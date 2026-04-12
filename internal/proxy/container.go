@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +13,11 @@ import (
 	dnetwork "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/errdefs"
 )
+
+// bootstrapConfig is the minimal Caddy config we seed into the config
+// volume before first start. It only enables the admin API; the real
+// config is pushed via /load once the API is reachable.
+var bootstrapConfig = []byte(`{"admin":{"listen":"127.0.0.1:2019"}}`)
 
 // ProxyContainerName is the fixed name we use for the managed Caddy
 // container so repeated enable/disable cycles don't leave orphans.
@@ -57,8 +64,8 @@ func (s *Service) EnableProxy(ctx context.Context) error {
 		"dockmesh.component": "proxy",
 	}
 	cfg := &container.Config{
-		Image: ProxyImage,
-		Cmd:   []string{"caddy", "run", "--config", "/config/caddy.json", "--adapter", "json", "--resume"},
+		Image:  ProxyImage,
+		Cmd:    []string{"caddy", "run", "--config", "/config/caddy.json"},
 		Labels: labels,
 	}
 	hostCfg := &container.HostConfig{
@@ -74,6 +81,18 @@ func (s *Service) EnableProxy(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("container create: %w", err)
 	}
+
+	// Seed the bootstrap config so caddy has something to read on start.
+	// We copy after Create (state=created) and before Start so there's no
+	// race with the Caddy process reading the file.
+	tarStream, err := tarSingleFile("caddy.json", bootstrapConfig)
+	if err != nil {
+		return fmt.Errorf("build bootstrap tar: %w", err)
+	}
+	if err := cli.CopyToContainer(ctx, resp.ID, "/config", tarStream, dtypes.CopyToContainerOptions{}); err != nil {
+		return fmt.Errorf("seed bootstrap config: %w", err)
+	}
+
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return fmt.Errorf("container start: %w", err)
 	}
@@ -107,6 +126,28 @@ func (s *Service) DisableProxy(ctx context.Context) error {
 	}
 	_ = cli.ContainerStop(ctx, info.ID, container.StopOptions{})
 	return cli.ContainerRemove(ctx, info.ID, container.RemoveOptions{Force: true})
+}
+
+// tarSingleFile wraps a single in-memory file as a tar stream suitable for
+// Docker's CopyToContainer.
+func tarSingleFile(name string, content []byte) (io.Reader, error) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	hdr := &tar.Header{
+		Name: name,
+		Mode: 0o644,
+		Size: int64(len(content)),
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		return nil, err
+	}
+	if _, err := tw.Write(content); err != nil {
+		return nil, err
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	return &buf, nil
 }
 
 // GetStatus inspects the container and pings the admin API.
