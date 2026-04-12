@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"errors"
+	"net"
 	"net/http"
+	"strconv"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
 )
@@ -17,6 +19,18 @@ type refreshRequest struct {
 }
 
 func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+	key := limitKey(ip)
+
+	// Brute-force guard (§1.5): 10 failures per minute → 5 min lockout.
+	if h.LoginLimter != nil {
+		if ok, retry := h.LoginLimter.Check(key); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
+			writeError(w, http.StatusTooManyRequests, "too many login attempts — try again later")
+			return
+		}
+	}
+
 	var req loginRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
@@ -26,8 +40,11 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "username and password required")
 		return
 	}
-	res, err := h.Auth.Login(r.Context(), req.Username, req.Password, r.UserAgent(), clientIP(r))
+	res, err := h.Auth.Login(r.Context(), req.Username, req.Password, r.UserAgent(), ip)
 	if errors.Is(err, auth.ErrInvalidCredentials) {
+		if h.LoginLimter != nil {
+			h.LoginLimter.Fail(key)
+		}
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -35,7 +52,20 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "login failed")
 		return
 	}
+	if h.LoginLimter != nil {
+		h.LoginLimter.Succeed(key)
+	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// limitKey normalises the IP so that different TCP source ports collapse
+// to the same bucket.
+func limitKey(ip string) string {
+	host, _, err := net.SplitHostPort(ip)
+	if err == nil {
+		return host
+	}
+	return ip
 }
 
 func (h *Handlers) Refresh(w http.ResponseWriter, r *http.Request) {
