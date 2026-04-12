@@ -130,6 +130,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermAuditRead))
 				r.Get("/audit", h.ListAudit)
+				r.Get("/audit/verify", h.VerifyAudit)
 			})
 		})
 

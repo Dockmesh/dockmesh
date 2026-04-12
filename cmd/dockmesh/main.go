@@ -86,7 +86,11 @@ func main() {
 	}
 
 	composeSvc := compose.NewService(dockerCli, stacksMgr)
-	auditSvc := audit.NewService(database)
+	auditSvc := audit.NewService(database, cfg.AuditGenesisPath)
+	if err := auditSvc.EnsureGenesis(ctx); err != nil {
+		slog.Error("audit genesis failed", "err", err)
+		os.Exit(1)
+	}
 	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
 	h := handlers.New(database, authSvc, auditSvc, dockerCli, stacksMgr, composeSvc, loginLimiter)
 	router := api.NewRouter(h, authSvc, webFS)

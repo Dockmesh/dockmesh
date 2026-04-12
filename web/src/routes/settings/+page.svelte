@@ -3,7 +3,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { Card, Button, Input, Modal, Badge, Skeleton, EmptyState } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
-  import { User, Users, Activity, Plus, Trash2, UserCog, ShieldCheck, ShieldOff, Copy, KeyRound } from 'lucide-svelte';
+  import { User, Users, Activity, Plus, Trash2, UserCog, ShieldCheck, ShieldOff, Copy, KeyRound, Link2 } from 'lucide-svelte';
 
   type Tab = 'account' | 'users' | 'audit';
   let tab = $state<Tab>('account');
@@ -171,6 +171,31 @@
   let auditEntries = $state<Array<any>>([]);
   let auditLoading = $state(false);
   let auditLimit = $state(100);
+  let verifyResult = $state<null | {
+    verified: number;
+    broken: number;
+    first_break?: number;
+    break_reason?: string;
+    genesis: string;
+    warnings?: string[];
+  }>(null);
+  let verifying = $state(false);
+
+  async function runVerify() {
+    verifying = true;
+    try {
+      verifyResult = await api.audit.verify();
+      if (verifyResult.broken === 0) {
+        toast.success('Chain intact', `${verifyResult.verified} entries verified`);
+      } else {
+        toast.error('Chain broken', verifyResult.break_reason ?? 'see report');
+      }
+    } catch (err) {
+      toast.error('Verify failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      verifying = false;
+    }
+  }
 
   async function loadAudit() {
     auditLoading = true;
@@ -379,7 +404,7 @@
       </Card>
     {/if}
   {:else if tab === 'audit'}
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-3 flex-wrap">
       <label class="text-sm flex items-center gap-2">
         <span class="text-[var(--fg-muted)]">Limit</span>
         <select class="dm-input !py-1 !px-2 !w-auto text-xs" bind:value={auditLimit} onchange={loadAudit}>
@@ -390,8 +415,40 @@
         </select>
       </label>
       <Button size="sm" variant="secondary" onclick={loadAudit}>Refresh</Button>
+      <Button size="sm" variant="secondary" loading={verifying} onclick={runVerify}>
+        <Link2 class="w-3.5 h-3.5" />
+        Verify chain
+      </Button>
       <span class="text-xs text-[var(--fg-subtle)] ml-auto">{auditEntries.length} entries</span>
     </div>
+
+    {#if verifyResult}
+      <div class="dm-card p-4 {verifyResult.broken === 0 ? 'border-[color-mix(in_srgb,var(--color-success-500)_40%,transparent)]' : 'border-[color-mix(in_srgb,var(--color-danger-500)_40%,transparent)]'}">
+        <div class="flex items-center gap-2 text-sm font-medium">
+          {#if verifyResult.broken === 0}
+            <ShieldCheck class="w-4 h-4 text-[var(--color-success-400)]" />
+            <span class="text-[var(--color-success-400)]">Chain intact</span>
+          {:else}
+            <ShieldOff class="w-4 h-4 text-[var(--color-danger-400)]" />
+            <span class="text-[var(--color-danger-400)]">Chain broken</span>
+          {/if}
+        </div>
+        <div class="text-xs text-[var(--fg-muted)] mt-2 space-y-1 font-mono">
+          <div>verified: <span class="text-[var(--fg)]">{verifyResult.verified}</span></div>
+          <div>broken: <span class="text-[var(--fg)]">{verifyResult.broken}</span></div>
+          {#if verifyResult.first_break}
+            <div>first break: row <span class="text-[var(--color-danger-400)]">{verifyResult.first_break}</span></div>
+            <div>reason: <span class="text-[var(--color-danger-400)]">{verifyResult.break_reason}</span></div>
+          {/if}
+          <div class="pt-1">genesis: <span class="text-[var(--fg-subtle)] break-all">{verifyResult.genesis}</span></div>
+          {#if verifyResult.warnings && verifyResult.warnings.length > 0}
+            <div class="pt-1 text-[var(--color-warning-400)]">
+              {verifyResult.warnings.length} legacy entries without chain
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
 
     {#if auditLoading && auditEntries.length === 0}
       <Card>
