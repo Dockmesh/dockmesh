@@ -9,19 +9,28 @@ import (
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
 type Handlers struct {
-	DB      *sql.DB
-	Auth    *auth.Service
-	Docker  *docker.Client // may be nil if the daemon was unreachable at startup
-	Stacks  *stacks.Manager
-	Compose *compose.Service
+	DB          *sql.DB
+	Auth        *auth.Service
+	Docker      *docker.Client // may be nil if the daemon was unreachable at startup
+	Stacks      *stacks.Manager
+	Compose     *compose.Service
+	LoginLimter *ratelimit.Limiter
 }
 
-func New(db *sql.DB, authSvc *auth.Service, dockerCli *docker.Client, stacksMgr *stacks.Manager, composeSvc *compose.Service) *Handlers {
-	return &Handlers{DB: db, Auth: authSvc, Docker: dockerCli, Stacks: stacksMgr, Compose: composeSvc}
+func New(db *sql.DB, authSvc *auth.Service, dockerCli *docker.Client, stacksMgr *stacks.Manager, composeSvc *compose.Service, loginLimiter *ratelimit.Limiter) *Handlers {
+	return &Handlers{
+		DB:          db,
+		Auth:        authSvc,
+		Docker:      dockerCli,
+		Stacks:      stacksMgr,
+		Compose:     composeSvc,
+		LoginLimter: loginLimiter,
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
