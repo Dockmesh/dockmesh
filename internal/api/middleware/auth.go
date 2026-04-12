@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 type ctxKey struct{ name string }
@@ -61,6 +62,20 @@ func RequireRole(allowed ...string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			role := Role(r.Context())
 			if _, ok := allowedSet[role]; !ok {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequirePerm returns middleware that rejects requests whose user role
+// is not granted the given permission. Must be chained after NewAuth.
+func RequirePerm(perm rbac.Perm) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !rbac.Allowed(Role(r.Context()), perm) {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}

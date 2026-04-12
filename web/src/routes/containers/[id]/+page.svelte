@@ -8,6 +8,7 @@
   import '@xterm/xterm/css/xterm.css';
   import { Card, Badge, Button, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { allowed } from '$lib/rbac';
   import {
     ChevronLeft,
     Play,
@@ -23,6 +24,8 @@
   } from 'lucide-svelte';
 
   const id = $derived($page.params.id);
+  const canControl = $derived(allowed('container.control'));
+  const canExec = $derived(allowed('container.exec'));
 
   let info = $state<any>(null);
   let loading = $state(true);
@@ -323,23 +326,25 @@
           {info.State?.Status ?? 'unknown'}
         </Badge>
       </div>
-      <div class="flex gap-2 flex-wrap">
-        {#if info.State?.Running}
-          <Button variant="secondary" onclick={() => action('restart')}>
-            <RotateCw class="w-4 h-4" /> Restart
+      {#if canControl}
+        <div class="flex gap-2 flex-wrap">
+          {#if info.State?.Running}
+            <Button variant="secondary" onclick={() => action('restart')}>
+              <RotateCw class="w-4 h-4" /> Restart
+            </Button>
+            <Button variant="secondary" onclick={() => action('stop')}>
+              <Square class="w-4 h-4" /> Stop
+            </Button>
+          {:else}
+            <Button variant="primary" onclick={() => action('start')}>
+              <Play class="w-4 h-4" /> Start
+            </Button>
+          {/if}
+          <Button variant="danger" onclick={remove}>
+            <Trash2 class="w-4 h-4" /> Remove
           </Button>
-          <Button variant="secondary" onclick={() => action('stop')}>
-            <Square class="w-4 h-4" /> Stop
-          </Button>
-        {:else}
-          <Button variant="primary" onclick={() => action('start')}>
-            <Play class="w-4 h-4" /> Start
-          </Button>
-        {/if}
-        <Button variant="danger" onclick={remove}>
-          <Trash2 class="w-4 h-4" /> Remove
-        </Button>
-      </div>
+        </div>
+      {/if}
     </div>
 
     <!-- Info cards -->
@@ -377,7 +382,9 @@
       </button>
     {/snippet}
     {@render tabBtn('logs', 'Logs', FileText, wsConnected)}
-    {@render tabBtn('exec', 'Terminal', TerminalIcon, execConnected)}
+    {#if canExec}
+      {@render tabBtn('exec', 'Terminal', TerminalIcon, execConnected)}
+    {/if}
     {@render tabBtn('stats', 'Stats', Activity, statsConnected)}
     {@render tabBtn('inspect', 'Inspect', Code2, false)}
   </div>

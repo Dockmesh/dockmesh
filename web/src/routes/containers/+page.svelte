@@ -4,7 +4,10 @@
   import { onDestroy } from 'svelte';
   import { Card, Badge, EmptyState, Button, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { allowed } from '$lib/rbac';
   import { Box, Play, Square, RotateCw, Trash2, RefreshCw } from 'lucide-svelte';
+
+  const canControl = $derived(allowed('container.control'));
 
   interface Container {
     Id: string;
@@ -172,23 +175,25 @@
                 </div>
               </div>
             </button>
-            <div class="flex gap-1 shrink-0">
-              {#if running}
-                <Button size="xs" variant="ghost" onclick={() => action(c.Id, 'restart')} aria-label="Restart">
-                  <RotateCw class="w-3.5 h-3.5" />
+            {#if canControl}
+              <div class="flex gap-1 shrink-0">
+                {#if running}
+                  <Button size="xs" variant="ghost" onclick={() => action(c.Id, 'restart')} aria-label="Restart">
+                    <RotateCw class="w-3.5 h-3.5" />
+                  </Button>
+                  <Button size="xs" variant="ghost" onclick={() => action(c.Id, 'stop')} aria-label="Stop">
+                    <Square class="w-3.5 h-3.5" />
+                  </Button>
+                {:else}
+                  <Button size="xs" variant="ghost" onclick={() => action(c.Id, 'start')} aria-label="Start">
+                    <Play class="w-3.5 h-3.5" />
+                  </Button>
+                {/if}
+                <Button size="xs" variant="ghost" onclick={() => action(c.Id, 'remove')} aria-label="Remove">
+                  <Trash2 class="w-3.5 h-3.5 text-[var(--color-danger-400)]" />
                 </Button>
-                <Button size="xs" variant="ghost" onclick={() => action(c.Id, 'stop')} aria-label="Stop">
-                  <Square class="w-3.5 h-3.5" />
-                </Button>
-              {:else}
-                <Button size="xs" variant="ghost" onclick={() => action(c.Id, 'start')} aria-label="Start">
-                  <Play class="w-3.5 h-3.5" />
-                </Button>
-              {/if}
-              <Button size="xs" variant="ghost" onclick={() => action(c.Id, 'remove')} aria-label="Remove">
-                <Trash2 class="w-3.5 h-3.5 text-[var(--color-danger-400)]" />
-              </Button>
-            </div>
+              </div>
+            {/if}
           </div>
         {/each}
       </div>
