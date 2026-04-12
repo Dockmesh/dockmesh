@@ -10,6 +10,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -25,6 +26,7 @@ type Handlers struct {
 	LoginLimter *ratelimit.Limiter
 	Scanner     scanner.Scanner
 	ScanStore   *scanner.Store
+	Proxy       *proxy.Service
 }
 
 type Deps struct {
@@ -37,6 +39,7 @@ type Deps struct {
 	LoginLimiter *ratelimit.Limiter
 	Scanner      scanner.Scanner
 	ScanStore    *scanner.Store
+	Proxy        *proxy.Service
 }
 
 func New(d Deps) *Handlers {
@@ -50,6 +53,7 @@ func New(d Deps) *Handlers {
 		LoginLimter: d.LoginLimiter,
 		Scanner:     d.Scanner,
 		ScanStore:   d.ScanStore,
+		Proxy:       d.Proxy,
 	}
 }
 

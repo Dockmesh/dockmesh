@@ -20,6 +20,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
@@ -126,6 +127,13 @@ func main() {
 	}
 	scanStore := scanner.NewStore(database)
 
+	proxySvc := proxy.NewService(database, dockerCli, cfg.ProxyEnabled)
+	if cfg.ProxyEnabled {
+		if err := proxySvc.SyncFromDB(ctx); err != nil {
+			slog.Warn("proxy sync failed — caddy container may not be running yet", "err", err)
+		}
+	}
+
 	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
 	h := handlers.New(handlers.Deps{
 		DB:           database,
@@ -137,6 +145,7 @@ func main() {
 		LoginLimiter: loginLimiter,
 		Scanner:      scannerSvc,
 		ScanStore:    scanStore,
+		Proxy:        proxySvc,
 	})
 	router := api.NewRouter(h, authSvc, webFS)
 
