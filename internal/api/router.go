@@ -36,6 +36,20 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.NewAuth(authSvc))
 
+			r.Get("/me", h.Me)
+			r.Get("/audit", h.ListAudit)
+
+			// User management: admin-only except self password change.
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequireRole("admin"))
+				r.Get("/users", h.ListUsers)
+				r.Post("/users", h.CreateUser)
+				r.Put("/users/{id}", h.UpdateUser)
+				r.Delete("/users/{id}", h.DeleteUser)
+			})
+			// Self or admin — enforced inside the handler.
+			r.Put("/users/{id}/password", h.ChangeUserPassword)
+
 			r.Get("/stacks", h.ListStacks)
 			r.Post("/stacks", h.CreateStack)
 			r.Get("/stacks/{name}", h.GetStack)

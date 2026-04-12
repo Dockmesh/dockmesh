@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
 )
@@ -43,6 +44,7 @@ func (h *Handlers) CreateStack(w http.ResponseWriter, r *http.Request) {
 		writeStackError(w, err)
 		return
 	}
+	h.audit(r, audit.ActionStackCreate, req.Name, nil)
 	writeJSON(w, http.StatusCreated, d)
 }
 
@@ -62,6 +64,7 @@ func (h *Handlers) UpdateStack(w http.ResponseWriter, r *http.Request) {
 		writeStackError(w, err)
 		return
 	}
+	h.audit(r, audit.ActionStackUpdate, name, nil)
 	writeJSON(w, http.StatusOK, d)
 }
 
@@ -71,6 +74,7 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 		writeStackError(w, err)
 		return
 	}
+	h.audit(r, audit.ActionStackDelete, name, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -89,6 +93,7 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, audit.ActionStackDeploy, name, map[string]int{"services": len(res.Services)})
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -102,6 +107,7 @@ func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, audit.ActionStackStop, name, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 
+	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -53,6 +54,7 @@ func (h *Handlers) CreateNetwork(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, audit.ActionNetworkCreate, req.Name, nil)
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -61,9 +63,11 @@ func (h *Handlers) RemoveNetwork(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
-	if err := h.Docker.RemoveNetwork(r.Context(), chi.URLParam(r, "id")); err != nil {
+	id := chi.URLParam(r, "id")
+	if err := h.Docker.RemoveNetwork(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, audit.ActionNetworkRemove, id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }

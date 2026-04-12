@@ -26,7 +26,8 @@ func (h *Handlers) WSTicket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	ticket, err := h.Auth.IssueWSTicket(uid)
+	role := middleware.Role(r.Context())
+	ticket, err := h.Auth.IssueWSTicket(uid, role)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "ticket generation failed")
 		return

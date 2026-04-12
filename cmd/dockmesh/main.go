@@ -14,6 +14,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/api"
 	"github.com/dockmesh/dockmesh/internal/api/handlers"
+	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/config"
@@ -85,8 +86,9 @@ func main() {
 	}
 
 	composeSvc := compose.NewService(dockerCli, stacksMgr)
+	auditSvc := audit.NewService(database)
 	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
-	h := handlers.New(database, authSvc, dockerCli, stacksMgr, composeSvc, loginLimiter)
+	h := handlers.New(database, authSvc, auditSvc, dockerCli, stacksMgr, composeSvc, loginLimiter)
 	router := api.NewRouter(h, authSvc, webFS)
 
 	srv := &http.Server{

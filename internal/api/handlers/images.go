@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -41,6 +42,7 @@ func (h *Handlers) PullImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
+	h.audit(r, audit.ActionImagePull, req.Image, nil)
 	// Stream the pull progress to the client as ndjson.
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.WriteHeader(http.StatusOK)
@@ -73,6 +75,7 @@ func (h *Handlers) RemoveImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, audit.ActionImageRemove, id, nil)
 	writeJSON(w, http.StatusOK, deleted)
 }
 
@@ -86,5 +89,6 @@ func (h *Handlers) PruneImages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, audit.ActionImagePrune, "", map[string]int64{"space_reclaimed": int64(report.SpaceReclaimed)})
 	writeJSON(w, http.StatusOK, report)
 }

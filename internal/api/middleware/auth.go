@@ -10,17 +10,25 @@ import (
 
 type ctxKey struct{ name string }
 
-var userIDKey = ctxKey{"userID"}
+var (
+	userIDKey = ctxKey{"userID"}
+	roleKey   = ctxKey{"role"}
+)
 
 // UserID extracts the authenticated user ID from the request context.
-// Returns "" if the request did not pass through NewAuth.
 func UserID(ctx context.Context) string {
 	v, _ := ctx.Value(userIDKey).(string)
 	return v
 }
 
+// Role extracts the authenticated user's role from the request context.
+func Role(ctx context.Context) string {
+	v, _ := ctx.Value(roleKey).(string)
+	return v
+}
+
 // NewAuth returns middleware that validates Bearer JWTs via the auth service
-// and injects the user ID into the request context.
+// and injects the user ID + role into the request context.
 func NewAuth(svc *auth.Service) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -30,13 +38,33 @@ func NewAuth(svc *auth.Service) func(http.Handler) http.Handler {
 				return
 			}
 			token := strings.TrimPrefix(h, "Bearer ")
-			uid, err := svc.Validate(token)
+			uid, role, err := svc.Validate(token)
 			if err != nil {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
 			ctx := context.WithValue(r.Context(), userIDKey, uid)
+			ctx = context.WithValue(ctx, roleKey, role)
 			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// RequireRole returns middleware that rejects requests whose user does not
+// have any of the allowed roles. Must be chained after NewAuth.
+func RequireRole(allowed ...string) func(http.Handler) http.Handler {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, r := range allowed {
+		allowedSet[r] = struct{}{}
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			role := Role(r.Context())
+			if _, ok := allowedSet[role]; !ok {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
 }
