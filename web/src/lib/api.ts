@@ -113,6 +113,34 @@ export const api = {
     prune: () => request<any>('/volumes/prune', { method: 'POST' })
   },
 
+  users: {
+    me: () => request<{ id: string; username: string; email?: string; role: string }>('/me'),
+    list: () => request<Array<{ id: string; username: string; email?: string; role: string }>>('/users'),
+    create: (username: string, password: string, role: string, email?: string) =>
+      request<{ id: string; username: string; role: string }>('/users', {
+        method: 'POST',
+        body: JSON.stringify({ username, password, role, email })
+      }),
+    update: (id: string, email: string, role: string) =>
+      request<{ id: string; username: string; role: string }>(`/users/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ email, role })
+      }),
+    delete: (id: string) => request<void>(`/users/${id}`, { method: 'DELETE' }),
+    changePassword: (id: string, password: string) =>
+      request<void>(`/users/${id}/password`, {
+        method: 'PUT',
+        body: JSON.stringify({ password })
+      })
+  },
+
+  audit: {
+    list: (limit = 100) =>
+      request<Array<{ id: number; ts: string; user_id?: string; action: string; target?: string; details?: string }>>(
+        `/audit?limit=${limit}`
+      )
+  },
+
   ws: {
     ticket: () => request<{ ticket: string }>('/ws/ticket', { method: 'POST' })
   }
