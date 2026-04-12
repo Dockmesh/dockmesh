@@ -1,0 +1,28 @@
+[Unit]
+Description=Dockmesh container management
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=dockmesh
+Group=dockmesh
+WorkingDirectory=/home/dockmesh/dockmesh
+ExecStart=/home/dockmesh/dockmesh/dockmesh
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dockmesh
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Security hardening — enable once a dedicated data dir is set up.
+# ProtectSystem=strict
+# ProtectHome=true
+# PrivateTmp=true
+# NoNewPrivileges=true
+# ReadWritePaths=/home/dockmesh/dockmesh/data /home/dockmesh/dockmesh/stacks
+
+[Install]
+WantedBy=multi-user.target
