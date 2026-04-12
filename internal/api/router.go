@@ -83,6 +83,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 			r.Post("/volumes/prune", h.PruneVolumes)
 
 			r.Post("/ws/ticket", h.WSTicket)
+
+			r.Post("/convert/run-to-compose", h.ConvertRunToCompose)
 		})
 
 		// WebSocket endpoints — auth via ?ticket= (not Bearer header).
