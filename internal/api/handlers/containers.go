@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -35,15 +36,15 @@ func (h *Handlers) InspectContainer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) StartContainer(w http.ResponseWriter, r *http.Request) {
-	h.containerAction(w, r, h.Docker.StartContainer)
+	h.containerAction(w, r, h.Docker.StartContainer, audit.ActionContainerStart)
 }
 
 func (h *Handlers) StopContainer(w http.ResponseWriter, r *http.Request) {
-	h.containerAction(w, r, h.Docker.StopContainer)
+	h.containerAction(w, r, h.Docker.StopContainer, audit.ActionContainerStop)
 }
 
 func (h *Handlers) RestartContainer(w http.ResponseWriter, r *http.Request) {
-	h.containerAction(w, r, h.Docker.RestartContainer)
+	h.containerAction(w, r, h.Docker.RestartContainer, audit.ActionContainerKill)
 }
 
 func (h *Handlers) RemoveContainer(w http.ResponseWriter, r *http.Request) {
@@ -51,22 +52,26 @@ func (h *Handlers) RemoveContainer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
+	id := chi.URLParam(r, "id")
 	force := r.URL.Query().Get("force") == "true"
-	if err := h.Docker.RemoveContainer(r.Context(), chi.URLParam(r, "id"), force); err != nil {
+	if err := h.Docker.RemoveContainer(r.Context(), id, force); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, audit.ActionContainerRm, id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *Handlers) containerAction(w http.ResponseWriter, r *http.Request, fn func(context.Context, string) error) {
+func (h *Handlers) containerAction(w http.ResponseWriter, r *http.Request, fn func(context.Context, string) error, action string) {
 	if h.Docker == nil {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
-	if err := fn(r.Context(), chi.URLParam(r, "id")); err != nil {
+	id := chi.URLParam(r, "id")
+	if err := fn(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, action, id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 
+	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -53,6 +54,7 @@ func (h *Handlers) CreateVolume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, audit.ActionVolumeCreate, req.Name, nil)
 	writeJSON(w, http.StatusCreated, vol)
 }
 
@@ -61,11 +63,13 @@ func (h *Handlers) RemoveVolume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
+	name := chi.URLParam(r, "name")
 	force := r.URL.Query().Get("force") == "true"
-	if err := h.Docker.RemoveVolume(r.Context(), chi.URLParam(r, "name"), force); err != nil {
+	if err := h.Docker.RemoveVolume(r.Context(), name, force); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, audit.ActionVolumeRemove, name, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -79,5 +83,6 @@ func (h *Handlers) PruneVolumes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, audit.ActionVolumePrune, "", map[string]uint64{"space_reclaimed": report.SpaceReclaimed})
 	writeJSON(w, http.StatusOK, report)
 }

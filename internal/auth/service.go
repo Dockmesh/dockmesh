@@ -102,6 +102,65 @@ func (s *Service) GetUser(ctx context.Context, id string) (*User, error) {
 	return &u, nil
 }
 
+func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, username, email, role FROM users ORDER BY username`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		var u User
+		var email sql.NullString
+		if err := rows.Scan(&u.ID, &u.Username, &email, &u.Role); err != nil {
+			return nil, err
+		}
+		if email.Valid {
+			u.Email = email.String
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+func (s *Service) UpdateUser(ctx context.Context, id, email, role string) (*User, error) {
+	var emailNullable any
+	if email != "" {
+		emailNullable = email
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET email = ?, role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		emailNullable, role, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetUser(ctx, id)
+}
+
+func (s *Service) DeleteUser(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Service) ChangePassword(ctx context.Context, id, newPassword string) error {
+	hash, err := HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		hash, id)
+	return err
+}
+
 func (s *Service) Login(ctx context.Context, username, password, userAgent, ip string) (*LoginResult, error) {
 	var u User
 	var email sql.NullString
@@ -187,13 +246,13 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 	return err
 }
 
-// Validate parses an access token and returns the user ID.
-func (s *Service) Validate(token string) (string, error) {
+// Validate parses an access token and returns (userID, role).
+func (s *Service) Validate(token string) (string, string, error) {
 	c, err := ParseAccessToken(s.secret, token)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return c.UserID, nil
+	return c.UserID, c.Role, nil
 }
 
 type refreshClaims struct {
@@ -203,7 +262,7 @@ type refreshClaims struct {
 }
 
 func (s *Service) mintPair(u User, familyID string, seq int, expiresAt time.Time) (*LoginResult, error) {
-	access, err := IssueAccessToken(s.secret, u.ID)
+	access, err := IssueAccessToken(s.secret, u.ID, u.Role)
 	if err != nil {
 		return nil, err
 	}
@@ -248,9 +307,10 @@ func (s *Service) parseRefresh(token string) (*refreshClaims, error) {
 // IssueWSTicket creates a short-lived (30s) JWT ticket for WebSocket auth (§15.8).
 // The client obtains it via POST /api/v1/ws/ticket with a valid Bearer token,
 // then passes it as ?ticket=<JWT> on the WebSocket upgrade URL.
-func (s *Service) IssueWSTicket(userID string) (string, error) {
+func (s *Service) IssueWSTicket(userID, role string) (string, error) {
 	c := Claims{
 		UserID: userID,
+		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(30 * time.Second)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -261,7 +321,7 @@ func (s *Service) IssueWSTicket(userID string) (string, error) {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString(s.secret)
 }
 
-// ValidateWSTicket verifies a WebSocket ticket JWT.
+// ValidateWSTicket verifies a WebSocket ticket JWT and returns the user ID.
 func (s *Service) ValidateWSTicket(token string) (string, error) {
 	c, err := ParseAccessToken(s.secret, token)
 	if err != nil {

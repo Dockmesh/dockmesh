@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
 )
 
@@ -45,6 +46,9 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		if h.LoginLimter != nil {
 			h.LoginLimter.Fail(key)
 		}
+		if h.Audit != nil {
+			h.Audit.Write(r.Context(), "", audit.ActionLoginFailed, req.Username, map[string]string{"ip": ip})
+		}
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -54,6 +58,9 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.LoginLimter != nil {
 		h.LoginLimter.Succeed(key)
+	}
+	if h.Audit != nil {
+		h.Audit.Write(r.Context(), res.User.ID, audit.ActionLogin, req.Username, map[string]string{"ip": ip})
 	}
 	writeJSON(w, http.StatusOK, res)
 }

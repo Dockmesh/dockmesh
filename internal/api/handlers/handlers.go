@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
@@ -16,16 +17,18 @@ import (
 type Handlers struct {
 	DB          *sql.DB
 	Auth        *auth.Service
+	Audit       *audit.Service
 	Docker      *docker.Client // may be nil if the daemon was unreachable at startup
 	Stacks      *stacks.Manager
 	Compose     *compose.Service
 	LoginLimter *ratelimit.Limiter
 }
 
-func New(db *sql.DB, authSvc *auth.Service, dockerCli *docker.Client, stacksMgr *stacks.Manager, composeSvc *compose.Service, loginLimiter *ratelimit.Limiter) *Handlers {
+func New(db *sql.DB, authSvc *auth.Service, auditSvc *audit.Service, dockerCli *docker.Client, stacksMgr *stacks.Manager, composeSvc *compose.Service, loginLimiter *ratelimit.Limiter) *Handlers {
 	return &Handlers{
 		DB:          db,
 		Auth:        authSvc,
+		Audit:       auditSvc,
 		Docker:      dockerCli,
 		Stacks:      stacksMgr,
 		Compose:     composeSvc,
