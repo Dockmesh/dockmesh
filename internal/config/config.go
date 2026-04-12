@@ -11,19 +11,21 @@ import (
 )
 
 type Config struct {
-	HTTPAddr    string
-	DBPath      string
-	StacksRoot  string
-	SecretsPath string
-	JWTSecret   []byte
+	HTTPAddr        string
+	DBPath          string
+	StacksRoot      string
+	SecretsPath     string
+	AuditGenesisPath string
+	JWTSecret       []byte
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		HTTPAddr:    envOr("DOCKMESH_HTTP_ADDR", ":8080"),
-		DBPath:      envOr("DOCKMESH_DB_PATH", "./data/dockmesh.db"),
-		StacksRoot:  envOr("DOCKMESH_STACKS_ROOT", "./stacks"),
-		SecretsPath: envOr("DOCKMESH_SECRETS_PATH", "./data/secrets.env"),
+		HTTPAddr:         envOr("DOCKMESH_HTTP_ADDR", ":8080"),
+		DBPath:           envOr("DOCKMESH_DB_PATH", "./data/dockmesh.db"),
+		StacksRoot:       envOr("DOCKMESH_STACKS_ROOT", "./stacks"),
+		SecretsPath:      envOr("DOCKMESH_SECRETS_PATH", "./data/secrets.env"),
+		AuditGenesisPath: envOr("DOCKMESH_AUDIT_GENESIS_PATH", "./data/audit-genesis.sha256"),
 	}
 	secret, err := loadOrCreateJWTSecret(cfg.SecretsPath)
 	if err != nil {

@@ -42,6 +42,20 @@ func (h *Handlers) ListAudit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, entries)
 }
 
+// VerifyAudit walks the hash chain and reports any tampering (§15.10).
+func (h *Handlers) VerifyAudit(w http.ResponseWriter, r *http.Request) {
+	if h.Audit == nil {
+		writeError(w, http.StatusServiceUnavailable, "audit unavailable")
+		return
+	}
+	report, err := h.Audit.Verify(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
 // ensureErrorsImport silences the unused-import warning in case errors is
 // unused after future edits. Kept for the user-lookup guard above.
 var _ = errors.New

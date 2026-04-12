@@ -158,9 +158,18 @@ export const api = {
 
   audit: {
     list: (limit = 100) =>
-      request<Array<{ id: number; ts: string; user_id?: string; action: string; target?: string; details?: string }>>(
+      request<Array<{ id: number; ts: string; user_id?: string; action: string; target?: string; details?: string; prev_hash?: string; row_hash?: string }>>(
         `/audit?limit=${limit}`
-      )
+      ),
+    verify: () =>
+      request<{
+        verified: number;
+        broken: number;
+        first_break?: number;
+        break_reason?: string;
+        genesis: string;
+        warnings?: string[];
+      }>('/audit/verify')
   },
 
   convert: {
