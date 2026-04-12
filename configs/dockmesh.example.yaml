@@ -1,0 +1,47 @@
+# Dockmesh example configuration.
+# Copy to dockmesh.yaml and adjust. All fields are optional — defaults shown.
+
+server:
+  # HTTP listen address for the API and embedded frontend.
+  addr: ":8080"
+  # Base URL used when generating absolute links (e.g. in emails).
+  base_url: "http://localhost:8080"
+
+database:
+  # "sqlite" (default, embedded) or "postgres".
+  driver: "sqlite"
+  # For sqlite: path to the DB file. For postgres: DSN string.
+  dsn: "./data/dockmesh.db"
+
+stacks:
+  # Root directory where each stack lives as <root>/<name>/compose.yaml.
+  # The filesystem is the source of truth; the DB only stores metadata.
+  root: "./stacks"
+
+auth:
+  # HMAC secret for JWT access tokens. Generate with: openssl rand -hex 32
+  jwt_secret: "CHANGE_ME"
+  # Access token lifetime. Refresh tokens rotate automatically.
+  access_token_ttl: "15m"
+  refresh_token_ttl: "720h"
+
+docker:
+  # Leave empty to use DOCKER_HOST / default socket.
+  host: ""
+
+proxy:
+  # Caddy admin API endpoint (Phase 2).
+  admin_url: "http://localhost:2019"
+  enabled: false
+
+scanner:
+  # Grype integration (Phase 2).
+  enabled: false
+
+agents:
+  # Outbound-only remote agents (Phase 3).
+  enrollment_token: ""
+
+logging:
+  level: "info"   # debug | info | warn | error
+  format: "json"  # json | text

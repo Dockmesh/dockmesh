@@ -1,0 +1,62 @@
+package api
+
+import (
+	"io/fs"
+	"net/http"
+
+	"github.com/dockmesh/dockmesh/internal/api/handlers"
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/auth"
+	"github.com/go-chi/chi/v5"
+	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+)
+
+func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Handler {
+	r := chi.NewRouter()
+
+	r.Use(chimw.RequestID)
+	r.Use(chimw.RealIP)
+	r.Use(middleware.Logging)
+	r.Use(chimw.Recoverer)
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:5173"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+		AllowCredentials: true,
+	}))
+
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/health", h.Health)
+
+		r.Post("/auth/login", h.Login)
+		r.Post("/auth/logout", h.Logout)
+		r.Post("/auth/refresh", h.Refresh)
+
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.NewAuth(authSvc))
+
+			r.Get("/stacks", h.ListStacks)
+			r.Post("/stacks", h.CreateStack)
+			r.Get("/stacks/{name}", h.GetStack)
+			r.Put("/stacks/{name}", h.UpdateStack)
+			r.Delete("/stacks/{name}", h.DeleteStack)
+			r.Post("/stacks/{name}/deploy", h.DeployStack)
+			r.Post("/stacks/{name}/stop", h.StopStack)
+			r.Get("/stacks/{name}/status", h.StackStatus)
+
+			r.Get("/containers", h.ListContainers)
+			r.Get("/containers/{id}", h.InspectContainer)
+			r.Post("/containers/{id}/start", h.StartContainer)
+			r.Post("/containers/{id}/stop", h.StopContainer)
+			r.Post("/containers/{id}/restart", h.RestartContainer)
+			r.Delete("/containers/{id}", h.RemoveContainer)
+		})
+	})
+
+	if webFS != nil {
+		r.Handle("/*", http.FileServer(http.FS(webFS)))
+	}
+
+	return r
+}
