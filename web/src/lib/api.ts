@@ -1,4 +1,4 @@
-import { auth } from './stores/auth';
+import { auth } from './stores/auth.svelte';
 
 const BASE = '/api/v1';
 

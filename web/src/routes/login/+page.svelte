@@ -1,6 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { auth } from '$lib/stores/auth';
+  import { auth } from '$lib/stores/auth.svelte';
   import { api, ApiError } from '$lib/api';
 
   let username = $state('admin');

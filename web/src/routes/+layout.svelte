@@ -2,7 +2,7 @@
   import '../app.css';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { auth } from '$lib/stores/auth';
+  import { auth } from '$lib/stores/auth.svelte';
   import { api } from '$lib/api';
 
   let { children } = $props();
