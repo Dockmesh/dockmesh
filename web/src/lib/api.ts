@@ -141,6 +141,14 @@ export const api = {
       )
   },
 
+  convert: {
+    runToCompose: (command: string) =>
+      request<{ yaml: string; warnings?: string[] }>('/convert/run-to-compose', {
+        method: 'POST',
+        body: JSON.stringify({ command })
+      })
+  },
+
   ws: {
     ticket: () => request<{ ticket: string }>('/ws/ticket', { method: 'POST' })
   }

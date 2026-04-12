@@ -11,6 +11,27 @@
   let newEnv = $state('');
   let creating = $state(false);
 
+  // docker run → compose converter
+  let showImport = $state(false);
+  let runCommand = $state('');
+  let convertWarnings = $state<string[]>([]);
+  let converting = $state(false);
+
+  async function convertRun() {
+    converting = true;
+    convertWarnings = [];
+    try {
+      const res = await api.convert.runToCompose(runCommand);
+      newCompose = res.yaml;
+      convertWarnings = res.warnings ?? [];
+      showImport = false;
+    } catch (err) {
+      error = err instanceof ApiError ? err.message : 'convert failed';
+    } finally {
+      converting = false;
+    }
+  }
+
   async function load() {
     loading = true;
     try {
@@ -78,7 +99,16 @@
       onsubmit={create}
       class="w-full max-w-2xl p-6 rounded border border-[var(--border)] bg-[var(--panel)] space-y-3"
     >
-      <h3 class="text-lg font-semibold">Create Stack</h3>
+      <div class="flex justify-between items-center">
+        <h3 class="text-lg font-semibold">Create Stack</h3>
+        <button
+          type="button"
+          class="text-sm px-2 py-1 rounded border border-[var(--border)] hover:border-brand-500"
+          onclick={() => (showImport = true)}
+        >
+          Import from docker run
+        </button>
+      </div>
       <input
         class="w-full px-3 py-2 rounded border border-[var(--border)] bg-[var(--bg)]"
         placeholder="Name (lowercase, digits, hyphens)"
@@ -97,6 +127,14 @@
         bind:value={newEnv}
         disabled={creating}
       ></textarea>
+      {#if convertWarnings.length > 0}
+        <div class="p-2 rounded border border-yellow-500/30 bg-yellow-500/10 text-yellow-400 text-xs">
+          <strong>Warnings from converter:</strong>
+          <ul class="list-disc list-inside">
+            {#each convertWarnings as w}<li>{w}</li>{/each}
+          </ul>
+        </div>
+      {/if}
       <div class="flex justify-end gap-2">
         <button type="button" class="px-4 py-2 rounded border border-[var(--border)]" onclick={() => (showCreate = false)}>
           Cancel
@@ -106,5 +144,33 @@
         </button>
       </div>
     </form>
+  </div>
+{/if}
+
+{#if showImport}
+  <div class="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-20">
+    <div class="w-full max-w-2xl p-6 rounded border border-[var(--border)] bg-[var(--panel)] space-y-3">
+      <h3 class="text-lg font-semibold">Import from docker run</h3>
+      <p class="text-sm text-[var(--muted)]">
+        Paste a complete <code class="font-mono">docker run</code> command. We'll convert
+        it into compose YAML. Supports ports, volumes, env, networks, restart,
+        labels, and the common flags.
+      </p>
+      <textarea
+        class="w-full h-32 px-3 py-2 font-mono text-sm rounded border border-[var(--border)] bg-[var(--bg)]"
+        placeholder="docker run -d --name web -p 8080:80 nginx:alpine"
+        bind:value={runCommand}
+      ></textarea>
+      <div class="flex justify-end gap-2">
+        <button class="px-4 py-2 rounded border border-[var(--border)]" onclick={() => (showImport = false)}>Cancel</button>
+        <button
+          class="px-4 py-2 rounded bg-brand-500 text-white font-semibold disabled:opacity-50"
+          onclick={convertRun}
+          disabled={converting || !runCommand.trim()}
+        >
+          {converting ? 'Converting…' : 'Convert'}
+        </button>
+      </div>
+    </div>
   </div>
 {/if}

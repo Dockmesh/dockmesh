@@ -2,6 +2,7 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { api, ApiError } from '$lib/api';
+  import { onDestroy } from 'svelte';
 
   const name = $derived($page.params.name);
 
@@ -12,9 +13,16 @@
   let error = $state('');
   let busy = $state(false);
 
+  // External-change notification (§15.9)
+  let externalChange = $state<{ file: string; type: string } | null>(null);
+  let dirty = $state(false);
+  let ws: WebSocket | null = null;
+
   async function load() {
     loading = true;
     error = '';
+    externalChange = null;
+    dirty = false;
     try {
       const detail = await api.stacks.get(name);
       compose = detail.compose;
@@ -30,6 +38,31 @@
       loading = false;
     }
   }
+
+  async function connectEvents() {
+    disconnectEvents();
+    try {
+      const { ticket } = await api.ws.ticket();
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/api/v1/ws/events?ticket=${ticket}`);
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.source === 'stacks' && msg.name === name && msg.type === 'modified') {
+            externalChange = { file: msg.file ?? 'compose.yaml', type: msg.type };
+          } else if (msg.source === 'stacks' && msg.name === name && msg.type === 'removed') {
+            externalChange = { file: msg.file ?? '', type: 'removed' };
+          }
+        } catch { /* ignore */ }
+      };
+    } catch { /* ignore */ }
+  }
+
+  function disconnectEvents() {
+    if (ws) { ws.close(); ws = null; }
+  }
+
+  onDestroy(disconnectEvents);
 
   async function save() {
     busy = true;
@@ -82,7 +115,10 @@
   }
 
   $effect(() => {
-    if (name) load();
+    if (name) {
+      load();
+      connectEvents();
+    }
   });
 </script>
 
@@ -94,6 +130,17 @@
 
   {#if error}
     <div class="p-3 rounded border border-red-500/30 bg-red-500/10 text-red-500 text-sm">{error}</div>
+  {/if}
+
+  {#if externalChange}
+    <div class="p-3 rounded border border-yellow-500/40 bg-yellow-500/10 text-yellow-300 text-sm flex items-center gap-3">
+      <div class="flex-1">
+        ⚠ <strong>{externalChange.file || 'stack'}</strong> was {externalChange.type} outside Dockmesh.
+        {#if dirty}<span class="text-red-400 ml-2">You have unsaved edits.</span>{/if}
+      </div>
+      <button class="px-3 py-1 rounded bg-yellow-500/20 hover:bg-yellow-500/30" onclick={load}>Reload</button>
+      <button class="px-3 py-1 rounded border border-[var(--border)]" onclick={() => (externalChange = null)}>Ignore</button>
+    </div>
   {/if}
 
   {#if loading}
@@ -147,6 +194,7 @@
         id="compose"
         class="w-full h-80 px-3 py-2 font-mono text-sm rounded border border-[var(--border)] bg-[var(--bg)]"
         bind:value={compose}
+        oninput={() => (dirty = true)}
       ></textarea>
     </div>
 
@@ -156,6 +204,7 @@
         id="env"
         class="w-full h-24 px-3 py-2 font-mono text-sm rounded border border-[var(--border)] bg-[var(--bg)]"
         bind:value={env}
+        oninput={() => (dirty = true)}
       ></textarea>
     </div>
   {/if}

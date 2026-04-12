@@ -12,7 +12,9 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/mattn/go-shellwords v1.0.12
 	golang.org/x/crypto v0.22.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.29.8
 )
 
@@ -30,7 +32,6 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-shellwords v1.0.12 // indirect
 	github.com/moby/term v0.5.2 // indirect
 	github.com/morikuni/aec v1.1.0 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
