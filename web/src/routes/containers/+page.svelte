@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, ApiError } from '$lib/api';
   import { goto } from '$app/navigation';
+  import { onDestroy } from 'svelte';
 
   interface Container {
     Id: string;
@@ -15,6 +16,47 @@
   let loading = $state(true);
   let error = $state('');
   let showAll = $state(true);
+  let live = $state(false);
+  let ws: WebSocket | null = null;
+  let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Debounced reload so a burst of events doesn't hammer the API.
+  function scheduleReload() {
+    if (reloadTimer) clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(load, 300);
+  }
+
+  async function connectEvents() {
+    if (ws) return;
+    try {
+      const { ticket } = await api.ws.ticket();
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/api/v1/ws/events?ticket=${ticket}`);
+      ws.onopen = () => { live = true; };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          // Only react to container events.
+          if (msg.type === 'container') scheduleReload();
+        } catch { /* ignore */ }
+      };
+      ws.onclose = () => { live = false; ws = null; };
+      ws.onerror = () => { live = false; };
+    } catch {
+      live = false;
+    }
+  }
+
+  function disconnectEvents() {
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
+    if (reloadTimer) clearTimeout(reloadTimer);
+    live = false;
+  }
+
+  onDestroy(disconnectEvents);
 
   async function load() {
     loading = true;
@@ -52,12 +94,23 @@
     return [...seen].join(', ');
   }
 
-  $effect(() => { load(); });
+  $effect(() => {
+    load();
+    connectEvents();
+    return disconnectEvents;
+  });
 </script>
 
 <section class="space-y-4">
   <div class="flex justify-between items-center">
-    <h2 class="text-xl font-semibold">Containers</h2>
+    <div class="flex items-center gap-2">
+      <h2 class="text-xl font-semibold">Containers</h2>
+      {#if live}
+        <span class="inline-flex items-center gap-1 text-xs text-green-500">
+          <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>live
+        </span>
+      {/if}
+    </div>
     <div class="flex gap-2 items-center">
       <label class="text-sm flex items-center gap-1">
         <input type="checkbox" bind:checked={showAll} onchange={load} /> show stopped
