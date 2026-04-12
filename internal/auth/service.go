@@ -245,6 +245,31 @@ func (s *Service) parseRefresh(token string) (*refreshClaims, error) {
 	return c, nil
 }
 
+// IssueWSTicket creates a short-lived (30s) JWT ticket for WebSocket auth (§15.8).
+// The client obtains it via POST /api/v1/ws/ticket with a valid Bearer token,
+// then passes it as ?ticket=<JWT> on the WebSocket upgrade URL.
+func (s *Service) IssueWSTicket(userID string) (string, error) {
+	c := Claims{
+		UserID: userID,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(30 * time.Second)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Issuer:    "dockmesh",
+			Subject:   "ws-ticket",
+		},
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString(s.secret)
+}
+
+// ValidateWSTicket verifies a WebSocket ticket JWT.
+func (s *Service) ValidateWSTicket(token string) (string, error) {
+	c, err := ParseAccessToken(s.secret, token)
+	if err != nil {
+		return "", err
+	}
+	return c.UserID, nil
+}
+
 func generatePassword(n int) (string, error) {
 	// Ambiguous characters (0/O, 1/l/I) intentionally excluded.
 	const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"

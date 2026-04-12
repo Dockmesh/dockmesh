@@ -51,6 +51,29 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 			r.Post("/containers/{id}/stop", h.StopContainer)
 			r.Post("/containers/{id}/restart", h.RestartContainer)
 			r.Delete("/containers/{id}", h.RemoveContainer)
+
+			r.Get("/images", h.ListImages)
+			r.Post("/images/pull", h.PullImage)
+			r.Delete("/images/{id}", h.RemoveImage)
+			r.Post("/images/prune", h.PruneImages)
+
+			r.Get("/networks", h.ListNetworks)
+			r.Get("/networks/{id}", h.InspectNetwork)
+			r.Post("/networks", h.CreateNetwork)
+			r.Delete("/networks/{id}", h.RemoveNetwork)
+
+			r.Get("/volumes", h.ListVolumes)
+			r.Get("/volumes/{name}", h.InspectVolume)
+			r.Post("/volumes", h.CreateVolume)
+			r.Delete("/volumes/{name}", h.RemoveVolume)
+			r.Post("/volumes/prune", h.PruneVolumes)
+
+			r.Post("/ws/ticket", h.WSTicket)
+		})
+
+		// WebSocket endpoints — auth via ?ticket= (not Bearer header).
+		r.Route("/api/v1/ws", func(r chi.Router) {
+			r.Get("/logs/{id}", h.WSLogs)
 		})
 	})
 
