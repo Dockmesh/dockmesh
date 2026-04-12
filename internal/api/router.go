@@ -89,6 +89,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 		r.Get("/ws/logs/{id}", h.WSLogs)
 		r.Get("/ws/events", h.WSEvents)
 		r.Get("/ws/exec/{id}", h.WSExec)
+		r.Get("/ws/stats/{id}", h.WSStats)
 	})
 
 	if webFS != nil {
