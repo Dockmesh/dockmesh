@@ -44,6 +44,14 @@
   });
 </script>
 
+{#snippet card(label: string, value: string | number, hint?: string)}
+  <div class="p-4 rounded border border-[var(--border)] bg-[var(--panel)]">
+    <div class="text-sm text-[var(--muted)]">{label}</div>
+    <div class="text-2xl font-bold mt-1">{value}</div>
+    {#if hint}<div class="text-xs text-[var(--muted)] mt-1">{hint}</div>{/if}
+  </div>
+{/snippet}
+
 <section class="space-y-4">
   <div class="flex justify-between items-center">
     <h2 class="text-xl font-semibold">Dashboard</h2>
@@ -57,23 +65,11 @@
   {/if}
 
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-    <Card label="Containers" value={`${stats.containersRunning} / ${stats.containers}`} hint="running / total" />
-    <Card label="Stacks" value={stats.stacks} />
-    <Card label="Images" value={stats.images} />
-    <Card label="Networks" value={stats.networks} />
-    <Card label="Volumes" value={stats.volumes} />
-    <Card
-      label="Docker"
-      value={health?.docker ? 'connected' : 'offline'}
-      hint={health?.version ? `dockmesh ${health.version}` : ''}
-    />
+    {@render card('Containers', `${stats.containersRunning} / ${stats.containers}`, 'running / total')}
+    {@render card('Stacks', stats.stacks)}
+    {@render card('Images', stats.images)}
+    {@render card('Networks', stats.networks)}
+    {@render card('Volumes', stats.volumes)}
+    {@render card('Docker', health?.docker ? 'connected' : 'offline', health?.version ? `dockmesh ${health.version}` : '')}
   </div>
 </section>
-
-{#snippet Card({ label, value, hint }: { label: string; value: string | number; hint?: string })}
-  <div class="p-4 rounded border border-[var(--border)] bg-[var(--panel)]">
-    <div class="text-sm text-[var(--muted)]">{label}</div>
-    <div class="text-2xl font-bold mt-1">{value}</div>
-    {#if hint}<div class="text-xs text-[var(--muted)] mt-1">{hint}</div>{/if}
-  </div>
-{/snippet}
