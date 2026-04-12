@@ -3,13 +3,16 @@
   import { goto } from '$app/navigation';
   import { api, ApiError } from '$lib/api';
   import { tick } from 'svelte';
+  import { Terminal } from '@xterm/xterm';
+  import { FitAddon } from '@xterm/addon-fit';
+  import '@xterm/xterm/css/xterm.css';
 
   const id = $derived($page.params.id);
 
   let info = $state<any>(null);
   let loading = $state(true);
   let error = $state('');
-  let tab = $state<'logs' | 'inspect'>('logs');
+  let tab = $state<'logs' | 'exec' | 'inspect'>('logs');
 
   // Log state
   let logs = $state<string[]>([]);
@@ -17,6 +20,15 @@
   let autoScroll = $state(true);
   let logContainer: HTMLDivElement | null = $state(null);
   let ws: WebSocket | null = null;
+
+  // Exec state
+  let execContainer: HTMLDivElement | null = $state(null);
+  let execConnected = $state(false);
+  let execShell = $state<'sh' | 'bash'>('sh');
+  let term: Terminal | null = null;
+  let fitAddon: FitAddon | null = null;
+  let execWs: WebSocket | null = null;
+  let resizeObserver: ResizeObserver | null = null;
 
   async function loadInfo() {
     loading = true;
@@ -74,6 +86,89 @@
     wsConnected = false;
   }
 
+  async function connectExec() {
+    disconnectExec();
+    if (!execContainer) return;
+
+    term = new Terminal({
+      fontFamily: 'JetBrains Mono, Menlo, Consolas, monospace',
+      fontSize: 13,
+      cursorBlink: true,
+      theme: {
+        background: '#000000',
+        foreground: '#e7ecf5'
+      }
+    });
+    fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(execContainer);
+    fitAddon.fit();
+
+    try {
+      const { ticket } = await api.ws.ticket();
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const cmd = execShell === 'bash' ? '/bin/bash' : '/bin/sh';
+      const url = `${proto}//${location.host}/api/v1/ws/exec/${id}?ticket=${ticket}&cmd=${encodeURIComponent(cmd)}`;
+      execWs = new WebSocket(url);
+      execWs.binaryType = 'arraybuffer';
+
+      execWs.onopen = () => {
+        execConnected = true;
+        // Send initial resize
+        const { cols, rows } = term!;
+        execWs!.send(JSON.stringify({ type: 'resize', cols, rows }));
+      };
+      execWs.onmessage = (ev) => {
+        if (typeof ev.data === 'string') {
+          // Error JSON from server
+          term!.write(`\r\n\x1b[31m${ev.data}\x1b[0m\r\n`);
+        } else {
+          term!.write(new Uint8Array(ev.data));
+        }
+      };
+      execWs.onclose = () => {
+        execConnected = false;
+        term?.write('\r\n\x1b[33m[session closed]\x1b[0m\r\n');
+      };
+      execWs.onerror = () => {
+        execConnected = false;
+      };
+
+      term.onData((data) => {
+        if (execWs?.readyState === WebSocket.OPEN) {
+          execWs.send(new TextEncoder().encode(data));
+        }
+      });
+      term.onResize(({ cols, rows }) => {
+        if (execWs?.readyState === WebSocket.OPEN) {
+          execWs.send(JSON.stringify({ type: 'resize', cols, rows }));
+        }
+      });
+
+      resizeObserver = new ResizeObserver(() => {
+        try { fitAddon?.fit(); } catch { /* ignore */ }
+      });
+      resizeObserver.observe(execContainer);
+    } catch (err) {
+      error = err instanceof ApiError ? err.message : 'exec connect failed';
+    }
+  }
+
+  function disconnectExec() {
+    resizeObserver?.disconnect();
+    resizeObserver = null;
+    if (execWs) {
+      execWs.close();
+      execWs = null;
+    }
+    if (term) {
+      term.dispose();
+      term = null;
+    }
+    fitAddon = null;
+    execConnected = false;
+  }
+
   async function action(op: 'start' | 'stop' | 'restart') {
     try {
       if (op === 'start') await api.containers.start(id);
@@ -100,9 +195,27 @@
   $effect(() => {
     if (id) {
       loadInfo();
-      connectLogs();
     }
-    return () => disconnect();
+  });
+
+  // Tab effect: open/close WS + terminal when switching tabs.
+  $effect(() => {
+    if (tab === 'logs') {
+      disconnectExec();
+      connectLogs();
+    } else if (tab === 'exec') {
+      disconnect();
+      // Wait for the DOM node to exist before attaching xterm.
+      tick().then(connectExec);
+    } else {
+      disconnect();
+      disconnectExec();
+    }
+  });
+
+  $effect(() => () => {
+    disconnect();
+    disconnectExec();
   });
 
   function containerName(inf: any): string {
@@ -171,7 +284,13 @@
       class="px-4 py-2 text-sm border-b-2 {tab === 'logs' ? 'border-brand-500 text-[var(--fg)]' : 'border-transparent text-[var(--muted)]'}"
       onclick={() => (tab = 'logs')}
     >
-      Logs {#if wsConnected}<span class="w-1.5 h-1.5 inline-block rounded-full bg-green-500 ml-1"></span>{/if}
+      Logs {#if wsConnected && tab === 'logs'}<span class="w-1.5 h-1.5 inline-block rounded-full bg-green-500 ml-1"></span>{/if}
+    </button>
+    <button
+      class="px-4 py-2 text-sm border-b-2 {tab === 'exec' ? 'border-brand-500 text-[var(--fg)]' : 'border-transparent text-[var(--muted)]'}"
+      onclick={() => (tab = 'exec')}
+    >
+      Terminal {#if execConnected && tab === 'exec'}<span class="w-1.5 h-1.5 inline-block rounded-full bg-green-500 ml-1"></span>{/if}
     </button>
     <button
       class="px-4 py-2 text-sm border-b-2 {tab === 'inspect' ? 'border-brand-500 text-[var(--fg)]' : 'border-transparent text-[var(--muted)]'}"
@@ -207,6 +326,26 @@
         <div class="text-[var(--muted)]">disconnected</div>
       {/if}
     </div>
+  {:else if tab === 'exec'}
+    <div class="flex items-center gap-3 text-sm">
+      <label class="flex items-center gap-1">
+        Shell:
+        <select class="px-2 py-0.5 rounded border border-[var(--border)] bg-[var(--bg)] ml-1" bind:value={execShell}>
+          <option value="sh">/bin/sh</option>
+          <option value="bash">/bin/bash</option>
+        </select>
+      </label>
+      <button class="px-2 py-0.5 border border-[var(--border)] rounded" onclick={connectExec}>Reconnect</button>
+      {#if execConnected}
+        <span class="text-xs text-[var(--muted)] ml-auto">connected</span>
+      {:else}
+        <span class="text-xs text-[var(--muted)] ml-auto">disconnected</span>
+      {/if}
+    </div>
+    <div
+      bind:this={execContainer}
+      class="h-[60vh] rounded border border-[var(--border)] bg-black p-2"
+    ></div>
   {:else if tab === 'inspect'}
     <pre class="h-[60vh] overflow-auto p-3 rounded border border-[var(--border)] bg-[var(--panel)] font-mono text-xs">{JSON.stringify(info, null, 2)}</pre>
   {/if}
