@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { api, ApiError } from '$lib/api';
-  import { Card, Button, EmptyState, Skeleton, Badge } from '$lib/components/ui';
+  import { api, ApiError, type ScanReport, type Severity } from '$lib/api';
+  import { Card, Button, EmptyState, Skeleton, Badge, Modal } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
-  import { Image as ImageIcon, Trash2, RefreshCw, Sparkles } from 'lucide-svelte';
+  import { Image as ImageIcon, Trash2, RefreshCw, Sparkles, Shield, ShieldAlert } from 'lucide-svelte';
 
   const canWrite = $derived(allowed('image.write'));
+  const canScan = $derived(allowed('image.scan'));
 
   interface ImageSummary {
     Id: string;
@@ -16,6 +17,13 @@
 
   let images = $state<ImageSummary[]>([]);
   let loading = $state(true);
+
+  // Scan state
+  let scanOpen = $state(false);
+  let scanBusy = $state(false);
+  let scanReport = $state<ScanReport | null>(null);
+  let scanImageRef = $state('');
+  let severityFilter = $state<Severity | 'all'>('all');
 
   async function load() {
     loading = true;
@@ -50,6 +58,31 @@
     }
   }
 
+  async function scanImage(img: ImageSummary) {
+    scanImageRef = img.RepoTags?.[0] ?? img.Id.slice(7, 19);
+    scanOpen = true;
+    scanBusy = true;
+    scanReport = null;
+    severityFilter = 'all';
+
+    // Try cached result first for instant display.
+    try {
+      const cached = await api.images.getScan(img.Id);
+      scanReport = cached;
+    } catch { /* 404 is fine */ }
+
+    try {
+      scanReport = await api.images.scan(img.Id);
+      toast.success('Scan complete', `${scanReport.vulnerabilities.length} findings`);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        toast.error('Scan failed', err.message);
+      }
+    } finally {
+      scanBusy = false;
+    }
+  }
+
   function formatSize(bytes: number): string {
     const mb = bytes / 1024 / 1024;
     if (mb < 1024) return `${mb.toFixed(1)} MB`;
@@ -65,7 +98,27 @@
     return `${Math.floor(d / 365)}y ago`;
   }
 
+  function sevColor(s: Severity): 'danger' | 'warning' | 'info' | 'default' {
+    if (s === 'critical' || s === 'high') return 'danger';
+    if (s === 'medium') return 'warning';
+    if (s === 'low') return 'info';
+    return 'default';
+  }
+
   const totalSize = $derived(images.reduce((sum, i) => sum + i.Size, 0));
+
+  const sum = $derived(scanReport?.summary ?? { critical: 0, high: 0, medium: 0, low: 0, negligible: 0, unknown: 0 });
+
+  const filteredVulns = $derived(
+    scanReport
+      ? scanReport.vulnerabilities
+          .filter((v) => severityFilter === 'all' || v.severity === severityFilter)
+          .sort((a, b) => {
+            const rank = { critical: 5, high: 4, medium: 3, low: 2, negligible: 1, unknown: 0 };
+            return rank[b.severity] - rank[a.severity];
+          })
+      : []
+  );
 
   $effect(() => { load(); });
 </script>
@@ -132,6 +185,11 @@
                 <span>{fmtAge(img.Created)}</span>
               </div>
             </div>
+            {#if canScan}
+              <Button size="xs" variant="ghost" onclick={() => scanImage(img)} aria-label="Scan for vulnerabilities" title="Scan">
+                <Shield class="w-3.5 h-3.5" />
+              </Button>
+            {/if}
             {#if canWrite}
               <Button size="xs" variant="ghost" onclick={() => removeImage(img.Id)} aria-label="Remove">
                 <Trash2 class="w-3.5 h-3.5 text-[var(--color-danger-400)]" />
@@ -143,3 +201,98 @@
     </Card>
   {/if}
 </section>
+
+<Modal bind:open={scanOpen} title="Vulnerability scan" maxWidth="max-w-4xl">
+  <div class="mb-4">
+    <div class="text-xs text-[var(--fg-muted)]">Image</div>
+    <div class="font-mono text-sm truncate">{scanImageRef}</div>
+    {#if scanReport}
+      <div class="text-xs text-[var(--fg-subtle)] mt-1">
+        {scanReport.scanner}
+        {scanReport.scanner_version ?? ''}
+        · scanned {new Date(scanReport.scanned_at).toLocaleString()}
+      </div>
+    {/if}
+  </div>
+
+  {#if scanBusy && !scanReport}
+    <div class="flex items-center gap-3 py-8 justify-center text-[var(--fg-muted)]">
+      <Shield class="w-5 h-5 animate-pulse" />
+      Running grype scan — this can take a minute for large images…
+    </div>
+  {:else if scanReport}
+    {#snippet sevCard(label: string, count: number, key: Severity | 'all', color: string)}
+      <button
+        type="button"
+        class="dm-card p-3 text-left transition-colors {severityFilter === key ? 'border-[var(--color-brand-500)]' : ''}"
+        onclick={() => (severityFilter = key)}
+      >
+        <div class="text-xs {color}">{label}</div>
+        <div class="text-2xl font-bold font-mono tabular-nums">{count}</div>
+      </button>
+    {/snippet}
+
+    <!-- Severity summary pills -->
+    <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-4">
+      {@render sevCard('Total', sum.critical + sum.high + sum.medium + sum.low + sum.negligible + sum.unknown, 'all', 'text-[var(--fg-muted)]')}
+      {@render sevCard('Critical', sum.critical, 'critical', 'text-[var(--color-danger-400)]')}
+      {@render sevCard('High', sum.high, 'high', 'text-[var(--color-danger-400)]')}
+      {@render sevCard('Medium', sum.medium, 'medium', 'text-[var(--color-warning-400)]')}
+      {@render sevCard('Low', sum.low, 'low', 'text-[var(--color-brand-400)]')}
+      {@render sevCard('Negligible', sum.negligible, 'negligible', 'text-[var(--fg-subtle)]')}
+    </div>
+
+    {#if filteredVulns.length === 0}
+      <div class="py-8 text-center text-sm text-[var(--fg-muted)]">
+        {#if scanReport.vulnerabilities.length === 0}
+          <ShieldAlert class="w-5 h-5 mx-auto mb-2 text-[var(--color-success-400)]" />
+          No vulnerabilities found. Nice.
+        {:else}
+          No entries match the current filter.
+        {/if}
+      </div>
+    {:else}
+      <div class="border border-[var(--border)] rounded-lg overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="text-left text-xs text-[var(--fg-muted)] uppercase tracking-wider bg-[var(--bg-elevated)]">
+            <tr>
+              <th class="px-3 py-2 font-medium">Severity</th>
+              <th class="px-3 py-2 font-medium">CVE</th>
+              <th class="px-3 py-2 font-medium">Package</th>
+              <th class="px-3 py-2 font-medium">Version</th>
+              <th class="px-3 py-2 font-medium">Fix</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[var(--border)]">
+            {#each filteredVulns.slice(0, 200) as v}
+              <tr class="hover:bg-[var(--surface-hover)]">
+                <td class="px-3 py-1.5">
+                  <Badge variant={sevColor(v.severity)} dot>{v.severity}</Badge>
+                </td>
+                <td class="px-3 py-1.5 font-mono text-xs">
+                  {#if v.url}
+                    <a href={v.url} target="_blank" rel="noopener" class="text-[var(--color-brand-400)] hover:underline">{v.id}</a>
+                  {:else}
+                    {v.id}
+                  {/if}
+                </td>
+                <td class="px-3 py-1.5 font-mono text-xs">{v.package}</td>
+                <td class="px-3 py-1.5 font-mono text-xs text-[var(--fg-muted)]">{v.version}</td>
+                <td class="px-3 py-1.5 font-mono text-xs text-[var(--color-success-400)]">{v.fixed_in ?? '—'}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+      {#if filteredVulns.length > 200}
+        <div class="text-xs text-[var(--fg-subtle)] mt-2 text-center">
+          showing 200 of {filteredVulns.length} — refine the filter for more detail
+        </div>
+      {/if}
+    {/if}
+  {/if}
+
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (scanOpen = false)}>Close</Button>
+  {/snippet}
+</Modal>

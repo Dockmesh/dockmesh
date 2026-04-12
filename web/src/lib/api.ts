@@ -2,6 +2,34 @@ import { auth } from './stores/auth.svelte';
 
 const BASE = '/api/v1';
 
+export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'negligible' | 'unknown';
+
+export interface ScanVuln {
+  id: string;
+  severity: Severity;
+  package: string;
+  version: string;
+  fixed_in?: string;
+  type?: string;
+  url?: string;
+}
+
+export interface ScanReport {
+  image: string;
+  scanner: string;
+  scanner_version?: string;
+  scanned_at: string;
+  summary: {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+    negligible: number;
+    unknown: number;
+  };
+  vulnerabilities: ScanVuln[];
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -114,7 +142,11 @@ export const api = {
     pull: (image: string) => request<any>('/images/pull', { method: 'POST', body: JSON.stringify({ image }) }),
     remove: (id: string, force = false) =>
       request<any>(`/images/${encodeURIComponent(id)}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
-    prune: () => request<{ ImagesDeleted: any[]; SpaceReclaimed: number }>('/images/prune', { method: 'POST' })
+    prune: () => request<{ ImagesDeleted: any[]; SpaceReclaimed: number }>('/images/prune', { method: 'POST' }),
+    scan: (id: string) =>
+      request<ScanReport>(`/images/${encodeURIComponent(id)}/scan`, { method: 'POST' }),
+    getScan: (id: string) =>
+      request<ScanReport>(`/images/${encodeURIComponent(id)}/scan`)
   },
 
   networks: {

@@ -21,6 +21,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
+	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/pkg/version"
@@ -110,8 +111,33 @@ func main() {
 		slog.Error("audit genesis failed", "err", err)
 		os.Exit(1)
 	}
+
+	// Vulnerability scanner — optional, logged as unavailable if the
+	// grype binary is missing so the UI can show a helpful hint.
+	var scannerSvc scanner.Scanner
+	if cfg.ScannerEnabled {
+		g := scanner.NewGrypeCLI(cfg.ScannerBinary)
+		if err := g.Ready(); err != nil {
+			slog.Warn("scanner disabled — install grype to enable CVE scans", "err", err)
+		} else {
+			scannerSvc = g
+			slog.Info("scanner ready", "engine", "grype")
+		}
+	}
+	scanStore := scanner.NewStore(database)
+
 	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
-	h := handlers.New(database, authSvc, auditSvc, dockerCli, stacksMgr, composeSvc, loginLimiter)
+	h := handlers.New(handlers.Deps{
+		DB:           database,
+		Auth:         authSvc,
+		Audit:        auditSvc,
+		Docker:       dockerCli,
+		Stacks:       stacksMgr,
+		Compose:      composeSvc,
+		LoginLimiter: loginLimiter,
+		Scanner:      scannerSvc,
+		ScanStore:    scanStore,
+	})
 	router := api.NewRouter(h, authSvc, webFS)
 
 	srv := &http.Server{

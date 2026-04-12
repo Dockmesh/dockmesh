@@ -13,6 +13,11 @@ func (c *Client) ListImages(ctx context.Context, all bool) ([]image.Summary, err
 	return c.cli.ImageList(ctx, types.ImageListOptions{All: all})
 }
 
+func (c *Client) InspectImage(ctx context.Context, id string) (types.ImageInspect, error) {
+	info, _, err := c.cli.ImageInspectWithRaw(ctx, id)
+	return info, err
+}
+
 func (c *Client) PullImage(ctx context.Context, ref string) (io.ReadCloser, error) {
 	return c.cli.ImagePull(ctx, ref, types.ImagePullOptions{})
 }

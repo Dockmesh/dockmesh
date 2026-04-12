@@ -44,6 +44,7 @@ const (
 	ActionImagePull      = "image.pull"
 	ActionImageRemove    = "image.remove"
 	ActionImagePrune     = "image.prune"
+	ActionImageScan      = "image.scan"
 	ActionNetworkCreate  = "network.create"
 	ActionNetworkRemove  = "network.remove"
 	ActionVolumeCreate   = "volume.create"

@@ -11,6 +11,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
+	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
@@ -22,17 +23,33 @@ type Handlers struct {
 	Stacks      *stacks.Manager
 	Compose     *compose.Service
 	LoginLimter *ratelimit.Limiter
+	Scanner     scanner.Scanner
+	ScanStore   *scanner.Store
 }
 
-func New(db *sql.DB, authSvc *auth.Service, auditSvc *audit.Service, dockerCli *docker.Client, stacksMgr *stacks.Manager, composeSvc *compose.Service, loginLimiter *ratelimit.Limiter) *Handlers {
+type Deps struct {
+	DB           *sql.DB
+	Auth         *auth.Service
+	Audit        *audit.Service
+	Docker       *docker.Client
+	Stacks       *stacks.Manager
+	Compose      *compose.Service
+	LoginLimiter *ratelimit.Limiter
+	Scanner      scanner.Scanner
+	ScanStore    *scanner.Store
+}
+
+func New(d Deps) *Handlers {
 	return &Handlers{
-		DB:          db,
-		Auth:        authSvc,
-		Audit:       auditSvc,
-		Docker:      dockerCli,
-		Stacks:      stacksMgr,
-		Compose:     composeSvc,
-		LoginLimter: loginLimiter,
+		DB:          d.DB,
+		Auth:        d.Auth,
+		Audit:       d.Audit,
+		Docker:      d.Docker,
+		Stacks:      d.Stacks,
+		Compose:     d.Compose,
+		LoginLimter: d.LoginLimiter,
+		Scanner:     d.Scanner,
+		ScanStore:   d.ScanStore,
 	}
 }
 
