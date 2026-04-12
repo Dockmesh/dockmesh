@@ -101,6 +101,13 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Post("/images/prune", h.PruneImages)
 			})
 
+			// -------------------------- IMAGE SCAN ---------------------------
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermImageScan))
+				r.Post("/images/{id}/scan", h.ScanImage)
+				r.Get("/images/{id}/scan", h.GetScan)
+			})
+
 			// -------------------------- NETWORK WRITE ------------------------
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermNetworkWrite))

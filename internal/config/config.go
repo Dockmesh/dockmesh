@@ -18,6 +18,8 @@ type Config struct {
 	AuditGenesisPath  string
 	SecretsKeyPath    string
 	SecretsEncryptEnv bool
+	ScannerBinary     string
+	ScannerEnabled    bool
 	JWTSecret         []byte
 }
 
@@ -30,6 +32,8 @@ func Load() (*Config, error) {
 		AuditGenesisPath:  envOr("DOCKMESH_AUDIT_GENESIS_PATH", "./data/audit-genesis.sha256"),
 		SecretsKeyPath:    envOr("DOCKMESH_SECRETS_KEY_PATH", "./data/secrets.age-key"),
 		SecretsEncryptEnv: envOr("DOCKMESH_SECRETS_ENCRYPT_ENV", "true") != "false",
+		ScannerBinary:     envOr("DOCKMESH_SCANNER_BINARY", "grype"),
+		ScannerEnabled:    envOr("DOCKMESH_SCANNER_ENABLED", "true") != "false",
 	}
 	secret, err := loadOrCreateJWTSecret(cfg.SecretsPath)
 	if err != nil {

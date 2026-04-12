@@ -22,6 +22,7 @@ const (
 
 	// Image / network / volume management
 	PermImageWrite   Perm = "image.write"
+	PermImageScan    Perm = "image.scan"
 	PermNetworkWrite Perm = "network.write"
 	PermVolumeWrite  Perm = "volume.write"
 
@@ -55,6 +56,7 @@ var rolePerms = map[Role]map[Perm]bool{
 		PermStackWrite:       true,
 		PermStackDeploy:      true,
 		PermImageWrite:       true,
+		PermImageScan:        true,
 		PermNetworkWrite:     true,
 		PermVolumeWrite:      true,
 		PermUserManage:       true,
@@ -65,6 +67,7 @@ var rolePerms = map[Role]map[Perm]bool{
 		PermContainerControl: true,
 		PermContainerExec:    true,
 		PermStackDeploy:      true,
+		PermImageScan:        true,
 		PermAuditRead:        true,
 		// Deliberately omitted: PermStackWrite (editing compose files),
 		// PermImageWrite, PermNetworkWrite, PermVolumeWrite, PermUserManage
