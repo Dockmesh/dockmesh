@@ -119,18 +119,23 @@
         <h3 class="text-sm font-semibold text-[var(--muted)] mb-2">Services</h3>
         <div class="space-y-2">
           {#each services as s}
-            <div class="p-3 rounded border border-[var(--border)] bg-[var(--panel)] flex justify-between items-center">
-              <div>
-                <div class="font-mono text-sm">{s.service}</div>
-                <div class="text-xs text-[var(--muted)]">{s.image}</div>
+            <a
+              href={`/containers/${s.container_id}`}
+              class="block p-3 rounded border border-[var(--border)] bg-[var(--panel)] hover:border-brand-500 transition-colors"
+            >
+              <div class="flex justify-between items-center">
+                <div>
+                  <div class="font-mono text-sm">{s.service}</div>
+                  <div class="text-xs text-[var(--muted)]">{s.image}</div>
+                </div>
+                <div class="text-right">
+                  <span class="text-xs px-2 py-0.5 rounded {s.state === 'running' ? 'bg-green-500/20 text-green-500' : 'bg-[var(--bg)] text-[var(--muted)]'}">
+                    {s.state}
+                  </span>
+                  <div class="text-xs text-[var(--muted)] mt-1">{s.status}</div>
+                </div>
               </div>
-              <div class="text-right">
-                <span class="text-xs px-2 py-0.5 rounded {s.state === 'running' ? 'bg-green-500/20 text-green-500' : 'bg-[var(--bg)] text-[var(--muted)]'}">
-                  {s.state}
-                </span>
-                <div class="text-xs text-[var(--muted)] mt-1">{s.status}</div>
-              </div>
-            </div>
+            </a>
           {/each}
         </div>
       </div>

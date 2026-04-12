@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '$lib/api';
+  import { goto } from '$app/navigation';
 
   interface Container {
     Id: string;
@@ -76,12 +77,15 @@
   {:else}
     <div class="space-y-2">
       {#each containers as c}
-        <div class="p-3 rounded border border-[var(--border)] bg-[var(--panel)] flex items-center gap-3">
+        <div class="p-3 rounded border border-[var(--border)] bg-[var(--panel)] flex items-center gap-3 hover:border-brand-500 transition-colors">
           <span class="w-2 h-2 rounded-full {c.State === 'running' ? 'bg-green-500' : 'bg-[var(--muted)]'}"></span>
-          <div class="flex-1 min-w-0">
+          <button
+            class="flex-1 min-w-0 text-left"
+            onclick={() => goto(`/containers/${c.Id}`)}
+          >
             <div class="font-mono text-sm truncate">{c.Names?.[0]?.replace(/^\//, '') ?? c.Id.slice(0, 12)}</div>
             <div class="text-xs text-[var(--muted)] truncate">{c.Image} · {c.Status}{portSummary(c) ? ' · ' + portSummary(c) : ''}</div>
-          </div>
+          </button>
           <div class="flex gap-1">
             {#if c.State === 'running'}
               <button class="px-2 py-1 text-xs border border-[var(--border)] rounded" onclick={() => action(c.Id, 'restart')}>Restart</button>
