@@ -139,6 +139,18 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Get("/audit", h.ListAudit)
 				r.Get("/audit/verify", h.VerifyAudit)
 			})
+
+			// -------------------------- PROXY (admin) ------------------------
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Get("/proxy/status", h.ProxyStatus)
+				r.Post("/proxy/enable", h.ProxyEnable)
+				r.Post("/proxy/disable", h.ProxyDisable)
+				r.Get("/proxy/routes", h.ListProxyRoutes)
+				r.Post("/proxy/routes", h.CreateProxyRoute)
+				r.Put("/proxy/routes/{id}", h.UpdateProxyRoute)
+				r.Delete("/proxy/routes/{id}", h.DeleteProxyRoute)
+			})
 		})
 
 		// WebSocket endpoints — auth via ?ticket= (not Bearer header).

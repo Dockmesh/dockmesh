@@ -20,6 +20,7 @@ type Config struct {
 	SecretsEncryptEnv bool
 	ScannerBinary     string
 	ScannerEnabled    bool
+	ProxyEnabled      bool
 	JWTSecret         []byte
 }
 
@@ -34,6 +35,8 @@ func Load() (*Config, error) {
 		SecretsEncryptEnv: envOr("DOCKMESH_SECRETS_ENCRYPT_ENV", "true") != "false",
 		ScannerBinary:     envOr("DOCKMESH_SCANNER_BINARY", "grype"),
 		ScannerEnabled:    envOr("DOCKMESH_SCANNER_ENABLED", "true") != "false",
+		// Proxy is opt-in: many users already run Traefik or NPM.
+		ProxyEnabled: envOr("DOCKMESH_PROXY_ENABLED", "false") == "true",
 	}
 	secret, err := loadOrCreateJWTSecret(cfg.SecretsPath)
 	if err != nil {

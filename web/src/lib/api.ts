@@ -212,6 +212,20 @@ export const api = {
       })
   },
 
+  proxy: {
+    status: () =>
+      request<{ enabled: boolean; running: boolean; admin_ok: boolean; version?: string; container?: string }>('/proxy/status'),
+    enable: () => request<any>('/proxy/enable', { method: 'POST' }),
+    disable: () => request<void>('/proxy/disable', { method: 'POST' }),
+    listRoutes: () =>
+      request<Array<{ id: number; host: string; upstream: string; tls_mode: string; created_at: string; updated_at: string }>>('/proxy/routes'),
+    createRoute: (host: string, upstream: string, tls_mode: string) =>
+      request<any>('/proxy/routes', { method: 'POST', body: JSON.stringify({ host, upstream, tls_mode }) }),
+    updateRoute: (id: number, upstream: string, tls_mode: string) =>
+      request<void>(`/proxy/routes/${id}`, { method: 'PUT', body: JSON.stringify({ upstream, tls_mode }) }),
+    deleteRoute: (id: number) => request<void>(`/proxy/routes/${id}`, { method: 'DELETE' })
+  },
+
   ws: {
     ticket: () => request<{ ticket: string }>('/ws/ticket', { method: 'POST' })
   }
