@@ -21,6 +21,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
+	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/pkg/version"
 )
@@ -31,6 +32,15 @@ var webDist embed.FS
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
+
+	// Subcommand dispatch (§15.2: `dockmesh secrets rotate`).
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "secrets":
+			runSecretsCmd(os.Args[2:])
+			return
+		}
+	}
 
 	slog.Info("starting dockmesh", "version", version.Version, "commit", version.Commit)
 
@@ -73,7 +83,16 @@ func main() {
 		defer dockerCli.Close()
 	}
 
-	stacksMgr, err := stacks.NewManager(cfg.StacksRoot)
+	secretsSvc, err := secrets.New(cfg.SecretsKeyPath, cfg.SecretsEncryptEnv)
+	if err != nil {
+		slog.Error("secrets init failed", "err", err)
+		os.Exit(1)
+	}
+	if secretsSvc.Enabled() {
+		slog.Info("secrets encryption enabled", "recipient", secretsSvc.PublicRecipient())
+	}
+
+	stacksMgr, err := stacks.NewManager(cfg.StacksRoot, secretsSvc)
 	if err != nil {
 		slog.Error("stacks manager init failed", "err", err)
 		os.Exit(1)

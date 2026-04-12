@@ -7,6 +7,20 @@ import (
 	"github.com/docker/docker/api/types/mount"
 )
 
+func TestParseEnvContent(t *testing.T) {
+	in := "# comment\n\nFOO=bar\nBAZ=qux\nNOEQ\n"
+	got := parseEnvContent(in)
+	want := []string{"FOO=bar", "BAZ=qux"}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("[%d] = %q, want %q", i, got[i], w)
+		}
+	}
+}
+
 func strp(s string) *string { return &s }
 
 func TestServiceToContainerConfig(t *testing.T) {

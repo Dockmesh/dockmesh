@@ -10,16 +10,20 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/fsnotify/fsnotify"
 )
 
 // Manager is the filesystem-backed stack registry.
-// Layout: <root>/<name>/compose.yaml  (+ optional .env, .dockmesh.meta.json).
+// Layout: <root>/<name>/compose.yaml (+ optional .env / .env.age, .dockmesh.meta.json).
 // The filesystem is the source of truth; the DB only holds metadata.
+// When the secrets service is enabled, `.env` is stored as `.env.age` —
+// plaintext never touches the disk.
 type Manager struct {
 	root    string
 	rootAbs string
 	watcher *fsnotify.Watcher
+	secrets *secrets.Service
 
 	mu     sync.RWMutex
 	stacks map[string]*Stack
@@ -81,7 +85,7 @@ func ValidateName(name string) error {
 	return nil
 }
 
-func NewManager(root string) (*Manager, error) {
+func NewManager(root string, secretsSvc *secrets.Service) (*Manager, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir %s: %w", root, err)
 	}
@@ -97,6 +101,7 @@ func NewManager(root string) (*Manager, error) {
 		root:    root,
 		rootAbs: rootAbs,
 		watcher: w,
+		secrets: secretsSvc,
 		stacks:  make(map[string]*Stack),
 	}
 	if err := m.scan(); err != nil {
@@ -273,8 +278,69 @@ func (m *Manager) Get(name string) (*Detail, error) {
 	if err != nil {
 		return nil, err
 	}
-	envBytes, _ := os.ReadFile(filepath.Join(dir, ".env"))
-	return &Detail{Name: name, Compose: string(compose), Env: string(envBytes)}, nil
+	envStr, err := m.readEnv(dir)
+	if err != nil {
+		return nil, err
+	}
+	return &Detail{Name: name, Compose: string(compose), Env: envStr}, nil
+}
+
+// readEnv prefers the encrypted `.env.age` when it exists (and decrypts
+// via the secrets service) and falls back to plaintext `.env` for
+// backward compatibility.
+func (m *Manager) readEnv(dir string) (string, error) {
+	agePath := filepath.Join(dir, ".env.age")
+	if ct, err := os.ReadFile(agePath); err == nil {
+		if m.secrets == nil || !m.secrets.Enabled() {
+			return "", fmt.Errorf("found .env.age but secrets service is disabled")
+		}
+		pt, err := m.secrets.Decrypt(ct)
+		if err != nil {
+			return "", fmt.Errorf("decrypt .env.age: %w", err)
+		}
+		return string(pt), nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	// Legacy plaintext fallback.
+	b, err := os.ReadFile(filepath.Join(dir, ".env"))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// writeEnv writes the env content either encrypted (preferred) or
+// plaintext (legacy) depending on whether the secrets service is active.
+// The unused variant is removed so exactly one of the two files exists.
+func (m *Manager) writeEnv(dir, env string) error {
+	plainPath := filepath.Join(dir, ".env")
+	agePath := filepath.Join(dir, ".env.age")
+
+	if env == "" {
+		_ = os.Remove(plainPath)
+		_ = os.Remove(agePath)
+		return nil
+	}
+	if m.secrets != nil && m.secrets.Enabled() {
+		ct, err := m.secrets.Encrypt([]byte(env))
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(agePath, ct, 0o600); err != nil {
+			return err
+		}
+		_ = os.Remove(plainPath)
+		return nil
+	}
+	if err := os.WriteFile(plainPath, []byte(env), 0o600); err != nil {
+		return err
+	}
+	_ = os.Remove(agePath)
+	return nil
 }
 
 func (m *Manager) Create(name, compose, env string) (*Detail, error) {
@@ -292,10 +358,8 @@ func (m *Manager) Create(name, compose, env string) (*Detail, error) {
 	if err := os.WriteFile(composePath, []byte(compose), 0o644); err != nil {
 		return nil, err
 	}
-	if env != "" {
-		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(env), 0o600); err != nil {
-			return nil, err
-		}
+	if err := m.writeEnv(dir, env); err != nil {
+		return nil, err
 	}
 	m.mu.Lock()
 	m.stacks[name] = &Stack{Name: name, ComposePath: composePath}
@@ -318,15 +382,48 @@ func (m *Manager) Update(name, compose, env string) (*Detail, error) {
 	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(compose), 0o644); err != nil {
 		return nil, err
 	}
-	envPath := filepath.Join(dir, ".env")
-	if env != "" {
-		if err := os.WriteFile(envPath, []byte(env), 0o600); err != nil {
-			return nil, err
-		}
-	} else {
-		_ = os.Remove(envPath)
+	if err := m.writeEnv(dir, env); err != nil {
+		return nil, err
 	}
 	return &Detail{Name: name, Compose: compose, Env: env}, nil
+}
+
+// ReencryptAll re-encrypts every `.env.age` file under the manager root
+// using the current secrets service key. Used by `dockmesh secrets rotate`
+// after the key has been swapped out. The old plaintext is held only in
+// memory for the duration of each stack's rotation.
+func (m *Manager) ReencryptAll(oldSvc *secrets.Service) (int, error) {
+	entries, err := os.ReadDir(m.root)
+	if err != nil {
+		return 0, err
+	}
+	var count int
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		agePath := filepath.Join(m.root, e.Name(), ".env.age")
+		ct, err := os.ReadFile(agePath)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return count, err
+		}
+		pt, err := oldSvc.Decrypt(ct)
+		if err != nil {
+			return count, fmt.Errorf("decrypt %s: %w", agePath, err)
+		}
+		newCT, err := m.secrets.Encrypt(pt)
+		if err != nil {
+			return count, fmt.Errorf("encrypt %s: %w", agePath, err)
+		}
+		if err := os.WriteFile(agePath, newCT, 0o600); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, nil
 }
 
 func (m *Manager) Delete(name string) error {
