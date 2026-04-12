@@ -12,7 +12,7 @@
   let info = $state<any>(null);
   let loading = $state(true);
   let error = $state('');
-  let tab = $state<'logs' | 'exec' | 'inspect'>('logs');
+  let tab = $state<'logs' | 'exec' | 'stats' | 'inspect'>('logs');
 
   // Log state
   let logs = $state<string[]>([]);
@@ -20,6 +20,23 @@
   let autoScroll = $state(true);
   let logContainer: HTMLDivElement | null = $state(null);
   let ws: WebSocket | null = null;
+
+  // Stats state
+  interface StatsSample {
+    cpu_percent: number;
+    mem_used: number;
+    mem_limit: number;
+    mem_percent: number;
+    net_rx: number;
+    net_tx: number;
+    blk_read: number;
+    blk_write: number;
+    pids_current: number;
+  }
+  let stats = $state<StatsSample | null>(null);
+  let statsHistory = $state<StatsSample[]>([]);
+  let statsConnected = $state(false);
+  let statsWs: WebSocket | null = null;
 
   // Exec state
   let execContainer: HTMLDivElement | null = $state(null);
@@ -84,6 +101,56 @@
       ws = null;
     }
     wsConnected = false;
+  }
+
+  async function connectStats() {
+    disconnectStats();
+    try {
+      const { ticket } = await api.ws.ticket();
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      statsWs = new WebSocket(`${proto}//${location.host}/api/v1/ws/stats/${id}?ticket=${ticket}`);
+      statsWs.onopen = () => { statsConnected = true; };
+      statsWs.onmessage = (ev) => {
+        try {
+          const s = JSON.parse(ev.data) as StatsSample;
+          if ((s as any).error) return;
+          stats = s;
+          statsHistory = [...statsHistory, s].slice(-60);
+        } catch { /* ignore */ }
+      };
+      statsWs.onclose = () => { statsConnected = false; };
+      statsWs.onerror = () => { statsConnected = false; };
+    } catch {
+      statsConnected = false;
+    }
+  }
+
+  function disconnectStats() {
+    if (statsWs) {
+      statsWs.close();
+      statsWs = null;
+    }
+    statsConnected = false;
+  }
+
+  function formatBytes(n: number): string {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  }
+
+  function sparkPath(values: number[], max: number, w: number, h: number): string {
+    if (values.length === 0) return '';
+    const m = max || Math.max(1, ...values);
+    const stepX = w / Math.max(1, values.length - 1);
+    return values
+      .map((v, i) => {
+        const x = (i * stepX).toFixed(1);
+        const y = (h - (v / m) * h).toFixed(1);
+        return `${i === 0 ? 'M' : 'L'}${x},${y}`;
+      })
+      .join(' ');
   }
 
   async function connectExec() {
@@ -202,20 +269,28 @@
   $effect(() => {
     if (tab === 'logs') {
       disconnectExec();
+      disconnectStats();
       connectLogs();
     } else if (tab === 'exec') {
       disconnect();
-      // Wait for the DOM node to exist before attaching xterm.
+      disconnectStats();
       tick().then(connectExec);
+    } else if (tab === 'stats') {
+      disconnect();
+      disconnectExec();
+      statsHistory = [];
+      connectStats();
     } else {
       disconnect();
       disconnectExec();
+      disconnectStats();
     }
   });
 
   $effect(() => () => {
     disconnect();
     disconnectExec();
+    disconnectStats();
   });
 
   function containerName(inf: any): string {
@@ -293,6 +368,12 @@
       Terminal {#if execConnected && tab === 'exec'}<span class="w-1.5 h-1.5 inline-block rounded-full bg-green-500 ml-1"></span>{/if}
     </button>
     <button
+      class="px-4 py-2 text-sm border-b-2 {tab === 'stats' ? 'border-brand-500 text-[var(--fg)]' : 'border-transparent text-[var(--muted)]'}"
+      onclick={() => (tab = 'stats')}
+    >
+      Stats {#if statsConnected && tab === 'stats'}<span class="w-1.5 h-1.5 inline-block rounded-full bg-green-500 ml-1"></span>{/if}
+    </button>
+    <button
       class="px-4 py-2 text-sm border-b-2 {tab === 'inspect' ? 'border-brand-500 text-[var(--fg)]' : 'border-transparent text-[var(--muted)]'}"
       onclick={() => (tab = 'inspect')}
     >
@@ -346,6 +427,48 @@
       bind:this={execContainer}
       class="h-[60vh] rounded border border-[var(--border)] bg-black p-2"
     ></div>
+  {:else if tab === 'stats'}
+    {#if !stats}
+      <p class="text-[var(--muted)]">waiting for first sample…</p>
+    {:else}
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="p-4 rounded border border-[var(--border)] bg-[var(--panel)]">
+          <div class="flex justify-between items-baseline mb-2">
+            <div class="text-sm text-[var(--muted)]">CPU</div>
+            <div class="text-2xl font-bold font-mono">{stats.cpu_percent.toFixed(1)}<span class="text-sm text-[var(--muted)]">%</span></div>
+          </div>
+          <svg viewBox="0 0 300 60" class="w-full h-14">
+            <path d={sparkPath(statsHistory.map(s => s.cpu_percent), 100, 300, 60)} fill="none" stroke="#2563eb" stroke-width="2" />
+          </svg>
+        </div>
+        <div class="p-4 rounded border border-[var(--border)] bg-[var(--panel)]">
+          <div class="flex justify-between items-baseline mb-2">
+            <div class="text-sm text-[var(--muted)]">Memory</div>
+            <div class="text-2xl font-bold font-mono">{stats.mem_percent.toFixed(1)}<span class="text-sm text-[var(--muted)]">%</span></div>
+          </div>
+          <div class="text-xs text-[var(--muted)] mb-1">{formatBytes(stats.mem_used)} / {formatBytes(stats.mem_limit)}</div>
+          <svg viewBox="0 0 300 60" class="w-full h-14">
+            <path d={sparkPath(statsHistory.map(s => s.mem_percent), 100, 300, 60)} fill="none" stroke="#16a34a" stroke-width="2" />
+          </svg>
+        </div>
+        <div class="p-4 rounded border border-[var(--border)] bg-[var(--panel)]">
+          <div class="text-sm text-[var(--muted)] mb-2">Network</div>
+          <div class="flex gap-6 text-sm font-mono">
+            <div><span class="text-[var(--muted)]">↓ rx:</span> {formatBytes(stats.net_rx)}</div>
+            <div><span class="text-[var(--muted)]">↑ tx:</span> {formatBytes(stats.net_tx)}</div>
+          </div>
+        </div>
+        <div class="p-4 rounded border border-[var(--border)] bg-[var(--panel)]">
+          <div class="text-sm text-[var(--muted)] mb-2">Block I/O + PIDs</div>
+          <div class="flex gap-4 text-sm font-mono flex-wrap">
+            <div><span class="text-[var(--muted)]">read:</span> {formatBytes(stats.blk_read)}</div>
+            <div><span class="text-[var(--muted)]">write:</span> {formatBytes(stats.blk_write)}</div>
+            <div><span class="text-[var(--muted)]">pids:</span> {stats.pids_current}</div>
+          </div>
+        </div>
+      </div>
+      <div class="text-xs text-[var(--muted)]">{statsHistory.length} samples (rolling 60s)</div>
+    {/if}
   {:else if tab === 'inspect'}
     <pre class="h-[60vh] overflow-auto p-3 rounded border border-[var(--border)] bg-[var(--panel)] font-mono text-xs">{JSON.stringify(info, null, 2)}</pre>
   {/if}
