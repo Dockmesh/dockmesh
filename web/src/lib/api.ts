@@ -1,3 +1,5 @@
+import { auth } from './stores/auth';
+
 const BASE = '/api/v1';
 
 export class ApiError extends Error {
@@ -9,29 +11,109 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init.headers ?? {})
-    },
-    credentials: 'include'
-  });
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(init.headers as Record<string, string> ?? {})
+  };
+  if (auth.accessToken) {
+    headers['Authorization'] = `Bearer ${auth.accessToken}`;
+  }
+
+  let res = await fetch(`${BASE}${path}`, { ...init, headers });
+
+  // On 401, try one refresh then retry.
+  if (res.status === 401 && auth.refreshToken) {
+    const ok = await auth.refresh();
+    if (ok && auth.accessToken) {
+      headers['Authorization'] = `Bearer ${auth.accessToken}`;
+      res = await fetch(`${BASE}${path}`, { ...init, headers });
+    }
+  }
+
   if (!res.ok) {
-    throw new ApiError(`${res.status} ${res.statusText}`, res.status);
+    let msg = `${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (body.error) msg = body.error;
+    } catch { /* ignore */ }
+    throw new ApiError(msg, res.status);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
 export const api = {
-  health: () => request<{ status: string; version: string }>('/health'),
+  health: () => request<{ status: string; version: string; docker: boolean }>('/health'),
+
+  auth: {
+    login: (username: string, password: string) =>
+      request<{ access_token: string; refresh_token: string; user: { id: string; username: string; role: string } }>(
+        '/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }
+      ),
+    logout: () => {
+      const body = auth.refreshToken ? JSON.stringify({ refresh_token: auth.refreshToken }) : '{}';
+      return request<void>('/auth/logout', { method: 'POST', body }).finally(() => auth.clear());
+    }
+  },
+
   stacks: {
-    list: () => request<Array<{ name: string }>>('/stacks'),
-    get: (name: string) => request<{ name: string }>(`/stacks/${encodeURIComponent(name)}`),
+    list: () => request<Array<{ name: string; compose_path: string }>>('/stacks'),
+    get: (name: string) => request<{ name: string; compose: string; env: string }>(`/stacks/${encodeURIComponent(name)}`),
+    create: (name: string, compose: string, env?: string) =>
+      request<{ name: string }>('/stacks', { method: 'POST', body: JSON.stringify({ name, compose, env }) }),
+    update: (name: string, compose: string, env?: string) =>
+      request<{ name: string }>(`/stacks/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify({ compose, env }) }),
+    delete: (name: string) =>
+      request<void>(`/stacks/${encodeURIComponent(name)}`, { method: 'DELETE' }),
     deploy: (name: string) =>
-      request<void>(`/stacks/${encodeURIComponent(name)}/deploy`, { method: 'POST' }),
+      request<{ stack: string; services: Array<{ name: string; container_id: string; image: string }> }>(
+        `/stacks/${encodeURIComponent(name)}/deploy`, { method: 'POST' }
+      ),
     stop: (name: string) =>
-      request<void>(`/stacks/${encodeURIComponent(name)}/stop`, { method: 'POST' })
+      request<void>(`/stacks/${encodeURIComponent(name)}/stop`, { method: 'POST' }),
+    status: (name: string) =>
+      request<Array<{ service: string; container_id: string; state: string; status: string; image: string }>>(
+        `/stacks/${encodeURIComponent(name)}/status`
+      )
+  },
+
+  containers: {
+    list: (all = false) => request<any[]>(`/containers${all ? '?all=true' : ''}`),
+    inspect: (id: string) => request<any>(`/containers/${id}`),
+    start: (id: string) => request<void>(`/containers/${id}/start`, { method: 'POST' }),
+    stop: (id: string) => request<void>(`/containers/${id}/stop`, { method: 'POST' }),
+    restart: (id: string) => request<void>(`/containers/${id}/restart`, { method: 'POST' }),
+    remove: (id: string, force = false) =>
+      request<void>(`/containers/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' })
+  },
+
+  images: {
+    list: (all = false) => request<any[]>(`/images${all ? '?all=true' : ''}`),
+    pull: (image: string) => request<any>('/images/pull', { method: 'POST', body: JSON.stringify({ image }) }),
+    remove: (id: string, force = false) =>
+      request<any>(`/images/${encodeURIComponent(id)}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
+    prune: () => request<{ ImagesDeleted: any[]; SpaceReclaimed: number }>('/images/prune', { method: 'POST' })
+  },
+
+  networks: {
+    list: () => request<any[]>('/networks'),
+    inspect: (id: string) => request<any>(`/networks/${id}`),
+    create: (name: string, driver?: string) =>
+      request<{ Id: string }>('/networks', { method: 'POST', body: JSON.stringify({ name, driver }) }),
+    remove: (id: string) => request<void>(`/networks/${id}`, { method: 'DELETE' })
+  },
+
+  volumes: {
+    list: () => request<any[]>('/volumes'),
+    inspect: (name: string) => request<any>(`/volumes/${encodeURIComponent(name)}`),
+    create: (name: string, driver?: string) =>
+      request<any>('/volumes', { method: 'POST', body: JSON.stringify({ name, driver }) }),
+    remove: (name: string, force = false) =>
+      request<void>(`/volumes/${encodeURIComponent(name)}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
+    prune: () => request<any>('/volumes/prune', { method: 'POST' })
+  },
+
+  ws: {
+    ticket: () => request<{ ticket: string }>('/ws/ticket', { method: 'POST' })
   }
 };
