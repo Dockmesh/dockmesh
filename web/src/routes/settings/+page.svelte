@@ -3,7 +3,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { Card, Button, Input, Modal, Badge, Skeleton, EmptyState } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
-  import { User, Users, Activity, Plus, Trash2, UserCog } from 'lucide-svelte';
+  import { User, Users, Activity, Plus, Trash2, UserCog, ShieldCheck, ShieldOff, Copy, KeyRound } from 'lucide-svelte';
 
   type Tab = 'account' | 'users' | 'audit';
   let tab = $state<Tab>('account');
@@ -11,6 +11,14 @@
   // Account
   let me = $state<any>(null);
   let newPassword = $state('');
+
+  // MFA enrollment state
+  let mfaOpen = $state(false);
+  let mfaStep = $state<'qr' | 'recovery'>('qr');
+  let mfaEnroll = $state<{ secret: string; url: string; qr_data_url: string } | null>(null);
+  let mfaCode = $state('');
+  let mfaRecovery = $state<string[]>([]);
+  let mfaBusy = $state(false);
 
   async function loadMe() {
     try {
@@ -33,6 +41,73 @@
     } catch (err) {
       toast.error('Failed', err instanceof ApiError ? err.message : undefined);
     }
+  }
+
+  async function startMFAEnroll() {
+    mfaBusy = true;
+    mfaStep = 'qr';
+    mfaCode = '';
+    mfaRecovery = [];
+    try {
+      mfaEnroll = await api.mfa.enrollStart();
+      mfaOpen = true;
+    } catch (err) {
+      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      mfaBusy = false;
+    }
+  }
+
+  async function verifyMFAEnroll(e: Event) {
+    e.preventDefault();
+    mfaBusy = true;
+    try {
+      const r = await api.mfa.enrollVerify(mfaCode.trim());
+      mfaRecovery = r.recovery_codes;
+      mfaStep = 'recovery';
+      await loadMe();
+    } catch (err) {
+      toast.error('Verification failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      mfaBusy = false;
+    }
+  }
+
+  async function disableMFA() {
+    if (!confirm('Disable two-factor authentication?')) return;
+    try {
+      await api.mfa.disable();
+      toast.success('2FA disabled');
+      await loadMe();
+    } catch (err) {
+      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
+  async function resetUserMFA(userId: string, username: string) {
+    if (!confirm(`Reset 2FA for "${username}"? The user will need to re-enroll.`)) return;
+    try {
+      await api.mfa.reset(userId);
+      toast.success('2FA reset', username);
+      await loadUsers();
+    } catch (err) {
+      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
+  function copyText(s: string) {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(s);
+      toast.info('Copied');
+    }
+  }
+
+  function closeMFA() {
+    mfaOpen = false;
+    mfaEnroll = null;
+    mfaCode = '';
+    mfaRecovery = [];
+    mfaStep = 'qr';
   }
 
   // Users
@@ -190,6 +265,42 @@
             </Button>
           </form>
         </Card>
+
+        <Card class="p-5 md:col-span-2">
+          <div class="flex items-start justify-between gap-4">
+            <div class="flex items-start gap-3">
+              <div class="w-10 h-10 rounded-lg bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] text-[var(--color-brand-400)] flex items-center justify-center shrink-0">
+                {#if me.mfa_enabled}
+                  <ShieldCheck class="w-5 h-5" />
+                {:else}
+                  <ShieldOff class="w-5 h-5" />
+                {/if}
+              </div>
+              <div>
+                <h3 class="font-semibold text-sm flex items-center gap-2">
+                  Two-factor authentication
+                  {#if me.mfa_enabled}<Badge variant="success" dot>active</Badge>{/if}
+                </h3>
+                <p class="text-xs text-[var(--fg-muted)] mt-1 max-w-md">
+                  Protect your account with a second factor. Scan the QR with any TOTP app
+                  (Google Authenticator, Authy, 1Password, Bitwarden, …) and keep the
+                  recovery codes safe.
+                </p>
+              </div>
+            </div>
+            <div>
+              {#if me.mfa_enabled}
+                <Button variant="danger" size="sm" onclick={disableMFA}>
+                  <ShieldOff class="w-3.5 h-3.5" /> Disable
+                </Button>
+              {:else}
+                <Button variant="primary" size="sm" loading={mfaBusy} onclick={startMFAEnroll}>
+                  <ShieldCheck class="w-3.5 h-3.5" /> Enable 2FA
+                </Button>
+              {/if}
+            </div>
+          </div>
+        </Card>
       </div>
     {:else}
       <Skeleton width="100%" height="12rem" />
@@ -224,7 +335,12 @@
                 {u.username[0]?.toUpperCase()}
               </div>
               <div class="flex-1 min-w-0">
-                <div class="font-medium text-sm truncate">{u.username}</div>
+                <div class="font-medium text-sm truncate flex items-center gap-1.5">
+                  {u.username}
+                  {#if (u as any).mfa_enabled}
+                    <ShieldCheck class="w-3.5 h-3.5 text-[var(--color-success-400)]" />
+                  {/if}
+                </div>
                 <div class="text-xs text-[var(--fg-muted)] truncate">{u.email ?? '—'}</div>
               </div>
               <select
@@ -237,6 +353,17 @@
                 <option value="operator">operator</option>
                 <option value="viewer">viewer</option>
               </select>
+              {#if (u as any).mfa_enabled}
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onclick={() => resetUserMFA(u.id, u.username)}
+                  aria-label="Reset 2FA"
+                  title="Reset 2FA"
+                >
+                  <KeyRound class="w-3.5 h-3.5 text-[var(--color-warning-400)]" />
+                </Button>
+              {/if}
               <Button
                 size="xs"
                 variant="ghost"
@@ -313,6 +440,64 @@
     {/if}
   {/if}
 </section>
+
+<Modal bind:open={mfaOpen} title={mfaStep === 'qr' ? 'Enable two-factor authentication' : 'Save your recovery codes'} maxWidth="max-w-md" onclose={closeMFA}>
+  {#if mfaStep === 'qr' && mfaEnroll}
+    <div class="space-y-4">
+      <p class="text-sm text-[var(--fg-muted)]">
+        Scan this QR code with your authenticator app, then enter the 6-digit code it shows.
+      </p>
+      <div class="flex justify-center p-4 bg-white rounded-lg">
+        <img src={mfaEnroll.qr_data_url} alt="TOTP QR code" class="w-52 h-52" />
+      </div>
+      <div>
+        <div class="text-xs text-[var(--fg-muted)] mb-1">Or enter manually</div>
+        <div class="flex gap-2">
+          <code class="flex-1 dm-input font-mono text-xs select-all">{mfaEnroll.secret}</code>
+          <Button size="sm" variant="secondary" onclick={() => copyText(mfaEnroll!.secret)}>
+            <Copy class="w-3.5 h-3.5" />
+          </Button>
+        </div>
+      </div>
+      <form onsubmit={verifyMFAEnroll}>
+        <Input
+          label="6-digit code"
+          bind:value={mfaCode}
+          placeholder="000000"
+          autocomplete="one-time-code"
+          inputmode="numeric"
+        />
+        <div class="mt-4 flex justify-end gap-2">
+          <Button variant="secondary" onclick={closeMFA} type="button">Cancel</Button>
+          <Button variant="primary" type="submit" loading={mfaBusy} disabled={mfaCode.length < 6}>
+            Verify and enable
+          </Button>
+        </div>
+      </form>
+    </div>
+  {:else if mfaStep === 'recovery'}
+    <div class="space-y-4">
+      <div class="flex items-start gap-2 text-xs text-[var(--color-warning-400)] bg-[color-mix(in_srgb,var(--color-warning-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-warning-500)_25%,transparent)] rounded-lg px-3 py-2">
+        <ShieldCheck class="w-3.5 h-3.5 shrink-0 mt-0.5" />
+        <span>
+          <strong>Save these recovery codes now.</strong> Each can be used once instead of a TOTP code if
+          you lose access to your authenticator. They won't be shown again.
+        </span>
+      </div>
+      <div class="grid grid-cols-2 gap-2 font-mono text-sm">
+        {#each mfaRecovery as code}
+          <code class="dm-card p-2 text-center select-all">{code}</code>
+        {/each}
+      </div>
+      <div class="flex justify-end gap-2">
+        <Button variant="secondary" onclick={() => copyText(mfaRecovery.join('\n'))}>
+          <Copy class="w-3.5 h-3.5" /> Copy all
+        </Button>
+        <Button variant="primary" onclick={closeMFA}>I've saved them</Button>
+      </div>
+    </div>
+  {/if}
+</Modal>
 
 <Modal bind:open={showCreate} title="Create user" maxWidth="max-w-md">
   <form onsubmit={createUser} class="space-y-4" id="create-user-form">

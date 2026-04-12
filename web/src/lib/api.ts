@@ -47,13 +47,35 @@ export const api = {
 
   auth: {
     login: (username: string, password: string) =>
-      request<{ access_token: string; refresh_token: string; user: { id: string; username: string; role: string } }>(
-        '/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }
-      ),
+      request<{
+        access_token?: string;
+        refresh_token?: string;
+        user?: { id: string; username: string; role: string; mfa_enabled?: boolean };
+        mfa_required?: boolean;
+        mfa_token?: string;
+      }>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+    verifyMFA: (mfaToken: string, code: string) =>
+      request<{
+        access_token: string;
+        refresh_token: string;
+        user: { id: string; username: string; role: string; mfa_enabled?: boolean };
+      }>('/auth/mfa', { method: 'POST', body: JSON.stringify({ mfa_token: mfaToken, code }) }),
     logout: () => {
       const body = auth.refreshToken ? JSON.stringify({ refresh_token: auth.refreshToken }) : '{}';
       return request<void>('/auth/logout', { method: 'POST', body }).finally(() => auth.clear());
     }
+  },
+
+  mfa: {
+    enrollStart: () =>
+      request<{ secret: string; url: string; qr_data_url: string }>('/mfa/enroll/start', { method: 'POST' }),
+    enrollVerify: (code: string) =>
+      request<{ recovery_codes: string[] }>('/mfa/enroll/verify', {
+        method: 'POST',
+        body: JSON.stringify({ code })
+      }),
+    disable: () => request<void>('/mfa', { method: 'DELETE' }),
+    reset: (userId: string) => request<void>(`/users/${userId}/mfa`, { method: 'DELETE' })
   },
 
   stacks: {
