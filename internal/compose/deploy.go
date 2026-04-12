@@ -86,7 +86,13 @@ func (s *Service) Deploy(ctx context.Context, stackName string) (*DeployResult, 
 	if err != nil {
 		return nil, err
 	}
-	proj, err := LoadProject(ctx, dir, stackName)
+	// Fetch the decrypted env through the stack manager — this is the
+	// only place plaintext secrets exist, and it stays in memory.
+	detail, err := s.stacks.Get(stackName)
+	if err != nil {
+		return nil, err
+	}
+	proj, err := LoadProject(ctx, dir, stackName, detail.Env)
 	if err != nil {
 		return nil, err
 	}

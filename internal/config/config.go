@@ -11,21 +11,25 @@ import (
 )
 
 type Config struct {
-	HTTPAddr        string
-	DBPath          string
-	StacksRoot      string
-	SecretsPath     string
-	AuditGenesisPath string
-	JWTSecret       []byte
+	HTTPAddr          string
+	DBPath            string
+	StacksRoot        string
+	SecretsPath       string
+	AuditGenesisPath  string
+	SecretsKeyPath    string
+	SecretsEncryptEnv bool
+	JWTSecret         []byte
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		HTTPAddr:         envOr("DOCKMESH_HTTP_ADDR", ":8080"),
-		DBPath:           envOr("DOCKMESH_DB_PATH", "./data/dockmesh.db"),
-		StacksRoot:       envOr("DOCKMESH_STACKS_ROOT", "./stacks"),
-		SecretsPath:      envOr("DOCKMESH_SECRETS_PATH", "./data/secrets.env"),
-		AuditGenesisPath: envOr("DOCKMESH_AUDIT_GENESIS_PATH", "./data/audit-genesis.sha256"),
+		HTTPAddr:          envOr("DOCKMESH_HTTP_ADDR", ":8080"),
+		DBPath:            envOr("DOCKMESH_DB_PATH", "./data/dockmesh.db"),
+		StacksRoot:        envOr("DOCKMESH_STACKS_ROOT", "./stacks"),
+		SecretsPath:       envOr("DOCKMESH_SECRETS_PATH", "./data/secrets.env"),
+		AuditGenesisPath:  envOr("DOCKMESH_AUDIT_GENESIS_PATH", "./data/audit-genesis.sha256"),
+		SecretsKeyPath:    envOr("DOCKMESH_SECRETS_KEY_PATH", "./data/secrets.age-key"),
+		SecretsEncryptEnv: envOr("DOCKMESH_SECRETS_ENCRYPT_ENV", "true") != "false",
 	}
 	secret, err := loadOrCreateJWTSecret(cfg.SecretsPath)
 	if err != nil {
