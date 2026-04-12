@@ -20,16 +20,22 @@ var (
 )
 
 type User struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
-	Email    string `json:"email,omitempty"`
-	Role     string `json:"role"`
+	ID         string `json:"id"`
+	Username   string `json:"username"`
+	Email      string `json:"email,omitempty"`
+	Role       string `json:"role"`
+	MFAEnabled bool   `json:"mfa_enabled"`
 }
 
 type LoginResult struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	User         User   `json:"user"`
+	AccessToken  string `json:"access_token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	User         *User  `json:"user,omitempty"`
+	// When MFA is required, the backend returns MFARequired=true plus a
+	// short-lived MFAToken. The client then calls /auth/mfa with the
+	// MFAToken and the 6-digit code to obtain the full session.
+	MFARequired bool   `json:"mfa_required,omitempty"`
+	MFAToken    string `json:"mfa_token,omitempty"`
 }
 
 type Service struct {
@@ -90,21 +96,23 @@ func (s *Service) CreateUser(ctx context.Context, username, email, password, rol
 func (s *Service) GetUser(ctx context.Context, id string) (*User, error) {
 	var u User
 	var email sql.NullString
+	var totpVerified int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, username, email, role FROM users WHERE id = ?`, id).
-		Scan(&u.ID, &u.Username, &email, &u.Role)
+		`SELECT id, username, email, role, totp_verified FROM users WHERE id = ?`, id).
+		Scan(&u.ID, &u.Username, &email, &u.Role, &totpVerified)
 	if err != nil {
 		return nil, err
 	}
 	if email.Valid {
 		u.Email = email.String
 	}
+	u.MFAEnabled = totpVerified == 1
 	return &u, nil
 }
 
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, username, email, role FROM users ORDER BY username`)
+		`SELECT id, username, email, role, totp_verified FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -113,12 +121,14 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	for rows.Next() {
 		var u User
 		var email sql.NullString
-		if err := rows.Scan(&u.ID, &u.Username, &email, &u.Role); err != nil {
+		var totp int
+		if err := rows.Scan(&u.ID, &u.Username, &email, &u.Role, &totp); err != nil {
 			return nil, err
 		}
 		if email.Valid {
 			u.Email = email.String
 		}
+		u.MFAEnabled = totp == 1
 		out = append(out, u)
 	}
 	return out, rows.Err()
@@ -165,9 +175,10 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 	var u User
 	var email sql.NullString
 	var hash string
+	var totpVerified int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, username, email, role, password FROM users WHERE username = ?`, username).
-		Scan(&u.ID, &u.Username, &email, &u.Role, &hash)
+		`SELECT id, username, email, role, password, totp_verified FROM users WHERE username = ?`, username).
+		Scan(&u.ID, &u.Username, &email, &u.Role, &hash, &totpVerified)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrInvalidCredentials
 	}
@@ -181,6 +192,38 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 	if err != nil || !ok {
 		return nil, ErrInvalidCredentials
 	}
+	if totpVerified == 1 {
+		// Password OK but MFA required — return a pending token.
+		token, err := s.issueMFAPending(u.ID)
+		if err != nil {
+			return nil, err
+		}
+		return &LoginResult{MFARequired: true, MFAToken: token}, nil
+	}
+	return s.startSession(ctx, u, userAgent, ip)
+}
+
+// VerifyLoginMFA consumes a pending MFA token plus a TOTP (or recovery)
+// code and, on success, issues the real session.
+func (s *Service) VerifyLoginMFA(ctx context.Context, mfaToken, code, userAgent, ip string) (*LoginResult, error) {
+	claims, err := s.parseMFAPending(mfaToken)
+	if err != nil {
+		return nil, ErrInvalidCredentials
+	}
+	ok, err := s.verifyMFACode(ctx, claims.UserID, code)
+	if err != nil || !ok {
+		return nil, ErrInvalidCredentials
+	}
+	u, err := s.GetUser(ctx, claims.UserID)
+	if err != nil {
+		return nil, err
+	}
+	return s.startSession(ctx, *u, userAgent, ip)
+}
+
+// startSession inserts the sessions row and mints the token pair. Shared
+// between password-only login and MFA-completed login.
+func (s *Service) startSession(ctx context.Context, u User, userAgent, ip string) (*LoginResult, error) {
 	familyID := uuid.NewString()
 	expiresAt := time.Now().Add(s.refreshTTL)
 	if _, err := s.db.ExecContext(ctx,
@@ -189,6 +232,36 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 		return nil, err
 	}
 	return s.mintPair(u, familyID, 0, expiresAt)
+}
+
+func (s *Service) issueMFAPending(userID string) (string, error) {
+	c := Claims{
+		UserID: userID,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Issuer:    "dockmesh",
+			Subject:   "mfa-pending",
+		},
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString(s.secret)
+}
+
+func (s *Service) parseMFAPending(token string) (*Claims, error) {
+	t, err := jwt.ParseWithClaims(token, &Claims{}, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("unexpected signing method")
+		}
+		return s.secret, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	c, ok := t.Claims.(*Claims)
+	if !ok || !t.Valid || c.Subject != "mfa-pending" {
+		return nil, errors.New("invalid mfa token")
+	}
+	return c, nil
 }
 
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (*LoginResult, error) {
@@ -270,7 +343,7 @@ func (s *Service) mintPair(u User, familyID string, seq int, expiresAt time.Time
 	if err != nil {
 		return nil, err
 	}
-	return &LoginResult{AccessToken: access, RefreshToken: refresh, User: u}, nil
+	return &LoginResult{AccessToken: access, RefreshToken: refresh, User: &u}, nil
 }
 
 func (s *Service) issueRefresh(familyID string, seq int, expiresAt time.Time) (string, error) {

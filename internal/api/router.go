@@ -31,6 +31,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 		r.Get("/health", h.Health)
 
 		r.Post("/auth/login", h.Login)
+		r.Post("/auth/mfa", h.LoginMFA)
 		r.Post("/auth/logout", h.Logout)
 		r.Post("/auth/refresh", h.Refresh)
 
@@ -41,6 +42,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 			r.Get("/me", h.Me)
 			r.Put("/users/{id}/password", h.ChangeUserPassword) // self or admin (enforced inside)
 			r.Post("/ws/ticket", h.WSTicket)
+
+			// Self MFA enrollment / disable
+			r.Post("/mfa/enroll/start", h.MFAEnrollStart)
+			r.Post("/mfa/enroll/verify", h.MFAEnrollVerify)
+			r.Delete("/mfa", h.MFADisable)
 
 			// -------------------------- READ ROUTES --------------------------
 			r.Group(func(r chi.Router) {
@@ -117,6 +123,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Post("/users", h.CreateUser)
 				r.Put("/users/{id}", h.UpdateUser)
 				r.Delete("/users/{id}", h.DeleteUser)
+				r.Delete("/users/{id}/mfa", h.MFAReset)
 			})
 
 			// -------------------------- AUDIT READ ---------------------------
