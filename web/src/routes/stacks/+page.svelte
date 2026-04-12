@@ -1,21 +1,50 @@
 <script lang="ts">
   import { api, ApiError } from '$lib/api';
   import { goto } from '$app/navigation';
+  import { Button, Card, Modal, EmptyState, Input, Skeleton } from '$lib/components/ui';
+  import { toast } from '$lib/stores/toast.svelte';
+  import { Layers, Plus, FileCode2, Terminal } from 'lucide-svelte';
 
   let stacks = $state<Array<{ name: string }>>([]);
   let loading = $state(true);
-  let error = $state('');
   let showCreate = $state(false);
+  let showImport = $state(false);
+
   let newName = $state('');
   let newCompose = $state('services:\n  web:\n    image: nginx:alpine\n    ports:\n      - "8080:80"\n');
   let newEnv = $state('');
   let creating = $state(false);
 
-  // docker run → compose converter
-  let showImport = $state(false);
   let runCommand = $state('');
   let convertWarnings = $state<string[]>([]);
   let converting = $state(false);
+
+  async function load() {
+    loading = true;
+    try {
+      stacks = await api.stacks.list();
+    } catch (err) {
+      toast.error('Failed to load stacks', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function create(e: Event) {
+    e.preventDefault();
+    creating = true;
+    try {
+      await api.stacks.create(newName, newCompose, newEnv || undefined);
+      toast.success('Stack created', newName);
+      showCreate = false;
+      newName = '';
+      await load();
+    } catch (err) {
+      toast.error('Create failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      creating = false;
+    }
+  }
 
   async function convertRun() {
     converting = true;
@@ -25,152 +54,164 @@
       newCompose = res.yaml;
       convertWarnings = res.warnings ?? [];
       showImport = false;
+      if (convertWarnings.length > 0) {
+        toast.warning('Converted with warnings', `${convertWarnings.length} unsupported flag(s)`);
+      } else {
+        toast.success('Converted', 'compose.yaml populated');
+      }
     } catch (err) {
-      error = err instanceof ApiError ? err.message : 'convert failed';
+      toast.error('Convert failed', err instanceof ApiError ? err.message : undefined);
     } finally {
       converting = false;
-    }
-  }
-
-  async function load() {
-    loading = true;
-    try {
-      stacks = await api.stacks.list();
-    } catch (err: any) {
-      error = err.message;
-    } finally {
-      loading = false;
-    }
-  }
-
-  async function create(e: Event) {
-    e.preventDefault();
-    creating = true;
-    error = '';
-    try {
-      await api.stacks.create(newName, newCompose, newEnv || undefined);
-      showCreate = false;
-      newName = '';
-      await load();
-    } catch (err) {
-      error = err instanceof ApiError ? err.message : 'Create failed';
-    } finally {
-      creating = false;
     }
   }
 
   $effect(() => { load(); });
 </script>
 
-<section class="space-y-4">
-  <div class="flex justify-between items-center">
-    <h2 class="text-xl font-semibold">Stacks</h2>
-    <button class="px-3 py-1 rounded bg-brand-500 text-white text-sm" onclick={() => (showCreate = true)}>
-      + New Stack
-    </button>
+<section class="space-y-6">
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div>
+      <h2 class="text-2xl font-semibold tracking-tight">Stacks</h2>
+      <p class="text-sm text-[var(--fg-muted)] mt-0.5">
+        Compose definitions stored on disk under <code class="font-mono text-xs">stacks/</code>
+      </p>
+    </div>
+    <Button variant="primary" onclick={() => (showCreate = true)}>
+      <Plus class="w-4 h-4" />
+      New Stack
+    </Button>
   </div>
 
-  {#if error}
-    <div class="p-3 rounded border border-red-500/30 bg-red-500/10 text-red-500 text-sm">{error}</div>
-  {/if}
-
   {#if loading}
-    <p class="text-[var(--muted)]">Loading…</p>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      {#each Array(3) as _}
+        <Card class="p-5">
+          <Skeleton width="60%" height="1.25rem" />
+          <Skeleton class="mt-3" width="40%" height="0.85rem" />
+        </Card>
+      {/each}
+    </div>
   {:else if stacks.length === 0}
-    <p class="text-[var(--muted)]">No stacks yet. Create one to get started.</p>
+    <Card>
+      <EmptyState
+        icon={Layers}
+        title="No stacks yet"
+        description="Create your first stack by pasting a compose.yaml or importing a docker run command."
+      >
+        {#snippet action()}
+          <Button variant="primary" onclick={() => (showCreate = true)}>
+            <Plus class="w-4 h-4" />
+            Create stack
+          </Button>
+        {/snippet}
+      </EmptyState>
+    </Card>
   {:else}
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {#each stacks as s}
-        <button
-          class="text-left p-4 rounded border border-[var(--border)] bg-[var(--panel)] hover:border-brand-500"
-          onclick={() => goto(`/stacks/${s.name}`)}
-        >
-          <div class="font-semibold">{s.name}</div>
-          <div class="text-xs text-[var(--muted)] mt-1">Filesystem-backed</div>
-        </button>
+        <Card hover onclick={() => goto(`/stacks/${s.name}`)} class="p-5">
+          <div class="flex items-start gap-3">
+            <div class="w-10 h-10 rounded-lg bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] text-[var(--color-brand-400)] flex items-center justify-center shrink-0">
+              <Layers class="w-5 h-5" />
+            </div>
+            <div class="min-w-0 flex-1">
+              <div class="font-semibold text-[var(--fg)] truncate">{s.name}</div>
+              <div class="text-xs text-[var(--fg-muted)] mt-0.5">filesystem-backed</div>
+            </div>
+          </div>
+        </Card>
       {/each}
     </div>
   {/if}
 </section>
 
-{#if showCreate}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-10">
-    <form
-      onsubmit={create}
-      class="w-full max-w-2xl p-6 rounded border border-[var(--border)] bg-[var(--panel)] space-y-3"
-    >
-      <div class="flex justify-between items-center">
-        <h3 class="text-lg font-semibold">Create Stack</h3>
-        <button
-          type="button"
-          class="text-sm px-2 py-1 rounded border border-[var(--border)] hover:border-brand-500"
-          onclick={() => (showImport = true)}
-        >
-          Import from docker run
-        </button>
+<Modal bind:open={showCreate} title="Create stack" maxWidth="max-w-3xl">
+  <form onsubmit={create} class="space-y-4" id="create-stack-form">
+    <div class="flex items-center justify-between">
+      <div class="text-xs text-[var(--fg-muted)]">
+        Name must match <code class="font-mono">[a-z0-9][a-z0-9-]*[a-z0-9]</code>, 2-63 chars.
       </div>
-      <input
-        class="w-full px-3 py-2 rounded border border-[var(--border)] bg-[var(--bg)]"
-        placeholder="Name (lowercase, digits, hyphens)"
-        bind:value={newName}
-        disabled={creating}
-      />
+      <button
+        type="button"
+        class="dm-btn dm-btn-ghost dm-btn-xs"
+        onclick={() => (showImport = true)}
+      >
+        <Terminal class="w-3.5 h-3.5" />
+        Import from docker run
+      </button>
+    </div>
+
+    <Input label="Name" placeholder="my-stack" bind:value={newName} disabled={creating} />
+
+    <div>
+      <label for="compose" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">
+        <span class="inline-flex items-center gap-1"><FileCode2 class="w-3 h-3" /> compose.yaml</span>
+      </label>
       <textarea
-        class="w-full h-48 px-3 py-2 font-mono text-sm rounded border border-[var(--border)] bg-[var(--bg)]"
-        placeholder="compose.yaml"
+        id="compose"
+        class="dm-input font-mono text-xs h-64 resize-y"
         bind:value={newCompose}
         disabled={creating}
       ></textarea>
+    </div>
+
+    <div>
+      <label for="env" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">.env (optional)</label>
       <textarea
-        class="w-full h-20 px-3 py-2 font-mono text-sm rounded border border-[var(--border)] bg-[var(--bg)]"
-        placeholder=".env (optional)"
+        id="env"
+        class="dm-input font-mono text-xs h-20 resize-y"
         bind:value={newEnv}
         disabled={creating}
+        placeholder="KEY=value"
       ></textarea>
-      {#if convertWarnings.length > 0}
-        <div class="p-2 rounded border border-yellow-500/30 bg-yellow-500/10 text-yellow-400 text-xs">
-          <strong>Warnings from converter:</strong>
-          <ul class="list-disc list-inside">
-            {#each convertWarnings as w}<li>{w}</li>{/each}
-          </ul>
-        </div>
-      {/if}
-      <div class="flex justify-end gap-2">
-        <button type="button" class="px-4 py-2 rounded border border-[var(--border)]" onclick={() => (showCreate = false)}>
-          Cancel
-        </button>
-        <button type="submit" class="px-4 py-2 rounded bg-brand-500 text-white font-semibold" disabled={creating || !newName || !newCompose}>
-          {creating ? 'Creating…' : 'Create'}
-        </button>
-      </div>
-    </form>
-  </div>
-{/if}
-
-{#if showImport}
-  <div class="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-20">
-    <div class="w-full max-w-2xl p-6 rounded border border-[var(--border)] bg-[var(--panel)] space-y-3">
-      <h3 class="text-lg font-semibold">Import from docker run</h3>
-      <p class="text-sm text-[var(--muted)]">
-        Paste a complete <code class="font-mono">docker run</code> command. We'll convert
-        it into compose YAML. Supports ports, volumes, env, networks, restart,
-        labels, and the common flags.
-      </p>
-      <textarea
-        class="w-full h-32 px-3 py-2 font-mono text-sm rounded border border-[var(--border)] bg-[var(--bg)]"
-        placeholder="docker run -d --name web -p 8080:80 nginx:alpine"
-        bind:value={runCommand}
-      ></textarea>
-      <div class="flex justify-end gap-2">
-        <button class="px-4 py-2 rounded border border-[var(--border)]" onclick={() => (showImport = false)}>Cancel</button>
-        <button
-          class="px-4 py-2 rounded bg-brand-500 text-white font-semibold disabled:opacity-50"
-          onclick={convertRun}
-          disabled={converting || !runCommand.trim()}
-        >
-          {converting ? 'Converting…' : 'Convert'}
-        </button>
-      </div>
     </div>
-  </div>
-{/if}
+
+    {#if convertWarnings.length > 0}
+      <div class="dm-card p-3 text-xs border-[color-mix(in_srgb,var(--color-warning-500)_30%,transparent)]">
+        <div class="font-medium text-[var(--color-warning-400)] mb-1">Converter warnings</div>
+        <ul class="list-disc list-inside text-[var(--fg-muted)] space-y-0.5">
+          {#each convertWarnings as w}<li>{w}</li>{/each}
+        </ul>
+      </div>
+    {/if}
+  </form>
+
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (showCreate = false)}>Cancel</Button>
+    <Button
+      variant="primary"
+      type="submit"
+      form="create-stack-form"
+      loading={creating}
+      disabled={creating || !newName || !newCompose}
+    >
+      Create
+    </Button>
+  {/snippet}
+</Modal>
+
+<Modal bind:open={showImport} title="Import from docker run" maxWidth="max-w-xl">
+  <p class="text-sm text-[var(--fg-muted)] mb-4">
+    Paste a complete <code class="font-mono">docker run</code> command. We convert
+    it into compose YAML. Supports ports, volumes, env, networks, restart,
+    labels, capabilities and the common flags.
+  </p>
+  <textarea
+    class="dm-input font-mono text-xs h-32"
+    placeholder="docker run -d --name web -p 8080:80 nginx:alpine"
+    bind:value={runCommand}
+  ></textarea>
+
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (showImport = false)}>Cancel</Button>
+    <Button
+      variant="primary"
+      loading={converting}
+      disabled={converting || !runCommand.trim()}
+      onclick={convertRun}
+    >
+      Convert
+    </Button>
+  {/snippet}
+</Modal>
