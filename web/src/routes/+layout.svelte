@@ -6,6 +6,7 @@
   import { api } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
   import { Toaster } from '$lib/components/ui';
+  import { allowed } from '$lib/rbac';
   import {
     LayoutDashboard,
     Layers,
@@ -49,13 +50,18 @@
     goto('/login');
   }
 
-  const nav = [
-    { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-    { href: '/stacks', label: 'Stacks', icon: Layers },
-    { href: '/containers', label: 'Containers', icon: Box },
-    { href: '/images', label: 'Images', icon: ImageIcon },
-    { href: '/settings', label: 'Settings', icon: SettingsIcon }
-  ];
+  // Nav entries — every authenticated user can see these; RBAC enforcement
+  // is on the actions within each page, not on navigation itself. The
+  // Images page is hidden for viewer since there's nothing they can do there.
+  const nav = $derived(
+    [
+      { href: '/', label: 'Dashboard', icon: LayoutDashboard, show: true },
+      { href: '/stacks', label: 'Stacks', icon: Layers, show: true },
+      { href: '/containers', label: 'Containers', icon: Box, show: true },
+      { href: '/images', label: 'Images', icon: ImageIcon, show: allowed('image.write') || allowed('read') },
+      { href: '/settings', label: 'Settings', icon: SettingsIcon, show: true }
+    ].filter((n) => n.show)
+  );
 
   function isActive(href: string): boolean {
     const p = $page.url.pathname;

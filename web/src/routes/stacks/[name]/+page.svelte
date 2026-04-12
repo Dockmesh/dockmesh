@@ -5,7 +5,11 @@
   import { onDestroy } from 'svelte';
   import { Button, Card, Badge, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { allowed } from '$lib/rbac';
   import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw } from 'lucide-svelte';
+
+  const canWrite = $derived(allowed('stack.write'));
+  const canDeploy = $derived(allowed('stack.deploy'));
 
   const name = $derived($page.params.name);
 
@@ -154,22 +158,26 @@
       {/if}
     </div>
     <div class="flex gap-2 flex-wrap">
-      <Button variant="primary" onclick={deploy} loading={busy} disabled={busy}>
-        <Play class="w-4 h-4" />
-        Deploy
-      </Button>
-      <Button variant="secondary" onclick={stop} disabled={busy}>
-        <Square class="w-4 h-4" />
-        Stop
-      </Button>
-      <Button variant="secondary" onclick={save} disabled={busy || !dirty}>
-        <Save class="w-4 h-4" />
-        Save
-      </Button>
-      <Button variant="danger" onclick={del} disabled={busy}>
-        <Trash2 class="w-4 h-4" />
-        Delete
-      </Button>
+      {#if canDeploy}
+        <Button variant="primary" onclick={deploy} loading={busy} disabled={busy}>
+          <Play class="w-4 h-4" />
+          Deploy
+        </Button>
+        <Button variant="secondary" onclick={stop} disabled={busy}>
+          <Square class="w-4 h-4" />
+          Stop
+        </Button>
+      {/if}
+      {#if canWrite}
+        <Button variant="secondary" onclick={save} disabled={busy || !dirty}>
+          <Save class="w-4 h-4" />
+          Save
+        </Button>
+        <Button variant="danger" onclick={del} disabled={busy}>
+          <Trash2 class="w-4 h-4" />
+          Delete
+        </Button>
+      {/if}
     </div>
   </div>
 

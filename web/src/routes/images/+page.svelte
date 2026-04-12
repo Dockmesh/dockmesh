@@ -2,7 +2,10 @@
   import { api, ApiError } from '$lib/api';
   import { Card, Button, EmptyState, Skeleton, Badge } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { allowed } from '$lib/rbac';
   import { Image as ImageIcon, Trash2, RefreshCw, Sparkles } from 'lucide-svelte';
+
+  const canWrite = $derived(allowed('image.write'));
 
   interface ImageSummary {
     Id: string;
@@ -80,10 +83,12 @@
         <RefreshCw class="w-3.5 h-3.5 {loading ? 'animate-spin' : ''}" />
         Refresh
       </Button>
-      <Button variant="secondary" size="sm" onclick={prune}>
-        <Sparkles class="w-3.5 h-3.5" />
-        Prune
-      </Button>
+      {#if canWrite}
+        <Button variant="secondary" size="sm" onclick={prune}>
+          <Sparkles class="w-3.5 h-3.5" />
+          Prune
+        </Button>
+      {/if}
     </div>
   </div>
 
@@ -127,9 +132,11 @@
                 <span>{fmtAge(img.Created)}</span>
               </div>
             </div>
-            <Button size="xs" variant="ghost" onclick={() => removeImage(img.Id)} aria-label="Remove">
-              <Trash2 class="w-3.5 h-3.5 text-[var(--color-danger-400)]" />
-            </Button>
+            {#if canWrite}
+              <Button size="xs" variant="ghost" onclick={() => removeImage(img.Id)} aria-label="Remove">
+                <Trash2 class="w-3.5 h-3.5 text-[var(--color-danger-400)]" />
+              </Button>
+            {/if}
           </div>
         {/each}
       </div>

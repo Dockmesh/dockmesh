@@ -3,7 +3,10 @@
   import { goto } from '$app/navigation';
   import { Button, Card, Modal, EmptyState, Input, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { allowed } from '$lib/rbac';
   import { Layers, Plus, FileCode2, Terminal } from 'lucide-svelte';
+
+  const canWrite = $derived(allowed('stack.write'));
 
   let stacks = $state<Array<{ name: string }>>([]);
   let loading = $state(true);
@@ -77,10 +80,12 @@
         Compose definitions stored on disk under <code class="font-mono text-xs">stacks/</code>
       </p>
     </div>
-    <Button variant="primary" onclick={() => (showCreate = true)}>
-      <Plus class="w-4 h-4" />
-      New Stack
-    </Button>
+    {#if canWrite}
+      <Button variant="primary" onclick={() => (showCreate = true)}>
+        <Plus class="w-4 h-4" />
+        New Stack
+      </Button>
+    {/if}
   </div>
 
   {#if loading}
@@ -100,10 +105,12 @@
         description="Create your first stack by pasting a compose.yaml or importing a docker run command."
       >
         {#snippet action()}
-          <Button variant="primary" onclick={() => (showCreate = true)}>
-            <Plus class="w-4 h-4" />
-            Create stack
-          </Button>
+          {#if canWrite}
+            <Button variant="primary" onclick={() => (showCreate = true)}>
+              <Plus class="w-4 h-4" />
+              Create stack
+            </Button>
+          {/if}
         {/snippet}
       </EmptyState>
     </Card>
