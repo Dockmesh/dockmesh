@@ -87,6 +87,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 
 		// WebSocket endpoints — auth via ?ticket= (not Bearer header).
 		r.Get("/ws/logs/{id}", h.WSLogs)
+		r.Get("/ws/events", h.WSEvents)
 	})
 
 	if webFS != nil {
