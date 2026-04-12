@@ -1,0 +1,39 @@
+# Runtime data
+/data/
+*.db
+*.db-shm
+*.db-wal
+
+# Go build output
+/dockmesh
+/dockmesh.exe
+/bin/
+/dist/
+/cmd/dockmesh/web_dist/*
+!/cmd/dockmesh/web_dist/.gitkeep
+
+# Frontend build
+/web/build/
+/web/.svelte-kit/
+/web/node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code local (per-user, not shared)
+.claude/settings.local.json
+
+# Test / coverage
+*.out
+coverage.txt
