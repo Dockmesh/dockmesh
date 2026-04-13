@@ -87,11 +87,47 @@ func NewService(db *sql.DB, notifier *notify.Service) *Service {
 	}
 }
 
-// Start launches the evaluator goroutine.
+// Start launches the evaluator goroutine. Restores the firing state
+// from alert_history first so a restart doesn't lose track of currently
+// active alerts.
 func (s *Service) Start(ctx context.Context) {
+	if err := s.loadFiringState(ctx); err != nil {
+		slog.Warn("alerts: load firing state", "err", err)
+	}
 	s.wg.Add(1)
 	go s.evalLoop(ctx)
-	slog.Info("alerts evaluator started")
+	slog.Info("alerts evaluator started", "firing", len(s.firing))
+}
+
+// loadFiringState rebuilds s.firing from the latest alert_history row
+// per (rule_id, container_name). Anything whose latest status is "fired"
+// is still considered firing — the next eval will re-resolve it if the
+// underlying metric has recovered.
+func (s *Service) loadFiringState(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT h.rule_id, h.container_name
+		FROM alert_history h
+		JOIN (
+			SELECT rule_id, container_name, MAX(id) AS max_id
+			FROM alert_history
+			GROUP BY rule_id, container_name
+		) latest ON h.id = latest.max_id
+		WHERE h.status = 'fired'`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	for rows.Next() {
+		var ruleID int64
+		var name string
+		if err := rows.Scan(&ruleID, &name); err != nil {
+			return err
+		}
+		s.firing[stateKey(ruleID, name)] = true
+	}
+	return rows.Err()
 }
 
 func (s *Service) Stop() {
