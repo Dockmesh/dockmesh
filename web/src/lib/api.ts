@@ -52,6 +52,56 @@ export interface MetricsSample {
   blk_write: number;
 }
 
+export interface NotificationChannel {
+  id: number;
+  type: string;
+  name: string;
+  config: any;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AlertRule {
+  id: number;
+  name: string;
+  container_filter: string;
+  metric: string;
+  operator: string;
+  threshold: number;
+  duration_seconds: number;
+  channel_ids: number[];
+  enabled: boolean;
+  firing_since?: string;
+  last_triggered_at?: string;
+  last_resolved_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AlertRuleInput {
+  name: string;
+  container_filter: string;
+  metric: string;
+  operator: string;
+  threshold: number;
+  duration_seconds: number;
+  channel_ids: number[];
+  enabled: boolean;
+}
+
+export interface AlertHistoryEntry {
+  id: number;
+  rule_id: number;
+  rule_name: string;
+  container_name: string;
+  status: string;
+  message: string;
+  value: number;
+  threshold: number;
+  occurred_at: string;
+}
+
 export interface OIDCProvider {
   id: number;
   slug: string;
@@ -288,6 +338,33 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ command })
       })
+  },
+
+  alerts: {
+    listChannels: () => request<NotificationChannel[]>('/notifications/channels'),
+    createChannel: (input: { type: string; name: string; config: any; enabled: boolean }) =>
+      request<NotificationChannel>('/notifications/channels', {
+        method: 'POST',
+        body: JSON.stringify({ ...input, config: typeof input.config === 'string' ? JSON.parse(input.config) : input.config })
+      }),
+    updateChannel: (id: number, input: { type: string; name: string; config: any; enabled: boolean }) =>
+      request<NotificationChannel>(`/notifications/channels/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ ...input, config: typeof input.config === 'string' ? JSON.parse(input.config) : input.config })
+      }),
+    deleteChannel: (id: number) =>
+      request<void>(`/notifications/channels/${id}`, { method: 'DELETE' }),
+    testChannel: (id: number) =>
+      request<void>(`/notifications/channels/${id}/test`, { method: 'POST' }),
+
+    listRules: () => request<AlertRule[]>('/alerts/rules'),
+    createRule: (input: AlertRuleInput) =>
+      request<AlertRule>('/alerts/rules', { method: 'POST', body: JSON.stringify(input) }),
+    updateRule: (id: number, input: AlertRuleInput) =>
+      request<AlertRule>(`/alerts/rules/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+    deleteRule: (id: number) => request<void>(`/alerts/rules/${id}`, { method: 'DELETE' }),
+
+    history: (limit = 100) => request<AlertHistoryEntry[]>(`/alerts/history?limit=${limit}`)
   },
 
   oidc: {
