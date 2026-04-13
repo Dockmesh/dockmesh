@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"context"
+	"errors"
 	"net/http"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
@@ -38,42 +38,56 @@ func (h *Handlers) InspectContainer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) StartContainer(w http.ResponseWriter, r *http.Request) {
-	h.containerAction(w, r, h.Docker.StartContainer, audit.ActionContainerStart)
+	h.containerAction(w, r, "start", audit.ActionContainerStart)
 }
 
 func (h *Handlers) StopContainer(w http.ResponseWriter, r *http.Request) {
-	h.containerAction(w, r, h.Docker.StopContainer, audit.ActionContainerStop)
+	h.containerAction(w, r, "stop", audit.ActionContainerStop)
 }
 
 func (h *Handlers) RestartContainer(w http.ResponseWriter, r *http.Request) {
-	h.containerAction(w, r, h.Docker.RestartContainer, audit.ActionContainerKill)
+	h.containerAction(w, r, "restart", audit.ActionContainerKill)
 }
 
 func (h *Handlers) RemoveContainer(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	id := chi.URLParam(r, "id")
 	force := r.URL.Query().Get("force") == "true"
-	if err := h.Docker.RemoveContainer(r.Context(), id, force); err != nil {
+	if err := target.RemoveContainer(r.Context(), id, force); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionContainerRm, id, nil)
+	h.audit(r, audit.ActionContainerRm, id, map[string]string{"host": target.ID()})
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *Handlers) containerAction(w http.ResponseWriter, r *http.Request, fn func(context.Context, string) error, action string) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+// containerAction dispatches a start/stop/restart op against whichever host
+// (local or agent) the request is targeted at via ?host=.
+func (h *Handlers) containerAction(w http.ResponseWriter, r *http.Request, op string, action string) {
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if err := fn(r.Context(), id); err != nil {
+	switch op {
+	case "start":
+		err = target.StartContainer(r.Context(), id)
+	case "stop":
+		err = target.StopContainer(r.Context(), id)
+	case "restart":
+		err = target.RestartContainer(r.Context(), id)
+	default:
+		err = errors.New("unknown op: " + op)
+	}
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, action, id, nil)
+	h.audit(r, action, id, map[string]string{"host": target.ID()})
 	w.WriteHeader(http.StatusNoContent)
 }

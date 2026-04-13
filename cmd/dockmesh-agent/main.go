@@ -271,6 +271,30 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		info, err := cli.ContainerInspect(ctx, req.ID)
 		respond(conn, f.ID, info, err)
 
+	case agents.FrameReqContainerStart:
+		var req agents.ContainerIDReq
+		_ = json.Unmarshal(f.Payload, &req)
+		err := cli.ContainerStart(ctx, req.ID, container.StartOptions{})
+		respond(conn, f.ID, struct{}{}, err)
+
+	case agents.FrameReqContainerStop:
+		var req agents.ContainerIDReq
+		_ = json.Unmarshal(f.Payload, &req)
+		err := cli.ContainerStop(ctx, req.ID, container.StopOptions{})
+		respond(conn, f.ID, struct{}{}, err)
+
+	case agents.FrameReqContainerRestart:
+		var req agents.ContainerIDReq
+		_ = json.Unmarshal(f.Payload, &req)
+		err := cli.ContainerRestart(ctx, req.ID, container.StopOptions{})
+		respond(conn, f.ID, struct{}{}, err)
+
+	case agents.FrameReqContainerRemove:
+		var req agents.ContainerIDReq
+		_ = json.Unmarshal(f.Payload, &req)
+		err := cli.ContainerRemove(ctx, req.ID, container.RemoveOptions{Force: req.Force})
+		respond(conn, f.ID, struct{}{}, err)
+
 	case agents.FrameReqImageList:
 		list, err := cli.ImageList(ctx, dtypes.ImageListOptions{All: false})
 		respond(conn, f.ID, list, err)

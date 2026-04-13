@@ -9,9 +9,6 @@
   import { Box, Play, Square, RotateCw, Trash2, RefreshCw, Server } from 'lucide-svelte';
 
   const canControl = $derived(allowed('container.control'));
-  // Host-mutating ops are still local-only in 3.1.2. Disable Start/Stop/etc.
-  // in the UI when a remote host is selected so users don't get surprised
-  // by a 5xx from the backend.
   const isRemote = $derived(hosts.id !== 'local');
 
   interface Container {
@@ -85,14 +82,17 @@
 
   async function action(id: string, op: 'start' | 'stop' | 'restart' | 'remove') {
     try {
-      if (op === 'start') await api.containers.start(id);
-      else if (op === 'stop') await api.containers.stop(id);
-      else if (op === 'restart') await api.containers.restart(id);
+      if (op === 'start') await api.containers.start(id, hosts.id);
+      else if (op === 'stop') await api.containers.stop(id, hosts.id);
+      else if (op === 'restart') await api.containers.restart(id, hosts.id);
       else {
         if (!confirm('Remove this container?')) return;
-        await api.containers.remove(id, true);
+        await api.containers.remove(id, true, hosts.id);
       }
       toast.success(op, id.slice(0, 12));
+      // Reload the list so the UI reflects the new state without waiting
+      // for the docker events WS (which only watches the local daemon).
+      await load();
     } catch (err) {
       toast.error(`${op} failed`, err instanceof ApiError ? err.message : undefined);
     }
@@ -177,7 +177,7 @@
           <div class="flex items-center gap-3 px-4 py-3 hover:bg-[var(--surface-hover)] transition-colors">
             <button
               class="flex items-center gap-3 flex-1 min-w-0 text-left py-1"
-              onclick={() => goto(`/containers/${c.Id}`)}
+              onclick={() => goto(`/containers/${c.Id}${isRemote ? '?host=' + hosts.id : ''}`)}
             >
               <span class="w-2 h-2 rounded-full shrink-0 {running ? 'bg-[var(--color-success-500)]' : 'bg-[var(--fg-subtle)]'}"
                     style={running ? 'box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success-500) 20%, transparent);' : ''}></span>
@@ -195,7 +195,7 @@
                 </div>
               </div>
             </button>
-            {#if canControl && !isRemote}
+            {#if canControl}
               <div class="flex gap-1 shrink-0">
                 {#if running}
                   <Button size="xs" variant="ghost" onclick={() => action(c.Id, 'restart')} aria-label="Restart">
