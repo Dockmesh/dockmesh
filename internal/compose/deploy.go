@@ -78,9 +78,15 @@ type StatusEntry struct {
 	Image       string `json:"image"`
 }
 
+// Deploy is the filesystem entry point: looks the stack up via the stacks
+// manager, loads compose.yaml + .env, then hands the parsed project to
+// DeployProject which is the actual executor.
 func (s *Service) Deploy(ctx context.Context, stackName string) (*DeployResult, error) {
 	if s.docker == nil {
 		return nil, errors.New("docker unavailable")
+	}
+	if s.stacks == nil {
+		return nil, errors.New("stacks manager not configured")
 	}
 	dir, err := s.stacks.Dir(stackName)
 	if err != nil {
@@ -96,9 +102,19 @@ func (s *Service) Deploy(ctx context.Context, stackName string) (*DeployResult, 
 	if err != nil {
 		return nil, err
 	}
+	return s.DeployProject(ctx, proj)
+}
 
+// DeployProject runs the executor against an already-parsed compose project.
+// This is the seam that lets the agent reuse the exact same deploy code:
+// the agent receives compose+env over the WS, parses it from a tmpdir, and
+// calls DeployProject directly. No stacks.Manager dependency needed.
+func (s *Service) DeployProject(ctx context.Context, proj *composetypes.Project) (*DeployResult, error) {
+	if s.docker == nil {
+		return nil, errors.New("docker unavailable")
+	}
 	cli := s.docker.Raw()
-	result := &DeployResult{Stack: stackName}
+	result := &DeployResult{Stack: proj.Name}
 
 	netNames, err := s.reconcileNetworks(ctx, cli, proj, result)
 	if err != nil {

@@ -79,45 +79,55 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	name := chi.URLParam(r, "name")
-	if _, err := h.Stacks.Get(name); err != nil {
+	// Always read the canonical compose+env from the central server's
+	// filesystem (where stacks live). The host abstraction takes the
+	// content as parameters so local + remote share the same call shape.
+	detail, err := h.Stacks.Get(name)
+	if err != nil {
 		writeStackError(w, err)
 		return
 	}
-	res, err := h.Compose.Deploy(r.Context(), name)
+	res, err := target.DeployStack(r.Context(), name, detail.Compose, detail.Env)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionStackDeploy, name, map[string]int{"services": len(res.Services)})
+	h.audit(r, audit.ActionStackDeploy, name, map[string]any{
+		"services": len(res.Services),
+		"host":     target.ID(),
+	})
 	writeJSON(w, http.StatusOK, res)
 }
 
 func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	name := chi.URLParam(r, "name")
-	if err := h.Compose.Stop(r.Context(), name); err != nil {
+	if err := target.StopStack(r.Context(), name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionStackStop, name, nil)
+	h.audit(r, audit.ActionStackStop, name, map[string]string{"host": target.ID()})
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handlers) StackStatus(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	name := chi.URLParam(r, "name")
-	status, err := h.Compose.Status(r.Context(), name)
+	status, err := target.StackStatus(r.Context(), name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

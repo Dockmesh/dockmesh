@@ -11,6 +11,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/dockmesh/dockmesh/internal/compose"
 	dtypes "github.com/docker/docker/api/types"
 )
 
@@ -51,6 +52,14 @@ type Host interface {
 	ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error)
 	ListNetworks(ctx context.Context) ([]dtypes.NetworkResource, error)
 	ListVolumes(ctx context.Context) ([]any, error)
+
+	// Stack operations (slice 3.1.3). The handler reads the compose+env
+	// from the central server's filesystem once and passes the content
+	// to whichever host — local writes to a tmpdir + parses + runs;
+	// remote ships the payload over the agent WS.
+	DeployStack(ctx context.Context, name, composeYAML, envContent string) (*compose.DeployResult, error)
+	StopStack(ctx context.Context, name string) error
+	StackStatus(ctx context.Context, name string) ([]compose.StatusEntry, error)
 }
 
 // ExecSession is the interface the WS exec handler uses to talk to a

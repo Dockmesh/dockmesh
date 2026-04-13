@@ -44,6 +44,13 @@ const (
 	FrameReqVolumeList  = "req.volumes.list"
 	FrameReqDaemonInfo  = "req.daemon.info"
 
+	// Stack operations (slice 3.1.3) — server ships compose YAML + .env
+	// content with the deploy request, agent runs the same compose
+	// executor as the server would for a local deploy.
+	FrameReqStackDeploy = "req.stack.deploy"
+	FrameReqStackStop   = "req.stack.stop"
+	FrameReqStackStatus = "req.stack.status"
+
 	// Single response type. Errors set OK=false and put the message in Error.
 	FrameRes = "res"
 
@@ -109,6 +116,19 @@ type ContainerListReq struct {
 type ContainerIDReq struct {
 	ID    string `json:"id"`
 	Force bool   `json:"force,omitempty"`
+}
+
+// StackDeployReq carries the full compose project payload to the agent.
+// The agent writes Compose + Env to a temp directory, parses with
+// compose-go and runs the same DeployProject executor the server uses.
+type StackDeployReq struct {
+	Name    string `json:"name"`
+	Compose string `json:"compose"`
+	Env     string `json:"env,omitempty"`
+}
+
+type StackNameReq struct {
+	Name string `json:"name"`
 }
 
 // HelloPayload is what the agent sends as soon as the WS opens. It tells
