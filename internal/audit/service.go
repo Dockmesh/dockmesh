@@ -205,7 +205,7 @@ func (s *Service) List(ctx context.Context, limit int) ([]Entry, error) {
 	}
 	defer rows.Close()
 
-	var out []Entry
+	out := []Entry{}
 	for rows.Next() {
 		var e Entry
 		var userID, target, details, prev, row sql.NullString

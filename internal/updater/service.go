@@ -210,7 +210,7 @@ func (s *Service) History(ctx context.Context, containerName string) ([]Entry, e
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Entry
+	out := []Entry{}
 	for rows.Next() {
 		var e Entry
 		var rolledAt sql.NullTime

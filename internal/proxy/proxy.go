@@ -126,7 +126,7 @@ func (s *Service) listRoutes(ctx context.Context) ([]Route, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Route
+	out := []Route{}
 	for rows.Next() {
 		var r Route
 		if err := rows.Scan(&r.ID, &r.Host, &r.Upstream, &r.TLSMode, &r.CreatedAt, &r.UpdatedAt); err != nil {

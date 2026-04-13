@@ -151,7 +151,7 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []User
+	out := []User{}
 	for rows.Next() {
 		var u User
 		var email sql.NullString

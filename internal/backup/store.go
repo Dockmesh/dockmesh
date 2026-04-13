@@ -28,7 +28,7 @@ func (s *store) listJobs(ctx context.Context) ([]Job, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Job
+	out := []Job{}
 	for rows.Next() {
 		j, err := scanJob(rows)
 		if err != nil {
@@ -146,7 +146,7 @@ func (s *store) listRuns(ctx context.Context, limit int) ([]Run, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Run
+	out := []Run{}
 	for rows.Next() {
 		var r Run
 		var finished sql.NullTime

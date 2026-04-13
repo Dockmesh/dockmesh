@@ -111,7 +111,7 @@ func (s *Service) ListProviders(ctx context.Context) ([]Provider, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Provider
+	out := []Provider{}
 	for rows.Next() {
 		p, err := scanProvider(rows)
 		if err != nil {
@@ -136,7 +136,7 @@ func (s *Service) ListEnabledPublic(ctx context.Context) ([]PublicProvider, erro
 		return nil, err
 	}
 	defer rows.Close()
-	var out []PublicProvider
+	out := []PublicProvider{}
 	for rows.Next() {
 		var p PublicProvider
 		if err := rows.Scan(&p.Slug, &p.DisplayName); err != nil {

@@ -356,7 +356,7 @@ func (c *Collector) Query(ctx context.Context, q Query) ([]Sample, error) {
 	}
 	defer rows.Close()
 
-	var out []Sample
+	out := []Sample{}
 	for rows.Next() {
 		var s Sample
 		if err := rows.Scan(&s.TS, &s.CPUPercent, &s.MemUsed, &s.MemLimit,
