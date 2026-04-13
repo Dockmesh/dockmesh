@@ -113,7 +113,9 @@
       g.push(n);
     }
     const out: StackBox[] = [];
-    const PAD = 32;
+    const PAD_X = 36;
+    const PAD_TOP = 36; // room for the stack-name label at the top
+    const PAD_BOTTOM = 44; // room for container name + port badge under the bottom-most node
     let i = 0;
     for (const [name, members] of groups) {
       if (members.length < 2) continue;
@@ -122,17 +124,18 @@
         maxX = -Infinity,
         maxY = -Infinity;
       for (const m of members) {
-        if (m.x - m.radius < minX) minX = m.x - m.radius;
-        if (m.y - m.radius < minY) minY = m.y - m.radius;
-        if (m.x + m.radius > maxX) maxX = m.x + m.radius;
-        if (m.y + m.radius > maxY) maxY = m.y + m.radius;
+        const r = m.radius;
+        if (m.x - r < minX) minX = m.x - r;
+        if (m.y - r < minY) minY = m.y - r;
+        if (m.x + r > maxX) maxX = m.x + r;
+        if (m.y + r > maxY) maxY = m.y + r;
       }
       out.push({
         name,
-        x: minX - PAD,
-        y: minY - PAD - 8,
-        w: maxX - minX + PAD * 2,
-        h: maxY - minY + PAD * 2 + 8,
+        x: minX - PAD_X,
+        y: minY - PAD_TOP,
+        w: maxX - minX + PAD_X * 2,
+        h: maxY - minY + PAD_TOP + PAD_BOTTOM,
         color: stackColor(i++)
       });
     }
@@ -304,16 +307,34 @@
   //     overlapping each other. This is the equivalent of d3-force-cluster
   //     and is what stops the stack groups from sitting on top of one
   //     another.
-  const REPEL = 6500;
-  const LINK_DIST = 220;
-  const LINK_K = 0.025;
+  const REPEL = 7500;
+  const LINK_DIST = 240;
+  const LINK_K = 0.022;
   const GRAVITY = 0.006;
   const DAMPING = 0.78;
-  const COLLISION_PASSES = 4;
-  const COLLISION_PAD = 36;
-  const COHESION = 0.018;
-  const CLUSTER_GAP = 90; // extra px between two cluster bounding spheres
+  const COLLISION_PASSES = 6;
+  const COLLISION_PAD = 14; // small extra margin on top of effective radii
+  const COHESION = 0.008; // mild — heavy cohesion squeezes 2-node clusters
+  const COHESION_MIN_MEMBERS = 3; // skip cohesion for tiny clusters
+  const CLUSTER_GAP = 90;
   const MAX_TICKS = 1200;
+
+  // Effective collision radius — the visual circle plus the area its
+  // bottom labels occupy. Network nodes have 3 lines of label below them
+  // (NET / driver / name). Container nodes have a name line plus an
+  // optional port badge. We use this for ALL pair collisions so two
+  // circles can never sit close enough that their labels read on top of
+  // each other.
+  function collisionRadius(n: SimNode): number {
+    if (n.kind === 'network') {
+      // 28 visual + ~28 label area (driver text below + name text)
+      return n.radius + 30;
+    }
+    const c = n.data as TopoContainer;
+    const hasPort = c.ports && c.ports.length > 0;
+    // 18 visual + name line (~14) + optional port badge (~14)
+    return n.radius + (hasPort ? 32 : 18);
+  }
 
   type Cluster = {
     name: string;
@@ -350,7 +371,7 @@
       for (const m of members) {
         const dx = m.x - cx;
         const dy = m.y - cy;
-        const d = Math.sqrt(dx * dx + dy * dy) + m.radius;
+        const d = Math.sqrt(dx * dx + dy * dy) + collisionRadius(m);
         if (d > radius) radius = d;
       }
       out.push({ name, cx, cy, radius, members });
@@ -403,8 +424,12 @@
     // are summed with everything else.
     const clusters = computeClusters();
 
-    // Cohesion: each member is pulled toward its cluster centroid.
+    // Cohesion: each member is pulled toward its cluster centroid. Skip
+    // tiny clusters (<3 members) — for a network + single container the
+    // spring link already keeps them grouped, and adding cohesion just
+    // squeezes them on top of each other.
     for (const c of clusters) {
+      if (c.members.length < COHESION_MIN_MEMBERS) continue;
       for (const m of c.members) {
         m.vx += (c.cx - m.x) * COHESION;
         m.vy += (c.cy - m.y) * COHESION;
@@ -455,9 +480,11 @@
       node.y = Math.max(60, Math.min(WORLD_H - 60, node.y));
     }
 
-    // Collision resolution — multiple relaxation passes so springs can't
-    // overpower the separation in a single frame. Velocities are damped
-    // on contact so colliders settle instead of bouncing.
+    // Collision resolution — multiple relaxation passes against the
+    // *effective* radii (visual circle + label area) so that not even
+    // labels of two nodes can sit on top of each other. Velocities are
+    // damped on contact so colliders settle instead of bouncing.
+    const effR = simNodes.map(collisionRadius);
     for (let pass = 0; pass < COLLISION_PASSES; pass++) {
       let any = false;
       for (let i = 0; i < n; i++) {
@@ -467,7 +494,7 @@
           const dx = b.x - a.x;
           const dy = b.y - a.y;
           const d = Math.sqrt(dx * dx + dy * dy) + 0.01;
-          const minD = a.radius + b.radius + COLLISION_PAD;
+          const minD = effR[i] + effR[j] + COLLISION_PAD;
           if (d < minD) {
             any = true;
             const overlap = (minD - d) / d;
@@ -476,14 +503,14 @@
             if (!a.fixed) {
               a.x -= ox;
               a.y -= oy;
-              a.vx *= 0.4;
-              a.vy *= 0.4;
+              a.vx *= 0.3;
+              a.vy *= 0.3;
             }
             if (!b.fixed) {
               b.x += ox;
               b.y += oy;
-              b.vx *= 0.4;
-              b.vy *= 0.4;
+              b.vx *= 0.3;
+              b.vy *= 0.3;
             }
           }
         }
