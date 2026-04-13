@@ -150,7 +150,7 @@ func (s *Service) ListRules(ctx context.Context) ([]Rule, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Rule
+	out := []Rule{}
 	for rows.Next() {
 		r, err := scanRule(rows)
 		if err != nil {
@@ -215,7 +215,7 @@ func (s *Service) History(ctx context.Context, limit int) ([]HistoryEntry, error
 		return nil, err
 	}
 	defer rows.Close()
-	var out []HistoryEntry
+	out := []HistoryEntry{}
 	for rows.Next() {
 		var e HistoryEntry
 		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.ContainerName, &e.Status,
