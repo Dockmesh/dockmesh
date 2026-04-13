@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { api, ApiError, type Topology, type TopoNetwork, type TopoContainer } from '$lib/api';
   import { Card, Button, Skeleton, EmptyState, Badge } from '$lib/components/ui';
@@ -15,7 +15,12 @@
   async function load() {
     loading = true;
     try {
-      topo = await api.networks.topology();
+      const next = await api.networks.topology();
+      topo = next;
+      // Build the simulation eagerly so the first frame is already laid out.
+      // Any subsequent showSystem toggle goes through the dedicated effect
+      // below; we do NOT rebuild from a $effect that reads `topo` because
+      // buildSimulation reads topo deeply and would form a tracked cycle.
       buildSimulation();
     } catch (err) {
       toast.error('Failed to load topology', err instanceof ApiError ? err.message : undefined);
@@ -52,10 +57,6 @@
   let nodeMap = new Map<string, SimNode>();
   let raf: number | null = null;
   let ticks = 0;
-
-  // Filtered views for rendering
-  const visibleNodes = $derived(nodes);
-  const visibleLinks = $derived(links);
 
   function buildSimulation() {
     if (!topo) return;
@@ -184,8 +185,11 @@
       n.x = Math.max(40, Math.min(W - 40, n.x));
       n.y = Math.max(40, Math.min(H - 40, n.y));
     }
-    // Trigger reactivity
-    nodes = nodes;
+    // Force-publish a new array reference so the {#each} block re-renders.
+    // Mutating n.x/n.y on existing items isn't enough because the state
+    // proxy doesn't observe property writes on the contained objects when
+    // they're plain (non-state) records.
+    nodes = [...nodes];
     ticks++;
     if (ticks < MAX_TICKS) {
       raf = requestAnimationFrame(tick);
@@ -229,7 +233,7 @@
     const p = svgPoint(e);
     dragging.x = p.x;
     dragging.y = p.y;
-    nodes = nodes;
+    nodes = [...nodes];
   }
 
   function onMouseUp() {
@@ -268,18 +272,24 @@
     return n ? n.label : linkSourceOrTarget.slice(0, 12);
   }
 
-  // Reload simulation when filter toggles
-  $effect(() => {
-    if (topo) buildSimulation();
-  });
-
-  $effect(() => {
-    void showSystem;
-    if (topo) buildSimulation();
-  });
-
-  $effect(() => {
+  // Initial fetch — call directly, not via $effect, so we don't accidentally
+  // turn the load() body into a tracked dep graph.
+  onMount(() => {
     load();
+  });
+
+  // Re-layout on system-network filter toggle. We track *only* showSystem
+  // and call buildSimulation in untrack() so its internal reads of `topo`
+  // don't become deps of this effect (which would form a cycle the moment
+  // buildSimulation writes to nodes/links).
+  let prevShowSystem = showSystem;
+  $effect(() => {
+    const current = showSystem;
+    if (current === prevShowSystem) return;
+    prevShowSystem = current;
+    untrack(() => {
+      if (topo) buildSimulation();
+    });
   });
 </script>
 
@@ -326,7 +336,7 @@
         >
           <!-- Edges -->
           <g stroke="var(--border-strong)" stroke-width="1.5" fill="none">
-            {#each visibleLinks as l}
+            {#each links as l}
               {@const s = nodeMap.get(l.source)}
               {@const t = nodeMap.get(l.target)}
               {#if s && t}
@@ -345,7 +355,7 @@
           </g>
 
           <!-- Nodes -->
-          {#each visibleNodes as n (n.id)}
+          {#each nodes as n (n.id)}
             {@const isSel = selected?.id === n.id}
             {@const dim = selected && !isSel && !selectedLinks.some((l) => l.source === n.id || l.target === n.id)}
             <g
@@ -406,7 +416,7 @@
           <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full" style="background:#a855f7"></span>overlay</div>
           <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full" style="background:#22c55e"></span>running container</div>
           <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full" style="background:#6b7280"></span>stopped / system</div>
-          <div class="ml-auto">{visibleNodes.length} nodes · {visibleLinks.length} edges</div>
+          <div class="ml-auto">{nodes.length} nodes · {links.length} edges</div>
         </div>
       </Card>
 
