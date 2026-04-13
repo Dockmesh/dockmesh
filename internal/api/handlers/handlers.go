@@ -6,11 +6,12 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
+	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
-	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/metrics"
 	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/oidc"
@@ -37,6 +38,7 @@ type Handlers struct {
 	Metrics     *metrics.Collector
 	Notify      *notify.Service
 	Alerts      *alerts.Service
+	Backups     *backup.Service
 	JWTSecret   []byte // raw secret used to sign the short-lived OIDC state cookie
 }
 
@@ -56,6 +58,7 @@ type Deps struct {
 	Metrics      *metrics.Collector
 	Notify       *notify.Service
 	Alerts       *alerts.Service
+	Backups      *backup.Service
 	JWTSecret    []byte
 }
 
@@ -76,6 +79,7 @@ func New(d Deps) *Handlers {
 		Metrics:     d.Metrics,
 		Notify:      d.Notify,
 		Alerts:      d.Alerts,
+		Backups:     d.Backups,
 		JWTSecret:   d.JWTSecret,
 	}
 }

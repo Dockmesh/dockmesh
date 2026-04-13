@@ -176,6 +176,19 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Get("/alerts/history", h.ListAlertHistory)
 			})
 
+			// -------------------------- BACKUPS (admin) -----------------------
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Get("/backups/jobs", h.ListBackupJobs)
+				r.Post("/backups/jobs", h.CreateBackupJob)
+				r.Get("/backups/jobs/{id}", h.GetBackupJob)
+				r.Put("/backups/jobs/{id}", h.UpdateBackupJob)
+				r.Delete("/backups/jobs/{id}", h.DeleteBackupJob)
+				r.Post("/backups/jobs/{id}/run", h.RunBackupJob)
+				r.Get("/backups/runs", h.ListBackupRuns)
+				r.Post("/backups/runs/{id}/restore", h.RestoreBackup)
+			})
+
 			// -------------------------- PROXY (admin) ------------------------
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermUserManage))

@@ -14,6 +14,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/api"
+	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/api/handlers"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
@@ -153,6 +154,12 @@ func main() {
 	alertsSvc.Start(ctx)
 	defer alertsSvc.Stop()
 
+	backupSvc := backup.NewService(database, dockerCli, stacksMgr, secretsSvc)
+	if err := backupSvc.Start(ctx); err != nil {
+		slog.Warn("backup scheduler start", "err", err)
+	}
+	defer backupSvc.Stop()
+
 	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
 	h := handlers.New(handlers.Deps{
 		DB:           database,
@@ -170,6 +177,7 @@ func main() {
 		Metrics:      metricsCol,
 		Notify:       notifySvc,
 		Alerts:       alertsSvc,
+		Backups:      backupSvc,
 		JWTSecret:    cfg.JWTSecret,
 	})
 	router := api.NewRouter(h, authSvc, webFS)
