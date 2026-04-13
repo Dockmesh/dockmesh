@@ -237,9 +237,14 @@ func (s *Service) evalAll(ctx context.Context) {
 // operator+threshold, so a single recovery sample is enough to clear
 // the alert. This is "all-of" semantics, the simplest interpretation
 // of "must persist for N seconds".
+//
+// Resolution: containers that were firing but now have either a
+// non-breaching sample OR no samples for 2× the collection interval
+// (i.e. the container was removed) are resolved.
 func (s *Service) evalRule(ctx context.Context, r *Rule) error {
 	now := time.Now()
 	from := now.Add(-time.Duration(r.DurationSeconds) * time.Second).Unix()
+	seen := make(map[string]bool)
 
 	// Resolve the metric expression to a SQL expression on metrics_raw.
 	var col string
@@ -302,6 +307,7 @@ func (s *Service) evalRule(ctx context.Context, r *Rule) error {
 		if n < 1 {
 			continue
 		}
+		seen[name] = true
 		breach := false
 		switch op {
 		case ">":
@@ -323,7 +329,32 @@ func (s *Service) evalRule(ctx context.Context, r *Rule) error {
 			s.setFiring(key, false)
 		}
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// Resolve currently-firing containers that produced no samples in
+	// this window — usually because the container was stopped or removed.
+	s.stateMu.Lock()
+	prefix := fmt.Sprintf("%d|", r.ID)
+	var stale []string
+	for key := range s.firing {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		name := strings.TrimPrefix(key, prefix)
+		if seen[name] {
+			continue
+		}
+		stale = append(stale, name)
+	}
+	s.stateMu.Unlock()
+
+	for _, name := range stale {
+		s.resolveRule(ctx, r, name, 0, now2)
+		s.setFiring(stateKey(r.ID, name), false)
+	}
+	return nil
 }
 
 func (s *Service) fireRule(ctx context.Context, r *Rule, container string, value float64, ts time.Time) {
