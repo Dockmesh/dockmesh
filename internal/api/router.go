@@ -160,6 +160,22 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Delete("/oidc/providers/{id}", h.DeleteOIDCProvider)
 			})
 
+			// -------------------------- ALERTS (admin) -----------------------
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Get("/notifications/channels", h.ListNotificationChannels)
+				r.Post("/notifications/channels", h.CreateNotificationChannel)
+				r.Put("/notifications/channels/{id}", h.UpdateNotificationChannel)
+				r.Delete("/notifications/channels/{id}", h.DeleteNotificationChannel)
+				r.Post("/notifications/channels/{id}/test", h.TestNotificationChannel)
+
+				r.Get("/alerts/rules", h.ListAlertRules)
+				r.Post("/alerts/rules", h.CreateAlertRule)
+				r.Put("/alerts/rules/{id}", h.UpdateAlertRule)
+				r.Delete("/alerts/rules/{id}", h.DeleteAlertRule)
+				r.Get("/alerts/history", h.ListAlertHistory)
+			})
+
 			// -------------------------- PROXY (admin) ------------------------
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermUserManage))
