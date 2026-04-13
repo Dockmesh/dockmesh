@@ -213,18 +213,43 @@
     simLinks = [];
     nodeMap.clear();
 
-    const radius = Math.min(WORLD_W, WORLD_H) * 0.32;
-    nets.forEach((n, i) => {
-      const angle = (i / Math.max(1, nets.length)) * Math.PI * 2;
-      const seedX = CENTER_X + Math.cos(angle) * radius;
-      const seedY = CENTER_Y + Math.sin(angle) * radius;
+    // ----- Stack-aware seeding -----
+    // Place each compose stack at its own anchor on a big outer circle, and
+    // unstacked nodes at the centre. This gives the simulation a sensible
+    // starting layout instead of having every cluster fight from the same
+    // point. Without this seed, large topologies converge to a "spaghetti
+    // ball" and small ones look randomly different on every reload.
+    const stacks = new Set<string>();
+    for (const n of nets) if (n.stack) stacks.add(n.stack);
+    for (const c of conts) if (c.stack) stacks.add(c.stack);
+    const stackList = [...stacks].sort();
+    const stackAnchors = new Map<string, { x: number; y: number }>();
+    const outerRadius = Math.min(WORLD_W, WORLD_H) * 0.34;
+    stackList.forEach((s, i) => {
+      const angle = (i / Math.max(1, stackList.length)) * Math.PI * 2 - Math.PI / 2;
+      stackAnchors.set(s, {
+        x: CENTER_X + Math.cos(angle) * outerRadius,
+        y: CENTER_Y + Math.sin(angle) * outerRadius
+      });
+    });
+
+    function seedFor(stack: string | undefined, fallback: { x: number; y: number }) {
+      if (stack && stackAnchors.has(stack)) {
+        const a = stackAnchors.get(stack)!;
+        return { x: a.x + (Math.random() - 0.5) * 60, y: a.y + (Math.random() - 0.5) * 60 };
+      }
+      return fallback;
+    }
+
+    nets.forEach((n) => {
       const old = prev?.get(n.id);
+      const seed = seedFor(n.stack, { x: CENTER_X + (Math.random() - 0.5) * 200, y: CENTER_Y + (Math.random() - 0.5) * 200 });
       const node: SimNode = {
         id: n.id,
         kind: 'network',
         label: n.name,
-        x: old ? old.x : seedX,
-        y: old ? old.y : seedY,
+        x: old ? old.x : seed.x,
+        y: old ? old.y : seed.y,
         vx: 0,
         vy: 0,
         fixed: old ? old.fixed : false,
@@ -236,17 +261,19 @@
     });
 
     conts.forEach((c) => {
+      const old = prev?.get(c.id);
       const firstNet = topo!.links.find((l) => l.container_id === c.id && netIds.has(l.network_id));
       const anchor = firstNet ? nodeMap.get(firstNet.network_id) : null;
-      const ax = anchor ? anchor.x : CENTER_X;
-      const ay = anchor ? anchor.y : CENTER_Y;
-      const old = prev?.get(c.id);
+      const fallback = anchor
+        ? { x: anchor.x + (Math.random() - 0.5) * 80, y: anchor.y + (Math.random() - 0.5) * 80 }
+        : { x: CENTER_X + (Math.random() - 0.5) * 200, y: CENTER_Y + (Math.random() - 0.5) * 200 };
+      const seed = seedFor(c.stack, fallback);
       const node: SimNode = {
         id: c.id,
         kind: 'container',
         label: c.name,
-        x: old ? old.x : ax + (Math.random() - 0.5) * 100,
-        y: old ? old.y : ay + (Math.random() - 0.5) * 100,
+        x: old ? old.x : seed.x,
+        y: old ? old.y : seed.y,
         vx: 0,
         vy: 0,
         fixed: old ? old.fixed : false,
@@ -270,23 +297,66 @@
   }
 
   // ---------- physics ----------
-  // Tuned for ≤80 nodes. Containers attached to the same network were
-  // overlapping because:
-  //   1. collision padding was too tight for the bottom-label text,
-  //   2. only one relaxation pass per frame meant springs immediately
-  //      pulled colliders back together,
-  //   3. LINK_DIST left too little arc room when 4-5 containers shared
-  //      one network.
-  // Increasing padding + iterating the collision pass + a longer link
-  // distance gives every container room for its name and port badge.
+  // Tuned for ≤80 nodes. Two layers of forces:
+  //   • Node-level: repulsion + spring links + collision (per-node).
+  //   • Cluster-level: cohesion pulls stack members to their centroid,
+  //     cluster-collision keeps whole stack bounding spheres from
+  //     overlapping each other. This is the equivalent of d3-force-cluster
+  //     and is what stops the stack groups from sitting on top of one
+  //     another.
   const REPEL = 6500;
   const LINK_DIST = 220;
   const LINK_K = 0.025;
   const GRAVITY = 0.006;
   const DAMPING = 0.78;
   const COLLISION_PASSES = 4;
-  const COLLISION_PAD = 36; // extra px between circle edges (room for labels)
+  const COLLISION_PAD = 36;
+  const COHESION = 0.018;
+  const CLUSTER_GAP = 90; // extra px between two cluster bounding spheres
   const MAX_TICKS = 1200;
+
+  type Cluster = {
+    name: string;
+    cx: number;
+    cy: number;
+    radius: number;
+    members: SimNode[];
+  };
+
+  function computeClusters(): Cluster[] {
+    const groups = new Map<string, SimNode[]>();
+    for (const n of simNodes) {
+      const stack = (n.data as { stack?: string }).stack;
+      if (!stack) continue;
+      let g = groups.get(stack);
+      if (!g) {
+        g = [];
+        groups.set(stack, g);
+      }
+      g.push(n);
+    }
+    const out: Cluster[] = [];
+    for (const [name, members] of groups) {
+      if (members.length < 2) continue;
+      let cx = 0;
+      let cy = 0;
+      for (const m of members) {
+        cx += m.x;
+        cy += m.y;
+      }
+      cx /= members.length;
+      cy /= members.length;
+      let radius = 0;
+      for (const m of members) {
+        const dx = m.x - cx;
+        const dy = m.y - cy;
+        const d = Math.sqrt(dx * dx + dy * dy) + m.radius;
+        if (d > radius) radius = d;
+      }
+      out.push({ name, cx, cy, radius, members });
+    }
+    return out;
+  }
 
   function tick() {
     if (simNodes.length === 0) return;
@@ -326,6 +396,49 @@
       s.vy += fy;
       t.vx -= fx;
       t.vy -= fy;
+    }
+
+    // Cluster forces — compute centroids once, then apply cohesion +
+    // group-level repulsion BEFORE the integration step so the velocities
+    // are summed with everything else.
+    const clusters = computeClusters();
+
+    // Cohesion: each member is pulled toward its cluster centroid.
+    for (const c of clusters) {
+      for (const m of c.members) {
+        m.vx += (c.cx - m.x) * COHESION;
+        m.vy += (c.cy - m.y) * COHESION;
+      }
+    }
+
+    // Cluster-vs-cluster repulsion: if bounding spheres overlap, push every
+    // member of both clusters apart. This is the "collision box" for groups.
+    for (let i = 0; i < clusters.length; i++) {
+      const a = clusters[i];
+      for (let j = i + 1; j < clusters.length; j++) {
+        const b = clusters[j];
+        const dx = b.cx - a.cx;
+        const dy = b.cy - a.cy;
+        const d = Math.sqrt(dx * dx + dy * dy) + 0.01;
+        const minD = a.radius + b.radius + CLUSTER_GAP;
+        if (d < minD) {
+          const overlap = (minD - d) / d;
+          const ox = dx * overlap * 0.25;
+          const oy = dy * overlap * 0.25;
+          for (const m of a.members) {
+            if (!m.fixed) {
+              m.x -= ox;
+              m.y -= oy;
+            }
+          }
+          for (const m of b.members) {
+            if (!m.fixed) {
+              m.x += ox;
+              m.y += oy;
+            }
+          }
+        }
+      }
     }
 
     // Gravity + integrate
