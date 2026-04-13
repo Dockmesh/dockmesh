@@ -46,7 +46,40 @@ const (
 
 	// Single response type. Errors set OK=false and put the message in Error.
 	FrameRes = "res"
+
+	// Stream multiplexing — one bidirectional logical stream per stream_id,
+	// carried over the same agent connection. Used for logs, stats and exec
+	// where request/response doesn't fit (long-lived, chunked, possibly
+	// bidirectional).
+	FrameStreamOpen  = "stream.open"  // server → agent: start a new stream
+	FrameStreamData  = "stream.data"  // bidirectional: payload bytes
+	FrameStreamClose = "stream.close" // bidirectional: end the stream
 )
+
+// StreamOpen is the server → agent payload that requests a new stream.
+// Kind picks the data source on the agent side. Params are kind-specific
+// (e.g. {"tail":"100"} for logs).
+type StreamOpen struct {
+	StreamID  string         `json:"stream_id"`
+	Kind      string         `json:"kind"` // "logs" | "stats" | "exec"
+	Container string         `json:"container"`
+	Params    map[string]any `json:"params,omitempty"`
+}
+
+// StreamData carries an opaque chunk of stream payload. Bytes are
+// base64-encoded by default JSON marshalling so we can ship raw binary
+// (docker multiplexed log frames, etc.) without escaping issues.
+type StreamData struct {
+	StreamID string `json:"stream_id"`
+	Data     []byte `json:"data"`
+}
+
+// StreamClose terminates a stream. Error is non-empty if the stream ended
+// because of a failure (otherwise it's a clean EOF).
+type StreamClose struct {
+	StreamID string `json:"stream_id"`
+	Error    string `json:"error,omitempty"`
+}
 
 // ResponseEnvelope is the wire format every response uses. Data is the
 // JSON-encoded result of the operation; both sides use the same docker

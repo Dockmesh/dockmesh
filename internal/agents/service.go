@@ -63,9 +63,9 @@ type Service struct {
 }
 
 // ConnectedAgent is held in memory while the agent's WS is open. HTTP
-// handlers ask the remote agent to do things via Request(), which sends
-// a frame over the send channel and waits on a per-request response
-// channel registered in pending.
+// handlers ask the remote agent to do things via Request() (one-shot
+// request/response) or OpenStream() (long-lived multiplexed channel for
+// logs / stats / exec).
 type ConnectedAgent struct {
 	ID       string
 	Name     string
@@ -75,6 +75,9 @@ type ConnectedAgent struct {
 
 	pendingMu sync.Mutex
 	pending   map[string]chan Frame
+
+	streamsMu sync.Mutex
+	streams   map[string]*Stream
 }
 
 func (c *ConnectedAgent) Send(f Frame) {

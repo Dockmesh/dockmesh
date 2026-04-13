@@ -33,6 +33,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 
@@ -240,6 +241,18 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 			if err := writeFrame(conn, agents.Frame{Type: agents.FrameAgentPong, Payload: pong}); err != nil {
 				return err
 			}
+		case agents.FrameStreamOpen:
+			var open agents.StreamOpen
+			if err := json.Unmarshal(f.Payload, &open); err != nil {
+				continue
+			}
+			go startStream(ctxConn, conn, dockerCli, open)
+
+		case agents.FrameStreamClose:
+			var sc agents.StreamClose
+			_ = json.Unmarshal(f.Payload, &sc)
+			closeStream(sc.StreamID)
+
 		default:
 			// Anything starting with req. is a server-initiated request.
 			// Handle it in a goroutine so a slow handler can't block the
@@ -247,6 +260,117 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 			go handleRequest(ctxConn, conn, dockerCli, f)
 		}
 	}
+}
+
+// -----------------------------------------------------------------------------
+// Stream registry — tracks running goroutines so stream.close can cancel them.
+// -----------------------------------------------------------------------------
+
+var (
+	streamMu  sync.Mutex
+	streamMap = map[string]context.CancelFunc{}
+	streamWMu sync.Mutex // serialises writeFrame() so concurrent streams don't interleave WS frames
+)
+
+func registerStream(id string, cancel context.CancelFunc) {
+	streamMu.Lock()
+	streamMap[id] = cancel
+	streamMu.Unlock()
+}
+
+func deregisterStream(id string) {
+	streamMu.Lock()
+	delete(streamMap, id)
+	streamMu.Unlock()
+}
+
+func closeStream(id string) {
+	streamMu.Lock()
+	cancel, ok := streamMap[id]
+	if ok {
+		delete(streamMap, id)
+	}
+	streamMu.Unlock()
+	if ok {
+		cancel()
+	}
+}
+
+// safeWriteFrame is the agent's only WS write path. Holding the mutex
+// guarantees that stream.data chunks from concurrent streams don't
+// interleave inside the same WS message — gorilla/websocket panics if
+// two goroutines try to write at once.
+func safeWriteFrame(conn *websocket.Conn, f agents.Frame) error {
+	streamWMu.Lock()
+	defer streamWMu.Unlock()
+	return writeFrame(conn, f)
+}
+
+// startStream dispatches to the right reader for the requested stream
+// kind. New kinds (stats, exec) get added here.
+func startStream(parent context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen) {
+	if cli == nil {
+		sendStreamClose(conn, open.StreamID, "docker daemon unavailable")
+		return
+	}
+	ctx, cancel := context.WithCancel(parent)
+	registerStream(open.StreamID, cancel)
+	defer deregisterStream(open.StreamID)
+	defer cancel()
+
+	switch open.Kind {
+	case "logs":
+		runLogStream(ctx, conn, cli, open)
+	default:
+		sendStreamClose(conn, open.StreamID, "unknown stream kind: "+open.Kind)
+	}
+}
+
+func runLogStream(ctx context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen) {
+	tail, _ := open.Params["tail"].(string)
+	if tail == "" {
+		tail = "100"
+	}
+	follow := true
+	if v, ok := open.Params["follow"].(bool); ok {
+		follow = v
+	}
+	rc, err := cli.ContainerLogs(ctx, open.Container, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     follow,
+		Tail:       tail,
+		Timestamps: true,
+	})
+	if err != nil {
+		sendStreamClose(conn, open.StreamID, err.Error())
+		return
+	}
+	defer rc.Close()
+
+	buf := make([]byte, 8192)
+	for {
+		n, rerr := rc.Read(buf)
+		if n > 0 {
+			payload, _ := json.Marshal(agents.StreamData{StreamID: open.StreamID, Data: append([]byte(nil), buf[:n]...)})
+			if werr := safeWriteFrame(conn, agents.Frame{Type: agents.FrameStreamData, Payload: payload}); werr != nil {
+				return
+			}
+		}
+		if rerr != nil {
+			if rerr == io.EOF || ctx.Err() != nil {
+				sendStreamClose(conn, open.StreamID, "")
+			} else {
+				sendStreamClose(conn, open.StreamID, rerr.Error())
+			}
+			return
+		}
+	}
+}
+
+func sendStreamClose(conn *websocket.Conn, id, errMsg string) {
+	payload, _ := json.Marshal(agents.StreamClose{StreamID: id, Error: errMsg})
+	_ = safeWriteFrame(conn, agents.Frame{Type: agents.FrameStreamClose, Payload: payload})
 }
 
 // -----------------------------------------------------------------------------

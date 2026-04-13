@@ -98,6 +98,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer h.svc.markOffline(ag)
+	defer ag.closeAllStreams()
 
 	slog.Info("agent connected", "id", agent.ID, "name", agent.Name, "host", hello.Hostname, "version", hello.Version)
 
@@ -163,6 +164,9 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
 		case FrameRes:
 			ag.deliverResponse(f)
+			conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
+		case FrameStreamData, FrameStreamClose:
+			ag.routeStreamFrame(f)
 			conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
 		}
 	}

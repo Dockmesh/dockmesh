@@ -37,11 +37,8 @@ func (h *Handlers) WSTicket(w http.ResponseWriter, r *http.Request) {
 
 // WSLogs streams container logs over a WebSocket connection.
 // Auth via ?ticket= query parameter (short-lived JWT from WSTicket).
+// Reads ?host=<id> to pick a remote agent — falls back to local docker.
 func (h *Handlers) WSLogs(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		http.Error(w, "docker unavailable", http.StatusServiceUnavailable)
-		return
-	}
 	ticket := r.URL.Query().Get("ticket")
 	if ticket == "" {
 		http.Error(w, "ticket required", http.StatusUnauthorized)
@@ -49,6 +46,12 @@ func (h *Handlers) WSLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := h.Auth.ValidateWSTicket(ticket); err != nil {
 		http.Error(w, "invalid ticket", http.StatusUnauthorized)
+		return
+	}
+
+	target, err := h.pickHost(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 
@@ -74,7 +77,7 @@ func (h *Handlers) WSLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	rc, err := h.Docker.ContainerLogs(r.Context(), containerID, tail, true)
+	rc, err := target.ContainerLogs(r.Context(), containerID, tail, true)
 	if err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
 		return
