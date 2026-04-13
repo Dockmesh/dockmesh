@@ -37,7 +37,10 @@ import (
 	"syscall"
 	"time"
 
+	dockerwrap "github.com/dockmesh/dockmesh/internal/docker"
+
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/compose"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/volume"
@@ -611,9 +614,58 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		info, err := cli.Info(ctx)
 		respond(conn, f.ID, info, err)
 
+	case agents.FrameReqStackDeploy:
+		var req agents.StackDeployReq
+		_ = json.Unmarshal(f.Payload, &req)
+		res, err := agentDeployStack(ctx, cli, req)
+		respond(conn, f.ID, res, err)
+
+	case agents.FrameReqStackStop:
+		var req agents.StackNameReq
+		_ = json.Unmarshal(f.Payload, &req)
+		err := compose.NewService(dockerwrap.Wrap(cli), nil).Stop(ctx, req.Name)
+		respond(conn, f.ID, struct{}{}, err)
+
+	case agents.FrameReqStackStatus:
+		var req agents.StackNameReq
+		_ = json.Unmarshal(f.Payload, &req)
+		out, err := compose.NewService(dockerwrap.Wrap(cli), nil).Status(ctx, req.Name)
+		respond(conn, f.ID, out, err)
+
 	default:
 		sendResponse(conn, f.ID, agents.ResponseEnvelope{OK: false, Error: "unknown request type: " + f.Type})
 	}
+}
+
+// agentDeployStack stages compose+env into a tmpdir, parses, and runs the
+// shared executor against the local docker daemon. Same code path the
+// central server uses for a local deploy — code from internal/compose is
+// fully reusable thanks to the Service.DeployProject extraction.
+func agentDeployStack(ctx context.Context, cli *client.Client, req agents.StackDeployReq) (*compose.DeployResult, error) {
+	stagingBase := filepath.Join(envOr("DOCKMESH_DATA_DIR", "/var/lib/dockmesh"), "staging")
+	if err := os.MkdirAll(stagingBase, 0o700); err != nil {
+		return nil, err
+	}
+	dir, err := os.MkdirTemp(stagingBase, req.Name+"-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(req.Compose), 0o600); err != nil {
+		return nil, err
+	}
+	if req.Env != "" {
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(req.Env), 0o600); err != nil {
+			return nil, err
+		}
+	}
+
+	proj, err := compose.LoadProject(ctx, dir, req.Name, req.Env)
+	if err != nil {
+		return nil, err
+	}
+	return compose.NewService(dockerwrap.Wrap(cli), nil).DeployProject(ctx, proj)
 }
 
 func respond(conn *websocket.Conn, id string, data any, err error) {

@@ -354,16 +354,23 @@ export const api = {
       request<{ name: string }>(`/stacks/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify({ compose, env }) }),
     delete: (name: string) =>
       request<void>(`/stacks/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-    deploy: (name: string) =>
-      request<{ stack: string; services: Array<{ name: string; container_id: string; image: string }> }>(
-        `/stacks/${encodeURIComponent(name)}/deploy`, { method: 'POST' }
-      ),
-    stop: (name: string) =>
-      request<void>(`/stacks/${encodeURIComponent(name)}/stop`, { method: 'POST' }),
-    status: (name: string) =>
-      request<Array<{ service: string; container_id: string; state: string; status: string; image: string }>>(
-        `/stacks/${encodeURIComponent(name)}/status`
-      )
+    deploy: (name: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<{ stack: string; services: Array<{ name: string; container_id: string; image: string }> }>(
+        `/stacks/${encodeURIComponent(name)}/deploy${qs}`,
+        { method: 'POST' }
+      );
+    },
+    stop: (name: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<void>(`/stacks/${encodeURIComponent(name)}/stop${qs}`, { method: 'POST' });
+    },
+    status: (name: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<Array<{ service: string; container_id: string; state: string; status: string; image: string }>>(
+        `/stacks/${encodeURIComponent(name)}/status${qs}`
+      );
+    }
   },
 
   hosts: {

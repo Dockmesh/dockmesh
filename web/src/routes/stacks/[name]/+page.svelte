@@ -6,10 +6,12 @@
   import { Button, Card, Badge, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
-  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw } from 'lucide-svelte';
+  import { hosts } from '$lib/stores/host.svelte';
+  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server } from 'lucide-svelte';
 
   const canWrite = $derived(allowed('stack.write'));
   const canDeploy = $derived(allowed('stack.deploy'));
+  const isRemote = $derived(hosts.id !== 'local');
 
   const name = $derived($page.params.name);
 
@@ -32,7 +34,7 @@
       compose = detail.compose;
       env = detail.env ?? '';
       try {
-        services = await api.stacks.status(name);
+        services = await api.stacks.status(name, hosts.id);
       } catch {
         services = [];
       }
@@ -76,9 +78,19 @@
 
   async function refreshStatus() {
     try {
-      services = await api.stacks.status(name);
+      services = await api.stacks.status(name, hosts.id);
     } catch { /* ignore */ }
   }
+
+  // Re-load whenever the user picks a different host from the top bar.
+  let prevHost = hosts.id;
+  $effect(() => {
+    const cur = hosts.id;
+    if (cur !== prevHost) {
+      prevHost = cur;
+      refreshStatus();
+    }
+  });
 
   async function save() {
     busy = true;
@@ -96,8 +108,8 @@
   async function deploy() {
     busy = true;
     try {
-      const res = await api.stacks.deploy(name);
-      toast.success('Deployed', `${res.services.length} service(s) running`);
+      const res = await api.stacks.deploy(name, hosts.id);
+      toast.success('Deployed', `${res.services.length} service(s) on ${hosts.selected?.name ?? 'local'}`);
       await refreshStatus();
     } catch (err) {
       toast.error('Deploy failed', err instanceof ApiError ? err.message : undefined);
@@ -109,7 +121,7 @@
   async function stop() {
     busy = true;
     try {
-      await api.stacks.stop(name);
+      await api.stacks.stop(name, hosts.id);
       services = [];
       toast.info('Stopped');
     } catch (err) {
@@ -151,6 +163,12 @@
   <div class="flex items-center justify-between flex-wrap gap-3">
     <div class="flex items-center gap-3 min-w-0">
       <h2 class="text-2xl font-semibold tracking-tight truncate">{name}</h2>
+      {#if isRemote}
+        <span class="inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded border border-[var(--color-brand-500)]/40 bg-[color-mix(in_srgb,var(--color-brand-500)_10%,transparent)] text-[var(--color-brand-400)]">
+          <Server class="w-3 h-3" />
+          {hosts.selected?.name}
+        </span>
+      {/if}
       {#if services.length > 0}
         <Badge variant={services.every((s) => s.state === 'running') ? 'success' : 'warning'} dot>
           {services.filter((s) => s.state === 'running').length}/{services.length} running

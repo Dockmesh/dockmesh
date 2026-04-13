@@ -3,7 +3,10 @@ package host
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 
+	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/volume"
@@ -85,6 +88,69 @@ func (h *LocalHost) StartExec(ctx context.Context, id string, cmd []string) (Exe
 		return nil, err
 	}
 	return &localExecSession{cli: h.cli, sess: sess, ctx: ctx}, nil
+}
+
+// DeployStack writes compose+env to a temp dir, parses, and runs the
+// shared compose executor against the local docker daemon. Same code
+// path as the agent's deploy handler — proves the seam works.
+func (h *LocalHost) DeployStack(ctx context.Context, name, composeYAML, envContent string) (*compose.DeployResult, error) {
+	if h.cli == nil {
+		return nil, ErrNoDocker
+	}
+	dir, cleanup, err := writeStagingDir(name, composeYAML, envContent)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	proj, err := compose.LoadProject(ctx, dir, name, envContent)
+	if err != nil {
+		return nil, err
+	}
+	svc := compose.NewService(h.cli, nil)
+	return svc.DeployProject(ctx, proj)
+}
+
+func (h *LocalHost) StopStack(ctx context.Context, name string) error {
+	if h.cli == nil {
+		return ErrNoDocker
+	}
+	return compose.NewService(h.cli, nil).Stop(ctx, name)
+}
+
+func (h *LocalHost) StackStatus(ctx context.Context, name string) ([]compose.StatusEntry, error) {
+	if h.cli == nil {
+		return nil, ErrNoDocker
+	}
+	return compose.NewService(h.cli, nil).Status(ctx, name)
+}
+
+// writeStagingDir creates a tmp directory containing compose.yaml and an
+// optional .env file. Used both by LocalHost.DeployStack on the central
+// server (so we go through the same parse path as the agent) and by the
+// agent's own deploy handler.
+func writeStagingDir(name, composeYAML, envContent string) (string, func(), error) {
+	base, err := os.MkdirTemp("", "dockmesh-deploy-"+name+"-")
+	if err != nil {
+		return "", func() {}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(base) }
+	if err := os.WriteFile(filepath.Join(base, "compose.yaml"), []byte(composeYAML), 0o600); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	if envContent != "" {
+		if err := os.WriteFile(filepath.Join(base, ".env"), []byte(envContent), 0o600); err != nil {
+			cleanup()
+			return "", func() {}, err
+		}
+	}
+	return base, cleanup, nil
+}
+
+// WriteStagingDir is the exported helper the agent uses to materialise
+// the same compose+env layout into its own /var/lib/dockmesh/staging.
+func WriteStagingDir(name, composeYAML, envContent string) (string, func(), error) {
+	return writeStagingDir(name, composeYAML, envContent)
 }
 
 // localExecSession wraps the docker hijacked response in the ExecSession

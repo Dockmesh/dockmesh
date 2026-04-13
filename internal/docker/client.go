@@ -37,3 +37,9 @@ func (c *Client) Close() error {
 // Raw exposes the underlying Docker SDK client.
 // TODO(phase1): replace with typed wrappers per resource.
 func (c *Client) Raw() *client.Client { return c.cli }
+
+// Wrap adopts an existing low-level docker SDK client. Used by the agent
+// where we already have a *client.Client from the heartbeat / request
+// handlers and don't want to open a second connection just to satisfy
+// the compose.Service constructor.
+func Wrap(cli *client.Client) *Client { return &Client{cli: cli} }

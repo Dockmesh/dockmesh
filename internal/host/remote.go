@@ -8,6 +8,7 @@ import (
 	"io"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/compose"
 	dtypes "github.com/docker/docker/api/types"
 )
 
@@ -149,6 +150,46 @@ func (s *remoteExecSession) Resize(rows, cols uint) error {
 	return s.stream.WriteControl("resize", map[string]any{"cols": cols, "rows": rows})
 }
 func (s *remoteExecSession) Close() error { return s.stream.Close() }
+
+// -----------------------------------------------------------------------------
+// Stack operations
+// -----------------------------------------------------------------------------
+
+func (h *RemoteHost) DeployStack(ctx context.Context, name, composeYAML, envContent string) (*compose.DeployResult, error) {
+	data, err := h.request(ctx, agents.FrameReqStackDeploy, agents.StackDeployReq{
+		Name:    name,
+		Compose: composeYAML,
+		Env:     envContent,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var out compose.DeployResult
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode deploy result: %w", err)
+	}
+	return &out, nil
+}
+
+func (h *RemoteHost) StopStack(ctx context.Context, name string) error {
+	_, err := h.request(ctx, agents.FrameReqStackStop, agents.StackNameReq{Name: name})
+	return err
+}
+
+func (h *RemoteHost) StackStatus(ctx context.Context, name string) ([]compose.StatusEntry, error) {
+	data, err := h.request(ctx, agents.FrameReqStackStatus, agents.StackNameReq{Name: name})
+	if err != nil {
+		return nil, err
+	}
+	var out []compose.StatusEntry
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode status: %w", err)
+	}
+	if out == nil {
+		out = []compose.StatusEntry{}
+	}
+	return out, nil
+}
 
 func (h *RemoteHost) ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error) {
 	data, err := h.request(ctx, agents.FrameReqImageList, map[string]bool{"all": all})
