@@ -52,6 +52,37 @@ export interface MetricsSample {
   blk_write: number;
 }
 
+export interface TopoNetwork {
+  id: string;
+  name: string;
+  driver: string;
+  scope: string;
+  internal: boolean;
+  system: boolean;
+  stack?: string;
+}
+
+export interface TopoContainer {
+  id: string;
+  name: string;
+  state: string;
+  image: string;
+  stack?: string;
+}
+
+export interface TopoLink {
+  network_id: string;
+  container_id: string;
+  ipv4?: string;
+  aliases?: string[];
+}
+
+export interface Topology {
+  networks: TopoNetwork[];
+  containers: TopoContainer[];
+  links: TopoLink[];
+}
+
 export interface BackupSource {
   type: 'volume' | 'stack';
   name: string;
@@ -340,7 +371,8 @@ export const api = {
     inspect: (id: string) => request<any>(`/networks/${id}`),
     create: (name: string, driver?: string) =>
       request<{ Id: string }>('/networks', { method: 'POST', body: JSON.stringify({ name, driver }) }),
-    remove: (id: string) => request<void>(`/networks/${id}`, { method: 'DELETE' })
+    remove: (id: string) => request<void>(`/networks/${id}`, { method: 'DELETE' }),
+    topology: () => request<Topology>('/networks/topology')
   },
 
   volumes: {
