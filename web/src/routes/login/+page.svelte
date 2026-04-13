@@ -3,6 +3,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { api, ApiError } from '$lib/api';
   import { Button, Input } from '$lib/components/ui';
+  import { toast } from '$lib/stores/toast.svelte';
   import { Lock, ShieldCheck } from 'lucide-svelte';
 
   let username = $state('admin');
@@ -13,6 +14,56 @@
   // MFA step state
   let mfaToken = $state<string | null>(null);
   let mfaCode = $state('');
+
+  // SSO providers
+  let providers = $state<Array<{ slug: string; display_name: string }>>([]);
+
+  async function loadProviders() {
+    try {
+      providers = await api.oidc.listPublic();
+    } catch { /* ignore */ }
+  }
+
+  async function handleSSOHash() {
+    if (typeof window === 'undefined') return;
+    const hash = window.location.hash.slice(1);
+    if (!hash) return;
+    const params = new URLSearchParams(hash);
+    const access = params.get('sso_access');
+    const refresh = params.get('sso_refresh');
+    if (!access || !refresh) return;
+
+    // Clear hash so reloads don't re-trigger.
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+
+    // Set tokens so we can fetch /me.
+    auth.setSession({ id: '', username: '', role: '' } as any, access, refresh);
+    try {
+      const me = await api.users.me();
+      auth.setSession(me as any, access, refresh);
+      toast.success('Signed in via SSO', me.username);
+      goto('/');
+    } catch {
+      auth.clear();
+      error = 'SSO callback failed to load profile';
+    }
+  }
+
+  function handleSSOErrorParam() {
+    if (typeof window === 'undefined') return;
+    const p = new URLSearchParams(window.location.search);
+    const e = p.get('sso_error');
+    if (e) {
+      error = 'SSO failed: ' + decodeURIComponent(e);
+      history.replaceState(null, '', window.location.pathname);
+    }
+  }
+
+  $effect(() => {
+    handleSSOHash();
+    handleSSOErrorParam();
+    loadProviders();
+  });
 
   async function submit(e: Event) {
     e.preventDefault();
@@ -56,6 +107,11 @@
     mfaToken = null;
     mfaCode = '';
     error = '';
+  }
+
+  function ssoLogin(slug: string) {
+    // Full redirect — backend sets the state cookie + redirects to provider.
+    window.location.href = `/api/v1/auth/oidc/${slug}/login`;
   }
 </script>
 
@@ -107,6 +163,28 @@
         <Button type="submit" variant="primary" class="w-full" {loading} disabled={loading || !username || !password}>
           {loading ? 'Signing in…' : 'Sign in'}
         </Button>
+
+        {#if providers.length > 0}
+          <div class="relative my-3">
+            <div class="absolute inset-0 flex items-center">
+              <div class="w-full border-t border-[var(--border)]"></div>
+            </div>
+            <div class="relative flex justify-center">
+              <span class="bg-[var(--surface)] px-2 text-xs text-[var(--fg-subtle)] uppercase tracking-wider">or</span>
+            </div>
+          </div>
+          <div class="space-y-2">
+            {#each providers as p}
+              <button
+                type="button"
+                class="dm-btn dm-btn-secondary w-full"
+                onclick={() => ssoLogin(p.slug)}
+              >
+                Sign in with {p.display_name}
+              </button>
+            {/each}
+          </div>
+        {/if}
       </form>
     {:else}
       <form onsubmit={submitMFA} class="dm-card p-6 space-y-4 shadow-2xl">

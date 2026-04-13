@@ -41,6 +41,36 @@ export interface UpdateResult {
   history_id?: number;
 }
 
+export interface OIDCProvider {
+  id: number;
+  slug: string;
+  display_name: string;
+  issuer_url: string;
+  client_id: string;
+  scopes: string;
+  group_claim?: string;
+  admin_group?: string;
+  operator_group?: string;
+  default_role: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OIDCProviderInput {
+  slug: string;
+  display_name: string;
+  issuer_url: string;
+  client_id: string;
+  client_secret: string;
+  scopes: string;
+  group_claim?: string;
+  admin_group?: string;
+  operator_group?: string;
+  default_role: string;
+  enabled: boolean;
+}
+
 export interface UpdateHistoryEntry {
   id: number;
   container_name: string;
@@ -243,6 +273,19 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ command })
       })
+  },
+
+  oidc: {
+    listPublic: () =>
+      request<Array<{ slug: string; display_name: string }>>('/auth/oidc/providers'),
+    listAdmin: () =>
+      request<Array<OIDCProvider>>('/oidc/providers'),
+    create: (input: OIDCProviderInput) =>
+      request<OIDCProvider>('/oidc/providers', { method: 'POST', body: JSON.stringify(input) }),
+    update: (id: number, input: OIDCProviderInput) =>
+      request<OIDCProvider>(`/oidc/providers/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+    delete: (id: number) =>
+      request<void>(`/oidc/providers/${id}`, { method: 'DELETE' })
   },
 
   proxy: {

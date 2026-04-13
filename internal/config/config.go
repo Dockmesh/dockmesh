@@ -21,6 +21,7 @@ type Config struct {
 	ScannerBinary     string
 	ScannerEnabled    bool
 	ProxyEnabled      bool
+	BaseURL           string
 	JWTSecret         []byte
 }
 
@@ -37,6 +38,9 @@ func Load() (*Config, error) {
 		ScannerEnabled:    envOr("DOCKMESH_SCANNER_ENABLED", "true") != "false",
 		// Proxy is opt-in: many users already run Traefik or NPM.
 		ProxyEnabled: envOr("DOCKMESH_PROXY_ENABLED", "false") == "true",
+		// BaseURL is used to build the OIDC redirect URL. Providers must
+		// have <baseURL>/api/v1/auth/oidc/{slug}/callback whitelisted.
+		BaseURL: envOr("DOCKMESH_BASE_URL", "http://localhost:8080"),
 	}
 	secret, err := loadOrCreateJWTSecret(cfg.SecretsPath)
 	if err != nil {
