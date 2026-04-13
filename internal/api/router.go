@@ -1,8 +1,11 @@
 package api
 
 import (
+	"io"
 	"io/fs"
 	"net/http"
+	"path"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/api/handlers"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
@@ -213,8 +216,48 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 	})
 
 	if webFS != nil {
-		r.Handle("/*", http.FileServer(http.FS(webFS)))
+		r.Handle("/*", spaHandler(webFS))
 	}
 
 	return r
+}
+
+// spaHandler serves files from the embedded SvelteKit build with a single-page
+// app fallback: any request for a path that doesn't resolve to a file falls
+// back to index.html so client-side routes (e.g. /backups, /containers/abc)
+// keep working on full-page reloads.
+func spaHandler(webFS fs.FS) http.Handler {
+	fileServer := http.FileServer(http.FS(webFS))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Never fall back for API or WS paths — those are handled above. If
+		// chi reaches the file handler with /api/* it means the route is
+		// genuinely missing and a 404 is correct.
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			http.NotFound(w, r)
+			return
+		}
+		clean := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+		if clean == "" {
+			clean = "index.html"
+		}
+		if f, err := webFS.Open(clean); err == nil {
+			_ = f.Close()
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		// Unknown path → serve index.html so the SvelteKit router takes over.
+		index, err := webFS.Open("index.html")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer index.Close()
+		stat, err := index.Stat()
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		http.ServeContent(w, r, "index.html", stat.ModTime(), index.(io.ReadSeeker))
+	})
 }
