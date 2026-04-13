@@ -22,6 +22,9 @@ type Config struct {
 	ScannerEnabled    bool
 	ProxyEnabled      bool
 	BaseURL           string
+	AgentListen       string
+	AgentPublicURL    string
+	AgentSANs         string
 	JWTSecret         []byte
 }
 
@@ -41,6 +44,13 @@ func Load() (*Config, error) {
 		// BaseURL is used to build the OIDC redirect URL. Providers must
 		// have <baseURL>/api/v1/auth/oidc/{slug}/callback whitelisted.
 		BaseURL: envOr("DOCKMESH_BASE_URL", "http://localhost:8080"),
+		// Remote-agent mTLS listener (concept §3.1). Empty = disabled.
+		// AgentPublicURL is the wss:// URL printed in the install hint;
+		// must be reachable by the agent host. AgentSANs adds extra
+		// hostnames/IPs to the server cert (comma-separated).
+		AgentListen:    envOr("DOCKMESH_AGENT_LISTEN", ":8443"),
+		AgentPublicURL: envOr("DOCKMESH_AGENT_PUBLIC_URL", ""),
+		AgentSANs:      envOr("DOCKMESH_AGENT_SANS", ""),
 	}
 	secret, err := loadOrCreateJWTSecret(cfg.SecretsPath)
 	if err != nil {

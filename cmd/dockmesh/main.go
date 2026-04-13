@@ -8,10 +8,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"net/url"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/api"
 	"github.com/dockmesh/dockmesh/internal/backup"
@@ -25,6 +28,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/metrics"
 	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/oidc"
+	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/scanner"
@@ -160,6 +164,30 @@ func main() {
 	}
 	defer backupSvc.Stop()
 
+	// Remote-agent PKI + service. The mTLS listener starts only if the
+	// CA + server cert can be issued and a listen address is configured.
+	pkiSANs := []string{}
+	if cfg.AgentSANs != "" {
+		for _, s := range strings.Split(cfg.AgentSANs, ",") {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				pkiSANs = append(pkiSANs, s)
+			}
+		}
+	}
+	pkiMgr, err := pki.New("./data", pkiSANs)
+	if err != nil {
+		slog.Error("agent pki init failed", "err", err)
+		os.Exit(1)
+	}
+	agentPublic := cfg.AgentPublicURL
+	if agentPublic == "" {
+		// Best-effort default: replace http(s) base URL host with wss + the
+		// agent listener port. Operator should override via env in prod.
+		agentPublic = deriveAgentURL(cfg.BaseURL, cfg.AgentListen)
+	}
+	agentsSvc := agents.NewService(database, pkiMgr, cfg.BaseURL, agentPublic)
+
 	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
 	h := handlers.New(handlers.Deps{
 		DB:           database,
@@ -178,9 +206,39 @@ func main() {
 		Notify:       notifySvc,
 		Alerts:       alertsSvc,
 		Backups:      backupSvc,
+		Agents:       agentsSvc,
 		JWTSecret:    cfg.JWTSecret,
 	})
 	router := api.NewRouter(h, authSvc, webFS)
+
+	// mTLS listener for agents (concept §3.1). Started in its own
+	// goroutine; failures are logged but don't take down the main API.
+	if cfg.AgentListen != "" {
+		tlsCfg, err := agents.ServerTLSConfig(pkiMgr)
+		if err != nil {
+			slog.Error("agent tls config", "err", err)
+		} else {
+			agentMux := http.NewServeMux()
+			agentMux.Handle("/connect", agents.NewWSHandler(agentsSvc, pkiMgr))
+			agentSrv := &http.Server{
+				Addr:              cfg.AgentListen,
+				Handler:           agentMux,
+				TLSConfig:         tlsCfg,
+				ReadHeaderTimeout: 10 * time.Second,
+			}
+			go func() {
+				slog.Info("agent mtls listening", "addr", cfg.AgentListen, "public_url", agentPublic)
+				if err := agentSrv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					slog.Error("agent listener error", "err", err)
+				}
+			}()
+			defer func() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = agentSrv.Shutdown(shutdownCtx)
+			}()
+		}
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -204,4 +262,17 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+// deriveAgentURL builds a default wss:// URL for the agent listener from
+// the API base URL and the agent listen address. Operator can override
+// with DOCKMESH_AGENT_PUBLIC_URL — recommended in production.
+func deriveAgentURL(baseURL, listen string) string {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Host == "" {
+		return "wss://localhost" + listen + "/connect"
+	}
+	host := u.Hostname()
+	port := strings.TrimPrefix(listen, ":")
+	return "wss://" + host + ":" + port + "/connect"
 }

@@ -1,4 +1,4 @@
-.PHONY: dev build test lint docker clean tidy frontend-install frontend-build backend-build
+.PHONY: dev build test lint docker clean tidy frontend-install frontend-build backend-build agent agent-linux
 
 VERSION ?= dev
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -23,6 +23,12 @@ frontend-build: frontend-install
 
 backend-build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o dockmesh ./cmd/dockmesh
+
+agent:
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o dockmesh-agent ./cmd/dockmesh-agent
+
+agent-linux:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o dockmesh-agent ./cmd/dockmesh-agent
 
 build: frontend-build backend-build
 	@echo ">> built ./dockmesh"
