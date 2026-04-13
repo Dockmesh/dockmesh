@@ -70,6 +70,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Get("/images", h.ListImages)
 
 				r.Get("/networks", h.ListNetworks)
+				r.Get("/networks/topology", h.GetTopology)
 				r.Get("/networks/{id}", h.InspectNetwork)
 
 				r.Get("/volumes", h.ListVolumes)
