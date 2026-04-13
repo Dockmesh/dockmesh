@@ -161,6 +161,9 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
 		case FrameAgentPong:
 			conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
+		case FrameRes:
+			ag.deliverResponse(f)
+			conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
 		}
 	}
 }

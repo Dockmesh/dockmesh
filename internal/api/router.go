@@ -63,6 +63,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermRead))
 
+				// Host registry — local + every connected agent.
+				r.Get("/hosts", h.ListHosts)
+
 				r.Get("/stacks", h.ListStacks)
 				r.Get("/stacks/{name}", h.GetStack)
 				r.Get("/stacks/{name}/status", h.StackStatus)

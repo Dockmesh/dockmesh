@@ -9,12 +9,13 @@ import (
 )
 
 func (h *Handlers) ListContainers(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	all := r.URL.Query().Get("all") == "true"
-	list, err := h.Docker.ListContainers(r.Context(), all)
+	list, err := target.ListContainers(r.Context(), all)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -23,11 +24,12 @@ func (h *Handlers) ListContainers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) InspectContainer(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	info, err := h.Docker.InspectContainer(r.Context(), chi.URLParam(r, "id"))
+	info, err := target.InspectContainer(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return

@@ -9,6 +9,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/compose"
@@ -41,6 +42,7 @@ type Handlers struct {
 	Alerts      *alerts.Service
 	Backups     *backup.Service
 	Agents      *agents.Service
+	Hosts       *host.Registry
 	JWTSecret   []byte // raw secret used to sign the short-lived OIDC state cookie
 }
 
@@ -62,6 +64,7 @@ type Deps struct {
 	Alerts       *alerts.Service
 	Backups      *backup.Service
 	Agents       *agents.Service
+	Hosts        *host.Registry
 	JWTSecret    []byte
 }
 
@@ -84,6 +87,7 @@ func New(d Deps) *Handlers {
 		Alerts:      d.Alerts,
 		Backups:     d.Backups,
 		Agents:      d.Agents,
+		Hosts:       d.Hosts,
 		JWTSecret:   d.JWTSecret,
 	}
 }
@@ -104,4 +108,21 @@ func decodeJSON(r *http.Request, dst any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(dst)
+}
+
+// pickHost resolves the ?host=<id> query parameter against the host
+// registry. Empty / missing / "local" returns the local docker daemon.
+// Unknown / offline agents bubble up as ErrAgentOffline / ErrUnknownHost
+// so the caller can return 503.
+func (h *Handlers) pickHost(r *http.Request) (host.Host, error) {
+	id := r.URL.Query().Get("host")
+	if h.Hosts == nil {
+		// Backwards compat: fall back to wrapping the docker.Client directly
+		// so a server started without a registry still works.
+		if h.Docker == nil {
+			return nil, host.ErrNoDocker
+		}
+		return host.NewLocal(h.Docker), nil
+	}
+	return h.Hosts.Pick(id)
 }

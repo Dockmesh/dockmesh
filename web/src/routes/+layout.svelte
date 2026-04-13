@@ -3,6 +3,7 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
+  import { hosts } from '$lib/stores/host.svelte';
   import { api } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
   import { Toaster } from '$lib/components/ui';
@@ -22,12 +23,40 @@
     Sun,
     LogOut,
     Menu,
-    X
+    X,
+    HardDrive,
+    ChevronDown
   } from 'lucide-svelte';
 
   let { children } = $props();
   let theme = $state<'light' | 'dark'>('dark');
   let mobileOpen = $state(false);
+  let hostMenuOpen = $state(false);
+
+  // Refresh the available host list whenever auth flips on, and poll
+  // every 10s so newly-connected agents show up in the switcher without
+  // a page reload.
+  let hostPollTimer: ReturnType<typeof setInterval> | null = null;
+  async function refreshHosts() {
+    if (!auth.isAuthenticated) return;
+    try {
+      const list = await api.hosts.list();
+      hosts.setAvailable(list);
+    } catch {
+      /* ignore — we'll retry on the next tick */
+    }
+  }
+  $effect(() => {
+    if (auth.isAuthenticated) {
+      refreshHosts();
+      if (!hostPollTimer) {
+        hostPollTimer = setInterval(refreshHosts, 10000);
+      }
+    } else if (hostPollTimer) {
+      clearInterval(hostPollTimer);
+      hostPollTimer = null;
+    }
+  });
 
   $effect(() => {
     if (typeof document !== 'undefined') {
@@ -166,6 +195,71 @@
         </button>
         <h1 class="text-base font-semibold text-[var(--fg)]">{pageTitle()}</h1>
         <div class="flex-1"></div>
+
+        <!-- Host switcher -->
+        {#if hosts.available.length > 0}
+          <div class="relative">
+            <button
+              class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-[var(--border)] bg-[var(--surface)] hover:border-brand-500 transition-colors"
+              onclick={() => (hostMenuOpen = !hostMenuOpen)}
+              aria-haspopup="listbox"
+              aria-expanded={hostMenuOpen}
+            >
+              <HardDrive class="w-3.5 h-3.5 text-[var(--fg-muted)]" />
+              <span class="font-mono text-xs">{hosts.selected?.name ?? 'Local'}</span>
+              {#if hosts.selected?.kind === 'agent' && hosts.selected.status !== 'online'}
+                <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-warning-500)]"></span>
+              {:else}
+                <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-success-500)]"></span>
+              {/if}
+              <ChevronDown class="w-3 h-3 text-[var(--fg-muted)]" />
+            </button>
+            {#if hostMenuOpen}
+              <button
+                class="fixed inset-0 z-30 cursor-default"
+                aria-label="Close host menu"
+                onclick={() => (hostMenuOpen = false)}
+              ></button>
+              <div
+                class="absolute right-0 top-full mt-1 z-40 min-w-[220px] bg-[var(--bg-elevated)] border border-[var(--border-strong)] rounded-lg shadow-2xl py-1"
+                role="listbox"
+              >
+                <div class="px-3 py-1.5 text-[10px] text-[var(--fg-subtle)] uppercase tracking-wider font-medium">
+                  Docker host
+                </div>
+                {#each hosts.available as h}
+                  {@const online = h.status === 'online'}
+                  <button
+                    class="w-full text-left px-3 py-2 text-sm hover:bg-[var(--surface-hover)] flex items-center gap-2 disabled:opacity-50"
+                    onclick={() => {
+                      hosts.set(h.id);
+                      hostMenuOpen = false;
+                    }}
+                    disabled={!online}
+                    role="option"
+                    aria-selected={h.id === hosts.id}
+                  >
+                    {#if h.kind === 'local'}
+                      <HardDrive class="w-3.5 h-3.5 text-[var(--color-brand-400)]" />
+                    {:else}
+                      <Server class="w-3.5 h-3.5 text-[var(--color-brand-400)]" />
+                    {/if}
+                    <span class="font-mono text-xs flex-1 truncate">{h.name}</span>
+                    {#if online}
+                      <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-success-500)]"></span>
+                    {:else}
+                      <span class="text-[10px] text-[var(--fg-subtle)]">{h.status}</span>
+                    {/if}
+                    {#if h.id === hosts.id}
+                      <span class="text-[var(--color-brand-400)] text-xs">●</span>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+
         <button
           class="p-2 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]"
           onclick={() => (theme = theme === 'dark' ? 'light' : 'dark')}

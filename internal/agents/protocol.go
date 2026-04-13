@@ -19,15 +19,55 @@ type Frame struct {
 }
 
 const (
-	// Agent → Server
+	// Lifecycle (agent → server)
 	FrameAgentHello     = "agent.hello"
 	FrameAgentHeartbeat = "agent.heartbeat"
 	FrameAgentPong      = "agent.pong"
 
-	// Server → Agent
+	// Lifecycle (server → agent)
 	FrameServerWelcome = "server.welcome"
 	FrameServerPing    = "server.ping"
+
+	// Container operations (server → agent: req.*, agent → server: res.*).
+	// Each request carries a unique ID; the response echoes that ID so the
+	// server can correlate it with the waiting goroutine.
+	FrameReqContainerList    = "req.containers.list"
+	FrameReqContainerInspect = "req.containers.inspect"
+	FrameReqContainerStart   = "req.containers.start"
+	FrameReqContainerStop    = "req.containers.stop"
+	FrameReqContainerRestart = "req.containers.restart"
+	FrameReqContainerRemove  = "req.containers.remove"
+
+	// Resource listings (read-only, server → agent)
+	FrameReqImageList   = "req.images.list"
+	FrameReqNetworkList = "req.networks.list"
+	FrameReqVolumeList  = "req.volumes.list"
+	FrameReqDaemonInfo  = "req.daemon.info"
+
+	// Single response type. Errors set OK=false and put the message in Error.
+	FrameRes = "res"
 )
+
+// ResponseEnvelope is the wire format every response uses. Data is the
+// JSON-encoded result of the operation; both sides use the same docker
+// SDK so types match without translation.
+type ResponseEnvelope struct {
+	OK    bool            `json:"ok"`
+	Error string          `json:"error,omitempty"`
+	Data  json.RawMessage `json:"data,omitempty"`
+}
+
+// Request payloads — kept tiny, most operations only need an ID + maybe
+// a flag.
+
+type ContainerListReq struct {
+	All bool `json:"all"`
+}
+
+type ContainerIDReq struct {
+	ID    string `json:"id"`
+	Force bool   `json:"force,omitempty"`
+}
 
 // HelloPayload is what the agent sends as soon as the WS opens. It tells
 // the server which version, OS and docker daemon are on the other end.

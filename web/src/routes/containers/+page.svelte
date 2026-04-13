@@ -5,9 +5,14 @@
   import { Card, Badge, EmptyState, Button, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
-  import { Box, Play, Square, RotateCw, Trash2, RefreshCw } from 'lucide-svelte';
+  import { hosts } from '$lib/stores/host.svelte';
+  import { Box, Play, Square, RotateCw, Trash2, RefreshCw, Server } from 'lucide-svelte';
 
   const canControl = $derived(allowed('container.control'));
+  // Host-mutating ops are still local-only in 3.1.2. Disable Start/Stop/etc.
+  // in the UI when a remote host is selected so users don't get surprised
+  // by a 5xx from the backend.
+  const isRemote = $derived(hosts.id !== 'local');
 
   interface Container {
     Id: string;
@@ -60,13 +65,23 @@
   async function load() {
     loading = true;
     try {
-      containers = await api.containers.list(showAll);
+      containers = await api.containers.list(showAll, hosts.id);
     } catch (err) {
       toast.error('Failed to load', err instanceof ApiError ? err.message : undefined);
     } finally {
       loading = false;
     }
   }
+
+  // Re-load whenever the user picks a different host from the top bar.
+  let prevHost = hosts.id;
+  $effect(() => {
+    const cur = hosts.id;
+    if (cur !== prevHost) {
+      prevHost = cur;
+      load();
+    }
+  });
 
   async function action(id: string, op: 'start' | 'stop' | 'restart' | 'remove') {
     try {
@@ -110,8 +125,13 @@
           <Badge variant="success" dot>live</Badge>
         {/if}
       </div>
-      <p class="text-sm text-[var(--fg-muted)] mt-0.5">
-        {containers.length} {containers.length === 1 ? 'container' : 'containers'}
+      <p class="text-sm text-[var(--fg-muted)] mt-0.5 flex items-center gap-2">
+        {#if isRemote}
+          <Server class="w-3.5 h-3.5 text-[var(--color-brand-400)]" />
+          <span>Showing remote host <span class="font-mono text-[var(--fg)]">{hosts.selected?.name}</span></span>
+          <span>·</span>
+        {/if}
+        <span>{containers.length} {containers.length === 1 ? 'container' : 'containers'}</span>
       </p>
     </div>
     <div class="flex items-center gap-3">
@@ -175,7 +195,7 @@
                 </div>
               </div>
             </button>
-            {#if canControl}
+            {#if canControl && !isRemote}
               <div class="flex gap-1 shrink-0">
                 {#if running}
                   <Button size="xs" variant="ghost" onclick={() => action(c.Id, 'restart')} aria-label="Restart">
