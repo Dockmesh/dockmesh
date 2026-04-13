@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	dtypes "github.com/docker/docker/api/types"
@@ -89,6 +90,20 @@ func (h *RemoteHost) RestartContainer(ctx context.Context, id string) error {
 func (h *RemoteHost) RemoveContainer(ctx context.Context, id string, force bool) error {
 	_, err := h.request(ctx, agents.FrameReqContainerRemove, agents.ContainerIDReq{ID: id, Force: force})
 	return err
+}
+
+func (h *RemoteHost) ContainerLogs(ctx context.Context, id, tail string, follow bool) (io.ReadCloser, error) {
+	if h.agent == nil {
+		return nil, ErrAgentOffline
+	}
+	stream, err := h.agent.OpenStream(ctx, "logs", id, map[string]any{
+		"tail":   tail,
+		"follow": follow,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return stream, nil
 }
 
 func (h *RemoteHost) ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error) {

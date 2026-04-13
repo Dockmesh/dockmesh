@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"io"
 
 	"github.com/dockmesh/dockmesh/internal/docker"
 	dtypes "github.com/docker/docker/api/types"
@@ -59,6 +60,13 @@ func (h *LocalHost) RemoveContainer(ctx context.Context, id string, force bool) 
 		return ErrNoDocker
 	}
 	return h.cli.RemoveContainer(ctx, id, force)
+}
+
+func (h *LocalHost) ContainerLogs(ctx context.Context, id, tail string, follow bool) (io.ReadCloser, error) {
+	if h.cli == nil {
+		return nil, ErrNoDocker
+	}
+	return h.cli.ContainerLogs(ctx, id, tail, follow)
 }
 
 func (h *LocalHost) ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error) {

@@ -9,6 +9,7 @@ package host
 
 import (
 	"context"
+	"io"
 
 	dtypes "github.com/docker/docker/api/types"
 )
@@ -29,6 +30,13 @@ type Host interface {
 	StopContainer(ctx context.Context, id string) error
 	RestartContainer(ctx context.Context, id string) error
 	RemoveContainer(ctx context.Context, id string, force bool) error
+
+	// Container log stream (slice 3.1.2.2). The returned ReadCloser
+	// produces docker's multiplexed log frame format (8-byte mux header
+	// per chunk for non-tty containers) — the WS handler scans line-by-
+	// line and strips the header. Both LocalHost and RemoteHost expose
+	// the same wire format so handler code doesn't branch.
+	ContainerLogs(ctx context.Context, id string, tail string, follow bool) (io.ReadCloser, error)
 
 	// Resource lists (read-only — full CRUD comes later)
 	ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error)

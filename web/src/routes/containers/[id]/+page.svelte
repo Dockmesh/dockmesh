@@ -41,11 +41,13 @@
   let loading = $state(true);
   let tab = $state<'logs' | 'exec' | 'stats' | 'updates' | 'inspect'>('logs');
 
-  // When viewing a remote host, default to Inspect — logs/exec/stats/updates
-  // are still local-only in 3.1.2.1 (streaming + image pulls come in 3.1.2.2 / 3.1.3).
+  // For remote hosts in 3.1.2.2: Logs + Inspect are available. Terminal,
+  // Stats and Updates are still local-only (coming in 3.1.2.3 / 3.1.2.4).
+  // If the user lands on a disabled tab while viewing a remote host, snap
+  // back to logs.
   $effect(() => {
-    if (isRemote && tab !== 'inspect') {
-      tab = 'inspect';
+    if (isRemote && (tab === 'exec' || tab === 'stats' || tab === 'updates')) {
+      tab = 'logs';
     }
   });
 
@@ -209,7 +211,8 @@
     try {
       const { ticket } = await api.ws.ticket();
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${proto}//${location.host}/api/v1/ws/logs/${id}?ticket=${ticket}&tail=200`);
+      const hostQs = isRemote ? `&host=${encodeURIComponent(targetHost)}` : '';
+      ws = new WebSocket(`${proto}//${location.host}/api/v1/ws/logs/${id}?ticket=${ticket}&tail=200${hostQs}`);
       ws.onopen = () => { wsConnected = true; };
       ws.onmessage = async (ev) => {
         logs = [...logs, ev.data as string];
@@ -344,7 +347,7 @@
       else await api.containers.restart(id, targetHost);
       toast.success(op);
       await loadInfo();
-      if (tab === 'logs' && !isRemote) connectLogs();
+      if (tab === 'logs') connectLogs();
     } catch (err) {
       toast.error(`${op} failed`, err instanceof ApiError ? err.message : undefined);
     }
@@ -366,13 +369,16 @@
   });
 
   $effect(() => {
-    // None of the streaming tabs work for remote hosts in 3.1.2.1 — only
-    // inspect data is proxied. Tear down any local streams that might
-    // still be running from a previous local session.
+    // For remote hosts only logs is supported in 3.1.2.2. Tear down any
+    // local-only streams left over from a previous session.
     if (isRemote) {
-      disconnectLogs();
       disconnectExec();
       disconnectStats();
+      if (tab === 'logs') {
+        connectLogs();
+      } else {
+        disconnectLogs();
+      }
       return;
     }
     if (tab === 'logs') {
@@ -523,8 +529,8 @@
         {/if}
       </button>
     {/snippet}
+    {@render tabBtn('logs', 'Logs', FileText, wsConnected)}
     {#if !isRemote}
-      {@render tabBtn('logs', 'Logs', FileText, wsConnected)}
       {#if canExec}
         {@render tabBtn('exec', 'Terminal', TerminalIcon, execConnected)}
       {/if}
@@ -539,8 +545,8 @@
   {#if isRemote}
     <div class="dm-card p-3 text-xs text-[var(--fg-muted)] flex items-center gap-2">
       <span class="text-[var(--color-brand-400)]">⚡</span>
-      Showing inspect data from remote host. Logs, terminal, stats and updates
-      will arrive in slice 3.1.2.2.
+      Remote host — Logs and Inspect are streamed via the agent. Terminal,
+      Stats and Updates are still local-only (3.1.2.3 / 3.1.2.4).
     </div>
   {/if}
 
