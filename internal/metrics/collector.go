@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"strings"
 	"sync"
@@ -147,23 +146,28 @@ type sample struct {
 	BlkWrite   uint64
 }
 
-// fetchOneShot calls ContainerStatsOneShot which returns a single reading
-// without the streaming overhead. CPU % is computed the same way as the
-// live ws endpoint so both match.
+// fetchOneShot reads 2 frames from a streaming ContainerStats request:
+// the first frame populates Docker's internal PreCPUStats baseline, the
+// second carries the CPU delta we actually want. Using the one-shot
+// endpoint produces CPU=0 because there is no prior reading to delta
+// against.
 func fetchOneShot(ctx context.Context, cli interface {
-	ContainerStatsOneShot(context.Context, string) (dtypes.ContainerStats, error)
+	ContainerStats(context.Context, string, bool) (dtypes.ContainerStats, error)
 }, id string) (*sample, error) {
-	resp, err := cli.ContainerStatsOneShot(ctx, id)
+	resp, err := cli.ContainerStats(ctx, id, true)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
+
+	dec := json.NewDecoder(resp.Body)
+	var s dtypes.StatsJSON
+	// Skip the first frame — PreCPUStats is empty so CPU% = 0.
+	if err := dec.Decode(&s); err != nil {
 		return nil, err
 	}
-	var s dtypes.StatsJSON
-	if err := json.Unmarshal(b, &s); err != nil {
+	// Second frame has real delta values.
+	if err := dec.Decode(&s); err != nil {
 		return nil, err
 	}
 
