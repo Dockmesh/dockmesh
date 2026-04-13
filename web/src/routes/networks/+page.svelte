@@ -52,11 +52,40 @@
   const CENTER_X = W / 2;
   const CENTER_Y = H / 2;
 
-  let nodes = $state<SimNode[]>([]);
-  let links = $state<SimLink[]>([]);
+  // The simulation data is plain JS — NOT $state — to avoid Svelte's deep
+  // proxy wrapping every node and confusing identity between the array and
+  // the lookup map. We bump `frame` once per tick to drive re-renders, and
+  // the template reads `simNodes` / `simEdges` (also plain) through that
+  // dependency. This is much more predictable than wrapping a force sim in
+  // proxies.
+  let frame = $state(0);
+  let simNodes: SimNode[] = [];
+  let simLinks: SimLink[] = [];
   let nodeMap = new Map<string, SimNode>();
   let raf: number | null = null;
   let ticks = 0;
+
+  // Edges with materialised x1/y1/x2/y2 — derived per frame from the live
+  // node positions. Reading `frame` here is what makes Svelte recompute
+  // the edge geometry on every tick.
+  type Edge = { sid: string; tid: string; x1: number; y1: number; x2: number; y2: number };
+  const edges = $derived.by<Edge[]>(() => {
+    void frame;
+    const out: Edge[] = [];
+    for (const l of simLinks) {
+      const s = nodeMap.get(l.source);
+      const t = nodeMap.get(l.target);
+      if (!s || !t) continue;
+      out.push({ sid: l.source, tid: l.target, x1: s.x, y1: s.y, x2: t.x, y2: t.y });
+    }
+    return out;
+  });
+
+  // Same trick for nodes — expose a snapshot keyed on frame.
+  const renderedNodes = $derived.by(() => {
+    void frame;
+    return simNodes.map((n) => ({ ...n }));
+  });
 
   function buildSimulation() {
     if (!topo) return;
@@ -70,8 +99,8 @@
     }
     const conts = topo.containers.filter((c) => usedContainerIds.has(c.id));
 
-    nodes = [];
-    links = [];
+    simNodes = [];
+    simLinks = [];
     nodeMap.clear();
 
     // Seed positions: networks on a circle, containers near their first network.
@@ -90,7 +119,7 @@
         radius: 22,
         data: n
       };
-      nodes.push(node);
+      simNodes.push(node);
       nodeMap.set(n.id, node);
     });
 
@@ -118,10 +147,11 @@
 
     for (const l of topo.links) {
       if (netIds.has(l.network_id) && nodeMap.has(l.container_id)) {
-        links.push({ source: l.network_id, target: l.container_id });
+        simLinks.push({ source: l.network_id, target: l.container_id });
       }
     }
 
+    frame++;
     ticks = 0;
     if (raf) cancelAnimationFrame(raf);
     raf = requestAnimationFrame(tick);
@@ -136,12 +166,12 @@
   const MAX_TICKS = 600;
 
   function tick() {
-    if (nodes.length === 0) return;
+    if (simNodes.length === 0) return;
     // Repulsion: O(n²) is fine for our sizes.
-    for (let i = 0; i < nodes.length; i++) {
-      const a = nodes[i];
-      for (let j = i + 1; j < nodes.length; j++) {
-        const b = nodes[j];
+    for (let i = 0; i < simNodes.length; i++) {
+      const a = simNodes[i];
+      for (let j = i + 1; j < simNodes.length; j++) {
+        const b = simNodes[j];
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const d2 = dx * dx + dy * dy + 0.01;
@@ -156,7 +186,7 @@
       }
     }
     // Spring links
-    for (const l of links) {
+    for (const l of simLinks) {
       const s = nodeMap.get(l.source);
       const t = nodeMap.get(l.target);
       if (!s || !t) continue;
@@ -172,7 +202,7 @@
       t.vy -= fy;
     }
     // Gravity toward centre
-    for (const n of nodes) {
+    for (const n of simNodes) {
       n.vx += (CENTER_X - n.x) * GRAVITY;
       n.vy += (CENTER_Y - n.y) * GRAVITY;
       n.vx *= DAMPING;
@@ -181,15 +211,12 @@
         n.x += n.vx;
         n.y += n.vy;
       }
-      // Soft bounds
       n.x = Math.max(40, Math.min(W - 40, n.x));
       n.y = Math.max(40, Math.min(H - 40, n.y));
     }
-    // Force-publish a new array reference so the {#each} block re-renders.
-    // Mutating n.x/n.y on existing items isn't enough because the state
-    // proxy doesn't observe property writes on the contained objects when
-    // they're plain (non-state) records.
-    nodes = [...nodes];
+    // Bump the frame counter — the $derived edges/renderedNodes read it
+    // and recompute their snapshots, which the template rerenders.
+    frame++;
     ticks++;
     if (ticks < MAX_TICKS) {
       raf = requestAnimationFrame(tick);
@@ -220,11 +247,15 @@
     return { x: sx, y: sy };
   }
 
-  function onMouseDown(node: SimNode, e: MouseEvent) {
+  function onMouseDown(snapshot: SimNode, e: MouseEvent) {
     e.stopPropagation();
-    selected = { kind: node.kind, id: node.id };
-    dragging = node;
-    node.fixed = true;
+    // The {#each} iterates over `renderedNodes` (snapshot copies), so we
+    // need to look up the real simulation object before mutating it.
+    const real = nodeMap.get(snapshot.id);
+    if (!real) return;
+    selected = { kind: real.kind, id: real.id };
+    dragging = real;
+    real.fixed = true;
     reheat();
   }
 
@@ -233,7 +264,7 @@
     const p = svgPoint(e);
     dragging.x = p.x;
     dragging.y = p.y;
-    nodes = [...nodes];
+    frame++;
   }
 
   function onMouseUp() {
@@ -243,8 +274,14 @@
     }
   }
 
-  function onBackgroundClick() {
-    selected = null;
+  function onBackgroundClick(e: MouseEvent) {
+    // Only deselect when the click *originates* on the SVG background, not
+    // when it bubbles up from a node group. Without this guard a node click
+    // would select on mousedown and immediately deselect on the bubbled
+    // click event a few ms later.
+    if (e.target === svgEl) {
+      selected = null;
+    }
   }
 
   // ---------- styling helpers ----------
@@ -263,7 +300,7 @@
   const selectedNode = $derived(selected ? nodeMap.get(selected.id) ?? null : null);
   const selectedLinks = $derived(
     selected
-      ? links.filter((l) => l.source === selected!.id || l.target === selected!.id)
+      ? simLinks.filter((l) => l.source === selected!.id || l.target === selected!.id)
       : []
   );
 
@@ -336,26 +373,22 @@
         >
           <!-- Edges -->
           <g stroke="var(--border-strong)" stroke-width="1.5" fill="none">
-            {#each links as l}
-              {@const s = nodeMap.get(l.source)}
-              {@const t = nodeMap.get(l.target)}
-              {#if s && t}
-                {@const isSel = selected && (selected.id === l.source || selected.id === l.target)}
-                <line
-                  x1={s.x}
-                  y1={s.y}
-                  x2={t.x}
-                  y2={t.y}
-                  stroke={isSel ? 'var(--color-brand-400)' : 'var(--border-strong)'}
-                  stroke-width={isSel ? 2 : 1.2}
-                  opacity={selected && !isSel ? 0.25 : 0.7}
-                />
-              {/if}
+            {#each edges as e (e.sid + '|' + e.tid)}
+              {@const isSel = selected && (selected.id === e.sid || selected.id === e.tid)}
+              <line
+                x1={e.x1}
+                y1={e.y1}
+                x2={e.x2}
+                y2={e.y2}
+                stroke={isSel ? 'var(--color-brand-400)' : 'var(--border-strong)'}
+                stroke-width={isSel ? 2 : 1.2}
+                opacity={selected && !isSel ? 0.25 : 0.7}
+              />
             {/each}
           </g>
 
           <!-- Nodes -->
-          {#each nodes as n (n.id)}
+          {#each renderedNodes as n (n.id)}
             {@const isSel = selected?.id === n.id}
             {@const dim = selected && !isSel && !selectedLinks.some((l) => l.source === n.id || l.target === n.id)}
             <g
@@ -416,7 +449,7 @@
           <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full" style="background:#a855f7"></span>overlay</div>
           <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full" style="background:#22c55e"></span>running container</div>
           <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full" style="background:#6b7280"></span>stopped / system</div>
-          <div class="ml-auto">{nodes.length} nodes · {links.length} edges</div>
+          <div class="ml-auto">{renderedNodes.length} nodes · {edges.length} edges</div>
         </div>
       </Card>
 
