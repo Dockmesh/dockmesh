@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
+  import * as dagre from '@dagrejs/dagre';
   import {
     api,
     ApiError,
@@ -8,7 +9,7 @@
     type TopoNetwork,
     type TopoContainer
   } from '$lib/api';
-  import { Card, Button, Skeleton, EmptyState, Badge, Input } from '$lib/components/ui';
+  import { Card, Button, Skeleton, EmptyState, Badge } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import {
     Network as NetworkIcon,
@@ -32,35 +33,31 @@
   let ws: WebSocket | null = null;
   let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // ---------- viewport ----------
-  // World coordinate space is fixed at WORLD_W x WORLD_H. The transform
-  // (panX, panY, zoom) maps it into the viewBox of the SVG. Pan + zoom is
-  // implemented entirely on the transform, the layout doesn't know about it.
-  const WORLD_W = 1600;
-  const WORLD_H = 1100;
-  const CENTER_X = WORLD_W / 2;
-  const CENTER_Y = WORLD_H / 2;
+  // ---------- node sizing ----------
+  // The dagre layout treats each node as a fixed-size rectangle. We give it
+  // dimensions that match the SVG visuals (circle + bottom labels) so the
+  // resulting placement leaves enough room for everything we draw.
+  const NETWORK_W = 110;
+  const NETWORK_H = 100;
+  const CONTAINER_W = 150;
+  const CONTAINER_H = 90;
+  const NETWORK_R = 28;
+  const CONTAINER_R = 18;
 
-  let panX = $state(0);
-  let panY = $state(0);
-  let zoom = $state(1);
-  let panning = false;
-  let panStart = { x: 0, y: 0, panX: 0, panY: 0 };
-
-  // ---------- simulation data (plain JS, not $state) ----------
-  type SimNode = {
+  // ---------- laid out scene ----------
+  type LaidNode = {
     id: string;
     kind: 'network' | 'container';
     label: string;
     x: number;
     y: number;
-    vx: number;
-    vy: number;
-    fixed: boolean;
-    radius: number;
     data: TopoNetwork | TopoContainer;
   };
-  type SimLink = { source: string; target: string };
+  type LaidEdge = {
+    sid: string;
+    tid: string;
+    points: { x: number; y: number }[];
+  };
   type StackBox = {
     name: string;
     x: number;
@@ -70,620 +67,256 @@
     color: string;
   };
 
-  let frame = $state(0);
-  let simNodes: SimNode[] = [];
-  let simLinks: SimLink[] = [];
-  let nodeMap = new Map<string, SimNode>();
-  let raf: number | null = null;
-  let ticks = 0;
-
-  // Snapshots derived per frame so the SVG re-renders.
-  type Edge = { sid: string; tid: string; x1: number; y1: number; x2: number; y2: number };
-  const edges = $derived.by<Edge[]>(() => {
-    void frame;
-    const out: Edge[] = [];
-    for (const l of simLinks) {
-      const s = nodeMap.get(l.source);
-      const t = nodeMap.get(l.target);
-      if (!s || !t) continue;
-      out.push({ sid: l.source, tid: l.target, x1: s.x, y1: s.y, x2: t.x, y2: t.y });
-    }
-    return out;
+  let scene = $state<{
+    nodes: LaidNode[];
+    edges: LaidEdge[];
+    stacks: StackBox[];
+    width: number;
+    height: number;
+  }>({
+    nodes: [],
+    edges: [],
+    stacks: [],
+    width: 0,
+    height: 0
   });
 
-  const renderedNodes = $derived.by(() => {
-    void frame;
-    return simNodes.map((n) => ({ ...n }));
-  });
-
-  // Stack groups: deterministic bounding box around all nodes that share a
-  // compose project label. Updated every frame so they shrink/expand as
-  // members move under the simulation.
-  const stackBoxes = $derived.by<StackBox[]>(() => {
-    void frame;
-    const groups = new Map<string, SimNode[]>();
-    for (const n of simNodes) {
-      const stack = (n.data as any).stack as string | undefined;
-      if (!stack) continue;
-      let g = groups.get(stack);
-      if (!g) {
-        g = [];
-        groups.set(stack, g);
-      }
-      g.push(n);
-    }
-    const out: StackBox[] = [];
-    const PAD_X = 36;
-    const PAD_TOP = 36; // room for the stack-name label at the top
-    const PAD_BOTTOM = 44; // room for container name + port badge under the bottom-most node
-    let i = 0;
-    for (const [name, members] of groups) {
-      if (members.length < 2) continue;
-      let minX = Infinity,
-        minY = Infinity,
-        maxX = -Infinity,
-        maxY = -Infinity;
-      for (const m of members) {
-        const r = m.radius;
-        if (m.x - r < minX) minX = m.x - r;
-        if (m.y - r < minY) minY = m.y - r;
-        if (m.x + r > maxX) maxX = m.x + r;
-        if (m.y + r > maxY) maxY = m.y + r;
-      }
-      out.push({
-        name,
-        x: minX - PAD_X,
-        y: minY - PAD_TOP,
-        w: maxX - minX + PAD_X * 2,
-        h: maxY - minY + PAD_TOP + PAD_BOTTOM,
-        color: stackColor(i++)
-      });
-    }
-    return out;
-  });
+  // Lookup map (rebuilt with each layout)
+  let nodeIndex = new Map<string, LaidNode>();
 
   function stackColor(i: number): string {
     const palette = ['#06b6d4', '#a855f7', '#f59e0b', '#ec4899', '#10b981', '#3b82f6', '#f97316'];
     return palette[i % palette.length];
   }
 
-  // ---------- search filter ----------
-  const searchMatches = $derived.by(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return null;
-    const hits = new Set<string>();
-    for (const n of simNodes) {
-      if (n.label.toLowerCase().includes(q)) hits.add(n.id);
-      else if (n.kind === 'container' && (n.data as TopoContainer).image.toLowerCase().includes(q)) hits.add(n.id);
+  // ---------- the layout ----------
+  // Build a dagre compound graph: each compose stack becomes a parent node
+  // with its network + containers as children. Standalone networks /
+  // containers go at the root level. dagre runs Sugiyama layered layout
+  // and gives us non-overlapping rectangles by construction.
+  function relayout() {
+    if (!topo) {
+      scene = { nodes: [], edges: [], stacks: [], width: 0, height: 0 };
+      nodeIndex.clear();
+      return;
     }
-    // Expand by direct neighbours so context is preserved.
-    for (const l of simLinks) {
-      if (hits.has(l.source) || hits.has(l.target)) {
-        hits.add(l.source);
-        hits.add(l.target);
-      }
-    }
-    return hits;
-  });
 
-  function isDimmed(id: string): boolean {
-    if (searchMatches && !searchMatches.has(id)) return true;
-    if (selected) {
-      if (selected.id === id) return false;
-      const touched = simLinks.some(
-        (l) =>
-          (l.source === selected!.id && (l.target === id || l.source === id)) ||
-          (l.target === selected!.id && (l.source === id || l.target === id))
-      );
-      if (!touched) return true;
-    }
-    return false;
-  }
-
-  // ---------- load + simulate ----------
-  async function load(preservePositions = false) {
-    loading = true;
-    try {
-      const next = await api.networks.topology();
-      const oldPositions = preservePositions ? snapshotPositions() : null;
-      topo = next;
-      buildSimulation(oldPositions);
-    } catch (err) {
-      toast.error('Failed to load topology', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      loading = false;
-    }
-  }
-
-  function snapshotPositions(): Map<string, { x: number; y: number; fixed: boolean }> {
-    const out = new Map<string, { x: number; y: number; fixed: boolean }>();
-    for (const n of simNodes) out.set(n.id, { x: n.x, y: n.y, fixed: n.fixed });
-    return out;
-  }
-
-  function buildSimulation(prev?: Map<string, { x: number; y: number; fixed: boolean }> | null) {
-    if (!topo) return;
     const nets = showSystem ? topo.networks : topo.networks.filter((n) => !n.system);
     const netIds = new Set(nets.map((n) => n.id));
 
+    // Only containers that participate in at least one visible network
     const usedContainerIds = new Set<string>();
     for (const l of topo.links) {
       if (netIds.has(l.network_id)) usedContainerIds.add(l.container_id);
     }
     const conts = topo.containers.filter((c) => usedContainerIds.has(c.id));
 
-    simNodes = [];
-    simLinks = [];
-    nodeMap.clear();
+    const g = new dagre.graphlib.Graph({ compound: true, multigraph: false });
+    g.setGraph({
+      rankdir: 'TB',
+      nodesep: 30,
+      ranksep: 55,
+      marginx: 20,
+      marginy: 20
+    });
+    g.setDefaultEdgeLabel(() => ({}));
 
-    // ----- Stack-aware seeding -----
-    // Place each compose stack at its own anchor on a big outer circle, and
-    // unstacked nodes at the centre. This gives the simulation a sensible
-    // starting layout instead of having every cluster fight from the same
-    // point. Without this seed, large topologies converge to a "spaghetti
-    // ball" and small ones look randomly different on every reload.
-    const stacks = new Set<string>();
-    for (const n of nets) if (n.stack) stacks.add(n.stack);
-    for (const c of conts) if (c.stack) stacks.add(c.stack);
-    const stackList = [...stacks].sort();
-    const stackAnchors = new Map<string, { x: number; y: number }>();
-    const outerRadius = Math.min(WORLD_W, WORLD_H) * 0.34;
-    stackList.forEach((s, i) => {
-      const angle = (i / Math.max(1, stackList.length)) * Math.PI * 2 - Math.PI / 2;
-      stackAnchors.set(s, {
-        x: CENTER_X + Math.cos(angle) * outerRadius,
-        y: CENTER_Y + Math.sin(angle) * outerRadius
+    // Discover stacks and create one compound parent per stack
+    const stackNames = new Set<string>();
+    for (const n of nets) if (n.stack) stackNames.add(n.stack);
+    for (const c of conts) if (c.stack) stackNames.add(c.stack);
+    const stackList = [...stackNames].sort();
+    const stackKey = (name: string) => `stack:${name}`;
+    for (const name of stackList) {
+      g.setNode(stackKey(name), {
+        label: name,
+        clusterLabelPos: 'top',
+        // Padding pushes children away from the parent's borders so
+        // there's room for the dashed rect + label we draw on top of it.
+        padding: 18
       });
-    });
-
-    function seedFor(stack: string | undefined, fallback: { x: number; y: number }) {
-      if (stack && stackAnchors.has(stack)) {
-        const a = stackAnchors.get(stack)!;
-        return { x: a.x + (Math.random() - 0.5) * 60, y: a.y + (Math.random() - 0.5) * 60 };
-      }
-      return fallback;
     }
 
-    nets.forEach((n) => {
-      const old = prev?.get(n.id);
-      const seed = seedFor(n.stack, { x: CENTER_X + (Math.random() - 0.5) * 200, y: CENTER_Y + (Math.random() - 0.5) * 200 });
-      const node: SimNode = {
-        id: n.id,
-        kind: 'network',
+    // Add network nodes
+    for (const n of nets) {
+      g.setNode(n.id, {
         label: n.name,
-        x: old ? old.x : seed.x,
-        y: old ? old.y : seed.y,
-        vx: 0,
-        vy: 0,
-        fixed: old ? old.fixed : false,
-        radius: 28,
+        width: NETWORK_W,
+        height: NETWORK_H,
+        kind: 'network',
         data: n
-      };
-      simNodes.push(node);
-      nodeMap.set(n.id, node);
-    });
+      });
+      if (n.stack) g.setParent(n.id, stackKey(n.stack));
+    }
 
-    conts.forEach((c) => {
-      const old = prev?.get(c.id);
-      const firstNet = topo!.links.find((l) => l.container_id === c.id && netIds.has(l.network_id));
-      const anchor = firstNet ? nodeMap.get(firstNet.network_id) : null;
-      const fallback = anchor
-        ? { x: anchor.x + (Math.random() - 0.5) * 80, y: anchor.y + (Math.random() - 0.5) * 80 }
-        : { x: CENTER_X + (Math.random() - 0.5) * 200, y: CENTER_Y + (Math.random() - 0.5) * 200 };
-      const seed = seedFor(c.stack, fallback);
-      const node: SimNode = {
-        id: c.id,
-        kind: 'container',
+    // Add container nodes
+    for (const c of conts) {
+      g.setNode(c.id, {
         label: c.name,
-        x: old ? old.x : seed.x,
-        y: old ? old.y : seed.y,
-        vx: 0,
-        vy: 0,
-        fixed: old ? old.fixed : false,
-        radius: 18,
+        width: CONTAINER_W,
+        height: CONTAINER_H,
+        kind: 'container',
         data: c
-      };
-      simNodes.push(node);
-      nodeMap.set(c.id, node);
-    });
+      });
+      if (c.stack) g.setParent(c.id, stackKey(c.stack));
+    }
 
+    // Add edges (network → container)
     for (const l of topo.links) {
-      if (netIds.has(l.network_id) && nodeMap.has(l.container_id)) {
-        simLinks.push({ source: l.network_id, target: l.container_id });
+      if (netIds.has(l.network_id) && usedContainerIds.has(l.container_id)) {
+        g.setEdge(l.network_id, l.container_id);
       }
     }
 
-    frame++;
-    ticks = 0;
-    if (raf) cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(tick);
-  }
+    // Run layout
+    dagre.layout(g);
 
-  // ---------- physics ----------
-  // Tuned for ≤80 nodes. Two layers of forces:
-  //   • Node-level: repulsion + spring links + collision (per-node).
-  //   • Cluster-level: cohesion pulls stack members to their centroid,
-  //     cluster-collision keeps whole stack bounding spheres from
-  //     overlapping each other. This is the equivalent of d3-force-cluster
-  //     and is what stops the stack groups from sitting on top of one
-  //     another.
-  const REPEL = 7500;
-  const LINK_DIST = 240;
-  const LINK_K = 0.022;
-  const GRAVITY = 0.006;
-  const DAMPING = 0.78;
-  const COLLISION_PASSES = 6;
-  const COLLISION_PAD = 14; // small extra margin on top of effective radii
-  const COHESION = 0.008; // mild — heavy cohesion squeezes 2-node clusters
-  const COHESION_MIN_MEMBERS = 3; // skip cohesion for tiny clusters
-  const CLUSTER_GAP = 90;
-  const MAX_TICKS = 1200;
+    // Read back positions
+    const nodes: LaidNode[] = [];
+    const edges: LaidEdge[] = [];
+    const stacks: StackBox[] = [];
+    let stackIdx = 0;
 
-  // Effective collision radius — the visual circle plus the area its
-  // bottom labels occupy. Network nodes have 3 lines of label below them
-  // (NET / driver / name). Container nodes have a name line plus an
-  // optional port badge. We use this for ALL pair collisions so two
-  // circles can never sit close enough that their labels read on top of
-  // each other.
-  function collisionRadius(n: SimNode): number {
-    if (n.kind === 'network') {
-      // 28 visual + ~28 label area (driver text below + name text)
-      return n.radius + 30;
-    }
-    const c = n.data as TopoContainer;
-    const hasPort = c.ports && c.ports.length > 0;
-    // 18 visual + name line (~14) + optional port badge (~14)
-    return n.radius + (hasPort ? 32 : 18);
-  }
-
-  type Cluster = {
-    name: string;
-    cx: number;
-    cy: number;
-    radius: number;
-    members: SimNode[];
-  };
-
-  function computeClusters(): Cluster[] {
-    const groups = new Map<string, SimNode[]>();
-    for (const n of simNodes) {
-      const stack = (n.data as { stack?: string }).stack;
-      if (!stack) continue;
-      let g = groups.get(stack);
-      if (!g) {
-        g = [];
-        groups.set(stack, g);
+    for (const id of g.nodes()) {
+      const meta: any = g.node(id);
+      if (id.startsWith('stack:')) {
+        // dagre returns center coords + dims for compound nodes
+        stacks.push({
+          name: id.slice('stack:'.length),
+          x: meta.x - meta.width / 2,
+          y: meta.y - meta.height / 2,
+          w: meta.width,
+          h: meta.height,
+          color: stackColor(stackIdx++)
+        });
+        continue;
       }
-      g.push(n);
-    }
-    const out: Cluster[] = [];
-    for (const [name, members] of groups) {
-      if (members.length < 2) continue;
-      let cx = 0;
-      let cy = 0;
-      for (const m of members) {
-        cx += m.x;
-        cy += m.y;
-      }
-      cx /= members.length;
-      cy /= members.length;
-      let radius = 0;
-      for (const m of members) {
-        const dx = m.x - cx;
-        const dy = m.y - cy;
-        const d = Math.sqrt(dx * dx + dy * dy) + collisionRadius(m);
-        if (d > radius) radius = d;
-      }
-      out.push({ name, cx, cy, radius, members });
-    }
-    return out;
-  }
-
-  function tick() {
-    if (simNodes.length === 0) return;
-    const n = simNodes.length;
-
-    // Repulsion
-    for (let i = 0; i < n; i++) {
-      const a = simNodes[i];
-      for (let j = i + 1; j < n; j++) {
-        const b = simNodes[j];
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const d2 = dx * dx + dy * dy + 0.01;
-        const d = Math.sqrt(d2);
-        const f = REPEL / d2;
-        const fx = (dx / d) * f;
-        const fy = (dy / d) * f;
-        a.vx -= fx;
-        a.vy -= fy;
-        b.vx += fx;
-        b.vy += fy;
-      }
+      nodes.push({
+        id,
+        kind: meta.kind,
+        label: meta.label,
+        x: meta.x,
+        y: meta.y,
+        data: meta.data
+      });
     }
 
-    // Spring links
-    for (const l of simLinks) {
-      const s = nodeMap.get(l.source);
-      const t = nodeMap.get(l.target);
-      if (!s || !t) continue;
-      const dx = t.x - s.x;
-      const dy = t.y - s.y;
-      const d = Math.sqrt(dx * dx + dy * dy) + 0.01;
-      const diff = d - LINK_DIST;
-      const fx = (dx / d) * diff * LINK_K;
-      const fy = (dy / d) * diff * LINK_K;
-      s.vx += fx;
-      s.vy += fy;
-      t.vx -= fx;
-      t.vy -= fy;
+    for (const e of g.edges()) {
+      const ed: any = g.edge(e);
+      edges.push({
+        sid: e.v,
+        tid: e.w,
+        points: (ed.points || []).map((p: any) => ({ x: p.x, y: p.y }))
+      });
     }
 
-    // Cluster forces — compute centroids once, then apply cohesion +
-    // group-level repulsion BEFORE the integration step so the velocities
-    // are summed with everything else.
-    const clusters = computeClusters();
+    const graphMeta: any = g.graph();
+    nodeIndex = new Map(nodes.map((n) => [n.id, n]));
 
-    // Cohesion: each member is pulled toward its cluster centroid. Skip
-    // tiny clusters (<3 members) — for a network + single container the
-    // spring link already keeps them grouped, and adding cohesion just
-    // squeezes them on top of each other.
-    for (const c of clusters) {
-      if (c.members.length < COHESION_MIN_MEMBERS) continue;
-      for (const m of c.members) {
-        m.vx += (c.cx - m.x) * COHESION;
-        m.vy += (c.cy - m.y) * COHESION;
-      }
-    }
+    scene = {
+      nodes,
+      edges,
+      stacks,
+      width: graphMeta.width || 800,
+      height: graphMeta.height || 600
+    };
 
-    // Cluster-vs-cluster repulsion: if bounding spheres overlap, push every
-    // member of both clusters apart. This is the "collision box" for groups.
-    for (let i = 0; i < clusters.length; i++) {
-      const a = clusters[i];
-      for (let j = i + 1; j < clusters.length; j++) {
-        const b = clusters[j];
-        const dx = b.cx - a.cx;
-        const dy = b.cy - a.cy;
-        const d = Math.sqrt(dx * dx + dy * dy) + 0.01;
-        const minD = a.radius + b.radius + CLUSTER_GAP;
-        if (d < minD) {
-          const overlap = (minD - d) / d;
-          const ox = dx * overlap * 0.25;
-          const oy = dy * overlap * 0.25;
-          for (const m of a.members) {
-            if (!m.fixed) {
-              m.x -= ox;
-              m.y -= oy;
-            }
-          }
-          for (const m of b.members) {
-            if (!m.fixed) {
-              m.x += ox;
-              m.y += oy;
-            }
-          }
-        }
-      }
-    }
-
-    // Gravity + integrate
-    for (const node of simNodes) {
-      node.vx += (CENTER_X - node.x) * GRAVITY;
-      node.vy += (CENTER_Y - node.y) * GRAVITY;
-      node.vx *= DAMPING;
-      node.vy *= DAMPING;
-      if (!node.fixed) {
-        node.x += node.vx;
-        node.y += node.vy;
-      }
-      node.x = Math.max(60, Math.min(WORLD_W - 60, node.x));
-      node.y = Math.max(60, Math.min(WORLD_H - 60, node.y));
-    }
-
-    // Collision resolution — multiple relaxation passes against the
-    // *effective* radii (visual circle + label area) so that not even
-    // labels of two nodes can sit on top of each other. Velocities are
-    // damped on contact so colliders settle instead of bouncing.
-    const effR = simNodes.map(collisionRadius);
-    for (let pass = 0; pass < COLLISION_PASSES; pass++) {
-      let any = false;
-      for (let i = 0; i < n; i++) {
-        const a = simNodes[i];
-        for (let j = i + 1; j < n; j++) {
-          const b = simNodes[j];
-          const dx = b.x - a.x;
-          const dy = b.y - a.y;
-          const d = Math.sqrt(dx * dx + dy * dy) + 0.01;
-          const minD = effR[i] + effR[j] + COLLISION_PAD;
-          if (d < minD) {
-            any = true;
-            const overlap = (minD - d) / d;
-            const ox = dx * overlap * 0.5;
-            const oy = dy * overlap * 0.5;
-            if (!a.fixed) {
-              a.x -= ox;
-              a.y -= oy;
-              a.vx *= 0.3;
-              a.vy *= 0.3;
-            }
-            if (!b.fixed) {
-              b.x += ox;
-              b.y += oy;
-              b.vx *= 0.3;
-              b.vy *= 0.3;
-            }
-          }
-        }
-      }
-      if (!any) break;
-    }
-
-    frame++;
-    ticks++;
-    if (ticks < MAX_TICKS) {
-      raf = requestAnimationFrame(tick);
-    } else {
-      raf = null;
+    // Reset viewport on first layout if zoomed too far in
+    if (zoom === 1 && panX === 0 && panY === 0) {
+      fitToView();
     }
   }
 
-  function reheat() {
-    ticks = 0;
-    if (!raf) raf = requestAnimationFrame(tick);
-  }
-
-  // ---------- live updates ----------
-  async function connectLive() {
-    if (ws) return;
-    try {
-      const { ticket } = await api.ws.ticket();
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${proto}//${location.host}/api/v1/ws/events?ticket=${ticket}`);
-      ws.onopen = () => {
-        live = true;
-      };
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (
-            (msg.source === 'docker' && (msg.type === 'container' || msg.type === 'network')) ||
-            msg.source === 'stacks'
-          ) {
-            scheduleReload();
-          }
-        } catch {
-          /* ignore */
-        }
-      };
-      ws.onclose = () => {
-        live = false;
-        ws = null;
-      };
-      ws.onerror = () => {
-        live = false;
-      };
-    } catch {
-      live = false;
-    }
-  }
-
-  function scheduleReload() {
-    if (reloadTimer) clearTimeout(reloadTimer);
-    reloadTimer = setTimeout(() => load(true), 500);
-  }
-
-  function disconnectLive() {
-    if (ws) {
-      ws.close();
-      ws = null;
-    }
-    if (reloadTimer) clearTimeout(reloadTimer);
-    live = false;
-  }
-
-  onDestroy(() => {
-    if (raf) cancelAnimationFrame(raf);
-    disconnectLive();
-  });
-
-  // ---------- viewport interaction ----------
+  // ---------- viewport ----------
+  let panX = $state(0);
+  let panY = $state(0);
+  let zoom = $state(1);
   let svgEl: SVGSVGElement | null = $state(null);
+  let panning = false;
+  let panStart = { clientX: 0, clientY: 0, panX: 0, panY: 0 };
 
-  function svgPointWorld(clientX: number, clientY: number): { x: number; y: number } {
-    if (!svgEl) return { x: 0, y: 0 };
+  function fitToView() {
+    if (!svgEl) return;
     const rect = svgEl.getBoundingClientRect();
-    // Convert client → SVG viewport
-    const vx = ((clientX - rect.left) / rect.width) * WORLD_W;
-    const vy = ((clientY - rect.top) / rect.height) * WORLD_H;
-    // Reverse the pan/zoom transform to get world coords.
-    return { x: (vx - panX) / zoom, y: (vy - panY) / zoom };
+    if (rect.width === 0 || scene.width === 0) return;
+    const pad = 60;
+    const sx = (rect.width - pad * 2) / scene.width;
+    const sy = (rect.height - pad * 2) / scene.height;
+    zoom = Math.min(2, Math.max(0.3, Math.min(sx, sy)));
+    panX = (rect.width - scene.width * zoom) / 2;
+    panY = (rect.height - scene.height * zoom) / 2;
   }
 
   function onWheel(e: WheelEvent) {
     e.preventDefault();
+    if (!svgEl) return;
     const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
     const newZoom = Math.max(0.3, Math.min(3, zoom * factor));
-    if (!svgEl) {
-      zoom = newZoom;
-      return;
-    }
-    // Anchor zoom at the cursor.
     const rect = svgEl.getBoundingClientRect();
-    const vx = ((e.clientX - rect.left) / rect.width) * WORLD_W;
-    const vy = ((e.clientY - rect.top) / rect.height) * WORLD_H;
-    panX = vx - (vx - panX) * (newZoom / zoom);
-    panY = vy - (vy - panY) * (newZoom / zoom);
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    panX = cx - (cx - panX) * (newZoom / zoom);
+    panY = cy - (cy - panY) * (newZoom / zoom);
     zoom = newZoom;
   }
 
   function onSvgMouseDown(e: MouseEvent) {
-    if (e.target !== svgEl && !(e.target as Element)?.classList?.contains('bg-rect')) return;
-    panning = true;
-    panStart = { x: e.clientX, y: e.clientY, panX, panY };
+    // Only pan when grabbing the background, not a node.
+    const target = e.target as Element;
+    if (target === svgEl || target.classList?.contains('bg-rect') || target.tagName === 'svg') {
+      panning = true;
+      panStart = { clientX: e.clientX, clientY: e.clientY, panX, panY };
+    }
+  }
+
+  function onWindowMouseMove(e: MouseEvent) {
+    if (!panning) return;
+    panX = panStart.panX + (e.clientX - panStart.clientX);
+    panY = panStart.panY + (e.clientY - panStart.clientY);
+  }
+
+  function onWindowMouseUp() {
+    panning = false;
   }
 
   function onSvgClick(e: MouseEvent) {
-    // Deselect only if user clicked the actual background, not a node child.
-    if (e.target === svgEl || (e.target as Element)?.classList?.contains('bg-rect')) {
+    const target = e.target as Element;
+    if (target === svgEl || target.classList?.contains('bg-rect')) {
       selected = null;
     }
   }
 
   function resetView() {
-    panX = 0;
-    panY = 0;
-    zoom = 1;
+    fitToView();
   }
-
   function zoomIn() {
-    zoom = Math.min(3, zoom * 1.2);
+    if (!svgEl) return;
+    const rect = svgEl.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const newZoom = Math.min(3, zoom * 1.2);
+    panX = cx - (cx - panX) * (newZoom / zoom);
+    panY = cy - (cy - panY) * (newZoom / zoom);
+    zoom = newZoom;
   }
   function zoomOut() {
-    zoom = Math.max(0.3, zoom / 1.2);
+    if (!svgEl) return;
+    const rect = svgEl.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const newZoom = Math.max(0.3, zoom / 1.2);
+    panX = cx - (cx - panX) * (newZoom / zoom);
+    panY = cy - (cy - panY) * (newZoom / zoom);
+    zoom = newZoom;
   }
 
-  // ---------- node drag ----------
-  let dragging: SimNode | null = null;
-
-  function onNodeMouseDown(snapshot: SimNode, e: MouseEvent) {
+  // ---------- interaction ----------
+  function onNodeClick(node: LaidNode, e: MouseEvent) {
     e.stopPropagation();
-    const real = nodeMap.get(snapshot.id);
-    if (!real) return;
-    selected = { kind: real.kind, id: real.id };
-    dragging = real;
-    real.fixed = true;
-    reheat();
+    selected = { kind: node.kind, id: node.id };
   }
 
-  function onWindowMouseMove(e: MouseEvent) {
-    if (panning) {
-      const dx = e.clientX - panStart.x;
-      const dy = e.clientY - panStart.y;
-      // Convert client px delta to viewport units
-      if (svgEl) {
-        const rect = svgEl.getBoundingClientRect();
-        panX = panStart.panX + (dx / rect.width) * WORLD_W;
-        panY = panStart.panY + (dy / rect.height) * WORLD_H;
-      }
-      return;
-    }
-    if (dragging) {
-      const p = svgPointWorld(e.clientX, e.clientY);
-      dragging.x = p.x;
-      dragging.y = p.y;
-      frame++;
-    }
-  }
-
-  function onWindowMouseUp() {
-    if (dragging) {
-      dragging.fixed = false;
-      dragging = null;
-    }
-    panning = false;
-  }
-
-  function onNodeMouseEnter(node: SimNode, e: MouseEvent) {
+  function onNodeMouseEnter(node: LaidNode, e: MouseEvent) {
     hovered = { id: node.id, clientX: e.clientX, clientY: e.clientY };
   }
   function onNodeMouseLeave() {
@@ -693,7 +326,39 @@
     if (hovered) hovered = { ...hovered, clientX: e.clientX, clientY: e.clientY };
   }
 
-  // ---------- styling helpers ----------
+  // ---------- search filter ----------
+  const searchMatches = $derived.by(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return null;
+    const hits = new Set<string>();
+    for (const n of scene.nodes) {
+      if (n.label.toLowerCase().includes(q)) hits.add(n.id);
+      else if (n.kind === 'container' && (n.data as TopoContainer).image.toLowerCase().includes(q)) hits.add(n.id);
+    }
+    for (const e of scene.edges) {
+      if (hits.has(e.sid) || hits.has(e.tid)) {
+        hits.add(e.sid);
+        hits.add(e.tid);
+      }
+    }
+    return hits;
+  });
+
+  function isDimmed(id: string): boolean {
+    if (searchMatches && !searchMatches.has(id)) return true;
+    if (selected) {
+      if (selected.id === id) return false;
+      const touched = scene.edges.some(
+        (e) =>
+          (e.sid === selected!.id && (e.tid === id || e.sid === id)) ||
+          (e.tid === selected!.id && (e.sid === id || e.tid === id))
+      );
+      if (!touched) return true;
+    }
+    return false;
+  }
+
+  // ---------- styling ----------
   function networkColor(n: TopoNetwork): string {
     if (n.system) return '#6b7280';
     if (n.driver === 'overlay') return '#a855f7';
@@ -704,9 +369,6 @@
     return '#22c55e';
   }
 
-  // Service icon: emoji for known popular images, else first 2 letters.
-  // Avoids shipping a 100 KB icon set; all ASCII/emoji is bundled by the
-  // browser already.
   const ICON_MAP: Record<string, string> = {
     nginx: 'NX',
     caddy: 'CA',
@@ -759,33 +421,116 @@
   }
 
   // ---------- side panel data ----------
-  const selectedNode = $derived(selected ? nodeMap.get(selected.id) ?? null : null);
+  const selectedNode = $derived(selected ? nodeIndex.get(selected.id) ?? null : null);
   const selectedLinks = $derived(
     selected
-      ? simLinks.filter((l) => l.source === selected!.id || l.target === selected!.id)
+      ? scene.edges.filter((e) => e.sid === selected!.id || e.tid === selected!.id)
       : []
   );
-  const hoveredNode = $derived(hovered ? nodeMap.get(hovered.id) ?? null : null);
+  const hoveredNode = $derived(hovered ? nodeIndex.get(hovered.id) ?? null : null);
 
   function neighbourLabel(id: string): string {
-    const n = nodeMap.get(id);
+    const n = nodeIndex.get(id);
     return n ? n.label : id.slice(0, 12);
   }
 
-  // ---------- mount + filter effect ----------
+  // ---------- edge path ----------
+  // dagre returns a list of waypoints; render them as a smooth curve via
+  // SVG path commands. For 2 points we use a straight line; for ≥3 we use
+  // a quadratic curve through the midpoints (catmull-rom-ish smoothing).
+  function edgePath(e: LaidEdge): string {
+    const pts = e.points;
+    if (pts.length === 0) return '';
+    if (pts.length === 1) return `M${pts[0].x},${pts[0].y}`;
+    if (pts.length === 2) return `M${pts[0].x},${pts[0].y} L${pts[1].x},${pts[1].y}`;
+    let d = `M${pts[0].x},${pts[0].y}`;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const mx = (pts[i].x + pts[i + 1].x) / 2;
+      const my = (pts[i].y + pts[i + 1].y) / 2;
+      d += ` Q${pts[i].x},${pts[i].y} ${mx},${my}`;
+    }
+    const last = pts[pts.length - 1];
+    d += ` L${last.x},${last.y}`;
+    return d;
+  }
+
+  // ---------- load + live ----------
+  async function load() {
+    loading = true;
+    try {
+      topo = await api.networks.topology();
+      relayout();
+    } catch (err) {
+      toast.error('Failed to load topology', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function connectLive() {
+    if (ws) return;
+    try {
+      const { ticket } = await api.ws.ticket();
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/api/v1/ws/events?ticket=${ticket}`);
+      ws.onopen = () => {
+        live = true;
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (
+            (msg.source === 'docker' && (msg.type === 'container' || msg.type === 'network')) ||
+            msg.source === 'stacks'
+          ) {
+            scheduleReload();
+          }
+        } catch {
+          /* ignore */
+        }
+      };
+      ws.onclose = () => {
+        live = false;
+        ws = null;
+      };
+      ws.onerror = () => {
+        live = false;
+      };
+    } catch {
+      live = false;
+    }
+  }
+
+  function scheduleReload() {
+    if (reloadTimer) clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => load(), 500);
+  }
+
+  function disconnectLive() {
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
+    if (reloadTimer) clearTimeout(reloadTimer);
+    live = false;
+  }
+
+  onDestroy(disconnectLive);
+
   onMount(() => {
     load();
     connectLive();
   });
 
+  // Re-layout when the show-system filter toggles. topo doesn't change,
+  // only the included subset does.
   let prevShowSystem = showSystem;
   $effect(() => {
-    const current = showSystem;
-    if (current === prevShowSystem) return;
-    prevShowSystem = current;
-    untrack(() => {
-      if (topo) buildSimulation(snapshotPositions());
-    });
+    const cur = showSystem;
+    if (cur !== prevShowSystem) {
+      prevShowSystem = cur;
+      relayout();
+    }
   });
 </script>
 
@@ -803,7 +548,7 @@
         {/if}
       </h2>
       <p class="text-sm text-[var(--fg-muted)] mt-0.5">
-        Drag the background to pan, scroll to zoom, drag a node to pin it. Stack labels group containers by compose project.
+        Hierarchical layout via dagre — deterministic, no overlaps. Drag to pan, scroll to zoom.
       </p>
     </div>
     <div class="flex items-center gap-2 flex-wrap">
@@ -820,7 +565,7 @@
         {#if showSystem}<EyeOff class="w-3.5 h-3.5" />{:else}<Eye class="w-3.5 h-3.5" />{/if}
         {showSystem ? 'Hide' : 'Show'} system
       </Button>
-      <Button variant="secondary" size="sm" onclick={() => load(true)}>
+      <Button variant="secondary" size="sm" onclick={load}>
         <RefreshCw class="w-3.5 h-3.5 {loading ? 'animate-spin' : ''}" /> Refresh
       </Button>
     </div>
@@ -839,7 +584,6 @@
   {:else}
     <div class="grid grid-cols-1 lg:grid-cols-4 gap-4">
       <Card class="lg:col-span-3 overflow-hidden relative">
-        <!-- Zoom controls -->
         <div class="absolute top-3 right-3 z-10 flex flex-col gap-1 bg-[var(--surface)] border border-[var(--border)] rounded-lg p-1 shadow-lg">
           <button
             class="w-7 h-7 flex items-center justify-center rounded text-[var(--fg-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]"
@@ -860,8 +604,8 @@
           <button
             class="w-7 h-7 flex items-center justify-center rounded text-[var(--fg-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]"
             onclick={resetView}
-            aria-label="Reset view"
-            title="Reset view"
+            aria-label="Fit to view"
+            title="Fit to view"
           >
             <Maximize2 class="w-3.5 h-3.5" />
           </button>
@@ -872,20 +616,18 @@
 
         <svg
           bind:this={svgEl}
-          viewBox="0 0 {WORLD_W} {WORLD_H}"
-          class="w-full h-[72vh] {panning ? 'cursor-grabbing' : 'cursor-grab'}"
+          class="w-full h-[72vh] {panning ? 'cursor-grabbing' : 'cursor-grab'} block"
           onmousedown={onSvgMouseDown}
           onclick={onSvgClick}
           onwheel={onWheel}
           role="application"
           aria-label="Network topology graph"
         >
-          <!-- Background hit target so SVG-level events work -->
-          <rect class="bg-rect" x="0" y="0" width={WORLD_W} height={WORLD_H} fill="transparent" />
+          <rect class="bg-rect" x="0" y="0" width="100%" height="100%" fill="transparent" />
 
-          <g transform="translate({panX} {panY}) scale({zoom})">
-            <!-- Stack groups (rendered behind everything) -->
-            {#each stackBoxes as box (box.name)}
+          <g style="transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: 0 0; transition: transform 0ms;">
+            <!-- Stack groups (rendered behind nodes) -->
+            {#each scene.stacks as box (box.name)}
               <g>
                 <rect
                   x={box.x}
@@ -899,9 +641,20 @@
                   stroke-dasharray="6 4"
                   pointer-events="none"
                 />
+                <rect
+                  x={box.x + 10}
+                  y={box.y - 12}
+                  width={box.name.length * 8 + 16}
+                  height="22"
+                  rx="6"
+                  fill="var(--bg-elevated)"
+                  stroke="color-mix(in srgb, {box.color} 50%, transparent)"
+                  stroke-width="1"
+                  pointer-events="none"
+                />
                 <text
-                  x={box.x + 14}
-                  y={box.y + 18}
+                  x={box.x + 18}
+                  y={box.y + 4}
                   font-size="13"
                   font-weight="600"
                   fill={box.color}
@@ -915,30 +668,28 @@
 
             <!-- Edges -->
             <g fill="none">
-              {#each edges as e (e.sid + '|' + e.tid)}
+              {#each scene.edges as e (e.sid + '|' + e.tid)}
                 {@const isSel = selected && (selected.id === e.sid || selected.id === e.tid)}
                 {@const dim = (selected || searchMatches) && !isSel && (isDimmed(e.sid) || isDimmed(e.tid))}
-                <line
-                  x1={e.x1}
-                  y1={e.y1}
-                  x2={e.x2}
-                  y2={e.y2}
+                <path
+                  d={edgePath(e)}
                   stroke={isSel ? 'var(--color-brand-400)' : 'var(--border-strong)'}
-                  stroke-width={isSel ? 2.5 : 1.4}
-                  opacity={dim ? 0.1 : isSel ? 1 : 0.55}
+                  stroke-width={isSel ? 2.5 : 1.5}
+                  opacity={dim ? 0.1 : isSel ? 1 : 0.6}
+                  style="transition: stroke 200ms, opacity 200ms"
                 />
               {/each}
             </g>
 
             <!-- Nodes -->
-            {#each renderedNodes as n (n.id)}
+            {#each scene.nodes as n (n.id)}
               {@const isSel = selected?.id === n.id}
               {@const dim = isDimmed(n.id)}
               <g
-                transform="translate({n.x},{n.y})"
+                style="transform: translate({n.x}px, {n.y}px); transform-box: fill-box; transition: transform 300ms ease, opacity 200ms;"
                 opacity={dim ? 0.15 : 1}
-                class="cursor-grab active:cursor-grabbing transition-opacity"
-                onmousedown={(e) => onNodeMouseDown(n, e)}
+                class="cursor-pointer"
+                onclick={(e) => onNodeClick(n, e)}
                 onmouseenter={(e) => onNodeMouseEnter(n, e)}
                 onmouseleave={onNodeMouseLeave}
                 onmousemove={onNodeMouseMove}
@@ -948,7 +699,7 @@
                 {#if n.kind === 'network'}
                   {@const net = n.data as TopoNetwork}
                   <circle
-                    r={n.radius}
+                    r={NETWORK_R}
                     fill="color-mix(in srgb, {networkColor(net)} 22%, var(--bg-elevated))"
                     stroke={networkColor(net)}
                     stroke-width={isSel ? 3.5 : 2.5}
@@ -972,17 +723,17 @@
                   >{net.driver}</text>
                   <text
                     text-anchor="middle"
-                    y={n.radius + 14}
+                    y={NETWORK_R + 14}
                     font-size="11"
                     font-weight="500"
                     fill="var(--fg)"
                     font-family="var(--font-mono)"
                     pointer-events="none"
-                  >{n.label}</text>
+                  >{net.name}</text>
                 {:else}
                   {@const c = n.data as TopoContainer}
                   <circle
-                    r={n.radius}
+                    r={CONTAINER_R}
                     fill="color-mix(in srgb, {containerColor(c)} 24%, var(--bg-elevated))"
                     stroke={containerColor(c)}
                     stroke-width={isSel ? 3 : 2}
@@ -998,17 +749,17 @@
                   >{serviceIcon(c.image)}</text>
                   <text
                     text-anchor="middle"
-                    y={n.radius + 13}
+                    y={CONTAINER_R + 13}
                     font-size="10"
                     font-weight="500"
                     fill="var(--fg)"
                     font-family="var(--font-mono)"
                     pointer-events="none"
-                  >{n.label.length > 22 ? n.label.slice(0, 21) + '…' : n.label}</text>
+                  >{c.name.length > 22 ? c.name.slice(0, 21) + '…' : c.name}</text>
                   {#if c.ports && c.ports.length > 0}
                     <text
                       text-anchor="middle"
-                      y={n.radius + 25}
+                      y={CONTAINER_R + 25}
                       font-size="8"
                       fill="var(--color-brand-400)"
                       font-family="var(--font-mono)"
@@ -1060,7 +811,7 @@
           <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full" style="background:#a855f7"></span>overlay</div>
           <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full" style="background:#22c55e"></span>running</div>
           <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full" style="background:#6b7280"></span>stopped / system</div>
-          <div class="ml-auto">{renderedNodes.length} nodes · {edges.length} edges{#if stackBoxes.length > 0} · {stackBoxes.length} stacks{/if}</div>
+          <div class="ml-auto">{scene.nodes.length} nodes · {scene.edges.length} edges{#if scene.stacks.length > 0} · {scene.stacks.length} stacks{/if}</div>
         </div>
       </Card>
 
@@ -1091,7 +842,7 @@
             <div class="text-xs text-[var(--fg-muted)] mb-2">{selectedLinks.length} attached container(s)</div>
             <div class="space-y-1 max-h-72 overflow-auto -mx-2">
               {#each selectedLinks as l}
-                {@const cid = l.source === selectedNode.id ? l.target : l.source}
+                {@const cid = l.sid === selectedNode.id ? l.tid : l.sid}
                 <button
                   class="block w-full text-left px-2 py-1.5 text-xs font-mono rounded hover:bg-[var(--surface-hover)]"
                   onclick={() => goto(`/containers/${cid}`)}
@@ -1128,7 +879,7 @@
             <div class="text-xs text-[var(--fg-muted)] mb-2">{selectedLinks.length} network(s)</div>
             <div class="space-y-1 max-h-48 overflow-auto -mx-2">
               {#each selectedLinks as l}
-                {@const nid = l.source === selectedNode.id ? l.target : l.source}
+                {@const nid = l.sid === selectedNode.id ? l.tid : l.sid}
                 <div class="px-2 py-1 text-xs font-mono rounded text-[var(--fg)]">
                   {neighbourLabel(nid)}
                 </div>
