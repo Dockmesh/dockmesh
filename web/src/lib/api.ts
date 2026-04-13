@@ -52,6 +52,64 @@ export interface MetricsSample {
   blk_write: number;
 }
 
+export interface BackupSource {
+  type: 'volume' | 'stack';
+  name: string;
+}
+
+export interface BackupHook {
+  container: string;
+  cmd: string[];
+}
+
+export interface BackupJob {
+  id: number;
+  name: string;
+  target_type: string;
+  target_config: any;
+  sources: BackupSource[];
+  schedule: string;
+  retention_count: number;
+  retention_days: number;
+  encrypt: boolean;
+  pre_hooks: BackupHook[];
+  post_hooks: BackupHook[];
+  enabled: boolean;
+  last_run_at?: string;
+  next_run_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BackupJobInput {
+  name: string;
+  target_type: string;
+  target_config: any;
+  sources: BackupSource[];
+  schedule: string;
+  retention_count: number;
+  retention_days: number;
+  encrypt: boolean;
+  pre_hooks: BackupHook[];
+  post_hooks: BackupHook[];
+  enabled: boolean;
+}
+
+export interface BackupRun {
+  id: number;
+  job_id: number;
+  job_name: string;
+  status: string;
+  started_at: string;
+  finished_at?: string;
+  size_bytes: number;
+  target_path?: string;
+  sha256?: string;
+  encrypted: boolean;
+  error?: string;
+  sources: BackupSource[];
+}
+
 export interface NotificationChannel {
   id: number;
   type: string;
@@ -293,6 +351,23 @@ export const api = {
     remove: (name: string, force = false) =>
       request<void>(`/volumes/${encodeURIComponent(name)}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
     prune: () => request<any>('/volumes/prune', { method: 'POST' })
+  },
+
+  backups: {
+    listJobs: () => request<BackupJob[]>('/backups/jobs'),
+    getJob: (id: number) => request<BackupJob>(`/backups/jobs/${id}`),
+    createJob: (input: BackupJobInput) =>
+      request<BackupJob>('/backups/jobs', { method: 'POST', body: JSON.stringify(input) }),
+    updateJob: (id: number, input: BackupJobInput) =>
+      request<BackupJob>(`/backups/jobs/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+    deleteJob: (id: number) => request<void>(`/backups/jobs/${id}`, { method: 'DELETE' }),
+    runJob: (id: number) => request<BackupRun>(`/backups/jobs/${id}/run`, { method: 'POST' }),
+    listRuns: (limit = 100) => request<BackupRun[]>(`/backups/runs?limit=${limit}`),
+    restore: (runId: number, destVolume: string) =>
+      request<void>(`/backups/runs/${runId}/restore`, {
+        method: 'POST',
+        body: JSON.stringify({ dest_volume: destVolume })
+      })
   },
 
   users: {

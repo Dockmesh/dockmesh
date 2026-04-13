@@ -46,6 +46,15 @@ func (s *Service) PublicRecipient() string {
 	return s.identity.Recipient().String()
 }
 
+// Identity returns the loaded X25519 identity. Used by callers that need
+// to decrypt with the same key (e.g. the backup restore path).
+func (s *Service) Identity() (age.Identity, error) {
+	if s.identity == nil {
+		return nil, errors.New("secrets service has no identity loaded")
+	}
+	return s.identity, nil
+}
+
 func (s *Service) loadOrCreateKey() error {
 	b, err := os.ReadFile(s.keyPath)
 	switch {
