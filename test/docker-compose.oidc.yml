@@ -1,0 +1,19 @@
+# Dev-only OIDC provider for testing Dockmesh SSO locally.
+#
+#   docker compose -f test/docker-compose.oidc.yml up -d
+#   docker compose -f test/docker-compose.oidc.yml down
+#
+# Dex will be reachable at http://localhost:5556/dex with the static
+# users admin@dockmesh.local / user@dockmesh.local, password "password"
+# (both). Create a matching OIDC provider in Dockmesh with the values
+# documented in test/dex/config.yaml.
+services:
+  dex:
+    image: ghcr.io/dexidp/dex:v2.44.0
+    container_name: dockmesh-dex
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    ports:
+      - "5556:5556"
+    volumes:
+      - ./dex/config.yaml:/etc/dex/config.yaml:ro
+    restart: unless-stopped

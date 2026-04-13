@@ -10,6 +10,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/oidc"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/scanner"
@@ -29,6 +30,8 @@ type Handlers struct {
 	ScanStore   *scanner.Store
 	Proxy       *proxy.Service
 	Updater     *updater.Service
+	OIDC        *oidc.Service
+	JWTSecret   []byte // raw secret used to sign the short-lived OIDC state cookie
 }
 
 type Deps struct {
@@ -43,6 +46,8 @@ type Deps struct {
 	ScanStore    *scanner.Store
 	Proxy        *proxy.Service
 	Updater      *updater.Service
+	OIDC         *oidc.Service
+	JWTSecret    []byte
 }
 
 func New(d Deps) *Handlers {
@@ -58,6 +63,8 @@ func New(d Deps) *Handlers {
 		ScanStore:   d.ScanStore,
 		Proxy:       d.Proxy,
 		Updater:     d.Updater,
+		OIDC:        d.OIDC,
+		JWTSecret:   d.JWTSecret,
 	}
 }
 

@@ -93,6 +93,40 @@ func (s *Service) CreateUser(ctx context.Context, username, email, password, rol
 	return &User{ID: id, Username: username, Email: email, Role: role}, nil
 }
 
+// CreateSSOUser inserts a user without a local password. The password
+// column holds a random unguessable value so local login can never
+// succeed for SSO-only accounts.
+func (s *Service) CreateSSOUser(ctx context.Context, username, email, role, provider, subject string) (*User, error) {
+	randomPw, err := generatePassword(40)
+	if err != nil {
+		return nil, err
+	}
+	hash, err := HashPassword(randomPw)
+	if err != nil {
+		return nil, err
+	}
+	id := uuid.NewString()
+	var emailNullable any
+	if email != "" {
+		emailNullable = email
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO users (id, username, email, password, role, oidc_provider, oidc_subject)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, username, emailNullable, hash, role, provider, subject)
+	if err != nil {
+		return nil, fmt.Errorf("insert sso user: %w", err)
+	}
+	return &User{ID: id, Username: username, Email: email, Role: role}, nil
+}
+
+// StartSessionForSSO mints a token pair for an SSO-authenticated user,
+// bypassing password + MFA checks. Callers are responsible for having
+// actually verified the SSO flow before calling this.
+func (s *Service) StartSessionForSSO(ctx context.Context, u User, userAgent, ip string) (*LoginResult, error) {
+	return s.startSession(ctx, u, userAgent, ip)
+}
+
 func (s *Service) GetUser(ctx context.Context, id string) (*User, error) {
 	var u User
 	var email sql.NullString

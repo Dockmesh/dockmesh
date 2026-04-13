@@ -20,6 +20,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/oidc"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/scanner"
@@ -135,6 +136,7 @@ func main() {
 		}
 	}
 	updaterSvc := updater.NewService(dockerCli, database)
+	oidcSvc := oidc.NewService(database, authSvc, secretsSvc, cfg.BaseURL)
 
 	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
 	h := handlers.New(handlers.Deps{
@@ -149,6 +151,8 @@ func main() {
 		ScanStore:    scanStore,
 		Proxy:        proxySvc,
 		Updater:      updaterSvc,
+		OIDC:         oidcSvc,
+		JWTSecret:    cfg.JWTSecret,
 	})
 	router := api.NewRouter(h, authSvc, webFS)
 

@@ -1,0 +1,47 @@
+# Dex config for local Dockmesh OIDC testing.
+# Start with: docker compose -f test/docker-compose.oidc.yml up -d
+#
+# The callback URL below assumes Dockmesh is reachable at
+# http://localhost:8080 (adjust DOCKMESH_BASE_URL on the backend if not).
+# After Dex is up, create an OIDC provider in Dockmesh Settings → SSO with:
+#   slug:          dex
+#   issuer url:    http://localhost:5556/dex
+#   client id:     dockmesh
+#   client secret: dockmesh-dev-secret
+#   scopes:        openid,profile,email,groups
+#   group claim:   groups
+#   admin group:   dockmesh-admins
+
+issuer: http://localhost:5556/dex
+
+storage:
+  type: memory
+
+web:
+  http: 0.0.0.0:5556
+
+oauth2:
+  skipApprovalScreen: true
+  responseTypes: [code]
+
+staticClients:
+  - id: dockmesh
+    redirectURIs:
+      - "http://localhost:8080/api/v1/auth/oidc/dex/callback"
+      - "http://192.168.10.164:8080/api/v1/auth/oidc/dex/callback"
+    name: Dockmesh
+    secret: dockmesh-dev-secret
+
+enablePasswordDB: true
+
+# bcrypt of "password" — generated with: htpasswd -bnBC 10 "" password | tr -d ':\n'
+staticPasswords:
+  - email: admin@dockmesh.local
+    hash: "$2y$10$i2.tSLkchjnpGkHlz3JJd.X6c8cPnPR3UAHZ4fMOsKj4D97WqWcsm"
+    username: admin
+    userID: 00000000-0000-0000-0000-000000000001
+
+  - email: user@dockmesh.local
+    hash: "$2y$10$i2.tSLkchjnpGkHlz3JJd.X6c8cPnPR3UAHZ4fMOsKj4D97WqWcsm"
+    username: user
+    userID: 00000000-0000-0000-0000-000000000002

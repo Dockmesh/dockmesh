@@ -3,10 +3,110 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { Card, Button, Input, Modal, Badge, Skeleton, EmptyState } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
-  import { User, Users, Activity, Plus, Trash2, UserCog, ShieldCheck, ShieldOff, Copy, KeyRound, Link2 } from 'lucide-svelte';
+  import { User, Users, Activity, Plus, Trash2, UserCog, ShieldCheck, ShieldOff, Copy, KeyRound, Link2, Globe, ExternalLink } from 'lucide-svelte';
+  import type { OIDCProvider, OIDCProviderInput } from '$lib/api';
 
-  type Tab = 'account' | 'users' | 'audit';
+  type Tab = 'account' | 'users' | 'audit' | 'sso';
   let tab = $state<Tab>('account');
+
+  // SSO state
+  let oidcProviders = $state<OIDCProvider[]>([]);
+  let oidcLoading = $state(false);
+  let showOIDC = $state(false);
+  let editingOIDC = $state<OIDCProvider | null>(null);
+  let oForm = $state<OIDCProviderInput>({
+    slug: '',
+    display_name: '',
+    issuer_url: '',
+    client_id: '',
+    client_secret: '',
+    scopes: 'openid,profile,email',
+    group_claim: 'groups',
+    admin_group: '',
+    operator_group: '',
+    default_role: 'viewer',
+    enabled: true
+  });
+
+  async function loadOIDC() {
+    oidcLoading = true;
+    try {
+      oidcProviders = await api.oidc.listAdmin();
+    } catch (err) {
+      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      oidcLoading = false;
+    }
+  }
+
+  function resetOIDCForm() {
+    oForm = {
+      slug: '',
+      display_name: '',
+      issuer_url: '',
+      client_id: '',
+      client_secret: '',
+      scopes: 'openid,profile,email',
+      group_claim: 'groups',
+      admin_group: '',
+      operator_group: '',
+      default_role: 'viewer',
+      enabled: true
+    };
+    editingOIDC = null;
+  }
+
+  function openNewOIDC() {
+    resetOIDCForm();
+    showOIDC = true;
+  }
+
+  function openEditOIDC(p: OIDCProvider) {
+    editingOIDC = p;
+    oForm = {
+      slug: p.slug,
+      display_name: p.display_name,
+      issuer_url: p.issuer_url,
+      client_id: p.client_id,
+      client_secret: '',
+      scopes: p.scopes,
+      group_claim: p.group_claim ?? '',
+      admin_group: p.admin_group ?? '',
+      operator_group: p.operator_group ?? '',
+      default_role: p.default_role,
+      enabled: p.enabled
+    };
+    showOIDC = true;
+  }
+
+  async function saveOIDC(e: Event) {
+    e.preventDefault();
+    try {
+      if (editingOIDC) {
+        await api.oidc.update(editingOIDC.id, oForm);
+        toast.success('Provider updated', oForm.slug);
+      } else {
+        await api.oidc.create(oForm);
+        toast.success('Provider created', oForm.slug);
+      }
+      showOIDC = false;
+      resetOIDCForm();
+      await loadOIDC();
+    } catch (err) {
+      toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
+  async function deleteOIDC(p: OIDCProvider) {
+    if (!confirm(`Delete provider "${p.display_name}"?`)) return;
+    try {
+      await api.oidc.delete(p.id);
+      toast.success('Deleted', p.slug);
+      await loadOIDC();
+    } catch (err) {
+      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
 
   // Account
   let me = $state<any>(null);
@@ -223,6 +323,7 @@
     if (tab === 'account') loadMe();
     else if (tab === 'users') loadUsers();
     else if (tab === 'audit') loadAudit();
+    else if (tab === 'sso') loadOIDC();
   });
 
   const isAdmin = $derived(auth.user?.role === 'admin');
@@ -230,6 +331,7 @@
   const tabs: Array<{ id: Tab; label: string; icon: any; show: boolean }> = $derived([
     { id: 'account', label: 'Account', icon: User, show: true },
     { id: 'users', label: 'Users', icon: Users, show: isAdmin },
+    { id: 'sso', label: 'SSO', icon: Globe, show: isAdmin },
     { id: 'audit', label: 'Audit Log', icon: Activity, show: true }
   ]);
 </script>
@@ -497,6 +599,107 @@
     {/if}
   {/if}
 </section>
+
+{#if tab === 'sso' && isAdmin}
+  <section class="space-y-4">
+    <div class="flex justify-between items-center">
+      <div class="text-sm text-[var(--fg-muted)]">
+        {oidcProviders.length} {oidcProviders.length === 1 ? 'provider' : 'providers'} configured
+      </div>
+      <Button variant="primary" onclick={openNewOIDC}>
+        <Plus class="w-4 h-4" /> Add provider
+      </Button>
+    </div>
+
+    {#if oidcLoading && oidcProviders.length === 0}
+      <Card><Skeleton class="m-5" width="70%" height="1rem" /></Card>
+    {:else if oidcProviders.length === 0}
+      <Card>
+        <EmptyState
+          icon={Globe}
+          title="No SSO providers"
+          description="Add an OIDC provider (Azure AD, Google, Keycloak, Dex, Auth0, …) to let users sign in via their organisation account."
+        />
+      </Card>
+    {:else}
+      <Card>
+        <div class="divide-y divide-[var(--border)]">
+          {#each oidcProviders as p}
+            <div class="flex items-center gap-3 px-5 py-3 hover:bg-[var(--surface-hover)] transition-colors">
+              <div class="w-10 h-10 rounded-lg bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] text-[var(--color-brand-400)] flex items-center justify-center shrink-0">
+                <Globe class="w-5 h-5" />
+              </div>
+              <button class="flex-1 min-w-0 text-left" onclick={() => openEditOIDC(p)}>
+                <div class="font-medium text-sm flex items-center gap-2">
+                  {p.display_name}
+                  {#if !p.enabled}<Badge variant="default">disabled</Badge>{/if}
+                </div>
+                <div class="text-xs text-[var(--fg-muted)] font-mono truncate">{p.issuer_url}</div>
+              </button>
+              <Button size="xs" variant="ghost" onclick={() => deleteOIDC(p)} aria-label="Delete">
+                <Trash2 class="w-3.5 h-3.5 text-[var(--color-danger-400)]" />
+              </Button>
+            </div>
+          {/each}
+        </div>
+      </Card>
+    {/if}
+
+    <Card class="p-4">
+      <div class="text-xs text-[var(--fg-muted)] space-y-1">
+        <div class="font-medium text-[var(--fg)]">Callback URL</div>
+        <code class="font-mono text-[var(--color-brand-400)]">{`${typeof window !== 'undefined' ? window.location.origin : ''}/api/v1/auth/oidc/{slug}/callback`}</code>
+        <div>Configure this in your provider's app/client redirect URIs.</div>
+      </div>
+    </Card>
+  </section>
+{/if}
+
+<Modal bind:open={showOIDC} title={editingOIDC ? 'Edit OIDC provider' : 'Add OIDC provider'} maxWidth="max-w-xl" onclose={resetOIDCForm}>
+  <form onsubmit={saveOIDC} class="space-y-3" id="oidc-form">
+    <div class="grid grid-cols-2 gap-3">
+      <Input label="Slug" hint="used in URLs" bind:value={oForm.slug} disabled={editingOIDC !== null} />
+      <Input label="Display name" bind:value={oForm.display_name} />
+    </div>
+    <Input label="Issuer URL" placeholder="https://login.microsoftonline.com/{tenant}/v2.0" bind:value={oForm.issuer_url} hint="OIDC discovery root" />
+    <div class="grid grid-cols-2 gap-3">
+      <Input label="Client ID" bind:value={oForm.client_id} />
+      <Input
+        label="Client secret"
+        type="password"
+        bind:value={oForm.client_secret}
+        hint={editingOIDC ? 'leave blank to keep existing' : undefined}
+      />
+    </div>
+    <Input label="Scopes" bind:value={oForm.scopes} hint="comma-separated" />
+    <div class="grid grid-cols-3 gap-3">
+      <Input label="Group claim" placeholder="groups" bind:value={oForm.group_claim} />
+      <Input label="Admin group" bind:value={oForm.admin_group} />
+      <Input label="Operator group" bind:value={oForm.operator_group} />
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Default role</span>
+        <select class="dm-input" bind:value={oForm.default_role}>
+          <option value="viewer">viewer</option>
+          <option value="operator">operator</option>
+          <option value="admin">admin</option>
+        </select>
+      </div>
+      <label class="flex items-end gap-2 pb-2">
+        <input type="checkbox" bind:checked={oForm.enabled} class="accent-[var(--color-brand-500)]" />
+        <span class="text-sm">Enabled</span>
+      </label>
+    </div>
+  </form>
+
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => { showOIDC = false; resetOIDCForm(); }}>Cancel</Button>
+    <Button variant="primary" type="submit" form="oidc-form">
+      {editingOIDC ? 'Save' : 'Create'}
+    </Button>
+  {/snippet}
+</Modal>
 
 <Modal bind:open={mfaOpen} title={mfaStep === 'qr' ? 'Enable two-factor authentication' : 'Save your recovery codes'} maxWidth="max-w-md" onclose={closeMFA}>
   {#if mfaStep === 'qr' && mfaEnroll}
