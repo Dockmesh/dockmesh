@@ -68,6 +68,13 @@ export interface TopoContainer {
   state: string;
   image: string;
   stack?: string;
+  ports?: TopoPort[];
+}
+
+export interface TopoPort {
+  host_port: number;
+  container_port: number;
+  protocol: string;
 }
 
 export interface TopoLink {

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -28,11 +29,18 @@ type TopoNetwork struct {
 }
 
 type TopoContainer struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	State string `json:"state"`
-	Image string `json:"image"`
-	Stack string `json:"stack,omitempty"`
+	ID    string     `json:"id"`
+	Name  string     `json:"name"`
+	State string     `json:"state"`
+	Image string     `json:"image"`
+	Stack string     `json:"stack,omitempty"`
+	Ports []TopoPort `json:"ports,omitempty"`
+}
+
+type TopoPort struct {
+	HostPort      int    `json:"host_port"`
+	ContainerPort int    `json:"container_port"`
+	Protocol      string `json:"protocol"`
 }
 
 type TopoLink struct {
@@ -77,12 +85,32 @@ func (h *Handlers) GetTopology(w http.ResponseWriter, r *http.Request) {
 		if c.Labels != nil {
 			stack = c.Labels["com.docker.compose.project"]
 		}
+		// Deduplicate published ports — Docker reports one entry per host
+		// IP binding (0.0.0.0 + ::) which would otherwise show twice.
+		seen := make(map[string]bool)
+		var ports []TopoPort
+		for _, p := range c.Ports {
+			if p.PublicPort == 0 {
+				continue
+			}
+			key := fmt.Sprintf("%d/%s", p.PublicPort, p.Type)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			ports = append(ports, TopoPort{
+				HostPort:      int(p.PublicPort),
+				ContainerPort: int(p.PrivatePort),
+				Protocol:      p.Type,
+			})
+		}
 		topo.Containers = append(topo.Containers, TopoContainer{
 			ID:    c.ID,
 			Name:  name,
 			State: c.State,
 			Image: c.Image,
 			Stack: stack,
+			Ports: ports,
 		})
 		containerByID[c.ID] = true
 	}
