@@ -37,7 +37,9 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/gorilla/websocket"
 )
@@ -211,7 +213,17 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 		}
 	}()
 
-	// Read loop: handle server pings + future request frames.
+	// Shared docker client for request handlers (re-created on each
+	// request would be wasteful; one per connection is fine).
+	dockerCli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		slog.Warn("docker client init failed — agent will only respond to pings", "err", err)
+	}
+	if dockerCli != nil {
+		defer dockerCli.Close()
+	}
+
+	// Read loop: handle server pings + request/response frames.
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -228,8 +240,80 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 			if err := writeFrame(conn, agents.Frame{Type: agents.FrameAgentPong, Payload: pong}); err != nil {
 				return err
 			}
+		default:
+			// Anything starting with req. is a server-initiated request.
+			// Handle it in a goroutine so a slow handler can't block the
+			// read loop (and therefore the heartbeat too).
+			go handleRequest(ctxConn, conn, dockerCli, f)
 		}
 	}
+}
+
+// -----------------------------------------------------------------------------
+// Request handlers
+// -----------------------------------------------------------------------------
+
+func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client, f agents.Frame) {
+	if cli == nil {
+		sendResponse(conn, f.ID, agents.ResponseEnvelope{OK: false, Error: "docker daemon unavailable"})
+		return
+	}
+	switch f.Type {
+	case agents.FrameReqContainerList:
+		var req agents.ContainerListReq
+		_ = json.Unmarshal(f.Payload, &req)
+		list, err := cli.ContainerList(ctx, container.ListOptions{All: req.All})
+		respond(conn, f.ID, list, err)
+
+	case agents.FrameReqContainerInspect:
+		var req agents.ContainerIDReq
+		_ = json.Unmarshal(f.Payload, &req)
+		info, err := cli.ContainerInspect(ctx, req.ID)
+		respond(conn, f.ID, info, err)
+
+	case agents.FrameReqImageList:
+		list, err := cli.ImageList(ctx, dtypes.ImageListOptions{All: false})
+		respond(conn, f.ID, list, err)
+
+	case agents.FrameReqNetworkList:
+		list, err := cli.NetworkList(ctx, dtypes.NetworkListOptions{})
+		respond(conn, f.ID, list, err)
+
+	case agents.FrameReqVolumeList:
+		list, err := cli.VolumeList(ctx, volume.ListOptions{})
+		if err != nil {
+			respond(conn, f.ID, nil, err)
+			return
+		}
+		// VolumeList returns a struct with pointer slice — flatten so the
+		// server gets a JSON array directly.
+		respond(conn, f.ID, list.Volumes, nil)
+
+	case agents.FrameReqDaemonInfo:
+		info, err := cli.Info(ctx)
+		respond(conn, f.ID, info, err)
+
+	default:
+		sendResponse(conn, f.ID, agents.ResponseEnvelope{OK: false, Error: "unknown request type: " + f.Type})
+	}
+}
+
+func respond(conn *websocket.Conn, id string, data any, err error) {
+	if err != nil {
+		sendResponse(conn, id, agents.ResponseEnvelope{OK: false, Error: err.Error()})
+		return
+	}
+	b, mErr := json.Marshal(data)
+	if mErr != nil {
+		sendResponse(conn, id, agents.ResponseEnvelope{OK: false, Error: mErr.Error()})
+		return
+	}
+	sendResponse(conn, id, agents.ResponseEnvelope{OK: true, Data: b})
+}
+
+func sendResponse(conn *websocket.Conn, id string, env agents.ResponseEnvelope) {
+	envBytes, _ := json.Marshal(env)
+	_ = writeFrame(conn, agents.Frame{Type: agents.FrameRes, ID: id, Payload: envBytes})
 }
 
 // -----------------------------------------------------------------------------

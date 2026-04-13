@@ -25,6 +25,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/metrics"
 	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/oidc"
@@ -187,6 +188,7 @@ func main() {
 		agentPublic = deriveAgentURL(cfg.BaseURL, cfg.AgentListen)
 	}
 	agentsSvc := agents.NewService(database, pkiMgr, cfg.BaseURL, agentPublic)
+	hostRegistry := host.NewRegistry(dockerCli, agentsSvc)
 
 	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
 	h := handlers.New(handlers.Deps{
@@ -207,6 +209,7 @@ func main() {
 		Alerts:       alertsSvc,
 		Backups:      backupSvc,
 		Agents:       agentsSvc,
+		Hosts:        hostRegistry,
 		JWTSecret:    cfg.JWTSecret,
 	})
 	router := api.NewRouter(h, authSvc, webFS)

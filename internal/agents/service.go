@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -61,15 +62,19 @@ type Service struct {
 	connected map[string]*ConnectedAgent // keyed by agent id
 }
 
-// ConnectedAgent is held in memory while the agent's WS is open. Slice 3.1.2
-// will hang request channels off this struct so HTTP handlers can ask the
-// remote agent to do things.
+// ConnectedAgent is held in memory while the agent's WS is open. HTTP
+// handlers ask the remote agent to do things via Request(), which sends
+// a frame over the send channel and waits on a per-request response
+// channel registered in pending.
 type ConnectedAgent struct {
 	ID       string
 	Name     string
 	Hello    HelloPayload
 	JoinedAt time.Time
 	send     chan Frame
+
+	pendingMu sync.Mutex
+	pending   map[string]chan Frame
 }
 
 func (c *ConnectedAgent) Send(f Frame) {
@@ -77,6 +82,66 @@ func (c *ConnectedAgent) Send(f Frame) {
 	case c.send <- f:
 	default:
 		// Drop on full — the agent will time out and reconnect.
+	}
+}
+
+// Request sends a request frame and blocks until a response with the
+// matching ID arrives, the context is cancelled, or the request times
+// out (30s). The frame's ID is overwritten with a fresh UUID.
+func (c *ConnectedAgent) Request(ctx context.Context, f Frame) (*ResponseEnvelope, error) {
+	id := uuid.NewString()
+	f.ID = id
+
+	ch := make(chan Frame, 1)
+	c.pendingMu.Lock()
+	if c.pending == nil {
+		c.pending = make(map[string]chan Frame)
+	}
+	c.pending[id] = ch
+	c.pendingMu.Unlock()
+	defer func() {
+		c.pendingMu.Lock()
+		delete(c.pending, id)
+		c.pendingMu.Unlock()
+	}()
+
+	select {
+	case c.send <- f:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	select {
+	case resp := <-ch:
+		var env ResponseEnvelope
+		if err := json.Unmarshal(resp.Payload, &env); err != nil {
+			return nil, fmt.Errorf("decode response: %w", err)
+		}
+		if !env.OK {
+			return &env, fmt.Errorf("agent: %s", env.Error)
+		}
+		return &env, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(30 * time.Second):
+		return nil, fmt.Errorf("agent request %q timed out", f.Type)
+	}
+}
+
+// deliverResponse is called by server.go when a res frame arrives on the
+// inbound stream. It hands the frame to whichever Request() goroutine is
+// waiting for that ID. Frames with no matching pending request are
+// dropped silently (e.g. late responses after timeout).
+func (c *ConnectedAgent) deliverResponse(f Frame) {
+	c.pendingMu.Lock()
+	ch, ok := c.pending[f.ID]
+	c.pendingMu.Unlock()
+	if !ok {
+		return
+	}
+	select {
+	case ch <- f:
+	default:
 	}
 }
 
@@ -330,6 +395,14 @@ func (s *Service) Connected() []string {
 		out = append(out, id)
 	}
 	return out
+}
+
+// GetConnected returns the live ConnectedAgent struct for the given id
+// or nil if the agent is not currently connected.
+func (s *Service) GetConnected(id string) *ConnectedAgent {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.connected[id]
 }
 
 // -----------------------------------------------------------------------------

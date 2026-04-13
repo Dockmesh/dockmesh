@@ -52,6 +52,13 @@ export interface MetricsSample {
   blk_write: number;
 }
 
+export interface HostInfo {
+  id: string;
+  name: string;
+  kind: 'local' | 'agent';
+  status: 'online' | 'offline' | 'pending' | 'revoked';
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -359,9 +366,22 @@ export const api = {
       )
   },
 
+  hosts: {
+    list: () => request<HostInfo[]>('/hosts')
+  },
+
   containers: {
-    list: (all = false) => request<any[]>(`/containers${all ? '?all=true' : ''}`),
-    inspect: (id: string) => request<any>(`/containers/${id}`),
+    list: (all = false, host = 'local') => {
+      const params = new URLSearchParams();
+      if (all) params.set('all', 'true');
+      if (host && host !== 'local') params.set('host', host);
+      const qs = params.toString();
+      return request<any[]>(`/containers${qs ? '?' + qs : ''}`);
+    },
+    inspect: (id: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<any>(`/containers/${id}${qs}`);
+    },
     start: (id: string) => request<void>(`/containers/${id}/start`, { method: 'POST' }),
     stop: (id: string) => request<void>(`/containers/${id}/stop`, { method: 'POST' }),
     restart: (id: string) => request<void>(`/containers/${id}/restart`, { method: 'POST' }),
