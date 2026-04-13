@@ -9,7 +9,7 @@
   import { Card, Badge, Button, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
-  import type { UpdatePreview, UpdateHistoryEntry } from '$lib/api';
+  import type { UpdatePreview, UpdateHistoryEntry, MetricsSample } from '$lib/api';
   import {
     ChevronLeft,
     Play,
@@ -65,6 +65,39 @@
   let statsHistory = $state<StatsSample[]>([]);
   let statsConnected = $state(false);
   let statsWs: WebSocket | null = null;
+
+  // History metrics (server-side collected)
+  type HistoryRange = '1h' | '6h' | '24h' | '7d' | '30d';
+  let historyRange = $state<HistoryRange>('1h');
+  let historySamples = $state<MetricsSample[]>([]);
+  let historyLoading = $state(false);
+
+  const RANGE_SECONDS: Record<HistoryRange, number> = {
+    '1h': 3600,
+    '6h': 6 * 3600,
+    '24h': 24 * 3600,
+    '7d': 7 * 86400,
+    '30d': 30 * 86400
+  };
+
+  function rangeResolution(r: HistoryRange): 'raw' | '1m' | '1h' {
+    if (r === '1h' || r === '6h') return 'raw';
+    if (r === '24h' || r === '7d') return '1m';
+    return '1h';
+  }
+
+  async function loadHistory() {
+    historyLoading = true;
+    try {
+      const to = Math.floor(Date.now() / 1000);
+      const from = to - RANGE_SECONDS[historyRange];
+      historySamples = await api.containers.metrics(id, from, to, rangeResolution(historyRange));
+    } catch { /* ignore — empty history is fine */
+      historySamples = [];
+    } finally {
+      historyLoading = false;
+    }
+  }
 
   // Exec
   let execContainer: HTMLDivElement | null = $state(null);
@@ -332,6 +365,7 @@
       disconnectLogs();
       disconnectExec();
       connectStats();
+      loadHistory();
     } else if (tab === 'updates') {
       disconnectLogs();
       disconnectExec();
@@ -602,6 +636,72 @@
         </Card>
       </div>
       <div class="text-xs text-[var(--fg-subtle)]">{statsHistory.length} samples (rolling 60s)</div>
+
+      <!-- Historical chart -->
+      <Card class="p-5">
+        <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+          <h3 class="font-semibold text-sm">History</h3>
+          <div class="flex gap-1 text-xs">
+            {#each ['1h', '6h', '24h', '7d', '30d'] as const as r}
+              <button
+                class="px-2.5 py-1 rounded-md font-mono transition-colors
+                       {historyRange === r
+                  ? 'bg-[var(--color-brand-500)] text-white'
+                  : 'text-[var(--fg-muted)] hover:bg-[var(--surface-hover)]'}"
+                onclick={() => { historyRange = r; loadHistory(); }}
+              >
+                {r}
+              </button>
+            {/each}
+          </div>
+        </div>
+        {#if historyLoading && historySamples.length === 0}
+          <div class="text-xs text-[var(--fg-muted)]">loading…</div>
+        {:else if historySamples.length === 0}
+          <div class="text-xs text-[var(--fg-muted)]">
+            no samples yet — collector runs every 30 seconds, check back in a minute
+          </div>
+        {:else}
+          {@const cpuVals = historySamples.map((s) => s.cpu_percent)}
+          {@const memPct = historySamples.map((s) =>
+            s.mem_limit > 0 ? (s.mem_used / s.mem_limit) * 100 : 0
+          )}
+          <div class="space-y-5">
+            <div>
+              <div class="flex justify-between text-xs text-[var(--fg-muted)] mb-1">
+                <span>CPU %</span>
+                <span>{cpuVals.length} samples</span>
+              </div>
+              <svg viewBox="0 0 600 80" class="w-full h-20">
+                <defs>
+                  <linearGradient id="hist-cpu-grad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.3" />
+                    <stop offset="100%" stop-color="#06b6d4" stop-opacity="0" />
+                  </linearGradient>
+                </defs>
+                <path d={sparkArea(cpuVals, 100, 600, 80)} fill="url(#hist-cpu-grad)" />
+                <path d={sparkPath(cpuVals, 100, 600, 80)} fill="none" stroke="#06b6d4" stroke-width="1.5" stroke-linejoin="round" />
+              </svg>
+            </div>
+            <div>
+              <div class="flex justify-between text-xs text-[var(--fg-muted)] mb-1">
+                <span>Memory %</span>
+                <span>peak {Math.max(...memPct).toFixed(1)}%</span>
+              </div>
+              <svg viewBox="0 0 600 80" class="w-full h-20">
+                <defs>
+                  <linearGradient id="hist-mem-grad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#22c55e" stop-opacity="0.3" />
+                    <stop offset="100%" stop-color="#22c55e" stop-opacity="0" />
+                  </linearGradient>
+                </defs>
+                <path d={sparkArea(memPct, 100, 600, 80)} fill="url(#hist-mem-grad)" />
+                <path d={sparkPath(memPct, 100, 600, 80)} fill="none" stroke="#22c55e" stroke-width="1.5" stroke-linejoin="round" />
+              </svg>
+            </div>
+          </div>
+        {/if}
+      </Card>
     {/if}
   {:else if tab === 'updates'}
     <div class="space-y-4">

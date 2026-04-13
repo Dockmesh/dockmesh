@@ -41,6 +41,17 @@ export interface UpdateResult {
   history_id?: number;
 }
 
+export interface MetricsSample {
+  ts: number;
+  cpu_percent: number;
+  mem_used: number;
+  mem_limit: number;
+  net_rx: number;
+  net_tx: number;
+  blk_read: number;
+  blk_write: number;
+}
+
 export interface OIDCProvider {
   id: number;
   slug: string;
@@ -197,7 +208,11 @@ export const api = {
         body: JSON.stringify({ history_id: historyId })
       }),
     updateHistory: (id: string) =>
-      request<UpdateHistoryEntry[]>(`/containers/${id}/update-history`)
+      request<UpdateHistoryEntry[]>(`/containers/${id}/update-history`),
+    metrics: (id: string, from: number, to: number, resolution: 'raw' | '1m' | '1h' = 'raw') =>
+      request<MetricsSample[]>(
+        `/containers/${id}/metrics?from=${from}&to=${to}&resolution=${resolution}`
+      )
   },
 
   images: {
