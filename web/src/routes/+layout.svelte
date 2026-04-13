@@ -16,6 +16,7 @@
     Bell,
     Archive,
     Network as NetworkIcon,
+    Server,
     Settings as SettingsIcon,
     Moon,
     Sun,
@@ -65,6 +66,7 @@
       { href: '/images', label: 'Images', icon: ImageIcon, show: allowed('image.write') || allowed('read') },
       { href: '/networks', label: 'Networks', icon: NetworkIcon, show: allowed('read') },
       { href: '/proxy', label: 'Proxy', icon: Globe, show: allowed('user.manage') },
+      { href: '/agents', label: 'Agents', icon: Server, show: allowed('user.manage') },
       { href: '/alerts', label: 'Alerts', icon: Bell, show: allowed('user.manage') },
       { href: '/backups', label: 'Backups', icon: Archive, show: allowed('user.manage') },
       { href: '/settings', label: 'Settings', icon: SettingsIcon, show: true }

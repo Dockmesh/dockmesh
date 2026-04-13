@@ -52,6 +52,29 @@ export interface MetricsSample {
   blk_write: number;
 }
 
+export interface Agent {
+  id: string;
+  name: string;
+  status: 'pending' | 'online' | 'offline' | 'revoked';
+  version?: string;
+  os?: string;
+  arch?: string;
+  hostname?: string;
+  docker_version?: string;
+  cert_fingerprint?: string;
+  last_seen_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentCreateResult {
+  agent: Agent;
+  token: string;
+  enroll_url: string;
+  agent_url: string;
+  install_hint: string;
+}
+
 export interface TopoNetwork {
   id: string;
   name: string;
@@ -492,6 +515,14 @@ export const api = {
       request<OIDCProvider>(`/oidc/providers/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
     delete: (id: number) =>
       request<void>(`/oidc/providers/${id}`, { method: 'DELETE' })
+  },
+
+  agents: {
+    list: () => request<Agent[]>('/agents'),
+    get: (id: string) => request<Agent>(`/agents/${id}`),
+    create: (name: string) =>
+      request<AgentCreateResult>('/agents', { method: 'POST', body: JSON.stringify({ name }) }),
+    delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' })
   },
 
   proxy: {

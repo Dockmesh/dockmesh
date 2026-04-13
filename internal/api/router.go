@@ -43,6 +43,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 		r.Get("/auth/oidc/{slug}/login", h.OIDCLogin)
 		r.Get("/auth/oidc/{slug}/callback", h.OIDCCallback)
 
+		// Agent enrollment — token is the auth, no JWT required.
+		r.Post("/agents/enroll", h.EnrollAgent)
+
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.NewAuth(authSvc))
 
@@ -178,6 +181,15 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Put("/alerts/rules/{id}", h.UpdateAlertRule)
 				r.Delete("/alerts/rules/{id}", h.DeleteAlertRule)
 				r.Get("/alerts/history", h.ListAlertHistory)
+			})
+
+			// -------------------------- AGENTS (admin) -----------------------
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Get("/agents", h.ListAgents)
+				r.Post("/agents", h.CreateAgent)
+				r.Get("/agents/{id}", h.GetAgent)
+				r.Delete("/agents/{id}", h.DeleteAgent)
 			})
 
 			// -------------------------- BACKUPS (admin) -----------------------

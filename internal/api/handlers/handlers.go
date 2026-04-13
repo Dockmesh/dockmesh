@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
@@ -39,6 +40,7 @@ type Handlers struct {
 	Notify      *notify.Service
 	Alerts      *alerts.Service
 	Backups     *backup.Service
+	Agents      *agents.Service
 	JWTSecret   []byte // raw secret used to sign the short-lived OIDC state cookie
 }
 
@@ -59,6 +61,7 @@ type Deps struct {
 	Notify       *notify.Service
 	Alerts       *alerts.Service
 	Backups      *backup.Service
+	Agents       *agents.Service
 	JWTSecret    []byte
 }
 
@@ -80,6 +83,7 @@ func New(d Deps) *Handlers {
 		Notify:      d.Notify,
 		Alerts:      d.Alerts,
 		Backups:     d.Backups,
+		Agents:      d.Agents,
 		JWTSecret:   d.JWTSecret,
 	}
 }
