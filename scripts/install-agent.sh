@@ -99,8 +99,8 @@ http_get() {
 require_root
 require_systemd
 
-if [[ "$TOKEN" == "{{TOKEN}}" || -z "$TOKEN" ]]; then
-  die "token not templated — did you fetch this script with ?token=… ?"
+if [[ -z "$TOKEN" ]]; then
+  die "no enrollment token — did you fetch this script with ?token=… ?"
 fi
 
 ARCH="$(detect_arch)"
