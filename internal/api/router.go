@@ -100,6 +100,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Post("/containers/{id}/update", h.UpdateContainer)
 				r.Post("/containers/{id}/rollback", h.RollbackContainer)
 				r.Get("/containers/{id}/update-history", h.UpdateHistory)
+
+				r.Get("/containers/{id}/metrics", h.GetMetrics)
 			})
 
 			// -------------------------- IMAGE WRITE --------------------------
