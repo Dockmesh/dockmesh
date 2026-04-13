@@ -14,6 +14,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/dockmesh/dockmesh/internal/updater"
 )
 
 type Handlers struct {
@@ -27,6 +28,7 @@ type Handlers struct {
 	Scanner     scanner.Scanner
 	ScanStore   *scanner.Store
 	Proxy       *proxy.Service
+	Updater     *updater.Service
 }
 
 type Deps struct {
@@ -40,6 +42,7 @@ type Deps struct {
 	Scanner      scanner.Scanner
 	ScanStore    *scanner.Store
 	Proxy        *proxy.Service
+	Updater      *updater.Service
 }
 
 func New(d Deps) *Handlers {
@@ -54,6 +57,7 @@ func New(d Deps) *Handlers {
 		Scanner:     d.Scanner,
 		ScanStore:   d.ScanStore,
 		Proxy:       d.Proxy,
+		Updater:     d.Updater,
 	}
 }
 
