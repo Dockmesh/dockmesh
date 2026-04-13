@@ -382,11 +382,26 @@ export const api = {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
       return request<any>(`/containers/${id}${qs}`);
     },
-    start: (id: string) => request<void>(`/containers/${id}/start`, { method: 'POST' }),
-    stop: (id: string) => request<void>(`/containers/${id}/stop`, { method: 'POST' }),
-    restart: (id: string) => request<void>(`/containers/${id}/restart`, { method: 'POST' }),
-    remove: (id: string, force = false) =>
-      request<void>(`/containers/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
+    _hostQuery: (host?: string) => (host && host !== 'local' ? '?host=' + encodeURIComponent(host) : ''),
+    start: (id: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<void>(`/containers/${id}/start${qs}`, { method: 'POST' });
+    },
+    stop: (id: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<void>(`/containers/${id}/stop${qs}`, { method: 'POST' });
+    },
+    restart: (id: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<void>(`/containers/${id}/restart${qs}`, { method: 'POST' });
+    },
+    remove: (id: string, force = false, host = 'local') => {
+      const params = new URLSearchParams();
+      if (force) params.set('force', 'true');
+      if (host && host !== 'local') params.set('host', host);
+      const qs = params.toString();
+      return request<void>(`/containers/${id}${qs ? '?' + qs : ''}`, { method: 'DELETE' });
+    },
     updateInfo: (id: string) =>
       request<UpdatePreview>(`/containers/${id}/update-info`),
     doUpdate: (id: string) =>

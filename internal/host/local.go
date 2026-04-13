@@ -33,6 +33,34 @@ func (h *LocalHost) InspectContainer(ctx context.Context, id string) (dtypes.Con
 	return h.cli.InspectContainer(ctx, id)
 }
 
+func (h *LocalHost) StartContainer(ctx context.Context, id string) error {
+	if h.cli == nil {
+		return ErrNoDocker
+	}
+	return h.cli.StartContainer(ctx, id)
+}
+
+func (h *LocalHost) StopContainer(ctx context.Context, id string) error {
+	if h.cli == nil {
+		return ErrNoDocker
+	}
+	return h.cli.StopContainer(ctx, id)
+}
+
+func (h *LocalHost) RestartContainer(ctx context.Context, id string) error {
+	if h.cli == nil {
+		return ErrNoDocker
+	}
+	return h.cli.RestartContainer(ctx, id)
+}
+
+func (h *LocalHost) RemoveContainer(ctx context.Context, id string, force bool) error {
+	if h.cli == nil {
+		return ErrNoDocker
+	}
+	return h.cli.RemoveContainer(ctx, id, force)
+}
+
 func (h *LocalHost) ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error) {
 	if h.cli == nil {
 		return nil, ErrNoDocker

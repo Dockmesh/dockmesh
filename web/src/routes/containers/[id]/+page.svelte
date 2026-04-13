@@ -9,6 +9,7 @@
   import { Card, Badge, Button, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
+  import { hosts } from '$lib/stores/host.svelte';
   import type { UpdatePreview, UpdateHistoryEntry, MetricsSample } from '$lib/api';
   import {
     ChevronLeft,
@@ -31,10 +32,22 @@
   const id = $derived($page.params.id);
   const canControl = $derived(allowed('container.control'));
   const canExec = $derived(allowed('container.exec'));
+  // Resolve the host: prefer the URL ?host=… (set when the user navigated
+  // here from a remote-host listing), otherwise the global selection.
+  const targetHost = $derived($page.url.searchParams.get('host') || hosts.id);
+  const isRemote = $derived(targetHost !== 'local');
 
   let info = $state<any>(null);
   let loading = $state(true);
   let tab = $state<'logs' | 'exec' | 'stats' | 'updates' | 'inspect'>('logs');
+
+  // When viewing a remote host, default to Inspect — logs/exec/stats/updates
+  // are still local-only in 3.1.2.1 (streaming + image pulls come in 3.1.2.2 / 3.1.3).
+  $effect(() => {
+    if (isRemote && tab !== 'inspect') {
+      tab = 'inspect';
+    }
+  });
 
   // Updates state
   let updatePreview = $state<UpdatePreview | null>(null);
@@ -111,7 +124,7 @@
   async function loadInfo() {
     loading = true;
     try {
-      info = await api.containers.inspect(id);
+      info = await api.containers.inspect(id, targetHost);
     } catch (err) {
       toast.error('Load failed', err instanceof ApiError ? err.message : undefined);
     } finally {
@@ -326,12 +339,12 @@
   // ---------- Actions ----------
   async function action(op: 'start' | 'stop' | 'restart') {
     try {
-      if (op === 'start') await api.containers.start(id);
-      else if (op === 'stop') await api.containers.stop(id);
-      else await api.containers.restart(id);
+      if (op === 'start') await api.containers.start(id, targetHost);
+      else if (op === 'stop') await api.containers.stop(id, targetHost);
+      else await api.containers.restart(id, targetHost);
       toast.success(op);
       await loadInfo();
-      if (tab === 'logs') connectLogs();
+      if (tab === 'logs' && !isRemote) connectLogs();
     } catch (err) {
       toast.error(`${op} failed`, err instanceof ApiError ? err.message : undefined);
     }
@@ -340,7 +353,7 @@
   async function remove() {
     if (!confirm('Remove this container?')) return;
     try {
-      await api.containers.remove(id, true);
+      await api.containers.remove(id, true, targetHost);
       toast.success('Removed');
       goto('/containers');
     } catch (err) {
@@ -353,6 +366,15 @@
   });
 
   $effect(() => {
+    // None of the streaming tabs work for remote hosts in 3.1.2.1 — only
+    // inspect data is proxied. Tear down any local streams that might
+    // still be running from a previous local session.
+    if (isRemote) {
+      disconnectLogs();
+      disconnectExec();
+      disconnectStats();
+      return;
+    }
     if (tab === 'logs') {
       disconnectExec();
       disconnectStats();
@@ -501,16 +523,26 @@
         {/if}
       </button>
     {/snippet}
-    {@render tabBtn('logs', 'Logs', FileText, wsConnected)}
-    {#if canExec}
-      {@render tabBtn('exec', 'Terminal', TerminalIcon, execConnected)}
-    {/if}
-    {@render tabBtn('stats', 'Stats', Activity, statsConnected)}
-    {#if canControl}
-      {@render tabBtn('updates', 'Updates', Download, false)}
+    {#if !isRemote}
+      {@render tabBtn('logs', 'Logs', FileText, wsConnected)}
+      {#if canExec}
+        {@render tabBtn('exec', 'Terminal', TerminalIcon, execConnected)}
+      {/if}
+      {@render tabBtn('stats', 'Stats', Activity, statsConnected)}
+      {#if canControl}
+        {@render tabBtn('updates', 'Updates', Download, false)}
+      {/if}
     {/if}
     {@render tabBtn('inspect', 'Inspect', Code2, false)}
   </div>
+
+  {#if isRemote}
+    <div class="dm-card p-3 text-xs text-[var(--fg-muted)] flex items-center gap-2">
+      <span class="text-[var(--color-brand-400)]">⚡</span>
+      Showing inspect data from remote host. Logs, terminal, stats and updates
+      will arrive in slice 3.1.2.2.
+    </div>
+  {/if}
 
   <!-- Tab panels -->
   {#if tab === 'logs'}

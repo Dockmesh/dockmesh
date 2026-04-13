@@ -71,6 +71,26 @@ func (h *RemoteHost) InspectContainer(ctx context.Context, id string) (dtypes.Co
 	return out, nil
 }
 
+func (h *RemoteHost) StartContainer(ctx context.Context, id string) error {
+	_, err := h.request(ctx, agents.FrameReqContainerStart, agents.ContainerIDReq{ID: id})
+	return err
+}
+
+func (h *RemoteHost) StopContainer(ctx context.Context, id string) error {
+	_, err := h.request(ctx, agents.FrameReqContainerStop, agents.ContainerIDReq{ID: id})
+	return err
+}
+
+func (h *RemoteHost) RestartContainer(ctx context.Context, id string) error {
+	_, err := h.request(ctx, agents.FrameReqContainerRestart, agents.ContainerIDReq{ID: id})
+	return err
+}
+
+func (h *RemoteHost) RemoveContainer(ctx context.Context, id string, force bool) error {
+	_, err := h.request(ctx, agents.FrameReqContainerRemove, agents.ContainerIDReq{ID: id, Force: force})
+	return err
+}
+
 func (h *RemoteHost) ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error) {
 	data, err := h.request(ctx, agents.FrameReqImageList, map[string]bool{"all": all})
 	if err != nil {

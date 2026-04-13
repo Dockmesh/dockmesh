@@ -24,6 +24,12 @@ type Host interface {
 	ListContainers(ctx context.Context, all bool) ([]dtypes.Container, error)
 	InspectContainer(ctx context.Context, id string) (dtypes.ContainerJSON, error)
 
+	// Container mutations (slice 3.1.2.1)
+	StartContainer(ctx context.Context, id string) error
+	StopContainer(ctx context.Context, id string) error
+	RestartContainer(ctx context.Context, id string) error
+	RemoveContainer(ctx context.Context, id string, force bool) error
+
 	// Resource lists (read-only — full CRUD comes later)
 	ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error)
 	ListNetworks(ctx context.Context) ([]dtypes.NetworkResource, error)
