@@ -38,10 +38,29 @@ type Host interface {
 	// the same wire format so handler code doesn't branch.
 	ContainerLogs(ctx context.Context, id string, tail string, follow bool) (io.ReadCloser, error)
 
+	// Container stats stream (slice 3.1.2.3). Newline-delimited JSON
+	// matching the docker /containers/{id}/stats?stream=true response.
+	ContainerStats(ctx context.Context, id string) (io.ReadCloser, error)
+
+	// Interactive exec session (slice 3.1.2.4). Returns an ExecSession
+	// that owns stdin/stdout via Read/Write and a Resize op for tty
+	// dimensions. Close terminates the session.
+	StartExec(ctx context.Context, id string, cmd []string) (ExecSession, error)
+
 	// Resource lists (read-only — full CRUD comes later)
 	ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error)
 	ListNetworks(ctx context.Context) ([]dtypes.NetworkResource, error)
 	ListVolumes(ctx context.Context) ([]any, error)
+}
+
+// ExecSession is the interface the WS exec handler uses to talk to a
+// running interactive exec instance. LocalExecSession wraps a docker
+// HijackedResponse; RemoteExecSession wraps a multiplexed agent stream.
+type ExecSession interface {
+	io.Reader // stdout/stderr (tty mode merges them)
+	io.Writer // stdin
+	Resize(rows, cols uint) error
+	Close() error
 }
 
 // Info is what /api/v1/hosts returns for the frontend host switcher.

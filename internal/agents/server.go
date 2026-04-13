@@ -165,7 +165,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case FrameRes:
 			ag.deliverResponse(f)
 			conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
-		case FrameStreamData, FrameStreamClose:
+		case FrameStreamData, FrameStreamClose, FrameStreamControl:
 			ag.routeStreamFrame(f)
 			conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
 		}

@@ -51,9 +51,10 @@ const (
 	// carried over the same agent connection. Used for logs, stats and exec
 	// where request/response doesn't fit (long-lived, chunked, possibly
 	// bidirectional).
-	FrameStreamOpen  = "stream.open"  // server → agent: start a new stream
-	FrameStreamData  = "stream.data"  // bidirectional: payload bytes
-	FrameStreamClose = "stream.close" // bidirectional: end the stream
+	FrameStreamOpen    = "stream.open"    // server → agent: start a new stream
+	FrameStreamData    = "stream.data"    // bidirectional: payload bytes
+	FrameStreamClose   = "stream.close"   // bidirectional: end the stream
+	FrameStreamControl = "stream.control" // bidirectional: out-of-band ops (resize, signals)
 )
 
 // StreamOpen is the server → agent payload that requests a new stream.
@@ -79,6 +80,14 @@ type StreamData struct {
 type StreamClose struct {
 	StreamID string `json:"stream_id"`
 	Error    string `json:"error,omitempty"`
+}
+
+// StreamControl carries out-of-band events that don't fit the byte-oriented
+// data channel. Used by exec for tty resize: Op="resize", Params={cols,rows}.
+type StreamControl struct {
+	StreamID string         `json:"stream_id"`
+	Op       string         `json:"op"`
+	Params   map[string]any `json:"params,omitempty"`
 }
 
 // ResponseEnvelope is the wire format every response uses. Data is the

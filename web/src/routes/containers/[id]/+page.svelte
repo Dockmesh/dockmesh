@@ -41,13 +41,12 @@
   let loading = $state(true);
   let tab = $state<'logs' | 'exec' | 'stats' | 'updates' | 'inspect'>('logs');
 
-  // For remote hosts in 3.1.2.2: Logs + Inspect are available. Terminal,
-  // Stats and Updates are still local-only (coming in 3.1.2.3 / 3.1.2.4).
-  // If the user lands on a disabled tab while viewing a remote host, snap
-  // back to logs.
+  // For remote hosts in 3.1.2.4: Logs / Stats / Terminal / Inspect work.
+  // Updates is still local-only (image pulls live on the central server's
+  // docker daemon — that one comes in 3.1.3 with stack deploy).
   $effect(() => {
-    if (isRemote && (tab === 'exec' || tab === 'stats' || tab === 'updates')) {
-      tab = 'logs';
+    if (isRemote && tab === 'updates') {
+      tab = 'inspect';
     }
   });
 
@@ -240,7 +239,8 @@
     try {
       const { ticket } = await api.ws.ticket();
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      statsWs = new WebSocket(`${proto}//${location.host}/api/v1/ws/stats/${id}?ticket=${ticket}`);
+      const hostQs = isRemote ? `&host=${encodeURIComponent(targetHost)}` : '';
+      statsWs = new WebSocket(`${proto}//${location.host}/api/v1/ws/stats/${id}?ticket=${ticket}${hostQs}`);
       statsWs.onopen = () => { statsConnected = true; };
       statsWs.onmessage = (ev) => {
         try {
@@ -291,7 +291,8 @@
       const { ticket } = await api.ws.ticket();
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const cmd = execShell === 'bash' ? '/bin/bash' : '/bin/sh';
-      execWs = new WebSocket(`${proto}//${location.host}/api/v1/ws/exec/${id}?ticket=${ticket}&cmd=${encodeURIComponent(cmd)}`);
+      const hostQs = isRemote ? `&host=${encodeURIComponent(targetHost)}` : '';
+      execWs = new WebSocket(`${proto}//${location.host}/api/v1/ws/exec/${id}?ticket=${ticket}&cmd=${encodeURIComponent(cmd)}${hostQs}`);
       execWs.binaryType = 'arraybuffer';
 
       execWs.onopen = () => {
@@ -369,18 +370,6 @@
   });
 
   $effect(() => {
-    // For remote hosts only logs is supported in 3.1.2.2. Tear down any
-    // local-only streams left over from a previous session.
-    if (isRemote) {
-      disconnectExec();
-      disconnectStats();
-      if (tab === 'logs') {
-        connectLogs();
-      } else {
-        disconnectLogs();
-      }
-      return;
-    }
     if (tab === 'logs') {
       disconnectExec();
       disconnectStats();
@@ -530,14 +519,12 @@
       </button>
     {/snippet}
     {@render tabBtn('logs', 'Logs', FileText, wsConnected)}
-    {#if !isRemote}
-      {#if canExec}
-        {@render tabBtn('exec', 'Terminal', TerminalIcon, execConnected)}
-      {/if}
-      {@render tabBtn('stats', 'Stats', Activity, statsConnected)}
-      {#if canControl}
-        {@render tabBtn('updates', 'Updates', Download, false)}
-      {/if}
+    {#if canExec}
+      {@render tabBtn('exec', 'Terminal', TerminalIcon, execConnected)}
+    {/if}
+    {@render tabBtn('stats', 'Stats', Activity, statsConnected)}
+    {#if canControl && !isRemote}
+      {@render tabBtn('updates', 'Updates', Download, false)}
     {/if}
     {@render tabBtn('inspect', 'Inspect', Code2, false)}
   </div>
@@ -545,8 +532,8 @@
   {#if isRemote}
     <div class="dm-card p-3 text-xs text-[var(--fg-muted)] flex items-center gap-2">
       <span class="text-[var(--color-brand-400)]">⚡</span>
-      Remote host — Logs and Inspect are streamed via the agent. Terminal,
-      Stats and Updates are still local-only (3.1.2.3 / 3.1.2.4).
+      Remote host — Logs, Stats, Terminal and Inspect are streamed via the agent.
+      Image updates are still local-only (coming with stack deploy in 3.1.3).
     </div>
   {/if}
 

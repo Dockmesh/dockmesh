@@ -106,6 +106,50 @@ func (h *RemoteHost) ContainerLogs(ctx context.Context, id, tail string, follow 
 	return stream, nil
 }
 
+func (h *RemoteHost) ContainerStats(ctx context.Context, id string) (io.ReadCloser, error) {
+	if h.agent == nil {
+		return nil, ErrAgentOffline
+	}
+	return h.agent.OpenStream(ctx, "stats", id, nil)
+}
+
+func (h *RemoteHost) StartExec(ctx context.Context, id string, cmd []string) (ExecSession, error) {
+	if h.agent == nil {
+		return nil, ErrAgentOffline
+	}
+	stream, err := h.agent.OpenStream(ctx, "exec", id, map[string]any{
+		"cmd": cmd,
+		// Sensible TTY defaults; the browser sends a resize as soon as it
+		// has measured xterm.fit so this rarely shows.
+		"cols": 80,
+		"rows": 24,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &remoteExecSession{stream: stream}, nil
+}
+
+// remoteExecSession adapts an agent stream to the ExecSession interface.
+// Reads pull from the stream's incoming buffer (stdout). Writes push
+// stream.data frames in the server → agent direction (stdin). Resize
+// uses an out-of-band stream.control frame.
+type remoteExecSession struct {
+	stream *agents.Stream
+}
+
+func (s *remoteExecSession) Read(p []byte) (int, error)  { return s.stream.Read(p) }
+func (s *remoteExecSession) Write(p []byte) (int, error) {
+	if err := s.stream.WriteFrame(p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+func (s *remoteExecSession) Resize(rows, cols uint) error {
+	return s.stream.WriteControl("resize", map[string]any{"cols": cols, "rows": rows})
+}
+func (s *remoteExecSession) Close() error { return s.stream.Close() }
+
 func (h *RemoteHost) ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error) {
 	data, err := h.request(ctx, agents.FrameReqImageList, map[string]bool{"all": all})
 	if err != nil {

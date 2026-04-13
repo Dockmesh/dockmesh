@@ -23,6 +23,18 @@ type NormalizedStats struct {
 	PidsCurr   uint64  `json:"pids_current"`
 }
 
+// ContainerStats returns the raw stats stream from the docker daemon —
+// newline-delimited JSON matching the StatsJSON layout. Same wire format
+// the local handler and the remote agent use, so normalization can stay
+// in one place (the WS handler).
+func (c *Client) ContainerStats(ctx context.Context, containerID string) (io.ReadCloser, error) {
+	resp, err := c.cli.ContainerStats(ctx, containerID, true)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
+}
+
 // StreamStats returns a channel of normalized stats and an error channel.
 // The channels close when ctx is cancelled or the stats stream ends.
 func (c *Client) StreamStats(ctx context.Context, containerID string) (<-chan NormalizedStats, <-chan error) {
@@ -62,6 +74,11 @@ func (c *Client) StreamStats(ctx context.Context, containerID string) (<-chan No
 
 	return out, errCh
 }
+
+// Normalize is the exported version of normalize() so handlers that
+// stream raw stats (local or via remote agent) can convert frame-by-frame
+// without reimplementing the formulas.
+func Normalize(s *types.StatsJSON) NormalizedStats { return normalize(s) }
 
 func normalize(s *types.StatsJSON) NormalizedStats {
 	// CPU % — Linux formula (Windows path omitted; concept §10 targets Linux).
