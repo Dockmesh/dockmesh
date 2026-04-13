@@ -299,8 +299,7 @@ func (s *Service) evalRule(ctx context.Context, r *Rule) error {
 		if err := rows.Scan(&name, &minV, &maxV, &n, &lastV); err != nil {
 			return err
 		}
-		if n < 2 {
-			// Not enough samples to make a sustained call yet.
+		if n < 1 {
 			continue
 		}
 		breach := false
