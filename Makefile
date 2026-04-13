@@ -1,4 +1,4 @@
-.PHONY: dev build test lint docker clean tidy frontend-install frontend-build backend-build agent agent-linux
+.PHONY: dev build test lint docker clean tidy frontend-install frontend-build backend-build agent agent-linux agent-bundle
 
 VERSION ?= dev
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -30,8 +30,17 @@ agent:
 agent-linux:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o dockmesh-agent ./cmd/dockmesh-agent
 
-build: frontend-build backend-build
-	@echo ">> built ./dockmesh"
+# Cross-compile the agent for both common Linux arches into ./bin/. The
+# server's /install/{name} endpoint serves files from this directory so
+# the curl-bash installer can download the right binary.
+agent-bundle:
+	mkdir -p bin
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/dockmesh-agent-linux-amd64 ./cmd/dockmesh-agent
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/dockmesh-agent-linux-arm64 ./cmd/dockmesh-agent
+	@ls -lh bin/
+
+build: frontend-build agent-bundle backend-build
+	@echo ">> built ./dockmesh + bin/dockmesh-agent-linux-{amd64,arm64}"
 
 test:
 	go test -race ./...

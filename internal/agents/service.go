@@ -118,20 +118,19 @@ func (s *Service) Create(ctx context.Context, name string) (*CreateResult, error
 	if err != nil {
 		return nil, err
 	}
+	// One-line installer command — runs on the remote host as root,
+	// creates a dedicated dockmesh-agent service user, installs Docker
+	// if missing, drops a hardened systemd unit and starts the agent.
+	installHint := fmt.Sprintf(
+		"curl -fsSL %s/install/agent.sh?token=%s | sudo bash",
+		s.publicURL, token)
+
 	return &CreateResult{
-		Agent:     *a,
-		Token:     token,
-		EnrollURL: s.publicURL + "/api/v1/agents/enroll",
-		AgentURL:  s.agentURL,
-		InstallHint: fmt.Sprintf(
-			"docker run -d --name dockmesh-agent --restart unless-stopped \\\n"+
-				"  -v /var/run/docker.sock:/var/run/docker.sock \\\n"+
-				"  -v dockmesh-agent:/var/lib/dockmesh \\\n"+
-				"  -e DOCKMESH_ENROLL_URL=%s \\\n"+
-				"  -e DOCKMESH_AGENT_URL=%s \\\n"+
-				"  -e DOCKMESH_TOKEN=%s \\\n"+
-				"  ghcr.io/dockmesh/agent:latest",
-			s.publicURL+"/api/v1/agents/enroll", s.agentURL, token),
+		Agent:       *a,
+		Token:       token,
+		EnrollURL:   s.publicURL + "/api/v1/agents/enroll",
+		AgentURL:    s.agentURL,
+		InstallHint: installHint,
 	}, nil
 }
 

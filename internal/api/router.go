@@ -228,6 +228,13 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 		r.Get("/ws/stats/{id}", h.WSStats)
 	})
 
+	// Public installer + binary download. Lives outside /api/v1 because
+	// they're file downloads, not REST endpoints. The token in the script
+	// URL is the auth (re-validated on enroll). The binary is unauthenticated
+	// because it's just public code.
+	r.Get("/install/agent.sh", h.AgentInstallScript)
+	r.Get("/install/{name}", h.AgentBinary)
+
 	if webFS != nil {
 		r.Handle("/*", spaHandler(webFS))
 	}

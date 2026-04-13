@@ -52,6 +52,14 @@ type agentConfig struct {
 }
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--version", "-v", "version":
+			fmt.Printf("dockmesh-agent %s %s/%s\n", agentVersion, runtime.GOOS, runtime.GOARCH)
+			return
+		}
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 

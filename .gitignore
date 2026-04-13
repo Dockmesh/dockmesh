@@ -7,6 +7,8 @@
 # Go build output
 /dockmesh
 /dockmesh.exe
+/dockmesh-agent
+/dockmesh-agent.exe
 /bin/
 /dist/
 /cmd/dockmesh/web_dist/*
