@@ -35,6 +35,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 		r.Post("/auth/logout", h.Logout)
 		r.Post("/auth/refresh", h.Refresh)
 
+		// OIDC flow is public — state is carried in a signed cookie.
+		r.Get("/auth/oidc/providers", h.ListOIDCProvidersPublic)
+		r.Get("/auth/oidc/{slug}/login", h.OIDCLogin)
+		r.Get("/auth/oidc/{slug}/callback", h.OIDCCallback)
+
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.NewAuth(authSvc))
 
@@ -142,6 +147,15 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Use(middleware.RequirePerm(rbac.PermAuditRead))
 				r.Get("/audit", h.ListAudit)
 				r.Get("/audit/verify", h.VerifyAudit)
+			})
+
+			// -------------------------- OIDC ADMIN ---------------------------
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Get("/oidc/providers", h.ListOIDCProviders)
+				r.Post("/oidc/providers", h.CreateOIDCProvider)
+				r.Put("/oidc/providers/{id}", h.UpdateOIDCProvider)
+				r.Delete("/oidc/providers/{id}", h.DeleteOIDCProvider)
 			})
 
 			// -------------------------- PROXY (admin) ------------------------
