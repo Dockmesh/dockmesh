@@ -9,6 +9,7 @@
   import { Card, Badge, Button, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
+  import type { UpdatePreview, UpdateHistoryEntry } from '$lib/api';
   import {
     ChevronLeft,
     Play,
@@ -20,7 +21,11 @@
     Activity,
     Code2,
     Trash,
-    Link as LinkIcon
+    Link as LinkIcon,
+    Download,
+    Undo2,
+    ExternalLink,
+    Package
   } from 'lucide-svelte';
 
   const id = $derived($page.params.id);
@@ -29,7 +34,13 @@
 
   let info = $state<any>(null);
   let loading = $state(true);
-  let tab = $state<'logs' | 'exec' | 'stats' | 'inspect'>('logs');
+  let tab = $state<'logs' | 'exec' | 'stats' | 'updates' | 'inspect'>('logs');
+
+  // Updates state
+  let updatePreview = $state<UpdatePreview | null>(null);
+  let updateHistory = $state<UpdateHistoryEntry[]>([]);
+  let previewLoading = $state(false);
+  let updateBusy = $state(false);
 
   // Logs
   let logs = $state<string[]>([]);
@@ -73,6 +84,76 @@
     } finally {
       loading = false;
     }
+  }
+
+  // ---------- Updates ----------
+  async function loadUpdateData() {
+    previewLoading = true;
+    try {
+      const [p, h] = await Promise.all([
+        api.containers.updateInfo(id).catch(() => null),
+        api.containers.updateHistory(id).catch(() => [] as UpdateHistoryEntry[])
+      ]);
+      updatePreview = p;
+      updateHistory = h;
+    } finally {
+      previewLoading = false;
+    }
+  }
+
+  async function doUpdate() {
+    if (!confirm('Pull the latest image and recreate this container? The old image will be kept as a rollback snapshot.')) return;
+    updateBusy = true;
+    try {
+      const res = await api.containers.doUpdate(id);
+      if (!res.updated) {
+        toast.info('Already up to date', res.image);
+      } else {
+        toast.success('Updated', res.image);
+        // Container id changed — navigate to the new one.
+        goto(`/containers/${res.container_id}`);
+        return;
+      }
+      await loadUpdateData();
+    } catch (err) {
+      toast.error('Update failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      updateBusy = false;
+    }
+  }
+
+  async function doRollback(historyId: number) {
+    if (!confirm('Roll back this container to the previous image version?')) return;
+    updateBusy = true;
+    try {
+      const res = await api.containers.rollback(id, historyId);
+      toast.success('Rolled back', res.image);
+      goto(`/containers/${res.container_id}`);
+    } catch (err) {
+      toast.error('Rollback failed', err instanceof ApiError ? err.message : undefined);
+      updateBusy = false;
+    }
+  }
+
+  function fmtRelTime(ts?: string | null): string {
+    if (!ts) return '—';
+    const d = (Date.now() - new Date(ts).getTime()) / 1000;
+    if (d < 60) return 'just now';
+    if (d < 3600) return `${Math.floor(d / 60)}m ago`;
+    if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
+    if (d < 2592000) return `${Math.floor(d / 86400)}d ago`;
+    return new Date(ts).toLocaleDateString();
+  }
+
+  function fmtMB(bytes?: number): string {
+    if (!bytes) return '—';
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+
+  function shortDigest(d?: string): string {
+    if (!d) return '—';
+    const m = d.match(/sha256:([a-f0-9]{12})/);
+    return m ? m[0] : d.slice(0, 19);
   }
 
   // ---------- Logs ----------
@@ -251,6 +332,11 @@
       disconnectLogs();
       disconnectExec();
       connectStats();
+    } else if (tab === 'updates') {
+      disconnectLogs();
+      disconnectExec();
+      disconnectStats();
+      loadUpdateData();
     } else {
       disconnectLogs();
       disconnectExec();
@@ -386,6 +472,9 @@
       {@render tabBtn('exec', 'Terminal', TerminalIcon, execConnected)}
     {/if}
     {@render tabBtn('stats', 'Stats', Activity, statsConnected)}
+    {#if canControl}
+      {@render tabBtn('updates', 'Updates', Download, false)}
+    {/if}
     {@render tabBtn('inspect', 'Inspect', Code2, false)}
   </div>
 
@@ -514,6 +603,104 @@
       </div>
       <div class="text-xs text-[var(--fg-subtle)]">{statsHistory.length} samples (rolling 60s)</div>
     {/if}
+  {:else if tab === 'updates'}
+    <div class="space-y-4">
+      <!-- Preview card -->
+      {#if previewLoading && !updatePreview}
+        <Card class="p-5">
+          <Skeleton width="40%" height="1.25rem" />
+          <Skeleton class="mt-3" width="70%" height="0.85rem" />
+        </Card>
+      {:else if updatePreview}
+        <Card class="p-5">
+          <div class="flex items-start justify-between flex-wrap gap-4">
+            <div class="flex items-start gap-3">
+              <div class="w-10 h-10 rounded-lg bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] text-[var(--color-brand-400)] flex items-center justify-center shrink-0">
+                <Package class="w-5 h-5" />
+              </div>
+              <div>
+                <div class="font-mono text-sm">{updatePreview.image}</div>
+                <div class="text-xs text-[var(--fg-muted)] mt-1 space-y-0.5 font-mono">
+                  <div>local: {shortDigest(updatePreview.current_digest)} · built {fmtRelTime(updatePreview.current_created)}</div>
+                  {#if updatePreview.remote_last_updated}
+                    <div>remote: pushed {fmtRelTime(updatePreview.remote_last_updated)} · {fmtMB(updatePreview.remote_size)}</div>
+                  {/if}
+                </div>
+                <div class="flex gap-3 mt-2 text-xs">
+                  {#if updatePreview.docker_hub_url}
+                    <a href={updatePreview.docker_hub_url} target="_blank" rel="noopener" class="text-[var(--color-brand-400)] hover:underline inline-flex items-center gap-1">
+                      Docker Hub <ExternalLink class="w-3 h-3" />
+                    </a>
+                  {/if}
+                  {#if updatePreview.github_url}
+                    <a href={updatePreview.github_url} target="_blank" rel="noopener" class="text-[var(--color-brand-400)] hover:underline inline-flex items-center gap-1">
+                      GitHub <ExternalLink class="w-3 h-3" />
+                    </a>
+                  {/if}
+                </div>
+              </div>
+            </div>
+            <Button variant="primary" onclick={doUpdate} loading={updateBusy}>
+              <Download class="w-4 h-4" /> Pull & update
+            </Button>
+          </div>
+
+          {#if updatePreview.warnings && updatePreview.warnings.length > 0}
+            <div class="text-xs text-[var(--fg-subtle)] mt-3">
+              {updatePreview.warnings.join(' · ')}
+            </div>
+          {/if}
+        </Card>
+
+        {#if updatePreview.latest_release}
+          <Card>
+            <div class="px-5 py-3 border-b border-[var(--border)] flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <h3 class="font-semibold text-sm">
+                  {updatePreview.latest_release.name || updatePreview.latest_release.tag}
+                </h3>
+                <Badge variant="info">{updatePreview.latest_release.tag}</Badge>
+              </div>
+              <a href={updatePreview.latest_release.url} target="_blank" rel="noopener"
+                 class="text-xs text-[var(--color-brand-400)] hover:underline inline-flex items-center gap-1">
+                Open release <ExternalLink class="w-3 h-3" />
+              </a>
+            </div>
+            <div class="p-5 max-h-[40vh] overflow-auto">
+              <pre class="font-mono text-xs whitespace-pre-wrap break-words text-[var(--fg-muted)]">{updatePreview.latest_release.body || '(no release notes)'}</pre>
+            </div>
+          </Card>
+        {/if}
+      {/if}
+
+      <!-- History -->
+      {#if updateHistory.length > 0}
+        <Card>
+          <div class="px-5 py-3 border-b border-[var(--border)] text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">
+            History
+          </div>
+          <div class="divide-y divide-[var(--border)]">
+            {#each updateHistory as e}
+              <div class="flex items-center gap-3 px-5 py-3">
+                <div class="flex-1 min-w-0">
+                  <div class="font-mono text-sm truncate">{e.image_ref}</div>
+                  <div class="text-xs text-[var(--fg-muted)] font-mono truncate">
+                    {shortDigest(e.old_digest)} → {shortDigest(e.new_digest)} · {fmtRelTime(e.applied_at)}
+                  </div>
+                </div>
+                {#if e.rolled_back_at}
+                  <Badge variant="warning">rolled back</Badge>
+                {:else}
+                  <Button size="xs" variant="ghost" onclick={() => doRollback(e.id)} disabled={updateBusy}>
+                    <Undo2 class="w-3.5 h-3.5" /> Rollback
+                  </Button>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        </Card>
+      {/if}
+    </div>
   {:else if tab === 'inspect'}
     <Card>
       <pre class="h-[60vh] overflow-auto p-5 font-mono text-xs leading-relaxed">{JSON.stringify(info, null, 2)}</pre>

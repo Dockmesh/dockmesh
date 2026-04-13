@@ -30,6 +30,28 @@ export interface ScanReport {
   vulnerabilities: ScanVuln[];
 }
 
+export interface UpdateResult {
+  container_id: string;
+  container_name: string;
+  image: string;
+  old_digest: string;
+  new_digest: string;
+  updated: boolean;
+  rollback_tag?: string;
+  history_id?: number;
+}
+
+export interface UpdateHistoryEntry {
+  id: number;
+  container_name: string;
+  image_ref: string;
+  old_digest: string;
+  new_digest: string;
+  rollback_tag: string;
+  applied_at: string;
+  rolled_back_at?: string;
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -134,7 +156,18 @@ export const api = {
     stop: (id: string) => request<void>(`/containers/${id}/stop`, { method: 'POST' }),
     restart: (id: string) => request<void>(`/containers/${id}/restart`, { method: 'POST' }),
     remove: (id: string, force = false) =>
-      request<void>(`/containers/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' })
+      request<void>(`/containers/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
+    updateInfo: (id: string) =>
+      request<UpdatePreview>(`/containers/${id}/update-info`),
+    doUpdate: (id: string) =>
+      request<UpdateResult>(`/containers/${id}/update`, { method: 'POST' }),
+    rollback: (id: string, historyId: number) =>
+      request<UpdateResult>(`/containers/${id}/rollback`, {
+        method: 'POST',
+        body: JSON.stringify({ history_id: historyId })
+      }),
+    updateHistory: (id: string) =>
+      request<UpdateHistoryEntry[]>(`/containers/${id}/update-history`)
   },
 
   images: {

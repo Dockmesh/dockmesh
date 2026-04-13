@@ -91,6 +91,10 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Post("/containers/{id}/stop", h.StopContainer)
 				r.Post("/containers/{id}/restart", h.RestartContainer)
 				r.Delete("/containers/{id}", h.RemoveContainer)
+				r.Get("/containers/{id}/update-info", h.PreviewUpdate)
+				r.Post("/containers/{id}/update", h.UpdateContainer)
+				r.Post("/containers/{id}/rollback", h.RollbackContainer)
+				r.Get("/containers/{id}/update-history", h.UpdateHistory)
 			})
 
 			// -------------------------- IMAGE WRITE --------------------------
