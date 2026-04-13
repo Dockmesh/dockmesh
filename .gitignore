@@ -33,6 +33,8 @@ Thumbs.db
 
 # Claude Code local (per-user, not shared)
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks/
 
 # Test / coverage
 *.out
