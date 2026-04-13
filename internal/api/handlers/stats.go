@@ -3,20 +3,20 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 
+	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
+
+	dtypes "github.com/docker/docker/api/types"
 )
 
 // WSStats streams normalized container stats over a WebSocket.
-// Auth via ?ticket= query parameter (§15.8).
+// Auth via ?ticket= query parameter (§15.8). Honours ?host= for remote agents.
 func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		http.Error(w, "docker unavailable", http.StatusServiceUnavailable)
-		return
-	}
 	ticket := r.URL.Query().Get("ticket")
 	if ticket == "" {
 		http.Error(w, "ticket required", http.StatusUnauthorized)
@@ -24,6 +24,12 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := h.Auth.ValidateWSTicket(ticket); err != nil {
 		http.Error(w, "invalid ticket", http.StatusUnauthorized)
+		return
+	}
+
+	target, err := h.pickHost(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 
@@ -48,27 +54,32 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	statsCh, errCh := h.Docker.StreamStats(ctx, containerID)
+	rc, err := target.ContainerStats(ctx, containerID)
+	if err != nil {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+err.Error()+`"}`))
+		return
+	}
+	defer rc.Close()
+
+	dec := json.NewDecoder(rc)
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		case err := <-errCh:
-			if err != nil {
-				_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+err.Error()+`"}`))
+		}
+		var raw dtypes.StatsJSON
+		if err := dec.Decode(&raw); err != nil {
+			if err != io.EOF {
+				slog.Debug("stats decode", "err", err)
 			}
 			return
-		case s, ok := <-statsCh:
-			if !ok {
-				return
-			}
-			b, err := json.Marshal(s)
-			if err != nil {
-				continue
-			}
-			if err := conn.WriteMessage(websocket.TextMessage, b); err != nil {
-				return
-			}
+		}
+		norm := docker.Normalize(&raw)
+		b, err := json.Marshal(norm)
+		if err != nil {
+			continue
+		}
+		if err := conn.WriteMessage(websocket.TextMessage, b); err != nil {
+			return
 		}
 	}
 }

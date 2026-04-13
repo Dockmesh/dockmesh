@@ -32,6 +32,22 @@ type Stream struct {
 	pending []byte
 }
 
+// WriteControl sends an out-of-band control message (e.g. exec resize)
+// to the agent side. Non-blocking — if the send buffer is full the call
+// fails. That's acceptable for control ops which are infrequent.
+func (s *Stream) WriteControl(op string, params map[string]any) error {
+	if s.closed.Load() {
+		return io.ErrClosedPipe
+	}
+	payload, _ := json.Marshal(StreamControl{StreamID: s.ID, Op: op, Params: params})
+	select {
+	case s.agent.send <- Frame{Type: FrameStreamControl, Payload: payload}:
+		return nil
+	default:
+		return errors.New("agent send buffer full")
+	}
+}
+
 // OpenStream tells the agent to start producing data for the given kind
 // (logs / stats / exec) and returns a Stream the caller can read from.
 // The stream stays open until Close() is called or the agent ends it.

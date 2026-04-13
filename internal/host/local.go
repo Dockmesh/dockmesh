@@ -69,6 +69,43 @@ func (h *LocalHost) ContainerLogs(ctx context.Context, id, tail string, follow b
 	return h.cli.ContainerLogs(ctx, id, tail, follow)
 }
 
+func (h *LocalHost) ContainerStats(ctx context.Context, id string) (io.ReadCloser, error) {
+	if h.cli == nil {
+		return nil, ErrNoDocker
+	}
+	return h.cli.ContainerStats(ctx, id)
+}
+
+func (h *LocalHost) StartExec(ctx context.Context, id string, cmd []string) (ExecSession, error) {
+	if h.cli == nil {
+		return nil, ErrNoDocker
+	}
+	sess, err := h.cli.StartExec(ctx, id, cmd)
+	if err != nil {
+		return nil, err
+	}
+	return &localExecSession{cli: h.cli, sess: sess, ctx: ctx}, nil
+}
+
+// localExecSession wraps the docker hijacked response in the ExecSession
+// interface. The Conn carries stdin (Write); the Reader carries the
+// merged tty stdout.
+type localExecSession struct {
+	cli  *docker.Client
+	sess *docker.ExecSession
+	ctx  context.Context
+}
+
+func (s *localExecSession) Read(p []byte) (int, error)  { return s.sess.Hijack.Reader.Read(p) }
+func (s *localExecSession) Write(p []byte) (int, error) { return s.sess.Hijack.Conn.Write(p) }
+func (s *localExecSession) Resize(rows, cols uint) error {
+	return s.cli.ResizeExec(s.ctx, s.sess.ID, rows, cols)
+}
+func (s *localExecSession) Close() error {
+	s.sess.Hijack.Close()
+	return nil
+}
+
 func (h *LocalHost) ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error) {
 	if h.cli == nil {
 		return nil, ErrNoDocker

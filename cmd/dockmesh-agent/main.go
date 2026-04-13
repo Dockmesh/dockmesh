@@ -248,6 +248,21 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 			}
 			go startStream(ctxConn, conn, dockerCli, open)
 
+		case agents.FrameStreamData:
+			// Server → agent data on an existing stream (exec stdin).
+			var sd agents.StreamData
+			if err := json.Unmarshal(f.Payload, &sd); err != nil {
+				continue
+			}
+			deliverStreamInput(sd.StreamID, sd.Data)
+
+		case agents.FrameStreamControl:
+			var sc agents.StreamControl
+			if err := json.Unmarshal(f.Payload, &sc); err != nil {
+				continue
+			}
+			deliverStreamControl(sc.StreamID, sc.Op, sc.Params)
+
 		case agents.FrameStreamClose:
 			var sc agents.StreamClose
 			_ = json.Unmarshal(f.Payload, &sc)
@@ -266,16 +281,27 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 // Stream registry — tracks running goroutines so stream.close can cancel them.
 // -----------------------------------------------------------------------------
 
+// streamReg tracks a single in-flight stream on the agent side. Logs and
+// stats only need cancel; exec also needs a writer (stdin) and a resize
+// hook for control frames.
+type streamReg struct {
+	cancel context.CancelFunc
+	stdin  io.Writer                  // nil for non-bidirectional streams
+	resize func(rows, cols uint) error // nil if not resizable
+}
+
 var (
 	streamMu  sync.Mutex
-	streamMap = map[string]context.CancelFunc{}
+	streamMap = map[string]*streamReg{}
 	streamWMu sync.Mutex // serialises writeFrame() so concurrent streams don't interleave WS frames
 )
 
-func registerStream(id string, cancel context.CancelFunc) {
+func registerStream(id string, cancel context.CancelFunc) *streamReg {
+	r := &streamReg{cancel: cancel}
 	streamMu.Lock()
-	streamMap[id] = cancel
+	streamMap[id] = r
 	streamMu.Unlock()
+	return r
 }
 
 func deregisterStream(id string) {
@@ -286,14 +312,60 @@ func deregisterStream(id string) {
 
 func closeStream(id string) {
 	streamMu.Lock()
-	cancel, ok := streamMap[id]
+	r, ok := streamMap[id]
 	if ok {
 		delete(streamMap, id)
 	}
 	streamMu.Unlock()
 	if ok {
-		cancel()
+		r.cancel()
 	}
+}
+
+// deliverStreamInput is called when the server sends stream.data on an
+// already-open stream — used to push exec stdin to the docker side.
+func deliverStreamInput(id string, data []byte) {
+	streamMu.Lock()
+	r, ok := streamMap[id]
+	streamMu.Unlock()
+	if !ok || r.stdin == nil {
+		return
+	}
+	_, _ = r.stdin.Write(data)
+}
+
+// deliverStreamControl handles out-of-band control ops (currently only
+// exec resize).
+func deliverStreamControl(id, op string, params map[string]any) {
+	streamMu.Lock()
+	r, ok := streamMap[id]
+	streamMu.Unlock()
+	if !ok {
+		return
+	}
+	switch op {
+	case "resize":
+		if r.resize == nil {
+			return
+		}
+		cols := uintFromAny(params["cols"])
+		rows := uintFromAny(params["rows"])
+		if cols > 0 && rows > 0 {
+			_ = r.resize(rows, cols)
+		}
+	}
+}
+
+func uintFromAny(v any) uint {
+	switch n := v.(type) {
+	case float64:
+		return uint(n)
+	case int:
+		return uint(n)
+	case uint:
+		return n
+	}
+	return 0
 }
 
 // safeWriteFrame is the agent's only WS write path. Holding the mutex
@@ -314,15 +386,113 @@ func startStream(parent context.Context, conn *websocket.Conn, cli *client.Clien
 		return
 	}
 	ctx, cancel := context.WithCancel(parent)
-	registerStream(open.StreamID, cancel)
+	reg := registerStream(open.StreamID, cancel)
 	defer deregisterStream(open.StreamID)
 	defer cancel()
 
 	switch open.Kind {
 	case "logs":
 		runLogStream(ctx, conn, cli, open)
+	case "stats":
+		runStatsStream(ctx, conn, cli, open)
+	case "exec":
+		runExecStream(ctx, conn, cli, open, reg)
 	default:
 		sendStreamClose(conn, open.StreamID, "unknown stream kind: "+open.Kind)
+	}
+}
+
+func runStatsStream(ctx context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen) {
+	resp, err := cli.ContainerStats(ctx, open.Container, true)
+	if err != nil {
+		sendStreamClose(conn, open.StreamID, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	buf := make([]byte, 4096)
+	for {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			payload, _ := json.Marshal(agents.StreamData{StreamID: open.StreamID, Data: append([]byte(nil), buf[:n]...)})
+			if werr := safeWriteFrame(conn, agents.Frame{Type: agents.FrameStreamData, Payload: payload}); werr != nil {
+				return
+			}
+		}
+		if rerr != nil {
+			if rerr == io.EOF || ctx.Err() != nil {
+				sendStreamClose(conn, open.StreamID, "")
+			} else {
+				sendStreamClose(conn, open.StreamID, rerr.Error())
+			}
+			return
+		}
+	}
+}
+
+func runExecStream(ctx context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) {
+	// Decode params
+	cmdSlice := []string{"/bin/sh"}
+	if raw, ok := open.Params["cmd"].([]any); ok {
+		out := make([]string, 0, len(raw))
+		for _, v := range raw {
+			if s, ok := v.(string); ok {
+				out = append(out, s)
+			}
+		}
+		if len(out) > 0 {
+			cmdSlice = out
+		}
+	}
+
+	createResp, err := cli.ContainerExecCreate(ctx, open.Container, dtypes.ExecConfig{
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+		Tty:          true,
+		Cmd:          cmdSlice,
+	})
+	if err != nil {
+		sendStreamClose(conn, open.StreamID, err.Error())
+		return
+	}
+	hijack, err := cli.ContainerExecAttach(ctx, createResp.ID, dtypes.ExecStartCheck{Tty: true})
+	if err != nil {
+		sendStreamClose(conn, open.StreamID, err.Error())
+		return
+	}
+	defer hijack.Close()
+
+	// Wire up the registry hooks so deliverStreamInput / deliverStreamControl
+	// can reach this exec instance.
+	reg.stdin = hijack.Conn
+	reg.resize = func(rows, cols uint) error {
+		return cli.ContainerExecResize(ctx, createResp.ID, container.ResizeOptions{Height: rows, Width: cols})
+	}
+
+	// Apply the initial size if the client passed one in StreamOpen.Params.
+	if c, r := uintFromAny(open.Params["cols"]), uintFromAny(open.Params["rows"]); c > 0 && r > 0 {
+		_ = reg.resize(r, c)
+	}
+
+	// Pump exec stdout → server as stream.data frames.
+	buf := make([]byte, 4096)
+	for {
+		n, rerr := hijack.Reader.Read(buf)
+		if n > 0 {
+			payload, _ := json.Marshal(agents.StreamData{StreamID: open.StreamID, Data: append([]byte(nil), buf[:n]...)})
+			if werr := safeWriteFrame(conn, agents.Frame{Type: agents.FrameStreamData, Payload: payload}); werr != nil {
+				return
+			}
+		}
+		if rerr != nil {
+			if rerr == io.EOF || ctx.Err() != nil {
+				sendStreamClose(conn, open.StreamID, "")
+			} else {
+				sendStreamClose(conn, open.StreamID, rerr.Error())
+			}
+			return
+		}
 	}
 }
 

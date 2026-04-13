@@ -11,20 +11,16 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// WSExec proxies an interactive exec session over a WebSocket.
+// WSExec proxies an interactive exec session over a WebSocket. Honours
+// ?host=<id> for remote agents.
 //
-// Protocol:
+// Protocol (unchanged for both local and remote):
 //   - BinaryMessage from client → stdin bytes to container
-//   - BinaryMessage to client   ← stdout/stderr bytes from container (merged,
-//     since TTY mode does not multiplex the streams)
+//   - BinaryMessage to client   ← stdout/stderr bytes (TTY merged)
 //   - TextMessage (JSON)        ← resize control: {"type":"resize","cols":N,"rows":M}
 //
 // Auth via ?ticket= (§15.8). Optional ?cmd=/bin/bash, defaults to /bin/sh.
 func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		http.Error(w, "docker unavailable", http.StatusServiceUnavailable)
-		return
-	}
 	ticket := r.URL.Query().Get("ticket")
 	if ticket == "" {
 		http.Error(w, "ticket required", http.StatusUnauthorized)
@@ -32,6 +28,12 @@ func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := h.Auth.ValidateWSTicket(ticket); err != nil {
 		http.Error(w, "invalid ticket", http.StatusUnauthorized)
+		return
+	}
+
+	target, err := h.pickHost(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 
@@ -51,18 +53,18 @@ func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	session, err := h.Docker.StartExec(ctx, containerID, []string{cmd})
+	session, err := target.StartExec(ctx, containerID, []string{cmd})
 	if err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+err.Error()+`"}`))
 		return
 	}
-	defer session.Hijack.Close()
+	defer session.Close()
 
 	// Goroutine 1: container → WebSocket (binary frames).
 	go func() {
 		buf := make([]byte, 4096)
 		for {
-			n, err := session.Hijack.Reader.Read(buf)
+			n, err := session.Read(buf)
 			if n > 0 {
 				if err := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); err != nil {
 					cancel()
@@ -92,7 +94,7 @@ func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
 		}
 		switch msgType {
 		case websocket.BinaryMessage:
-			if _, err := session.Hijack.Conn.Write(data); err != nil {
+			if _, err := session.Write(data); err != nil {
 				return
 			}
 		case websocket.TextMessage:
@@ -105,7 +107,7 @@ func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if ctrl.Type == "resize" && ctrl.Cols > 0 && ctrl.Rows > 0 {
-				_ = h.Docker.ResizeExec(ctx, session.ID, ctrl.Rows, ctrl.Cols)
+				_ = session.Resize(ctrl.Rows, ctrl.Cols)
 			}
 		}
 	}
