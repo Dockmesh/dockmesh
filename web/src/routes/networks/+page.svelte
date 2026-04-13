@@ -270,12 +270,23 @@
   }
 
   // ---------- physics ----------
-  const REPEL = 4500;
-  const LINK_DIST = 160;
-  const LINK_K = 0.04;
-  const GRAVITY = 0.008;
-  const DAMPING = 0.82;
-  const MAX_TICKS = 800;
+  // Tuned for ≤80 nodes. Containers attached to the same network were
+  // overlapping because:
+  //   1. collision padding was too tight for the bottom-label text,
+  //   2. only one relaxation pass per frame meant springs immediately
+  //      pulled colliders back together,
+  //   3. LINK_DIST left too little arc room when 4-5 containers shared
+  //      one network.
+  // Increasing padding + iterating the collision pass + a longer link
+  // distance gives every container room for its name and port badge.
+  const REPEL = 6500;
+  const LINK_DIST = 220;
+  const LINK_K = 0.025;
+  const GRAVITY = 0.006;
+  const DAMPING = 0.78;
+  const COLLISION_PASSES = 4;
+  const COLLISION_PAD = 36; // extra px between circle edges (room for labels)
+  const MAX_TICKS = 1200;
 
   function tick() {
     if (simNodes.length === 0) return;
@@ -331,30 +342,40 @@
       node.y = Math.max(60, Math.min(WORLD_H - 60, node.y));
     }
 
-    // Collision resolution — push overlapping nodes apart so circles never
-    // touch. Ten percent of one frame's worth of position is plenty.
-    for (let i = 0; i < n; i++) {
-      const a = simNodes[i];
-      for (let j = i + 1; j < n; j++) {
-        const b = simNodes[j];
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const d = Math.sqrt(dx * dx + dy * dy) + 0.01;
-        const minD = a.radius + b.radius + 14;
-        if (d < minD) {
-          const overlap = (minD - d) / d;
-          const ox = dx * overlap * 0.5;
-          const oy = dy * overlap * 0.5;
-          if (!a.fixed) {
-            a.x -= ox;
-            a.y -= oy;
-          }
-          if (!b.fixed) {
-            b.x += ox;
-            b.y += oy;
+    // Collision resolution — multiple relaxation passes so springs can't
+    // overpower the separation in a single frame. Velocities are damped
+    // on contact so colliders settle instead of bouncing.
+    for (let pass = 0; pass < COLLISION_PASSES; pass++) {
+      let any = false;
+      for (let i = 0; i < n; i++) {
+        const a = simNodes[i];
+        for (let j = i + 1; j < n; j++) {
+          const b = simNodes[j];
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const d = Math.sqrt(dx * dx + dy * dy) + 0.01;
+          const minD = a.radius + b.radius + COLLISION_PAD;
+          if (d < minD) {
+            any = true;
+            const overlap = (minD - d) / d;
+            const ox = dx * overlap * 0.5;
+            const oy = dy * overlap * 0.5;
+            if (!a.fixed) {
+              a.x -= ox;
+              a.y -= oy;
+              a.vx *= 0.4;
+              a.vy *= 0.4;
+            }
+            if (!b.fixed) {
+              b.x += ox;
+              b.y += oy;
+              b.vx *= 0.4;
+              b.vy *= 0.4;
+            }
           }
         }
       }
+      if (!any) break;
     }
 
     frame++;
