@@ -8,6 +8,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/system"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/volume"
 )
@@ -199,6 +200,14 @@ func (h *LocalHost) ListVolumes(ctx context.Context) ([]any, error) {
 		out = append(out, v)
 	}
 	return out, nil
+}
+
+// SystemMetrics reads host-level CPU / memory / disk / uptime via the
+// system package. On Linux it reads /proc and statfs; on other platforms
+// (dev builds) the system package stub returns zero values so the
+// dashboard still renders without crashing.
+func (h *LocalHost) SystemMetrics(ctx context.Context) (system.Metrics, error) {
+	return system.Collect(), nil
 }
 
 // silence unused import if volume isn't otherwise referenced

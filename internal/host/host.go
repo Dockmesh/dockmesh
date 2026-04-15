@@ -12,6 +12,7 @@ import (
 	"io"
 
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/system"
 	dtypes "github.com/docker/docker/api/types"
 )
 
@@ -60,6 +61,12 @@ type Host interface {
 	DeployStack(ctx context.Context, name, composeYAML, envContent string) (*compose.DeployResult, error)
 	StopStack(ctx context.Context, name string) error
 	StackStatus(ctx context.Context, name string) ([]compose.StatusEntry, error)
+
+	// Host-level system metrics (CPU / memory / disk / uptime). Locally
+	// this reads /proc and statfs; remotely it asks the agent to do the
+	// same and ships the result back. Used by the dashboard's all-mode
+	// System Health panel which renders one row per host. Slice P.6.
+	SystemMetrics(ctx context.Context) (system.Metrics, error)
 }
 
 // ExecSession is the interface the WS exec handler uses to talk to a

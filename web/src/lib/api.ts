@@ -59,6 +59,25 @@ export interface HostInfo {
   status: 'online' | 'offline' | 'pending' | 'revoked';
 }
 
+// SystemMetrics is the host-level CPU / memory / disk / uptime snapshot
+// returned by GET /api/v1/system/metrics. In all-mode the response is a
+// FanOutResponse<SystemMetrics>, one row per host, with host_id and
+// host_name flattened alongside the metrics fields via backend struct
+// embedding.
+export interface SystemMetrics {
+  cpu_percent: number;
+  cpu_cores: number;
+  cpu_used_cores: number;
+  mem_percent: number;
+  mem_total: number;
+  mem_used: number;
+  disk_percent: number;
+  disk_total: number;
+  disk_used: number;
+  disk_path: string;
+  uptime_seconds: number;
+}
+
 // FanOutResponse is the shape returned by list endpoints when called
 // with ?host=all. Per-row host metadata (host_id / host_name) is
 // flattened into each item via backend struct embedding, and any
@@ -544,20 +563,14 @@ export const api = {
   },
 
   system: {
-    metrics: () =>
-      request<{
-        cpu_percent: number;
-        cpu_cores: number;
-        cpu_used_cores: number;
-        mem_percent: number;
-        mem_total: number;
-        mem_used: number;
-        disk_percent: number;
-        disk_total: number;
-        disk_used: number;
-        disk_path: string;
-        uptime_seconds: number;
-      }>('/system/metrics')
+    // host='local' (default) → bare Metrics object for the central server.
+    // host='<id>'            → bare Metrics object for that specific agent.
+    // host='all'             → FanOutResponse with one row per online host.
+    // The frontend uses isFanOut() to narrow the return type at the caller.
+    metrics: (host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<SystemMetrics | FanOutResponse<SystemMetrics>>(`/system/metrics${qs}`);
+    }
   },
 
   audit: {

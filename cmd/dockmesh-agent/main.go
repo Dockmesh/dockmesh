@@ -41,6 +41,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/system"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/volume"
@@ -613,6 +614,13 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 	case agents.FrameReqDaemonInfo:
 		info, err := cli.Info(ctx)
 		respond(conn, f.ID, info, err)
+
+	case agents.FrameReqSystemMetrics:
+		// Read host-level CPU / memory / disk / uptime by calling the
+		// shared system package on the agent's own host. Same code path
+		// the central server uses for its local host, just executed on
+		// the agent side via the protocol. Slice P.6.
+		respond(conn, f.ID, system.Collect(), nil)
 
 	case agents.FrameReqStackDeploy:
 		var req agents.StackDeployReq

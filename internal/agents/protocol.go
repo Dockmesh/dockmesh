@@ -44,6 +44,12 @@ const (
 	FrameReqVolumeList  = "req.volumes.list"
 	FrameReqDaemonInfo  = "req.daemon.info"
 
+	// Host-level system metrics (CPU / memory / disk / uptime) for the
+	// dashboard's all-mode System Health panel. Payload is empty; the
+	// agent reads its local /proc and /var/lib/docker via the system
+	// package and returns the Metrics struct as JSON. Slice P.6.
+	FrameReqSystemMetrics = "req.system.metrics"
+
 	// Stack operations (slice 3.1.3) — server ships compose YAML + .env
 	// content with the deploy request, agent runs the same compose
 	// executor as the server would for a local deploy.

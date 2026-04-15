@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/system"
 	dtypes "github.com/docker/docker/api/types"
 )
 
@@ -74,6 +75,9 @@ func (f *fakeHost) DeployStack(context.Context, string, string, string) (*compos
 func (f *fakeHost) StopStack(context.Context, string) error { panic("no") }
 func (f *fakeHost) StackStatus(context.Context, string) ([]compose.StatusEntry, error) {
 	panic("no")
+}
+func (f *fakeHost) SystemMetrics(context.Context) (system.Metrics, error) {
+	return system.Metrics{}, nil
 }
 
 func TestFanOut_HappyPath(t *testing.T) {
