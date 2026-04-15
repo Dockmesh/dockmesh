@@ -31,7 +31,7 @@ type Handlers struct {
 	Docker      *docker.Client // may be nil if the daemon was unreachable at startup
 	Stacks      *stacks.Manager
 	Compose     *compose.Service
-	LoginLimter *ratelimit.Limiter
+	LoginLimiter *ratelimit.Limiter
 	Scanner     scanner.Scanner
 	ScanStore   *scanner.Store
 	Proxy       *proxy.Service
@@ -76,7 +76,7 @@ func New(d Deps) *Handlers {
 		Docker:      d.Docker,
 		Stacks:      d.Stacks,
 		Compose:     d.Compose,
-		LoginLimter: d.LoginLimiter,
+		LoginLimiter: d.LoginLimiter,
 		Scanner:     d.Scanner,
 		ScanStore:   d.ScanStore,
 		Proxy:       d.Proxy,

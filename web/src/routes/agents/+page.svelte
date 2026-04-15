@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import { api, ApiError, type Agent, type AgentCreateResult } from '$lib/api';
+  import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { Server, Plus, Trash2, RefreshCw, Copy, CheckCircle2 } from 'lucide-svelte';
@@ -15,8 +16,6 @@
   // After create, we keep the result around to show the token + install
   // command in a follow-up dialog. The token is shown ONCE.
   let createResult = $state<AgentCreateResult | null>(null);
-
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   async function load() {
     loading = true;
@@ -79,15 +78,17 @@
     return new Date(ts).toLocaleString();
   }
 
-  onMount(() => {
+  $effect(() => {
+    if (!allowed('user.manage')) {
+      goto('/');
+      return;
+    }
     load();
     // Poll every 5s so status flips from pending → online without a manual refresh.
-    pollTimer = setInterval(() => {
+    const timer = setInterval(() => {
       if (document.visibilityState === 'visible') load();
     }, 5000);
-  });
-  onDestroy(() => {
-    if (pollTimer) clearInterval(pollTimer);
+    return () => clearInterval(timer);
   });
 </script>
 

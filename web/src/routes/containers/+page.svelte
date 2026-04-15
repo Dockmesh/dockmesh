@@ -1,11 +1,11 @@
 <script lang="ts">
   import { api, ApiError } from '$lib/api';
   import { goto } from '$app/navigation';
-  import { onDestroy } from 'svelte';
   import { Card, Badge, EmptyState, Button, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
+  import { EventStream, type ConnStatus } from '$lib/events';
   import { Box, Play, Square, RotateCw, Trash2, RefreshCw, Server } from 'lucide-svelte';
 
   const canControl = $derived(allowed('container.control'));
@@ -24,8 +24,8 @@
   let containers = $state<Container[]>([]);
   let loading = $state(true);
   let showAll = $state(true);
-  let live = $state(false);
-  let ws: WebSocket | null = null;
+  let connStatus = $state<ConnStatus>('connecting');
+  const live = $derived(connStatus === 'live');
   let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 
   function scheduleReload() {
@@ -33,31 +33,17 @@
     reloadTimer = setTimeout(load, 300);
   }
 
-  async function connectEvents() {
-    if (ws) return;
-    try {
-      const { ticket } = await api.ws.ticket();
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${proto}//${location.host}/api/v1/ws/events?ticket=${ticket}`);
-      ws.onopen = () => { live = true; };
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg.source === 'docker' && msg.type === 'container') scheduleReload();
-        } catch { /* ignore */ }
-      };
-      ws.onclose = () => { live = false; ws = null; };
-      ws.onerror = () => { live = false; };
-    } catch { /* ignore */ }
-  }
+  const stream = new EventStream({
+    onMessage: (msg) => {
+      if (msg.source === 'docker' && msg.type === 'container') scheduleReload();
+    },
+    onStatus: (s) => { connStatus = s; }
+  });
 
   function disconnectEvents() {
-    if (ws) { ws.close(); ws = null; }
+    stream.stop();
     if (reloadTimer) clearTimeout(reloadTimer);
-    live = false;
   }
-
-  onDestroy(disconnectEvents);
 
   async function load() {
     loading = true;
@@ -111,7 +97,7 @@
 
   $effect(() => {
     load();
-    connectEvents();
+    stream.start();
     return disconnectEvents;
   });
 </script>
@@ -123,6 +109,8 @@
         <h2 class="text-2xl font-semibold tracking-tight">Containers</h2>
         {#if live}
           <Badge variant="success" dot>live</Badge>
+        {:else if connStatus === 'reconnecting'}
+          <Badge variant="warning" dot>reconnecting…</Badge>
         {/if}
       </div>
       <p class="text-sm text-[var(--fg-muted)] mt-0.5 flex items-center gap-2">

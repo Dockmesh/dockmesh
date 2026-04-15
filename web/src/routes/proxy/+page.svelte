@@ -1,8 +1,11 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import { api, ApiError } from '$lib/api';
+  import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { Globe, Plus, Trash2, Power, PowerOff, RefreshCw, Lock, ShieldCheck } from 'lucide-svelte';
+
 
   interface ProxyRoute {
     id: number;
@@ -105,7 +108,13 @@
     return 'HTTP only';
   }
 
-  $effect(() => { load(); });
+  $effect(() => {
+    if (!allowed('user.manage')) {
+      goto('/');
+      return;
+    }
+    load();
+  });
 </script>
 
 <section class="space-y-6">

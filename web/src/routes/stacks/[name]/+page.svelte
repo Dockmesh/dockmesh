@@ -2,11 +2,11 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { api, ApiError } from '$lib/api';
-  import { onDestroy } from 'svelte';
   import { Button, Card, Badge, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
+  import { EventStream } from '$lib/events';
   import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server } from 'lucide-svelte';
 
   const canWrite = $derived(allowed('stack.write'));
@@ -23,7 +23,22 @@
 
   let externalChange = $state<{ file: string; type: string } | null>(null);
   let dirty = $state(false);
-  let ws: WebSocket | null = null;
+
+  const stream = new EventStream({
+    onMessage: (msg) => {
+      if (msg.source === 'stacks' && msg.name === name) {
+        if (msg.type === 'modified') {
+          externalChange = { file: msg.file ?? 'compose.yaml', type: msg.type };
+        } else if (msg.type === 'removed' && !msg.file) {
+          externalChange = { file: '', type: 'removed' };
+        }
+      }
+      if (msg.source === 'docker' && msg.type === 'container') {
+        // Container lifecycle events in our stack → reload status.
+        refreshStatus();
+      }
+    }
+  });
 
   async function load() {
     loading = true;
@@ -44,37 +59,6 @@
       loading = false;
     }
   }
-
-  async function connectEvents() {
-    disconnectEvents();
-    try {
-      const { ticket } = await api.ws.ticket();
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${proto}//${location.host}/api/v1/ws/events?ticket=${ticket}`);
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg.source === 'stacks' && msg.name === name) {
-            if (msg.type === 'modified') {
-              externalChange = { file: msg.file ?? 'compose.yaml', type: msg.type };
-            } else if (msg.type === 'removed' && !msg.file) {
-              externalChange = { file: '', type: 'removed' };
-            }
-          }
-          if (msg.source === 'docker' && msg.type === 'container') {
-            // Container lifecycle events in our stack → reload status.
-            refreshStatus();
-          }
-        } catch { /* ignore */ }
-      };
-    } catch { /* ignore */ }
-  }
-
-  function disconnectEvents() {
-    if (ws) { ws.close(); ws = null; }
-  }
-
-  onDestroy(disconnectEvents);
 
   async function refreshStatus() {
     try {
@@ -147,8 +131,9 @@
   $effect(() => {
     if (name) {
       load();
-      connectEvents();
+      stream.start();
     }
+    return stream.stop;
   });
 </script>
 

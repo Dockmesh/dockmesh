@@ -24,8 +24,8 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	key := limitKey(ip)
 
 	// Brute-force guard (§1.5): 10 failures per minute → 5 min lockout.
-	if h.LoginLimter != nil {
-		if ok, retry := h.LoginLimter.Check(key); !ok {
+	if h.LoginLimiter != nil {
+		if ok, retry := h.LoginLimiter.Check(key); !ok {
 			w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
 			writeError(w, http.StatusTooManyRequests, "too many login attempts — try again later")
 			return
@@ -43,8 +43,8 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.Auth.Login(r.Context(), req.Username, req.Password, r.UserAgent(), ip)
 	if errors.Is(err, auth.ErrInvalidCredentials) {
-		if h.LoginLimter != nil {
-			h.LoginLimter.Fail(key)
+		if h.LoginLimiter != nil {
+			h.LoginLimiter.Fail(key)
 		}
 		if h.Audit != nil {
 			h.Audit.Write(r.Context(), "", audit.ActionLoginFailed, req.Username, map[string]string{"ip": ip})
@@ -56,8 +56,8 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "login failed")
 		return
 	}
-	if h.LoginLimter != nil {
-		h.LoginLimter.Succeed(key)
+	if h.LoginLimiter != nil {
+		h.LoginLimiter.Succeed(key)
 	}
 	// Don't audit MFA-pending state — audit happens after /auth/mfa succeeds.
 	if h.Audit != nil && res.User != nil {

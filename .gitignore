@@ -41,3 +41,15 @@ Thumbs.db
 # Test / coverage
 *.out
 coverage.txt
+
+# Playwright MCP session artifacts (screenshots, snapshots)
+.playwright-mcp/
+
+# Root-level design iteration screenshots (logos, dashboard mockups)
+# Kept out of git; archived separately if needed.
+/logo-*.png
+/p5-*.png
+
+# Temporary working files
+/tmp_*.md
+/tmp_*.json

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, ApiError } from '$lib/api';
   import { auth } from '$lib/stores/auth.svelte';
+  import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, Skeleton, EmptyState } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { User, Users, Activity, Plus, Trash2, UserCog, ShieldCheck, ShieldOff, Copy, KeyRound, Link2, Globe, ExternalLink } from 'lucide-svelte';
@@ -326,14 +327,19 @@
     else if (tab === 'sso') loadOIDC();
   });
 
-  const isAdmin = $derived(auth.user?.role === 'admin');
-
   const tabs: Array<{ id: Tab; label: string; icon: any; show: boolean }> = $derived([
     { id: 'account', label: 'Account', icon: User, show: true },
-    { id: 'users', label: 'Users', icon: Users, show: isAdmin },
-    { id: 'sso', label: 'SSO', icon: Globe, show: isAdmin },
-    { id: 'audit', label: 'Audit Log', icon: Activity, show: true }
+    { id: 'users', label: 'Users', icon: Users, show: allowed('user.manage') },
+    { id: 'sso', label: 'SSO', icon: Globe, show: allowed('user.manage') },
+    { id: 'audit', label: 'Audit Log', icon: Activity, show: allowed('audit.read') }
   ]);
+
+  // If the user lands on a tab they're not allowed to see (e.g. deep link
+  // or role change), snap back to the first visible tab.
+  $effect(() => {
+    const visible = tabs.filter((t) => t.show).map((t) => t.id);
+    if (!visible.includes(tab)) tab = visible[0] ?? 'account';
+  });
 </script>
 
 <section class="space-y-6">
@@ -600,7 +606,7 @@
   {/if}
 </section>
 
-{#if tab === 'sso' && isAdmin}
+{#if tab === 'sso' && allowed('user.manage')}
   <section class="space-y-4">
     <div class="flex justify-between items-center">
       <div class="text-sm text-[var(--fg-muted)]">

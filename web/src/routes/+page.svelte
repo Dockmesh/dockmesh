@@ -1,42 +1,115 @@
 <script lang="ts">
   import { api } from '$lib/api';
-  import { Card, Skeleton, Badge } from '$lib/components/ui';
-  import { Box, Layers, Image as ImageIcon, Network, HardDrive, Activity, RefreshCw } from 'lucide-svelte';
+  import { allowed } from '$lib/rbac';
+  import { hosts } from '$lib/stores/host.svelte';
+  import { Skeleton, Badge } from '$lib/components/ui';
+  import {
+    Box,
+    Cpu,
+    MemoryStick,
+    HardDrive,
+    Activity,
+    RefreshCw,
+    Server,
+    CheckCircle2,
+    AlertTriangle,
+    Rocket,
+    Download,
+    Archive,
+    ShieldCheck
+  } from 'lucide-svelte';
 
-  let stats = $state({
-    containers: 0,
-    containersRunning: 0,
-    stacks: 0,
-    images: 0,
-    networks: 0,
-    volumes: 0
-  });
+  type SystemMetrics = {
+    cpu_percent: number;
+    cpu_cores: number;
+    cpu_used_cores: number;
+    mem_percent: number;
+    mem_total: number;
+    mem_used: number;
+    disk_percent: number;
+    disk_total: number;
+    disk_used: number;
+    disk_path: string;
+    uptime_seconds: number;
+  };
+
+  type StackCard = {
+    name: string;
+    state: 'running' | 'stopped' | 'unhealthy' | 'partial';
+    services: Array<{ name: string; state: string }>;
+  };
+
   let health = $state<{ status: string; version: string; docker: boolean } | null>(null);
+  let sysMetrics = $state<SystemMetrics | null>(null);
+  let containerStats = $state({ total: 0, running: 0, stopped: 0, unhealthy: 0 });
+  let stackCards = $state<StackCard[]>([]);
   let recentAudit = $state<any[]>([]);
+  let agentCount = $state({ online: 0, total: 0 });
   let loading = $state(true);
   let error = $state('');
+  let stackFilter = $state<'all' | 'running' | 'stopped' | 'unhealthy'>('all');
 
   async function load() {
     loading = true;
     error = '';
     try {
-      const [h, containers, stacks, images, networks, volumes, audit] = await Promise.all([
+      const [h, sys, containers, stacksList, audit, hostList] = await Promise.all([
         api.health(),
+        api.system.metrics().catch(() => null),
         api.containers.list(true).catch(() => []),
         api.stacks.list().catch(() => []),
-        api.images.list().catch(() => []),
-        api.networks.list().catch(() => []),
-        api.volumes.list().catch(() => []),
-        api.audit.list(10).catch(() => [])
+        allowed('audit.read') ? api.audit.list(8).catch(() => []) : Promise.resolve([]),
+        api.hosts.list().catch(() => [])
       ]);
       health = h;
-      stats.containers = containers.length;
-      stats.containersRunning = containers.filter((c: any) => c.State === 'running').length;
-      stats.stacks = stacks.length;
-      stats.images = images.length;
-      stats.networks = networks.length;
-      stats.volumes = volumes.length;
+      sysMetrics = sys;
+
+      // Container breakdown
+      containerStats.total = containers.length;
+      containerStats.running = containers.filter((c: any) => c.State === 'running').length;
+      containerStats.stopped = containers.filter((c: any) =>
+        ['exited', 'dead', 'created'].includes(c.State)
+      ).length;
+      containerStats.unhealthy = containers.filter((c: any) =>
+        (c.Status ?? '').toLowerCase().includes('unhealthy')
+      ).length;
+
+      // Derive stack cards by grouping containers on com.docker.compose.project.
+      // Avoids an N+1 fan-out of /stacks/{name}/status calls.
+      const byStack = new Map<string, Array<any>>();
+      for (const c of containers) {
+        const proj: string | undefined = c.Labels?.['com.docker.compose.project'];
+        if (!proj) continue;
+        if (!byStack.has(proj)) byStack.set(proj, []);
+        byStack.get(proj)!.push(c);
+      }
+      stackCards = stacksList.map((s: any) => {
+        const cs = byStack.get(s.name) ?? [];
+        const running = cs.filter((c) => c.State === 'running').length;
+        const unhealthy = cs.filter((c) =>
+          (c.Status ?? '').toLowerCase().includes('unhealthy')
+        ).length;
+        let state: StackCard['state'];
+        if (cs.length === 0) state = 'stopped';
+        else if (unhealthy > 0) state = 'unhealthy';
+        else if (running === cs.length) state = 'running';
+        else if (running === 0) state = 'stopped';
+        else state = 'partial';
+        return {
+          name: s.name,
+          state,
+          services: cs.map((c) => ({
+            name:
+              c.Labels?.['com.docker.compose.service'] ??
+              (c.Names?.[0] ?? '').replace(/^\//, ''),
+            state: c.State
+          }))
+        };
+      });
+
       recentAudit = audit;
+      agentCount.total = hostList.length;
+      agentCount.online = hostList.filter((x: any) => x.status === 'online').length;
     } catch (err: any) {
       error = err.message ?? 'Failed to load';
     } finally {
@@ -49,10 +122,81 @@
   });
 
   function actionColor(action: string): 'success' | 'warning' | 'danger' | 'info' | 'default' {
-    if (action.includes('delete') || action.includes('remove') || action.includes('failed')) return 'danger';
-    if (action.includes('create') || action.includes('deploy') || action.includes('start')) return 'success';
+    if (action.includes('delete') || action.includes('remove') || action.includes('failed'))
+      return 'danger';
+    if (action.includes('create') || action.includes('deploy') || action.includes('start'))
+      return 'success';
     if (action.includes('update') || action.includes('refresh')) return 'info';
     return 'default';
+  }
+
+  // Map a raw audit event to a human-readable sentence. Keeping the
+  // mapping frontend-side lets us i18n later without a backend schema
+  // change. Every case falls through to a generic "action — target"
+  // format so unknown actions still render.
+  function formatActivity(e: any): string {
+    const tgt = e.target ?? '';
+    const short = tgt.length > 12 && /^[0-9a-f]/.test(tgt) ? tgt.slice(0, 12) : tgt;
+    switch (e.action) {
+      case 'auth.login':
+        return 'signed in';
+      case 'auth.logout':
+        return 'signed out';
+      case 'auth.login_failed':
+        return `failed sign-in attempt${tgt ? ' for ' + tgt : ''}`;
+      case 'auth.sso_login':
+        return 'signed in via SSO';
+      case 'stack.create':
+        return `created stack ${tgt}`;
+      case 'stack.update':
+        return `updated stack ${tgt}`;
+      case 'stack.delete':
+        return `deleted stack ${tgt}`;
+      case 'stack.deploy':
+        return `deployed stack ${tgt}`;
+      case 'stack.stop':
+        return `stopped stack ${tgt}`;
+      case 'container.start':
+        return `started container ${short}`;
+      case 'container.stop':
+        return `stopped container ${short}`;
+      case 'container.restart':
+        return `restarted container ${short}`;
+      case 'container.remove':
+        return `removed container ${short}`;
+      case 'container.update':
+        return `updated container ${short}`;
+      case 'container.rollback':
+        return `rolled back container ${short}`;
+      case 'image.pull':
+        return `pulled image ${tgt}`;
+      case 'image.remove':
+        return `removed image ${short}`;
+      case 'image.prune':
+        return `pruned unused images`;
+      case 'image.scan':
+        return `scanned image ${tgt}`;
+      case 'network.create':
+        return `created network ${tgt}`;
+      case 'network.remove':
+        return `removed network ${tgt}`;
+      case 'volume.create':
+        return `created volume ${tgt}`;
+      case 'volume.remove':
+        return `removed volume ${tgt}`;
+      case 'volume.prune':
+        return `pruned unused volumes`;
+      case 'user.create':
+        return `created user ${tgt}`;
+      case 'user.delete':
+        return `deleted user ${tgt}`;
+      case 'user.update':
+        return `updated user ${tgt}`;
+      case 'user.password':
+        return `changed password for ${tgt}`;
+      default:
+        return e.action + (tgt ? ` — ${short}` : '');
+    }
   }
 
   function fmtTime(ts: string): string {
@@ -61,22 +205,73 @@
     if (diff < 60) return 'just now';
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 30 * 86400) return `${Math.floor(diff / 86400)}d ago`;
     return t.toLocaleDateString();
   }
+
+  function fmtBytes(n: number): string {
+    if (n === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
+    return `${(n / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+  }
+
+  // Pick a bar color based on percentage — green < 60%, yellow < 85%,
+  // red above that. Keeps the dashboard a quick visual read.
+  function barColor(pct: number): string {
+    if (pct < 60) return 'var(--color-success-500)';
+    if (pct < 85) return 'var(--color-warning-500)';
+    return 'var(--color-danger-500)';
+  }
+
+  function textColor(pct: number): string {
+    if (pct < 60) return 'var(--color-success-400)';
+    if (pct < 85) return 'var(--color-warning-400)';
+    return 'var(--color-danger-400)';
+  }
+
+  const filteredStacks = $derived(
+    stackFilter === 'all' ? stackCards : stackCards.filter((s) => s.state === stackFilter)
+  );
+  const stackCounts = $derived({
+    all: stackCards.length,
+    running: stackCards.filter((s) => s.state === 'running').length,
+    stopped: stackCards.filter((s) => s.state === 'stopped').length,
+    unhealthy: stackCards.filter((s) => s.state === 'unhealthy' || s.state === 'partial').length
+  });
+
+  const canDeploy = $derived(allowed('stack.deploy'));
+  const canImage = $derived(allowed('image.write'));
+  const canBackup = $derived(allowed('user.manage'));
+  const canScan = $derived(allowed('image.scan'));
+
+  const isRemote = $derived(hosts.id !== 'local');
 </script>
 
 <section class="space-y-6">
   <!-- Header row -->
-  <div class="flex items-center justify-between flex-wrap gap-3">
+  <div class="flex items-start justify-between flex-wrap gap-3">
     <div>
-      <h2 class="text-2xl font-semibold tracking-tight">Overview</h2>
-      <p class="text-sm text-[var(--fg-muted)] mt-0.5">
+      <div class="flex items-center gap-2">
+        <h1 class="text-[22px] font-semibold tracking-tight">Dashboard</h1>
+        {#if isRemote}
+          <span
+            class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-[var(--color-brand-500)]/30 bg-[color-mix(in_srgb,var(--color-brand-500)_10%,transparent)] text-[var(--color-brand-400)]"
+          >
+            <Server class="w-3 h-3" />
+            {hosts.selected?.name}
+          </span>
+        {/if}
+      </div>
+      <p class="text-sm text-[var(--fg-muted)] mt-0.5 flex items-center gap-1.5">
         {#if health?.docker}
-          Connected to Docker · {health.version}
+          <CheckCircle2 class="w-3.5 h-3.5 text-[var(--color-success-400)]" />
+          <span>Docker {health.version} · Dockmesh {health.status}</span>
         {:else if health}
+          <AlertTriangle class="w-3.5 h-3.5 text-[var(--color-warning-400)]" />
           <span class="text-[var(--color-warning-400)]">Docker daemon unreachable</span>
         {:else}
-          Loading system status…
+          <span>Loading system status…</span>
         {/if}
       </p>
     </div>
@@ -92,89 +287,330 @@
   </div>
 
   {#if error}
-    <div class="dm-card p-4 border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] text-[var(--color-danger-400)] text-sm">
+    <div
+      class="dm-card p-4 border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] text-[var(--color-danger-400)] text-sm"
+    >
       {error}
     </div>
   {/if}
 
-  <!-- Metric cards -->
-  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-    {#snippet metric(label: string, value: string | number, sub: string, Icon: any, iconColor: string)}
-      <Card class="p-5">
-        <div class="flex items-start justify-between">
-          <div class="min-w-0 flex-1">
-            <div class="text-xs text-[var(--fg-muted)] uppercase tracking-wider font-medium">{label}</div>
-            {#if loading}
-              <Skeleton class="mt-2" width="60%" height="1.75rem" />
-            {:else}
-              <div class="text-2xl font-semibold mt-1 font-mono tabular-nums">{value}</div>
-            {/if}
-            <div class="text-xs text-[var(--fg-subtle)] mt-1">{sub}</div>
-          </div>
-          <div class="w-9 h-9 rounded-lg {iconColor} flex items-center justify-center shrink-0">
-            <Icon class="w-4.5 h-4.5" />
-          </div>
+  <!-- ─────────── Row 1: System metrics (4 columns) ─────────── -->
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+    <!-- CPU -->
+    <div class="dm-card p-4">
+      <div class="flex items-center justify-between text-[11px] text-[var(--fg-muted)] uppercase tracking-wider font-medium">
+        <div class="flex items-center gap-1.5">
+          <Cpu class="w-3.5 h-3.5" />
+          <span>CPU</span>
         </div>
-      </Card>
-    {/snippet}
-
-    {@render metric(
-      'Containers',
-      `${stats.containersRunning}/${stats.containers}`,
-      'running of total',
-      Box,
-      'bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] text-[var(--color-brand-400)]'
-    )}
-    {@render metric('Stacks', stats.stacks, 'filesystem-backed', Layers, 'bg-[color-mix(in_srgb,var(--color-success-500)_15%,transparent)] text-[var(--color-success-400)]')}
-    {@render metric('Images', stats.images, 'local', ImageIcon, 'bg-[color-mix(in_srgb,#a855f7_15%,transparent)] text-[#c084fc]')}
-    {@render metric('Networks', stats.networks, 'docker networks', Network, 'bg-[color-mix(in_srgb,#f97316_15%,transparent)] text-[#fb923c]')}
-  </div>
-
-  <!-- Secondary row: volumes + recent activity -->
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-    <Card class="p-5">
-      <div class="flex items-start justify-between mb-3">
-        <div>
-          <div class="text-xs text-[var(--fg-muted)] uppercase tracking-wider font-medium">Volumes</div>
-          <div class="text-2xl font-semibold mt-1 font-mono tabular-nums">{stats.volumes}</div>
-          <div class="text-xs text-[var(--fg-subtle)] mt-1">persistent storage</div>
-        </div>
-        <div class="w-9 h-9 rounded-lg bg-[color-mix(in_srgb,#eab308_15%,transparent)] text-[#facc15] flex items-center justify-center shrink-0">
-          <HardDrive class="w-4.5 h-4.5" />
-        </div>
-      </div>
-    </Card>
-
-    <!-- Recent activity spans 2 cols -->
-    <Card class="lg:col-span-2">
-      <div class="p-5 border-b border-[var(--border)] flex items-center gap-2">
-        <Activity class="w-4 h-4 text-[var(--fg-muted)]" />
-        <h3 class="font-semibold text-sm">Recent activity</h3>
-      </div>
-      <div class="divide-y divide-[var(--border)]">
-        {#if loading}
-          {#each Array(5) as _}
-            <div class="px-5 py-3 flex items-center gap-3">
-              <Skeleton width="5rem" height="1.25rem" />
-              <Skeleton width="8rem" height="1rem" />
-              <div class="flex-1"></div>
-              <Skeleton width="4rem" height="0.85rem" />
-            </div>
-          {/each}
-        {:else if recentAudit.length === 0}
-          <div class="px-5 py-8 text-center text-sm text-[var(--fg-muted)]">No activity yet</div>
-        {:else}
-          {#each recentAudit as e}
-            <div class="px-5 py-3 flex items-center gap-3 text-sm">
-              <Badge variant={actionColor(e.action)} dot>
-                {e.action}
-              </Badge>
-              <span class="font-mono text-xs text-[var(--fg-muted)] truncate flex-1">{e.target || '—'}</span>
-              <span class="text-xs text-[var(--fg-subtle)] shrink-0">{fmtTime(e.ts)}</span>
-            </div>
-          {/each}
+        {#if sysMetrics}
+          <span class="normal-case text-[var(--fg-subtle)]">{sysMetrics.cpu_cores} cores</span>
         {/if}
       </div>
-    </Card>
+      {#if loading || !sysMetrics}
+        <Skeleton class="mt-2" width="4rem" height="1.5rem" />
+        <Skeleton class="mt-2" width="100%" height="0.25rem" />
+      {:else}
+        <div class="mt-1.5 text-xl font-semibold font-mono tabular-nums leading-tight" style:color={textColor(sysMetrics.cpu_percent)}>
+          {sysMetrics.cpu_percent.toFixed(0)}%
+        </div>
+        <div class="mt-2 h-1 rounded-full overflow-hidden bg-[var(--surface-hover)]">
+          <div
+            class="h-full rounded-full transition-all duration-500"
+            style:width="{sysMetrics.cpu_percent}%"
+            style:background={barColor(sysMetrics.cpu_percent)}
+          ></div>
+        </div>
+        <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)] tabular-nums">
+          {sysMetrics.cpu_used_cores.toFixed(2)} / {sysMetrics.cpu_cores.toFixed(2)} cores
+        </div>
+      {/if}
+    </div>
+
+    <!-- Memory -->
+    <div class="dm-card p-4">
+      <div class="flex items-center justify-between text-[11px] text-[var(--fg-muted)] uppercase tracking-wider font-medium">
+        <div class="flex items-center gap-1.5">
+          <MemoryStick class="w-3.5 h-3.5" />
+          <span>Memory</span>
+        </div>
+        {#if sysMetrics && sysMetrics.mem_total > 0}
+          <span class="normal-case text-[var(--fg-subtle)]">{fmtBytes(sysMetrics.mem_total)}</span>
+        {/if}
+      </div>
+      {#if loading || !sysMetrics}
+        <Skeleton class="mt-2" width="4rem" height="1.5rem" />
+        <Skeleton class="mt-2" width="100%" height="0.25rem" />
+      {:else if sysMetrics.mem_total === 0}
+        <div class="mt-1.5 text-xl font-semibold text-[var(--fg-subtle)] leading-tight">—</div>
+        <div class="mt-2 h-1 rounded-full bg-[var(--surface-hover)]"></div>
+        <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)]">unavailable on this host</div>
+      {:else}
+        <div class="mt-1.5 text-xl font-semibold font-mono tabular-nums leading-tight" style:color={textColor(sysMetrics.mem_percent)}>
+          {sysMetrics.mem_percent.toFixed(0)}%
+        </div>
+        <div class="mt-2 h-1 rounded-full overflow-hidden bg-[var(--surface-hover)]">
+          <div
+            class="h-full rounded-full transition-all duration-500"
+            style:width="{sysMetrics.mem_percent}%"
+            style:background={barColor(sysMetrics.mem_percent)}
+          ></div>
+        </div>
+        <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)] tabular-nums">
+          {fmtBytes(sysMetrics.mem_used)} / {fmtBytes(sysMetrics.mem_total)}
+        </div>
+      {/if}
+    </div>
+
+    <!-- Disk -->
+    <div class="dm-card p-4">
+      <div class="flex items-center justify-between text-[11px] text-[var(--fg-muted)] uppercase tracking-wider font-medium">
+        <div class="flex items-center gap-1.5">
+          <HardDrive class="w-3.5 h-3.5" />
+          <span>Disk</span>
+        </div>
+        {#if sysMetrics && sysMetrics.disk_path}
+          <span class="normal-case text-[var(--fg-subtle)] font-mono truncate ml-2" title={sysMetrics.disk_path}>
+            {sysMetrics.disk_path}
+          </span>
+        {/if}
+      </div>
+      {#if loading || !sysMetrics}
+        <Skeleton class="mt-2" width="4rem" height="1.5rem" />
+        <Skeleton class="mt-2" width="100%" height="0.25rem" />
+      {:else if sysMetrics.disk_total === 0}
+        <div class="mt-1.5 text-xl font-semibold text-[var(--fg-subtle)] leading-tight">—</div>
+        <div class="mt-2 h-1 rounded-full bg-[var(--surface-hover)]"></div>
+        <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)]">unavailable on this host</div>
+      {:else}
+        <div class="mt-1.5 text-xl font-semibold font-mono tabular-nums leading-tight" style:color={textColor(sysMetrics.disk_percent)}>
+          {sysMetrics.disk_percent.toFixed(0)}%
+        </div>
+        <div class="mt-2 h-1 rounded-full overflow-hidden bg-[var(--surface-hover)]">
+          <div
+            class="h-full rounded-full transition-all duration-500"
+            style:width="{sysMetrics.disk_percent}%"
+            style:background={barColor(sysMetrics.disk_percent)}
+          ></div>
+        </div>
+        <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)] tabular-nums">
+          {fmtBytes(sysMetrics.disk_used)} / {fmtBytes(sysMetrics.disk_total)}
+        </div>
+      {/if}
+    </div>
+
+    <!-- Containers -->
+    <div class="dm-card p-4">
+      <div class="flex items-center justify-between text-[11px] text-[var(--fg-muted)] uppercase tracking-wider font-medium">
+        <div class="flex items-center gap-1.5">
+          <Box class="w-3.5 h-3.5" />
+          <span>Containers</span>
+        </div>
+        {#if agentCount.total > 0}
+          <span class="normal-case text-[var(--fg-subtle)]">
+            {agentCount.online}/{agentCount.total} host{agentCount.total === 1 ? '' : 's'}
+          </span>
+        {/if}
+      </div>
+      {#if loading}
+        <Skeleton class="mt-2" width="4rem" height="1.5rem" />
+        <Skeleton class="mt-3" width="100%" height="0.75rem" />
+      {:else}
+        <div class="mt-1.5 text-xl font-semibold leading-tight">
+          <span class="font-mono tabular-nums">{containerStats.running}</span><span class="text-sm font-normal text-[var(--fg-subtle)]"> / {containerStats.total}</span>
+        </div>
+        <div class="mt-2.5 flex items-center gap-3 text-[11px]">
+          <span class="flex items-center gap-1 text-[var(--fg-muted)]">
+            <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-success-500)]"></span>
+            {containerStats.running} running
+          </span>
+          {#if containerStats.stopped > 0}
+            <span class="flex items-center gap-1 text-[var(--fg-muted)]">
+              <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-danger-500)]"></span>
+              {containerStats.stopped} stopped
+            </span>
+          {/if}
+          {#if containerStats.unhealthy > 0}
+            <span class="flex items-center gap-1 text-[var(--fg-muted)]">
+              <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-warning-500)]"></span>
+              {containerStats.unhealthy} unhealthy
+            </span>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  </div>
+
+  <!-- ─────────── Row 2: Stacks section ─────────── -->
+  <div>
+    <div class="flex items-end justify-between flex-wrap gap-2 mb-3">
+      <div>
+        <h3 class="text-sm font-semibold tracking-tight">Stacks</h3>
+        <p class="text-xs text-[var(--fg-muted)] mt-0.5">
+          {stackCards.length} stack{stackCards.length === 1 ? '' : 's'}
+          {#if agentCount.total > 1}
+            across {agentCount.total} hosts
+          {/if}
+        </p>
+      </div>
+      <div class="flex gap-1 text-xs">
+        {#snippet pill(key: 'all' | 'running' | 'stopped' | 'unhealthy', label: string, n: number)}
+          <button
+            class="px-2.5 py-1 rounded-full border transition-colors {stackFilter === key
+              ? 'bg-[var(--surface)] border-[var(--border-strong)] text-[var(--fg)]'
+              : 'border-[var(--border)] text-[var(--fg-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]'}"
+            onclick={() => (stackFilter = key)}
+          >
+            {label} <span class="tabular-nums">{n}</span>
+          </button>
+        {/snippet}
+        {@render pill('all', 'All', stackCounts.all)}
+        {@render pill('running', 'Running', stackCounts.running)}
+        {@render pill('stopped', 'Stopped', stackCounts.stopped)}
+        {@render pill('unhealthy', 'Issues', stackCounts.unhealthy)}
+      </div>
+    </div>
+
+    {#if loading && stackCards.length === 0}
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {#each Array(3) as _}
+          <div class="dm-card p-4 space-y-2">
+            <Skeleton width="60%" height="1rem" />
+            <Skeleton width="40%" height="0.85rem" />
+            <Skeleton width="100%" height="1.25rem" />
+          </div>
+        {/each}
+      </div>
+    {:else if filteredStacks.length === 0}
+      <div class="dm-card p-8 text-center text-sm text-[var(--fg-muted)]">
+        {#if stackCards.length === 0}
+          No stacks yet. <a href="/stacks" class="text-[var(--color-brand-400)] hover:underline">Create one →</a>
+        {:else}
+          No stacks match this filter.
+        {/if}
+      </div>
+    {:else}
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {#each filteredStacks as s}
+          <a
+            href="/stacks/{s.name}"
+            class="dm-card p-4 hover:border-[var(--border-strong)] transition-colors group"
+          >
+            <div class="flex items-start justify-between gap-2 mb-2.5">
+              <div class="font-medium text-sm truncate">{s.name}</div>
+              {#if s.state === 'running'}
+                <Badge variant="success" dot>running</Badge>
+              {:else if s.state === 'unhealthy'}
+                <Badge variant="warning" dot>unhealthy</Badge>
+              {:else if s.state === 'partial'}
+                <Badge variant="warning" dot>partial</Badge>
+              {:else}
+                <Badge variant="default" dot>stopped</Badge>
+              {/if}
+            </div>
+            {#if s.services.length > 0}
+              <div class="flex flex-wrap gap-1 mb-2">
+                {#each s.services.slice(0, 5) as svc}
+                  <span
+                    class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[var(--surface-hover)] text-[var(--fg-muted)]"
+                  >
+                    {svc.name}
+                  </span>
+                {/each}
+                {#if s.services.length > 5}
+                  <span class="font-mono text-[10px] px-1.5 py-0.5 text-[var(--fg-subtle)]">
+                    +{s.services.length - 5}
+                  </span>
+                {/if}
+              </div>
+            {/if}
+            <div class="text-[11px] text-[var(--fg-subtle)]">
+              {s.services.length} service{s.services.length === 1 ? '' : 's'}
+            </div>
+          </a>
+        {/each}
+      </div>
+    {/if}
+  </div>
+
+  <!-- ─────────── Row 3: Activity + Quick actions ─────────── -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    {#if allowed('audit.read')}
+      <div class="dm-card lg:col-span-2 flex flex-col">
+        <div class="px-4 py-3 border-b border-[var(--border)] flex items-center gap-2">
+          <Activity class="w-4 h-4 text-[var(--fg-muted)]" />
+          <h3 class="font-semibold text-sm">Recent activity</h3>
+          <div class="flex-1"></div>
+          <a
+            href="/settings"
+            class="text-xs text-[var(--fg-muted)] hover:text-[var(--fg)] transition-colors"
+          >
+            View all →
+          </a>
+        </div>
+        <div class="divide-y divide-[var(--border)] flex-1">
+          {#if loading && recentAudit.length === 0}
+            {#each Array(6) as _}
+              <div class="px-4 py-2.5 flex items-center gap-3">
+                <Skeleton width="5rem" height="1rem" />
+                <Skeleton width="8rem" height="0.85rem" />
+                <div class="flex-1"></div>
+                <Skeleton width="3rem" height="0.75rem" />
+              </div>
+            {/each}
+          {:else if recentAudit.length === 0}
+            <div class="px-4 py-10 text-center text-sm text-[var(--fg-muted)]">No activity yet</div>
+          {:else}
+            {#each recentAudit as e}
+              <div class="px-4 py-2.5 flex items-center gap-3 text-sm hover:bg-[var(--surface-hover)] transition-colors">
+                <Badge variant={actionColor(e.action)} dot>
+                  {e.action.split('.')[0]}
+                </Badge>
+                <span class="text-[var(--fg-muted)] truncate flex-1">{formatActivity(e)}</span>
+                <span class="text-[11px] text-[var(--fg-subtle)] shrink-0 tabular-nums">
+                  {fmtTime(e.ts)}
+                </span>
+              </div>
+            {/each}
+          {/if}
+        </div>
+      </div>
+    {/if}
+
+    <div class="dm-card flex flex-col {allowed('audit.read') ? '' : 'lg:col-span-3'}">
+      <div class="px-4 py-3 border-b border-[var(--border)]">
+        <h3 class="font-semibold text-sm">Quick actions</h3>
+      </div>
+      <div class="p-2 grid grid-cols-1 {allowed('audit.read') ? '' : 'sm:grid-cols-2 lg:grid-cols-4'} gap-1">
+        {#snippet quickAction(href: string, Icon: any, title: string, sub: string)}
+          <a
+            {href}
+            class="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[var(--surface-hover)] transition-colors group"
+          >
+            <div
+              class="w-8 h-8 rounded-lg border border-[var(--border)] bg-[color-mix(in_srgb,var(--color-brand-500)_8%,transparent)] text-[var(--color-brand-400)] flex items-center justify-center shrink-0 group-hover:bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] group-hover:border-[var(--color-brand-500)]/30 transition-colors"
+            >
+              <Icon class="w-4 h-4" />
+            </div>
+            <div class="min-w-0">
+              <div class="text-sm font-medium">{title}</div>
+              <div class="text-[11px] text-[var(--fg-subtle)]">{sub}</div>
+            </div>
+          </a>
+        {/snippet}
+        {#if canDeploy}
+          {@render quickAction('/stacks', Rocket, 'Deploy stack', 'From compose file')}
+        {/if}
+        {#if canImage}
+          {@render quickAction('/images', Download, 'Pull image', 'From registry')}
+        {/if}
+        {#if canBackup}
+          {@render quickAction('/backups', Archive, 'Create backup', 'Volumes + stacks')}
+        {/if}
+        {#if canScan}
+          {@render quickAction('/images', ShieldCheck, 'Scan image', 'CVE check via Grype')}
+        {/if}
+      </div>
+    </div>
   </div>
 </section>
