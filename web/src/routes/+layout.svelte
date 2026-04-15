@@ -206,18 +206,18 @@
         ? 'translate-x-0'
         : '-translate-x-full'} md:translate-x-0 transition-[width,transform] duration-200"
     >
-      <div class="h-16 flex items-center border-b border-[var(--border)] {sidebarCollapsed ? 'justify-center px-2' : 'justify-between px-4'}">
-        <a href="/" class="flex items-center" aria-label="Dockmesh home">
+      <div class="h-16 flex items-center border-b border-[var(--border)] {sidebarCollapsed ? 'justify-center px-2' : 'justify-between pl-4 pr-2'}">
+        <a href="/" class="flex items-center min-w-0" aria-label="Dockmesh home">
           {#if sidebarCollapsed}
-            <img src="/logo-mark.svg" alt="Dockmesh" class="h-7 w-7" />
+            <img src="/logo-mark.svg" alt="Dockmesh" class="h-9 w-9" />
           {:else}
-            <img src="/logo-wordmark.svg" alt="Dockmesh" class="h-7" />
+            <img src="/logo-wordmark.svg" alt="Dockmesh" class="h-10" />
           {/if}
         </a>
         {#if !sidebarCollapsed}
           <button
             onclick={() => (sidebarCollapsed = true)}
-            class="hidden md:inline-flex p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+            class="hidden md:inline-flex p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)] shrink-0"
             title="Collapse sidebar"
             aria-label="Collapse sidebar"
           >
