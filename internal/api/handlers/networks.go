@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/host"
+	dtypes "github.com/docker/docker/api/types"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -13,12 +16,45 @@ type networkRequest struct {
 	Labels map[string]string `json:"labels,omitempty"`
 }
 
+// networkRow is the all-mode row type for ListNetworks.
+type networkRow struct {
+	dtypes.NetworkResource
+	HostID   string `json:"host_id"`
+	HostName string `json:"host_name"`
+}
+
 func (h *Handlers) ListNetworks(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	hostID := r.URL.Query().Get("host")
+
+	if host.IsAll(hostID) && h.Hosts != nil {
+		targets := h.Hosts.PickAll(r.Context())
+		res := host.FanOut(r.Context(), targets, func(ctx context.Context, hh host.Host) ([]networkRow, error) {
+			list, err := hh.ListNetworks(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows := make([]networkRow, len(list))
+			for i, n := range list {
+				rows[i] = networkRow{
+					NetworkResource: n,
+					HostID:          hh.ID(),
+					HostName:        hh.Name(),
+				}
+			}
+			return rows, nil
+		})
+		writeJSON(w, http.StatusOK, res)
 		return
 	}
-	nets, err := h.Docker.ListNetworks(r.Context())
+
+	// Single-host path via the host.Host interface (pre-P.6 this handler
+	// always returned local networks regardless of the selected host).
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	nets, err := target.ListNetworks(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -27,16 +63,33 @@ func (h *Handlers) ListNetworks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) InspectNetwork(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
-		return
-	}
-	net, err := h.Docker.InspectNetwork(r.Context(), chi.URLParam(r, "id"))
+	// Inspect is single-host by definition — the id is scoped to one
+	// docker daemon. The frontend passes ?host=<id> when navigating from
+	// an all-mode list so we look up the network on the correct host.
+	target, err := h.pickHost(r)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, net)
+	// host.Host doesn't expose InspectNetwork today — the read-only
+	// list is enough for P.6. Detail view falls back to local docker
+	// if the selected host is local; for remote hosts it surfaces the
+	// same NotFound error until we add InspectNetwork to the interface.
+	if target.ID() == "local" {
+		if h.Docker == nil {
+			writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+			return
+		}
+		net, err := h.Docker.InspectNetwork(r.Context(), chi.URLParam(r, "id"))
+		if err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, net)
+		return
+	}
+	// TODO(p.7): extend host.Host with InspectNetwork for remote hosts.
+	writeError(w, http.StatusNotImplemented, "network inspect on remote hosts is planned for P.7")
 }
 
 func (h *Handlers) CreateNetwork(w http.ResponseWriter, r *http.Request) {
