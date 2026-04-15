@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -23,13 +24,15 @@ import (
 // readable.
 type Executor struct {
 	store   *store
+	db      *sql.DB
 	docker  *docker.Client
 	stacks  *stacks.Manager
 	secrets *secrets.Service
+	paths   SystemPaths
 }
 
-func newExecutor(s *store, dc *docker.Client, sm *stacks.Manager, sec *secrets.Service) *Executor {
-	return &Executor{store: s, docker: dc, stacks: sm, secrets: sec}
+func newExecutor(s *store, db *sql.DB, dc *docker.Client, sm *stacks.Manager, sec *secrets.Service, paths SystemPaths) *Executor {
+	return &Executor{store: s, db: db, docker: dc, stacks: sm, secrets: sec, paths: paths}
 }
 
 // Run executes one backup job, persisting a backup_runs row throughout.
@@ -141,6 +144,8 @@ func (e *Executor) streamSources(ctx context.Context, sources []Source, w io.Wri
 		// Walk dir, tar manually since we don't want a docker helper for
 		// host paths.
 		return tarHostDir(dir, w)
+	case "system":
+		return tarSystem(ctx, e.db, e.paths, w)
 	default:
 		return 0, fmt.Errorf("%w: %s", ErrUnknownSourceType, src.Type)
 	}

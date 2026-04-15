@@ -22,20 +22,22 @@ type Service struct {
 	docker  *docker.Client
 	stacks  *stacks.Manager
 	secrets *secrets.Service
+	paths   SystemPaths
 
 	cron     *cron.Cron
 	mu       sync.Mutex
 	entryIDs map[int64]cron.EntryID
 }
 
-func NewService(db *sql.DB, dc *docker.Client, sm *stacks.Manager, sec *secrets.Service) *Service {
+func NewService(db *sql.DB, dc *docker.Client, sm *stacks.Manager, sec *secrets.Service, paths SystemPaths) *Service {
 	st := newStore(db)
 	return &Service{
 		store:    st,
-		exec:     newExecutor(st, dc, sm, sec),
+		exec:     newExecutor(st, db, dc, sm, sec, paths),
 		docker:   dc,
 		stacks:   sm,
 		secrets:  sec,
+		paths:    paths,
 		cron:     cron.New(),
 		entryIDs: make(map[int64]cron.EntryID),
 	}
