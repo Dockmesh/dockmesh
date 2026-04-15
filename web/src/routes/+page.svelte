@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api } from '$lib/api';
+  import { api, isFanOut } from '$lib/api';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import { Skeleton, Badge } from '$lib/components/ui';
@@ -53,7 +53,7 @@
     loading = true;
     error = '';
     try {
-      const [h, sys, containers, stacksList, audit, hostList] = await Promise.all([
+      const [h, sys, containersRaw, stacksList, audit, hostList] = await Promise.all([
         api.health(),
         api.system.metrics().catch(() => null),
         api.containers.list(true).catch(() => []),
@@ -63,6 +63,13 @@
       ]);
       health = h;
       sysMetrics = sys;
+
+      // Dashboard is always single-host (no host picker scoping here),
+      // but the list endpoint's return type is the union because it can
+      // fan out when called with host='all'. Narrow defensively so
+      // TypeScript doesn't complain, and so that if someone later passes
+      // host='all' the dashboard still shows sensible aggregated totals.
+      const containers: any[] = isFanOut(containersRaw) ? containersRaw.items : containersRaw;
 
       // Container breakdown
       containerStats.total = containers.length;

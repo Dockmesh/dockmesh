@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, ApiError } from '$lib/api';
+  import { api, ApiError, isFanOut } from '$lib/api';
   import { goto } from '$app/navigation';
   import { Button, Modal, EmptyState, Input, Skeleton, Badge } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
@@ -39,10 +39,13 @@
   async function load() {
     loading = true;
     try {
-      const [stackList, containers] = await Promise.all([
+      const [stackList, containersRaw] = await Promise.all([
         api.stacks.list(),
         api.containers.list(true, hosts.id).catch(() => [])
       ]);
+      // Normalize containers to a bare array: if the picker is on 'all'
+      // we get a FanOutResponse back, otherwise a plain array.
+      const containers: any[] = isFanOut(containersRaw) ? containersRaw.items : containersRaw;
 
       // Group containers by stack name via the compose project label.
       // This avoids fanning out one /stacks/{name}/status call per stack.
