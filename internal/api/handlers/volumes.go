@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -13,12 +15,50 @@ type volumeRequest struct {
 	Labels map[string]string `json:"labels,omitempty"`
 }
 
+// volumeRow is the all-mode row type for ListVolumes. The underlying
+// volume type is `any` per the Host interface contract (Docker's volume
+// list returns heterogeneous shapes), so we use json.RawMessage-like
+// passthrough via interface{} and let the encoder flatten naturally
+// via the Volume field as a named key. Unlike containers/images/networks
+// we cannot use struct embedding here because `any` has no fields to
+// embed; the frontend accesses volume data via `item.volume.*` in
+// all-mode responses.
+type volumeRow struct {
+	Volume   any    `json:"volume"`
+	HostID   string `json:"host_id"`
+	HostName string `json:"host_name"`
+}
+
 func (h *Handlers) ListVolumes(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	hostID := r.URL.Query().Get("host")
+
+	if host.IsAll(hostID) && h.Hosts != nil {
+		targets := h.Hosts.PickAll(r.Context())
+		res := host.FanOut(r.Context(), targets, func(ctx context.Context, hh host.Host) ([]volumeRow, error) {
+			list, err := hh.ListVolumes(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows := make([]volumeRow, len(list))
+			for i, v := range list {
+				rows[i] = volumeRow{
+					Volume:   v,
+					HostID:   hh.ID(),
+					HostName: hh.Name(),
+				}
+			}
+			return rows, nil
+		})
+		writeJSON(w, http.StatusOK, res)
 		return
 	}
-	vols, err := h.Docker.ListVolumes(r.Context())
+
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	vols, err := target.ListVolumes(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -27,16 +67,28 @@ func (h *Handlers) ListVolumes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) InspectVolume(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
-		return
-	}
-	vol, err := h.Docker.InspectVolume(r.Context(), chi.URLParam(r, "name"))
+	// Inspect is single-host. Frontend passes ?host=<id> when navigating
+	// from all-mode so we route to the correct daemon.
+	target, err := h.pickHost(r)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, vol)
+	if target.ID() == "local" {
+		if h.Docker == nil {
+			writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+			return
+		}
+		vol, err := h.Docker.InspectVolume(r.Context(), chi.URLParam(r, "name"))
+		if err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, vol)
+		return
+	}
+	// TODO(p.7): extend host.Host with InspectVolume for remote hosts.
+	writeError(w, http.StatusNotImplemented, "volume inspect on remote hosts is planned for P.7")
 }
 
 func (h *Handlers) CreateVolume(w http.ResponseWriter, r *http.Request) {

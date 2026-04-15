@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"io"
 	"net/http"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/host"
+	dtypes "github.com/docker/docker/api/types"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -12,13 +15,52 @@ type pullRequest struct {
 	Image string `json:"image"`
 }
 
+// imageRow is the all-mode row type for ListImages. Embeds the docker
+// ImageSummary so its fields flatten into the final JSON alongside
+// host_id / host_name.
+type imageRow struct {
+	dtypes.ImageSummary
+	HostID   string `json:"host_id"`
+	HostName string `json:"host_name"`
+}
+
 func (h *Handlers) ListImages(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	all := r.URL.Query().Get("all") == "true"
+	hostID := r.URL.Query().Get("host")
+
+	// All-mode: fan out. Each online host contributes its image list,
+	// tagged with host metadata per row.
+	if host.IsAll(hostID) && h.Hosts != nil {
+		targets := h.Hosts.PickAll(r.Context())
+		res := host.FanOut(r.Context(), targets, func(ctx context.Context, hh host.Host) ([]imageRow, error) {
+			list, err := hh.ListImages(ctx, all)
+			if err != nil {
+				return nil, err
+			}
+			rows := make([]imageRow, len(list))
+			for i, im := range list {
+				rows[i] = imageRow{
+					ImageSummary: im,
+					HostID:       hh.ID(),
+					HostName:     hh.Name(),
+				}
+			}
+			return rows, nil
+		})
+		writeJSON(w, http.StatusOK, res)
 		return
 	}
-	all := r.URL.Query().Get("all") == "true"
-	images, err := h.Docker.ListImages(r.Context(), all)
+
+	// Single-host path. Uses the host.Host interface instead of h.Docker
+	// directly so a remote host picker actually shows remote images
+	// (pre-P.6 this handler always returned local images regardless of
+	// the selected host).
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	images, err := target.ListImages(r.Context(), all)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
