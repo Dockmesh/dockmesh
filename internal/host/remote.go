@@ -9,6 +9,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/system"
 	dtypes "github.com/docker/docker/api/types"
 )
 
@@ -232,6 +233,22 @@ func (h *RemoteHost) ListVolumes(ctx context.Context) ([]any, error) {
 	}
 	if out == nil {
 		out = []any{}
+	}
+	return out, nil
+}
+
+// SystemMetrics asks the agent to read its own /proc + statfs and return
+// a Metrics snapshot. Empty payload. The agent handler mirrors the local
+// path — it calls system.Collect() on its own host and ships the result.
+// Used by the dashboard's all-mode System Health panel.
+func (h *RemoteHost) SystemMetrics(ctx context.Context) (system.Metrics, error) {
+	data, err := h.request(ctx, agents.FrameReqSystemMetrics, nil)
+	if err != nil {
+		return system.Metrics{}, err
+	}
+	var out system.Metrics
+	if err := json.Unmarshal(data, &out); err != nil {
+		return system.Metrics{}, fmt.Errorf("decode system metrics: %w", err)
 	}
 	return out, nil
 }

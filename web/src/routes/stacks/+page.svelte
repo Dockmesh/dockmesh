@@ -15,6 +15,10 @@
     name: string;
     state: StackState;
     services: Array<{ name: string; state: string; status: string }>;
+    // Hosts this stack's containers are currently running on. In
+    // single-host mode this is always one entry; in all-mode we collect
+    // every host that has matching compose-project labels.
+    hosts: Array<{ id: string; name: string }>;
   }
 
   let stackCards = $state<StackCard[]>([]);
@@ -69,6 +73,16 @@
         else if (running === cs.length) state = 'running';
         else if (running === 0) state = 'stopped';
         else state = 'partial';
+
+        // Collect distinct hosts from the container rows. In single-host
+        // mode containers have no host_id set, so we default to 'local'.
+        const seenHost = new Map<string, string>();
+        for (const c of cs) {
+          const id = c.host_id ?? 'local';
+          const name = c.host_name ?? 'Local';
+          if (!seenHost.has(id)) seenHost.set(id, name);
+        }
+
         return {
           name: s.name,
           state,
@@ -78,7 +92,8 @@
               (c.Names?.[0] ?? '').replace(/^\//, ''),
             state: c.State,
             status: c.Status ?? ''
-          }))
+          })),
+          hosts: [...seenHost.entries()].map(([id, name]) => ({ id, name }))
         };
       });
     } catch (err) {
@@ -300,6 +315,18 @@
                   +{s.services.length - 6}
                 </span>
               {/if}
+            </div>
+          {/if}
+          {#if hosts.isAll && s.hosts.length > 0}
+            <!-- Host pills only in all-mode — single-host mode already
+                 labels the page header with the host name. -->
+            <div class="flex items-center gap-1 flex-wrap mt-2 pt-2 border-t border-[var(--border)]">
+              {#each s.hosts as h}
+                <span class="inline-flex items-center gap-0.5 font-mono text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)]">
+                  <Server class="w-2.5 h-2.5" />
+                  {h.name}
+                </span>
+              {/each}
             </div>
           {/if}
         </a>

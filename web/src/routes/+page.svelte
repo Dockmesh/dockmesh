@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, isFanOut } from '$lib/api';
+  import { api, isFanOut, type SystemMetrics } from '$lib/api';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import { Skeleton, Badge } from '$lib/components/ui';
@@ -16,31 +16,29 @@
     Rocket,
     Download,
     Archive,
-    ShieldCheck
+    ShieldCheck,
+    Layers
   } from 'lucide-svelte';
 
-  type SystemMetrics = {
-    cpu_percent: number;
-    cpu_cores: number;
-    cpu_used_cores: number;
-    mem_percent: number;
-    mem_total: number;
-    mem_used: number;
-    disk_percent: number;
-    disk_total: number;
-    disk_used: number;
-    disk_path: string;
-    uptime_seconds: number;
-  };
+  // Per-host metrics row used in all-mode. Matches the backend
+  // systemMetricsRow shape (flattened Metrics + host metadata).
+  type PerHostMetrics = SystemMetrics & { host_id: string; host_name: string };
 
   type StackCard = {
     name: string;
     state: 'running' | 'stopped' | 'unhealthy' | 'partial';
     services: Array<{ name: string; state: string }>;
+    // Hosts where this stack's containers currently live. In all-mode
+    // this can be multiple — today we still deploy a stack to one host
+    // at a time but the per-host-label grouping detects anything that
+    // drifted to run on multiple hosts.
+    hosts: Array<{ id: string; name: string }>;
   };
 
   let health = $state<{ status: string; version: string; docker: boolean } | null>(null);
+  // Single-host mode: one Metrics object. All-mode: array of per-host rows.
   let sysMetrics = $state<SystemMetrics | null>(null);
+  let perHostMetrics = $state<PerHostMetrics[]>([]);
   let containerStats = $state({ total: 0, running: 0, stopped: 0, unhealthy: 0 });
   let stackCards = $state<StackCard[]>([]);
   let recentAudit = $state<any[]>([]);
@@ -49,29 +47,42 @@
   let error = $state('');
   let stackFilter = $state<'all' | 'running' | 'stopped' | 'unhealthy'>('all');
 
+  const isAll = $derived(hosts.isAll);
+  const isRemote = $derived(hosts.id !== 'local' && hosts.id !== 'all');
+
   async function load() {
     loading = true;
     error = '';
     try {
-      const [h, sys, containersRaw, stacksList, audit, hostList] = await Promise.all([
+      // Pass hosts.id to the containers + system metrics calls so the
+      // dashboard respects the host picker. In all-mode both return a
+      // FanOutResponse and we flatten / aggregate below.
+      const [h, sysRaw, containersRaw, stacksList, audit, hostList] = await Promise.all([
         api.health(),
-        api.system.metrics().catch(() => null),
-        api.containers.list(true).catch(() => []),
+        api.system.metrics(hosts.id).catch(() => null),
+        api.containers.list(true, hosts.id).catch(() => []),
         api.stacks.list().catch(() => []),
         allowed('audit.read') ? api.audit.list(8).catch(() => []) : Promise.resolve([]),
         api.hosts.list().catch(() => [])
       ]);
       health = h;
-      sysMetrics = sys;
 
-      // Dashboard is always single-host (no host picker scoping here),
-      // but the list endpoint's return type is the union because it can
-      // fan out when called with host='all'. Narrow defensively so
-      // TypeScript doesn't complain, and so that if someone later passes
-      // host='all' the dashboard still shows sensible aggregated totals.
+      // System metrics: in all-mode extract per-host rows for the
+      // mini-table; in single-host mode keep the one snapshot as-is.
+      if (sysRaw && isFanOut(sysRaw)) {
+        perHostMetrics = sysRaw.items as PerHostMetrics[];
+        sysMetrics = null;
+      } else {
+        perHostMetrics = [];
+        sysMetrics = sysRaw as SystemMetrics | null;
+      }
+
+      // Containers: in all-mode the rows already carry host_id / host_name
+      // via backend struct embedding; in single-host it's a bare array.
       const containers: any[] = isFanOut(containersRaw) ? containersRaw.items : containersRaw;
 
-      // Container breakdown
+      // Container breakdown — aggregated across however many hosts the
+      // containers came from.
       containerStats.total = containers.length;
       containerStats.running = containers.filter((c: any) => c.State === 'running').length;
       containerStats.stopped = containers.filter((c: any) =>
@@ -82,7 +93,9 @@
       ).length;
 
       // Derive stack cards by grouping containers on com.docker.compose.project.
-      // Avoids an N+1 fan-out of /stacks/{name}/status calls.
+      // Each stack tracks the set of hosts its containers actually run on —
+      // in all-mode we render those as host pills on the card so the user
+      // sees "stack X is on hostA + hostB" without drilling into detail.
       const byStack = new Map<string, Array<any>>();
       for (const c of containers) {
         const proj: string | undefined = c.Labels?.['com.docker.compose.project'];
@@ -102,6 +115,18 @@
         else if (running === cs.length) state = 'running';
         else if (running === 0) state = 'stopped';
         else state = 'partial';
+
+        // Collect unique hosts this stack's containers are on. In
+        // single-host mode this is always one entry; in all-mode it's
+        // whichever hosts actually ran containers labeled with this
+        // compose project.
+        const seenHost = new Map<string, string>();
+        for (const c of cs) {
+          const id = c.host_id ?? 'local';
+          const name = c.host_name ?? 'Local';
+          if (!seenHost.has(id)) seenHost.set(id, name);
+        }
+
         return {
           name: s.name,
           state,
@@ -110,7 +135,8 @@
               c.Labels?.['com.docker.compose.service'] ??
               (c.Names?.[0] ?? '').replace(/^\//, ''),
             state: c.State
-          }))
+          })),
+          hosts: [...seenHost.entries()].map(([id, name]) => ({ id, name }))
         };
       });
 
@@ -123,6 +149,16 @@
       loading = false;
     }
   }
+
+  // Re-load when the host picker changes.
+  let prevHost = hosts.id;
+  $effect(() => {
+    const cur = hosts.id;
+    if (cur !== prevHost) {
+      prevHost = cur;
+      load();
+    }
+  });
 
   $effect(() => {
     load();
@@ -251,8 +287,6 @@
   const canImage = $derived(allowed('image.write'));
   const canBackup = $derived(allowed('user.manage'));
   const canScan = $derived(allowed('image.scan'));
-
-  const isRemote = $derived(hosts.id !== 'local');
 </script>
 
 <section class="space-y-6">
@@ -301,7 +335,13 @@
     </div>
   {/if}
 
-  <!-- ─────────── Row 1: System metrics (4 columns) ─────────── -->
+  <!-- ─────────── Row 1: System metrics ───────────
+       Single-host mode: 4 cards (CPU / Memory / Disk / Containers).
+       All-hosts mode: Containers card alone + a per-host table below.
+       The CPU/Memory/Disk cards don't make sense in all-mode because
+       there isn't one host whose numbers would go in them — instead we
+       show a compact table with one row per host. -->
+  {#if !isAll}
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
     <!-- CPU -->
     <div class="dm-card p-4">
@@ -447,6 +487,133 @@
       {/if}
     </div>
   </div>
+  {:else}
+  <!-- All-hosts mode row 1: aggregated totals + per-host health table -->
+  <div class="grid grid-cols-1 lg:grid-cols-4 gap-3">
+    <!-- Aggregated Containers card — same shape as single-mode, but
+         the totals now span every host the fan-out contacted. -->
+    <div class="dm-card p-4">
+      <div class="flex items-center justify-between text-[11px] text-[var(--fg-muted)] uppercase tracking-wider font-medium">
+        <div class="flex items-center gap-1.5">
+          <Box class="w-3.5 h-3.5" />
+          <span>Containers</span>
+        </div>
+        {#if agentCount.total > 0}
+          <span class="normal-case text-[var(--fg-subtle)]">
+            {agentCount.online}/{agentCount.total} host{agentCount.total === 1 ? '' : 's'}
+          </span>
+        {/if}
+      </div>
+      {#if loading}
+        <Skeleton class="mt-2" width="4rem" height="1.5rem" />
+        <Skeleton class="mt-3" width="100%" height="0.75rem" />
+      {:else}
+        <div class="mt-1.5 text-xl font-semibold leading-tight">
+          <span class="font-mono tabular-nums">{containerStats.running}</span><span class="text-sm font-normal text-[var(--fg-subtle)]"> / {containerStats.total}</span>
+        </div>
+        <div class="mt-2.5 flex items-center gap-3 text-[11px] flex-wrap">
+          <span class="flex items-center gap-1 text-[var(--fg-muted)]">
+            <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-success-500)]"></span>
+            {containerStats.running} running
+          </span>
+          {#if containerStats.stopped > 0}
+            <span class="flex items-center gap-1 text-[var(--fg-muted)]">
+              <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-danger-500)]"></span>
+              {containerStats.stopped} stopped
+            </span>
+          {/if}
+          {#if containerStats.unhealthy > 0}
+            <span class="flex items-center gap-1 text-[var(--fg-muted)]">
+              <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-warning-500)]"></span>
+              {containerStats.unhealthy} unhealthy
+            </span>
+          {/if}
+        </div>
+      {/if}
+    </div>
+
+    <!-- Per-host mini-table. Spans the remaining 3 columns on lg so
+         it sits next to the Containers card. Each row is one host with
+         CPU / RAM / Disk progress bars — a compact way to see which
+         host is under pressure without drilling into a detail view. -->
+    <div class="dm-card lg:col-span-3 overflow-hidden">
+      <div class="px-4 py-3 border-b border-[var(--border)] flex items-center gap-2">
+        <Layers class="w-3.5 h-3.5 text-[var(--fg-muted)]" />
+        <h3 class="font-semibold text-xs uppercase tracking-wider text-[var(--fg-muted)]">Per-host system health</h3>
+        <div class="flex-1"></div>
+        <span class="text-[11px] text-[var(--fg-subtle)] tabular-nums">
+          {perHostMetrics.length} host{perHostMetrics.length === 1 ? '' : 's'}
+        </span>
+      </div>
+      {#if loading && perHostMetrics.length === 0}
+        <div class="p-4 space-y-2">
+          {#each Array(2) as _}
+            <Skeleton width="100%" height="1.25rem" />
+          {/each}
+        </div>
+      {:else if perHostMetrics.length === 0}
+        <div class="p-6 text-center text-xs text-[var(--fg-muted)]">No host metrics available.</div>
+      {:else}
+        <div class="overflow-x-auto">
+          <table class="w-full text-[12px]">
+            <thead>
+              <tr class="text-left text-[10px] uppercase tracking-wider text-[var(--fg-subtle)] border-b border-[var(--border)]">
+                <th class="px-4 py-2 font-medium">Host</th>
+                <th class="px-3 py-2 font-medium w-[22%]">CPU</th>
+                <th class="px-3 py-2 font-medium w-[22%]">Memory</th>
+                <th class="px-3 py-2 font-medium w-[22%]">Disk</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[var(--border)]">
+              {#each perHostMetrics as m}
+                <tr class="hover:bg-[var(--surface-hover)] transition-colors">
+                  <td class="px-4 py-2.5">
+                    <div class="flex items-center gap-2">
+                      <Server class="w-3 h-3 text-[var(--color-brand-400)]" />
+                      <span class="font-mono text-[11px] text-[var(--fg)]">{m.host_name}</span>
+                    </div>
+                  </td>
+                  <td class="px-3 py-2.5">
+                    <div class="flex items-center gap-2">
+                      <div class="flex-1 h-1 rounded-full bg-[var(--surface-hover)] overflow-hidden">
+                        <div class="h-full rounded-full transition-all" style:width="{m.cpu_percent}%" style:background={barColor(m.cpu_percent)}></div>
+                      </div>
+                      <span class="font-mono text-[11px] tabular-nums shrink-0 w-8 text-right" style:color={textColor(m.cpu_percent)}>{m.cpu_percent.toFixed(0)}%</span>
+                    </div>
+                  </td>
+                  <td class="px-3 py-2.5">
+                    {#if m.mem_total > 0}
+                      <div class="flex items-center gap-2">
+                        <div class="flex-1 h-1 rounded-full bg-[var(--surface-hover)] overflow-hidden">
+                          <div class="h-full rounded-full transition-all" style:width="{m.mem_percent}%" style:background={barColor(m.mem_percent)}></div>
+                        </div>
+                        <span class="font-mono text-[11px] tabular-nums shrink-0 w-8 text-right" style:color={textColor(m.mem_percent)}>{m.mem_percent.toFixed(0)}%</span>
+                      </div>
+                    {:else}
+                      <span class="text-[var(--fg-subtle)]">—</span>
+                    {/if}
+                  </td>
+                  <td class="px-3 py-2.5">
+                    {#if m.disk_total > 0}
+                      <div class="flex items-center gap-2">
+                        <div class="flex-1 h-1 rounded-full bg-[var(--surface-hover)] overflow-hidden">
+                          <div class="h-full rounded-full transition-all" style:width="{m.disk_percent}%" style:background={barColor(m.disk_percent)}></div>
+                        </div>
+                        <span class="font-mono text-[11px] tabular-nums shrink-0 w-8 text-right" style:color={textColor(m.disk_percent)}>{m.disk_percent.toFixed(0)}%</span>
+                      </div>
+                    {:else}
+                      <span class="text-[var(--fg-subtle)]">—</span>
+                    {/if}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+    </div>
+  </div>
+  {/if}
 
   <!-- ─────────── Row 2: Stacks section ─────────── -->
   <div>
@@ -531,8 +698,21 @@
                 {/if}
               </div>
             {/if}
-            <div class="text-[11px] text-[var(--fg-subtle)]">
-              {s.services.length} service{s.services.length === 1 ? '' : 's'}
+            <div class="flex items-center justify-between text-[11px] text-[var(--fg-subtle)]">
+              <span>{s.services.length} service{s.services.length === 1 ? '' : 's'}</span>
+              {#if isAll && s.hosts.length > 0}
+                <!-- Host pills: where this stack's containers actually
+                     run. Visible only in all-mode so single-host views
+                     don't duplicate the header host name on every card. -->
+                <div class="flex items-center gap-1 flex-wrap justify-end">
+                  {#each s.hosts as h}
+                    <span class="inline-flex items-center gap-0.5 font-mono text-[10px] px-1 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)]">
+                      <Server class="w-2.5 h-2.5" />
+                      {h.name}
+                    </span>
+                  {/each}
+                </div>
+              {/if}
             </div>
           </a>
         {/each}
