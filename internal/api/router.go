@@ -87,6 +87,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 
 				// Host-level CPU / RAM / disk snapshot for the dashboard.
 				r.Get("/system/metrics", h.SystemMetrics)
+
+				// Default-system-backup status for the sidebar pill.
+				// Read-only — any authenticated viewer can see whether
+				// the server is self-protected.
+				r.Get("/system/backup-status", h.BackupStatus)
 			})
 
 			// -------------------------- STACK WRITE --------------------------
@@ -210,6 +215,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Post("/backups/jobs/{id}/run", h.RunBackupJob)
 				r.Get("/backups/runs", h.ListBackupRuns)
 				r.Post("/backups/runs/{id}/restore", h.RestoreBackup)
+				// Toggle the auto-created daily system backup job.
+				r.Put("/backups/system/enabled", h.SetBackupEnabled)
 			})
 
 			// -------------------------- PROXY (admin) ------------------------

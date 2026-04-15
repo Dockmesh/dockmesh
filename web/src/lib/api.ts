@@ -88,6 +88,25 @@ export interface HostInfo {
 // FanOutResponse<SystemMetrics>, one row per host, with host_id and
 // host_name flattened alongside the metrics fields via backend struct
 // embedding.
+// BackupStatus is the compact state record used by the sidebar "last
+// backup" pill and the Settings > System automated-backup section.
+// state:
+//   never     — default job doesn't exist or has never run
+//   ok        — most recent run succeeded ≤ 36 h ago
+//   stale     — most recent run succeeded but is older than 36 h
+//   failed    — most recent run's status is not "success"
+//   disabled  — default job exists but is disabled
+export interface BackupStatus {
+  state: 'never' | 'ok' | 'stale' | 'failed' | 'disabled';
+  enabled: boolean;
+  job_exists: boolean;
+  last_run_at?: string;
+  last_status?: string;
+  last_error?: string;
+  last_size_bytes?: number;
+  age_seconds?: number;
+}
+
 export interface SystemMetrics {
   cpu_percent: number;
   cpu_cores: number;
@@ -594,7 +613,16 @@ export const api = {
     metrics: (host = 'local') => {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
       return request<SystemMetrics | FanOutResponse<SystemMetrics>>(`/system/metrics${qs}`);
-    }
+    },
+    // Default-system-backup status for the sidebar pill + settings.
+    backupStatus: () => request<BackupStatus>('/system/backup-status'),
+    // Toggle the auto-created daily system backup job.
+    setBackupEnabled: (enabled: boolean) =>
+      request<BackupStatus>('/backups/system/enabled', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+      })
   },
 
   audit: {

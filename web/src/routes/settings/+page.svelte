@@ -1,14 +1,62 @@
 <script lang="ts">
-  import { api, ApiError } from '$lib/api';
+  import { api, ApiError, type BackupStatus } from '$lib/api';
+  import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth.svelte';
   import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, Skeleton, EmptyState } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
-  import { User, Users, Activity, Plus, Trash2, UserCog, ShieldCheck, ShieldOff, Copy, KeyRound, Link2, Globe, ExternalLink } from 'lucide-svelte';
+  import { User, Users, Activity, Plus, Trash2, UserCog, ShieldCheck, ShieldOff, Copy, KeyRound, Link2, Globe, ExternalLink, HardDrive, ShieldAlert, AlertCircle } from 'lucide-svelte';
   import type { OIDCProvider, OIDCProviderInput } from '$lib/api';
 
-  type Tab = 'account' | 'users' | 'audit' | 'sso';
-  let tab = $state<Tab>('account');
+  type Tab = 'account' | 'users' | 'audit' | 'sso' | 'system';
+  // Initial tab honours ?tab=<id> so the sidebar last-backup pill can
+  // deep-link straight into the System tab. Snapping back to the first
+  // visible tab still happens below for invalid/unauthorised IDs.
+  let tab = $state<Tab>((new URLSearchParams($page.url.search).get('tab') as Tab) || 'account');
+
+  // --- System tab (P.6.5) ---
+  let backupStatus = $state<BackupStatus | null>(null);
+  let backupLoading = $state(false);
+  let backupBusy = $state(false);
+  async function loadBackup() {
+    backupLoading = true;
+    try {
+      backupStatus = await api.system.backupStatus();
+    } catch (err) {
+      toast.error('Failed to load backup status', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      backupLoading = false;
+    }
+  }
+  async function toggleBackup(enabled: boolean) {
+    backupBusy = true;
+    try {
+      backupStatus = await api.system.setBackupEnabled(enabled);
+      toast.success(enabled ? 'Automated backups enabled' : 'Automated backups disabled');
+    } catch (err) {
+      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      backupBusy = false;
+    }
+  }
+  function fmtAge(secs?: number): string {
+    if (secs == null) return '—';
+    if (secs < 60) return 'just now';
+    if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+    if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+    return `${Math.floor(secs / 86400)}d ago`;
+  }
+  function fmtBytes(n?: number): string {
+    if (!n) return '—';
+    const u = ['B', 'KB', 'MB', 'GB'];
+    let v = n;
+    let i = 0;
+    while (v >= 1024 && i < u.length - 1) {
+      v /= 1024;
+      i++;
+    }
+    return `${v.toFixed(1)} ${u[i]}`;
+  }
 
   // SSO state
   let oidcProviders = $state<OIDCProvider[]>([]);
@@ -325,12 +373,14 @@
     else if (tab === 'users') loadUsers();
     else if (tab === 'audit') loadAudit();
     else if (tab === 'sso') loadOIDC();
+    else if (tab === 'system') loadBackup();
   });
 
   const tabs: Array<{ id: Tab; label: string; icon: any; show: boolean }> = $derived([
     { id: 'account', label: 'Account', icon: User, show: true },
     { id: 'users', label: 'Users', icon: Users, show: allowed('user.manage') },
     { id: 'sso', label: 'SSO', icon: Globe, show: allowed('user.manage') },
+    { id: 'system', label: 'System', icon: HardDrive, show: allowed('user.manage') },
     { id: 'audit', label: 'Audit Log', icon: Activity, show: allowed('audit.read') }
   ]);
 
@@ -656,6 +706,110 @@
         <div class="font-medium text-[var(--fg)]">Callback URL</div>
         <code class="font-mono text-[var(--color-brand-400)]">{`${typeof window !== 'undefined' ? window.location.origin : ''}/api/v1/auth/oidc/{slug}/callback`}</code>
         <div>Configure this in your provider's app/client redirect URIs.</div>
+      </div>
+    </Card>
+  </section>
+{/if}
+
+{#if tab === 'system' && allowed('user.manage')}
+  <section class="space-y-4 max-w-3xl">
+    <Card class="p-5">
+      <div class="flex items-start justify-between gap-4">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <HardDrive class="w-4 h-4 text-[var(--color-brand-400)]" />
+            <h3 class="font-semibold">Automated backups</h3>
+          </div>
+          <p class="text-sm text-[var(--fg-muted)] mt-1">
+            Daily snapshot of the Dockmesh database, <code class="font-mono text-xs">/stacks</code>
+            directory, and server data dir. Runs at 03:00 server-local time, keeps the last 14
+            days. Single point of failure mitigation — restoring this archive is enough to bring
+            a destroyed Dockmesh server back up.
+          </p>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
+          <input
+            type="checkbox"
+            class="sr-only peer"
+            checked={!!backupStatus?.enabled}
+            disabled={backupBusy || backupLoading}
+            onchange={(e) => toggleBackup((e.target as HTMLInputElement).checked)}
+          />
+          <div class="w-11 h-6 bg-[var(--surface)] border border-[var(--border)] rounded-full peer-checked:bg-[var(--color-brand-500)] peer-checked:border-[var(--color-brand-500)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-transform peer-checked:after:translate-x-5"></div>
+        </label>
+      </div>
+
+      {#if backupLoading && !backupStatus}
+        <Skeleton class="mt-4" width="100%" height="3rem" />
+      {:else if backupStatus}
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
+          <div>
+            <div class="text-[var(--fg-muted)] mb-0.5">State</div>
+            <div class="font-medium">
+              {#if backupStatus.state === 'ok'}
+                <Badge variant="success" dot>healthy</Badge>
+              {:else if backupStatus.state === 'stale'}
+                <Badge variant="warning" dot>stale</Badge>
+              {:else if backupStatus.state === 'failed'}
+                <Badge variant="danger" dot>failed</Badge>
+              {:else if backupStatus.state === 'disabled'}
+                <Badge variant="default" dot>disabled</Badge>
+              {:else}
+                <Badge variant="default" dot>never run</Badge>
+              {/if}
+            </div>
+          </div>
+          <div>
+            <div class="text-[var(--fg-muted)] mb-0.5">Last run</div>
+            <div class="font-medium">{fmtAge(backupStatus.age_seconds)}</div>
+          </div>
+          <div>
+            <div class="text-[var(--fg-muted)] mb-0.5">Last size</div>
+            <div class="font-medium">{fmtBytes(backupStatus.last_size_bytes)}</div>
+          </div>
+          <div>
+            <div class="text-[var(--fg-muted)] mb-0.5">Storage</div>
+            <div class="font-medium font-mono">./data/backups</div>
+          </div>
+        </div>
+
+        {#if backupStatus.state === 'failed' && backupStatus.last_error}
+          <div class="mt-3 p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] text-xs text-[var(--color-danger-400)] flex items-start gap-2">
+            <ShieldAlert class="w-4 h-4 shrink-0 mt-0.5" />
+            <div class="font-mono break-all">{backupStatus.last_error}</div>
+          </div>
+        {/if}
+
+        {#if backupStatus.state === 'stale'}
+          <div class="mt-3 p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-warning-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-warning-500)_30%,transparent)] text-xs text-[var(--color-warning-400)] flex items-start gap-2">
+            <AlertCircle class="w-4 h-4 shrink-0 mt-0.5" />
+            <div>No successful run in the last 36 hours. Check the backup job logs under
+              <a class="underline" href="/backups">Backups → Runs</a>.</div>
+          </div>
+        {/if}
+
+        {#if backupStatus.state === 'never' && backupStatus.enabled}
+          <div class="mt-3 text-xs text-[var(--fg-muted)]">
+            The first run will happen at the next scheduled time (03:00). You can trigger an
+            immediate run from <a class="underline" href="/backups">Backups</a>.
+          </div>
+        {/if}
+      {/if}
+    </Card>
+
+    <Card class="p-4">
+      <div class="text-xs text-[var(--fg-muted)] space-y-1.5">
+        <div class="font-medium text-[var(--fg)] flex items-center gap-1.5">
+          <ShieldCheck class="w-3.5 h-3.5" /> Recovery from backup
+        </div>
+        <ol class="list-decimal list-inside space-y-0.5">
+          <li>Stop the dockmesh service on the new host.</li>
+          <li>Extract the latest archive from <code class="font-mono">./data/backups/jobs/dockmesh-system/</code>
+            (decrypt with <code class="font-mono">age</code> if encrypted).</li>
+          <li>Copy <code class="font-mono">dockmesh.db</code> to <code class="font-mono">./data/dockmesh.db</code>
+            and restore <code class="font-mono">stacks/</code> + <code class="font-mono">data/</code> in place.</li>
+          <li>Start dockmesh; agents will reconnect automatically.</li>
+        </ol>
       </div>
     </Card>
   </section>

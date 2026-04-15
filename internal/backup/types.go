@@ -43,12 +43,27 @@ type JobInput struct {
 	Enabled        bool     `json:"enabled"`
 }
 
-// Source describes one thing to back up. type=volume snapshots a single
-// docker volume; type=stack snapshots a stack's compose+env+meta files
-// plus all named volumes referenced by the stack.
+// Source describes one thing to back up.
+//   - type=volume snapshots a single docker volume.
+//   - type=stack  snapshots a stack's compose+env+meta files plus all
+//     named volumes referenced by the stack.
+//   - type=system snapshots the Dockmesh server itself: SQLite DB (via
+//     VACUUM INTO for a consistent point-in-time copy), the /stacks
+//     filesystem, and the data directory (secrets keys, jwt secret,
+//     audit genesis). Used by the default daily backup job.
 type Source struct {
-	Type string `json:"type"` // "volume" | "stack"
+	Type string `json:"type"` // "volume" | "stack" | "system"
 	Name string `json:"name"`
+}
+
+// SystemPaths tells the Executor where the server's own files live so
+// the "system" source can snapshot them. Injected at NewService time —
+// the backup package cannot import internal/config, and hard-coding the
+// defaults would break non-default layouts.
+type SystemPaths struct {
+	DBPath     string // sqlite DB file (absolute or CWD-relative)
+	StacksRoot string // /stacks root containing per-stack compose dirs
+	DataDir    string // data dir with secrets.env, secrets.age-key, audit-genesis.sha256
 }
 
 // Hook is a docker exec invocation against a running container, used to

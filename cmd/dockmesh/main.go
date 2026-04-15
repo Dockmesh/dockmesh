@@ -10,6 +10,7 @@ import (
 	"os"
 	"net/url"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -159,9 +160,24 @@ func main() {
 	alertsSvc.Start(ctx)
 	defer alertsSvc.Stop()
 
-	backupSvc := backup.NewService(database, dockerCli, stacksMgr, secretsSvc)
+	// The "system" backup source needs absolute paths to the server's
+	// own DB, /stacks root, and data dir — the data dir is derived
+	// from DBPath so operators who override DOCKMESH_DB_PATH get the
+	// matching data dir automatically.
+	backupPaths := backup.SystemPaths{
+		DBPath:     cfg.DBPath,
+		StacksRoot: cfg.StacksRoot,
+		DataDir:    filepath.Dir(cfg.DBPath),
+	}
+	backupSvc := backup.NewService(database, dockerCli, stacksMgr, secretsSvc, backupPaths)
 	if err := backupSvc.Start(ctx); err != nil {
 		slog.Warn("backup scheduler start", "err", err)
+	}
+	// Default daily system backup (P.6.5). Idempotent — first boot
+	// creates the job; subsequent boots find it already there. Users
+	// who delete it are not pestered to recreate it.
+	if err := backupSvc.EnsureDefaultJob(ctx); err != nil {
+		slog.Warn("backup default job", "err", err)
 	}
 	defer backupSvc.Stop()
 
