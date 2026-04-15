@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import { api, ApiError } from '$lib/api';
   import type { NotificationChannel, AlertRule, AlertRuleInput, AlertHistoryEntry } from '$lib/api';
+  import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { Bell, Plus, Trash2, Send, Activity, BellRing, BellOff, AlertTriangle, CheckCircle2 } from 'lucide-svelte';
@@ -225,6 +227,10 @@
   }
 
   $effect(() => {
+    if (!allowed('user.manage')) {
+      goto('/');
+      return;
+    }
     if (tab === 'channels') loadChannels();
     else if (tab === 'rules') {
       loadRules();

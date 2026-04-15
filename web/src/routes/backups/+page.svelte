@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import { api, ApiError } from '$lib/api';
   import type { BackupJob, BackupJobInput, BackupRun, BackupSource } from '$lib/api';
+  import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { Archive, Plus, Play, Trash2, RefreshCw, Undo2, HardDrive, Cloud, Lock } from 'lucide-svelte';
@@ -198,6 +200,10 @@
   }
 
   $effect(() => {
+    if (!allowed('user.manage')) {
+      goto('/');
+      return;
+    }
     if (tab === 'jobs') loadJobs();
     else loadRuns();
   });

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import * as dagre from '@dagrejs/dagre';
   import {
@@ -11,6 +10,7 @@
   } from '$lib/api';
   import { Card, Button, Skeleton, EmptyState, Badge } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { EventStream, type ConnStatus } from '$lib/events';
   import {
     Network as NetworkIcon,
     RefreshCw,
@@ -29,8 +29,8 @@
   let selected = $state<{ kind: 'network' | 'container'; id: string } | null>(null);
   let hovered = $state<{ id: string; clientX: number; clientY: number } | null>(null);
   let search = $state('');
-  let live = $state(false);
-  let ws: WebSocket | null = null;
+  let connStatus = $state<ConnStatus>('connecting');
+  const live = $derived(connStatus === 'live');
   let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ---------- node sizing ----------
@@ -467,39 +467,17 @@
     }
   }
 
-  async function connectLive() {
-    if (ws) return;
-    try {
-      const { ticket } = await api.ws.ticket();
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${proto}//${location.host}/api/v1/ws/events?ticket=${ticket}`);
-      ws.onopen = () => {
-        live = true;
-      };
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (
-            (msg.source === 'docker' && (msg.type === 'container' || msg.type === 'network')) ||
-            msg.source === 'stacks'
-          ) {
-            scheduleReload();
-          }
-        } catch {
-          /* ignore */
-        }
-      };
-      ws.onclose = () => {
-        live = false;
-        ws = null;
-      };
-      ws.onerror = () => {
-        live = false;
-      };
-    } catch {
-      live = false;
-    }
-  }
+  const stream = new EventStream({
+    onMessage: (msg) => {
+      if (
+        (msg.source === 'docker' && (msg.type === 'container' || msg.type === 'network')) ||
+        msg.source === 'stacks'
+      ) {
+        scheduleReload();
+      }
+    },
+    onStatus: (s) => { connStatus = s; }
+  });
 
   function scheduleReload() {
     if (reloadTimer) clearTimeout(reloadTimer);
@@ -507,19 +485,14 @@
   }
 
   function disconnectLive() {
-    if (ws) {
-      ws.close();
-      ws = null;
-    }
+    stream.stop();
     if (reloadTimer) clearTimeout(reloadTimer);
-    live = false;
   }
 
-  onDestroy(disconnectLive);
-
-  onMount(() => {
+  $effect(() => {
     load();
-    connectLive();
+    stream.start();
+    return disconnectLive;
   });
 
   // Re-layout when the show-system filter toggles. topo doesn't change,
@@ -544,6 +517,10 @@
         {#if live}
           <span class="inline-flex items-center gap-1 text-xs text-[var(--color-success-400)] font-normal">
             <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-success-500)] animate-pulse"></span>live
+          </span>
+        {:else if connStatus === 'reconnecting'}
+          <span class="inline-flex items-center gap-1 text-xs text-[var(--color-warning-400)] font-normal">
+            <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-warning-500)] animate-pulse"></span>reconnecting…
           </span>
         {/if}
       </h2>

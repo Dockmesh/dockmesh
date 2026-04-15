@@ -81,6 +81,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 
 				r.Get("/volumes", h.ListVolumes)
 				r.Get("/volumes/{name}", h.InspectVolume)
+
+				// Historical metrics are read-only data, not a control action.
+				r.Get("/containers/{id}/metrics", h.GetMetrics)
 			})
 
 			// -------------------------- STACK WRITE --------------------------
@@ -110,8 +113,6 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Post("/containers/{id}/update", h.UpdateContainer)
 				r.Post("/containers/{id}/rollback", h.RollbackContainer)
 				r.Get("/containers/{id}/update-history", h.UpdateHistory)
-
-				r.Get("/containers/{id}/metrics", h.GetMetrics)
 			})
 
 			// -------------------------- IMAGE WRITE --------------------------
