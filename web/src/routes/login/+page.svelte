@@ -124,9 +124,7 @@
 
   <div class="relative w-full max-w-sm dm-fade-in">
     <div class="flex flex-col items-center mb-8">
-      <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center shadow-xl mb-4">
-        <span class="text-white font-bold text-2xl">D</span>
-      </div>
+      <img src="/logo-mark.svg" alt="Dockmesh" class="w-14 h-14 mb-4 drop-shadow-xl" />
       <h1 class="text-2xl font-semibold tracking-tight">
         {mfaToken ? 'Two-factor authentication' : 'Welcome to Dockmesh'}
       </h1>

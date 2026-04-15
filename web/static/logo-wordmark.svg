@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 180 36">
+
+<!-- Logo icon - small, 28px -->
+<g transform="translate(18,18) scale(0.082) translate(-768,-390)">
+  <path fill="#2c3f4e" d="M 855.48 288.24 L 767.88 335.08 L 767.88 240.97 L 768.12 239.82 Z"/>
+  <path fill="#04d1eb" d="M 952.82 345.30 L 952.16 341.57 L 855.48 288.24 L 767.88 335.08 L 865.50 389.75 Z"/>
+  <path fill="#03a0c2" d="M 952.82 345.30 L 865.50 389.75 L 952.87 440.58 Z"/>
+  <path fill="#097d9a" d="M 865.50 389.75 L 952.87 440.58 L 858.10 493.81 L 767.88 444.59 Z"/>
+  <path fill="#136079" d="M 767.88 444.59 L 858.10 493.81 L 804.62 523.76 L 767.88 544.10 Z"/>
+  <path fill="#304a5b" d="M 767.88 444.59 L 767.88 544.10 L 676.54 493.21 Z"/>
+  <path fill="#416276" d="M 767.88 444.59 L 669.94 390.15 L 584.24 441.28 L 676.54 493.21 Z"/>
+  <path fill="#213342" d="M 767.88 335.08 L 669.94 390.15 L 584.24 441.28 L 583.01 440.24 L 583.01 342.70 L 583.42 341.94 L 763.56 242.12 L 767.88 240.97 Z"/>
+</g>
+
+<!-- dockmesh text inline -->
+<text x="40" y="22" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="16" font-weight="600" letter-spacing="0.5" fill="#213342">dockmesh</text>
+</svg>
