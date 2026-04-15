@@ -204,9 +204,27 @@
     <aside
       class="fixed md:static inset-y-0 left-0 z-40 {sidebarCollapsed ? 'md:w-16' : 'md:w-64'} w-64 bg-[var(--bg-elevated)] border-r border-[var(--border)] flex flex-col transform {mobileOpen
         ? 'translate-x-0'
-        : '-translate-x-full'} md:translate-x-0 transition-[width,transform] duration-200"
+        : '-translate-x-full'} md:translate-x-0 transition-[width,transform] duration-200 relative"
     >
-      <div class="h-16 flex items-center border-b border-[var(--border)] {sidebarCollapsed ? 'justify-center px-2' : 'justify-between pl-4 pr-2'}">
+      <!-- Collapse toggle: anchored to the aside's right edge so it
+           stays at the same absolute position regardless of the
+           collapsed/expanded state. Previously it jumped between the
+           header (expanded) and a centred button below (collapsed),
+           which read as a visual glitch. -->
+      <button
+        onclick={() => (sidebarCollapsed = !sidebarCollapsed)}
+        class="hidden md:flex absolute top-[22px] -right-3 z-10 w-6 h-6 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--fg-muted)] hover:text-[var(--fg)] hover:border-[var(--color-brand-500)] shadow-sm transition-colors"
+        title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      >
+        {#if sidebarCollapsed}
+          <ChevronsRight class="w-3.5 h-3.5" />
+        {:else}
+          <ChevronsLeft class="w-3.5 h-3.5" />
+        {/if}
+      </button>
+
+      <div class="h-16 flex items-center border-b border-[var(--border)] {sidebarCollapsed ? 'justify-center px-2' : 'px-4'}">
         <a href="/" class="flex items-center min-w-0" aria-label="Dockmesh home">
           {#if sidebarCollapsed}
             <img src="/logo-mark.svg" alt="Dockmesh" class="h-9 w-9" />
@@ -232,27 +250,7 @@
             </svg>
           {/if}
         </a>
-        {#if !sidebarCollapsed}
-          <button
-            onclick={() => (sidebarCollapsed = true)}
-            class="hidden md:inline-flex p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)] shrink-0"
-            title="Collapse sidebar"
-            aria-label="Collapse sidebar"
-          >
-            <ChevronsLeft class="w-4 h-4" />
-          </button>
-        {/if}
       </div>
-      {#if sidebarCollapsed}
-        <button
-          onclick={() => (sidebarCollapsed = false)}
-          class="hidden md:flex mx-auto mt-2 p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]"
-          title="Expand sidebar"
-          aria-label="Expand sidebar"
-        >
-          <ChevronsRight class="w-4 h-4" />
-        </button>
-      {/if}
 
       <!-- Host switcher — structurally the parent of every action below
            it. Placed here (not in the header) so users never lose sight
