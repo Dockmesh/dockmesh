@@ -1,21 +1,27 @@
 <script lang="ts">
-  import { api, ApiError, type ScanReport, type Severity } from '$lib/api';
+  import { api, ApiError, isFanOut, type ScanReport, type Severity } from '$lib/api';
   import { Card, Button, EmptyState, Skeleton, Badge, Modal } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
-  import { Image as ImageIcon, Trash2, RefreshCw, Sparkles, Shield, ShieldAlert } from 'lucide-svelte';
+  import { hosts } from '$lib/stores/host.svelte';
+  import { Image as ImageIcon, Trash2, RefreshCw, Sparkles, Shield, ShieldAlert, AlertTriangle, Server, Layers } from 'lucide-svelte';
 
   const canWrite = $derived(allowed('image.write'));
   const canScan = $derived(allowed('image.scan'));
+  const isAll = $derived(hosts.isAll);
+  const isRemote = $derived(hosts.id !== 'local' && hosts.id !== 'all');
 
   interface ImageSummary {
     Id: string;
     RepoTags: string[] | null;
     Size: number;
     Created: number;
+    host_id?: string;
+    host_name?: string;
   }
 
   let images = $state<ImageSummary[]>([]);
+  let unreachable = $state<Array<{ host_id: string; host_name: string; reason: string }>>([]);
   let loading = $state(true);
 
   // Scan state
@@ -28,13 +34,30 @@
   async function load() {
     loading = true;
     try {
-      images = await api.images.list();
+      const res = await api.images.list(false, hosts.id);
+      if (isFanOut(res)) {
+        images = res.items as ImageSummary[];
+        unreachable = res.unreachable_hosts;
+      } else {
+        images = res as ImageSummary[];
+        unreachable = [];
+      }
     } catch (err) {
       toast.error('Failed to load', err instanceof ApiError ? err.message : undefined);
     } finally {
       loading = false;
     }
   }
+
+  // Reload when the host picker changes.
+  let prevHost = hosts.id;
+  $effect(() => {
+    const cur = hosts.id;
+    if (cur !== prevHost) {
+      prevHost = cur;
+      load();
+    }
+  });
 
   async function prune() {
     if (!confirm('Prune dangling images?')) return;
@@ -127,8 +150,17 @@
   <div class="flex items-center justify-between flex-wrap gap-3">
     <div>
       <h2 class="text-2xl font-semibold tracking-tight">Images</h2>
-      <p class="text-sm text-[var(--fg-muted)] mt-0.5">
-        {images.length} {images.length === 1 ? 'image' : 'images'} · {formatSize(totalSize)} total
+      <p class="text-sm text-[var(--fg-muted)] mt-0.5 flex items-center gap-2">
+        {#if isAll}
+          <Layers class="w-3.5 h-3.5 text-[var(--color-brand-400)]" />
+          <span>Aggregated across all online hosts</span>
+          <span>·</span>
+        {:else if isRemote}
+          <Server class="w-3.5 h-3.5 text-[var(--color-brand-400)]" />
+          <span>Showing remote host <span class="font-mono text-[var(--fg)]">{hosts.selected?.name}</span></span>
+          <span>·</span>
+        {/if}
+        <span>{images.length} {images.length === 1 ? 'image' : 'images'} · {formatSize(totalSize)} total</span>
       </p>
     </div>
     <div class="flex gap-2">
@@ -144,6 +176,20 @@
       {/if}
     </div>
   </div>
+
+  {#if unreachable.length > 0}
+    <div class="dm-card p-3 flex items-start gap-2.5 border border-[color-mix(in_srgb,var(--color-warning-500)_30%,transparent)]">
+      <AlertTriangle class="w-4 h-4 text-[var(--color-warning-400)] shrink-0 mt-0.5" />
+      <div class="text-xs flex-1">
+        <div class="font-medium text-[var(--color-warning-400)]">
+          Partial results — {unreachable.length} host{unreachable.length === 1 ? '' : 's'} did not respond
+        </div>
+        <div class="text-[var(--fg-muted)] mt-0.5">
+          {#each unreachable as u, i}<span class="font-mono">{u.host_name}</span>{#if u.reason} ({u.reason}){/if}{#if i < unreachable.length - 1}, {/if}{/each}
+        </div>
+      </div>
+    </div>
+  {/if}
 
   {#if loading && images.length === 0}
     <Card>
@@ -176,7 +222,15 @@
               <ImageIcon class="w-5 h-5" />
             </div>
             <div class="flex-1 min-w-0">
-              <div class="font-mono text-sm truncate">{img.RepoTags?.[0] ?? '<untagged>'}</div>
+              <div class="flex items-center gap-2 flex-wrap">
+                <div class="font-mono text-sm truncate">{img.RepoTags?.[0] ?? '<untagged>'}</div>
+                {#if isAll && img.host_name}
+                  <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)] font-mono">
+                    <Server class="w-2.5 h-2.5" />
+                    {img.host_name}
+                  </span>
+                {/if}
+              </div>
               <div class="flex gap-3 mt-0.5 text-xs text-[var(--fg-muted)]">
                 <span>{formatSize(img.Size)}</span>
                 <span>·</span>

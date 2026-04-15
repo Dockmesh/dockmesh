@@ -157,7 +157,10 @@
 
       <!-- Host switcher — structurally the parent of every action below
            it. Placed here (not in the header) so users never lose sight
-           of which host they're operating on. -->
+           of which host they're operating on. When more than one host
+           is registered, a virtual "All hosts" entry sits at the top
+           of the dropdown and fans out list pages across every online
+           host simultaneously. -->
       {#if hosts.available.length > 0}
         <div class="px-3 pt-3 pb-2 border-b border-[var(--border)]">
           <div class="text-[10px] uppercase tracking-wider text-[var(--fg-subtle)] font-medium px-2 pb-1.5">
@@ -170,7 +173,9 @@
               aria-haspopup="listbox"
               aria-expanded={hostMenuOpen}
             >
-              {#if hosts.selected?.kind === 'local'}
+              {#if hosts.selected?.kind === 'all'}
+                <Layers class="w-4 h-4 text-[var(--color-brand-400)] shrink-0" />
+              {:else if hosts.selected?.kind === 'local'}
                 <HardDrive class="w-4 h-4 text-[var(--color-brand-400)] shrink-0" />
               {:else}
                 <Server class="w-4 h-4 text-[var(--color-brand-400)] shrink-0" />
@@ -193,7 +198,7 @@
                 class="absolute left-0 right-0 top-full mt-1 z-40 bg-[var(--bg-elevated)] border border-[var(--border-strong)] rounded-lg shadow-2xl py-1"
                 role="listbox"
               >
-                {#each hosts.available as h}
+                {#each hosts.withAll as h, idx}
                   {@const online = h.status === 'online'}
                   <button
                     class="w-full text-left px-3 py-2 text-sm hover:bg-[var(--surface-hover)] flex items-center gap-2 disabled:opacity-50"
@@ -205,7 +210,9 @@
                     role="option"
                     aria-selected={h.id === hosts.id}
                   >
-                    {#if h.kind === 'local'}
+                    {#if h.kind === 'all'}
+                      <Layers class="w-3.5 h-3.5 text-[var(--color-brand-400)] shrink-0" />
+                    {:else if h.kind === 'local'}
                       <HardDrive class="w-3.5 h-3.5 text-[var(--color-brand-400)] shrink-0" />
                     {:else}
                       <Server class="w-3.5 h-3.5 text-[var(--color-brand-400)] shrink-0" />
@@ -220,6 +227,13 @@
                       <span class="text-[var(--color-brand-400)] text-xs">●</span>
                     {/if}
                   </button>
+                  <!-- Separator between the virtual "All hosts" entry
+                       and the real host list. Keeps the two semantically
+                       distinct so users don't confuse a fan-out with a
+                       specific host selection. -->
+                  {#if idx === 0 && h.kind === 'all'}
+                    <div class="my-1 border-t border-[var(--border)]"></div>
+                  {/if}
                 {/each}
               </div>
             {/if}

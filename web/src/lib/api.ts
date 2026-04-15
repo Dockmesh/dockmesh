@@ -55,8 +55,32 @@ export interface MetricsSample {
 export interface HostInfo {
   id: string;
   name: string;
-  kind: 'local' | 'agent';
+  kind: 'local' | 'agent' | 'all';
   status: 'online' | 'offline' | 'pending' | 'revoked';
+}
+
+// FanOutResponse is the shape returned by list endpoints when called
+// with ?host=all. Per-row host metadata (host_id / host_name) is
+// flattened into each item via backend struct embedding, and any
+// hosts that failed or timed out are reported under unreachable_hosts
+// so the frontend can render a "showing N of M hosts" banner.
+export interface FanOutResponse<T> {
+  items: Array<T & { host_id: string; host_name: string }>;
+  unreachable_hosts: Array<{ host_id: string; host_name: string; reason: string }>;
+}
+
+// isFanOut narrows a list response returned by one of the ?host=all
+// endpoints. Single-host responses return a bare array; the FanOutResponse
+// shape is the wrapper object. Pages that call the list with either mode
+// use this to branch on shape without a second query.
+//
+// Not generic over T because TypeScript's union-narrowing can't cross
+// a generic instantiation boundary — narrowing
+// `any[] | FanOutResponse<any>` via `isFanOut<Container>` leaves the
+// else branch as `any[] | FanOutResponse<any>` instead of `any[]`.
+// The non-generic form narrows cleanly.
+export function isFanOut(r: unknown): r is FanOutResponse<any> {
+  return typeof r === 'object' && r !== null && 'items' in r && 'unreachable_hosts' in r;
 }
 
 export interface Agent {
@@ -378,12 +402,17 @@ export const api = {
   },
 
   containers: {
+    // Returns a bare array for single-host mode (including the default
+    // "local" host). Returns a FanOutResponse wrapper when host='all',
+    // in which case each row already has host_id + host_name attached
+    // via backend struct embedding, and unreachable_hosts reports any
+    // hosts that failed the fan-out.
     list: (all = false, host = 'local') => {
       const params = new URLSearchParams();
       if (all) params.set('all', 'true');
       if (host && host !== 'local') params.set('host', host);
       const qs = params.toString();
-      return request<any[]>(`/containers${qs ? '?' + qs : ''}`);
+      return request<any[] | FanOutResponse<any>>(`/containers${qs ? '?' + qs : ''}`);
     },
     inspect: (id: string, host = 'local') => {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
@@ -427,7 +456,14 @@ export const api = {
   },
 
   images: {
-    list: (all = false) => request<any[]>(`/images${all ? '?all=true' : ''}`),
+    // Bare array for single-host, FanOutResponse for host='all'.
+    list: (all = false, host = 'local') => {
+      const params = new URLSearchParams();
+      if (all) params.set('all', 'true');
+      if (host && host !== 'local') params.set('host', host);
+      const qs = params.toString();
+      return request<any[] | FanOutResponse<any>>(`/images${qs ? '?' + qs : ''}`);
+    },
     pull: (image: string) => request<any>('/images/pull', { method: 'POST', body: JSON.stringify({ image }) }),
     remove: (id: string, force = false) =>
       request<any>(`/images/${encodeURIComponent(id)}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
@@ -439,8 +475,14 @@ export const api = {
   },
 
   networks: {
-    list: () => request<any[]>('/networks'),
-    inspect: (id: string) => request<any>(`/networks/${id}`),
+    list: (host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<any[] | FanOutResponse<any>>(`/networks${qs}`);
+    },
+    inspect: (id: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<any>(`/networks/${id}${qs}`);
+    },
     create: (name: string, driver?: string) =>
       request<{ Id: string }>('/networks', { method: 'POST', body: JSON.stringify({ name, driver }) }),
     remove: (id: string) => request<void>(`/networks/${id}`, { method: 'DELETE' }),
@@ -448,8 +490,14 @@ export const api = {
   },
 
   volumes: {
-    list: () => request<any[]>('/volumes'),
-    inspect: (name: string) => request<any>(`/volumes/${encodeURIComponent(name)}`),
+    list: (host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<any[] | FanOutResponse<any>>(`/volumes${qs}`);
+    },
+    inspect: (name: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<any>(`/volumes/${encodeURIComponent(name)}${qs}`);
+    },
     create: (name: string, driver?: string) =>
       request<any>('/volumes', { method: 'POST', body: JSON.stringify({ name, driver }) }),
     remove: (name: string, force = false) =>
