@@ -1,0 +1,53 @@
+# Line endings policy
+# -----------------------------------------------------------------------------
+# Dockmesh is cross-platform for development (Windows/macOS/Linux) but every
+# production artefact runs on Linux. Store everything as LF in the repo so
+# diffs are clean regardless of who's contributing.
+#
+# `text=auto` tells Git to detect text files automatically.
+# `eol=lf` tells Git to write LF line endings on checkout on every OS, not
+# CRLF on Windows. Combined, they stop the "LF will be replaced by CRLF the
+# next time Git touches it" warning storm for Windows contributors.
+
+* text=auto eol=lf
+
+# -----------------------------------------------------------------------------
+# Binary files — never touch these, regardless of auto-detection
+# -----------------------------------------------------------------------------
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.tar.gz binary
+*.tgz binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.db binary
+*.sqlite binary
+
+# Go compiled artefacts (normally .gitignored, but be explicit)
+*.exe binary
+
+# -----------------------------------------------------------------------------
+# Force LF explicitly on files where tooling cares about it
+# -----------------------------------------------------------------------------
+
+# Shell scripts must be LF to work on Linux
+*.sh text eol=lf
+
+# systemd units
+*.service text eol=lf
+
+# Go source — Go's gofmt enforces LF anyway, but this makes intent explicit
+*.go text eol=lf
+
+# Makefiles require LF
+Makefile text eol=lf
