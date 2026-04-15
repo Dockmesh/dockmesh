@@ -495,6 +495,23 @@ export const api = {
       })
   },
 
+  system: {
+    metrics: () =>
+      request<{
+        cpu_percent: number;
+        cpu_cores: number;
+        cpu_used_cores: number;
+        mem_percent: number;
+        mem_total: number;
+        mem_used: number;
+        disk_percent: number;
+        disk_total: number;
+        disk_used: number;
+        disk_path: string;
+        uptime_seconds: number;
+      }>('/system/metrics')
+  },
+
   audit: {
     list: (limit = 100) =>
       request<Array<{ id: number; ts: string; user_id?: string; action: string; target?: string; details?: string; prev_hash?: string; row_hash?: string }>>(

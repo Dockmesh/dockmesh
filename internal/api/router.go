@@ -84,6 +84,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 
 				// Historical metrics are read-only data, not a control action.
 				r.Get("/containers/{id}/metrics", h.GetMetrics)
+
+				// Host-level CPU / RAM / disk snapshot for the dashboard.
+				r.Get("/system/metrics", h.SystemMetrics)
 			})
 
 			// -------------------------- STACK WRITE --------------------------
