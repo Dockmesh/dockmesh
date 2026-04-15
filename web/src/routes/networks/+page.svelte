@@ -232,7 +232,9 @@
   let panY = $state(0);
   let zoom = $state(1);
   let svgEl: SVGSVGElement | null = $state(null);
-  let panning = false;
+  // `panning` needs $state so the cursor style reacts to mouse-down/up —
+  // without it Svelte warns and any derived CSS class wouldn't update.
+  let panning = $state(false);
   let panStart = { clientX: 0, clientY: 0, panX: 0, panY: 0 };
 
   function fitToView() {
@@ -496,15 +498,23 @@
   });
 
   // Re-layout when the show-system filter toggles. topo doesn't change,
-  // only the included subset does.
-  let prevShowSystem = showSystem;
-  $effect(() => {
-    const cur = showSystem;
-    if (cur !== prevShowSystem) {
-      prevShowSystem = cur;
-      relayout();
-    }
-  });
+  // only the included subset does. `prevShowSystem` is initialised to
+  // null and set on first effect run so svelte-check doesn't flag it as
+  // a stale module-level snapshot of a reactive.
+  {
+    let prevShowSystem: boolean | null = null;
+    $effect(() => {
+      const cur = showSystem;
+      if (prevShowSystem === null) {
+        prevShowSystem = cur;
+        return;
+      }
+      if (cur !== prevShowSystem) {
+        prevShowSystem = cur;
+        relayout();
+      }
+    });
+  }
 </script>
 
 <svelte:window onmousemove={onWindowMouseMove} onmouseup={onWindowMouseUp} />
@@ -591,6 +601,13 @@
           </div>
         </div>
 
+        <!-- The graph is a pan+zoom+click interaction surface that doesn't
+             have a keyboard equivalent (panning a graph with arrow keys is
+             a separate feature). role="application" tells assistive tech
+             this is a complex widget; individual nodes below have
+             role="button" + onkeydown for keyboard-accessible selection. -->
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <svg
           bind:this={svgEl}
           class="w-full h-[72vh] {panning ? 'cursor-grabbing' : 'cursor-grab'} block"
@@ -667,11 +684,18 @@
                 opacity={dim ? 0.15 : 1}
                 class="cursor-pointer"
                 onclick={(e) => onNodeClick(n, e)}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onNodeClick(n, e as unknown as MouseEvent);
+                  }
+                }}
                 onmouseenter={(e) => onNodeMouseEnter(n, e)}
                 onmouseleave={onNodeMouseLeave}
                 onmousemove={onNodeMouseMove}
                 role="button"
                 tabindex="0"
+                aria-label="{n.kind === 'network' ? 'Network' : 'Container'} {n.id}"
               >
                 {#if n.kind === 'network'}
                   {@const net = n.data as TopoNetwork}
