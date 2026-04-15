@@ -26,6 +26,8 @@
     X,
     HardDrive,
     ChevronDown,
+    ChevronsLeft,
+    ChevronsRight,
     ShieldCheck,
     ShieldAlert,
     ShieldOff
@@ -35,6 +37,21 @@
   let theme = $state<'light' | 'dark'>('dark');
   let mobileOpen = $state(false);
   let hostMenuOpen = $state(false);
+
+  // Desktop sidebar collapse — persisted in localStorage so the choice
+  // survives reloads. Mobile always uses the off-canvas full-width
+  // panel regardless of this flag.
+  let sidebarCollapsed = $state<boolean>(
+    typeof localStorage !== 'undefined' && localStorage.getItem('dm_sidebar_collapsed') === '1'
+  );
+  $effect(() => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('dm_sidebar_collapsed', sidebarCollapsed ? '1' : '0');
+    }
+    // A collapsed sidebar can't host the host-switcher dropdown — force
+    // it closed so we don't leak an orphaned popover.
+    if (sidebarCollapsed) hostMenuOpen = false;
+  });
 
   // Refresh the available host list whenever auth flips on, and poll
   // every 10s so newly-connected agents show up in the switcher without
@@ -185,15 +202,39 @@
   <div class="flex h-screen overflow-hidden">
     <!-- Sidebar -->
     <aside
-      class="fixed md:static inset-y-0 left-0 z-40 w-64 bg-[var(--bg-elevated)] border-r border-[var(--border)] flex flex-col transform {mobileOpen
+      class="fixed md:static inset-y-0 left-0 z-40 {sidebarCollapsed ? 'md:w-16' : 'md:w-64'} w-64 bg-[var(--bg-elevated)] border-r border-[var(--border)] flex flex-col transform {mobileOpen
         ? 'translate-x-0'
-        : '-translate-x-full'} md:translate-x-0 transition-transform duration-200"
+        : '-translate-x-full'} md:translate-x-0 transition-[width,transform] duration-200"
     >
-      <div class="px-5 h-16 flex items-center border-b border-[var(--border)]">
-        <span class="font-semibold text-[17px] tracking-tight text-[var(--fg)] select-none">
-          dockmesh
-        </span>
+      <div class="h-16 flex items-center border-b border-[var(--border)] {sidebarCollapsed ? 'justify-center px-2' : 'justify-between px-4'}">
+        <a href="/" class="flex items-center" aria-label="Dockmesh home">
+          {#if sidebarCollapsed}
+            <img src="/logo-mark.svg" alt="Dockmesh" class="h-7 w-7" />
+          {:else}
+            <img src="/logo-wordmark.svg" alt="Dockmesh" class="h-7" />
+          {/if}
+        </a>
+        {#if !sidebarCollapsed}
+          <button
+            onclick={() => (sidebarCollapsed = true)}
+            class="hidden md:inline-flex p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+            title="Collapse sidebar"
+            aria-label="Collapse sidebar"
+          >
+            <ChevronsLeft class="w-4 h-4" />
+          </button>
+        {/if}
       </div>
+      {#if sidebarCollapsed}
+        <button
+          onclick={() => (sidebarCollapsed = false)}
+          class="hidden md:flex mx-auto mt-2 p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+          title="Expand sidebar"
+          aria-label="Expand sidebar"
+        >
+          <ChevronsRight class="w-4 h-4" />
+        </button>
+      {/if}
 
       <!-- Host switcher — structurally the parent of every action below
            it. Placed here (not in the header) so users never lose sight
@@ -201,7 +242,7 @@
            is registered, a virtual "All hosts" entry sits at the top
            of the dropdown and fans out list pages across every online
            host simultaneously. -->
-      {#if hosts.available.length > 0}
+      {#if hosts.available.length > 0 && !sidebarCollapsed}
         <div class="px-3 pt-3 pb-2 border-b border-[var(--border)]">
           <div class="text-[10px] uppercase tracking-wider text-[var(--fg-subtle)] font-medium px-2 pb-1.5">
             Host
@@ -281,9 +322,9 @@
         </div>
       {/if}
 
-      <nav class="flex-1 px-3 py-3 overflow-y-auto">
+      <nav class="flex-1 {sidebarCollapsed ? 'px-2' : 'px-3'} py-3 overflow-y-auto">
         {#each sections as section, idx}
-          {#if section.title}
+          {#if section.title && !sidebarCollapsed}
             <div class="px-3 {idx === 0 ? 'pt-1' : 'pt-4'} pb-1.5 text-[10px] uppercase tracking-wider text-[var(--fg-subtle)] font-medium">
               {section.title}
             </div>
@@ -297,13 +338,14 @@
               <a
                 href={item.href}
                 onclick={() => (mobileOpen = false)}
-                class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors
+                title={sidebarCollapsed ? item.label : undefined}
+                class="flex items-center {sidebarCollapsed ? 'justify-center px-2' : 'gap-3 px-3'} py-2 rounded-lg text-sm transition-colors
                        {active
                   ? 'bg-[var(--surface)] text-[var(--fg)] font-medium'
                   : 'text-[var(--fg-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]'}"
               >
                 <Icon class="w-4 h-4 shrink-0" />
-                <span>{item.label}</span>
+                {#if !sidebarCollapsed}<span>{item.label}</span>{/if}
               </a>
             {/each}
           </div>
@@ -333,11 +375,11 @@
           : st === 'disabled'
           ? 'Backups off'
           : 'No backups yet'}
-        <div class="border-t border-[var(--border)] px-3 pt-2 pb-1">
+        <div class="border-t border-[var(--border)] {sidebarCollapsed ? 'px-2' : 'px-3'} pt-2 pb-1">
           <a
             href="/settings?tab=system"
             onclick={() => (mobileOpen = false)}
-            class="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] font-medium {cls}"
+            class="flex items-center {sidebarCollapsed ? 'justify-center px-2 py-2' : 'gap-2 px-2.5 py-1.5'} rounded-md text-[11px] font-medium {cls}"
             title={backupStatus.last_error || label}
           >
             {#if st === 'ok'}
@@ -347,7 +389,7 @@
             {:else}
               <ShieldOff class="w-3.5 h-3.5 shrink-0" />
             {/if}
-            <span class="truncate">{label}</span>
+            {#if !sidebarCollapsed}<span class="truncate">{label}</span>{/if}
           </a>
         </div>
       {/if}
@@ -356,28 +398,32 @@
            user card (identity) — both are "meta" actions, visually anchored
            at the bottom of the sidebar. This pairing is the default
            pattern in every modern SaaS tool (Notion, Slack, Linear, …). -->
-      <div class="border-t border-[var(--border)] px-3 pt-2 pb-2 space-y-0.5">
+      <div class="border-t border-[var(--border)] {sidebarCollapsed ? 'px-2' : 'px-3'} pt-2 pb-2 space-y-0.5">
         <a
           href="/settings"
           onclick={() => (mobileOpen = false)}
-          class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors
+          title={sidebarCollapsed ? 'Settings' : undefined}
+          class="flex items-center {sidebarCollapsed ? 'justify-center px-2' : 'gap-3 px-3'} py-2 rounded-lg text-sm transition-colors
                  {isActive('/settings')
             ? 'bg-[var(--surface)] text-[var(--fg)] font-medium'
             : 'text-[var(--fg-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]'}"
         >
           <SettingsIcon class="w-4 h-4 shrink-0" />
-          <span>Settings</span>
+          {#if !sidebarCollapsed}<span>Settings</span>{/if}
         </a>
       </div>
-      <div class="px-3 py-2 border-t border-[var(--border)]">
-        <div class="flex items-center gap-2 px-2 py-1.5 rounded-lg">
-          <div class="w-8 h-8 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white text-xs font-semibold shrink-0">
+      <div class="{sidebarCollapsed ? 'px-2' : 'px-3'} py-2 border-t border-[var(--border)]">
+        <div class="flex items-center {sidebarCollapsed ? 'flex-col gap-1' : 'gap-2 px-2'} py-1.5 rounded-lg">
+          <div class="w-8 h-8 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white text-xs font-semibold shrink-0"
+               title={sidebarCollapsed ? `${auth.user?.username} (${auth.user?.role})` : undefined}>
             {auth.user?.username?.[0]?.toUpperCase() ?? '?'}
           </div>
-          <div class="flex-1 min-w-0">
-            <div class="text-sm font-medium text-[var(--fg)] truncate">{auth.user?.username}</div>
-            <div class="text-[11px] text-[var(--fg-muted)] truncate">{auth.user?.role}</div>
-          </div>
+          {#if !sidebarCollapsed}
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-medium text-[var(--fg)] truncate">{auth.user?.username}</div>
+              <div class="text-[11px] text-[var(--fg-muted)] truncate">{auth.user?.role}</div>
+            </div>
+          {/if}
           <button
             onclick={() => (theme = theme === 'dark' ? 'light' : 'dark')}
             class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]"
