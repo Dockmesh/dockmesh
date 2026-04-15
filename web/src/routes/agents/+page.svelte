@@ -14,8 +14,11 @@
   let creating = $state(false);
 
   // After create, we keep the result around to show the token + install
-  // command in a follow-up dialog. The token is shown ONCE.
+  // command in a follow-up dialog. The token is shown ONCE. `showInstallModal`
+  // mirrors the presence of createResult for the modal's bind:open —
+  // avoids a custom getter/setter bind that the Svelte 5 parser chokes on.
   let createResult = $state<AgentCreateResult | null>(null);
+  let showInstallModal = $state(false);
 
   async function load() {
     loading = true;
@@ -34,6 +37,7 @@
     try {
       const res = await api.agents.create(newName);
       createResult = res;
+      showInstallModal = true;
       showCreate = false;
       newName = '';
       await load();
@@ -179,10 +183,17 @@
 </Modal>
 
 <!-- Install command modal — shown ONCE after create -->
-<Modal bind:open={() => createResult !== null, (v) => { if (!v) createResult = null; }}
+<!-- NB: earlier we used a custom getter/setter bind:open pattern here to
+     drive the modal directly off `createResult !== null`, but the Svelte 5
+     parser trips on the {() => get, (v) => set} syntax in attribute
+     position and cascades into dozens of downstream errors. Using a
+     separate $state boolean that mirrors createResult keeps the intent
+     (modal auto-opens when a create succeeds, clears createResult on
+     close) and parses cleanly. -->
+<Modal bind:open={showInstallModal}
        title="Agent created — copy the install command"
        maxWidth="max-w-2xl"
-       onclose={() => (createResult = null)}>
+       onclose={() => { createResult = null; showInstallModal = false; }}>
   {#if createResult}
     <div class="space-y-4">
       <div class="flex items-start gap-2 text-xs bg-[color-mix(in_srgb,var(--color-warning-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-warning-500)_30%,transparent)] rounded-lg px-3 py-2 text-[var(--color-warning-400)]">

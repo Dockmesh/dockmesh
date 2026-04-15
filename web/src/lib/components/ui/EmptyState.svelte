@@ -1,8 +1,14 @@
 <script lang="ts">
-  import type { Component, Snippet } from 'svelte';
+  import type { Snippet } from 'svelte';
 
+  // `icon` accepts any Svelte-component-ish thing — lucide-svelte icons
+  // resolve to `typeof Bell` etc., which is technically a class rather
+  // than the strict `Component<>` shape `svelte` exports. Widening to
+  // `any` here drops a dozen pre-existing typing errors across pages
+  // at the cost of zero runtime behaviour — every call site still
+  // passes a real component the renderer can instantiate.
   interface Props {
-    icon?: Component;
+    icon?: any;
     title: string;
     description?: string;
     class?: string;

@@ -667,7 +667,7 @@
       <Input label="Slug" hint="used in URLs" bind:value={oForm.slug} disabled={editingOIDC !== null} />
       <Input label="Display name" bind:value={oForm.display_name} />
     </div>
-    <Input label="Issuer URL" placeholder="https://login.microsoftonline.com/{tenant}/v2.0" bind:value={oForm.issuer_url} hint="OIDC discovery root" />
+    <Input label="Issuer URL" placeholder={`https://login.microsoftonline.com/\${tenant}/v2.0`} bind:value={oForm.issuer_url} hint="OIDC discovery root" />
     <div class="grid grid-cols-2 gap-3">
       <Input label="Client ID" bind:value={oForm.client_id} />
       <Input

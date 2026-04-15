@@ -41,6 +41,30 @@ export interface UpdateResult {
   history_id?: number;
 }
 
+// UpdatePreview mirrors internal/updater.UpdatePreview — non-destructive
+// lookup of what a container's next update would pull plus any Docker
+// Hub / GitHub release metadata we can dig up. Used by the container
+// detail page's "Updates" tab to let the user see what's waiting without
+// actually touching the image.
+export interface GitHubRelease {
+  tag: string;
+  name: string;
+  url: string;
+  body: string;
+  published?: string;
+}
+export interface UpdatePreview {
+  image: string;
+  current_digest?: string;
+  current_created?: string;
+  remote_last_updated?: string;
+  remote_size?: number;
+  docker_hub_url?: string;
+  github_url?: string;
+  latest_release?: GitHubRelease;
+  warnings?: string[];
+}
+
 export interface MetricsSample {
   ts: number;
   cpu_percent: number;
@@ -650,8 +674,11 @@ export const api = {
       request<{ enabled: boolean; running: boolean; admin_ok: boolean; version?: string; container?: string }>('/proxy/status'),
     enable: () => request<any>('/proxy/enable', { method: 'POST' }),
     disable: () => request<void>('/proxy/disable', { method: 'POST' }),
+    // tls_mode is narrowed to its three valid values so the proxy page's
+    // local ProxyRoute interface can assign the response directly without
+    // casting. The backend validates the mode on write anyway.
     listRoutes: () =>
-      request<Array<{ id: number; host: string; upstream: string; tls_mode: string; created_at: string; updated_at: string }>>('/proxy/routes'),
+      request<Array<{ id: number; host: string; upstream: string; tls_mode: 'auto' | 'internal' | 'none'; created_at: string; updated_at: string }>>('/proxy/routes'),
     createRoute: (host: string, upstream: string, tls_mode: string) =>
       request<any>('/proxy/routes', { method: 'POST', body: JSON.stringify({ host, upstream, tls_mode }) }),
     updateRoute: (id: number, upstream: string, tls_mode: string) =>
