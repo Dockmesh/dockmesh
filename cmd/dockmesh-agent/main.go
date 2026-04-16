@@ -28,6 +28,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os/exec"
 	"net/url"
 	"os"
 	"os/signal"
@@ -815,6 +816,23 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		res, err := agentCheckScale(ctx, cli, req)
 		respond(conn, f.ID, res, err)
 
+	case agents.FrameReqAgentUpgrade:
+		var req agents.AgentUpgradeReq
+		_ = json.Unmarshal(f.Payload, &req)
+		err := agentSelfUpgrade(req)
+		respond(conn, f.ID, map[string]string{"status": "upgrading"}, err)
+		if err == nil {
+			// Give time for the response to be sent, then restart.
+			go func() {
+				time.Sleep(2 * time.Second)
+				slog.Info("agent upgrade: restarting via systemd")
+				_ = exec.Command("systemctl", "restart", "dockmesh-agent").Run()
+				// If systemctl isn't available (dev), just exit and let the
+				// supervisor restart us.
+				os.Exit(0)
+			}()
+		}
+
 	case agents.FrameReqVolumeTarExport:
 		// Volume tar-export is handled as a stream, not a request/response,
 		// because the tar data can be large. The agent starts a helper
@@ -902,6 +920,51 @@ func agentCheckScale(ctx context.Context, cli *client.Client, req agents.StackCh
 		return nil, err
 	}
 	return compose.NewService(dockerwrap.Wrap(cli), nil).CheckScale(ctx, proj, req.Service)
+}
+
+// agentSelfUpgrade downloads a new binary from the server and replaces
+// the running executable. The agent should restart afterwards.
+func agentSelfUpgrade(req agents.AgentUpgradeReq) error {
+	if req.BinaryURL == "" {
+		return fmt.Errorf("binary_url required")
+	}
+	slog.Info("agent upgrade: downloading", "url", req.BinaryURL, "version", req.Version)
+
+	// Download to a temp file next to the current binary.
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve executable: %w", err)
+	}
+	exePath, _ = filepath.EvalSymlinks(exePath)
+
+	tmpPath := exePath + ".new"
+	resp, err := http.Get(req.BinaryURL)
+	if err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("download: HTTP %d", resp.StatusCode)
+	}
+
+	out, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		return fmt.Errorf("create tmp: %w", err)
+	}
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		out.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("write: %w", err)
+	}
+	out.Close()
+
+	// Atomic replace: rename new over old.
+	if err := os.Rename(tmpPath, exePath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("replace: %w", err)
+	}
+	slog.Info("agent upgrade: binary replaced", "path", exePath)
+	return nil
 }
 
 // stacksDir returns the persistent directory where the agent stores

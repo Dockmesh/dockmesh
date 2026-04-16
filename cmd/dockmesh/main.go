@@ -21,6 +21,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/api"
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/api/handlers"
 	"github.com/dockmesh/dockmesh/internal/audit"
@@ -36,6 +37,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/oidc"
 	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/dockmesh/dockmesh/internal/proxy"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/scaling"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/scanner"
@@ -229,6 +231,13 @@ func main() {
 	agentsSvc := agents.NewService(database, pkiMgr, cfg.BaseURL, agentPublic)
 	hostRegistry := host.NewRegistry(dockerCli, agentsSvc)
 
+	// RBAC v2: DB-backed custom roles with in-memory cache.
+	rolesStore := rbac.NewStore(database)
+	if err := rolesStore.Load(ctx); err != nil {
+		slog.Warn("rbac store load", "err", err)
+	}
+	middleware.RBACStore = rolesStore
+
 	deployStore := stacks.NewDeploymentStore(database)
 	migrationSvc := migration.NewService(database, hostRegistry, stacksMgr, deployStore)
 	if err := migrationSvc.Start(ctx); err != nil {
@@ -260,6 +269,7 @@ func main() {
 		Drains:       drainSvc,
 		Agents:       agentsSvc,
 		Hosts:        hostRegistry,
+		Roles:        rolesStore,
 		JWTSecret:    cfg.JWTSecret,
 	})
 	router := api.NewRouter(h, authSvc, webFS)
