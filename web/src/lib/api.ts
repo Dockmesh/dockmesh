@@ -163,6 +163,37 @@ export interface ThresholdConfig {
   duration_seconds: number;
 }
 
+// Migration (P.9)
+export interface Migration {
+  id: string;
+  stack_name: string;
+  source_host_id: string;
+  target_host_id: string;
+  status: string;
+  phase?: string;
+  progress?: MigrationProgress;
+  started_at?: string;
+  completed_at?: string;
+  error_message?: string;
+  initiated_by: string;
+  created_at: string;
+}
+
+export interface MigrationProgress {
+  current_volume?: string;
+  volume_index: number;
+  volumes_total: number;
+  bytes_total: number;
+  bytes_done: number;
+  images_pulled: number;
+  images_total: number;
+}
+
+export interface PreflightResult {
+  passed: boolean;
+  checks: Array<{ name: string; passed: boolean; detail?: string }>;
+}
+
 export interface SystemMetrics {
   cpu_percent: number;
   cpu_cores: number;
@@ -537,6 +568,27 @@ export const api = {
       }),
     deleteScalingRules: (name: string) =>
       request<void>(`/stacks/${encodeURIComponent(name)}/scaling-rules`, { method: 'DELETE' })
+  },
+
+  migrations: {
+    list: (limit = 100) => request<Migration[]>(`/migrations?limit=${limit}`),
+    active: () => request<Migration[]>('/migrations/active'),
+    get: (name: string, id: string) =>
+      request<Migration>(`/stacks/${encodeURIComponent(name)}/migrate/${id}`),
+    initiate: (name: string, targetHostId: string) =>
+      request<Migration>(`/stacks/${encodeURIComponent(name)}/migrate`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_host_id: targetHostId })
+      }),
+    preflight: (name: string, targetHostId: string) =>
+      request<PreflightResult>(`/stacks/${encodeURIComponent(name)}/migrate/preflight`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_host_id: targetHostId })
+      }),
+    rollback: (name: string, id: string) =>
+      request<void>(`/stacks/${encodeURIComponent(name)}/migrate/${id}/rollback`, { method: 'POST' }),
+    purgeSource: (name: string, id: string) =>
+      request<void>(`/stacks/${encodeURIComponent(name)}/migrate/${id}/source`, { method: 'DELETE' })
   },
 
   hosts: {

@@ -1,13 +1,13 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { api, ApiError, type ScaleCheck } from '$lib/api';
+  import { api, ApiError, type ScaleCheck, type PreflightResult, type Migration } from '$lib/api';
   import { Button, Card, Badge, Skeleton, Modal } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import { EventStream } from '$lib/events';
-  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server, Maximize2 } from 'lucide-svelte';
+  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2 } from 'lucide-svelte';
 
   const canWrite = $derived(allowed('stack.write'));
   const canDeploy = $derived(allowed('stack.deploy'));
@@ -77,6 +77,68 @@
     } finally {
       scaleBusy = false;
     }
+  }
+
+  // Migration state (P.9)
+  let showMigrate = $state(false);
+  let migrateTarget = $state('');
+  let migratePreflight = $state<PreflightResult | null>(null);
+  let migratePreflightLoading = $state(false);
+  let migrateBusy = $state(false);
+  let activeMigration = $state<Migration | null>(null);
+
+  async function openMigrate() {
+    migrateTarget = '';
+    migratePreflight = null;
+    showMigrate = true;
+  }
+
+  async function runPreflight() {
+    if (!migrateTarget) return;
+    migratePreflightLoading = true;
+    migratePreflight = null;
+    try {
+      migratePreflight = await api.migrations.preflight(name, migrateTarget);
+    } catch (err) {
+      toast.error('Preflight failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      migratePreflightLoading = false;
+    }
+  }
+
+  async function startMigration() {
+    migrateBusy = true;
+    try {
+      const m = await api.migrations.initiate(name, migrateTarget);
+      activeMigration = m;
+      showMigrate = false;
+      toast.success('Migration started', `${name} → ${migrateTarget}`);
+      pollMigration(m.id);
+    } catch (err) {
+      toast.error('Migration failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      migrateBusy = false;
+    }
+  }
+
+  function pollMigration(id: string) {
+    const iv = setInterval(async () => {
+      try {
+        const m = await api.migrations.get(name, id);
+        activeMigration = m;
+        if (['completed', 'failed', 'rolled_back'].includes(m.status)) {
+          clearInterval(iv);
+          if (m.status === 'completed') {
+            toast.success('Migration completed');
+            await load();
+          } else {
+            toast.error('Migration ' + m.status, m.error_message);
+          }
+        }
+      } catch {
+        clearInterval(iv);
+      }
+    }, 3000);
   }
 
   const stream = new EventStream({
@@ -222,6 +284,12 @@
           <Play class="w-4 h-4" />
           Deploy
         </Button>
+        {#if hosts.available.length > 1}
+          <Button variant="secondary" onclick={openMigrate} disabled={busy}>
+            <ArrowRightLeft class="w-4 h-4" />
+            Migrate
+          </Button>
+        {/if}
         <Button variant="secondary" onclick={stop} disabled={busy}>
           <Square class="w-4 h-4" />
           Stop
@@ -265,6 +333,27 @@
         <Button size="sm" variant="ghost" onclick={() => (externalChange = null)}>Ignore</Button>
       </div>
     </div>
+  {/if}
+
+  <!-- Active migration banner -->
+  {#if activeMigration && !activeMigration.completed_at}
+    <Card class="p-4 border-[var(--color-brand-500)]/30">
+      <div class="flex items-center gap-3">
+        <Loader2 class="w-5 h-5 text-[var(--color-brand-400)] animate-spin shrink-0" />
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-medium">
+            Migrating to {activeMigration.target_host_id}
+          </div>
+          <div class="text-xs text-[var(--fg-muted)]">
+            Phase: {activeMigration.phase ?? activeMigration.status}
+            {#if activeMigration.progress?.current_volume}
+              — Volume {activeMigration.progress.volume_index}/{activeMigration.progress.volumes_total}: {activeMigration.progress.current_volume}
+            {/if}
+          </div>
+        </div>
+        <Badge variant="info" dot>{activeMigration.status}</Badge>
+      </div>
+    </Card>
   {/if}
 
   <!-- Services -->
@@ -402,6 +491,75 @@
       onclick={doScale}
     >
       Scale to {scaleValue}
+    </Button>
+  {/snippet}
+</Modal>
+
+<!-- Migrate modal -->
+<Modal bind:open={showMigrate} title="Migrate {name}" maxWidth="max-w-lg">
+  <div class="space-y-4">
+    <div>
+      <label for="migrate-target" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Target host</label>
+      <select
+        id="migrate-target"
+        class="dm-input text-sm"
+        bind:value={migrateTarget}
+        onchange={() => { migratePreflight = null; if (migrateTarget) runPreflight(); }}
+      >
+        <option value="">Select a host…</option>
+        {#each hosts.available.filter(h => h.id !== hosts.id && h.id !== 'all') as h}
+          <option value={h.id} disabled={h.status !== 'online'}>{h.name} {h.status !== 'online' ? `(${h.status})` : ''}</option>
+        {/each}
+      </select>
+    </div>
+
+    {#if migratePreflightLoading}
+      <div class="flex items-center gap-2 text-sm text-[var(--fg-muted)]">
+        <Loader2 class="w-4 h-4 animate-spin" /> Running pre-flight checks…
+      </div>
+    {/if}
+
+    {#if migratePreflight}
+      <div class="space-y-1.5">
+        <div class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">Pre-flight checks</div>
+        {#each migratePreflight.checks as check}
+          <div class="flex items-center gap-2 text-xs">
+            {#if check.passed}
+              <CheckCircle2 class="w-3.5 h-3.5 text-[var(--color-success-400)] shrink-0" />
+            {:else}
+              <XCircle class="w-3.5 h-3.5 text-[var(--color-danger-400)] shrink-0" />
+            {/if}
+            <span class="font-medium">{check.name.replace(/_/g, ' ')}</span>
+            {#if check.detail}
+              <span class="text-[var(--fg-muted)] truncate">{check.detail}</span>
+            {/if}
+          </div>
+        {/each}
+      </div>
+
+      {#if !migratePreflight.passed}
+        <div class="p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] text-xs text-[var(--color-danger-400)]">
+          Pre-flight checks failed. Fix the issues above before migrating.
+        </div>
+      {/if}
+    {/if}
+
+    <p class="text-xs text-[var(--fg-muted)]">
+      The stack will be <strong>stopped</strong> on the current host during transfer (Safe Mode).
+      Downtime depends on volume size.
+    </p>
+  </div>
+
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (showMigrate = false)}>Cancel</Button>
+    <Button
+      variant="primary"
+      loading={migrateBusy}
+      disabled={migrateBusy || !migrateTarget || migratePreflightLoading || (migratePreflight && !migratePreflight.passed)}
+      onclick={startMigration}
+    >
+      <ArrowRightLeft class="w-4 h-4" />
+      Start migration
     </Button>
   {/snippet}
 </Modal>
