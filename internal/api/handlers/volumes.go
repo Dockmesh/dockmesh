@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
@@ -15,19 +16,12 @@ type volumeRequest struct {
 	Labels map[string]string `json:"labels,omitempty"`
 }
 
-// volumeRow is the all-mode row type for ListVolumes. The underlying
-// volume type is `any` per the Host interface contract (Docker's volume
-// list returns heterogeneous shapes), so we use json.RawMessage-like
-// passthrough via interface{} and let the encoder flatten naturally
-// via the Volume field as a named key. Unlike containers/images/networks
-// we cannot use struct embedding here because `any` has no fields to
-// embed; the frontend accesses volume data via `item.volume.*` in
-// all-mode responses.
-type volumeRow struct {
-	Volume   any    `json:"volume"`
-	HostID   string `json:"host_id"`
-	HostName string `json:"host_name"`
-}
+// volumeRow flattens the docker volume fields alongside host metadata
+// so the frontend sees Name, Driver, Scope, host_id, host_name at
+// the same level. We convert the `any` volume to a map and inject
+// the host fields — this avoids the nesting problem that struct
+// embedding can't solve for `any`.
+type volumeRow = map[string]any
 
 func (h *Handlers) ListVolumes(w http.ResponseWriter, r *http.Request) {
 	hostID := r.URL.Query().Get("host")
@@ -41,11 +35,10 @@ func (h *Handlers) ListVolumes(w http.ResponseWriter, r *http.Request) {
 			}
 			rows := make([]volumeRow, len(list))
 			for i, v := range list {
-				rows[i] = volumeRow{
-					Volume:   v,
-					HostID:   hh.ID(),
-					HostName: hh.Name(),
-				}
+				row := toMap(v)
+				row["host_id"] = hh.ID()
+				row["host_name"] = hh.Name()
+				rows[i] = row
 			}
 			return rows, nil
 		})
@@ -128,4 +121,13 @@ func (h *Handlers) PruneVolumes(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(r, audit.ActionVolumePrune, "", map[string]uint64{"space_reclaimed": report.SpaceReclaimed})
 	writeJSON(w, http.StatusOK, report)
+}
+
+// toMap converts an arbitrary struct to a map[string]any via JSON
+// round-trip. Used to flatten volume data alongside host metadata.
+func toMap(v any) map[string]any {
+	b, _ := json.Marshal(v)
+	m := make(map[string]any)
+	_ = json.Unmarshal(b, &m)
+	return m
 }
