@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/go-chi/chi/v5"
@@ -22,7 +23,7 @@ func (h *Handlers) ScanImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id := chi.URLParam(r, "id")
+	id, _ := url.PathUnescape(chi.URLParam(r, "id"))
 	// Resolve image id → repo:tag the scanner understands. Fall back to id.
 	ref := id
 	info, err := h.Docker.InspectImage(r.Context(), id)
@@ -57,7 +58,7 @@ func (h *Handlers) GetScan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
-	id := chi.URLParam(r, "id")
+	id, _ := url.PathUnescape(chi.URLParam(r, "id"))
 	ref := id
 	info, err := h.Docker.InspectImage(r.Context(), id)
 	if err == nil && len(info.RepoTags) > 0 {
