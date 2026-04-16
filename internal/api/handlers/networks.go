@@ -63,33 +63,17 @@ func (h *Handlers) ListNetworks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) InspectNetwork(w http.ResponseWriter, r *http.Request) {
-	// Inspect is single-host by definition — the id is scoped to one
-	// docker daemon. The frontend passes ?host=<id> when navigating from
-	// an all-mode list so we look up the network on the correct host.
 	target, err := h.pickHost(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	// host.Host doesn't expose InspectNetwork today — the read-only
-	// list is enough for P.6. Detail view falls back to local docker
-	// if the selected host is local; for remote hosts it surfaces the
-	// same NotFound error until we add InspectNetwork to the interface.
-	if target.ID() == "local" {
-		if h.Docker == nil {
-			writeError(w, http.StatusServiceUnavailable, "docker unavailable")
-			return
-		}
-		net, err := h.Docker.InspectNetwork(r.Context(), chi.URLParam(r, "id"))
-		if err != nil {
-			writeError(w, http.StatusNotFound, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, net)
+	net, err := target.InspectNetwork(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	// TODO(p.7): extend host.Host with InspectNetwork for remote hosts.
-	writeError(w, http.StatusNotImplemented, "network inspect on remote hosts is planned for P.7")
+	writeJSON(w, http.StatusOK, net)
 }
 
 func (h *Handlers) CreateNetwork(w http.ResponseWriter, r *http.Request) {

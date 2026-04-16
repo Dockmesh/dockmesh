@@ -42,8 +42,10 @@ const (
 	FrameReqImageList   = "req.images.list"
 	FrameReqImageRemove = "req.images.remove"
 	FrameReqImagePrune  = "req.images.prune"
-	FrameReqNetworkList = "req.networks.list"
-	FrameReqVolumeList  = "req.volumes.list"
+	FrameReqNetworkList    = "req.networks.list"
+	FrameReqNetworkInspect = "req.networks.inspect"
+	FrameReqVolumeList     = "req.volumes.list"
+	FrameReqVolumeInspect  = "req.volumes.inspect"
 	FrameReqDaemonInfo  = "req.daemon.info"
 
 	// Host-level system metrics (CPU / memory / disk / uptime) for the
@@ -152,6 +154,10 @@ type ContainerIDReq struct {
 type AgentUpgradeReq struct {
 	BinaryURL string `json:"binary_url"` // https://server/install/dockmesh-agent-linux-amd64
 	Version   string `json:"version"`    // expected version after upgrade
+}
+
+type ResourceIDReq struct {
+	ID string `json:"id"`
 }
 
 type ImageRemoveReq struct {

@@ -222,6 +222,19 @@ export interface Drain {
   created_at: string;
 }
 
+// Custom Roles (RBAC v2)
+export interface CustomRole {
+  name: string;
+  display: string;
+  builtin: boolean;
+  permissions: string[];
+}
+
+export interface PermissionInfo {
+  name: string;
+  description: string;
+}
+
 export interface SystemMetrics {
   cpu_percent: number;
   cpu_cores: number;
@@ -632,6 +645,24 @@ export const api = {
       request<void>(`/hosts/${encodeURIComponent(hostId)}/drain/${drainId}/resume`, { method: 'POST' }),
     abort: (hostId: string, drainId: string) =>
       request<void>(`/hosts/${encodeURIComponent(hostId)}/drain/${drainId}/abort`, { method: 'POST' })
+  },
+
+  roles: {
+    list: () => request<CustomRole[]>('/roles'),
+    get: (name: string) => request<CustomRole>(`/roles/${encodeURIComponent(name)}`),
+    permissions: () => request<PermissionInfo[]>('/roles/permissions'),
+    create: (role: { name: string; display: string; permissions: string[] }) =>
+      request<CustomRole>('/roles', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(role)
+      }),
+    update: (name: string, role: { display: string; permissions: string[] }) =>
+      request<CustomRole>(`/roles/${encodeURIComponent(name)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(role)
+      }),
+    delete: (name: string) =>
+      request<void>(`/roles/${encodeURIComponent(name)}`, { method: 'DELETE' })
   },
 
   hosts: {

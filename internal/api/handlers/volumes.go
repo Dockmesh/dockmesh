@@ -74,21 +74,12 @@ func (h *Handlers) InspectVolume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	if target.ID() == "local" {
-		if h.Docker == nil {
-			writeError(w, http.StatusServiceUnavailable, "docker unavailable")
-			return
-		}
-		vol, err := h.Docker.InspectVolume(r.Context(), chi.URLParam(r, "name"))
-		if err != nil {
-			writeError(w, http.StatusNotFound, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, vol)
+	vol, err := target.InspectVolume(r.Context(), chi.URLParam(r, "name"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	// TODO(p.7): extend host.Host with InspectVolume for remote hosts.
-	writeError(w, http.StatusNotImplemented, "volume inspect on remote hosts is planned for P.7")
+	writeJSON(w, http.StatusOK, vol)
 }
 
 func (h *Handlers) CreateVolume(w http.ResponseWriter, r *http.Request) {
