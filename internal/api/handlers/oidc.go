@@ -223,6 +223,19 @@ func (h *Handlers) DeleteOIDCProvider(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ReloadOIDCProviders flushes the OIDC provider cache so the next
+// login re-discovers every issuer from scratch. Useful when IdP
+// config changes without touching the Dockmesh DB rows.
+func (h *Handlers) ReloadOIDCProviders(w http.ResponseWriter, r *http.Request) {
+	if h.OIDC == nil {
+		writeError(w, http.StatusServiceUnavailable, "oidc not configured")
+		return
+	}
+	h.OIDC.ReloadAll()
+	h.audit(r, "oidc.reload", "", nil)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "reloaded"})
+}
+
 func encodeQuery(s string) string {
 	// Minimal encoder so we don't need net/url dep just for this helper.
 	return (&queryEscaper{s: s}).escape()

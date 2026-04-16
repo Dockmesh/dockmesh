@@ -180,6 +180,20 @@ func (h *LocalHost) ListImages(ctx context.Context, all bool) ([]dtypes.ImageSum
 	return h.cli.ListImages(ctx, all)
 }
 
+func (h *LocalHost) RemoveImage(ctx context.Context, id string, force bool) ([]dtypes.ImageDeleteResponseItem, error) {
+	if h.cli == nil {
+		return nil, ErrNoDocker
+	}
+	return h.cli.RemoveImage(ctx, id, force)
+}
+
+func (h *LocalHost) PruneImages(ctx context.Context) (dtypes.ImagesPruneReport, error) {
+	if h.cli == nil {
+		return dtypes.ImagesPruneReport{}, ErrNoDocker
+	}
+	return h.cli.PruneImages(ctx)
+}
+
 func (h *LocalHost) ListNetworks(ctx context.Context) ([]dtypes.NetworkResource, error) {
 	if h.cli == nil {
 		return nil, ErrNoDocker

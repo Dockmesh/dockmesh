@@ -38,8 +38,10 @@ const (
 	FrameReqContainerRestart = "req.containers.restart"
 	FrameReqContainerRemove  = "req.containers.remove"
 
-	// Resource listings (read-only, server → agent)
+	// Resource listings + mutations (server → agent)
 	FrameReqImageList   = "req.images.list"
+	FrameReqImageRemove = "req.images.remove"
+	FrameReqImagePrune  = "req.images.prune"
 	FrameReqNetworkList = "req.networks.list"
 	FrameReqVolumeList  = "req.volumes.list"
 	FrameReqDaemonInfo  = "req.daemon.info"
@@ -137,6 +139,11 @@ type ContainerListReq struct {
 }
 
 type ContainerIDReq struct {
+	ID    string `json:"id"`
+	Force bool   `json:"force,omitempty"`
+}
+
+type ImageRemoveReq struct {
 	ID    string `json:"id"`
 	Force bool   `json:"force,omitempty"`
 }

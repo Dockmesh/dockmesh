@@ -224,6 +224,15 @@ func (s *Service) DeleteProvider(ctx context.Context, id int64) error {
 	return err
 }
 
+// ReloadAll flushes the entire provider cache so the next login
+// re-discovers every issuer. Useful after changing provider config
+// at the IdP side without touching the Dockmesh row.
+func (s *Service) ReloadAll() {
+	s.mu.Lock()
+	s.cache = make(map[int64]*cachedProvider)
+	s.mu.Unlock()
+}
+
 func (s *Service) getProvider(ctx context.Context, id int64) (*Provider, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, slug, display_name, issuer_url, client_id, scopes,

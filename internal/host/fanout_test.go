@@ -65,6 +65,12 @@ func (f *fakeHost) StartExec(context.Context, string, []string) (ExecSession, er
 func (f *fakeHost) ListImages(context.Context, bool) ([]dtypes.ImageSummary, error) {
 	panic("no")
 }
+func (f *fakeHost) RemoveImage(context.Context, string, bool) ([]dtypes.ImageDeleteResponseItem, error) {
+	panic("no")
+}
+func (f *fakeHost) PruneImages(context.Context) (dtypes.ImagesPruneReport, error) {
+	panic("no")
+}
 func (f *fakeHost) ListNetworks(context.Context) ([]dtypes.NetworkResource, error) {
 	panic("no")
 }

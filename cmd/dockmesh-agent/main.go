@@ -45,6 +45,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/system"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/gorilla/websocket"
@@ -748,6 +749,16 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 	case agents.FrameReqImageList:
 		list, err := cli.ImageList(ctx, dtypes.ImageListOptions{All: false})
 		respond(conn, f.ID, list, err)
+
+	case agents.FrameReqImageRemove:
+		var req agents.ImageRemoveReq
+		_ = json.Unmarshal(f.Payload, &req)
+		deleted, err := cli.ImageRemove(ctx, req.ID, dtypes.ImageRemoveOptions{Force: req.Force, PruneChildren: true})
+		respond(conn, f.ID, deleted, err)
+
+	case agents.FrameReqImagePrune:
+		report, err := cli.ImagesPrune(ctx, filters.Args{})
+		respond(conn, f.ID, report, err)
 
 	case agents.FrameReqNetworkList:
 		list, err := cli.NetworkList(ctx, dtypes.NetworkListOptions{})
