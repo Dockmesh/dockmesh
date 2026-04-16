@@ -1,10 +1,10 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { api, ApiError, type Agent, type AgentCreateResult } from '$lib/api';
+  import { api, ApiError, type Agent, type AgentCreateResult, type DrainPlan } from '$lib/api';
   import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
-  import { Server, Plus, Trash2, RefreshCw, Copy, CheckCircle2 } from 'lucide-svelte';
+  import { Server, Plus, Trash2, RefreshCw, Copy, CheckCircle2, ArrowDownToLine } from 'lucide-svelte';
 
   let agents = $state<Agent[]>([]);
   let loading = $state(true);
@@ -19,6 +19,40 @@
   // avoids a custom getter/setter bind that the Svelte 5 parser chokes on.
   let createResult = $state<AgentCreateResult | null>(null);
   let showInstallModal = $state(false);
+
+  // Drain state (P.10)
+  let showDrain = $state(false);
+  let drainHostId = $state('');
+  let drainPlan = $state<DrainPlan | null>(null);
+  let drainLoading = $state(false);
+  let drainBusy = $state(false);
+
+  async function openDrain(hostId: string) {
+    drainHostId = hostId;
+    drainPlan = null;
+    drainLoading = true;
+    showDrain = true;
+    try {
+      drainPlan = await api.drains.plan(hostId);
+    } catch (err) {
+      toast.error('Plan failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      drainLoading = false;
+    }
+  }
+
+  async function executeDrain() {
+    drainBusy = true;
+    try {
+      const d = await api.drains.execute(drainHostId);
+      toast.success('Drain started', `${d.plan.length} stack(s) queued`);
+      showDrain = false;
+    } catch (err) {
+      toast.error('Drain failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      drainBusy = false;
+    }
+  }
 
   async function load() {
     loading = true;
@@ -151,6 +185,11 @@
                 · last seen {fmtTime(a.last_seen_at)}
               </div>
             </div>
+            {#if a.status === 'online'}
+              <Button size="xs" variant="ghost" onclick={() => openDrain(a.id)} aria-label="Drain host">
+                <ArrowDownToLine class="w-3.5 h-3.5 text-[var(--color-warning-400)]" />
+              </Button>
+            {/if}
             <Button size="xs" variant="ghost" onclick={() => del(a)} aria-label="Delete">
               <Trash2 class="w-3.5 h-3.5 text-[var(--color-danger-400)]" />
             </Button>
@@ -245,5 +284,74 @@
   {/if}
   {#snippet footer()}
     <Button variant="primary" onclick={() => (createResult = null)}>I've saved the token</Button>
+  {/snippet}
+</Modal>
+
+<!-- Drain modal -->
+<Modal bind:open={showDrain} title="Drain Host" maxWidth="max-w-xl">
+  <div class="space-y-4">
+    {#if drainLoading}
+      <div class="flex items-center gap-2 text-sm text-[var(--fg-muted)]">
+        <RefreshCw class="w-4 h-4 animate-spin" /> Generating drain plan…
+      </div>
+    {:else if drainPlan}
+      <p class="text-sm text-[var(--fg-muted)]">
+        Move all {drainPlan.entries.length} stack(s) from <strong>{drainPlan.source_name}</strong> to other hosts.
+        Stacks are migrated sequentially — the drain pauses on failure so you can decide how to proceed.
+      </p>
+
+      {#if drainPlan.entries.length === 0}
+        <div class="text-sm text-[var(--fg-muted)]">No stacks deployed on this host.</div>
+      {:else}
+        <div class="border border-[var(--border)] rounded-lg overflow-hidden">
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="bg-[var(--surface)] text-[var(--fg-muted)] uppercase tracking-wider">
+                <th class="text-left px-3 py-2">Stack</th>
+                <th class="text-left px-3 py-2">Target</th>
+                <th class="text-left px-3 py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[var(--border)]">
+              {#each drainPlan.entries as entry}
+                <tr>
+                  <td class="px-3 py-2 font-mono">{entry.stack_name}</td>
+                  <td class="px-3 py-2 font-mono">{entry.target_name || entry.target_host_id}</td>
+                  <td class="px-3 py-2">
+                    {#if entry.feasible}
+                      <Badge variant="success" dot>ready</Badge>
+                    {:else}
+                      <Badge variant="danger" dot>infeasible</Badge>
+                      {#if entry.detail}
+                        <div class="text-[10px] text-[var(--color-danger-400)] mt-0.5">{entry.detail}</div>
+                      {/if}
+                    {/if}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+
+        {#if !drainPlan.feasible}
+          <div class="text-xs text-[var(--color-danger-400)]">
+            Some stacks cannot be placed. Fix capacity issues before draining.
+          </div>
+        {/if}
+      {/if}
+    {/if}
+  </div>
+
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (showDrain = false)}>Cancel</Button>
+    <Button
+      variant="primary"
+      loading={drainBusy}
+      disabled={drainBusy || drainLoading || !drainPlan || drainPlan.entries.length === 0}
+      onclick={executeDrain}
+    >
+      <ArrowDownToLine class="w-4 h-4" />
+      Execute drain
+    </Button>
   {/snippet}
 </Modal>

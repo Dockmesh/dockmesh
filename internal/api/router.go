@@ -130,6 +130,17 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Get("/migrations/active", h.ListActiveMigrations)
 			})
 
+			// Drain host (P.10, admin-only)
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Post("/hosts/{id}/drain/plan", h.PlanDrain)
+				r.Post("/hosts/{id}/drain/execute", h.ExecuteDrain)
+				r.Get("/hosts/{id}/drain/{drain_id}", h.GetDrain)
+				r.Post("/hosts/{id}/drain/{drain_id}/pause", h.PauseDrain)
+				r.Post("/hosts/{id}/drain/{drain_id}/resume", h.ResumeDrain)
+				r.Post("/hosts/{id}/drain/{drain_id}/abort", h.AbortDrain)
+			})
+
 			// -------------------------- CONTAINER CONTROL --------------------
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermContainerControl))
