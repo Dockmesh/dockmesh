@@ -59,6 +59,7 @@ type Entry struct {
 	ID       int64     `json:"id"`
 	TS       time.Time `json:"ts"`
 	UserID   string    `json:"user_id,omitempty"`
+	Username string    `json:"username,omitempty"`
 	Action   string    `json:"action"`
 	Target   string    `json:"target,omitempty"`
 	Details  string    `json:"details,omitempty"`
@@ -191,15 +192,38 @@ func (s *Service) Write(ctx context.Context, userID, action, target string, deta
 }
 
 // List returns the most recent entries, newest first.
+// ListFilter controls audit log filtering.
+type ListFilter struct {
+	Limit  int
+	Action string // filter by action prefix
+	UserID string // filter by user_id
+}
+
 func (s *Service) List(ctx context.Context, limit int) ([]Entry, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 100
+	return s.ListFiltered(ctx, ListFilter{Limit: limit})
+}
+
+func (s *Service) ListFiltered(ctx context.Context, f ListFilter) ([]Entry, error) {
+	if f.Limit <= 0 || f.Limit > 1000 {
+		f.Limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, ts, user_id, action, target, details, prev_hash, row_hash
-		   FROM audit_log
-		  ORDER BY id DESC
-		  LIMIT ?`, limit)
+	query := `SELECT a.id, a.ts, a.user_id, COALESCE(u.username, ''), a.action, a.target, a.details, a.prev_hash, a.row_hash
+		FROM audit_log a
+		LEFT JOIN users u ON a.user_id = u.id
+		WHERE 1=1`
+	args := []any{}
+	if f.Action != "" {
+		query += ` AND a.action LIKE ?`
+		args = append(args, f.Action+"%")
+	}
+	if f.UserID != "" {
+		query += ` AND a.user_id = ?`
+		args = append(args, f.UserID)
+	}
+	query += ` ORDER BY a.id DESC LIMIT ?`
+	args = append(args, f.Limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -208,12 +232,15 @@ func (s *Service) List(ctx context.Context, limit int) ([]Entry, error) {
 	out := []Entry{}
 	for rows.Next() {
 		var e Entry
-		var userID, target, details, prev, row sql.NullString
-		if err := rows.Scan(&e.ID, &e.TS, &userID, &e.Action, &target, &details, &prev, &row); err != nil {
+		var userID, username, target, details, prev, row sql.NullString
+		if err := rows.Scan(&e.ID, &e.TS, &userID, &username, &e.Action, &target, &details, &prev, &row); err != nil {
 			return nil, err
 		}
 		if userID.Valid {
 			e.UserID = userID.String
+		}
+		if username.Valid {
+			e.Username = username.String
 		}
 		if target.Valid {
 			e.Target = target.String

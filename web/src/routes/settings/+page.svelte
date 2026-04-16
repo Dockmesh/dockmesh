@@ -386,6 +386,8 @@
   let auditEntries = $state<Array<any>>([]);
   let auditLoading = $state(false);
   let auditLimit = $state(100);
+  let auditActionFilter = $state('');
+  let auditSearch = $state('');
   let verifyResult = $state<null | {
     verified: number;
     broken: number;
@@ -415,13 +417,27 @@
   async function loadAudit() {
     auditLoading = true;
     try {
-      auditEntries = await api.audit.list(auditLimit);
+      auditEntries = await api.audit.list(auditLimit, auditActionFilter);
     } catch (err) {
       toast.error('Failed', err instanceof ApiError ? err.message : undefined);
     } finally {
       auditLoading = false;
     }
   }
+
+  // Unique action types for the filter dropdown
+  const auditActions = $derived([...new Set(auditEntries.map(e => e.action.split('.')[0]))].sort());
+
+  // Client-side text search over loaded entries
+  const filteredAudit = $derived(
+    auditEntries.filter(e => {
+      if (!auditSearch.trim()) return true;
+      const q = auditSearch.toLowerCase();
+      return (e.username ?? e.user_id ?? '').toLowerCase().includes(q)
+        || e.action.toLowerCase().includes(q)
+        || (e.target ?? '').toLowerCase().includes(q);
+    })
+  );
 
   function actionVariant(action: string): 'success' | 'warning' | 'danger' | 'info' | 'default' {
     if (action.includes('delete') || action.includes('remove') || action.includes('failed')) return 'danger';
@@ -631,21 +647,31 @@
     {/if}
   {:else if tab === 'audit'}
     <div class="flex items-center gap-3 flex-wrap">
-      <label class="text-sm flex items-center gap-2">
-        <span class="text-[var(--fg-muted)]">Limit</span>
-        <select class="dm-input !py-1 !px-2 !w-auto text-xs" bind:value={auditLimit} onchange={loadAudit}>
-          <option value={50}>50</option>
-          <option value={100}>100</option>
-          <option value={500}>500</option>
-          <option value={1000}>1000</option>
-        </select>
-      </label>
+      <div class="relative flex-1 min-w-[180px] max-w-xs">
+        <input type="search" placeholder="Search user, action, target…" bind:value={auditSearch} class="dm-input pl-3 pr-3 py-1.5 text-xs w-full" />
+      </div>
+      <select class="dm-input !py-1 !px-2 !w-auto text-xs" bind:value={auditActionFilter} onchange={loadAudit}>
+        <option value="">All actions</option>
+        <option value="auth">auth</option>
+        <option value="stack">stack</option>
+        <option value="container">container</option>
+        <option value="image">image</option>
+        <option value="user">user</option>
+        <option value="oidc">oidc</option>
+        <option value="network">network</option>
+        <option value="volume">volume</option>
+      </select>
+      <select class="dm-input !py-1 !px-2 !w-auto text-xs" bind:value={auditLimit} onchange={loadAudit}>
+        <option value={50}>50</option>
+        <option value={100}>100</option>
+        <option value={500}>500</option>
+      </select>
       <Button size="sm" variant="secondary" onclick={loadAudit}>Refresh</Button>
       <Button size="sm" variant="secondary" loading={verifying} onclick={runVerify}>
         <Link2 class="w-3.5 h-3.5" />
         Verify chain
       </Button>
-      <span class="text-xs text-[var(--fg-subtle)] ml-auto">{auditEntries.length} entries</span>
+      <span class="text-xs text-[var(--fg-subtle)] ml-auto">{filteredAudit.length} / {auditEntries.length}</span>
     </div>
 
     {#if verifyResult}
@@ -705,14 +731,14 @@
               </tr>
             </thead>
             <tbody class="divide-y divide-[var(--border)]">
-              {#each auditEntries as e}
+              {#each filteredAudit as e}
                 <tr class="hover:bg-[var(--surface-hover)]">
                   <td class="px-5 py-3 font-mono text-xs whitespace-nowrap text-[var(--fg-muted)]">{fmtTs(e.ts)}</td>
                   <td class="px-5 py-3">
                     <Badge variant={actionVariant(e.action)}>{e.action}</Badge>
                   </td>
                   <td class="px-5 py-3 font-mono text-xs truncate max-w-[200px]">{e.target ?? '—'}</td>
-                  <td class="px-5 py-3 font-mono text-xs text-[var(--fg-muted)]">{e.user_id?.slice(0, 8) ?? '—'}</td>
+                  <td class="px-5 py-3 text-xs">{e.username || e.user_id?.slice(0, 8) || '—'}</td>
                   <td class="px-5 py-3 font-mono text-xs text-[var(--fg-subtle)] truncate max-w-[300px]">{e.details ?? ''}</td>
                 </tr>
               {/each}

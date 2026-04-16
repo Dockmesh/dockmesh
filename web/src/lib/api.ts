@@ -833,10 +833,15 @@ export const api = {
   },
 
   audit: {
-    list: (limit = 100) =>
-      request<Array<{ id: number; ts: string; user_id?: string; action: string; target?: string; details?: string; prev_hash?: string; row_hash?: string }>>(
-        `/audit?limit=${limit}`
-      ),
+    list: (limit = 100, action = '', userId = '') => {
+      const params = new URLSearchParams();
+      params.set('limit', String(limit));
+      if (action) params.set('action', action);
+      if (userId) params.set('user_id', userId);
+      return request<Array<{ id: number; ts: string; user_id?: string; username?: string; action: string; target?: string; details?: string; prev_hash?: string; row_hash?: string }>>(
+        `/audit?${params}`
+      );
+    },
     verify: () =>
       request<{
         verified: number;

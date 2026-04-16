@@ -261,6 +261,26 @@
            is registered, a virtual "All hosts" entry sits at the top
            of the dropdown and fans out list pages across every online
            host simultaneously. -->
+      <!-- Collapsed host indicator: icon + colored dot so admin
+           keeps multi-host awareness even with the sidebar folded. -->
+      {#if hosts.available.length > 0 && sidebarCollapsed}
+        <div class="hidden md:flex flex-col items-center py-2 border-b border-[var(--border)]">
+          <button
+            class="p-1.5 rounded-md hover:bg-[var(--surface-hover)] relative"
+            title="{hosts.selected?.name ?? 'Local'} ({hosts.selected?.kind ?? 'local'})"
+            onclick={() => (sidebarCollapsed = false)}
+          >
+            {#if hosts.selected?.kind === 'all'}
+              <Layers class="w-4 h-4 text-[var(--color-brand-400)]" />
+            {:else if hosts.selected?.kind === 'agent'}
+              <Server class="w-4 h-4 text-[var(--color-brand-400)]" />
+            {:else}
+              <HardDrive class="w-4 h-4 text-[var(--fg-muted)]" />
+            {/if}
+            <span class="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full {hosts.isAll ? 'bg-[var(--color-brand-500)]' : hosts.selected?.status === 'online' ? 'bg-[var(--color-success-500)]' : 'bg-[var(--fg-subtle)]'}"></span>
+          </button>
+        </div>
+      {/if}
       {#if hosts.available.length > 0 && !sidebarCollapsed}
         <div class="px-3 pt-3 pb-2 border-b border-[var(--border)]">
           <div class="text-[10px] uppercase tracking-wider text-[var(--fg-subtle)] font-medium px-2 pb-1.5">
