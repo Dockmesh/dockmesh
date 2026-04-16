@@ -202,6 +202,38 @@ func (h *LocalHost) ListVolumes(ctx context.Context) ([]any, error) {
 	return out, nil
 }
 
+func (h *LocalHost) ScaleService(ctx context.Context, name, composeYAML, envContent, service string, replicas int) (*compose.ScaleResult, error) {
+	if h.cli == nil {
+		return nil, ErrNoDocker
+	}
+	dir, cleanup, err := writeStagingDir(name, composeYAML, envContent)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	proj, err := compose.LoadProject(ctx, dir, name, envContent)
+	if err != nil {
+		return nil, err
+	}
+	return compose.NewService(h.cli, nil).ScaleService(ctx, proj, service, replicas)
+}
+
+func (h *LocalHost) CheckScale(ctx context.Context, name, composeYAML, envContent, service string) (*compose.ScaleCheck, error) {
+	if h.cli == nil {
+		return nil, ErrNoDocker
+	}
+	dir, cleanup, err := writeStagingDir(name, composeYAML, envContent)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	proj, err := compose.LoadProject(ctx, dir, name, envContent)
+	if err != nil {
+		return nil, err
+	}
+	return compose.NewService(h.cli, nil).CheckScale(ctx, proj, service)
+}
+
 // SystemMetrics reads host-level CPU / memory / disk / uptime via the
 // system package. On Linux it reads /proc and statfs; on other platforms
 // (dev builds) the system package stub returns zero values so the

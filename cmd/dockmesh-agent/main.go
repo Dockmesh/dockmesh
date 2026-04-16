@@ -41,6 +41,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/system"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -640,6 +641,18 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		out, err := compose.NewService(dockerwrap.Wrap(cli), nil).Status(ctx, req.Name)
 		respond(conn, f.ID, out, err)
 
+	case agents.FrameReqStackScale:
+		var req agents.StackScaleReq
+		_ = json.Unmarshal(f.Payload, &req)
+		res, err := agentScaleService(ctx, cli, req)
+		respond(conn, f.ID, res, err)
+
+	case agents.FrameReqStackCheckScale:
+		var req agents.StackCheckScaleReq
+		_ = json.Unmarshal(f.Payload, &req)
+		res, err := agentCheckScale(ctx, cli, req)
+		respond(conn, f.ID, res, err)
+
 	case agents.FrameReqStackSync:
 		var req agents.StackSyncReq
 		_ = json.Unmarshal(f.Payload, &req)
@@ -686,6 +699,32 @@ func agentDeployStack(ctx context.Context, cli *client.Client, req agents.StackD
 		return nil, err
 	}
 	return compose.NewService(dockerwrap.Wrap(cli), nil).DeployProject(ctx, proj)
+}
+
+func agentScaleService(ctx context.Context, cli *client.Client, req agents.StackScaleReq) (*compose.ScaleResult, error) {
+	dir, cleanup, err := host.WriteStagingDir(req.Name, req.Compose, req.Env)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	proj, err := compose.LoadProject(ctx, dir, req.Name, req.Env)
+	if err != nil {
+		return nil, err
+	}
+	return compose.NewService(dockerwrap.Wrap(cli), nil).ScaleService(ctx, proj, req.Service, req.Replicas)
+}
+
+func agentCheckScale(ctx context.Context, cli *client.Client, req agents.StackCheckScaleReq) (*compose.ScaleCheck, error) {
+	dir, cleanup, err := host.WriteStagingDir(req.Name, req.Compose, req.Env)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	proj, err := compose.LoadProject(ctx, dir, req.Name, req.Env)
+	if err != nil {
+		return nil, err
+	}
+	return compose.NewService(dockerwrap.Wrap(cli), nil).CheckScale(ctx, proj, req.Service)
 }
 
 // stacksDir returns the persistent directory where the agent stores

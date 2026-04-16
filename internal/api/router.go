@@ -108,6 +108,14 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Use(middleware.RequirePerm(rbac.PermStackDeploy))
 				r.Post("/stacks/{name}/deploy", h.DeployStack)
 				r.Post("/stacks/{name}/stop", h.StopStack)
+				// Service scaling (P.8)
+				r.Get("/stacks/{name}/scale", h.ListServiceScale)
+				r.Get("/stacks/{name}/services/{service}/scale", h.GetScale)
+				r.Post("/stacks/{name}/services/{service}/scale", h.ScaleService)
+				// Auto-scaling rules (P.8)
+				r.Get("/stacks/{name}/scaling-rules", h.GetScalingRules)
+				r.Put("/stacks/{name}/scaling-rules", h.SetScalingRules)
+				r.Delete("/stacks/{name}/scaling-rules", h.DeleteScalingRules)
 			})
 
 			// -------------------------- CONTAINER CONTROL --------------------
