@@ -49,8 +49,10 @@ type Host interface {
 	// dimensions. Close terminates the session.
 	StartExec(ctx context.Context, id string, cmd []string) (ExecSession, error)
 
-	// Resource lists (read-only — full CRUD comes later)
+	// Resource lists + mutations
 	ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error)
+	RemoveImage(ctx context.Context, id string, force bool) ([]dtypes.ImageDeleteResponseItem, error)
+	PruneImages(ctx context.Context) (dtypes.ImagesPruneReport, error)
 	ListNetworks(ctx context.Context) ([]dtypes.NetworkResource, error)
 	ListVolumes(ctx context.Context) ([]any, error)
 

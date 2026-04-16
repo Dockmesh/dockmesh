@@ -4,12 +4,14 @@
   import {
     api,
     ApiError,
+    isFanOut,
     type Topology,
     type TopoNetwork,
     type TopoContainer
   } from '$lib/api';
   import { Card, Button, Skeleton, EmptyState, Badge } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { hosts } from '$lib/stores/host.svelte';
   import { EventStream, type ConnStatus } from '$lib/events';
   import {
     Network as NetworkIcon,
@@ -19,10 +21,71 @@
     Search,
     ZoomIn,
     ZoomOut,
-    Maximize2
+    Maximize2,
+    List,
+    GitBranch,
+    Server
   } from 'lucide-svelte';
 
-  // ---------- data ----------
+  // ---------- tabs ----------
+  type Tab = 'list' | 'topology';
+  let tab = $state<Tab>('list');
+
+  // ---------- list tab data ----------
+  interface NetworkRow {
+    Name: string;
+    Id: string;
+    Driver: string;
+    Scope: string;
+    IPAM?: { Config?: Array<{ Subnet?: string }> };
+    Containers?: Record<string, any>;
+    host_id?: string;
+    host_name?: string;
+  }
+  let networkList = $state<NetworkRow[]>([]);
+  let listLoading = $state(false);
+  let listSearch = $state('');
+
+  async function loadList() {
+    listLoading = true;
+    try {
+      const raw = await api.networks.list(hosts.id);
+      if (isFanOut(raw)) {
+        networkList = raw.items as NetworkRow[];
+      } else {
+        networkList = (raw as any[]) as NetworkRow[];
+      }
+    } catch (err) {
+      toast.error('Failed to load networks', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      listLoading = false;
+    }
+  }
+
+  const visibleNetworks = $derived(
+    networkList.filter((n) => {
+      if (!listSearch.trim()) return true;
+      const q = listSearch.toLowerCase();
+      return n.Name.toLowerCase().includes(q) || n.Driver.toLowerCase().includes(q);
+    })
+  );
+
+  function containerCount(n: NetworkRow): number {
+    return n.Containers ? Object.keys(n.Containers).length : 0;
+  }
+
+  function subnet(n: NetworkRow): string {
+    return n.IPAM?.Config?.[0]?.Subnet ?? '—';
+  }
+
+  $effect(() => {
+    if (tab === 'list') {
+      hosts.id; // re-load on host switch
+      loadList();
+    }
+  });
+
+  // ---------- topology tab data ----------
   let topo = $state<Topology | null>(null);
   let loading = $state(true);
   let showSystem = $state(false);
@@ -522,8 +585,91 @@
 <section class="space-y-4">
   <div class="flex items-center justify-between flex-wrap gap-3">
     <div>
-      <h2 class="text-2xl font-semibold tracking-tight flex items-center gap-2">
-        Network topology
+      <h2 class="text-2xl font-semibold tracking-tight">Networks</h2>
+      <p class="text-sm text-[var(--fg-muted)] mt-0.5">Docker networks and topology visualization.</p>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="border-b border-[var(--border)] flex gap-1">
+    <button
+      class="px-4 py-2.5 text-sm border-b-2 transition-colors flex items-center gap-2
+             {tab === 'list' ? 'border-[var(--color-brand-500)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}"
+      onclick={() => (tab = 'list')}
+    >
+      <List class="w-3.5 h-3.5" /> List
+    </button>
+    <button
+      class="px-4 py-2.5 text-sm border-b-2 transition-colors flex items-center gap-2
+             {tab === 'topology' ? 'border-[var(--color-brand-500)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}"
+      onclick={() => (tab = 'topology')}
+    >
+      <GitBranch class="w-3.5 h-3.5" /> Topology
+    </button>
+  </div>
+
+  <!-- List tab -->
+  {#if tab === 'list'}
+    {#if !listLoading && networkList.length > 0}
+      <div class="relative max-w-sm">
+        <Search class="w-3.5 h-3.5 text-[var(--fg-subtle)] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <input type="search" placeholder="Search networks…" bind:value={listSearch} class="dm-input pl-8 pr-3 py-1.5 text-sm w-full" />
+      </div>
+    {/if}
+
+    {#if listLoading}
+      <Card><Skeleton class="m-5" width="80%" height="6rem" /></Card>
+    {:else if networkList.length === 0}
+      <Card>
+        <EmptyState icon={NetworkIcon} title="No networks" description="Docker networks will appear here." />
+      </Card>
+    {:else}
+      <Card>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-[var(--border)] text-[var(--fg-muted)] text-xs uppercase tracking-wider">
+                <th class="text-left px-5 py-3">Name</th>
+                <th class="text-left px-3 py-3">Driver</th>
+                <th class="text-left px-3 py-3">Scope</th>
+                <th class="text-left px-3 py-3">Subnet</th>
+                <th class="text-right px-3 py-3">Containers</th>
+                {#if hosts.isAll}
+                  <th class="text-left px-3 py-3">Host</th>
+                {/if}
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[var(--border)]">
+              {#each visibleNetworks as n}
+                <tr class="hover:bg-[var(--surface-hover)]">
+                  <td class="px-5 py-3 font-mono text-sm truncate max-w-[250px]" title={n.Name}>{n.Name}</td>
+                  <td class="px-3 py-3 text-xs text-[var(--fg-muted)]">{n.Driver}</td>
+                  <td class="px-3 py-3"><Badge variant="default">{n.Scope}</Badge></td>
+                  <td class="px-3 py-3 font-mono text-xs text-[var(--fg-muted)]">{subnet(n)}</td>
+                  <td class="px-3 py-3 text-right tabular-nums">{containerCount(n)}</td>
+                  {#if hosts.isAll}
+                    <td class="px-3 py-3">
+                      <span class="inline-flex items-center gap-1 font-mono text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)]">
+                        <Server class="w-2.5 h-2.5" />
+                        {n.host_name || n.host_id || 'local'}
+                      </span>
+                    </td>
+                  {/if}
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    {/if}
+  {/if}
+
+  <!-- Topology tab -->
+  {#if tab === 'topology'}
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div>
+      <h3 class="text-lg font-semibold tracking-tight flex items-center gap-2">
+        Topology
         {#if live}
           <span class="inline-flex items-center gap-1 text-xs text-[var(--color-success-400)] font-normal">
             <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-success-500)] animate-pulse"></span>live
@@ -533,9 +679,9 @@
             <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-warning-500)] animate-pulse"></span>reconnecting…
           </span>
         {/if}
-      </h2>
+      </h3>
       <p class="text-sm text-[var(--fg-muted)] mt-0.5">
-        Hierarchical layout via dagre — deterministic, no overlaps. Drag to pan, scroll to zoom.
+        Hierarchical layout via dagre. Drag to pan, scroll to zoom.
       </p>
     </div>
     <div class="flex items-center gap-2 flex-wrap">
@@ -893,5 +1039,6 @@
         {/if}
       </Card>
     </div>
+  {/if}
   {/if}
 </section>

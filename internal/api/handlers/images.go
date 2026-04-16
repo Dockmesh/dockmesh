@@ -106,31 +106,36 @@ func (h *Handlers) PullImage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) RemoveImage(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	id := chi.URLParam(r, "id")
 	force := r.URL.Query().Get("force") == "true"
-	deleted, err := h.Docker.RemoveImage(r.Context(), id, force)
+	deleted, err := target.RemoveImage(r.Context(), id, force)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionImageRemove, id, nil)
+	h.audit(r, audit.ActionImageRemove, id, map[string]string{"host": target.ID()})
 	writeJSON(w, http.StatusOK, deleted)
 }
 
 func (h *Handlers) PruneImages(w http.ResponseWriter, r *http.Request) {
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	report, err := h.Docker.PruneImages(r.Context())
+	report, err := target.PruneImages(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionImagePrune, "", map[string]int64{"space_reclaimed": int64(report.SpaceReclaimed)})
+	h.audit(r, audit.ActionImagePrune, "", map[string]any{
+		"space_reclaimed": int64(report.SpaceReclaimed),
+		"host":            target.ID(),
+	})
 	writeJSON(w, http.StatusOK, report)
 }

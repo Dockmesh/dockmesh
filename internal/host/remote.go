@@ -253,6 +253,30 @@ func (h *RemoteHost) SystemMetrics(ctx context.Context) (system.Metrics, error) 
 	return out, nil
 }
 
+func (h *RemoteHost) RemoveImage(ctx context.Context, id string, force bool) ([]dtypes.ImageDeleteResponseItem, error) {
+	data, err := h.request(ctx, agents.FrameReqImageRemove, agents.ImageRemoveReq{ID: id, Force: force})
+	if err != nil {
+		return nil, err
+	}
+	var out []dtypes.ImageDeleteResponseItem
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode image remove: %w", err)
+	}
+	return out, nil
+}
+
+func (h *RemoteHost) PruneImages(ctx context.Context) (dtypes.ImagesPruneReport, error) {
+	data, err := h.request(ctx, agents.FrameReqImagePrune, nil)
+	if err != nil {
+		return dtypes.ImagesPruneReport{}, err
+	}
+	var out dtypes.ImagesPruneReport
+	if err := json.Unmarshal(data, &out); err != nil {
+		return dtypes.ImagesPruneReport{}, fmt.Errorf("decode image prune: %w", err)
+	}
+	return out, nil
+}
+
 func (h *RemoteHost) ScaleService(ctx context.Context, name, composeYAML, envContent, service string, replicas int) (*compose.ScaleResult, error) {
 	data, err := h.request(ctx, agents.FrameReqStackScale, agents.StackScaleReq{
 		Name: name, Compose: composeYAML, Env: envContent,
