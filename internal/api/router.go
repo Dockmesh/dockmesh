@@ -116,6 +116,16 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Get("/stacks/{name}/scaling-rules", h.GetScalingRules)
 				r.Put("/stacks/{name}/scaling-rules", h.SetScalingRules)
 				r.Delete("/stacks/{name}/scaling-rules", h.DeleteScalingRules)
+				// Migration (P.9)
+				r.Post("/stacks/{name}/migrate", h.InitiateMigration)
+				r.Get("/stacks/{name}/migrate/{id}", h.GetMigration)
+				r.Post("/stacks/{name}/migrate/{id}/rollback", h.RollbackMigration)
+			})
+
+			// Migrations global list (read-only, any authenticated user)
+			r.Group(func(r chi.Router) {
+				r.Get("/migrations", h.ListMigrations)
+				r.Get("/migrations/active", h.ListActiveMigrations)
 			})
 
 			// -------------------------- CONTAINER CONTROL --------------------
