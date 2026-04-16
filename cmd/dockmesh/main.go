@@ -31,6 +31,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/metrics"
+	"github.com/dockmesh/dockmesh/internal/migration"
 	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/oidc"
 	"github.com/dockmesh/dockmesh/internal/pki"
@@ -229,6 +230,10 @@ func main() {
 	hostRegistry := host.NewRegistry(dockerCli, agentsSvc)
 
 	deployStore := stacks.NewDeploymentStore(database)
+	migrationSvc := migration.NewService(database, hostRegistry, stacksMgr, deployStore)
+	if err := migrationSvc.Start(ctx); err != nil {
+		slog.Warn("migration service start", "err", err)
+	}
 
 	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
 	h := handlers.New(handlers.Deps{
@@ -249,6 +254,7 @@ func main() {
 		Notify:       notifySvc,
 		Alerts:       alertsSvc,
 		Backups:      backupSvc,
+		Migrations:   migrationSvc,
 		Agents:       agentsSvc,
 		Hosts:        hostRegistry,
 		JWTSecret:    cfg.JWTSecret,
