@@ -180,6 +180,7 @@
         {
           title: 'Automation',
           items: [
+            { href: '/environment', label: 'Environment', icon: Box, show: allowed('user.manage') },
             { href: '/alerts', label: 'Alerts', icon: Bell, show: allowed('user.manage') },
             { href: '/backups', label: 'Backups', icon: Archive, show: allowed('user.manage') }
           ]

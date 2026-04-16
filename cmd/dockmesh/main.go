@@ -30,6 +30,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/globalenv"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/metrics"
 	"github.com/dockmesh/dockmesh/internal/migration"
@@ -39,6 +40,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/scaling"
+	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
@@ -231,6 +233,14 @@ func main() {
 	agentsSvc := agents.NewService(database, pkiMgr, cfg.BaseURL, agentPublic)
 	hostRegistry := host.NewRegistry(dockerCli, agentsSvc)
 
+	// DB-backed system settings — reads from DB, falls back to env vars.
+	settingsStore := settings.NewStore(database)
+	if err := settingsStore.Load(ctx); err != nil {
+		slog.Warn("settings store load", "err", err)
+	}
+
+	globalEnvStore := globalenv.NewStore(database)
+
 	// RBAC v2: DB-backed custom roles with in-memory cache.
 	rolesStore := rbac.NewStore(database)
 	if err := rolesStore.Load(ctx); err != nil {
@@ -270,6 +280,8 @@ func main() {
 		Agents:       agentsSvc,
 		Hosts:        hostRegistry,
 		Roles:        rolesStore,
+		Settings:     settingsStore,
+		GlobalEnv:    globalEnvStore,
 		JWTSecret:    cfg.JWTSecret,
 	})
 	router := api.NewRouter(h, authSvc, webFS)

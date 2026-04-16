@@ -58,10 +58,36 @@
     return `${v.toFixed(1)} ${u[i]}`;
   }
 
-  // --- System tab: instance info ---
+  // --- System tab: instance info + settings ---
   let systemInfo = $state<{ version: string; commit: string; build_date: string; go_version: string; os: string; arch: string; uptime_seconds: number } | null>(null);
+  let sysSettings = $state<Map<string, string>>(new Map());
+  let settingsBusy = $state(false);
   async function loadSystemInfo() {
     try { systemInfo = await api.system.info(); } catch { /* ignore */ }
+    try {
+      const list = await api.system.settings();
+      const m = new Map<string, string>();
+      for (const e of list) m.set(e.key, e.value);
+      sysSettings = m;
+    } catch { /* ignore */ }
+  }
+  function getSetting(key: string): string { return sysSettings.get(key) ?? ''; }
+  function setSetting(key: string, value: string) {
+    const next = new Map(sysSettings);
+    next.set(key, value);
+    sysSettings = next;
+  }
+  async function saveSettings() {
+    settingsBusy = true;
+    try {
+      const entries = [...sysSettings.entries()].map(([key, value]) => ({ key, value }));
+      await api.system.updateSettings(entries);
+      toast.success('Settings saved');
+    } catch (err) {
+      toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      settingsBusy = false;
+    }
   }
   function fmtUptime(secs?: number): string {
     if (!secs) return '—';
@@ -894,6 +920,54 @@
         </div>
       </Card>
     {/if}
+
+    <!-- Runtime settings -->
+    <Card class="p-5">
+      <h3 class="font-semibold text-sm uppercase tracking-wider text-[var(--fg-muted)] mb-4">Configuration</h3>
+      <div class="space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-sm font-medium">Reverse Proxy (Caddy)</div>
+            <p class="text-xs text-[var(--fg-muted)]">Enable the embedded Caddy reverse proxy for automatic HTTPS.</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" class="sr-only peer"
+              checked={getSetting('proxy_enabled') === 'true'}
+              onchange={(e) => setSetting('proxy_enabled', (e.target as HTMLInputElement).checked ? 'true' : 'false')} />
+            <div class="w-11 h-6 bg-[var(--surface)] border border-[var(--border)] rounded-full peer-checked:bg-[var(--color-brand-500)] peer-checked:border-[var(--color-brand-500)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-transform peer-checked:after:translate-x-5"></div>
+          </label>
+        </div>
+        <div class="border-t border-[var(--border)]"></div>
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-sm font-medium">Vulnerability Scanner (Grype)</div>
+            <p class="text-xs text-[var(--fg-muted)]">Enable CVE scanning for Docker images.</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" class="sr-only peer"
+              checked={getSetting('scanner_enabled') === 'true'}
+              onchange={(e) => setSetting('scanner_enabled', (e.target as HTMLInputElement).checked ? 'true' : 'false')} />
+            <div class="w-11 h-6 bg-[var(--surface)] border border-[var(--border)] rounded-full peer-checked:bg-[var(--color-brand-500)] peer-checked:border-[var(--color-brand-500)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-transform peer-checked:after:translate-x-5"></div>
+          </label>
+        </div>
+        <div class="border-t border-[var(--border)]"></div>
+        <div>
+          <label for="base-url" class="text-sm font-medium">Base URL</label>
+          <p class="text-xs text-[var(--fg-muted)] mb-1.5">Used for OIDC callbacks and agent enrollment links.</p>
+          <input id="base-url" type="text" class="dm-input text-sm" placeholder="https://dockmesh.example.com"
+            value={getSetting('base_url')} onchange={(e) => setSetting('base_url', (e.target as HTMLInputElement).value)} />
+        </div>
+        <div>
+          <label for="agent-url" class="text-sm font-medium">Agent Public URL</label>
+          <p class="text-xs text-[var(--fg-muted)] mb-1.5">The wss:// URL agents use to connect. Leave empty to auto-derive from base URL.</p>
+          <input id="agent-url" type="text" class="dm-input text-sm" placeholder="wss://dockmesh.example.com:8443/connect"
+            value={getSetting('agent_public_url')} onchange={(e) => setSetting('agent_public_url', (e.target as HTMLInputElement).value)} />
+        </div>
+        <div class="flex justify-end">
+          <Button variant="primary" size="sm" loading={settingsBusy} onclick={saveSettings}>Save settings</Button>
+        </div>
+      </div>
+    </Card>
 
     <!-- Automated backups -->
     <Card class="p-5">

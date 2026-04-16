@@ -824,6 +824,12 @@ export const api = {
     // Default-system-backup status for the sidebar pill + settings.
     backupStatus: () => request<BackupStatus>('/system/backup-status'),
     info: () => request<{ version: string; commit: string; build_date: string; go_version: string; os: string; arch: string; uptime_seconds: number }>('/system/info'),
+    settings: () => request<Array<{ key: string; value: string }>>('/settings'),
+    updateSettings: (entries: Array<{ key: string; value: string }>) =>
+      request<Array<{ key: string; value: string }>>('/settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(entries)
+      }),
     // Toggle the auto-created daily system backup job.
     setBackupEnabled: (enabled: boolean) =>
       request<BackupStatus>('/backups/system/enabled', {
