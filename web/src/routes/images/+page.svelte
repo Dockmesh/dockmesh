@@ -351,7 +351,7 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-[var(--border)]">
-            {#each visible as img (img.Id)}
+            {#each visible as img (img.Id + (img.host_id ?? ''))}
               {@const used = isUsed(img)}
               <tr class="hover:bg-[var(--surface-hover)] transition-colors {selected.has(img.Id) ? 'bg-[color-mix(in_srgb,var(--color-brand-500)_5%,transparent)]' : ''}">
                 {#if canWrite}
