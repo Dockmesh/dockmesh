@@ -107,6 +107,22 @@ export interface BackupStatus {
   age_seconds?: number;
 }
 
+// StackDeployment tracks which host a stack is deployed on (P.7).
+export interface StackDeployment {
+  stack_name: string;
+  host_id: string;
+  host_name?: string;
+  status: 'deployed' | 'stopped' | 'migrating' | 'migrated_away';
+  deployed_at: string;
+  updated_at: string;
+}
+
+export interface StackListEntry {
+  name: string;
+  compose_path: string;
+  deployment?: StackDeployment;
+}
+
 export interface SystemMetrics {
   cpu_percent: number;
   cpu_cores: number;
@@ -432,7 +448,7 @@ export const api = {
   },
 
   stacks: {
-    list: () => request<Array<{ name: string; compose_path: string }>>('/stacks'),
+    list: () => request<StackListEntry[]>('/stacks'),
     get: (name: string) => request<{ name: string; compose: string; env: string }>(`/stacks/${encodeURIComponent(name)}`),
     create: (name: string, compose: string, env?: string) =>
       request<{ name: string }>('/stacks', { method: 'POST', body: JSON.stringify({ name, compose, env }) }),

@@ -57,6 +57,13 @@ const (
 	FrameReqStackStop   = "req.stack.stop"
 	FrameReqStackStatus = "req.stack.status"
 
+	// Compose-file mirroring (P.7) — server pushes the canonical
+	// compose+env content to the agent after a successful deploy so
+	// each agent retains a local copy in case the main server is lost.
+	// stack.delete removes the local copy when the stack is torn down.
+	FrameReqStackSync   = "req.stack.sync"
+	FrameReqStackDelete = "req.stack.delete"
+
 	// Single response type. Errors set OK=false and put the message in Error.
 	FrameRes = "res"
 
@@ -135,6 +142,15 @@ type StackDeployReq struct {
 
 type StackNameReq struct {
 	Name string `json:"name"`
+}
+
+// StackSyncReq carries the full compose + env + optional meta for
+// local storage on the agent. Used by compose-file mirroring (P.7).
+type StackSyncReq struct {
+	Name    string `json:"name"`
+	Compose string `json:"compose"`
+	Env     string `json:"env,omitempty"`
+	Meta    string `json:"meta,omitempty"` // .dockmesh.meta.json content
 }
 
 // HelloPayload is what the agent sends as soon as the WS opens. It tells

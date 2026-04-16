@@ -640,6 +640,18 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		out, err := compose.NewService(dockerwrap.Wrap(cli), nil).Status(ctx, req.Name)
 		respond(conn, f.ID, out, err)
 
+	case agents.FrameReqStackSync:
+		var req agents.StackSyncReq
+		_ = json.Unmarshal(f.Payload, &req)
+		err := agentSyncStack(req)
+		respond(conn, f.ID, struct{}{}, err)
+
+	case agents.FrameReqStackDelete:
+		var req agents.StackNameReq
+		_ = json.Unmarshal(f.Payload, &req)
+		err := agentDeleteStack(req.Name)
+		respond(conn, f.ID, struct{}{}, err)
+
 	default:
 		sendResponse(conn, f.ID, agents.ResponseEnvelope{OK: false, Error: "unknown request type: " + f.Type})
 	}
@@ -674,6 +686,50 @@ func agentDeployStack(ctx context.Context, cli *client.Client, req agents.StackD
 		return nil, err
 	}
 	return compose.NewService(dockerwrap.Wrap(cli), nil).DeployProject(ctx, proj)
+}
+
+// stacksDir returns the persistent directory where the agent stores
+// mirrored compose files — <dataDir>/stacks/<name>/. Created with 0750
+// so the dockmesh-agent user can read/write and docker group can read.
+func stacksDir(name string) string {
+	return filepath.Join(envOr("DOCKMESH_DATA_DIR", "/var/lib/dockmesh"), "stacks", name)
+}
+
+// agentSyncStack writes the compose+env+meta files to the agent's local
+// stacks directory so the agent can survive a server loss. Called after
+// every successful deploy/update (P.7 compose-file mirroring).
+func agentSyncStack(req agents.StackSyncReq) error {
+	dir := stacksDir(req.Name)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return fmt.Errorf("sync mkdir: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(req.Compose), 0o640); err != nil {
+		return fmt.Errorf("sync compose.yaml: %w", err)
+	}
+	if req.Env != "" {
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(req.Env), 0o640); err != nil {
+			return fmt.Errorf("sync .env: %w", err)
+		}
+	} else {
+		// Remove stale .env if the stack no longer has one.
+		_ = os.Remove(filepath.Join(dir, ".env"))
+	}
+	if req.Meta != "" {
+		if err := os.WriteFile(filepath.Join(dir, ".dockmesh.meta.json"), []byte(req.Meta), 0o640); err != nil {
+			return fmt.Errorf("sync meta: %w", err)
+		}
+	}
+	return nil
+}
+
+// agentDeleteStack removes the agent's local copy of a stack's compose
+// files. Called when the server deletes a stack (P.7).
+func agentDeleteStack(name string) error {
+	dir := stacksDir(name)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return nil // already gone
+	}
+	return os.RemoveAll(dir)
 }
 
 func respond(conn *websocket.Conn, id string, data any, err error) {
