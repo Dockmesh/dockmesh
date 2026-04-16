@@ -11,6 +11,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/migration"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/compose"
@@ -47,6 +48,7 @@ type Handlers struct {
 	Drains       *migration.DrainService
 	Agents       *agents.Service
 	Hosts        *host.Registry
+	Roles        *rbac.Store
 	JWTSecret    []byte // raw secret used to sign the short-lived OIDC state cookie
 }
 
@@ -72,6 +74,7 @@ type Deps struct {
 	Drains       *migration.DrainService
 	Agents       *agents.Service
 	Hosts        *host.Registry
+	Roles        *rbac.Store
 	JWTSecret    []byte
 }
 
@@ -98,6 +101,7 @@ func New(d Deps) *Handlers {
 		Drains:      d.Drains,
 		Agents:      d.Agents,
 		Hosts:       d.Hosts,
+		Roles:       d.Roles,
 		JWTSecret:   d.JWTSecret,
 	}
 }

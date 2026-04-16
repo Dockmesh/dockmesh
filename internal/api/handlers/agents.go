@@ -1,11 +1,14 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
+	"runtime"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/pkg/version"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -81,6 +84,68 @@ func (h *Handlers) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(r, audit.ActionStackDelete, "agent:"+id, nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// UpgradeAgent pushes a self-upgrade request to a connected agent.
+// The agent downloads the new binary from the server's /install/ endpoint
+// and restarts via systemd.
+//
+//	POST /api/v1/agents/{id}/upgrade
+func (h *Handlers) UpgradeAgent(w http.ResponseWriter, r *http.Request) {
+	if h.Agents == nil {
+		writeError(w, http.StatusServiceUnavailable, "agents not configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	ag := h.Agents.GetConnected(id)
+	if ag == nil {
+		writeError(w, http.StatusServiceUnavailable, "agent not connected")
+		return
+	}
+
+	// Determine the correct binary for the agent's architecture.
+	// The agent's arch comes from the hello payload.
+	agent, err := h.Agents.Get(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	arch := agent.Arch
+	if arch == "" {
+		arch = runtime.GOARCH
+	}
+	binaryName := "dockmesh-agent-linux-" + arch
+
+	// Build the download URL from the server's base URL.
+	baseURL := h.Agents.PublicURL()
+	binaryURL := baseURL + "/install/" + binaryName
+
+	req := agents.AgentUpgradeReq{
+		BinaryURL: binaryURL,
+		Version:   version.Version,
+	}
+	payload, _ := json.Marshal(req)
+	resp, err := ag.Request(r.Context(), agents.Frame{
+		Type:    agents.FrameReqAgentUpgrade,
+		Payload: payload,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !resp.OK {
+		writeError(w, http.StatusInternalServerError, resp.Error)
+		return
+	}
+	h.audit(r, audit.ActionStackDeploy, id, map[string]any{
+		"action":  "agent-upgrade",
+		"version": version.Version,
+		"binary":  binaryName,
+	})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "upgrading",
+		"version": version.Version,
+	})
 }
 
 // EnrollAgent is the public endpoint the agent binary calls during its

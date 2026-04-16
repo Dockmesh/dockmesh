@@ -59,6 +59,11 @@ const (
 	FrameReqStackStop   = "req.stack.stop"
 	FrameReqStackStatus = "req.stack.status"
 
+	// Agent self-upgrade (Polish). Server pushes a download URL and
+	// expected version; agent downloads, replaces its own binary, and
+	// restarts the systemd service.
+	FrameReqAgentUpgrade = "req.agent.upgrade"
+
 	// Service scaling (P.8) — manual replica count adjustment.
 	FrameReqStackScale      = "req.stack.scale"
 	FrameReqStackCheckScale = "req.stack.check_scale"
@@ -141,6 +146,12 @@ type ContainerListReq struct {
 type ContainerIDReq struct {
 	ID    string `json:"id"`
 	Force bool   `json:"force,omitempty"`
+}
+
+// AgentUpgradeReq tells the agent to download a new binary and restart.
+type AgentUpgradeReq struct {
+	BinaryURL string `json:"binary_url"` // https://server/install/dockmesh-agent-linux-amd64
+	Version   string `json:"version"`    // expected version after upgrade
 }
 
 type ImageRemoveReq struct {

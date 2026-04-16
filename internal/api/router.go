@@ -130,6 +130,17 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Get("/migrations/active", h.ListActiveMigrations)
 			})
 
+			// Roles RBAC v2 (admin-only)
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Get("/roles", h.ListRoles)
+				r.Get("/roles/permissions", h.AllPermissions)
+				r.Get("/roles/{name}", h.GetRole)
+				r.Post("/roles", h.CreateRole)
+				r.Put("/roles/{name}", h.UpdateRole)
+				r.Delete("/roles/{name}", h.DeleteRole)
+			})
+
 			// Drain host (P.10, admin-only)
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermUserManage))
@@ -234,6 +245,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Post("/agents", h.CreateAgent)
 				r.Get("/agents/{id}", h.GetAgent)
 				r.Delete("/agents/{id}", h.DeleteAgent)
+				r.Post("/agents/{id}/upgrade", h.UpgradeAgent)
 			})
 
 			// -------------------------- BACKUPS (admin) -----------------------

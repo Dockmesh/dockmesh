@@ -70,12 +70,23 @@ func RequireRole(allowed ...string) func(http.Handler) http.Handler {
 	}
 }
 
+// RBACStore is set by main.go at startup so the middleware can use
+// DB-backed custom roles. If nil, falls back to hardcoded builtins.
+var RBACStore *rbac.Store
+
 // RequirePerm returns middleware that rejects requests whose user role
 // is not granted the given permission. Must be chained after NewAuth.
 func RequirePerm(perm rbac.Perm) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !rbac.Allowed(Role(r.Context()), perm) {
+			role := Role(r.Context())
+			allowed := false
+			if RBACStore != nil {
+				allowed = RBACStore.AllowedDB(role, perm)
+			} else {
+				allowed = rbac.Allowed(role, perm)
+			}
+			if !allowed {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
