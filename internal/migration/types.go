@@ -4,6 +4,7 @@
 package migration
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -77,3 +78,5 @@ type PreflightResult struct {
 func (m *Migration) IsTerminal() bool {
 	return m.Status == StatusCompleted || m.Status == StatusFailed || m.Status == StatusRolledBack
 }
+
+var ErrNotCompleted = fmt.Errorf("migration not in completed state")
