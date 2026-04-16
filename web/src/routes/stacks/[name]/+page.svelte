@@ -1,13 +1,13 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { api, ApiError } from '$lib/api';
-  import { Button, Card, Badge, Skeleton } from '$lib/components/ui';
+  import { api, ApiError, type ScaleCheck } from '$lib/api';
+  import { Button, Card, Badge, Skeleton, Modal } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import { EventStream } from '$lib/events';
-  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server } from 'lucide-svelte';
+  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server, Maximize2 } from 'lucide-svelte';
 
   const canWrite = $derived(allowed('stack.write'));
   const canDeploy = $derived(allowed('stack.deploy'));
@@ -23,6 +23,61 @@
 
   let externalChange = $state<{ file: string; type: string } | null>(null);
   let dirty = $state(false);
+
+  // Scaling state (P.8)
+  let replicaCounts = $state<Map<string, number>>(new Map());
+  let showScale = $state(false);
+  let scaleTarget = $state('');
+  let scaleValue = $state(1);
+  let scaleCheck = $state<ScaleCheck | null>(null);
+  let scaleBusy = $state(false);
+  let scaleForce = $state(false);
+
+  async function loadReplicaCounts() {
+    try {
+      const list = await api.stacks.listScale(name, hosts.id);
+      const m = new Map<string, number>();
+      for (const e of list) m.set(e.service, e.replicas);
+      replicaCounts = m;
+    } catch { /* ignore — not critical */ }
+  }
+
+  async function openScale(service: string) {
+    scaleTarget = service;
+    scaleValue = replicaCounts.get(service) ?? 1;
+    scaleCheck = null;
+    scaleForce = false;
+    showScale = true;
+    try {
+      scaleCheck = await api.stacks.getScale(name, service, hosts.id);
+      if (scaleCheck) scaleValue = scaleCheck.current_replicas || 1;
+    } catch { /* fail open */ }
+  }
+
+  async function doScale() {
+    scaleBusy = true;
+    try {
+      const res = await api.stacks.scale(name, scaleTarget, scaleValue, scaleForce, hosts.id);
+      toast.success('Scaled', `${scaleTarget}: ${res.previous} → ${res.current}`);
+      showScale = false;
+      await loadReplicaCounts();
+      await refreshStatus();
+    } catch (err: any) {
+      // Check for stateful warning (409 with force_needed).
+      if (err?.status === 409) {
+        try {
+          const body = await err.json?.() ?? err;
+          if (body?.force_needed) {
+            toast.warning(body.message ?? 'Stateful service warning — enable force to proceed');
+            return;
+          }
+        } catch {}
+      }
+      toast.error('Scale failed', err instanceof ApiError ? err.message : String(err));
+    } finally {
+      scaleBusy = false;
+    }
+  }
 
   const stream = new EventStream({
     onMessage: (msg) => {
@@ -53,6 +108,7 @@
       } catch {
         services = [];
       }
+      await loadReplicaCounts();
     } catch (err) {
       toast.error('Load failed', err instanceof ApiError ? err.message : undefined);
     } finally {
@@ -224,17 +280,34 @@
       </div>
       <div class="divide-y divide-[var(--border)]">
         {#each services as s}
-          <a
-            href={`/containers/${s.container_id}`}
-            class="flex items-center gap-3 px-5 py-3 hover:bg-[var(--surface-hover)] transition-colors"
-          >
-            <Badge variant={s.state === 'running' ? 'success' : 'default'} dot>{s.state}</Badge>
-            <div class="min-w-0 flex-1">
-              <div class="font-mono text-sm">{s.service}</div>
-              <div class="text-xs text-[var(--fg-muted)] truncate">{s.image}</div>
-            </div>
-            <div class="text-xs text-[var(--fg-subtle)] text-right">{s.status}</div>
-          </a>
+          {@const count = replicaCounts.get(s.service) ?? 0}
+          <div class="flex items-center gap-3 px-5 py-3 hover:bg-[var(--surface-hover)] transition-colors">
+            <a href={`/containers/${s.container_id}`} class="flex items-center gap-3 flex-1 min-w-0">
+              <Badge variant={s.state === 'running' ? 'success' : 'default'} dot>{s.state}</Badge>
+              <div class="min-w-0 flex-1">
+                <div class="font-mono text-sm flex items-center gap-1.5">
+                  {s.service}
+                  {#if count > 1}
+                    <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] text-[var(--color-brand-400)]">
+                      x{count}
+                    </span>
+                  {/if}
+                </div>
+                <div class="text-xs text-[var(--fg-muted)] truncate">{s.image}</div>
+              </div>
+              <div class="text-xs text-[var(--fg-subtle)] text-right">{s.status}</div>
+            </a>
+            {#if canDeploy}
+              <button
+                class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)] shrink-0"
+                title="Scale {s.service}"
+                aria-label="Scale {s.service}"
+                onclick={() => openScale(s.service)}
+              >
+                <Maximize2 class="w-3.5 h-3.5" />
+              </button>
+            {/if}
+          </div>
         {/each}
       </div>
     </Card>
@@ -267,3 +340,68 @@
     ></textarea>
   </Card>
 </section>
+
+<!-- Scale modal -->
+<Modal bind:open={showScale} title="Scale {scaleTarget}" maxWidth="max-w-sm">
+  <div class="space-y-4">
+    <div>
+      <label for="scale-slider" class="block text-xs font-medium text-[var(--fg-muted)] mb-2">
+        Replicas: <span class="text-[var(--fg)] font-bold text-lg">{scaleValue}</span>
+      </label>
+      <input
+        id="scale-slider"
+        type="range"
+        min="0"
+        max="10"
+        step="1"
+        bind:value={scaleValue}
+        class="w-full accent-[var(--color-brand-500)]"
+      />
+      <div class="flex justify-between text-[10px] text-[var(--fg-subtle)] mt-1">
+        <span>0</span><span>5</span><span>10</span>
+      </div>
+    </div>
+
+    {#if scaleCheck?.has_container_name}
+      <div class="p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] text-xs text-[var(--color-danger-400)] flex items-start gap-2">
+        <AlertTriangle class="w-4 h-4 shrink-0 mt-0.5" />
+        <div>This service has <code class="font-mono">container_name</code> set. Remove it in the compose file to allow scaling beyond 1.</div>
+      </div>
+    {/if}
+
+    {#if scaleCheck?.has_hard_port}
+      <div class="p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] text-xs text-[var(--color-danger-400)] flex items-start gap-2">
+        <AlertTriangle class="w-4 h-4 shrink-0 mt-0.5" />
+        <div>Hard-coded host port <code class="font-mono">{scaleCheck.hard_port_detail}</code>. Use a port range or remove the binding to scale beyond 1.</div>
+      </div>
+    {/if}
+
+    {#if scaleCheck?.is_stateful && scaleValue > 1}
+      <div class="p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-warning-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-warning-500)_30%,transparent)] text-xs text-[var(--color-warning-400)]">
+        <div class="flex items-start gap-2">
+          <AlertTriangle class="w-4 h-4 shrink-0 mt-0.5" />
+          <div>
+            This service looks like a database (<strong>{scaleCheck.stateful_image}</strong>) with mounted volumes.
+            Scaling may cause data corruption.
+          </div>
+        </div>
+        <label class="flex items-center gap-2 mt-2 cursor-pointer">
+          <input type="checkbox" bind:checked={scaleForce} class="rounded" />
+          <span>I understand the risk — proceed anyway</span>
+        </label>
+      </div>
+    {/if}
+  </div>
+
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (showScale = false)}>Cancel</Button>
+    <Button
+      variant="primary"
+      loading={scaleBusy}
+      disabled={scaleBusy || (scaleValue > 1 && (scaleCheck?.has_container_name || scaleCheck?.has_hard_port)) || (scaleCheck?.is_stateful && scaleValue > 1 && !scaleForce)}
+      onclick={doScale}
+    >
+      Scale to {scaleValue}
+    </Button>
+  {/snippet}
+</Modal>

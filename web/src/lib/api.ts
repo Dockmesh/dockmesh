@@ -123,6 +123,46 @@ export interface StackListEntry {
   deployment?: StackDeployment;
 }
 
+// Scaling (P.8)
+export interface ScaleCheck {
+  service: string;
+  current_replicas: number;
+  has_container_name: boolean;
+  has_hard_port: boolean;
+  hard_port_detail?: string;
+  is_stateful: boolean;
+  stateful_image?: string;
+  has_volumes: boolean;
+}
+
+export interface ScaleResult {
+  service: string;
+  previous: number;
+  current: number;
+  created: number;
+  removed: number;
+}
+
+export interface ScalingConfig {
+  enabled: boolean;
+  rules: ScalingRule[];
+}
+
+export interface ScalingRule {
+  service: string;
+  min_replicas: number;
+  max_replicas: number;
+  scale_up: ThresholdConfig;
+  scale_down: ThresholdConfig;
+  cooldown_seconds: number;
+}
+
+export interface ThresholdConfig {
+  metric: 'cpu' | 'memory';
+  threshold_percent: number;
+  duration_seconds: number;
+}
+
 export interface SystemMetrics {
   cpu_percent: number;
   cpu_cores: number;
@@ -472,7 +512,31 @@ export const api = {
       return request<Array<{ service: string; container_id: string; state: string; status: string; image: string }>>(
         `/stacks/${encodeURIComponent(name)}/status${qs}`
       );
-    }
+    },
+    // Scaling (P.8)
+    listScale: (name: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<Array<{ service: string; replicas: number }>>(`/stacks/${encodeURIComponent(name)}/scale${qs}`);
+    },
+    getScale: (name: string, service: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<ScaleCheck>(`/stacks/${encodeURIComponent(name)}/services/${encodeURIComponent(service)}/scale${qs}`);
+    },
+    scale: (name: string, service: string, replicas: number, force = false, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<ScaleResult>(
+        `/stacks/${encodeURIComponent(name)}/services/${encodeURIComponent(service)}/scale${qs}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replicas, force }) }
+      );
+    },
+    getScalingRules: (name: string) =>
+      request<ScalingConfig>(`/stacks/${encodeURIComponent(name)}/scaling-rules`),
+    setScalingRules: (name: string, config: ScalingConfig) =>
+      request<ScalingConfig>(`/stacks/${encodeURIComponent(name)}/scaling-rules`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config)
+      }),
+    deleteScalingRules: (name: string) =>
+      request<void>(`/stacks/${encodeURIComponent(name)}/scaling-rules`, { method: 'DELETE' })
   },
 
   hosts: {
