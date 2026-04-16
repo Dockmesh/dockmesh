@@ -129,8 +129,12 @@
     return `${Math.floor(secs / 86400)}d ${Math.floor((secs % 86400) / 3600)}h`;
   }
   function detailHref(c: Container): string {
+    // In all-mode, always pass the specific host_id so the detail page
+    // doesn't fall back to hosts.id which would be "all" (503 on inspect).
     const h = c.host_id ?? hosts.id;
-    return `/containers/${c.Id}${h && h !== 'local' ? '?host=' + h : ''}`;
+    if (isAll && h) return `/containers/${c.Id}?host=${h}`;
+    if (h && h !== 'local') return `/containers/${c.Id}?host=${h}`;
+    return `/containers/${c.Id}`;
   }
 
   // Data loading
