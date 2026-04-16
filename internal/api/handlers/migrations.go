@@ -110,6 +110,53 @@ func (h *Handlers) ListMigrations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, list)
 }
 
+// PreflightMigration runs pre-flight checks without starting a migration.
+//
+//	POST /api/v1/stacks/{name}/migrate/preflight { "target_host_id": "xxx" }
+func (h *Handlers) PreflightMigration(w http.ResponseWriter, r *http.Request) {
+	if h.Migrations == nil {
+		writeError(w, http.StatusServiceUnavailable, "migration service unavailable")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	var req migration.MigrateRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	result, err := h.Migrations.Preflight(r.Context(), name, req.TargetHostID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// PurgeSource removes the source host's files/volumes after migration.
+//
+//	DELETE /api/v1/stacks/{name}/migrate/{id}/source
+func (h *Handlers) PurgeSource(w http.ResponseWriter, r *http.Request) {
+	if h.Migrations == nil {
+		writeError(w, http.StatusServiceUnavailable, "migration service unavailable")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if err := h.Migrations.PurgeSource(r.Context(), id); err != nil {
+		if err == migration.ErrNotFound {
+			writeError(w, http.StatusNotFound, "migration not found")
+		} else {
+			writeError(w, http.StatusBadRequest, err.Error())
+		}
+		return
+	}
+	name := chi.URLParam(r, "name")
+	h.audit(r, audit.ActionStackDeploy, name, map[string]any{
+		"action":       "migrate-purge-source",
+		"migration_id": id,
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // ListActiveMigrations returns only in-flight migrations.
 //
 //	GET /api/v1/migrations/active

@@ -61,6 +61,12 @@ const (
 	FrameReqStackScale      = "req.stack.scale"
 	FrameReqStackCheckScale = "req.stack.check_scale"
 
+	// Volume tar-stream (P.9 migration). The server opens a stream to
+	// the source agent for tar-export (read), and another to the target
+	// agent for tar-import (write). The server relays bytes between them.
+	FrameReqVolumeTarExport = "req.volume.tar_export" // source: start tar czf - on volume
+	FrameReqVolumeTarImport = "req.volume.tar_import" // target: start tar xzf - into volume
+
 	// Compose-file mirroring (P.7) — server pushes the canonical
 	// compose+env content to the agent after a successful deploy so
 	// each agent retains a local copy in case the main server is lost.
@@ -164,6 +170,11 @@ type StackCheckScaleReq struct {
 	Compose string `json:"compose"`
 	Env     string `json:"env,omitempty"`
 	Service string `json:"service"`
+}
+
+// VolumeTarReq identifies the volume for tar export/import.
+type VolumeTarReq struct {
+	Volume string `json:"volume"`
 }
 
 // StackSyncReq carries the full compose + env + optional meta for

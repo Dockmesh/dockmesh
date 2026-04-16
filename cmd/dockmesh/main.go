@@ -234,6 +234,7 @@ func main() {
 	if err := migrationSvc.Start(ctx); err != nil {
 		slog.Warn("migration service start", "err", err)
 	}
+	migrationSvc.StartCleaner(ctx)
 
 	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
 	h := handlers.New(handlers.Deps{

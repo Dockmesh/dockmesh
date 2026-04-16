@@ -118,8 +118,10 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Delete("/stacks/{name}/scaling-rules", h.DeleteScalingRules)
 				// Migration (P.9)
 				r.Post("/stacks/{name}/migrate", h.InitiateMigration)
+				r.Post("/stacks/{name}/migrate/preflight", h.PreflightMigration)
 				r.Get("/stacks/{name}/migrate/{id}", h.GetMigration)
 				r.Post("/stacks/{name}/migrate/{id}/rollback", h.RollbackMigration)
+				r.Delete("/stacks/{name}/migrate/{id}/source", h.PurgeSource)
 			})
 
 			// Migrations global list (read-only, any authenticated user)

@@ -402,6 +402,10 @@ func startStream(parent context.Context, conn *websocket.Conn, cli *client.Clien
 		runStatsStream(ctx, conn, cli, open)
 	case "exec":
 		runExecStream(ctx, conn, cli, open, reg)
+	case "volume_export":
+		runVolumeExportStream(ctx, conn, cli, open)
+	case "volume_import":
+		runVolumeImportStream(ctx, conn, cli, open, reg)
 	default:
 		sendStreamClose(conn, open.StreamID, "unknown stream kind: "+open.Kind)
 	}
@@ -548,6 +552,153 @@ func sendStreamClose(conn *websocket.Conn, id, errMsg string) {
 	_ = safeWriteFrame(conn, agents.Frame{Type: agents.FrameStreamClose, Payload: payload})
 }
 
+// runVolumeExportStream creates a temporary busybox container that mounts
+// the named volume read-only and runs `tar czf - -C /source .`, streaming
+// the gzipped archive to the server via stream.data frames. Used by P.9
+// migration to transfer volumes from source to target.
+func runVolumeExportStream(ctx context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen) {
+	volumeName, _ := open.Params["volume"].(string)
+	if volumeName == "" {
+		sendStreamClose(conn, open.StreamID, "volume param required")
+		return
+	}
+
+	const helperImage = "busybox:latest"
+	// Ensure helper image exists.
+	if _, _, err := cli.ImageInspectWithRaw(ctx, helperImage); err != nil {
+		rc, pullErr := cli.ImagePull(ctx, helperImage, dtypes.ImagePullOptions{})
+		if pullErr != nil {
+			sendStreamClose(conn, open.StreamID, "pull busybox: "+pullErr.Error())
+			return
+		}
+		_, _ = io.Copy(io.Discard, rc)
+		rc.Close()
+	}
+
+	resp, err := cli.ContainerCreate(ctx, &container.Config{
+		Image:        helperImage,
+		Cmd:          []string{"sh", "-c", "tar czf - -C /source ."},
+		AttachStdout: true,
+		AttachStderr: true,
+	}, &container.HostConfig{
+		Binds: []string{volumeName + ":/source:ro"},
+	}, nil, nil, "")
+	if err != nil {
+		sendStreamClose(conn, open.StreamID, "create helper: "+err.Error())
+		return
+	}
+	defer func() { _ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true}) }()
+
+	hijack, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+		Stream: true, Stdout: true, Stderr: true,
+	})
+	if err != nil {
+		sendStreamClose(conn, open.StreamID, "attach: "+err.Error())
+		return
+	}
+	defer hijack.Close()
+
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		sendStreamClose(conn, open.StreamID, "start: "+err.Error())
+		return
+	}
+
+	buf := make([]byte, 32*1024)
+	for {
+		n, rerr := hijack.Reader.Read(buf)
+		if n > 0 {
+			payload, _ := json.Marshal(agents.StreamData{StreamID: open.StreamID, Data: append([]byte(nil), buf[:n]...)})
+			if werr := safeWriteFrame(conn, agents.Frame{Type: agents.FrameStreamData, Payload: payload}); werr != nil {
+				return
+			}
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	sendStreamClose(conn, open.StreamID, "")
+}
+
+// runVolumeImportStream creates a temporary busybox container that mounts
+// the named volume and pipes incoming stream.data frames into `tar xzf -`.
+// Uses the existing stdin delivery mechanism (reg.stdin) so the server
+// can push bytes via deliverStreamInput. When the server closes the
+// stream, we close stdin and wait for tar to finish.
+func runVolumeImportStream(ctx context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) {
+	volumeName, _ := open.Params["volume"].(string)
+	if volumeName == "" {
+		sendStreamClose(conn, open.StreamID, "volume param required")
+		return
+	}
+
+	const helperImage = "busybox:latest"
+	if _, _, err := cli.ImageInspectWithRaw(ctx, helperImage); err != nil {
+		rc, pullErr := cli.ImagePull(ctx, helperImage, dtypes.ImagePullOptions{})
+		if pullErr != nil {
+			sendStreamClose(conn, open.StreamID, "pull busybox: "+pullErr.Error())
+			return
+		}
+		_, _ = io.Copy(io.Discard, rc)
+		rc.Close()
+	}
+
+	resp, err := cli.ContainerCreate(ctx, &container.Config{
+		Image:       helperImage,
+		Cmd:         []string{"sh", "-c", "tar xzf - -C /dest"},
+		AttachStdin: true,
+		OpenStdin:   true,
+		StdinOnce:   true,
+	}, &container.HostConfig{
+		Binds: []string{volumeName + ":/dest"},
+	}, nil, nil, "")
+	if err != nil {
+		sendStreamClose(conn, open.StreamID, "create helper: "+err.Error())
+		return
+	}
+	defer func() { _ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true}) }()
+
+	hijack, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+		Stream: true, Stdin: true,
+	})
+	if err != nil {
+		sendStreamClose(conn, open.StreamID, "attach: "+err.Error())
+		return
+	}
+	defer hijack.Close()
+
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		sendStreamClose(conn, open.StreamID, "start: "+err.Error())
+		return
+	}
+
+	// Wire the stream registry's stdin to the hijacked connection so
+	// deliverStreamInput() pushes bytes directly into the tar helper.
+	reg.stdin = hijack.Conn
+
+	// Wait for the container to exit (stdin will be closed when the
+	// server sends stream.close, which triggers closeStream → cancel).
+	<-ctx.Done()
+	_ = hijack.CloseWrite()
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer waitCancel()
+	statusCh, errCh := cli.ContainerWait(waitCtx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case s := <-statusCh:
+		if s.StatusCode != 0 {
+			sendStreamClose(conn, open.StreamID, fmt.Sprintf("tar exit %d", s.StatusCode))
+			return
+		}
+	case e := <-errCh:
+		sendStreamClose(conn, open.StreamID, e.Error())
+		return
+	case <-waitCtx.Done():
+		sendStreamClose(conn, open.StreamID, "tar timeout")
+		return
+	}
+	sendStreamClose(conn, open.StreamID, "")
+}
+
 // -----------------------------------------------------------------------------
 // Request handlers
 // -----------------------------------------------------------------------------
@@ -652,6 +803,21 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		_ = json.Unmarshal(f.Payload, &req)
 		res, err := agentCheckScale(ctx, cli, req)
 		respond(conn, f.ID, res, err)
+
+	case agents.FrameReqVolumeTarExport:
+		// Volume tar-export is handled as a stream, not a request/response,
+		// because the tar data can be large. The agent starts a helper
+		// container and pumps tar bytes via stream.data frames.
+		// This frame starts the process; the actual streaming is handled
+		// by the stream infrastructure (kind="volume_export").
+		var req agents.VolumeTarReq
+		_ = json.Unmarshal(f.Payload, &req)
+		respond(conn, f.ID, map[string]string{"status": "use stream kind=volume_export"}, nil)
+
+	case agents.FrameReqVolumeTarImport:
+		var req agents.VolumeTarReq
+		_ = json.Unmarshal(f.Payload, &req)
+		respond(conn, f.ID, map[string]string{"status": "use stream kind=volume_import"}, nil)
 
 	case agents.FrameReqStackSync:
 		var req agents.StackSyncReq
