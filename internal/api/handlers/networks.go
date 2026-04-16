@@ -108,3 +108,17 @@ func (h *Handlers) RemoveNetwork(w http.ResponseWriter, r *http.Request) {
 	h.audit(r, audit.ActionNetworkRemove, id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (h *Handlers) PruneNetworks(w http.ResponseWriter, r *http.Request) {
+	if h.Docker == nil {
+		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+		return
+	}
+	report, err := h.Docker.PruneNetworks(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, audit.ActionNetworkRemove, "", map[string]any{"pruned": len(report.NetworksDeleted)})
+	writeJSON(w, http.StatusOK, report)
+}

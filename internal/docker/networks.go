@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/filters"
 )
 
 func (c *Client) ListNetworks(ctx context.Context) ([]types.NetworkResource, error) {
@@ -26,4 +27,8 @@ func (c *Client) CreateNetwork(ctx context.Context, name, driver string, labels 
 
 func (c *Client) RemoveNetwork(ctx context.Context, id string) error {
 	return c.cli.NetworkRemove(ctx, id)
+}
+
+func (c *Client) PruneNetworks(ctx context.Context) (types.NetworksPruneReport, error) {
+	return c.cli.NetworksPrune(ctx, filters.Args{})
 }
