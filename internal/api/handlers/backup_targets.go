@@ -140,6 +140,74 @@ func (h *Handlers) TestBackupTarget(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// TestBackupTargetConfig tests a raw config without saving (for the dialog).
+//
+//	POST /api/v1/backups/targets/test-config
+func (h *Handlers) TestBackupTargetConfig(w http.ResponseWriter, r *http.Request) {
+	var in targets.TargetInput
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	tgt, err := buildTargetFromInput(in.Type, in.Config)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "error", "error": err.Error()})
+		return
+	}
+	type storageQuerier interface {
+		StorageInfo() (int64, int64, error)
+	}
+	var total, used int64
+	if sq, ok := tgt.(storageQuerier); ok {
+		total, used, err = sq.StorageInfo()
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"status": "error", "error": err.Error()})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "connected", "total_bytes": total, "used_bytes": used, "free_bytes": total - used,
+	})
+}
+
+// DiscoverSMBShares lists available shares on an SMB server.
+//
+//	POST /api/v1/backups/targets/discover-shares
+func (h *Handlers) DiscoverSMBShares(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Host     string `json:"host"`
+		Port     int    `json:"port"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	shares, err := targets.ListSMBShares(req.Host, req.Port, req.Username, req.Password)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"error": err.Error(), "shares": []string{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"shares": shares})
+}
+
+func buildTargetFromInput(typ string, cfg any) (targets.Target, error) {
+	switch typ {
+	case "local":
+		return targets.NewLocal(cfg)
+	case "s3":
+		return targets.NewS3(cfg)
+	case "sftp":
+		return targets.NewSFTP(cfg)
+	case "smb":
+		return targets.NewSMB(cfg)
+	case "webdav":
+		return targets.NewWebDAV(cfg)
+	}
+	return nil, fmt.Errorf("unknown target type: %s", typ)
+}
+
 func buildTargetFromStored(s *targets.StoredTarget) (targets.Target, error) {
 	switch s.Type {
 	case "local":

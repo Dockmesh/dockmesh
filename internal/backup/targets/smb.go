@@ -171,6 +171,45 @@ func (s *SMB) StorageInfo() (total, used int64, err error) {
 	return total, used, nil
 }
 
+// ListSMBShares connects to an SMB server and returns available share names.
+func ListSMBShares(host string, port int, username, password string) ([]string, error) {
+	if port == 0 {
+		port = 445
+	}
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("smb: dial: %w", err)
+	}
+	defer conn.Close()
+
+	d := &smb2.Dialer{
+		Initiator: &smb2.NTLMInitiator{
+			User:     username,
+			Password: password,
+		},
+	}
+	session, err := d.Dial(conn)
+	if err != nil {
+		return nil, fmt.Errorf("smb: auth failed: %w", err)
+	}
+	defer session.Logoff()
+
+	names, err := session.ListSharenames()
+	if err != nil {
+		return nil, fmt.Errorf("smb: list shares: %w", err)
+	}
+	// Filter out system shares (IPC$, ADMIN$, C$, etc.)
+	var out []string
+	for _, n := range names {
+		if strings.HasSuffix(n, "$") {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+
 type smbWriter struct {
 	f       *smb2.File
 	share   *smb2.Share

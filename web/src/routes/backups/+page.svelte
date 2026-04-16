@@ -136,6 +136,33 @@
 
   const activeTargetType = $derived(targetTypes.find(t => t.value === tType));
 
+  // Test connection in dialog
+  let testResult = $state<{ status: string; total_bytes?: number; used_bytes?: number; free_bytes?: number; error?: string } | null>(null);
+  let testBusy = $state(false);
+  async function testConfigInDialog() {
+    testBusy = true; testResult = null;
+    const config: Record<string, any> = { ...tConfig };
+    if (config.port) config.port = parseInt(config.port) || 0;
+    try {
+      testResult = await api.backups.testTargetConfig(tType, config);
+    } catch (err) {
+      testResult = { status: 'error', error: err instanceof ApiError ? err.message : String(err) };
+    } finally { testBusy = false; }
+  }
+
+  // SMB share discovery
+  let smbShares = $state<string[]>([]);
+  let smbDiscovering = $state(false);
+  async function discoverShares() {
+    smbDiscovering = true; smbShares = [];
+    try {
+      const res = await api.backups.discoverShares(tConfig.host ?? '', parseInt(tConfig.port ?? '445'), tConfig.username ?? '', tConfig.password ?? '');
+      if (res.error) { toast.error('Discovery failed', res.error); }
+      else { smbShares = res.shares ?? []; if (smbShares.length === 0) toast.info('No shares found'); }
+    } catch (err) { toast.error('Discovery failed', err instanceof ApiError ? err.message : String(err)); }
+    finally { smbDiscovering = false; }
+  }
+
   async function loadJobs() {
     loading = true;
     try { jobs = await api.backups.listJobs(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); } finally { loading = false; }
@@ -576,20 +603,62 @@
       <fieldset class="space-y-3">
         <legend class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-1">{activeTargetType.label} Configuration</legend>
         {#each activeTargetType.fields as f}
-          <div>
-            <label for="t-{f.key}" class="block text-xs font-medium text-[var(--fg-muted)] mb-1">{f.label}</label>
-            <input
-              id="t-{f.key}"
-              type={f.key === 'password' || f.key === 'secret_key' ? 'password' : 'text'}
-              class="dm-input text-sm font-mono"
-              placeholder={f.placeholder}
-              value={tConfig[f.key] ?? ''}
-              oninput={(e) => { tConfig = { ...tConfig, [f.key]: (e.target as HTMLInputElement).value }; }}
-            />
-          </div>
+          {#if f.key === 'share' && tType === 'smb'}
+            <!-- SMB share: discover button + dropdown -->
+            <div>
+              <label for="t-share" class="block text-xs font-medium text-[var(--fg-muted)] mb-1">Share</label>
+              <div class="flex gap-2">
+                {#if smbShares.length > 0}
+                  <select id="t-share" class="dm-input text-sm font-mono flex-1" value={tConfig.share ?? ''}
+                    onchange={(e) => { tConfig = { ...tConfig, share: (e.target as HTMLSelectElement).value }; }}>
+                    <option value="">Select a share…</option>
+                    {#each smbShares as s}<option value={s}>{s}</option>{/each}
+                  </select>
+                {:else}
+                  <input id="t-share" type="text" class="dm-input text-sm font-mono flex-1" placeholder="backups"
+                    value={tConfig.share ?? ''} oninput={(e) => { tConfig = { ...tConfig, share: (e.target as HTMLInputElement).value }; }} />
+                {/if}
+                <Button variant="secondary" size="sm" loading={smbDiscovering} onclick={discoverShares}
+                  disabled={!tConfig.host}>
+                  Discover
+                </Button>
+              </div>
+            </div>
+          {:else}
+            <div>
+              <label for="t-{f.key}" class="block text-xs font-medium text-[var(--fg-muted)] mb-1">{f.label}</label>
+              <input
+                id="t-{f.key}"
+                type={f.key === 'password' || f.key === 'secret_key' ? 'password' : 'text'}
+                class="dm-input text-sm font-mono"
+                placeholder={f.placeholder}
+                value={tConfig[f.key] ?? ''}
+                oninput={(e) => { tConfig = { ...tConfig, [f.key]: (e.target as HTMLInputElement).value }; }}
+              />
+            </div>
+          {/if}
         {/each}
       </fieldset>
     {/if}
+
+    <!-- Test Connection -->
+    <div class="flex items-center gap-3">
+      <Button variant="secondary" size="sm" loading={testBusy} onclick={testConfigInDialog} disabled={testBusy}>
+        Test connection
+      </Button>
+      {#if testResult}
+        {#if testResult.status === 'connected'}
+          <span class="text-xs text-[var(--color-success-400)] flex items-center gap-1">
+            ✓ Connected
+            {#if testResult.total_bytes && testResult.total_bytes > 0}
+              — {fmtBytes(testResult.free_bytes ?? 0)} free / {fmtBytes(testResult.total_bytes)}
+            {/if}
+          </span>
+        {:else}
+          <span class="text-xs text-[var(--color-danger-400)]">✗ {testResult.error ?? 'Failed'}</span>
+        {/if}
+      {/if}
+    </div>
   </form>
   {#snippet footer()}
     <Button variant="secondary" onclick={() => (showTarget = false)}>Cancel</Button>
