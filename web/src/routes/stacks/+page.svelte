@@ -5,7 +5,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
-  import { Layers, Plus, FileCode2, Terminal, Search, Server, RefreshCw, Play, Square, ArrowUpDown, Clock } from 'lucide-svelte';
+  import { Layers, Plus, FileCode2, Terminal, Search, Server, RefreshCw, Play, Square, ArrowUpDown, Clock, ArrowRightLeft } from 'lucide-svelte';
 
   const canWrite = $derived(allowed('stack.write'));
   const canDeploy = $derived(allowed('stack.deploy'));
@@ -407,6 +407,16 @@
             </div>
             {#if canDeploy}
               <div class="flex gap-1">
+                {#if hosts.available.length > 1}
+                  <a
+                    href="/stacks/{s.name}"
+                    class="p-1 rounded-md text-[var(--fg-muted)] hover:text-[var(--color-brand-400)] hover:bg-[var(--surface-hover)]"
+                    title="Migrate {s.name}"
+                    onclick={(e) => e.stopPropagation()}
+                  >
+                    <ArrowRightLeft class="w-3.5 h-3.5" />
+                  </a>
+                {/if}
                 {#if s.state === 'running' || s.state === 'partial' || s.state === 'unhealthy'}
                   <button
                     class="p-1 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)] disabled:opacity-50"
