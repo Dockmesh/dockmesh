@@ -281,6 +281,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Put("/backups/targets/{id}", h.UpdateBackupTarget)
 				r.Delete("/backups/targets/{id}", h.DeleteBackupTarget)
 				r.Post("/backups/targets/{id}/test", h.TestBackupTarget)
+				r.Post("/backups/targets/test-config", h.TestBackupTargetConfig)
+				r.Post("/backups/targets/discover-shares", h.DiscoverSMBShares)
 				r.Get("/backups/runs", h.ListBackupRuns)
 				r.Post("/backups/runs/{id}/restore", h.RestoreBackup)
 				// Toggle the auto-created daily system backup job.

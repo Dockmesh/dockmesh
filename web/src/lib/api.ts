@@ -812,6 +812,14 @@ export const api = {
       request<BackupTarget>(`/backups/targets/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
     deleteTarget: (id: number) => request<void>(`/backups/targets/${id}`, { method: 'DELETE' }),
     testTarget: (id: number) => request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string }>(`/backups/targets/${id}/test`, { method: 'POST' }),
+    testTargetConfig: (type: string, config: any) =>
+      request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string }>('/backups/targets/test-config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'test', type, config })
+      }),
+    discoverShares: (host: string, port: number, username: string, password: string) =>
+      request<{ shares: string[]; error?: string }>('/backups/targets/discover-shares', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ host, port: port || 445, username, password })
+      }),
     listJobs: () => request<BackupJob[]>('/backups/jobs'),
     getJob: (id: number) => request<BackupJob>(`/backups/jobs/${id}`),
     createJob: (input: BackupJobInput) =>
