@@ -28,10 +28,7 @@
   async function load() {
     loading = true;
     try {
-      const res = await fetch('/api/v1/global-env', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('dm_token')}` }
-      });
-      if (res.ok) vars = await res.json();
+      vars = await api.globalEnv.list();
     } catch (err) {
       toast.error('Failed to load', err instanceof ApiError ? err.message : undefined);
     } finally {
@@ -69,15 +66,10 @@
     e.preventDefault();
     saving = true;
     try {
-      const body = JSON.stringify(form);
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('dm_token')}`
-      };
       if (editingVar) {
-        await fetch(`/api/v1/global-env/${editingVar.id}`, { method: 'PUT', headers, body });
+        await api.globalEnv.update(editingVar.id, form);
       } else {
-        await fetch('/api/v1/global-env', { method: 'POST', headers, body });
+        await api.globalEnv.create(form);
       }
       showModal = false;
       toast.success(editingVar ? 'Updated' : 'Created');
@@ -92,14 +84,11 @@
   async function deleteVar(v: EnvVar) {
     if (!confirm(`Delete "${v.key}"?`)) return;
     try {
-      await fetch(`/api/v1/global-env/${v.id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('dm_token')}` }
-      });
+      await api.globalEnv.delete(v.id);
       toast.success('Deleted', v.key);
       await load();
     } catch (err) {
-      toast.error('Delete failed');
+      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
     }
   }
 </script>
