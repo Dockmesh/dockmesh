@@ -26,7 +26,11 @@
     Download,
     Undo2,
     ExternalLink,
-    Package
+    Package,
+    Info,
+    Network,
+    HardDrive,
+    Tag
   } from 'lucide-svelte';
 
   const id = $derived($page.params.id);
@@ -39,7 +43,7 @@
 
   let info = $state<any>(null);
   let loading = $state(true);
-  let tab = $state<'logs' | 'exec' | 'stats' | 'updates' | 'inspect'>('logs');
+  let tab = $state<'overview' | 'logs' | 'exec' | 'stats' | 'updates' | 'inspect'>('overview');
 
   // For remote hosts in 3.1.2.4: Logs / Stats / Terminal / Inspect work.
   // Updates is still local-only (image pulls live on the central server's
@@ -518,6 +522,7 @@
         {/if}
       </button>
     {/snippet}
+    {@render tabBtn('overview', 'Overview', Info, false)}
     {@render tabBtn('logs', 'Logs', FileText, wsConnected)}
     {#if canExec}
       {@render tabBtn('exec', 'Terminal', TerminalIcon, execConnected)}
@@ -538,7 +543,140 @@
   {/if}
 
   <!-- Tab panels -->
-  {#if tab === 'logs'}
+  {#if tab === 'overview' && info}
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <!-- Environment Variables -->
+      <Card>
+        <div class="px-5 py-3 border-b border-[var(--border)] text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider flex items-center gap-2">
+          <Tag class="w-3.5 h-3.5" /> Environment ({(info.Config?.Env ?? []).length})
+        </div>
+        <div class="max-h-64 overflow-auto">
+          {#if (info.Config?.Env ?? []).length === 0}
+            <div class="px-5 py-4 text-xs text-[var(--fg-subtle)]">No environment variables</div>
+          {:else}
+            <div class="divide-y divide-[var(--border)]">
+              {#each info.Config?.Env ?? [] as envLine}
+                {@const idx = envLine.indexOf('=')}
+                {@const key = idx >= 0 ? envLine.slice(0, idx) : envLine}
+                {@const val = idx >= 0 ? envLine.slice(idx + 1) : ''}
+                <div class="px-5 py-2 flex gap-2 text-xs hover:bg-[var(--surface-hover)]">
+                  <span class="font-mono font-medium text-[var(--fg)] shrink-0">{key}</span>
+                  <span class="font-mono text-[var(--fg-muted)] truncate" title={val}>{val || '(empty)'}</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </Card>
+
+      <!-- Mounts / Volumes -->
+      <Card>
+        <div class="px-5 py-3 border-b border-[var(--border)] text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider flex items-center gap-2">
+          <HardDrive class="w-3.5 h-3.5" /> Mounts ({(info.Mounts ?? []).length})
+        </div>
+        <div class="max-h-64 overflow-auto">
+          {#if (info.Mounts ?? []).length === 0}
+            <div class="px-5 py-4 text-xs text-[var(--fg-subtle)]">No mounts</div>
+          {:else}
+            <div class="divide-y divide-[var(--border)]">
+              {#each info.Mounts ?? [] as m}
+                <div class="px-5 py-2.5 text-xs hover:bg-[var(--surface-hover)]">
+                  <div class="flex items-center gap-2">
+                    <Badge variant={m.Type === 'volume' ? 'info' : 'default'}>{m.Type}</Badge>
+                    <span class="font-mono text-[var(--fg)] truncate">{m.Name || m.Source}</span>
+                    {#if m.RW === false}<Badge variant="warning">ro</Badge>{/if}
+                  </div>
+                  <div class="font-mono text-[var(--fg-muted)] mt-0.5 truncate" title={m.Destination}>→ {m.Destination}</div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </Card>
+
+      <!-- Networks -->
+      <Card>
+        <div class="px-5 py-3 border-b border-[var(--border)] text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider flex items-center gap-2">
+          <Network class="w-3.5 h-3.5" /> Networks ({Object.keys(info.NetworkSettings?.Networks ?? {}).length})
+        </div>
+        <div class="max-h-64 overflow-auto">
+          {#if Object.keys(info.NetworkSettings?.Networks ?? {}).length === 0}
+            <div class="px-5 py-4 text-xs text-[var(--fg-subtle)]">No networks</div>
+          {:else}
+            <div class="divide-y divide-[var(--border)]">
+              {#each Object.entries(info.NetworkSettings?.Networks ?? {}) as [netName, netCfg]}
+                {@const cfg = netCfg as any}
+                <div class="px-5 py-2.5 text-xs hover:bg-[var(--surface-hover)]">
+                  <div class="font-mono font-medium text-[var(--fg)]">{netName}</div>
+                  <div class="text-[var(--fg-muted)] mt-0.5 font-mono">
+                    {#if cfg?.IPAddress}IP: {cfg.IPAddress}{/if}
+                    {#if cfg?.Gateway} · GW: {cfg.Gateway}{/if}
+                    {#if cfg?.MacAddress} · MAC: {cfg.MacAddress}{/if}
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </Card>
+
+      <!-- Labels + Config -->
+      <Card>
+        <div class="px-5 py-3 border-b border-[var(--border)] text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider flex items-center gap-2">
+          <Info class="w-3.5 h-3.5" /> Configuration
+        </div>
+        <div class="divide-y divide-[var(--border)]">
+          <div class="px-5 py-2.5 flex justify-between text-xs">
+            <span class="text-[var(--fg-muted)]">Restart Policy</span>
+            <span class="font-mono text-[var(--fg)]">{info.HostConfig?.RestartPolicy?.Name ?? '—'}</span>
+          </div>
+          <div class="px-5 py-2.5 flex justify-between text-xs">
+            <span class="text-[var(--fg-muted)]">Working Dir</span>
+            <span class="font-mono text-[var(--fg)]">{info.Config?.WorkingDir || '/'}</span>
+          </div>
+          <div class="px-5 py-2.5 flex justify-between text-xs">
+            <span class="text-[var(--fg-muted)]">User</span>
+            <span class="font-mono text-[var(--fg)]">{info.Config?.User || 'root'}</span>
+          </div>
+          <div class="px-5 py-2.5 flex justify-between text-xs">
+            <span class="text-[var(--fg-muted)]">Entrypoint</span>
+            <span class="font-mono text-[var(--fg)] truncate max-w-[200px]" title={(info.Config?.Entrypoint ?? []).join(' ')}>
+              {(info.Config?.Entrypoint ?? []).join(' ') || '—'}
+            </span>
+          </div>
+          <div class="px-5 py-2.5 flex justify-between text-xs">
+            <span class="text-[var(--fg-muted)]">Command</span>
+            <span class="font-mono text-[var(--fg)] truncate max-w-[200px]" title={(info.Config?.Cmd ?? []).join(' ')}>
+              {(info.Config?.Cmd ?? []).join(' ') || '—'}
+            </span>
+          </div>
+          <div class="px-5 py-2.5 flex justify-between text-xs">
+            <span class="text-[var(--fg-muted)]">Privileged</span>
+            <span class="font-mono text-[var(--fg)]">{info.HostConfig?.Privileged ? 'yes' : 'no'}</span>
+          </div>
+          <div class="px-5 py-2.5 flex justify-between text-xs">
+            <span class="text-[var(--fg-muted)]">Network Mode</span>
+            <span class="font-mono text-[var(--fg)]">{info.HostConfig?.NetworkMode ?? '—'}</span>
+          </div>
+        </div>
+
+        <!-- Labels subsection -->
+        {#if Object.keys(info.Config?.Labels ?? {}).length > 0}
+          <div class="px-5 py-3 border-t border-[var(--border)] text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">
+            Labels ({Object.keys(info.Config?.Labels ?? {}).length})
+          </div>
+          <div class="max-h-48 overflow-auto divide-y divide-[var(--border)]">
+            {#each Object.entries(info.Config?.Labels ?? {}).sort(([a], [b]) => a.localeCompare(b)) as [k, v]}
+              <div class="px-5 py-1.5 flex gap-2 text-[10px] hover:bg-[var(--surface-hover)]">
+                <span class="font-mono font-medium text-[var(--fg)] shrink-0">{k}</span>
+                <span class="font-mono text-[var(--fg-muted)] truncate">{v}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </Card>
+    </div>
+  {:else if tab === 'logs'}
     <div class="flex items-center gap-3 text-sm">
       <label class="flex items-center gap-2 cursor-pointer">
         <input type="checkbox" bind:checked={autoScroll} class="accent-[var(--color-brand-500)]" />
