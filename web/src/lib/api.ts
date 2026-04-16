@@ -194,6 +194,34 @@ export interface PreflightResult {
   checks: Array<{ name: string; passed: boolean; detail?: string }>;
 }
 
+// Drain Host (P.10)
+export interface DrainPlan {
+  source_host_id: string;
+  source_name: string;
+  entries: DrainPlanEntry[];
+  feasible: boolean;
+}
+
+export interface DrainPlanEntry {
+  stack_name: string;
+  target_host_id: string;
+  target_name: string;
+  weight_bytes: number;
+  feasible: boolean;
+  detail?: string;
+}
+
+export interface Drain {
+  id: string;
+  source_host_id: string;
+  status: string;
+  plan: DrainPlanEntry[];
+  started_at?: string;
+  completed_at?: string;
+  initiated_by: string;
+  created_at: string;
+}
+
 export interface SystemMetrics {
   cpu_percent: number;
   cpu_cores: number;
@@ -589,6 +617,21 @@ export const api = {
       request<void>(`/stacks/${encodeURIComponent(name)}/migrate/${id}/rollback`, { method: 'POST' }),
     purgeSource: (name: string, id: string) =>
       request<void>(`/stacks/${encodeURIComponent(name)}/migrate/${id}/source`, { method: 'DELETE' })
+  },
+
+  drains: {
+    plan: (hostId: string) =>
+      request<DrainPlan>(`/hosts/${encodeURIComponent(hostId)}/drain/plan`, { method: 'POST' }),
+    execute: (hostId: string) =>
+      request<Drain>(`/hosts/${encodeURIComponent(hostId)}/drain/execute`, { method: 'POST' }),
+    get: (hostId: string, drainId: string) =>
+      request<Drain>(`/hosts/${encodeURIComponent(hostId)}/drain/${drainId}`),
+    pause: (hostId: string, drainId: string) =>
+      request<void>(`/hosts/${encodeURIComponent(hostId)}/drain/${drainId}/pause`, { method: 'POST' }),
+    resume: (hostId: string, drainId: string) =>
+      request<void>(`/hosts/${encodeURIComponent(hostId)}/drain/${drainId}/resume`, { method: 'POST' }),
+    abort: (hostId: string, drainId: string) =>
+      request<void>(`/hosts/${encodeURIComponent(hostId)}/drain/${drainId}/abort`, { method: 'POST' })
   },
 
   hosts: {

@@ -235,6 +235,7 @@ func main() {
 		slog.Warn("migration service start", "err", err)
 	}
 	migrationSvc.StartCleaner(ctx)
+	drainSvc := migration.NewDrainService(migrationSvc, database)
 
 	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
 	h := handlers.New(handlers.Deps{
@@ -256,6 +257,7 @@ func main() {
 		Alerts:       alertsSvc,
 		Backups:      backupSvc,
 		Migrations:   migrationSvc,
+		Drains:       drainSvc,
 		Agents:       agentsSvc,
 		Hosts:        hostRegistry,
 		JWTSecret:    cfg.JWTSecret,

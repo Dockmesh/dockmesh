@@ -44,6 +44,7 @@ type Handlers struct {
 	Alerts       *alerts.Service
 	Backups      *backup.Service
 	Migrations   *migration.Service
+	Drains       *migration.DrainService
 	Agents       *agents.Service
 	Hosts        *host.Registry
 	JWTSecret    []byte // raw secret used to sign the short-lived OIDC state cookie
@@ -68,6 +69,7 @@ type Deps struct {
 	Alerts       *alerts.Service
 	Backups      *backup.Service
 	Migrations   *migration.Service
+	Drains       *migration.DrainService
 	Agents       *agents.Service
 	Hosts        *host.Registry
 	JWTSecret    []byte
@@ -93,6 +95,7 @@ func New(d Deps) *Handlers {
 		Alerts:      d.Alerts,
 		Backups:     d.Backups,
 		Migrations:  d.Migrations,
+		Drains:      d.Drains,
 		Agents:      d.Agents,
 		Hosts:       d.Hosts,
 		JWTSecret:   d.JWTSecret,
