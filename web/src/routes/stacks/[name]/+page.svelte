@@ -9,9 +9,17 @@
   import { EventStream } from '$lib/events';
   import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2 } from 'lucide-svelte';
 
+  import { isAllHosts } from '$lib/stores/host.svelte';
+
   const canWrite = $derived(allowed('stack.write'));
   const canDeploy = $derived(allowed('stack.deploy'));
-  const isRemote = $derived(hosts.id !== 'local');
+
+  // The stack detail page always operates on a specific host, never "all".
+  // If the global picker is on "all", we resolve to the deployment's host
+  // (from the list response) or fall back to "local".
+  let deploymentHostId = $state<string>('local');
+  const stackHost = $derived(isAllHosts(hosts.id) ? deploymentHostId : hosts.id);
+  const isRemote = $derived(stackHost !== 'local');
 
   const name = $derived($page.params.name);
 
@@ -35,7 +43,7 @@
 
   async function loadReplicaCounts() {
     try {
-      const list = await api.stacks.listScale(name, hosts.id);
+      const list = await api.stacks.listScale(name, stackHost);
       const m = new Map<string, number>();
       for (const e of list) m.set(e.service, e.replicas);
       replicaCounts = m;
@@ -49,7 +57,7 @@
     scaleForce = false;
     showScale = true;
     try {
-      scaleCheck = await api.stacks.getScale(name, service, hosts.id);
+      scaleCheck = await api.stacks.getScale(name, service, stackHost);
       if (scaleCheck) scaleValue = scaleCheck.current_replicas || 1;
     } catch { /* fail open */ }
   }
@@ -57,7 +65,7 @@
   async function doScale() {
     scaleBusy = true;
     try {
-      const res = await api.stacks.scale(name, scaleTarget, scaleValue, scaleForce, hosts.id);
+      const res = await api.stacks.scale(name, scaleTarget, scaleValue, scaleForce, stackHost);
       toast.success('Scaled', `${scaleTarget}: ${res.previous} → ${res.current}`);
       showScale = false;
       await loadReplicaCounts();
@@ -165,8 +173,16 @@
       const detail = await api.stacks.get(name);
       compose = detail.compose;
       env = detail.env ?? '';
+      // Resolve deployment host for all-mode routing.
       try {
-        services = await api.stacks.status(name, hosts.id);
+        const stackList = await api.stacks.list();
+        const entry = stackList.find(s => s.name === name);
+        if (entry?.deployment?.host_id) {
+          deploymentHostId = entry.deployment.host_id;
+        }
+      } catch { /* ignore — fallback to local */ }
+      try {
+        services = await api.stacks.status(name, stackHost);
       } catch {
         services = [];
       }
@@ -180,19 +196,19 @@
 
   async function refreshStatus() {
     try {
-      services = await api.stacks.status(name, hosts.id);
+      services = await api.stacks.status(name, stackHost);
     } catch { /* ignore */ }
   }
 
-  // Re-load whenever the user picks a different host from the top bar.
-  let prevHost = hosts.id;
-  $effect(() => {
-    const cur = hosts.id;
-    if (cur !== prevHost) {
-      prevHost = cur;
-      refreshStatus();
-    }
-  });
+  // Re-load whenever the resolved host changes.
+  {
+    let prev: string | null = null;
+    $effect(() => {
+      const cur = stackHost;
+      if (prev === null) { prev = cur; return; }
+      if (cur !== prev) { prev = cur; refreshStatus(); }
+    });
+  }
 
   async function save() {
     busy = true;
@@ -210,7 +226,7 @@
   async function deploy() {
     busy = true;
     try {
-      const res = await api.stacks.deploy(name, hosts.id);
+      const res = await api.stacks.deploy(name, stackHost);
       toast.success('Deployed', `${res.services.length} service(s) on ${hosts.selected?.name ?? 'local'}`);
       await refreshStatus();
     } catch (err) {
@@ -223,7 +239,7 @@
   async function stop() {
     busy = true;
     try {
-      await api.stacks.stop(name, hosts.id);
+      await api.stacks.stop(name, stackHost);
       services = [];
       toast.info('Stopped');
     } catch (err) {
@@ -507,7 +523,7 @@
         onchange={() => { migratePreflight = null; if (migrateTarget) runPreflight(); }}
       >
         <option value="">Select a host…</option>
-        {#each hosts.available.filter(h => h.id !== hosts.id && h.id !== 'all') as h}
+        {#each hosts.available.filter(h => h.id !== stackHost && h.id !== 'all') as h}
           <option value={h.id} disabled={h.status !== 'online'}>{h.name} {h.status !== 'online' ? `(${h.status})` : ''}</option>
         {/each}
       </select>
