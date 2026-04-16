@@ -754,6 +754,7 @@ export const api = {
     create: (name: string, driver?: string) =>
       request<{ Id: string }>('/networks', { method: 'POST', body: JSON.stringify({ name, driver }) }),
     remove: (id: string) => request<void>(`/networks/${id}`, { method: 'DELETE' }),
+    prune: () => request<any>('/networks/prune', { method: 'POST' }),
     topology: () => request<Topology>('/networks/topology')
   },
 

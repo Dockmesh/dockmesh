@@ -185,6 +185,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Use(middleware.RequirePerm(rbac.PermNetworkWrite))
 				r.Post("/networks", h.CreateNetwork)
 				r.Delete("/networks/{id}", h.RemoveNetwork)
+				r.Post("/networks/prune", h.PruneNetworks)
 			})
 
 			// -------------------------- VOLUME WRITE -------------------------

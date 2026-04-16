@@ -9,8 +9,9 @@
     type TopoNetwork,
     type TopoContainer
   } from '$lib/api';
-  import { Card, Button, Skeleton, EmptyState, Badge } from '$lib/components/ui';
+  import { Card, Button, Skeleton, EmptyState, Badge, Modal, Input } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import { EventStream, type ConnStatus } from '$lib/events';
   import {
@@ -22,29 +23,60 @@
     ZoomIn,
     ZoomOut,
     Maximize2,
-    List,
     GitBranch,
-    Server
+    Server,
+    Plus,
+    Trash2,
+    ChevronUp,
+    ChevronDown,
+    Lock,
+    Shield
   } from 'lucide-svelte';
 
-  // ---------- tabs ----------
-  type Tab = 'list' | 'topology';
-  let tab = $state<Tab>('list');
+  const canWrite = $derived(allowed('network.write'));
+  const isAll = $derived(hosts.isAll);
 
-  // ---------- list tab data ----------
+  // ---------- view mode ----------
+  let showTopology = $state(false);
+
+  // ---------- list data ----------
   interface NetworkRow {
     Name: string;
     Id: string;
     Driver: string;
     Scope: string;
-    IPAM?: { Config?: Array<{ Subnet?: string }> };
+    Internal: boolean;
+    Attachable: boolean;
+    IPAM?: { Config?: Array<{ Subnet?: string; Gateway?: string }> };
     Containers?: Record<string, any>;
+    Labels?: Record<string, string>;
+    Created?: string;
     host_id?: string;
     host_name?: string;
   }
   let networkList = $state<NetworkRow[]>([]);
   let listLoading = $state(false);
   let listSearch = $state('');
+  let showSystem = $state(false);
+
+  // Sort
+  type SortKey = 'name' | 'driver' | 'scope' | 'containers';
+  let sortKey = $state<SortKey>('name');
+  let sortAsc = $state(true);
+
+  // Bulk
+  let selected = $state<Set<string>>(new Set());
+  let bulkBusy = $state(false);
+
+  // Create modal
+  let showCreate = $state(false);
+  let newName = $state('');
+  let newDriver = $state('bridge');
+  let newSubnet = $state('');
+  let newInternal = $state(false);
+  let creating = $state(false);
+
+  const systemNetworks = new Set(['bridge', 'host', 'none']);
 
   async function loadList() {
     listLoading = true;
@@ -63,35 +95,115 @@
   }
 
   const visibleNetworks = $derived(
-    networkList.filter((n) => {
-      if (!listSearch.trim()) return true;
-      const q = listSearch.toLowerCase();
-      return n.Name.toLowerCase().includes(q) || n.Driver.toLowerCase().includes(q);
-    })
+    networkList
+      .filter(n => {
+        if (!showSystem && systemNetworks.has(n.Name)) return false;
+        if (!listSearch.trim()) return true;
+        const q = listSearch.toLowerCase();
+        return n.Name.toLowerCase().includes(q) || n.Driver.toLowerCase().includes(q)
+          || (n.IPAM?.Config?.[0]?.Subnet ?? '').includes(q);
+      })
+      .sort((a, b) => {
+        let cmp = 0;
+        switch (sortKey) {
+          case 'name': cmp = a.Name.localeCompare(b.Name); break;
+          case 'driver': cmp = a.Driver.localeCompare(b.Driver); break;
+          case 'scope': cmp = a.Scope.localeCompare(b.Scope); break;
+          case 'containers': cmp = containerCount(a) - containerCount(b); break;
+        }
+        return sortAsc ? cmp : -cmp;
+      })
   );
+
+  const allSelected = $derived(visibleNetworks.length > 0 && visibleNetworks.every(n => selected.has(n.Id)));
+  function toggleAll() {
+    if (allSelected) { selected = new Set(); }
+    else { selected = new Set(visibleNetworks.map(n => n.Id)); }
+  }
+  function toggleOne(id: string) {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    selected = next;
+  }
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) { sortAsc = !sortAsc; }
+    else { sortKey = key; sortAsc = true; }
+  }
 
   function containerCount(n: NetworkRow): number {
     return n.Containers ? Object.keys(n.Containers).length : 0;
   }
-
   function subnet(n: NetworkRow): string {
     return n.IPAM?.Config?.[0]?.Subnet ?? '—';
   }
+  function gateway(n: NetworkRow): string {
+    return n.IPAM?.Config?.[0]?.Gateway ?? '—';
+  }
+  function stackOf(n: NetworkRow): string | null {
+    return n.Labels?.['com.docker.compose.project'] ?? null;
+  }
+
+  // Actions
+  async function createNetwork(e: Event) {
+    e.preventDefault();
+    creating = true;
+    try {
+      await api.networks.create(newName, newDriver);
+      toast.success('Network created', newName);
+      showCreate = false;
+      newName = '';
+      await loadList();
+    } catch (err) {
+      toast.error('Create failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      creating = false;
+    }
+  }
+  async function deleteNetwork(n: NetworkRow) {
+    if (!confirm(`Delete network "${n.Name}"?`)) return;
+    try {
+      await api.networks.remove(n.Id);
+      toast.success('Deleted', n.Name);
+      await loadList();
+    } catch (err) {
+      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+  async function bulkDelete() {
+    if (!confirm(`Delete ${selected.size} network(s)?`)) return;
+    bulkBusy = true;
+    let ok = 0, fail = 0;
+    for (const n of networkList.filter(n => selected.has(n.Id))) {
+      try { await api.networks.remove(n.Id); ok++; } catch { fail++; }
+    }
+    toast.success(`Deleted: ${ok}${fail ? `, ${fail} failed` : ''}`);
+    selected = new Set();
+    bulkBusy = false;
+    await loadList();
+  }
+  async function pruneNetworks() {
+    if (!confirm('Remove all unused networks? This cannot be undone.')) return;
+    try {
+      const res = await api.networks.prune();
+      toast.success('Pruned', `${res?.NetworksDeleted?.length ?? 0} network(s) removed`);
+      await loadList();
+    } catch (err) {
+      toast.error('Prune failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
 
   $effect(() => {
-    if (tab === 'list') {
-      hosts.id; // re-load on host switch
-      loadList();
-    }
+    hosts.id;
+    loadList();
   });
 
   // ---------- topology tab data ----------
   let topo = $state<Topology | null>(null);
   let loading = $state(true);
-  let showSystem = $state(false);
-  let selected = $state<{ kind: 'network' | 'container'; id: string } | null>(null);
+  let topoShowSystem = $state(false);
+  let topoSelected = $state<{ kind: 'network' | 'container'; id: string } | null>(null);
   let hovered = $state<{ id: string; clientX: number; clientY: number } | null>(null);
-  let search = $state('');
+  let topoSearch = $state('');
   let connStatus = $state<ConnStatus>('connecting');
   const live = $derived(connStatus === 'live');
   let reloadTimer: ReturnType<typeof setTimeout> | null = null;
@@ -164,7 +276,7 @@
       return;
     }
 
-    const nets = showSystem ? topo.networks : topo.networks.filter((n) => !n.system);
+    const nets = topoShowSystem ? topo.networks : topo.networks.filter((n) => !n.system);
     const netIds = new Set(nets.map((n) => n.id));
 
     // Only containers that participate in at least one visible network
@@ -347,7 +459,7 @@
   function onSvgClick(e: MouseEvent) {
     const target = e.target as Element;
     if (target === svgEl || target.classList?.contains('bg-rect')) {
-      selected = null;
+      topoSelected = null;
     }
   }
 
@@ -378,7 +490,7 @@
   // ---------- interaction ----------
   function onNodeClick(node: LaidNode, e: MouseEvent) {
     e.stopPropagation();
-    selected = { kind: node.kind, id: node.id };
+    topoSelected = { kind: node.kind, id: node.id };
   }
 
   function onNodeMouseEnter(node: LaidNode, e: MouseEvent) {
@@ -393,7 +505,7 @@
 
   // ---------- search filter ----------
   const searchMatches = $derived.by(() => {
-    const q = search.trim().toLowerCase();
+    const q = topoSearch.trim().toLowerCase();
     if (!q) return null;
     const hits = new Set<string>();
     for (const n of scene.nodes) {
@@ -411,12 +523,12 @@
 
   function isDimmed(id: string): boolean {
     if (searchMatches && !searchMatches.has(id)) return true;
-    if (selected) {
-      if (selected.id === id) return false;
+    if (topoSelected) {
+      if (topoSelected.id === id) return false;
       const touched = scene.edges.some(
         (e) =>
-          (e.sid === selected!.id && (e.tid === id || e.sid === id)) ||
-          (e.tid === selected!.id && (e.sid === id || e.tid === id))
+          (e.sid === topoSelected!.id && (e.tid === id || e.sid === id)) ||
+          (e.tid === topoSelected!.id && (e.sid === id || e.tid === id))
       );
       if (!touched) return true;
     }
@@ -486,10 +598,10 @@
   }
 
   // ---------- side panel data ----------
-  const selectedNode = $derived(selected ? nodeIndex.get(selected.id) ?? null : null);
+  const selectedNode = $derived(topoSelected ? nodeIndex.get(topoSelected.id) ?? null : null);
   const selectedLinks = $derived(
     selected
-      ? scene.edges.filter((e) => e.sid === selected!.id || e.tid === selected!.id)
+      ? scene.edges.filter((e) => e.sid === topoSelected!.id || e.tid === topoSelected!.id)
       : []
   );
   const hoveredNode = $derived(hovered ? nodeIndex.get(hovered.id) ?? null : null);
@@ -567,7 +679,7 @@
   {
     let prevShowSystem: boolean | null = null;
     $effect(() => {
-      const cur = showSystem;
+      const cur = topoShowSystem;
       if (prevShowSystem === null) {
         prevShowSystem = cur;
         return;
@@ -583,89 +695,183 @@
 <svelte:window onmousemove={onWindowMouseMove} onmouseup={onWindowMouseUp} />
 
 <section class="space-y-4">
+  <!-- Header -->
   <div class="flex items-center justify-between flex-wrap gap-3">
     <div>
       <h2 class="text-2xl font-semibold tracking-tight">Networks</h2>
-      <p class="text-sm text-[var(--fg-muted)] mt-0.5">Docker networks and topology visualization.</p>
+      <p class="text-sm text-[var(--fg-muted)] mt-0.5">
+        {networkList.length} network{networkList.length === 1 ? '' : 's'}
+        {#if isAll}across all hosts{:else if hosts.selected?.name && hosts.id !== 'local'}on {hosts.selected.name}{/if}
+      </p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button
+        class="dm-btn dm-btn-sm {showTopology ? 'dm-btn-primary' : 'dm-btn-secondary'}"
+        onclick={() => (showTopology = !showTopology)}
+        title="Toggle topology view"
+      >
+        <GitBranch class="w-3.5 h-3.5" /> Topology
+      </button>
+      {#if canWrite}
+        <Button variant="secondary" size="sm" onclick={pruneNetworks}>
+          <Trash2 class="w-3.5 h-3.5" /> Prune
+        </Button>
+        <Button variant="primary" size="sm" onclick={() => (showCreate = true)}>
+          <Plus class="w-3.5 h-3.5" /> Create
+        </Button>
+      {/if}
+      <Button variant="secondary" size="sm" onclick={loadList}>
+        <RefreshCw class="w-3.5 h-3.5 {listLoading ? 'animate-spin' : ''}" /> Refresh
+      </Button>
     </div>
   </div>
 
-  <!-- Tabs -->
-  <div class="border-b border-[var(--border)] flex gap-1">
-    <button
-      class="px-4 py-2.5 text-sm border-b-2 transition-colors flex items-center gap-2
-             {tab === 'list' ? 'border-[var(--color-brand-500)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}"
-      onclick={() => (tab = 'list')}
-    >
-      <List class="w-3.5 h-3.5" /> List
-    </button>
-    <button
-      class="px-4 py-2.5 text-sm border-b-2 transition-colors flex items-center gap-2
-             {tab === 'topology' ? 'border-[var(--color-brand-500)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}"
-      onclick={() => (tab = 'topology')}
-    >
-      <GitBranch class="w-3.5 h-3.5" /> Topology
-    </button>
-  </div>
-
-  <!-- List tab -->
-  {#if tab === 'list'}
-    {#if !listLoading && networkList.length > 0}
-      <div class="relative max-w-sm">
+  <!-- Search + filters -->
+  {#if networkList.length > 0}
+    <div class="flex flex-wrap items-center gap-3">
+      <div class="relative flex-1 min-w-[200px] max-w-sm">
         <Search class="w-3.5 h-3.5 text-[var(--fg-subtle)] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-        <input type="search" placeholder="Search networks…" bind:value={listSearch} class="dm-input pl-8 pr-3 py-1.5 text-sm w-full" />
+        <input type="search" placeholder="Search by name, driver, subnet…" bind:value={listSearch} class="dm-input pl-8 pr-3 py-1.5 text-sm w-full" />
       </div>
-    {/if}
-
-    {#if listLoading}
-      <Card><Skeleton class="m-5" width="80%" height="6rem" /></Card>
-    {:else if networkList.length === 0}
-      <Card>
-        <EmptyState icon={NetworkIcon} title="No networks" description="Docker networks will appear here." />
-      </Card>
-    {:else}
-      <Card>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="border-b border-[var(--border)] text-[var(--fg-muted)] text-xs uppercase tracking-wider">
-                <th class="text-left px-5 py-3">Name</th>
-                <th class="text-left px-3 py-3">Driver</th>
-                <th class="text-left px-3 py-3">Scope</th>
-                <th class="text-left px-3 py-3">Subnet</th>
-                <th class="text-right px-3 py-3">Containers</th>
-                {#if hosts.isAll}
-                  <th class="text-left px-3 py-3">Host</th>
-                {/if}
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-[var(--border)]">
-              {#each visibleNetworks as n}
-                <tr class="hover:bg-[var(--surface-hover)]">
-                  <td class="px-5 py-3 font-mono text-sm truncate max-w-[250px]" title={n.Name}>{n.Name}</td>
-                  <td class="px-3 py-3 text-xs text-[var(--fg-muted)]">{n.Driver}</td>
-                  <td class="px-3 py-3"><Badge variant="default">{n.Scope}</Badge></td>
-                  <td class="px-3 py-3 font-mono text-xs text-[var(--fg-muted)]">{subnet(n)}</td>
-                  <td class="px-3 py-3 text-right tabular-nums">{containerCount(n)}</td>
-                  {#if hosts.isAll}
-                    <td class="px-3 py-3">
-                      <span class="inline-flex items-center gap-1 font-mono text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)]">
-                        <Server class="w-2.5 h-2.5" />
-                        {n.host_name || n.host_id || 'local'}
-                      </span>
-                    </td>
-                  {/if}
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    {/if}
+      <label class="flex items-center gap-2 text-xs text-[var(--fg-muted)] cursor-pointer">
+        <input type="checkbox" bind:checked={showSystem} class="accent-[var(--color-brand-500)]" />
+        system networks
+      </label>
+    </div>
   {/if}
 
-  <!-- Topology tab -->
-  {#if tab === 'topology'}
+  <!-- Bulk action bar -->
+  {#if selected.size > 0 && canWrite}
+    <div class="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-[var(--surface)] border border-[var(--border)]">
+      <span class="text-sm font-medium">{selected.size} selected</span>
+      <div class="flex gap-1.5 ml-auto">
+        <Button size="xs" variant="danger" onclick={bulkDelete} disabled={bulkBusy}>
+          <Trash2 class="w-3.5 h-3.5" /> Delete
+        </Button>
+        <button class="text-xs text-[var(--fg-muted)] hover:text-[var(--fg)] ml-2" onclick={() => (selected = new Set())}>Clear</button>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Table -->
+  {#if listLoading && networkList.length === 0}
+    <Card>
+      <div class="divide-y divide-[var(--border)]">
+        {#each Array(5) as _}
+          <div class="px-5 py-3.5 flex items-center gap-4">
+            <Skeleton width="1rem" height="1rem" />
+            <Skeleton width="30%" height="0.85rem" />
+            <Skeleton width="15%" height="0.75rem" />
+          </div>
+        {/each}
+      </div>
+    </Card>
+  {:else if networkList.length === 0}
+    <Card>
+      <EmptyState icon={NetworkIcon} title="No networks" description="Docker networks will appear here when containers are running." />
+    </Card>
+  {:else if visibleNetworks.length === 0}
+    <Card class="p-8 text-center text-sm text-[var(--fg-muted)]">No networks match this search.</Card>
+  {:else}
+    <Card>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-[var(--border)] text-[var(--fg-muted)] text-xs uppercase tracking-wider">
+              {#if canWrite}
+                <th class="w-10 px-3 py-3">
+                  <input type="checkbox" checked={allSelected} onchange={toggleAll} class="accent-[var(--color-brand-500)]" />
+                </th>
+              {/if}
+              {#snippet sortHeader(key: SortKey, label: string)}
+                <th class="text-left px-3 py-3 cursor-pointer select-none hover:text-[var(--fg)]" onclick={() => toggleSort(key)}>
+                  <span class="inline-flex items-center gap-1">
+                    {label}
+                    {#if sortKey === key}
+                      {#if sortAsc}<ChevronUp class="w-3 h-3" />{:else}<ChevronDown class="w-3 h-3" />{/if}
+                    {/if}
+                  </span>
+                </th>
+              {/snippet}
+              {@render sortHeader('name', 'Name')}
+              <th class="text-left px-3 py-3">ID</th>
+              <th class="text-left px-3 py-3">Stack</th>
+              {@render sortHeader('driver', 'Driver')}
+              {@render sortHeader('scope', 'Scope')}
+              <th class="text-left px-3 py-3">Subnet</th>
+              <th class="text-left px-3 py-3">Gateway</th>
+              <th class="text-center px-3 py-3" title="Internal">Int</th>
+              {@render sortHeader('containers', 'Containers')}
+              {#if isAll}
+                <th class="text-left px-3 py-3">Host</th>
+              {/if}
+              {#if canWrite}
+                <th class="text-right px-3 py-3 w-20">Actions</th>
+              {/if}
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[var(--border)]">
+            {#each visibleNetworks as n (n.Id || n.Name)}
+              {@const stack = stackOf(n)}
+              {@const isSystem = systemNetworks.has(n.Name)}
+              <tr class="hover:bg-[var(--surface-hover)] transition-colors {selected.has(n.Id) ? 'bg-[color-mix(in_srgb,var(--color-brand-500)_5%,transparent)]' : ''}">
+                {#if canWrite}
+                  <td class="w-10 px-3 py-2.5">
+                    {#if !isSystem}
+                      <input type="checkbox" checked={selected.has(n.Id)} onchange={() => toggleOne(n.Id)} class="accent-[var(--color-brand-500)]" />
+                    {/if}
+                  </td>
+                {/if}
+                <td class="px-3 py-2.5">
+                  <span class="font-mono text-sm truncate block max-w-[180px]" title={n.Name}>{n.Name}</span>
+                </td>
+                <td class="px-3 py-2.5 text-[10px] text-[var(--fg-muted)] font-mono">{(n.Id ?? '').slice(0, 12)}</td>
+                <td class="px-3 py-2.5">
+                  {#if stack}
+                    <a href="/stacks/{stack}" class="text-xs text-[var(--color-brand-400)] hover:underline font-mono">{stack}</a>
+                  {:else}
+                    <span class="text-xs text-[var(--fg-subtle)]">—</span>
+                  {/if}
+                </td>
+                <td class="px-3 py-2.5 text-xs text-[var(--fg-muted)]">{n.Driver}</td>
+                <td class="px-3 py-2.5"><Badge variant="default">{n.Scope}</Badge></td>
+                <td class="px-3 py-2.5 font-mono text-xs text-[var(--fg-muted)]">{subnet(n)}</td>
+                <td class="px-3 py-2.5 font-mono text-xs text-[var(--fg-muted)]">{gateway(n)}</td>
+                <td class="px-3 py-2.5 text-center">
+                  {#if n.Internal}<span title="Internal network"><Lock class="w-3 h-3 text-[var(--color-warning-400)] inline" /></span>{/if}
+                </td>
+                <td class="px-3 py-2.5 text-center tabular-nums">{containerCount(n)}</td>
+                {#if isAll}
+                  <td class="px-3 py-2.5">
+                    <span class="inline-flex items-center gap-1 font-mono text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)]">
+                      <Server class="w-2.5 h-2.5" />
+                      {n.host_name || n.host_id || 'local'}
+                    </span>
+                  </td>
+                {/if}
+                {#if canWrite}
+                  <td class="px-3 py-2.5 text-right">
+                    {#if !isSystem}
+                      <button
+                        class="p-1.5 rounded-md text-[var(--color-danger-400)] hover:bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)]"
+                        title="Delete network"
+                        onclick={() => deleteNetwork(n)}
+                      >
+                        <Trash2 class="w-3.5 h-3.5" />
+                      </button>
+                    {/if}
+                  </td>
+                {/if}
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  {/if}
+
+  <!-- Topology (inline toggle, not a tab) -->
+  {#if showTopology}
   <div class="flex items-center justify-between flex-wrap gap-3">
     <div>
       <h3 class="text-lg font-semibold tracking-tight flex items-center gap-2">
@@ -689,14 +895,14 @@
         <Search class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--fg-subtle)] pointer-events-none" />
         <input
           type="text"
-          bind:value={search}
+          bind:value={topoSearch}
           placeholder="Search…"
           class="dm-input !py-1.5 !pl-8 !pr-3 text-sm w-48"
         />
       </div>
-      <Button variant="secondary" size="sm" onclick={() => (showSystem = !showSystem)}>
-        {#if showSystem}<EyeOff class="w-3.5 h-3.5" />{:else}<Eye class="w-3.5 h-3.5" />{/if}
-        {showSystem ? 'Hide' : 'Show'} system
+      <Button variant="secondary" size="sm" onclick={() => (topoShowSystem = !topoShowSystem)}>
+        {#if topoShowSystem}<EyeOff class="w-3.5 h-3.5" />{:else}<Eye class="w-3.5 h-3.5" />{/if}
+        {topoShowSystem ? 'Hide' : 'Show'} system
       </Button>
       <Button variant="secondary" size="sm" onclick={load}>
         <RefreshCw class="w-3.5 h-3.5 {loading ? 'animate-spin' : ''}" /> Refresh
@@ -809,8 +1015,8 @@
             <!-- Edges -->
             <g fill="none">
               {#each scene.edges as e (e.sid + '|' + e.tid)}
-                {@const isSel = selected && (selected.id === e.sid || selected.id === e.tid)}
-                {@const dim = (selected || searchMatches) && !isSel && (isDimmed(e.sid) || isDimmed(e.tid))}
+                {@const isSel = topoSelected && (topoSelected.id === e.sid || topoSelected.id === e.tid)}
+                {@const dim = (topoSelected || searchMatches) && !isSel && (isDimmed(e.sid) || isDimmed(e.tid))}
                 <path
                   d={edgePath(e)}
                   stroke={isSel ? 'var(--color-brand-400)' : 'var(--border-strong)'}
@@ -823,7 +1029,7 @@
 
             <!-- Nodes -->
             {#each scene.nodes as n (n.id)}
-              {@const isSel = selected?.id === n.id}
+              {@const isSel = topoSelected?.id === n.id}
               {@const dim = isDimmed(n.id)}
               <g
                 style="transform: translate({n.x}px, {n.y}px); transform-box: fill-box; transition: transform 300ms ease, opacity 200ms;"
@@ -1042,3 +1248,20 @@
   {/if}
   {/if}
 </section>
+
+<!-- Create network modal -->
+<Modal bind:open={showCreate} title="Create network" maxWidth="max-w-sm">
+  <form onsubmit={createNetwork} id="create-net-form" class="space-y-3">
+    <Input label="Name" placeholder="my-network" bind:value={newName} disabled={creating} />
+    <Input label="Driver" bind:value={newDriver} disabled={creating} hint="bridge, overlay, macvlan, host, none" />
+    <Input label="Subnet (optional)" placeholder="172.20.0.0/16" bind:value={newSubnet} disabled={creating} />
+    <label class="flex items-center gap-2 text-sm cursor-pointer">
+      <input type="checkbox" bind:checked={newInternal} class="accent-[var(--color-brand-500)]" />
+      <span>Internal (no external access)</span>
+    </label>
+  </form>
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (showCreate = false)}>Cancel</Button>
+    <Button variant="primary" type="submit" form="create-net-form" loading={creating} disabled={creating || !newName.trim()}>Create</Button>
+  {/snippet}
+</Modal>
