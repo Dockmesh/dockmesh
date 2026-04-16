@@ -1,9 +1,15 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
@@ -15,8 +21,46 @@ type stackRequest struct {
 	Env     string `json:"env,omitempty"`
 }
 
+// stackListEntry extends the filesystem Stack with the optional
+// deployment state so the frontend can show a Host column.
+type stackListEntry struct {
+	*stacks.Stack
+	Deployment *stacks.Deployment `json:"deployment,omitempty"`
+}
+
 func (h *Handlers) ListStacks(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, h.Stacks.List())
+	list := h.Stacks.List()
+	// Enrich with deployment info when available.
+	var deps map[string]*stacks.Deployment
+	if h.Deployments != nil {
+		var err error
+		deps, err = h.Deployments.All(r.Context())
+		if err != nil {
+			slog.Warn("list stacks: deployment query", "err", err)
+		}
+	}
+	// Resolve host names for each deployment.
+	var hostNames map[string]string
+	if h.Hosts != nil && len(deps) > 0 {
+		if infos, err := h.Hosts.List(r.Context()); err == nil {
+			hostNames = make(map[string]string, len(infos))
+			for _, info := range infos {
+				hostNames[info.ID] = info.Name
+			}
+		}
+	}
+	out := make([]stackListEntry, 0, len(list))
+	for _, s := range list {
+		entry := stackListEntry{Stack: s}
+		if d, ok := deps[s.Name]; ok {
+			if hostNames != nil {
+				d.HostName = hostNames[d.HostID]
+			}
+			entry.Deployment = d
+		}
+		out = append(out, entry)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *Handlers) GetStack(w http.ResponseWriter, r *http.Request) {
@@ -70,9 +114,27 @@ func (h *Handlers) UpdateStack(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	// Look up which host this stack was deployed to BEFORE deleting,
+	// so we can tell the agent to remove its local copy.
+	var deployHostID string
+	if h.Deployments != nil {
+		if d, err := h.Deployments.Get(r.Context(), name); err == nil && d != nil {
+			deployHostID = d.HostID
+		}
+	}
 	if err := h.Stacks.Delete(name); err != nil {
 		writeStackError(w, err)
 		return
+	}
+	// Remove deployment row (no-op if none exists).
+	if h.Deployments != nil {
+		if err := h.Deployments.Delete(r.Context(), name); err != nil {
+			slog.Warn("delete stack deployment row", "stack", name, "err", err)
+		}
+	}
+	// Tell the agent to drop its local copy (P.7 compose-file mirroring).
+	if deployHostID != "" {
+		h.deleteStackFromAgent(r.Context(), deployHostID, name)
 	}
 	h.audit(r, audit.ActionStackDelete, name, nil)
 	w.WriteHeader(http.StatusNoContent)
@@ -98,6 +160,16 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Record the deployment association (P.7).
+	if h.Deployments != nil {
+		if err := h.Deployments.Set(r.Context(), name, target.ID(), "deployed"); err != nil {
+			slog.Warn("set stack deployment", "stack", name, "host", target.ID(), "err", err)
+		}
+	}
+	// Compose-file mirroring (P.7): push canonical files to the agent
+	// so it retains a local copy for disaster recovery. Fire-and-forget
+	// — a sync failure must not block the deploy response.
+	h.syncStackToAgent(r.Context(), target.ID(), name, detail.Compose, detail.Env)
 	h.audit(r, audit.ActionStackDeploy, name, map[string]any{
 		"services": len(res.Services),
 		"host":     target.ID(),
@@ -116,6 +188,12 @@ func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Mark as stopped but keep the row so we remember which host it was on.
+	if h.Deployments != nil {
+		if err := h.Deployments.Set(r.Context(), name, target.ID(), "stopped"); err != nil {
+			slog.Warn("set stack deployment stopped", "stack", name, "err", err)
+		}
+	}
 	h.audit(r, audit.ActionStackStop, name, map[string]string{"host": target.ID()})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -133,6 +211,59 @@ func (h *Handlers) StackStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+// syncStackToAgent pushes the compose+env to the agent for local
+// caching. No-op for local or when agent is unavailable.
+func (h *Handlers) syncStackToAgent(ctx context.Context, hostID, name, compose, env string) {
+	if hostID == "" || hostID == "local" || h.Agents == nil {
+		return
+	}
+	ag := h.Agents.GetConnected(hostID)
+	if ag == nil {
+		return
+	}
+	// Read optional .dockmesh.meta.json from the stack dir.
+	var meta string
+	if dir, err := h.Stacks.Dir(name); err == nil {
+		if b, err := os.ReadFile(filepath.Join(dir, ".dockmesh.meta.json")); err == nil {
+			meta = string(b)
+		}
+	}
+	req := agents.StackSyncReq{Name: name, Compose: compose, Env: env, Meta: meta}
+	go func() {
+		if _, err := ag.Request(ctx, agents.Frame{
+			Type:    agents.FrameReqStackSync,
+			Payload: mustJSON(req),
+		}); err != nil {
+			slog.Warn("stack sync to agent", "stack", name, "agent", hostID, "err", err)
+		}
+	}()
+}
+
+// deleteStackFromAgent tells the agent to remove its local copy.
+func (h *Handlers) deleteStackFromAgent(ctx context.Context, hostID, name string) {
+	if hostID == "" || hostID == "local" || h.Agents == nil {
+		return
+	}
+	ag := h.Agents.GetConnected(hostID)
+	if ag == nil {
+		return
+	}
+	req := agents.StackNameReq{Name: name}
+	go func() {
+		if _, err := ag.Request(ctx, agents.Frame{
+			Type:    agents.FrameReqStackDelete,
+			Payload: mustJSON(req),
+		}); err != nil {
+			slog.Warn("stack delete from agent", "stack", name, "agent", hostID, "err", err)
+		}
+	}()
+}
+
+func mustJSON(v any) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return b
 }
 
 func writeStackError(w http.ResponseWriter, err error) {

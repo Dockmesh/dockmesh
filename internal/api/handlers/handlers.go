@@ -25,25 +25,26 @@ import (
 )
 
 type Handlers struct {
-	DB          *sql.DB
-	Auth        *auth.Service
-	Audit       *audit.Service
-	Docker      *docker.Client // may be nil if the daemon was unreachable at startup
-	Stacks      *stacks.Manager
-	Compose     *compose.Service
+	DB           *sql.DB
+	Auth         *auth.Service
+	Audit        *audit.Service
+	Docker       *docker.Client // may be nil if the daemon was unreachable at startup
+	Stacks       *stacks.Manager
+	Deployments  *stacks.DeploymentStore
+	Compose      *compose.Service
 	LoginLimiter *ratelimit.Limiter
-	Scanner     scanner.Scanner
-	ScanStore   *scanner.Store
-	Proxy       *proxy.Service
-	Updater     *updater.Service
-	OIDC        *oidc.Service
-	Metrics     *metrics.Collector
-	Notify      *notify.Service
-	Alerts      *alerts.Service
-	Backups     *backup.Service
-	Agents      *agents.Service
-	Hosts       *host.Registry
-	JWTSecret   []byte // raw secret used to sign the short-lived OIDC state cookie
+	Scanner      scanner.Scanner
+	ScanStore    *scanner.Store
+	Proxy        *proxy.Service
+	Updater      *updater.Service
+	OIDC         *oidc.Service
+	Metrics      *metrics.Collector
+	Notify       *notify.Service
+	Alerts       *alerts.Service
+	Backups      *backup.Service
+	Agents       *agents.Service
+	Hosts        *host.Registry
+	JWTSecret    []byte // raw secret used to sign the short-lived OIDC state cookie
 }
 
 type Deps struct {
@@ -52,6 +53,7 @@ type Deps struct {
 	Audit        *audit.Service
 	Docker       *docker.Client
 	Stacks       *stacks.Manager
+	Deployments  *stacks.DeploymentStore
 	Compose      *compose.Service
 	LoginLimiter *ratelimit.Limiter
 	Scanner      scanner.Scanner
@@ -75,6 +77,7 @@ func New(d Deps) *Handlers {
 		Audit:       d.Audit,
 		Docker:      d.Docker,
 		Stacks:      d.Stacks,
+		Deployments: d.Deployments,
 		Compose:     d.Compose,
 		LoginLimiter: d.LoginLimiter,
 		Scanner:     d.Scanner,

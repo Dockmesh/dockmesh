@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
+
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/api"
@@ -206,6 +208,8 @@ func main() {
 	agentsSvc := agents.NewService(database, pkiMgr, cfg.BaseURL, agentPublic)
 	hostRegistry := host.NewRegistry(dockerCli, agentsSvc)
 
+	deployStore := stacks.NewDeploymentStore(database)
+
 	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
 	h := handlers.New(handlers.Deps{
 		DB:           database,
@@ -213,6 +217,7 @@ func main() {
 		Audit:        auditSvc,
 		Docker:       dockerCli,
 		Stacks:       stacksMgr,
+		Deployments:  deployStore,
 		Compose:      composeSvc,
 		LoginLimiter: loginLimiter,
 		Scanner:      scannerSvc,
@@ -229,6 +234,29 @@ func main() {
 		JWTSecret:    cfg.JWTSecret,
 	})
 	router := api.NewRouter(h, authSvc, webFS)
+
+	// Backfill stack deployments (P.7): scan local containers to detect
+	// which stacks are already deployed. Remote-agent containers are
+	// handled lazily — agents reconnect after boot and their containers
+	// will be picked up on the next deploy or via a future sync.
+	if dockerCli != nil {
+		go func() {
+			bgCtx := context.Background()
+			cli := dockerCli.Raw()
+			all, err := cli.ContainerList(bgCtx, container.ListOptions{All: true})
+			if err != nil {
+				slog.Warn("backfill: container list", "err", err)
+				return
+			}
+			infos := make([]stacks.ContainerInfo, len(all))
+			for i, c := range all {
+				infos[i] = stacks.ContainerInfo{Labels: c.Labels, HostID: "local"}
+			}
+			if err := stacks.BackfillDeployments(bgCtx, deployStore, stacksMgr, infos); err != nil {
+				slog.Warn("backfill: deployments", "err", err)
+			}
+		}()
+	}
 
 	// mTLS listener for agents (concept §3.1). Started in its own
 	// goroutine; failures are logged but don't take down the main API.

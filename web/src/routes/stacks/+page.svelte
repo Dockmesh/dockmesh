@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, ApiError, isFanOut } from '$lib/api';
+  import { api, ApiError, isFanOut, type StackDeployment } from '$lib/api';
   import { goto } from '$app/navigation';
   import { Button, Modal, EmptyState, Input, Skeleton, Badge } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
@@ -19,6 +19,8 @@
     // single-host mode this is always one entry; in all-mode we collect
     // every host that has matching compose-project labels.
     hosts: Array<{ id: string; name: string }>;
+    // P.7: database-backed deployment association (host + status).
+    deployment?: StackDeployment;
   }
 
   let stackCards = $state<StackCard[]>([]);
@@ -61,7 +63,7 @@
         byStack.get(proj)!.push(c);
       }
 
-      stackCards = stackList.map((s: { name: string }) => {
+      stackCards = stackList.map((s) => {
         const cs = byStack.get(s.name) ?? [];
         const running = cs.filter((c) => c.State === 'running').length;
         const unhealthy = cs.filter((c) =>
@@ -93,7 +95,8 @@
             state: c.State,
             status: c.Status ?? ''
           })),
-          hosts: [...seenHost.entries()].map(([id, name]) => ({ id, name }))
+          hosts: [...seenHost.entries()].map(([id, name]) => ({ id, name })),
+          deployment: s.deployment
         };
       });
     } catch (err) {
@@ -317,9 +320,18 @@
               {/if}
             </div>
           {/if}
-          {#if hosts.isAll && s.hosts.length > 0}
-            <!-- Host pills only in all-mode — single-host mode already
-                 labels the page header with the host name. -->
+          {#if s.deployment}
+            <!-- P.7 deployment host — always shown so users see which
+                 host this stack lives on regardless of host-picker mode. -->
+            <div class="flex items-center gap-1.5 mt-2 pt-2 border-t border-[var(--border)]">
+              <span class="inline-flex items-center gap-1 font-mono text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)]">
+                <Server class="w-2.5 h-2.5" />
+                {s.deployment.host_name || s.deployment.host_id}
+              </span>
+            </div>
+          {:else if hosts.isAll && s.hosts.length > 0}
+            <!-- Fallback: container-derived hosts in all-mode for
+                 stacks that predate the deployment table. -->
             <div class="flex items-center gap-1 flex-wrap mt-2 pt-2 border-t border-[var(--border)]">
               {#each s.hosts as h}
                 <span class="inline-flex items-center gap-0.5 font-mono text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)]">
