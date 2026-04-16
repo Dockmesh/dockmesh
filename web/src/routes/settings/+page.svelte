@@ -58,6 +58,21 @@
     return `${v.toFixed(1)} ${u[i]}`;
   }
 
+  // --- System tab: instance info ---
+  let systemInfo = $state<{ version: string; commit: string; build_date: string; go_version: string; os: string; arch: string; uptime_seconds: number } | null>(null);
+  async function loadSystemInfo() {
+    try { systemInfo = await api.system.info(); } catch { /* ignore */ }
+  }
+  function fmtUptime(secs?: number): string {
+    if (!secs) return '—';
+    const d = Math.floor(secs / 86400);
+    const h = Math.floor((secs % 86400) / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    if (d > 0) return `${d}d ${h}h`;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  }
+
   // --- Roles tab (RBAC v2) ---
   let roles = $state<CustomRole[]>([]);
   let allPerms = $state<PermissionInfo[]>([]);
@@ -452,10 +467,10 @@
 
   $effect(() => {
     if (tab === 'account') loadMe();
-    else if (tab === 'users') loadUsers();
+    else if (tab === 'users') { loadUsers(); loadRoles(); }
     else if (tab === 'audit') loadAudit();
     else if (tab === 'sso') loadOIDC();
-    else if (tab === 'system') loadBackup();
+    else if (tab === 'system') { loadBackup(); loadSystemInfo(); }
     else if (tab === 'roles') loadRoles();
   });
 
@@ -500,69 +515,73 @@
 
   {#if tab === 'account'}
     {#if me}
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-3xl">
+      <div class="max-w-2xl space-y-6">
+        <!-- Profile -->
         <Card class="p-5">
-          <div class="flex items-center gap-3 mb-4">
-            <div class="w-12 h-12 rounded-full bg-gradient-to-br from-brand-400 to-brand-700 flex items-center justify-center text-white font-semibold text-lg">
+          <div class="flex items-center gap-4 mb-5">
+            <div class="w-14 h-14 rounded-full bg-gradient-to-br from-brand-400 to-brand-700 flex items-center justify-center text-white font-bold text-xl shrink-0">
               {me.username[0]?.toUpperCase()}
             </div>
-            <div>
-              <div class="font-semibold">{me.username}</div>
-              <Badge variant="info">{me.role}</Badge>
+            <div class="flex-1 min-w-0">
+              <div class="text-lg font-semibold">{me.username}</div>
+              <div class="flex items-center gap-2 mt-0.5">
+                <Badge variant="info">{me.role}</Badge>
+                {#if me.mfa_enabled}<Badge variant="success" dot>2FA</Badge>{/if}
+              </div>
             </div>
           </div>
-          {#if me.email}
-            <div class="text-xs text-[var(--fg-muted)]">Email</div>
-            <div class="text-sm font-mono">{me.email}</div>
-          {/if}
-        </Card>
-
-        <Card class="p-5">
-          <h3 class="font-semibold mb-3 text-sm">Change password</h3>
-          <form onsubmit={changeOwnPassword} class="space-y-3">
-            <Input
-              type="password"
-              placeholder="New password"
-              bind:value={newPassword}
-              hint="minimum 8 characters"
-              autocomplete="new-password"
-            />
-            <Button variant="primary" type="submit" disabled={newPassword.length < 8}>
-              Update password
-            </Button>
-          </form>
-        </Card>
-
-        <Card class="p-5 md:col-span-2">
-          <div class="flex items-start justify-between gap-4">
-            <div class="flex items-start gap-3">
-              <div class="w-10 h-10 rounded-lg bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] text-[var(--color-brand-400)] flex items-center justify-center shrink-0">
-                {#if me.mfa_enabled}
-                  <ShieldCheck class="w-5 h-5" />
-                {:else}
-                  <ShieldOff class="w-5 h-5" />
-                {/if}
-              </div>
-              <div>
-                <h3 class="font-semibold text-sm flex items-center gap-2">
-                  Two-factor authentication
-                  {#if me.mfa_enabled}<Badge variant="success" dot>active</Badge>{/if}
-                </h3>
-                <p class="text-xs text-[var(--fg-muted)] mt-1 max-w-md">
-                  Protect your account with a second factor. Scan the QR with any TOTP app
-                  (Google Authenticator, Authy, 1Password, Bitwarden, …) and keep the
-                  recovery codes safe.
-                </p>
-              </div>
+          <div class="grid grid-cols-2 gap-4 text-xs">
+            <div>
+              <div class="text-[var(--fg-muted)] uppercase tracking-wider font-medium mb-0.5">Email</div>
+              <div class="font-mono text-sm">{me.email || '—'}</div>
             </div>
             <div>
+              <div class="text-[var(--fg-muted)] uppercase tracking-wider font-medium mb-0.5">Member since</div>
+              <div class="font-mono text-sm">{me.created_at ? new Date(me.created_at).toLocaleDateString() : '—'}</div>
+            </div>
+          </div>
+        </Card>
+
+        <!-- Security -->
+        <Card class="p-5">
+          <h3 class="font-semibold text-sm uppercase tracking-wider text-[var(--fg-muted)] mb-4">Security</h3>
+          <div class="space-y-5">
+            <!-- Password -->
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <div class="text-sm font-medium">Password</div>
+                <p class="text-xs text-[var(--fg-muted)] mt-0.5">Set a new password (minimum 8 characters).</p>
+              </div>
+              <form onsubmit={changeOwnPassword} class="flex items-center gap-2">
+                <input
+                  type="password"
+                  placeholder="New password"
+                  bind:value={newPassword}
+                  autocomplete="new-password"
+                  class="dm-input text-sm !py-1.5 !w-48"
+                />
+                <Button variant="primary" size="sm" type="submit" disabled={newPassword.length < 8}>Update</Button>
+              </form>
+            </div>
+            <div class="border-t border-[var(--border)]"></div>
+            <!-- 2FA -->
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <div class="text-sm font-medium flex items-center gap-2">
+                  Two-factor authentication
+                  {#if me.mfa_enabled}<Badge variant="success" dot>active</Badge>{/if}
+                </div>
+                <p class="text-xs text-[var(--fg-muted)] mt-0.5 max-w-sm">
+                  TOTP-based second factor. Works with Google Authenticator, Authy, 1Password, Bitwarden.
+                </p>
+              </div>
               {#if me.mfa_enabled}
                 <Button variant="danger" size="sm" onclick={disableMFA}>
                   <ShieldOff class="w-3.5 h-3.5" /> Disable
                 </Button>
               {:else}
                 <Button variant="primary" size="sm" loading={mfaBusy} onclick={startMFAEnroll}>
-                  <ShieldCheck class="w-3.5 h-3.5" /> Enable 2FA
+                  <ShieldCheck class="w-3.5 h-3.5" /> Enable
                 </Button>
               {/if}
             </div>
@@ -573,75 +592,82 @@
       <Skeleton width="100%" height="12rem" />
     {/if}
   {:else if tab === 'users'}
-    <div class="flex justify-between items-center">
-      <div class="text-sm text-[var(--fg-muted)]">
-        {users.length} {users.length === 1 ? 'user' : 'users'}
-      </div>
+    <div class="flex items-center justify-between gap-3 flex-wrap">
+      <span class="text-sm text-[var(--fg-muted)]">{users.length} user{users.length === 1 ? '' : 's'}</span>
       <Button variant="primary" onclick={() => (showCreate = true)}>
         <Plus class="w-4 h-4" /> New user
       </Button>
     </div>
 
     {#if usersLoading && users.length === 0}
-      <Card>
-        <div class="divide-y divide-[var(--border)]">
-          {#each Array(3) as _}
-            <div class="px-5 py-4 flex items-center gap-3">
-              <Skeleton width="2.5rem" height="2.5rem" class="!rounded-full" />
-              <Skeleton width="30%" height="1rem" />
-            </div>
-          {/each}
-        </div>
-      </Card>
+      <Card><Skeleton class="m-5" width="80%" height="6rem" /></Card>
+    {:else if users.length === 0}
+      <Card><EmptyState icon={Users} title="No users" description="Create the first user account." /></Card>
     {:else}
       <Card>
-        <div class="divide-y divide-[var(--border)]">
-          {#each users as u}
-            <div class="flex items-center gap-3 px-5 py-3">
-              <div class="w-10 h-10 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white text-sm font-semibold shrink-0">
-                {u.username[0]?.toUpperCase()}
-              </div>
-              <div class="flex-1 min-w-0">
-                <div class="font-medium text-sm truncate flex items-center gap-1.5">
-                  {u.username}
-                  {#if (u as any).mfa_enabled}
-                    <ShieldCheck class="w-3.5 h-3.5 text-[var(--color-success-400)]" />
-                  {/if}
-                </div>
-                <div class="text-xs text-[var(--fg-muted)] truncate">{u.email ?? '—'}</div>
-              </div>
-              <select
-                class="dm-input !py-1 !px-2 !w-auto text-xs font-mono"
-                value={u.role}
-                onchange={(e) => changeRole(u.id, u.email, (e.target as HTMLSelectElement).value)}
-                disabled={u.id === me?.id}
-              >
-                <option value="admin">admin</option>
-                <option value="operator">operator</option>
-                <option value="viewer">viewer</option>
-              </select>
-              {#if (u as any).mfa_enabled}
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onclick={() => resetUserMFA(u.id, u.username)}
-                  aria-label="Reset 2FA"
-                  title="Reset 2FA"
-                >
-                  <KeyRound class="w-3.5 h-3.5 text-[var(--color-warning-400)]" />
-                </Button>
-              {/if}
-              <Button
-                size="xs"
-                variant="ghost"
-                onclick={() => deleteUser(u.id, u.username)}
-                disabled={u.id === me?.id}
-                aria-label="Delete"
-              >
-                <Trash2 class="w-3.5 h-3.5 text-[var(--color-danger-400)]" />
-              </Button>
-            </div>
-          {/each}
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-[var(--border)] text-[var(--fg-muted)] text-xs uppercase tracking-wider">
+                <th class="text-left px-5 py-3">User</th>
+                <th class="text-left px-3 py-3">Email</th>
+                <th class="text-left px-3 py-3">Role</th>
+                <th class="text-center px-3 py-3">2FA</th>
+                <th class="text-right px-3 py-3 w-24">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[var(--border)]">
+              {#each users as u}
+                <tr class="hover:bg-[var(--surface-hover)]">
+                  <td class="px-5 py-3">
+                    <div class="flex items-center gap-2.5">
+                      <div class="w-8 h-8 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white text-xs font-semibold shrink-0">
+                        {u.username[0]?.toUpperCase()}
+                      </div>
+                      <span class="font-medium text-sm">{u.username}</span>
+                    </div>
+                  </td>
+                  <td class="px-3 py-3 text-xs text-[var(--fg-muted)]">{u.email ?? '—'}</td>
+                  <td class="px-3 py-3">
+                    <select
+                      class="dm-input !py-1 !px-2 !w-auto text-xs font-mono"
+                      value={u.role}
+                      onchange={(e) => changeRole(u.id, u.email, (e.target as HTMLSelectElement).value)}
+                      disabled={u.id === me?.id}
+                    >
+                      {#each roles as r}
+                        <option value={r.name}>{r.display || r.name}</option>
+                      {/each}
+                    </select>
+                  </td>
+                  <td class="px-3 py-3 text-center">
+                    {#if (u as any).mfa_enabled}
+                      <ShieldCheck class="w-4 h-4 text-[var(--color-success-400)] inline" />
+                    {:else}
+                      <span class="text-xs text-[var(--fg-subtle)]">—</span>
+                    {/if}
+                  </td>
+                  <td class="px-3 py-3">
+                    <div class="flex gap-0.5 justify-end">
+                      {#if (u as any).mfa_enabled}
+                        <button class="p-1.5 rounded-md text-[var(--color-warning-400)] hover:bg-[var(--surface-hover)]" title="Reset 2FA" onclick={() => resetUserMFA(u.id, u.username)}>
+                          <KeyRound class="w-3.5 h-3.5" />
+                        </button>
+                      {/if}
+                      <button
+                        class="p-1.5 rounded-md text-[var(--color-danger-400)] hover:bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)]"
+                        title="Delete user"
+                        onclick={() => deleteUser(u.id, u.username)}
+                        disabled={u.id === me?.id}
+                      >
+                        <Trash2 class="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
         </div>
       </Card>
     {/if}
@@ -671,6 +697,19 @@
         <Link2 class="w-3.5 h-3.5" />
         Verify chain
       </Button>
+      <button
+        class="dm-btn dm-btn-secondary dm-btn-sm"
+        onclick={() => {
+          const csv = ['Timestamp,Action,Target,User,Details']
+            .concat(filteredAudit.map(e => `"${e.ts}","${e.action}","${e.target ?? ''}","${e.username ?? e.user_id ?? ''}","${(e.details ?? '').replace(/"/g, '""')}"`))
+            .join('\n');
+          const blob = new Blob([csv], { type: 'text/csv' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = `dockmesh-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+          a.click();
+        }}
+      >Export CSV</button>
       <span class="text-xs text-[var(--fg-subtle)] ml-auto">{filteredAudit.length} / {auditEntries.length}</span>
     </div>
 
@@ -807,6 +846,40 @@
 
 {#if tab === 'system' && allowed('user.manage')}
   <section class="space-y-4 max-w-3xl">
+    <!-- Instance info -->
+    {#if systemInfo}
+      <Card class="p-5">
+        <h3 class="font-semibold text-sm uppercase tracking-wider text-[var(--fg-muted)] mb-3">Instance</h3>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div>
+            <div class="text-[var(--fg-muted)] mb-0.5">Version</div>
+            <div class="font-mono font-medium">{systemInfo.version}</div>
+          </div>
+          <div>
+            <div class="text-[var(--fg-muted)] mb-0.5">Commit</div>
+            <div class="font-mono">{systemInfo.commit.slice(0, 7)}</div>
+          </div>
+          <div>
+            <div class="text-[var(--fg-muted)] mb-0.5">Built</div>
+            <div class="font-mono">{systemInfo.build_date.slice(0, 10)}</div>
+          </div>
+          <div>
+            <div class="text-[var(--fg-muted)] mb-0.5">Uptime</div>
+            <div class="font-mono">{fmtUptime(systemInfo.uptime_seconds)}</div>
+          </div>
+          <div>
+            <div class="text-[var(--fg-muted)] mb-0.5">Go</div>
+            <div class="font-mono">{systemInfo.go_version}</div>
+          </div>
+          <div>
+            <div class="text-[var(--fg-muted)] mb-0.5">Platform</div>
+            <div class="font-mono">{systemInfo.os}/{systemInfo.arch}</div>
+          </div>
+        </div>
+      </Card>
+    {/if}
+
+    <!-- Automated backups -->
     <Card class="p-5">
       <div class="flex items-start justify-between gap-4">
         <div class="flex-1 min-w-0">
@@ -910,11 +983,9 @@
 {/if}
 
 {#if tab === 'roles' && allowed('user.manage')}
-  <section class="space-y-4 max-w-4xl">
+  <section class="space-y-4">
     <div class="flex justify-between items-center">
-      <div class="text-sm text-[var(--fg-muted)]">
-        {roles.length} role{roles.length === 1 ? '' : 's'} ({roles.filter(r => r.builtin).length} built-in)
-      </div>
+      <span class="text-sm text-[var(--fg-muted)]">{roles.length} role{roles.length === 1 ? '' : 's'}</span>
       <Button variant="primary" onclick={openNewRole}>
         <Plus class="w-4 h-4" /> New role
       </Button>
@@ -923,40 +994,51 @@
     {#if rolesLoading}
       <Card><Skeleton class="m-5" width="80%" height="6rem" /></Card>
     {:else}
-      <div class="space-y-3">
-        {#each roles as role}
-          <Card class="p-4">
-            <div class="flex items-start justify-between gap-3">
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2">
-                  <span class="font-semibold text-sm">{role.display}</span>
-                  <code class="text-[10px] text-[var(--fg-muted)] font-mono">{role.name}</code>
-                  {#if role.builtin}<Badge variant="default">built-in</Badge>{/if}
-                </div>
-                <div class="flex flex-wrap gap-1 mt-2">
-                  {#each role.permissions as perm}
-                    <span class="text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)] font-mono">{perm}</span>
-                  {/each}
-                </div>
-              </div>
-              {#if !role.builtin}
-                <div class="flex gap-1 shrink-0">
-                  <Button size="xs" variant="ghost" onclick={() => openEditRole(role)}>Edit</Button>
-                  <Button size="xs" variant="ghost" onclick={() => deleteRole(role.name)}>
-                    <Trash2 class="w-3.5 h-3.5 text-[var(--color-danger-400)]" />
-                  </Button>
-                </div>
-              {/if}
-            </div>
-          </Card>
-        {/each}
-      </div>
+      <Card>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-[var(--border)] text-[var(--fg-muted)] text-xs uppercase tracking-wider">
+                <th class="text-left px-5 py-3">Role</th>
+                <th class="text-left px-3 py-3">Identifier</th>
+                <th class="text-left px-3 py-3">Type</th>
+                <th class="text-right px-3 py-3">Permissions</th>
+                <th class="text-right px-3 py-3 w-24">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[var(--border)]">
+              {#each roles as role}
+                <tr class="hover:bg-[var(--surface-hover)]">
+                  <td class="px-5 py-3 font-medium">{role.display}</td>
+                  <td class="px-3 py-3 font-mono text-xs text-[var(--fg-muted)]">{role.name}</td>
+                  <td class="px-3 py-3">
+                    {#if role.builtin}<Badge variant="default">built-in</Badge>{:else}<Badge variant="info">custom</Badge>{/if}
+                  </td>
+                  <td class="px-3 py-3 text-right tabular-nums">{role.permissions.length}</td>
+                  <td class="px-3 py-3">
+                    <div class="flex gap-0.5 justify-end">
+                      {#if !role.builtin}
+                        <button class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]" title="Edit" onclick={() => openEditRole(role)}>
+                          <UserCog class="w-3.5 h-3.5" />
+                        </button>
+                        <button class="p-1.5 rounded-md text-[var(--color-danger-400)] hover:bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)]" title="Delete" onclick={() => deleteRole(role.name)}>
+                          <Trash2 class="w-3.5 h-3.5" />
+                        </button>
+                      {/if}
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </Card>
     {/if}
   </section>
 {/if}
 
-<!-- Role modal -->
-<Modal bind:open={showRole} title={editingRole ? `Edit role: ${editingRole.display}` : 'Create role'} maxWidth="max-w-md">
+<!-- Role modal with grouped permissions -->
+<Modal bind:open={showRole} title={editingRole ? `Edit role: ${editingRole.display}` : 'Create role'} maxWidth="max-w-lg">
   <form onsubmit={saveRole} id="role-form" class="space-y-4">
     {#if !editingRole}
       <Input label="Name" placeholder="devops" hint="Lowercase, used as identifier" bind:value={roleForm.name} />
@@ -964,20 +1046,56 @@
     <Input label="Display name" placeholder="DevOps Engineer" bind:value={roleForm.display} />
     <div>
       <div class="text-xs font-medium text-[var(--fg-muted)] mb-2">Permissions</div>
-      <div class="space-y-1.5 max-h-64 overflow-auto">
-        {#each allPerms as perm}
-          <label class="flex items-center gap-2 cursor-pointer text-sm hover:bg-[var(--surface-hover)] px-2 py-1 rounded">
-            <input
-              type="checkbox"
-              checked={roleForm.permissions.includes(perm.name)}
-              onchange={() => togglePerm(perm.name)}
-              class="rounded"
-            />
-            <code class="text-xs font-mono">{perm.name}</code>
-            <span class="text-xs text-[var(--fg-muted)]">{perm.description}</span>
-          </label>
+      {#if allPerms.length > 0}
+      {@const groups = Object.entries(
+        allPerms.reduce((acc, p) => {
+          const cat = p.name.includes('.') ? p.name.split('.')[0] : 'general';
+          if (!acc[cat]) acc[cat] = [];
+          acc[cat].push(p);
+          return acc;
+        }, {} as Record<string, typeof allPerms>)
+      ).sort(([a], [b]) => a.localeCompare(b))}
+      <div class="space-y-3 max-h-72 overflow-auto">
+        {#each groups as [group, perms]}
+          <div class="border border-[var(--border)] rounded-lg">
+            <div class="px-3 py-2 bg-[var(--surface)] text-xs font-medium uppercase tracking-wider text-[var(--fg-muted)] flex items-center justify-between">
+              <span>{group}</span>
+              <label class="flex items-center gap-1 cursor-pointer text-[10px] font-normal normal-case">
+                <input
+                  type="checkbox"
+                  checked={perms.every(p => roleForm.permissions.includes(p.name))}
+                  onchange={() => {
+                    const allIn = perms.every(p => roleForm.permissions.includes(p.name));
+                    if (allIn) {
+                      roleForm.permissions = roleForm.permissions.filter(p => !perms.some(pp => pp.name === p));
+                    } else {
+                      const toAdd = perms.map(p => p.name).filter(n => !roleForm.permissions.includes(n));
+                      roleForm.permissions = [...roleForm.permissions, ...toAdd];
+                    }
+                  }}
+                  class="accent-[var(--color-brand-500)]"
+                />
+                all
+              </label>
+            </div>
+            <div class="divide-y divide-[var(--border)]">
+              {#each perms as perm}
+                <label class="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-[var(--surface-hover)] text-xs">
+                  <input
+                    type="checkbox"
+                    checked={roleForm.permissions.includes(perm.name)}
+                    onchange={() => togglePerm(perm.name)}
+                    class="accent-[var(--color-brand-500)]"
+                  />
+                  <code class="font-mono">{perm.name}</code>
+                  <span class="text-[var(--fg-muted)] ml-auto">{perm.description}</span>
+                </label>
+              {/each}
+            </div>
+          </div>
         {/each}
       </div>
+      {/if}
     </div>
   </form>
   {#snippet footer()}
