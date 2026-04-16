@@ -5,10 +5,15 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
-  import { Layers, Plus, FileCode2, Terminal, Search, Server, RefreshCw } from 'lucide-svelte';
+  import { Layers, Plus, FileCode2, Terminal, Search, Server, RefreshCw, Play, Square, ArrowUpDown, Clock } from 'lucide-svelte';
 
   const canWrite = $derived(allowed('stack.write'));
+  const canDeploy = $derived(allowed('stack.deploy'));
   const isRemote = $derived(hosts.id !== 'local');
+
+  // Sort
+  type SortMode = 'name' | 'state' | 'deployed';
+  let sortMode = $state<SortMode>('name');
 
   type StackState = 'running' | 'stopped' | 'partial' | 'unhealthy';
   interface StackCard {
@@ -170,7 +175,55 @@
           s.services.some((svc) => svc.name.toLowerCase().includes(q))
         );
       })
+      .sort((a, b) => {
+        if (sortMode === 'state') {
+          const order: Record<string, number> = { running: 0, partial: 1, unhealthy: 2, stopped: 3 };
+          return (order[a.state] ?? 9) - (order[b.state] ?? 9);
+        }
+        if (sortMode === 'deployed') {
+          const aTime = a.deployment?.deployed_at ?? '';
+          const bTime = b.deployment?.deployed_at ?? '';
+          return bTime.localeCompare(aTime); // newest first
+        }
+        return a.name.localeCompare(b.name);
+      })
   );
+
+  // Quick deploy/stop from the card
+  let actionBusy = $state<string | null>(null);
+  async function quickDeploy(name: string) {
+    actionBusy = name;
+    try {
+      const res = await api.stacks.deploy(name, hosts.id);
+      toast.success('Deployed', `${res.services.length} service(s)`);
+      await load();
+    } catch (err) {
+      toast.error('Deploy failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      actionBusy = null;
+    }
+  }
+  async function quickStop(name: string) {
+    actionBusy = name;
+    try {
+      await api.stacks.stop(name, hosts.id);
+      toast.info('Stopped', name);
+      await load();
+    } catch (err) {
+      toast.error('Stop failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      actionBusy = null;
+    }
+  }
+
+  function fmtRelTime(ts?: string): string {
+    if (!ts) return '';
+    const secs = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+    if (secs < 60) return 'just now';
+    if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+    if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+    return `${Math.floor(secs / 86400)}d ago`;
+  }
 
   function badgeVariant(state: StackState): 'success' | 'warning' | 'default' {
     if (state === 'running') return 'success';
@@ -235,6 +288,16 @@
           class="dm-input pl-8 pr-3 py-1.5 text-sm w-full"
         />
       </div>
+      <!-- Sort dropdown -->
+      <div class="flex items-center gap-1.5 text-xs text-[var(--fg-muted)]">
+        <ArrowUpDown class="w-3 h-3" />
+        <select class="dm-input !py-0.5 !px-2 !w-auto text-xs" bind:value={sortMode}>
+          <option value="name">Name</option>
+          <option value="state">Status</option>
+          <option value="deployed">Last deployed</option>
+        </select>
+      </div>
+
       <div class="flex gap-1 text-xs">
         {#snippet pill(key: 'all' | StackState, label: string, n: number)}
           <button
@@ -289,59 +352,84 @@
   {:else}
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
       {#each visible as s}
-        <a
-          href="/stacks/{s.name}"
-          class="dm-card dm-card-hover p-4 block group"
-        >
-          <div class="flex items-start justify-between gap-2 mb-2.5">
-            <div class="min-w-0 flex-1">
-              <div class="font-semibold text-[15px] text-[var(--fg)] truncate">{s.name}</div>
-              <div class="text-[11px] text-[var(--fg-subtle)] mt-0.5">
-                {s.services.length} service{s.services.length === 1 ? '' : 's'}
+        <div class="dm-card dm-card-hover p-4 group relative">
+          <a href="/stacks/{s.name}" class="block">
+            <div class="flex items-start justify-between gap-2 mb-2.5">
+              <div class="min-w-0 flex-1">
+                <div class="font-semibold text-[15px] text-[var(--fg)] truncate">{s.name}</div>
+                <div class="text-[11px] text-[var(--fg-subtle)] mt-0.5 flex items-center gap-2">
+                  <span>{s.services.length} service{s.services.length === 1 ? '' : 's'}</span>
+                  {#if s.deployment?.deployed_at}
+                    <span class="inline-flex items-center gap-0.5">
+                      <Clock class="w-2.5 h-2.5" />
+                      {fmtRelTime(s.deployment.deployed_at)}
+                    </span>
+                  {/if}
+                </div>
               </div>
+              <Badge variant={badgeVariant(s.state)} dot>{stateLabel(s.state)}</Badge>
             </div>
-            <Badge variant={badgeVariant(s.state)} dot>{stateLabel(s.state)}</Badge>
-          </div>
-          {#if s.services.length > 0}
-            <div class="flex flex-wrap gap-1">
-              {#each s.services.slice(0, 6) as svc}
-                <span
-                  class="font-mono text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)]"
-                  class:text-[var(--fg)]={svc.state === 'running'}
-                  title={svc.status}
-                >
-                  {svc.name}
+            {#if s.services.length > 0}
+              <div class="flex flex-wrap gap-1">
+                {#each s.services.slice(0, 6) as svc}
+                  <span
+                    class="font-mono text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)]"
+                    class:text-[var(--fg)]={svc.state === 'running'}
+                    title={svc.status}
+                  >
+                    {svc.name}
+                  </span>
+                {/each}
+                {#if s.services.length > 6}
+                  <span class="font-mono text-[10px] px-1.5 py-0.5 text-[var(--fg-subtle)]">
+                    +{s.services.length - 6}
+                  </span>
+                {/if}
+              </div>
+            {/if}
+          </a>
+          <!-- Footer: host + quick actions -->
+          <div class="flex items-center justify-between mt-2 pt-2 border-t border-[var(--border)]">
+            <div class="flex items-center gap-1.5">
+              {#if s.deployment}
+                <span class="inline-flex items-center gap-1 font-mono text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)]">
+                  <Server class="w-2.5 h-2.5" />
+                  {s.deployment.host_name || s.deployment.host_id}
                 </span>
-              {/each}
-              {#if s.services.length > 6}
-                <span class="font-mono text-[10px] px-1.5 py-0.5 text-[var(--fg-subtle)]">
-                  +{s.services.length - 6}
-                </span>
+              {:else if hosts.isAll && s.hosts.length > 0}
+                {#each s.hosts as h}
+                  <span class="inline-flex items-center gap-0.5 font-mono text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)]">
+                    <Server class="w-2.5 h-2.5" />
+                    {h.name}
+                  </span>
+                {/each}
               {/if}
             </div>
-          {/if}
-          {#if s.deployment}
-            <!-- P.7 deployment host — always shown so users see which
-                 host this stack lives on regardless of host-picker mode. -->
-            <div class="flex items-center gap-1.5 mt-2 pt-2 border-t border-[var(--border)]">
-              <span class="inline-flex items-center gap-1 font-mono text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)]">
-                <Server class="w-2.5 h-2.5" />
-                {s.deployment.host_name || s.deployment.host_id}
-              </span>
-            </div>
-          {:else if hosts.isAll && s.hosts.length > 0}
-            <!-- Fallback: container-derived hosts in all-mode for
-                 stacks that predate the deployment table. -->
-            <div class="flex items-center gap-1 flex-wrap mt-2 pt-2 border-t border-[var(--border)]">
-              {#each s.hosts as h}
-                <span class="inline-flex items-center gap-0.5 font-mono text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)]">
-                  <Server class="w-2.5 h-2.5" />
-                  {h.name}
-                </span>
-              {/each}
-            </div>
-          {/if}
-        </a>
+            {#if canDeploy}
+              <div class="flex gap-1">
+                {#if s.state === 'running' || s.state === 'partial' || s.state === 'unhealthy'}
+                  <button
+                    class="p-1 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)] disabled:opacity-50"
+                    title="Stop {s.name}"
+                    disabled={actionBusy === s.name}
+                    onclick={(e) => { e.preventDefault(); e.stopPropagation(); quickStop(s.name); }}
+                  >
+                    <Square class="w-3.5 h-3.5" />
+                  </button>
+                {:else}
+                  <button
+                    class="p-1 rounded-md text-[var(--color-success-400)] hover:bg-[color-mix(in_srgb,var(--color-success-500)_10%,transparent)] disabled:opacity-50"
+                    title="Deploy {s.name}"
+                    disabled={actionBusy === s.name}
+                    onclick={(e) => { e.preventDefault(); e.stopPropagation(); quickDeploy(s.name); }}
+                  >
+                    <Play class="w-3.5 h-3.5" />
+                  </button>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        </div>
       {/each}
     </div>
   {/if}
