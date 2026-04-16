@@ -163,6 +163,59 @@
     finally { smbDiscovering = false; }
   }
 
+  // Available resources for dropdowns in job dialog
+  let availableVolumes = $state<string[]>([]);
+  let availableStacks = $state<string[]>([]);
+  let availableContainers = $state<string[]>([]);
+
+  async function loadAvailableResources() {
+    try {
+      const [vols, stks, ctrs] = await Promise.all([
+        api.volumes.list('local').catch(() => []),
+        api.stacks.list().catch(() => []),
+        api.containers.list(false, 'local').catch(() => [])
+      ]);
+      availableVolumes = (Array.isArray(vols) ? vols : []).map((v: any) => v.Name).filter(Boolean).sort();
+      availableStacks = (Array.isArray(stks) ? stks : []).map((s: any) => s.name).filter(Boolean).sort();
+      const ctrList: any[] = Array.isArray(ctrs) ? ctrs : [];
+      availableContainers = ctrList.map((c: any) => (c.Names?.[0] ?? '').replace(/^\//, '')).filter(Boolean).sort();
+    } catch { /* ignore */ }
+  }
+
+  // Selected target ID for job dialog (separate from jTargetType)
+  let jSelectedTarget = $state<string>('inline');
+
+  // Visual cron builder
+  let cronMode = $state<'preset' | 'custom'>('preset');
+  let cronFreq = $state<'daily' | 'weekly' | 'hourly' | 'monthly'>('daily');
+  let cronHour = $state(3);
+  let cronMinute = $state(0);
+  let cronWeekday = $state(0); // 0=Sun
+
+  function buildCronFromVisual(): string {
+    switch (cronFreq) {
+      case 'hourly': return `${cronMinute} * * * *`;
+      case 'daily': return `${cronMinute} ${cronHour} * * *`;
+      case 'weekly': return `${cronMinute} ${cronHour} * * ${cronWeekday}`;
+      case 'monthly': return `${cronMinute} ${cronHour} 1 * *`;
+    }
+  }
+
+  $effect(() => {
+    if (cronMode === 'preset') {
+      jSchedule = buildCronFromVisual();
+    }
+  });
+
+  // Hook command presets
+  const hookPresets = [
+    { label: 'PostgreSQL dump', container: 'postgres', cmd: 'pg_dumpall -U postgres -f /tmp/dump.sql' },
+    { label: 'MySQL dump', container: 'mysql', cmd: 'mysqldump -u root --all-databases > /tmp/dump.sql' },
+    { label: 'MariaDB dump', container: 'mariadb', cmd: 'mariadb-dump -u root --all-databases > /tmp/dump.sql' },
+    { label: 'Redis save', container: 'redis', cmd: 'redis-cli BGSAVE' },
+    { label: 'MongoDB dump', container: 'mongo', cmd: 'mongodump --out /tmp/dump' },
+  ];
+
   async function loadJobs() {
     loading = true;
     try { jobs = await api.backups.listJobs(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); } finally { loading = false; }
@@ -237,10 +290,10 @@
     jPreHooks = []; jPostHooks = []; editing = null;
   }
 
-  function openNew() { resetForm(); showJob = true; }
+  function openNew() { resetForm(); jSelectedTarget = 'inline'; cronMode = 'preset'; cronFreq = 'daily'; cronHour = 3; cronMinute = 0; loadAvailableResources(); showJob = true; }
 
   function openEdit(j: BackupJob) {
-    editing = j;
+    editing = j; jSelectedTarget = 'inline'; cronMode = 'custom'; loadAvailableResources();
     jName = j.name; jTargetType = j.target_type as 'local' | 's3'; jEnabled = j.enabled; jEncrypt = j.encrypt;
     jSchedule = j.schedule; jRetentionCount = j.retention_count; jRetentionDays = j.retention_days;
     const cfg = j.target_config ?? {};
@@ -691,7 +744,8 @@
         <div class="flex gap-2 items-end">
           <div class="w-28">
             <label for="src-type-{i}" class="block text-xs text-[var(--fg-muted)] mb-1">Type</label>
-            <select id="src-type-{i}" class="dm-input text-sm" bind:value={jSources[i].type}>
+            <select id="src-type-{i}" class="dm-input text-sm" bind:value={jSources[i].type}
+              onchange={() => { jSources[i].name = jSources[i].type === 'system' ? 'dockmesh' : ''; }}>
               <option value="volume">Volume</option>
               <option value="stack">Stack</option>
               <option value="system">System</option>
@@ -699,7 +753,21 @@
           </div>
           <div class="flex-1">
             <label for="src-name-{i}" class="block text-xs text-[var(--fg-muted)] mb-1">Name</label>
-            <input id="src-name-{i}" type="text" class="dm-input text-sm" placeholder={src.type === 'system' ? 'dockmesh' : `my-${src.type}`} bind:value={jSources[i].name} />
+            {#if src.type === 'system'}
+              <input id="src-name-{i}" type="text" class="dm-input text-sm bg-[var(--surface)]" value="dockmesh" disabled />
+            {:else if src.type === 'volume' && availableVolumes.length > 0}
+              <select id="src-name-{i}" class="dm-input text-sm" bind:value={jSources[i].name}>
+                <option value="">Select volume…</option>
+                {#each availableVolumes as v}<option value={v}>{v}</option>{/each}
+              </select>
+            {:else if src.type === 'stack' && availableStacks.length > 0}
+              <select id="src-name-{i}" class="dm-input text-sm" bind:value={jSources[i].name}>
+                <option value="">Select stack…</option>
+                {#each availableStacks as s}<option value={s}>{s}</option>{/each}
+              </select>
+            {:else}
+              <input id="src-name-{i}" type="text" class="dm-input text-sm" placeholder={`my-${src.type}`} bind:value={jSources[i].name} />
+            {/if}
           </div>
           {#if jSources.length > 1}
             <button type="button" class="p-1.5 text-[var(--color-danger-400)]" onclick={() => removeSource(i)}><Trash2 class="w-3.5 h-3.5" /></button>
@@ -712,65 +780,90 @@
     <!-- Target -->
     <fieldset class="space-y-3">
       <legend class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">Where to store</legend>
-      {#if bTargets.length > 0}
+      <div>
+        <label for="job-target" class="block text-xs text-[var(--fg-muted)] mb-1">Target</label>
+        <select id="job-target" class="dm-input text-sm" bind:value={jSelectedTarget}>
+          <option value="inline">Configure inline…</option>
+          {#each bTargets as bt}
+            <option value="t:{bt.id}">{bt.name} ({bt.type.toUpperCase()}){bt.status === 'connected' ? ' ✓' : ''}</option>
+          {/each}
+        </select>
+      </div>
+      {#if jSelectedTarget === 'inline'}
         <div>
-          <label for="job-target" class="block text-xs text-[var(--fg-muted)] mb-1">Select a configured target</label>
-          <select id="job-target" class="dm-input text-sm" bind:value={jTargetType}
-            onchange={(e) => {
-              const val = (e.target as HTMLSelectElement).value;
-              if (val.startsWith('id:')) {
-                const tid = parseInt(val.slice(3));
-                const t = bTargets.find(bt => bt.id === tid);
-                if (t) { jTargetType = t.type as any; jLocalPath = (t.config as any)?.path ?? ''; }
-              }
-            }}>
-            <option value="local">Local directory (inline)</option>
-            {#each bTargets as bt}
-              <option value="id:{bt.id}">{bt.name} ({bt.type.toUpperCase()}){bt.status === 'connected' ? ' ✓' : ''}</option>
-            {/each}
-          </select>
-        </div>
-        <p class="text-[10px] text-[var(--fg-subtle)]">Select a pre-configured target or use "Local directory" for inline config. Manage targets in the Targets tab.</p>
-      {:else}
-        <div>
-          <label for="target-type" class="block text-xs text-[var(--fg-muted)] mb-1">Target type</label>
-          <select id="target-type" class="dm-input text-sm" bind:value={jTargetType}>
+          <label for="inline-target-type" class="block text-xs text-[var(--fg-muted)] mb-1">Type</label>
+          <select id="inline-target-type" class="dm-input text-sm" bind:value={jTargetType}>
             <option value="local">Local directory</option>
             <option value="s3">S3 / MinIO / Wasabi</option>
           </select>
         </div>
-      {/if}
-      {#if jTargetType === 'local'}
-        <Input label="Path" bind:value={jLocalPath} placeholder="./data/backups" hint="Absolute or relative to Dockmesh working directory" />
-      {:else if jTargetType === 's3'}
-        <div class="grid grid-cols-2 gap-3">
-          <Input label="Endpoint" bind:value={jS3Endpoint} placeholder="s3.amazonaws.com" />
-          <Input label="Bucket" bind:value={jS3Bucket} placeholder="my-backups" />
-          <Input label="Access Key" bind:value={jS3AccessKey} />
-          <Input label="Secret Key" type="password" bind:value={jS3SecretKey} />
-        </div>
+        {#if jTargetType === 'local'}
+          <Input label="Path" bind:value={jLocalPath} placeholder="./data/backups" />
+        {:else if jTargetType === 's3'}
+          <div class="grid grid-cols-2 gap-3">
+            <Input label="Endpoint" bind:value={jS3Endpoint} placeholder="s3.amazonaws.com" />
+            <Input label="Bucket" bind:value={jS3Bucket} placeholder="my-backups" />
+            <Input label="Access Key" bind:value={jS3AccessKey} />
+            <Input label="Secret Key" type="password" bind:value={jS3SecretKey} />
+          </div>
+        {/if}
+      {:else}
+        <p class="text-xs text-[var(--fg-subtle)]">Using pre-configured target. Manage targets in the Targets tab.</p>
       {/if}
       <label class="flex items-center gap-2 text-sm cursor-pointer">
         <input type="checkbox" bind:checked={jEncrypt} class="accent-[var(--color-brand-500)]" />
-        Encrypt with age (uses server's secrets key)
+        Encrypt with age
       </label>
     </fieldset>
 
     <!-- Schedule -->
     <fieldset class="space-y-3">
       <legend class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">Schedule</legend>
-      <div class="flex flex-wrap gap-1.5 mb-2">
-        {#each cronPresets as p}
-          <button type="button"
-            class="text-[10px] px-2 py-1 rounded border transition-colors {jSchedule === p.cron ? 'border-[var(--color-brand-500)] bg-[color-mix(in_srgb,var(--color-brand-500)_10%,transparent)] text-[var(--color-brand-400)]' : 'border-[var(--border)] text-[var(--fg-muted)] hover:border-[var(--color-brand-500)]'}"
-            onclick={() => (jSchedule = p.cron)}
-          >{p.label}</button>
-        {/each}
+      <div class="flex gap-2 text-xs mb-1">
+        <button type="button" class="px-2.5 py-1 rounded border transition-colors {cronMode === 'preset' ? 'border-[var(--color-brand-500)] text-[var(--color-brand-400)]' : 'border-[var(--border)] text-[var(--fg-muted)]'}" onclick={() => (cronMode = 'preset')}>Visual</button>
+        <button type="button" class="px-2.5 py-1 rounded border transition-colors {cronMode === 'custom' ? 'border-[var(--color-brand-500)] text-[var(--color-brand-400)]' : 'border-[var(--border)] text-[var(--fg-muted)]'}" onclick={() => (cronMode = 'custom')}>Custom cron</button>
       </div>
-      <div class="grid grid-cols-3 gap-3">
+      {#if cronMode === 'preset'}
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div>
+            <label for="cron-freq" class="block text-xs text-[var(--fg-muted)] mb-1">Frequency</label>
+            <select id="cron-freq" class="dm-input text-sm" bind:value={cronFreq}>
+              <option value="hourly">Every hour</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly (1st)</option>
+            </select>
+          </div>
+          {#if cronFreq !== 'hourly'}
+            <div>
+              <label for="cron-hour" class="block text-xs text-[var(--fg-muted)] mb-1">Hour</label>
+              <select id="cron-hour" class="dm-input text-sm" bind:value={cronHour}>
+                {#each Array(24) as _, h}<option value={h}>{String(h).padStart(2, '0')}:00</option>{/each}
+              </select>
+            </div>
+          {/if}
+          <div>
+            <label for="cron-min" class="block text-xs text-[var(--fg-muted)] mb-1">Minute</label>
+            <select id="cron-min" class="dm-input text-sm" bind:value={cronMinute}>
+              {#each [0, 5, 10, 15, 20, 30, 45] as m}<option value={m}>:{String(m).padStart(2, '0')}</option>{/each}
+            </select>
+          </div>
+          {#if cronFreq === 'weekly'}
+            <div>
+              <label for="cron-day" class="block text-xs text-[var(--fg-muted)] mb-1">Day</label>
+              <select id="cron-day" class="dm-input text-sm" bind:value={cronWeekday}>
+                {#each ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as d, i}<option value={i}>{d}</option>{/each}
+              </select>
+            </div>
+          {/if}
+        </div>
+        <div class="text-xs text-[var(--fg-muted)] font-mono">→ {jSchedule} ({cronHuman(jSchedule)})</div>
+      {:else}
         <Input label="Cron expression" bind:value={jSchedule} placeholder="0 3 * * *" hint={cronHuman(jSchedule)} />
-        <Input label="Keep last N backups" type="number" bind:value={jRetentionCount as any} />
-        <Input label="Keep N days" type="number" bind:value={jRetentionDays as any} />
+      {/if}
+      <div class="grid grid-cols-2 gap-3">
+        <Input label="Keep last N backups" type="number" bind:value={jRetentionCount as any} hint="0 = unlimited" />
+        <Input label="Keep N days" type="number" bind:value={jRetentionDays as any} hint="0 = unlimited" />
       </div>
     </fieldset>
 
@@ -780,23 +873,50 @@
         Pre/Post Hooks (optional)
       </summary>
       <div class="px-4 pb-4 space-y-3">
-        <div class="text-xs text-[var(--fg-subtle)]">Run commands via docker exec before/after the backup. Useful for pg_dump, mysqldump, etc.</div>
-        <div class="text-xs font-medium text-[var(--fg-muted)]">Pre-hooks</div>
+        <!-- Quick-add presets -->
+        <div class="flex flex-wrap gap-1.5">
+          {#each hookPresets as preset}
+            <button type="button"
+              class="text-[10px] px-2 py-1 rounded border border-[var(--border)] text-[var(--fg-muted)] hover:border-[var(--color-brand-500)] hover:text-[var(--color-brand-400)] transition-colors"
+              onclick={() => { jPreHooks = [...jPreHooks, { container: preset.container, cmd: preset.cmd }]; }}
+            >{preset.label}</button>
+          {/each}
+        </div>
+
+        <div class="text-xs font-medium text-[var(--fg-muted)]">Pre-hooks (before backup)</div>
         {#each jPreHooks as hook, i}
-          <div class="flex gap-2">
-            <input type="text" class="dm-input text-xs flex-1" placeholder="container name" bind:value={jPreHooks[i].container} />
-            <input type="text" class="dm-input text-xs flex-[2]" placeholder="pg_dumpall -U postgres -f /tmp/dump.sql" bind:value={jPreHooks[i].cmd} />
-            <button type="button" class="text-[var(--color-danger-400)]" onclick={() => (jPreHooks = jPreHooks.filter((_, idx) => idx !== i))}><Trash2 class="w-3 h-3" /></button>
+          <div class="flex gap-2 items-end">
+            <div class="w-40">
+              {#if availableContainers.length > 0}
+                <select class="dm-input text-xs" bind:value={jPreHooks[i].container}>
+                  <option value="">Container…</option>
+                  {#each availableContainers as c}<option value={c}>{c}</option>{/each}
+                </select>
+              {:else}
+                <input type="text" class="dm-input text-xs" placeholder="container" bind:value={jPreHooks[i].container} />
+              {/if}
+            </div>
+            <input type="text" class="dm-input text-xs flex-1 font-mono" placeholder="pg_dumpall -U postgres -f /tmp/dump.sql" bind:value={jPreHooks[i].cmd} />
+            <button type="button" class="p-1 text-[var(--color-danger-400)]" onclick={() => (jPreHooks = jPreHooks.filter((_, idx) => idx !== i))}><Trash2 class="w-3 h-3" /></button>
           </div>
         {/each}
         <button type="button" class="text-[10px] text-[var(--color-brand-400)] hover:underline" onclick={addPreHook}>+ Add pre-hook</button>
 
-        <div class="text-xs font-medium text-[var(--fg-muted)] pt-2">Post-hooks</div>
+        <div class="text-xs font-medium text-[var(--fg-muted)] pt-2">Post-hooks (after backup)</div>
         {#each jPostHooks as hook, i}
-          <div class="flex gap-2">
-            <input type="text" class="dm-input text-xs flex-1" placeholder="container name" bind:value={jPostHooks[i].container} />
-            <input type="text" class="dm-input text-xs flex-[2]" placeholder="command" bind:value={jPostHooks[i].cmd} />
-            <button type="button" class="text-[var(--color-danger-400)]" onclick={() => (jPostHooks = jPostHooks.filter((_, idx) => idx !== i))}><Trash2 class="w-3 h-3" /></button>
+          <div class="flex gap-2 items-end">
+            <div class="w-40">
+              {#if availableContainers.length > 0}
+                <select class="dm-input text-xs" bind:value={jPostHooks[i].container}>
+                  <option value="">Container…</option>
+                  {#each availableContainers as c}<option value={c}>{c}</option>{/each}
+                </select>
+              {:else}
+                <input type="text" class="dm-input text-xs" placeholder="container" bind:value={jPostHooks[i].container} />
+              {/if}
+            </div>
+            <input type="text" class="dm-input text-xs flex-1 font-mono" placeholder="command" bind:value={jPostHooks[i].cmd} />
+            <button type="button" class="p-1 text-[var(--color-danger-400)]" onclick={() => (jPostHooks = jPostHooks.filter((_, idx) => idx !== i))}><Trash2 class="w-3 h-3" /></button>
           </div>
         {/each}
         <button type="button" class="text-[10px] text-[var(--color-brand-400)] hover:underline" onclick={addPostHook}>+ Add post-hook</button>
