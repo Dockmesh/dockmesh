@@ -57,6 +57,10 @@ const (
 	FrameReqStackStop   = "req.stack.stop"
 	FrameReqStackStatus = "req.stack.status"
 
+	// Service scaling (P.8) — manual replica count adjustment.
+	FrameReqStackScale      = "req.stack.scale"
+	FrameReqStackCheckScale = "req.stack.check_scale"
+
 	// Compose-file mirroring (P.7) — server pushes the canonical
 	// compose+env content to the agent after a successful deploy so
 	// each agent retains a local copy in case the main server is lost.
@@ -142,6 +146,24 @@ type StackDeployReq struct {
 
 type StackNameReq struct {
 	Name string `json:"name"`
+}
+
+// StackScaleReq carries the compose content alongside the scale
+// request so the agent can parse the project locally. P.8.
+type StackScaleReq struct {
+	Name     string `json:"name"`
+	Compose  string `json:"compose"`
+	Env      string `json:"env,omitempty"`
+	Service  string `json:"service"`
+	Replicas int    `json:"replicas"`
+}
+
+// StackCheckScaleReq is the pre-flight check variant. P.8.
+type StackCheckScaleReq struct {
+	Name    string `json:"name"`
+	Compose string `json:"compose"`
+	Env     string `json:"env,omitempty"`
+	Service string `json:"service"`
 }
 
 // StackSyncReq carries the full compose + env + optional meta for

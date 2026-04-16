@@ -76,6 +76,12 @@ func (f *fakeHost) StopStack(context.Context, string) error { panic("no") }
 func (f *fakeHost) StackStatus(context.Context, string) ([]compose.StatusEntry, error) {
 	panic("no")
 }
+func (f *fakeHost) ScaleService(context.Context, string, string, string, string, int) (*compose.ScaleResult, error) {
+	panic("no")
+}
+func (f *fakeHost) CheckScale(context.Context, string, string, string, string) (*compose.ScaleCheck, error) {
+	panic("no")
+}
 func (f *fakeHost) SystemMetrics(context.Context) (system.Metrics, error) {
 	return system.Metrics{}, nil
 }

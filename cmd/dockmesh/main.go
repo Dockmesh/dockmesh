@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -34,6 +35,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/oidc"
 	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/dockmesh/dockmesh/internal/proxy"
+	"github.com/dockmesh/dockmesh/internal/scaling"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
@@ -182,6 +184,24 @@ func main() {
 		slog.Warn("backup default job", "err", err)
 	}
 	defer backupSvc.Stop()
+
+	// Auto-scaling controller (P.8). The ScaleFunc closure routes through
+	// the local compose service for now — remote scaling will go through
+	// the host abstraction once the agent binary is updated.
+	scaleController := scaling.NewController(stacksMgr, metricsCol, func(ctx context.Context, stackName, service string, replicas int) error {
+		if dockerCli == nil {
+			return fmt.Errorf("docker unavailable")
+		}
+		detail, err := stacksMgr.Get(stackName)
+		if err != nil {
+			return err
+		}
+		lh := host.NewLocal(dockerCli)
+		_, err = lh.ScaleService(ctx, stackName, detail.Compose, detail.Env, service, replicas)
+		return err
+	})
+	scaleController.Start(ctx)
+	defer scaleController.Stop()
 
 	// Remote-agent PKI + service. The mTLS listener starts only if the
 	// CA + server cert can be issued and a listen address is configured.

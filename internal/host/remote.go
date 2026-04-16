@@ -253,6 +253,35 @@ func (h *RemoteHost) SystemMetrics(ctx context.Context) (system.Metrics, error) 
 	return out, nil
 }
 
+func (h *RemoteHost) ScaleService(ctx context.Context, name, composeYAML, envContent, service string, replicas int) (*compose.ScaleResult, error) {
+	data, err := h.request(ctx, agents.FrameReqStackScale, agents.StackScaleReq{
+		Name: name, Compose: composeYAML, Env: envContent,
+		Service: service, Replicas: replicas,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var out compose.ScaleResult
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode scale result: %w", err)
+	}
+	return &out, nil
+}
+
+func (h *RemoteHost) CheckScale(ctx context.Context, name, composeYAML, envContent, service string) (*compose.ScaleCheck, error) {
+	data, err := h.request(ctx, agents.FrameReqStackCheckScale, agents.StackCheckScaleReq{
+		Name: name, Compose: composeYAML, Env: envContent, Service: service,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var out compose.ScaleCheck
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode check scale: %w", err)
+	}
+	return &out, nil
+}
+
 // Errors
 var (
 	ErrAgentOffline = errors.New("agent offline")
