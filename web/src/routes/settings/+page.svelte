@@ -1,14 +1,14 @@
 <script lang="ts">
-  import { api, ApiError, type BackupStatus } from '$lib/api';
+  import { api, ApiError, type BackupStatus, type CustomRole, type PermissionInfo } from '$lib/api';
   import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth.svelte';
   import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, Skeleton, EmptyState } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
-  import { User, Users, Activity, Plus, Trash2, UserCog, ShieldCheck, ShieldOff, Copy, KeyRound, Link2, Globe, ExternalLink, HardDrive, ShieldAlert, AlertCircle } from 'lucide-svelte';
+  import { User, Users, Activity, Plus, Trash2, UserCog, ShieldCheck, ShieldOff, Copy, KeyRound, Link2, Globe, ExternalLink, HardDrive, ShieldAlert, AlertCircle, Shield } from 'lucide-svelte';
   import type { OIDCProvider, OIDCProviderInput } from '$lib/api';
 
-  type Tab = 'account' | 'users' | 'audit' | 'sso' | 'system';
+  type Tab = 'account' | 'users' | 'audit' | 'sso' | 'system' | 'roles';
   // Initial tab honours ?tab=<id> so the sidebar last-backup pill can
   // deep-link straight into the System tab. Snapping back to the first
   // visible tab still happens below for invalid/unauthorised IDs.
@@ -56,6 +56,72 @@
       i++;
     }
     return `${v.toFixed(1)} ${u[i]}`;
+  }
+
+  // --- Roles tab (RBAC v2) ---
+  let roles = $state<CustomRole[]>([]);
+  let allPerms = $state<PermissionInfo[]>([]);
+  let rolesLoading = $state(false);
+  let showRole = $state(false);
+  let editingRole = $state<CustomRole | null>(null);
+  let roleForm = $state({ name: '', display: '', permissions: [] as string[] });
+
+  async function loadRoles() {
+    rolesLoading = true;
+    try {
+      [roles, allPerms] = await Promise.all([api.roles.list(), api.roles.permissions()]);
+    } catch (err) {
+      toast.error('Failed to load roles', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      rolesLoading = false;
+    }
+  }
+
+  function openNewRole() {
+    editingRole = null;
+    roleForm = { name: '', display: '', permissions: [] };
+    showRole = true;
+  }
+
+  function openEditRole(r: CustomRole) {
+    editingRole = r;
+    roleForm = { name: r.name, display: r.display, permissions: [...r.permissions] };
+    showRole = true;
+  }
+
+  async function saveRole(e: Event) {
+    e.preventDefault();
+    try {
+      if (editingRole) {
+        await api.roles.update(editingRole.name, { display: roleForm.display, permissions: roleForm.permissions });
+      } else {
+        await api.roles.create(roleForm);
+      }
+      showRole = false;
+      toast.success(editingRole ? 'Role updated' : 'Role created');
+      await loadRoles();
+    } catch (err) {
+      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
+  async function deleteRole(name: string) {
+    if (!confirm(`Delete role "${name}"?`)) return;
+    try {
+      await api.roles.delete(name);
+      toast.success('Role deleted');
+      await loadRoles();
+    } catch (err) {
+      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
+  function togglePerm(perm: string) {
+    if (roleForm.permissions.includes(perm)) {
+      roleForm.permissions = roleForm.permissions.filter(p => p !== perm);
+    } else {
+      roleForm.permissions = [...roleForm.permissions, perm];
+    }
   }
 
   // SSO state
@@ -374,6 +440,7 @@
     else if (tab === 'audit') loadAudit();
     else if (tab === 'sso') loadOIDC();
     else if (tab === 'system') loadBackup();
+    else if (tab === 'roles') loadRoles();
   });
 
   const tabs: Array<{ id: Tab; label: string; icon: any; show: boolean }> = $derived([
@@ -381,6 +448,7 @@
     { id: 'users', label: 'Users', icon: Users, show: allowed('user.manage') },
     { id: 'sso', label: 'SSO', icon: Globe, show: allowed('user.manage') },
     { id: 'system', label: 'System', icon: HardDrive, show: allowed('user.manage') },
+    { id: 'roles', label: 'Roles', icon: Shield, show: allowed('user.manage') },
     { id: 'audit', label: 'Audit Log', icon: Activity, show: allowed('audit.read') }
   ]);
 
@@ -814,6 +882,85 @@
     </Card>
   </section>
 {/if}
+
+{#if tab === 'roles' && allowed('user.manage')}
+  <section class="space-y-4 max-w-4xl">
+    <div class="flex justify-between items-center">
+      <div class="text-sm text-[var(--fg-muted)]">
+        {roles.length} role{roles.length === 1 ? '' : 's'} ({roles.filter(r => r.builtin).length} built-in)
+      </div>
+      <Button variant="primary" onclick={openNewRole}>
+        <Plus class="w-4 h-4" /> New role
+      </Button>
+    </div>
+
+    {#if rolesLoading}
+      <Card><Skeleton class="m-5" width="80%" height="6rem" /></Card>
+    {:else}
+      <div class="space-y-3">
+        {#each roles as role}
+          <Card class="p-4">
+            <div class="flex items-start justify-between gap-3">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="font-semibold text-sm">{role.display}</span>
+                  <code class="text-[10px] text-[var(--fg-muted)] font-mono">{role.name}</code>
+                  {#if role.builtin}<Badge variant="default">built-in</Badge>{/if}
+                </div>
+                <div class="flex flex-wrap gap-1 mt-2">
+                  {#each role.permissions as perm}
+                    <span class="text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)] font-mono">{perm}</span>
+                  {/each}
+                </div>
+              </div>
+              {#if !role.builtin}
+                <div class="flex gap-1 shrink-0">
+                  <Button size="xs" variant="ghost" onclick={() => openEditRole(role)}>Edit</Button>
+                  <Button size="xs" variant="ghost" onclick={() => deleteRole(role.name)}>
+                    <Trash2 class="w-3.5 h-3.5 text-[var(--color-danger-400)]" />
+                  </Button>
+                </div>
+              {/if}
+            </div>
+          </Card>
+        {/each}
+      </div>
+    {/if}
+  </section>
+{/if}
+
+<!-- Role modal -->
+<Modal bind:open={showRole} title={editingRole ? `Edit role: ${editingRole.display}` : 'Create role'} maxWidth="max-w-md">
+  <form onsubmit={saveRole} id="role-form" class="space-y-4">
+    {#if !editingRole}
+      <Input label="Name" placeholder="devops" hint="Lowercase, used as identifier" bind:value={roleForm.name} />
+    {/if}
+    <Input label="Display name" placeholder="DevOps Engineer" bind:value={roleForm.display} />
+    <div>
+      <div class="text-xs font-medium text-[var(--fg-muted)] mb-2">Permissions</div>
+      <div class="space-y-1.5 max-h-64 overflow-auto">
+        {#each allPerms as perm}
+          <label class="flex items-center gap-2 cursor-pointer text-sm hover:bg-[var(--surface-hover)] px-2 py-1 rounded">
+            <input
+              type="checkbox"
+              checked={roleForm.permissions.includes(perm.name)}
+              onchange={() => togglePerm(perm.name)}
+              class="rounded"
+            />
+            <code class="text-xs font-mono">{perm.name}</code>
+            <span class="text-xs text-[var(--fg-muted)]">{perm.description}</span>
+          </label>
+        {/each}
+      </div>
+    </div>
+  </form>
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (showRole = false)}>Cancel</Button>
+    <Button variant="primary" type="submit" form="role-form" disabled={!roleForm.display || (!editingRole && !roleForm.name)}>
+      {editingRole ? 'Update' : 'Create'}
+    </Button>
+  {/snippet}
+</Modal>
 
 <Modal bind:open={showOIDC} title={editingOIDC ? 'Edit OIDC provider' : 'Add OIDC provider'} maxWidth="max-w-xl" onclose={resetOIDCForm}>
   <form onsubmit={saveOIDC} class="space-y-3" id="oidc-form">

@@ -10,6 +10,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/system"
 	dtypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/volume"
 )
 
 // fakeHost implements the Host interface for fan-out tests. Its behavior
@@ -74,7 +75,13 @@ func (f *fakeHost) PruneImages(context.Context) (dtypes.ImagesPruneReport, error
 func (f *fakeHost) ListNetworks(context.Context) ([]dtypes.NetworkResource, error) {
 	panic("no")
 }
+func (f *fakeHost) InspectNetwork(context.Context, string) (dtypes.NetworkResource, error) {
+	panic("no")
+}
 func (f *fakeHost) ListVolumes(context.Context) ([]any, error) { panic("no") }
+func (f *fakeHost) InspectVolume(context.Context, string) (volume.Volume, error) {
+	panic("no")
+}
 func (f *fakeHost) DeployStack(context.Context, string, string, string) (*compose.DeployResult, error) {
 	panic("no")
 }

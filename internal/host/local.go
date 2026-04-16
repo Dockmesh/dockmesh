@@ -201,6 +201,20 @@ func (h *LocalHost) ListNetworks(ctx context.Context) ([]dtypes.NetworkResource,
 	return h.cli.ListNetworks(ctx)
 }
 
+func (h *LocalHost) InspectNetwork(ctx context.Context, id string) (dtypes.NetworkResource, error) {
+	if h.cli == nil {
+		return dtypes.NetworkResource{}, ErrNoDocker
+	}
+	return h.cli.InspectNetwork(ctx, id)
+}
+
+func (h *LocalHost) InspectVolume(ctx context.Context, name string) (volume.Volume, error) {
+	if h.cli == nil {
+		return volume.Volume{}, ErrNoDocker
+	}
+	return h.cli.InspectVolume(ctx, name)
+}
+
 func (h *LocalHost) ListVolumes(ctx context.Context) ([]any, error) {
 	if h.cli == nil {
 		return nil, ErrNoDocker

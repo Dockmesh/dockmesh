@@ -11,6 +11,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/system"
 	dtypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/volume"
 )
 
 // RemoteHost proxies operations to a connected agent over its WebSocket
@@ -249,6 +250,30 @@ func (h *RemoteHost) SystemMetrics(ctx context.Context) (system.Metrics, error) 
 	var out system.Metrics
 	if err := json.Unmarshal(data, &out); err != nil {
 		return system.Metrics{}, fmt.Errorf("decode system metrics: %w", err)
+	}
+	return out, nil
+}
+
+func (h *RemoteHost) InspectNetwork(ctx context.Context, id string) (dtypes.NetworkResource, error) {
+	data, err := h.request(ctx, agents.FrameReqNetworkInspect, agents.ResourceIDReq{ID: id})
+	if err != nil {
+		return dtypes.NetworkResource{}, err
+	}
+	var out dtypes.NetworkResource
+	if err := json.Unmarshal(data, &out); err != nil {
+		return dtypes.NetworkResource{}, fmt.Errorf("decode network inspect: %w", err)
+	}
+	return out, nil
+}
+
+func (h *RemoteHost) InspectVolume(ctx context.Context, name string) (volume.Volume, error) {
+	data, err := h.request(ctx, agents.FrameReqVolumeInspect, agents.ResourceIDReq{ID: name})
+	if err != nil {
+		return volume.Volume{}, err
+	}
+	var out volume.Volume
+	if err := json.Unmarshal(data, &out); err != nil {
+		return volume.Volume{}, fmt.Errorf("decode volume inspect: %w", err)
 	}
 	return out, nil
 }

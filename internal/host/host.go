@@ -14,6 +14,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/system"
 	dtypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/volume"
 )
 
 // Host is what HTTP handlers call. Both LocalHost (wrapping the embedded
@@ -54,7 +55,9 @@ type Host interface {
 	RemoveImage(ctx context.Context, id string, force bool) ([]dtypes.ImageDeleteResponseItem, error)
 	PruneImages(ctx context.Context) (dtypes.ImagesPruneReport, error)
 	ListNetworks(ctx context.Context) ([]dtypes.NetworkResource, error)
+	InspectNetwork(ctx context.Context, id string) (dtypes.NetworkResource, error)
 	ListVolumes(ctx context.Context) ([]any, error)
+	InspectVolume(ctx context.Context, name string) (volume.Volume, error)
 
 	// Stack operations (slice 3.1.3). The handler reads the compose+env
 	// from the central server's filesystem once and passes the content

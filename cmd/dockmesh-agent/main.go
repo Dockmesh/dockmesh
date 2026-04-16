@@ -765,6 +765,18 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		list, err := cli.NetworkList(ctx, dtypes.NetworkListOptions{})
 		respond(conn, f.ID, list, err)
 
+	case agents.FrameReqNetworkInspect:
+		var req agents.ResourceIDReq
+		_ = json.Unmarshal(f.Payload, &req)
+		net, err := cli.NetworkInspect(ctx, req.ID, dtypes.NetworkInspectOptions{})
+		respond(conn, f.ID, net, err)
+
+	case agents.FrameReqVolumeInspect:
+		var req agents.ResourceIDReq
+		_ = json.Unmarshal(f.Payload, &req)
+		vol, err := cli.VolumeInspect(ctx, req.ID)
+		respond(conn, f.ID, vol, err)
+
 	case agents.FrameReqVolumeList:
 		list, err := cli.VolumeList(ctx, volume.ListOptions{})
 		if err != nil {
