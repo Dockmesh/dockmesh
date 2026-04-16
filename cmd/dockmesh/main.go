@@ -23,6 +23,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/api/handlers"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
@@ -274,7 +275,8 @@ func main() {
 		Metrics:      metricsCol,
 		Notify:       notifySvc,
 		Alerts:       alertsSvc,
-		Backups:      backupSvc,
+		Backups:       backupSvc,
+		BackupTargets: targets.NewTargetStore(database),
 		Migrations:   migrationSvc,
 		Drains:       drainSvc,
 		Agents:       agentsSvc,

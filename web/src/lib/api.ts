@@ -334,6 +334,20 @@ export interface Topology {
   links: TopoLink[];
 }
 
+export interface BackupTarget {
+  id: number;
+  name: string;
+  type: string;
+  config: any;
+  status: string;
+  total_bytes: number;
+  used_bytes: number;
+  free_bytes: number;
+  last_checked_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface BackupSource {
   type: 'volume' | 'stack';
   name: string;
@@ -791,6 +805,13 @@ export const api = {
   },
 
   backups: {
+    listTargets: () => request<BackupTarget[]>('/backups/targets'),
+    createTarget: (input: { name: string; type: string; config: any }) =>
+      request<BackupTarget>('/backups/targets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+    updateTarget: (id: number, input: { name: string; type: string; config: any }) =>
+      request<BackupTarget>(`/backups/targets/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+    deleteTarget: (id: number) => request<void>(`/backups/targets/${id}`, { method: 'DELETE' }),
+    testTarget: (id: number) => request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string }>(`/backups/targets/${id}/test`, { method: 'POST' }),
     listJobs: () => request<BackupJob[]>('/backups/jobs'),
     getJob: (id: number) => request<BackupJob>(`/backups/jobs/${id}`),
     createJob: (input: BackupJobInput) =>

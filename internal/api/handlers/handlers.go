@@ -15,6 +15,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
@@ -45,15 +46,16 @@ type Handlers struct {
 	Metrics      *metrics.Collector
 	Notify       *notify.Service
 	Alerts       *alerts.Service
-	Backups      *backup.Service
-	Migrations   *migration.Service
-	Drains       *migration.DrainService
-	Agents       *agents.Service
-	Hosts        *host.Registry
-	Roles        *rbac.Store
-	Settings     *settings.Store
-	GlobalEnv    *globalenv.Store
-	JWTSecret    []byte // raw secret used to sign the short-lived OIDC state cookie
+	Backups        *backup.Service
+	BackupTargets  *targets.TargetStore
+	Migrations     *migration.Service
+	Drains         *migration.DrainService
+	Agents         *agents.Service
+	Hosts          *host.Registry
+	Roles          *rbac.Store
+	Settings       *settings.Store
+	GlobalEnv      *globalenv.Store
+	JWTSecret      []byte // raw secret used to sign the short-lived OIDC state cookie
 }
 
 type Deps struct {
@@ -73,15 +75,16 @@ type Deps struct {
 	Metrics      *metrics.Collector
 	Notify       *notify.Service
 	Alerts       *alerts.Service
-	Backups      *backup.Service
-	Migrations   *migration.Service
-	Drains       *migration.DrainService
-	Agents       *agents.Service
-	Hosts        *host.Registry
-	Roles        *rbac.Store
-	Settings     *settings.Store
-	GlobalEnv    *globalenv.Store
-	JWTSecret    []byte
+	Backups        *backup.Service
+	BackupTargets  *targets.TargetStore
+	Migrations     *migration.Service
+	Drains         *migration.DrainService
+	Agents         *agents.Service
+	Hosts          *host.Registry
+	Roles          *rbac.Store
+	Settings       *settings.Store
+	GlobalEnv      *globalenv.Store
+	JWTSecret      []byte
 }
 
 func New(d Deps) *Handlers {
@@ -102,8 +105,9 @@ func New(d Deps) *Handlers {
 		Metrics:     d.Metrics,
 		Notify:      d.Notify,
 		Alerts:      d.Alerts,
-		Backups:     d.Backups,
-		Migrations:  d.Migrations,
+		Backups:       d.Backups,
+		BackupTargets: d.BackupTargets,
+		Migrations:    d.Migrations,
 		Drains:      d.Drains,
 		Agents:      d.Agents,
 		Hosts:       d.Hosts,

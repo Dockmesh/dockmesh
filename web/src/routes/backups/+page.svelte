@@ -2,7 +2,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { api, ApiError } from '$lib/api';
-  import type { BackupJob, BackupJobInput, BackupRun, BackupSource, BackupHook } from '$lib/api';
+  import type { BackupJob, BackupJobInput, BackupRun, BackupSource, BackupHook, BackupTarget } from '$lib/api';
   import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
@@ -11,7 +11,7 @@
     Search, Clock, Copy, ChevronDown
   } from 'lucide-svelte';
 
-  type Tab = 'jobs' | 'runs';
+  type Tab = 'jobs' | 'runs' | 'targets';
   let tab = $state<Tab>((new URLSearchParams($page.url.search).get('tab') as Tab) || 'jobs');
 
   let jobs = $state<BackupJob[]>([]);
@@ -73,6 +73,69 @@
   let runJobFilter = $state('');
   let runStatusFilter = $state<'all' | 'success' | 'failed' | 'running'>('all');
 
+  // Targets
+  let bTargets = $state<BackupTarget[]>([]);
+  let targetsLoading = $state(false);
+  let showTarget = $state(false);
+  let editingTarget = $state<BackupTarget | null>(null);
+  let tName = $state('');
+  let tType = $state<'local' | 's3' | 'sftp' | 'smb' | 'webdav'>('local');
+  let tConfig = $state<Record<string, string>>({});
+  let tSaving = $state(false);
+
+  const targetTypes = [
+    { value: 'local', label: 'Local Directory', icon: '💾', fields: [{ key: 'path', label: 'Path', placeholder: './data/backups' }] },
+    { value: 'sftp', label: 'SFTP (SSH)', icon: '🔐', fields: [{ key: 'host', label: 'Host', placeholder: 'nas.local' }, { key: 'port', label: 'Port', placeholder: '22' }, { key: 'username', label: 'Username', placeholder: '' }, { key: 'password', label: 'Password', placeholder: '' }, { key: 'path', label: 'Remote path', placeholder: '/backups' }] },
+    { value: 'smb', label: 'SMB / NAS', icon: '📁', fields: [{ key: 'host', label: 'Server', placeholder: '192.168.1.100' }, { key: 'port', label: 'Port', placeholder: '445' }, { key: 'share', label: 'Share name', placeholder: 'backups' }, { key: 'username', label: 'Username', placeholder: '' }, { key: 'password', label: 'Password', placeholder: '' }, { key: 'path', label: 'Path within share', placeholder: 'dockmesh' }] },
+    { value: 'webdav', label: 'WebDAV (Nextcloud)', icon: '☁️', fields: [{ key: 'url', label: 'WebDAV URL', placeholder: 'https://nextcloud.example.com/remote.php/dav/files/user/' }, { key: 'username', label: 'Username', placeholder: '' }, { key: 'password', label: 'Password', placeholder: '' }, { key: 'path', label: 'Path', placeholder: '/backups' }] },
+    { value: 's3', label: 'S3 / MinIO / Wasabi', icon: '🪣', fields: [{ key: 'endpoint', label: 'Endpoint', placeholder: 's3.amazonaws.com' }, { key: 'bucket', label: 'Bucket', placeholder: 'my-backups' }, { key: 'access_key', label: 'Access Key', placeholder: '' }, { key: 'secret_key', label: 'Secret Key', placeholder: '' }, { key: 'region', label: 'Region', placeholder: 'us-east-1' }] }
+  ];
+
+  async function loadTargets() {
+    targetsLoading = true;
+    try { bTargets = await api.backups.listTargets(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); } finally { targetsLoading = false; }
+  }
+
+  function openNewTarget() {
+    editingTarget = null; tName = ''; tType = 'local'; tConfig = {}; showTarget = true;
+  }
+  function openEditTarget(t: BackupTarget) {
+    editingTarget = t; tName = t.name; tType = t.type as any;
+    const cfg = typeof t.config === 'object' ? t.config : {};
+    tConfig = {};
+    for (const [k, v] of Object.entries(cfg)) tConfig[k] = String(v ?? '');
+    showTarget = true;
+  }
+  async function saveTarget(e: Event) {
+    e.preventDefault(); tSaving = true;
+    const config: Record<string, any> = { ...tConfig };
+    if (config.port) config.port = parseInt(config.port) || 0;
+    try {
+      if (editingTarget) { await api.backups.updateTarget(editingTarget.id, { name: tName, type: tType, config }); toast.success('Updated', tName); }
+      else { await api.backups.createTarget({ name: tName, type: tType, config }); toast.success('Created', tName); }
+      showTarget = false; await loadTargets();
+    } catch (err) { toast.error('Save failed', err instanceof ApiError ? err.message : undefined); }
+    finally { tSaving = false; }
+  }
+  async function deleteTarget(t: BackupTarget) {
+    if (!confirm(`Delete target "${t.name}"?`)) return;
+    try { await api.backups.deleteTarget(t.id); toast.success('Deleted'); await loadTargets(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
+  }
+  async function testTarget(t: BackupTarget) {
+    toast.info('Testing connection…', t.name);
+    try {
+      const res = await api.backups.testTarget(t.id);
+      if (res.status === 'connected') {
+        toast.success('Connected', res.total_bytes > 0 ? `${fmtBytes(res.free_bytes)} free of ${fmtBytes(res.total_bytes)}` : 'OK');
+      } else {
+        toast.error('Connection failed', res.error);
+      }
+      await loadTargets();
+    } catch (err) { toast.error('Test failed', err instanceof ApiError ? err.message : undefined); }
+  }
+
+  const activeTargetType = $derived(targetTypes.find(t => t.value === tType));
+
   async function loadJobs() {
     loading = true;
     try { jobs = await api.backups.listJobs(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); } finally { loading = false; }
@@ -85,8 +148,9 @@
 
   $effect(() => {
     if (!allowed('user.manage')) { goto('/'); return; }
-    if (tab === 'jobs') loadJobs();
-    else { loadRuns(); loadJobs(); } // need jobs for job filter dropdown
+    if (tab === 'jobs') { loadJobs(); loadTargets(); }
+    else if (tab === 'runs') { loadRuns(); loadJobs(); }
+    else if (tab === 'targets') loadTargets();
   });
 
   // Summary stats
@@ -261,6 +325,9 @@
     <button class="px-4 py-2.5 text-sm border-b-2 transition-colors flex items-center gap-2 {tab === 'runs' ? 'border-[var(--color-brand-500)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}" onclick={() => (tab = 'runs')}>
       <Clock class="w-3.5 h-3.5" /> Runs
     </button>
+    <button class="px-4 py-2.5 text-sm border-b-2 transition-colors flex items-center gap-2 {tab === 'targets' ? 'border-[var(--color-brand-500)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}" onclick={() => (tab = 'targets')}>
+      <HardDrive class="w-3.5 h-3.5" /> Targets
+    </button>
   </div>
 
   <!-- ===== JOBS TAB ===== -->
@@ -337,7 +404,7 @@
     {/if}
 
   <!-- ===== RUNS TAB ===== -->
-  {:else}
+  {:else if tab === 'runs'}
     <!-- Filters -->
     <div class="flex flex-wrap items-center gap-3">
       <select class="dm-input !py-1 !px-2 !w-auto text-xs" bind:value={runJobFilter}>
@@ -405,8 +472,132 @@
         </div>
       </Card>
     {/if}
+
+  <!-- ===== TARGETS TAB ===== -->
+  {:else if tab === 'targets'}
+    <div class="flex justify-between items-center">
+      <span class="text-sm text-[var(--fg-muted)]">{bTargets.length} target{bTargets.length === 1 ? '' : 's'}</span>
+      <Button variant="primary" size="sm" onclick={openNewTarget}><Plus class="w-3.5 h-3.5" /> New target</Button>
+    </div>
+
+    {#if targetsLoading && bTargets.length === 0}
+      <Card><Skeleton class="m-5" width="70%" height="3rem" /></Card>
+    {:else if bTargets.length === 0}
+      <Card><EmptyState icon={HardDrive} title="No backup targets" description="Configure a storage destination (local, NAS, SFTP, S3, WebDAV) to use in backup jobs." /></Card>
+    {:else}
+      <Card>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-[var(--border)] text-[var(--fg-muted)] text-xs uppercase tracking-wider">
+                <th class="text-left px-5 py-3">Name</th>
+                <th class="text-left px-3 py-3">Type</th>
+                <th class="text-left px-3 py-3">Status</th>
+                <th class="text-left px-3 py-3">Storage</th>
+                <th class="text-left px-3 py-3">Last Checked</th>
+                <th class="text-right px-3 py-3 w-28">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[var(--border)]">
+              {#each bTargets as t (t.id)}
+                <tr class="hover:bg-[var(--surface-hover)]">
+                  <td class="px-5 py-2.5">
+                    <button class="text-left" onclick={() => openEditTarget(t)}>
+                      <div class="font-medium text-sm">{t.name}</div>
+                    </button>
+                  </td>
+                  <td class="px-3 py-2.5">
+                    <Badge variant={t.type === 's3' ? 'info' : t.type === 'sftp' ? 'success' : t.type === 'smb' ? 'warning' : t.type === 'webdav' ? 'info' : 'default'}>
+                      {t.type.toUpperCase()}
+                    </Badge>
+                  </td>
+                  <td class="px-3 py-2.5">
+                    {#if t.status === 'connected'}
+                      <Badge variant="success" dot>connected</Badge>
+                    {:else if t.status === 'error'}
+                      <Badge variant="danger" dot>error</Badge>
+                    {:else}
+                      <Badge variant="default">unknown</Badge>
+                    {/if}
+                  </td>
+                  <td class="px-3 py-2.5 text-xs font-mono tabular-nums">
+                    {#if t.total_bytes > 0}
+                      {fmtBytes(t.total_bytes - t.used_bytes)} free / {fmtBytes(t.total_bytes)}
+                    {:else}
+                      <span class="text-[var(--fg-subtle)]">—</span>
+                    {/if}
+                  </td>
+                  <td class="px-3 py-2.5 text-xs text-[var(--fg-muted)]">{fmtTime(t.last_checked_at)}</td>
+                  <td class="px-3 py-2.5">
+                    <div class="flex gap-0.5 justify-end">
+                      <button class="p-1.5 rounded-md text-[var(--color-brand-400)] hover:bg-[var(--surface-hover)]" title="Test connection" onclick={() => testTarget(t)}>
+                        <RefreshCw class="w-3.5 h-3.5" />
+                      </button>
+                      <button class="p-1.5 rounded-md text-[var(--color-danger-400)] hover:bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)]" title="Delete" onclick={() => deleteTarget(t)}>
+                        <Trash2 class="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    {/if}
   {/if}
 </section>
+
+<!-- Target modal -->
+<Modal bind:open={showTarget} title={editingTarget ? `Edit: ${editingTarget.name}` : 'New backup target'} maxWidth="max-w-lg">
+  <form onsubmit={saveTarget} class="space-y-4" id="target-form">
+    <Input label="Name" bind:value={tName} placeholder="My NAS" />
+
+    <!-- Type selector as visual cards -->
+    <div>
+      <div class="text-xs font-medium text-[var(--fg-muted)] mb-2">Type</div>
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {#each targetTypes as tt}
+          <button type="button"
+            class="p-3 rounded-lg border text-left transition-colors {tType === tt.value
+              ? 'border-[var(--color-brand-500)] bg-[color-mix(in_srgb,var(--color-brand-500)_8%,transparent)]'
+              : 'border-[var(--border)] hover:border-[var(--color-brand-500)]'}"
+            onclick={() => { tType = tt.value as any; tConfig = {}; }}
+          >
+            <div class="text-lg mb-0.5">{tt.icon}</div>
+            <div class="text-xs font-medium">{tt.label}</div>
+          </button>
+        {/each}
+      </div>
+    </div>
+
+    <!-- Type-specific fields -->
+    {#if activeTargetType}
+      <fieldset class="space-y-3">
+        <legend class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-1">{activeTargetType.label} Configuration</legend>
+        {#each activeTargetType.fields as f}
+          <div>
+            <label for="t-{f.key}" class="block text-xs font-medium text-[var(--fg-muted)] mb-1">{f.label}</label>
+            <input
+              id="t-{f.key}"
+              type={f.key === 'password' || f.key === 'secret_key' ? 'password' : 'text'}
+              class="dm-input text-sm font-mono"
+              placeholder={f.placeholder}
+              value={tConfig[f.key] ?? ''}
+              oninput={(e) => { tConfig = { ...tConfig, [f.key]: (e.target as HTMLInputElement).value }; }}
+            />
+          </div>
+        {/each}
+      </fieldset>
+    {/if}
+  </form>
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (showTarget = false)}>Cancel</Button>
+    <Button variant="primary" type="submit" form="target-form" loading={tSaving} disabled={tSaving || !tName.trim()}>
+      {editingTarget ? 'Save' : 'Create'}
+    </Button>
+  {/snippet}
+</Modal>
 
 <!-- ===== JOB MODAL (simplified, structured) ===== -->
 <Modal bind:open={showJob} title={editing ? `Edit: ${editing.name}` : 'New backup job'} maxWidth="max-w-2xl" onclose={resetForm}>
@@ -452,25 +643,42 @@
     <!-- Target -->
     <fieldset class="space-y-3">
       <legend class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">Where to store</legend>
-      <div>
-        <label for="target-type" class="block text-xs text-[var(--fg-muted)] mb-1">Target</label>
-        <select id="target-type" class="dm-input text-sm" bind:value={jTargetType}>
-          <option value="local">Local directory</option>
-          <option value="s3">S3 / MinIO / Wasabi / Backblaze</option>
-        </select>
-      </div>
+      {#if bTargets.length > 0}
+        <div>
+          <label for="job-target" class="block text-xs text-[var(--fg-muted)] mb-1">Select a configured target</label>
+          <select id="job-target" class="dm-input text-sm" bind:value={jTargetType}
+            onchange={(e) => {
+              const val = (e.target as HTMLSelectElement).value;
+              if (val.startsWith('id:')) {
+                const tid = parseInt(val.slice(3));
+                const t = bTargets.find(bt => bt.id === tid);
+                if (t) { jTargetType = t.type as any; jLocalPath = (t.config as any)?.path ?? ''; }
+              }
+            }}>
+            <option value="local">Local directory (inline)</option>
+            {#each bTargets as bt}
+              <option value="id:{bt.id}">{bt.name} ({bt.type.toUpperCase()}){bt.status === 'connected' ? ' ✓' : ''}</option>
+            {/each}
+          </select>
+        </div>
+        <p class="text-[10px] text-[var(--fg-subtle)]">Select a pre-configured target or use "Local directory" for inline config. Manage targets in the Targets tab.</p>
+      {:else}
+        <div>
+          <label for="target-type" class="block text-xs text-[var(--fg-muted)] mb-1">Target type</label>
+          <select id="target-type" class="dm-input text-sm" bind:value={jTargetType}>
+            <option value="local">Local directory</option>
+            <option value="s3">S3 / MinIO / Wasabi</option>
+          </select>
+        </div>
+      {/if}
       {#if jTargetType === 'local'}
         <Input label="Path" bind:value={jLocalPath} placeholder="./data/backups" hint="Absolute or relative to Dockmesh working directory" />
-      {:else}
+      {:else if jTargetType === 's3'}
         <div class="grid grid-cols-2 gap-3">
           <Input label="Endpoint" bind:value={jS3Endpoint} placeholder="s3.amazonaws.com" />
           <Input label="Bucket" bind:value={jS3Bucket} placeholder="my-backups" />
           <Input label="Access Key" bind:value={jS3AccessKey} />
           <Input label="Secret Key" type="password" bind:value={jS3SecretKey} />
-          <Input label="Region" bind:value={jS3Region} placeholder="us-east-1" />
-          <label class="flex items-center gap-2 text-sm mt-6 cursor-pointer">
-            <input type="checkbox" bind:checked={jS3SSL} class="accent-[var(--color-brand-500)]" /> Use SSL
-          </label>
         </div>
       {/if}
       <label class="flex items-center gap-2 text-sm cursor-pointer">

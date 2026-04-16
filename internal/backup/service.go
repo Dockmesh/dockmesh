@@ -201,6 +201,12 @@ func buildTarget(typ string, cfg any) (targets.Target, error) {
 		return targets.NewLocal(cfg)
 	case "s3":
 		return targets.NewS3(cfg)
+	case "sftp":
+		return targets.NewSFTP(cfg)
+	case "smb":
+		return targets.NewSMB(cfg)
+	case "webdav":
+		return targets.NewWebDAV(cfg)
 	}
 	return nil, ErrUnknownTargetType
 }
