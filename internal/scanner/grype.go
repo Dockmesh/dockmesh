@@ -56,9 +56,15 @@ func (g *GrypeCLI) Scan(ctx context.Context, image string) (*Report, error) {
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("grype exit %d: %s", ee.ExitCode(), string(ee.Stderr))
+			// Grype exits 1 when vulnerabilities are found — that's normal.
+			// Only treat exit codes > 1 as real errors. Exit 1 still
+			// produces valid JSON on stdout which we parse below.
+			if ee.ExitCode() > 1 || len(out) == 0 {
+				return nil, fmt.Errorf("grype exit %d: %s", ee.ExitCode(), string(ee.Stderr))
+			}
+		} else {
+			return nil, fmt.Errorf("run grype: %w", err)
 		}
-		return nil, fmt.Errorf("run grype: %w", err)
 	}
 
 	var raw grypeOutput
