@@ -213,13 +213,16 @@
     scanReport = null;
     severityFilter = 'all';
     try {
-      // Try cached result first (silent 404 if none).
-      scanReport = await api.images.getScan(ref).catch(() => null) as ScanReport | null;
-      // Run fresh scan.
+      // Run fresh scan (POST). Skip the cached-result GET to avoid
+      // console 404 noise — the POST always returns the latest result.
       scanReport = await api.images.scan(ref);
       toast.success('Scan complete', `${scanReport.vulnerabilities.length} findings`);
     } catch (err) {
-      if (err instanceof ApiError) toast.error('Scan failed', err.message);
+      if (err instanceof ApiError) {
+        toast.error('Scan failed', err.message);
+      } else {
+        toast.error('Scan failed', 'Scanner unavailable — is Grype installed?');
+      }
     } finally {
       scanBusy = false;
     }
