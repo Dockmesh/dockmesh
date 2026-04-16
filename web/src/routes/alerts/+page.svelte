@@ -104,24 +104,24 @@
   let rulesLoading = $state(false);
   let showRule = $state(false);
   let editRule = $state<AlertRule | null>(null);
-  let ruleForm = $state<AlertRuleInput>({ name: '', container_filter: '*', metric: 'cpu_percent', operator: 'gt', threshold: 80, duration_seconds: 60, channel_ids: [], enabled: true });
+  let ruleForm = $state<AlertRuleInput>({ name: '', container_filter: '*', metric: 'cpu_percent', operator: 'gt', threshold: 80, duration_seconds: 60, channel_ids: [], enabled: true, severity: 'warning', cooldown_seconds: 300, muted_until: '' });
 
   async function loadRules() {
     rulesLoading = true;
     try { rules = await api.alerts.listRules(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); } finally { rulesLoading = false; }
   }
 
-  function resetRule() { ruleForm = { name: '', container_filter: '*', metric: 'cpu_percent', operator: 'gt', threshold: 80, duration_seconds: 60, channel_ids: [], enabled: true }; editRule = null; }
+  function resetRule() { ruleForm = { name: '', container_filter: '*', metric: 'cpu_percent', operator: 'gt', threshold: 80, duration_seconds: 60, channel_ids: [], enabled: true, severity: 'warning', cooldown_seconds: 300, muted_until: '' }; editRule = null; }
 
   function openNewRule() { resetRule(); showRule = true; }
   function openEditRule(r: AlertRule) {
     editRule = r;
-    ruleForm = { name: r.name, container_filter: r.container_filter, metric: r.metric, operator: r.operator, threshold: r.threshold, duration_seconds: r.duration_seconds, channel_ids: r.channel_ids ?? [], enabled: r.enabled };
+    ruleForm = { name: r.name, container_filter: r.container_filter, metric: r.metric, operator: r.operator, threshold: r.threshold, duration_seconds: r.duration_seconds, channel_ids: r.channel_ids ?? [], enabled: r.enabled, severity: r.severity || 'warning', cooldown_seconds: r.cooldown_seconds || 300, muted_until: r.muted_until ?? '' };
     showRule = true;
   }
   function duplicateRule(r: AlertRule) {
     editRule = null;
-    ruleForm = { name: r.name + ' (copy)', container_filter: r.container_filter, metric: r.metric, operator: r.operator, threshold: r.threshold, duration_seconds: r.duration_seconds, channel_ids: r.channel_ids ?? [], enabled: false };
+    ruleForm = { name: r.name + ' (copy)', container_filter: r.container_filter, metric: r.metric, operator: r.operator, threshold: r.threshold, duration_seconds: r.duration_seconds, channel_ids: r.channel_ids ?? [], enabled: false, severity: r.severity || 'warning', cooldown_seconds: r.cooldown_seconds || 300, muted_until: '' };
     showRule = true;
   }
 
@@ -141,10 +141,33 @@
 
   async function toggleRuleEnabled(r: AlertRule) {
     try {
-      const input: AlertRuleInput = { name: r.name, container_filter: r.container_filter, metric: r.metric, operator: r.operator, threshold: r.threshold, duration_seconds: r.duration_seconds, channel_ids: r.channel_ids ?? [], enabled: !r.enabled };
+      const input: AlertRuleInput = { name: r.name, container_filter: r.container_filter, metric: r.metric, operator: r.operator, threshold: r.threshold, duration_seconds: r.duration_seconds, channel_ids: r.channel_ids ?? [], enabled: !r.enabled, severity: r.severity || 'warning', cooldown_seconds: r.cooldown_seconds || 300, muted_until: r.muted_until ?? '' };
       await api.alerts.updateRule(r.id, input);
       await loadRules();
     } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
+  }
+
+  async function muteRule(r: AlertRule, hours: number) {
+    try {
+      const until = new Date(Date.now() + hours * 3600000).toISOString();
+      const input: AlertRuleInput = { name: r.name, container_filter: r.container_filter, metric: r.metric, operator: r.operator, threshold: r.threshold, duration_seconds: r.duration_seconds, channel_ids: r.channel_ids ?? [], enabled: r.enabled, severity: r.severity || 'warning', cooldown_seconds: r.cooldown_seconds || 300, muted_until: until };
+      await api.alerts.updateRule(r.id, input);
+      toast.success(`Muted for ${hours}h`, r.name);
+      await loadRules();
+    } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
+  }
+
+  async function unmuteRule(r: AlertRule) {
+    try {
+      const input: AlertRuleInput = { name: r.name, container_filter: r.container_filter, metric: r.metric, operator: r.operator, threshold: r.threshold, duration_seconds: r.duration_seconds, channel_ids: r.channel_ids ?? [], enabled: r.enabled, severity: r.severity || 'warning', cooldown_seconds: r.cooldown_seconds || 300, muted_until: '' };
+      await api.alerts.updateRule(r.id, input);
+      toast.success('Unmuted', r.name);
+      await loadRules();
+    } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
+  }
+
+  function isMuted(r: AlertRule): boolean {
+    return !!r.muted_until && new Date(r.muted_until) > new Date();
   }
 
   function toggleChannelInRule(id: number) {
@@ -265,12 +288,17 @@
                   </td>
                   <td class="px-3 py-2.5">
                     <button class="text-left" onclick={() => openEditRule(r)}>
-                      <div class="font-medium text-sm">{r.name}</div>
+                      <div class="font-medium text-sm flex items-center gap-1.5">
+                        {r.name}
+                        <Badge variant={r.severity === 'critical' ? 'danger' : r.severity === 'info' ? 'info' : 'warning'}>{r.severity}</Badge>
+                        {#if isMuted(r)}<Badge variant="default">muted</Badge>{/if}
+                      </div>
                       <div class="text-[10px] text-[var(--fg-muted)] font-mono">{r.container_filter}</div>
                     </button>
                   </td>
                   <td class="px-3 py-2.5 font-mono text-xs text-[var(--fg-muted)]">
                     {r.metric.replace('_', ' ')} {r.operator === 'gt' ? '>' : '<'} {r.threshold}% for {r.duration_seconds}s
+                    {#if r.cooldown_seconds}<span class="text-[var(--fg-subtle)]"> · {r.cooldown_seconds}s cooldown</span>{/if}
                   </td>
                   <td class="px-3 py-2.5">
                     <div class="flex flex-wrap gap-1">
@@ -289,6 +317,15 @@
                   </td>
                   <td class="px-3 py-2.5">
                     <div class="flex gap-0.5 justify-end">
+                      {#if isMuted(r)}
+                        <button class="p-1.5 rounded-md text-[var(--color-warning-400)] hover:bg-[var(--surface-hover)]" title="Unmute" onclick={() => unmuteRule(r)}>
+                          <BellRing class="w-3.5 h-3.5" />
+                        </button>
+                      {:else}
+                        <button class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]" title="Mute 1h" onclick={() => muteRule(r, 1)}>
+                          <BellOff class="w-3.5 h-3.5" />
+                        </button>
+                      {/if}
                       <button class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]" title="Duplicate" onclick={() => duplicateRule(r)}>
                         <Copy class="w-3.5 h-3.5" />
                       </button>
@@ -380,6 +417,19 @@
           >{label}</button>
         {/each}
       </div>
+      <button
+        class="dm-btn dm-btn-secondary dm-btn-sm"
+        onclick={() => {
+          const csv = ['Time,Status,Rule,Container,Value,Threshold,Message']
+            .concat(filteredHistory.map(e => `"${e.occurred_at}","${e.status}","${e.rule_name}","${e.container_name}",${e.value ?? ''},${e.threshold ?? ''},"${(e.message ?? '').replace(/"/g, '""')}"`))
+            .join('\n');
+          const blob = new Blob([csv], { type: 'text/csv' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = `dockmesh-alerts-${new Date().toISOString().slice(0, 10)}.csv`;
+          a.click();
+        }}
+      >Export CSV</button>
       <span class="text-xs text-[var(--fg-subtle)] ml-auto">{filteredHistory.length} / {history.length}</span>
     </div>
 
@@ -506,6 +556,29 @@
       <Input label="Threshold %" type="number" bind:value={ruleForm.threshold as any} />
     </div>
     <Input label="Duration (seconds)" type="number" bind:value={ruleForm.duration_seconds as any} hint="Condition must hold this long before firing" />
+
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label for="rule-severity" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Severity</label>
+        <select id="rule-severity" class="dm-input text-sm" bind:value={ruleForm.severity}>
+          <option value="critical">Critical</option>
+          <option value="warning">Warning</option>
+          <option value="info">Info</option>
+        </select>
+      </div>
+      <Input label="Cooldown (seconds)" type="number" bind:value={ruleForm.cooldown_seconds as any} hint="Suppress re-notify for this long" />
+    </div>
+
+    {#if editRule}
+      <div>
+        <label for="rule-mute" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Mute until (optional)</label>
+        <input id="rule-mute" type="datetime-local" class="dm-input text-sm"
+          value={ruleForm.muted_until ? ruleForm.muted_until.slice(0, 16) : ''}
+          oninput={(e) => { const v = (e.target as HTMLInputElement).value; ruleForm.muted_until = v ? new Date(v).toISOString() : ''; }}
+        />
+        <span class="text-[10px] text-[var(--fg-subtle)]">Rule evaluates but notifications are suppressed while muted</span>
+      </div>
+    {/if}
 
     <div>
       <div class="text-xs font-medium text-[var(--fg-muted)] mb-1.5">Notify via</div>

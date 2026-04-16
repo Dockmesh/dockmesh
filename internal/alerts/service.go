@@ -34,6 +34,9 @@ type Rule struct {
 	DurationSeconds int        `json:"duration_seconds"`
 	ChannelIDs      []int64    `json:"channel_ids"`
 	Enabled         bool       `json:"enabled"`
+	Severity        string     `json:"severity"`          // critical | warning | info
+	CooldownSeconds int        `json:"cooldown_seconds"`  // suppress re-notify for this long
+	MutedUntil      *time.Time `json:"muted_until,omitempty"`
 	FiringSince     *time.Time `json:"firing_since,omitempty"`
 	LastTriggered   *time.Time `json:"last_triggered_at,omitempty"`
 	LastResolved    *time.Time `json:"last_resolved_at,omitempty"`
@@ -63,6 +66,9 @@ type RuleInput struct {
 	DurationSeconds int     `json:"duration_seconds"`
 	ChannelIDs      []int64 `json:"channel_ids"`
 	Enabled         bool    `json:"enabled"`
+	Severity        string  `json:"severity"`
+	CooldownSeconds int     `json:"cooldown_seconds"`
+	MutedUntil      string  `json:"muted_until,omitempty"` // ISO timestamp or empty
 }
 
 type Service struct {
@@ -143,6 +149,7 @@ func (s *Service) ListRules(ctx context.Context) ([]Rule, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, container_filter, metric, operator, threshold,
 		       duration_seconds, channel_ids, enabled,
+		       severity, cooldown_seconds, muted_until,
 		       firing_since, last_triggered_at, last_resolved_at,
 		       created_at, updated_at
 		FROM alert_rules ORDER BY id DESC`)
@@ -166,13 +173,27 @@ func (s *Service) Create(ctx context.Context, in RuleInput) (*Rule, error) {
 		return nil, err
 	}
 	ids, _ := json.Marshal(in.ChannelIDs)
+	sev := in.Severity
+	if sev == "" {
+		sev = "warning"
+	}
+	cooldown := in.CooldownSeconds
+	if cooldown <= 0 {
+		cooldown = 300
+	}
+	var mutedUntil *time.Time
+	if in.MutedUntil != "" {
+		if t, err := time.Parse(time.RFC3339, in.MutedUntil); err == nil {
+			mutedUntil = &t
+		}
+	}
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO alert_rules
 			(name, container_filter, metric, operator, threshold,
-			 duration_seconds, channel_ids, enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			 duration_seconds, channel_ids, enabled, severity, cooldown_seconds, muted_until)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.Name, in.ContainerFilter, in.Metric, in.Operator, in.Threshold,
-		in.DurationSeconds, string(ids), boolInt(in.Enabled))
+		in.DurationSeconds, string(ids), boolInt(in.Enabled), sev, cooldown, mutedUntil)
 	if err != nil {
 		return nil, err
 	}
@@ -185,14 +206,29 @@ func (s *Service) Update(ctx context.Context, id int64, in RuleInput) (*Rule, er
 		return nil, err
 	}
 	ids, _ := json.Marshal(in.ChannelIDs)
+	sev := in.Severity
+	if sev == "" {
+		sev = "warning"
+	}
+	cooldown := in.CooldownSeconds
+	if cooldown <= 0 {
+		cooldown = 300
+	}
+	var mutedUntil *time.Time
+	if in.MutedUntil != "" {
+		if t, err := time.Parse(time.RFC3339, in.MutedUntil); err == nil {
+			mutedUntil = &t
+		}
+	}
 	if _, err := s.db.ExecContext(ctx, `
 		UPDATE alert_rules SET
 			name = ?, container_filter = ?, metric = ?, operator = ?,
 			threshold = ?, duration_seconds = ?, channel_ids = ?, enabled = ?,
+			severity = ?, cooldown_seconds = ?, muted_until = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
 		in.Name, in.ContainerFilter, in.Metric, in.Operator, in.Threshold,
-		in.DurationSeconds, string(ids), boolInt(in.Enabled), id); err != nil {
+		in.DurationSeconds, string(ids), boolInt(in.Enabled), sev, cooldown, mutedUntil, id); err != nil {
 		return nil, err
 	}
 	return s.getRule(ctx, id)
@@ -466,6 +502,7 @@ func (s *Service) getRule(ctx context.Context, id int64) (*Rule, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, container_filter, metric, operator, threshold,
 		       duration_seconds, channel_ids, enabled,
+		       severity, cooldown_seconds, muted_until,
 		       firing_since, last_triggered_at, last_resolved_at,
 		       created_at, updated_at
 		FROM alert_rules WHERE id = ?`, id)
@@ -480,16 +517,27 @@ func scanRule(r rowScanner) (*Rule, error) {
 	var rule Rule
 	var ids string
 	var enabled int
+	var severity sql.NullString
+	var mutedUntil sql.NullTime
 	var firingSince, lastT, lastR sql.NullTime
 	if err := r.Scan(
 		&rule.ID, &rule.Name, &rule.ContainerFilter, &rule.Metric, &rule.Operator,
 		&rule.Threshold, &rule.DurationSeconds, &ids, &enabled,
+		&severity, &rule.CooldownSeconds, &mutedUntil,
 		&firingSince, &lastT, &lastR, &rule.CreatedAt, &rule.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
 	rule.Enabled = enabled == 1
+	rule.Severity = severity.String
+	if rule.Severity == "" {
+		rule.Severity = "warning"
+	}
 	_ = json.Unmarshal([]byte(ids), &rule.ChannelIDs)
+	if mutedUntil.Valid {
+		t := mutedUntil.Time
+		rule.MutedUntil = &t
+	}
 	if firingSince.Valid {
 		t := firingSince.Time
 		rule.FiringSince = &t

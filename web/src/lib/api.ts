@@ -412,6 +412,9 @@ export interface AlertRule {
   duration_seconds: number;
   channel_ids: number[];
   enabled: boolean;
+  severity: string;
+  cooldown_seconds: number;
+  muted_until?: string;
   firing_since?: string;
   last_triggered_at?: string;
   last_resolved_at?: string;
@@ -428,6 +431,9 @@ export interface AlertRuleInput {
   duration_seconds: number;
   channel_ids: number[];
   enabled: boolean;
+  severity: string;
+  cooldown_seconds: number;
+  muted_until?: string;
 }
 
 export interface AlertHistoryEntry {
