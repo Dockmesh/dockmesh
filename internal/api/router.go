@@ -131,6 +131,23 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Get("/migrations/active", h.ListActiveMigrations)
 			})
 
+			// System settings (admin-only)
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Get("/settings", h.ListSettings)
+				r.Put("/settings", h.UpdateSettings)
+			})
+
+			// Global environment variables (admin-only)
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Get("/global-env", h.ListGlobalEnv)
+				r.Post("/global-env", h.CreateGlobalEnv)
+				r.Put("/global-env/{id}", h.UpdateGlobalEnv)
+				r.Delete("/global-env/{id}", h.DeleteGlobalEnv)
+				r.Get("/global-env/groups", h.ListGlobalEnvGroups)
+			})
+
 			// Roles RBAC v2 (admin-only)
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermUserManage))
