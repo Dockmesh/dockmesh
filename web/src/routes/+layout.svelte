@@ -28,6 +28,7 @@
     ChevronDown,
     ChevronsLeft,
     ChevronsRight,
+    ArrowRightLeft,
     ShieldCheck,
     ShieldAlert,
     ShieldOff
@@ -164,7 +165,8 @@
             { href: '/stacks', label: 'Stacks', icon: Layers, show: true },
             { href: '/containers', label: 'Containers', icon: Box, show: true },
             { href: '/images', label: 'Images', icon: ImageIcon, show: allowed('image.write') || allowed('read') },
-            { href: '/agents', label: 'Agents', icon: Server, show: allowed('user.manage') }
+            { href: '/agents', label: 'Agents', icon: Server, show: allowed('user.manage') },
+            { href: '/migrations', label: 'Migrations', icon: ArrowRightLeft, show: allowed('stack.deploy') }
           ]
         },
         {
