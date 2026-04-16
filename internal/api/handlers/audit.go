@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/audit"
 )
 
 // errNotFound aliases sql.ErrNoRows so handler packages can check without
@@ -28,13 +29,15 @@ func (h *Handlers) ListAudit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "audit unavailable")
 		return
 	}
-	limit := 100
+	f := audit.ListFilter{Limit: 100}
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
-			limit = n
+			f.Limit = n
 		}
 	}
-	entries, err := h.Audit.List(r.Context(), limit)
+	f.Action = r.URL.Query().Get("action")
+	f.UserID = r.URL.Query().Get("user_id")
+	entries, err := h.Audit.ListFiltered(r.Context(), f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

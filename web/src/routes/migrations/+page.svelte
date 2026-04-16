@@ -6,16 +6,28 @@
 
   let migrations = $state<Migration[]>([]);
   let loading = $state(true);
+  let hostNames = $state<Map<string, string>>(new Map());
 
   async function load() {
     loading = true;
     try {
-      migrations = await api.migrations.list(200);
+      const [migs, hosts] = await Promise.all([
+        api.migrations.list(200),
+        api.hosts.list().catch(() => [])
+      ]);
+      migrations = migs;
+      const m = new Map<string, string>();
+      for (const h of hosts) m.set(h.id, h.name);
+      hostNames = m;
     } catch (err) {
       toast.error('Failed to load migrations', err instanceof ApiError ? err.message : undefined);
     } finally {
       loading = false;
     }
+  }
+
+  function hostLabel(id: string): string {
+    return hostNames.get(id) ?? id;
   }
 
   function statusVariant(s: string): 'success' | 'warning' | 'danger' | 'info' | 'default' {
@@ -87,7 +99,7 @@
                   <a href="/stacks/{m.stack_name}" class="font-mono text-sm hover:text-[var(--color-brand-400)]">{m.stack_name}</a>
                 </td>
                 <td class="px-3 py-3 text-xs font-mono text-[var(--fg-muted)]">
-                  {m.source_host_id} → {m.target_host_id}
+                  {hostLabel(m.source_host_id)} → {hostLabel(m.target_host_id)}
                 </td>
                 <td class="px-3 py-3">
                   <Badge variant={statusVariant(m.status)} dot>{m.status}</Badge>
