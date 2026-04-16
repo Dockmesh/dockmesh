@@ -43,7 +43,7 @@
 
   let info = $state<any>(null);
   let loading = $state(true);
-  let tab = $state<'overview' | 'logs' | 'exec' | 'stats' | 'updates' | 'inspect'>('overview');
+  let tab = $state<'overview' | 'logs' | 'exec' | 'updates' | 'inspect'>('overview');
 
   // For remote hosts in 3.1.2.4: Logs / Stats / Terminal / Inspect work.
   // Updates is still local-only (image pulls live on the central server's
@@ -374,7 +374,12 @@
   });
 
   $effect(() => {
-    if (tab === 'logs') {
+    if (tab === 'overview') {
+      disconnectLogs();
+      disconnectExec();
+      connectStats();
+      loadHistory();
+    } else if (tab === 'logs') {
       disconnectExec();
       disconnectStats();
       connectLogs();
@@ -382,11 +387,6 @@
       disconnectLogs();
       disconnectStats();
       tick().then(connectExec);
-    } else if (tab === 'stats') {
-      disconnectLogs();
-      disconnectExec();
-      connectStats();
-      loadHistory();
     } else if (tab === 'updates') {
       disconnectLogs();
       disconnectExec();
@@ -435,6 +435,39 @@
     return values
       .map((v, i) => `${i === 0 ? 'M' : 'L'}${(i * stepX).toFixed(1)},${(h - (v / m) * h).toFixed(1)}`)
       .join(' ');
+  }
+
+  // JSON syntax highlighting for Inspect tab
+  function highlightJSON(obj: any): string {
+    const raw = JSON.stringify(obj, null, 2);
+    return raw
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"([^"]+)":/g, '<span class="json-key">"$1"</span>:')
+      .replace(/: "([^"]*)"/g, ': <span class="json-string">"$1"</span>')
+      .replace(/: (\d+\.?\d*)/g, ': <span class="json-number">$1</span>')
+      .replace(/: (true|false)/g, ': <span class="json-bool">$1</span>')
+      .replace(/: (null)/g, ': <span class="json-null">$1</span>');
+  }
+
+  // Log line colorization
+  function colorizeLog(line: string): string {
+    const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Timestamp prefix (ISO or common formats)
+    let result = escaped.replace(
+      /^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[.\d]*Z?)/,
+      '<span class="log-ts">$1</span>'
+    );
+    // Log levels
+    result = result
+      .replace(/\b(ERROR|FATAL|CRIT(?:ICAL)?|PANIC)\b/gi, '<span class="log-error">$&</span>')
+      .replace(/\b(WARN(?:ING)?)\b/gi, '<span class="log-warn">$&</span>')
+      .replace(/\b(INFO)\b/gi, '<span class="log-info">$&</span>')
+      .replace(/\b(DEBUG|TRACE)\b/gi, '<span class="log-debug">$&</span>');
+    // HTTP status codes
+    result = result
+      .replace(/\b([45]\d{2})\b/g, '<span class="log-error">$1</span>')
+      .replace(/\b([23]\d{2})\b/g, '<span class="log-ok">$1</span>');
+    return result;
   }
 
   function sparkArea(values: number[], max: number, w: number, h: number): string {
@@ -522,12 +555,11 @@
         {/if}
       </button>
     {/snippet}
-    {@render tabBtn('overview', 'Overview', Info, false)}
+    {@render tabBtn('overview', 'Overview', Info, statsConnected)}
     {@render tabBtn('logs', 'Logs', FileText, wsConnected)}
     {#if canExec}
       {@render tabBtn('exec', 'Terminal', TerminalIcon, execConnected)}
     {/if}
-    {@render tabBtn('stats', 'Stats', Activity, statsConnected)}
     {#if canControl && !isRemote}
       {@render tabBtn('updates', 'Updates', Download, false)}
     {/if}
@@ -544,6 +576,103 @@
 
   <!-- Tab panels -->
   {#if tab === 'overview' && info}
+    <!-- Live Stats (merged from Stats tab) -->
+    {#if stats}
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Card class="p-4">
+          <div class="flex justify-between items-baseline mb-2">
+            <div class="text-[10px] text-[var(--fg-muted)] uppercase tracking-wider font-medium">CPU</div>
+            <div class="text-xl font-semibold font-mono tabular-nums">
+              {stats.cpu_percent.toFixed(1)}<span class="text-xs text-[var(--fg-muted)]">%</span>
+            </div>
+          </div>
+          <svg viewBox="0 0 200 40" class="w-full h-10">
+            <defs><linearGradient id="cpu-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#06b6d4" stop-opacity="0.3" /><stop offset="100%" stop-color="#06b6d4" stop-opacity="0" /></linearGradient></defs>
+            <path d={sparkArea(statsHistory.map(s => s.cpu_percent), 100, 200, 40)} fill="url(#cpu-g)" />
+            <path d={sparkPath(statsHistory.map(s => s.cpu_percent), 100, 200, 40)} fill="none" stroke="#06b6d4" stroke-width="1.5" stroke-linejoin="round" />
+          </svg>
+        </Card>
+        <Card class="p-4">
+          <div class="flex justify-between items-baseline mb-2">
+            <div class="text-[10px] text-[var(--fg-muted)] uppercase tracking-wider font-medium">Memory</div>
+            <div class="text-xl font-semibold font-mono tabular-nums">
+              {stats.mem_percent.toFixed(1)}<span class="text-xs text-[var(--fg-muted)]">%</span>
+            </div>
+          </div>
+          <div class="text-[10px] text-[var(--fg-subtle)] font-mono -mt-1 mb-1">{formatBytes(stats.mem_used)} / {formatBytes(stats.mem_limit)}</div>
+          <svg viewBox="0 0 200 40" class="w-full h-10">
+            <defs><linearGradient id="mem-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#22c55e" stop-opacity="0.3" /><stop offset="100%" stop-color="#22c55e" stop-opacity="0" /></linearGradient></defs>
+            <path d={sparkArea(statsHistory.map(s => s.mem_percent), 100, 200, 40)} fill="url(#mem-g)" />
+            <path d={sparkPath(statsHistory.map(s => s.mem_percent), 100, 200, 40)} fill="none" stroke="#22c55e" stroke-width="1.5" stroke-linejoin="round" />
+          </svg>
+        </Card>
+        <Card class="p-4">
+          <div class="text-[10px] text-[var(--fg-muted)] uppercase tracking-wider font-medium mb-2">Network</div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><div class="text-[10px] text-[var(--fg-subtle)]">↓ rx</div><div class="text-sm font-mono tabular-nums">{formatBytes(stats.net_rx)}</div></div>
+            <div><div class="text-[10px] text-[var(--fg-subtle)]">↑ tx</div><div class="text-sm font-mono tabular-nums">{formatBytes(stats.net_tx)}</div></div>
+          </div>
+        </Card>
+        <Card class="p-4">
+          <div class="text-[10px] text-[var(--fg-muted)] uppercase tracking-wider font-medium mb-2">Block I/O · PIDs</div>
+          <div class="grid grid-cols-3 gap-2">
+            <div><div class="text-[10px] text-[var(--fg-subtle)]">read</div><div class="text-xs font-mono tabular-nums">{formatBytes(stats.blk_read)}</div></div>
+            <div><div class="text-[10px] text-[var(--fg-subtle)]">write</div><div class="text-xs font-mono tabular-nums">{formatBytes(stats.blk_write)}</div></div>
+            <div><div class="text-[10px] text-[var(--fg-subtle)]">pids</div><div class="text-xs font-mono tabular-nums">{stats.pids_current}</div></div>
+          </div>
+        </Card>
+      </div>
+    {:else if statsConnected}
+      <Card class="p-4 text-center text-xs text-[var(--fg-muted)]">waiting for first stats sample…</Card>
+    {/if}
+
+    <!-- History chart -->
+    {#if historySamples.length > 0 || historyLoading}
+      <Card class="p-4">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+          <h3 class="font-semibold text-xs uppercase tracking-wider text-[var(--fg-muted)]">History</h3>
+          <div class="flex gap-1 text-[10px]">
+            {#each ['1h', '6h', '24h', '7d', '30d'] as const as r}
+              <button
+                class="px-2 py-0.5 rounded font-mono transition-colors
+                       {historyRange === r
+                  ? 'bg-[var(--color-brand-500)] text-white'
+                  : 'text-[var(--fg-muted)] hover:bg-[var(--surface-hover)]'}"
+                onclick={() => { historyRange = r; loadHistory(); }}
+              >{r}</button>
+            {/each}
+          </div>
+        </div>
+        {#if historyLoading && historySamples.length === 0}
+          <div class="text-xs text-[var(--fg-muted)]">loading…</div>
+        {:else if historySamples.length === 0}
+          <div class="text-xs text-[var(--fg-muted)]">no samples yet</div>
+        {:else}
+          {@const cpuVals = historySamples.map(s => s.cpu_percent)}
+          {@const memPct = historySamples.map(s => s.mem_limit > 0 ? (s.mem_used / s.mem_limit) * 100 : 0)}
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div>
+              <div class="flex justify-between text-[10px] text-[var(--fg-muted)] mb-1"><span>CPU %</span><span>{cpuVals.length} samples</span></div>
+              <svg viewBox="0 0 400 60" class="w-full h-14">
+                <defs><linearGradient id="hcpu" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#06b6d4" stop-opacity="0.3" /><stop offset="100%" stop-color="#06b6d4" stop-opacity="0" /></linearGradient></defs>
+                <path d={sparkArea(cpuVals, 100, 400, 60)} fill="url(#hcpu)" />
+                <path d={sparkPath(cpuVals, 100, 400, 60)} fill="none" stroke="#06b6d4" stroke-width="1.5" stroke-linejoin="round" />
+              </svg>
+            </div>
+            <div>
+              <div class="flex justify-between text-[10px] text-[var(--fg-muted)] mb-1"><span>Memory %</span><span>peak {Math.max(...memPct).toFixed(1)}%</span></div>
+              <svg viewBox="0 0 400 60" class="w-full h-14">
+                <defs><linearGradient id="hmem" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#22c55e" stop-opacity="0.3" /><stop offset="100%" stop-color="#22c55e" stop-opacity="0" /></linearGradient></defs>
+                <path d={sparkArea(memPct, 100, 400, 60)} fill="url(#hmem)" />
+                <path d={sparkPath(memPct, 100, 400, 60)} fill="none" stroke="#22c55e" stroke-width="1.5" stroke-linejoin="round" />
+              </svg>
+            </div>
+          </div>
+        {/if}
+      </Card>
+    {/if}
+
+    <!-- Config sections -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <!-- Environment Variables -->
       <Card>
@@ -702,7 +831,7 @@
       style="font-family: var(--font-mono);"
     >
       {#each logs as line, i (i)}
-        <div class="whitespace-pre-wrap break-all text-[#a8c5a8]">{line}</div>
+        <div class="whitespace-pre-wrap break-all log-line">{@html colorizeLog(line)}</div>
       {/each}
       {#if logs.length === 0 && wsConnected}
         <div class="text-[var(--fg-subtle)]">waiting for log output…</div>
@@ -725,147 +854,6 @@
       </span>
     </div>
     <div bind:this={execContainer} class="h-[60vh] rounded-xl border border-[var(--border)] bg-black p-3"></div>
-  {:else if tab === 'stats'}
-    {#if !stats}
-      <Card class="p-8 text-center text-sm text-[var(--fg-muted)]">waiting for first sample…</Card>
-    {:else}
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card class="p-5">
-          <div class="flex justify-between items-baseline mb-3">
-            <div class="text-xs text-[var(--fg-muted)] uppercase tracking-wider font-medium">CPU</div>
-            <div class="text-2xl font-semibold font-mono tabular-nums">
-              {stats.cpu_percent.toFixed(1)}<span class="text-sm text-[var(--fg-muted)]">%</span>
-            </div>
-          </div>
-          <svg viewBox="0 0 300 60" class="w-full h-16">
-            <defs>
-              <linearGradient id="cpu-grad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.3" />
-                <stop offset="100%" stop-color="#06b6d4" stop-opacity="0" />
-              </linearGradient>
-            </defs>
-            <path d={sparkArea(statsHistory.map(s => s.cpu_percent), 100, 300, 60)} fill="url(#cpu-grad)" />
-            <path d={sparkPath(statsHistory.map(s => s.cpu_percent), 100, 300, 60)} fill="none" stroke="#06b6d4" stroke-width="2" stroke-linejoin="round" />
-          </svg>
-        </Card>
-        <Card class="p-5">
-          <div class="flex justify-between items-baseline mb-3">
-            <div class="text-xs text-[var(--fg-muted)] uppercase tracking-wider font-medium">Memory</div>
-            <div class="text-2xl font-semibold font-mono tabular-nums">
-              {stats.mem_percent.toFixed(1)}<span class="text-sm text-[var(--fg-muted)]">%</span>
-            </div>
-          </div>
-          <div class="text-xs text-[var(--fg-muted)] mb-2 font-mono">{formatBytes(stats.mem_used)} / {formatBytes(stats.mem_limit)}</div>
-          <svg viewBox="0 0 300 60" class="w-full h-16">
-            <defs>
-              <linearGradient id="mem-grad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#22c55e" stop-opacity="0.3" />
-                <stop offset="100%" stop-color="#22c55e" stop-opacity="0" />
-              </linearGradient>
-            </defs>
-            <path d={sparkArea(statsHistory.map(s => s.mem_percent), 100, 300, 60)} fill="url(#mem-grad)" />
-            <path d={sparkPath(statsHistory.map(s => s.mem_percent), 100, 300, 60)} fill="none" stroke="#22c55e" stroke-width="2" stroke-linejoin="round" />
-          </svg>
-        </Card>
-        <Card class="p-5">
-          <div class="text-xs text-[var(--fg-muted)] uppercase tracking-wider font-medium mb-3">Network</div>
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <div class="text-xs text-[var(--fg-subtle)]">↓ received</div>
-              <div class="text-lg font-mono tabular-nums">{formatBytes(stats.net_rx)}</div>
-            </div>
-            <div>
-              <div class="text-xs text-[var(--fg-subtle)]">↑ sent</div>
-              <div class="text-lg font-mono tabular-nums">{formatBytes(stats.net_tx)}</div>
-            </div>
-          </div>
-        </Card>
-        <Card class="p-5">
-          <div class="text-xs text-[var(--fg-muted)] uppercase tracking-wider font-medium mb-3">Block I/O · PIDs</div>
-          <div class="grid grid-cols-3 gap-4">
-            <div>
-              <div class="text-xs text-[var(--fg-subtle)]">read</div>
-              <div class="text-sm font-mono tabular-nums">{formatBytes(stats.blk_read)}</div>
-            </div>
-            <div>
-              <div class="text-xs text-[var(--fg-subtle)]">write</div>
-              <div class="text-sm font-mono tabular-nums">{formatBytes(stats.blk_write)}</div>
-            </div>
-            <div>
-              <div class="text-xs text-[var(--fg-subtle)]">pids</div>
-              <div class="text-sm font-mono tabular-nums">{stats.pids_current}</div>
-            </div>
-          </div>
-        </Card>
-      </div>
-      <div class="text-xs text-[var(--fg-subtle)]">{statsHistory.length} samples (rolling 60s)</div>
-
-      <!-- Historical chart -->
-      <Card class="p-5">
-        <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
-          <h3 class="font-semibold text-sm">History</h3>
-          <div class="flex gap-1 text-xs">
-            {#each ['1h', '6h', '24h', '7d', '30d'] as const as r}
-              <button
-                class="px-2.5 py-1 rounded-md font-mono transition-colors
-                       {historyRange === r
-                  ? 'bg-[var(--color-brand-500)] text-white'
-                  : 'text-[var(--fg-muted)] hover:bg-[var(--surface-hover)]'}"
-                onclick={() => { historyRange = r; loadHistory(); }}
-              >
-                {r}
-              </button>
-            {/each}
-          </div>
-        </div>
-        {#if historyLoading && historySamples.length === 0}
-          <div class="text-xs text-[var(--fg-muted)]">loading…</div>
-        {:else if historySamples.length === 0}
-          <div class="text-xs text-[var(--fg-muted)]">
-            no samples yet — collector runs every 30 seconds, check back in a minute
-          </div>
-        {:else}
-          {@const cpuVals = historySamples.map((s) => s.cpu_percent)}
-          {@const memPct = historySamples.map((s) =>
-            s.mem_limit > 0 ? (s.mem_used / s.mem_limit) * 100 : 0
-          )}
-          <div class="space-y-5">
-            <div>
-              <div class="flex justify-between text-xs text-[var(--fg-muted)] mb-1">
-                <span>CPU %</span>
-                <span>{cpuVals.length} samples</span>
-              </div>
-              <svg viewBox="0 0 600 80" class="w-full h-20">
-                <defs>
-                  <linearGradient id="hist-cpu-grad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.3" />
-                    <stop offset="100%" stop-color="#06b6d4" stop-opacity="0" />
-                  </linearGradient>
-                </defs>
-                <path d={sparkArea(cpuVals, 100, 600, 80)} fill="url(#hist-cpu-grad)" />
-                <path d={sparkPath(cpuVals, 100, 600, 80)} fill="none" stroke="#06b6d4" stroke-width="1.5" stroke-linejoin="round" />
-              </svg>
-            </div>
-            <div>
-              <div class="flex justify-between text-xs text-[var(--fg-muted)] mb-1">
-                <span>Memory %</span>
-                <span>peak {Math.max(...memPct).toFixed(1)}%</span>
-              </div>
-              <svg viewBox="0 0 600 80" class="w-full h-20">
-                <defs>
-                  <linearGradient id="hist-mem-grad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="#22c55e" stop-opacity="0.3" />
-                    <stop offset="100%" stop-color="#22c55e" stop-opacity="0" />
-                  </linearGradient>
-                </defs>
-                <path d={sparkArea(memPct, 100, 600, 80)} fill="url(#hist-mem-grad)" />
-                <path d={sparkPath(memPct, 100, 600, 80)} fill="none" stroke="#22c55e" stroke-width="1.5" stroke-linejoin="round" />
-              </svg>
-            </div>
-          </div>
-        {/if}
-      </Card>
-    {/if}
   {:else if tab === 'updates'}
     <div class="space-y-4">
       <!-- Preview card -->
@@ -966,7 +954,25 @@
     </div>
   {:else if tab === 'inspect'}
     <Card>
-      <pre class="h-[60vh] overflow-auto p-5 font-mono text-xs leading-relaxed">{JSON.stringify(info, null, 2)}</pre>
+      <pre class="h-[60vh] overflow-auto p-5 font-mono text-xs leading-relaxed json-view">{@html highlightJSON(info)}</pre>
     </Card>
   {/if}
 </section>
+
+<style>
+  /* JSON syntax highlighting */
+  :global(.json-view .json-key) { color: #7dd3fc; }
+  :global(.json-view .json-string) { color: #86efac; }
+  :global(.json-view .json-number) { color: #fdba74; }
+  :global(.json-view .json-bool) { color: #c4b5fd; }
+  :global(.json-view .json-null) { color: #94a3b8; font-style: italic; }
+
+  /* Log line colorization */
+  :global(.log-line) { color: #d4d4d4; }
+  :global(.log-line .log-ts) { color: #6b7280; }
+  :global(.log-line .log-error) { color: #f87171; font-weight: 600; }
+  :global(.log-line .log-warn) { color: #fbbf24; }
+  :global(.log-line .log-info) { color: #60a5fa; }
+  :global(.log-line .log-debug) { color: #6b7280; }
+  :global(.log-line .log-ok) { color: #4ade80; }
+</style>
