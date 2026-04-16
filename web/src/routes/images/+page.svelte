@@ -204,15 +204,19 @@
     }
   }
   async function scanImage(img: ImageSummary) {
-    scanImageRef = img.RepoTags?.[0] ?? img.Id.slice(7, 19);
+    // Use the tag for scanning — the sha256 ID works but tags give
+    // cleaner cache keys and avoid URL-encoding issues with the colon.
+    const ref = img.RepoTags?.[0] ?? img.Id;
+    scanImageRef = ref;
     scanOpen = true;
     scanBusy = true;
     scanReport = null;
     severityFilter = 'all';
     try {
-      const cached = await api.images.getScan(img.Id).catch(() => null);
-      if (cached) scanReport = cached;
-      scanReport = await api.images.scan(img.Id);
+      // Try cached result first (silent 404 if none).
+      scanReport = await api.images.getScan(ref).catch(() => null) as ScanReport | null;
+      // Run fresh scan.
+      scanReport = await api.images.scan(ref);
       toast.success('Scan complete', `${scanReport.vulnerabilities.length} findings`);
     } catch (err) {
       if (err instanceof ApiError) toast.error('Scan failed', err.message);
