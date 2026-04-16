@@ -1,14 +1,18 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
   import { api, ApiError } from '$lib/api';
-  import type { BackupJob, BackupJobInput, BackupRun, BackupSource } from '$lib/api';
+  import type { BackupJob, BackupJobInput, BackupRun, BackupSource, BackupHook } from '$lib/api';
   import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
-  import { Archive, Plus, Play, Trash2, RefreshCw, Undo2, HardDrive, Cloud, Lock } from 'lucide-svelte';
+  import {
+    Archive, Plus, Play, Trash2, RefreshCw, Undo2, HardDrive, Cloud, Lock,
+    Search, Clock, Copy, ChevronDown
+  } from 'lucide-svelte';
 
   type Tab = 'jobs' | 'runs';
-  let tab = $state<Tab>('jobs');
+  let tab = $state<Tab>((new URLSearchParams($page.url.search).get('tab') as Tab) || 'jobs');
 
   let jobs = $state<BackupJob[]>([]);
   let runs = $state<BackupRun[]>([]);
@@ -17,172 +21,100 @@
   // Job modal
   let showJob = $state(false);
   let editing = $state<BackupJob | null>(null);
-  let form = $state<BackupJobInput>(emptyForm());
+
+  // Structured form fields
+  let jName = $state('');
+  let jTargetType = $state<'local' | 's3'>('local');
+  let jLocalPath = $state('./data/backups');
+  let jS3Endpoint = $state('');
+  let jS3Bucket = $state('');
+  let jS3AccessKey = $state('');
+  let jS3SecretKey = $state('');
+  let jS3Region = $state('');
+  let jS3SSL = $state(true);
+  let jSources = $state<Array<{ type: string; name: string }>>([{ type: 'volume', name: '' }]);
+  let jSchedule = $state('0 3 * * *');
+  let jRetentionCount = $state(7);
+  let jRetentionDays = $state(0);
+  let jEncrypt = $state(false);
+  let jEnabled = $state(true);
+  let jPreHooks = $state<Array<{ container: string; cmd: string }>>([]);
+  let jPostHooks = $state<Array<{ container: string; cmd: string }>>([]);
+
+  // Cron presets
+  const cronPresets = [
+    { label: 'Daily 3am', cron: '0 3 * * *' },
+    { label: 'Daily midnight', cron: '0 0 * * *' },
+    { label: 'Every 6 hours', cron: '0 */6 * * *' },
+    { label: 'Every 12 hours', cron: '0 */12 * * *' },
+    { label: 'Weekly Sunday 2am', cron: '0 2 * * 0' },
+    { label: 'Monthly 1st 3am', cron: '0 3 1 * *' },
+  ];
+
+  function cronHuman(cron: string): string {
+    const presets: Record<string, string> = {
+      '0 3 * * *': 'Daily at 03:00',
+      '0 0 * * *': 'Daily at midnight',
+      '0 */6 * * *': 'Every 6 hours',
+      '0 */12 * * *': 'Every 12 hours',
+      '0 2 * * 0': 'Weekly Sunday 02:00',
+      '0 3 1 * *': 'Monthly 1st at 03:00',
+    };
+    return presets[cron] ?? cron;
+  }
 
   // Restore modal
   let showRestore = $state(false);
   let restoreRun = $state<BackupRun | null>(null);
   let restoreVolume = $state('');
+  let restoreConfirm = $state('');
 
-  // Free-form text fields the user edits, then we parse on save.
-  let sourcesText = $state('volume:my-data');
-  let targetConfigText = $state('{"path":"/srv/dockmesh-backups"}');
-  let preHooksText = $state('');
-  let postHooksText = $state('');
-
-  function emptyForm(): BackupJobInput {
-    return {
-      name: '',
-      target_type: 'local',
-      target_config: { path: '/srv/dockmesh-backups' },
-      sources: [],
-      schedule: '',
-      retention_count: 7,
-      retention_days: 0,
-      encrypt: false,
-      pre_hooks: [],
-      post_hooks: [],
-      enabled: true
-    };
-  }
+  // Runs filters
+  let runJobFilter = $state('');
+  let runStatusFilter = $state<'all' | 'success' | 'failed' | 'running'>('all');
 
   async function loadJobs() {
     loading = true;
-    try {
-      jobs = await api.backups.listJobs();
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      loading = false;
-    }
+    try { jobs = await api.backups.listJobs(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); } finally { loading = false; }
   }
 
   async function loadRuns() {
     loading = true;
-    try {
-      runs = await api.backups.listRuns(100);
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      loading = false;
-    }
+    try { runs = await api.backups.listRuns(500); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); } finally { loading = false; }
   }
 
-  function openNew() {
-    editing = null;
-    form = emptyForm();
-    sourcesText = 'volume:my-data';
-    targetConfigText = '{"path":"/srv/dockmesh-backups"}';
-    preHooksText = '';
-    postHooksText = '';
-    showJob = true;
-  }
+  $effect(() => {
+    if (!allowed('user.manage')) { goto('/'); return; }
+    if (tab === 'jobs') loadJobs();
+    else { loadRuns(); loadJobs(); } // need jobs for job filter dropdown
+  });
 
-  function openEdit(j: BackupJob) {
-    editing = j;
-    form = {
-      name: j.name,
-      target_type: j.target_type,
-      target_config: j.target_config,
-      sources: j.sources,
-      schedule: j.schedule,
-      retention_count: j.retention_count,
-      retention_days: j.retention_days,
-      encrypt: j.encrypt,
-      pre_hooks: j.pre_hooks,
-      post_hooks: j.post_hooks,
-      enabled: j.enabled
-    };
-    sourcesText = j.sources.map((s) => `${s.type}:${s.name}`).join('\n');
-    targetConfigText = JSON.stringify(j.target_config, null, 2);
-    preHooksText = j.pre_hooks.length ? JSON.stringify(j.pre_hooks, null, 2) : '';
-    postHooksText = j.post_hooks.length ? JSON.stringify(j.post_hooks, null, 2) : '';
-    showJob = true;
-  }
+  // Summary stats
+  const activeJobs = $derived(jobs.filter(j => j.enabled).length);
+  const recentRuns = $derived(runs.filter(r => {
+    const age = Date.now() - new Date(r.started_at).getTime();
+    return age < 86400000;
+  }));
+  const recentSuccess = $derived(recentRuns.filter(r => r.status === 'success').length);
+  const recentFailed = $derived(recentRuns.filter(r => r.status === 'failed').length);
+  const nextRun = $derived(jobs.filter(j => j.enabled && j.next_run_at).sort((a, b) => (a.next_run_at ?? '').localeCompare(b.next_run_at ?? ''))[0]?.next_run_at);
 
-  function parseSources(s: string): BackupSource[] {
-    return s
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0 && !l.startsWith('#'))
-      .map((l) => {
-        const [type, ...rest] = l.split(':');
-        return { type: (type || 'volume').trim() as 'volume' | 'stack', name: rest.join(':').trim() };
-      });
-  }
+  // Runs filtering
+  const filteredRuns = $derived(
+    runs.filter(r => {
+      if (runJobFilter && r.job_name !== runJobFilter) return false;
+      if (runStatusFilter !== 'all' && r.status !== runStatusFilter) return false;
+      return true;
+    })
+  );
 
-  async function saveJob(e: Event) {
-    e.preventDefault();
-    try {
-      const payload: BackupJobInput = {
-        ...form,
-        sources: parseSources(sourcesText),
-        target_config: targetConfigText.trim() ? JSON.parse(targetConfigText) : {},
-        pre_hooks: preHooksText.trim() ? JSON.parse(preHooksText) : [],
-        post_hooks: postHooksText.trim() ? JSON.parse(postHooksText) : []
-      };
-      if (editing) {
-        await api.backups.updateJob(editing.id, payload);
-        toast.success('Job updated', payload.name);
-      } else {
-        await api.backups.createJob(payload);
-        toast.success('Job created', payload.name);
-      }
-      showJob = false;
-      await loadJobs();
-    } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : (err as Error).message);
-    }
-  }
-
-  async function deleteJob(j: BackupJob) {
-    if (!confirm(`Delete backup job "${j.name}"?`)) return;
-    try {
-      await api.backups.deleteJob(j.id);
-      toast.success('Deleted', j.name);
-      await loadJobs();
-    } catch (err) {
-      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  async function runJob(j: BackupJob) {
-    if (!confirm(`Run "${j.name}" now?`)) return;
-    try {
-      const r = await api.backups.runJob(j.id);
-      toast.success('Backup started', `run #${r.id}`);
-      await loadJobs();
-      if (tab === 'runs') await loadRuns();
-    } catch (err) {
-      toast.error('Run failed', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  function openRestore(r: BackupRun) {
-    restoreRun = r;
-    const firstVol = r.sources.find((s) => s.type === 'volume');
-    restoreVolume = firstVol ? `${firstVol.name}-restored` : '';
-    showRestore = true;
-  }
-
-  async function doRestore() {
-    if (!restoreRun || !restoreVolume.trim()) return;
-    try {
-      await api.backups.restore(restoreRun.id, restoreVolume.trim());
-      toast.success('Restored', `volume ${restoreVolume}`);
-      showRestore = false;
-    } catch (err) {
-      toast.error('Restore failed', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
+  // Helpers
   function fmtBytes(n: number): string {
     if (!n) return '—';
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
     if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
     return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
   }
-
   function fmtTime(ts?: string): string {
     if (!ts) return '—';
     const d = (Date.now() - new Date(ts).getTime()) / 1000;
@@ -191,7 +123,13 @@
     if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
     return new Date(ts).toLocaleString();
   }
-
+  function fmtDuration(start: string, end?: string): string {
+    if (!end) return 'running…';
+    const secs = Math.floor((new Date(end).getTime() - new Date(start).getTime()) / 1000);
+    if (secs < 60) return `${secs}s`;
+    if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+    return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
+  }
   function statusVariant(s: string): 'success' | 'warning' | 'danger' | 'info' | 'default' {
     if (s === 'success') return 'success';
     if (s === 'failed') return 'danger';
@@ -199,242 +137,422 @@
     return 'default';
   }
 
-  $effect(() => {
-    if (!allowed('user.manage')) {
-      goto('/');
-      return;
+  // Job CRUD
+  function resetForm() {
+    jName = ''; jTargetType = 'local'; jLocalPath = './data/backups';
+    jS3Endpoint = ''; jS3Bucket = ''; jS3AccessKey = ''; jS3SecretKey = ''; jS3Region = ''; jS3SSL = true;
+    jSources = [{ type: 'volume', name: '' }]; jSchedule = '0 3 * * *';
+    jRetentionCount = 7; jRetentionDays = 0; jEncrypt = false; jEnabled = true;
+    jPreHooks = []; jPostHooks = []; editing = null;
+  }
+
+  function openNew() { resetForm(); showJob = true; }
+
+  function openEdit(j: BackupJob) {
+    editing = j;
+    jName = j.name; jTargetType = j.target_type as 'local' | 's3'; jEnabled = j.enabled; jEncrypt = j.encrypt;
+    jSchedule = j.schedule; jRetentionCount = j.retention_count; jRetentionDays = j.retention_days;
+    const cfg = j.target_config ?? {};
+    if (j.target_type === 's3') {
+      jS3Endpoint = cfg.endpoint ?? ''; jS3Bucket = cfg.bucket ?? '';
+      jS3AccessKey = cfg.access_key ?? ''; jS3SecretKey = cfg.secret_key ?? '';
+      jS3Region = cfg.region ?? ''; jS3SSL = cfg.use_ssl !== false;
+    } else {
+      jLocalPath = cfg.path ?? './data/backups';
     }
-    if (tab === 'jobs') loadJobs();
-    else loadRuns();
-  });
+    jSources = j.sources.map(s => ({ type: s.type, name: s.name }));
+    if (jSources.length === 0) jSources = [{ type: 'volume', name: '' }];
+    jPreHooks = (j.pre_hooks ?? []).map(h => ({ container: h.container, cmd: h.cmd.join(' ') }));
+    jPostHooks = (j.post_hooks ?? []).map(h => ({ container: h.container, cmd: h.cmd.join(' ') }));
+    showJob = true;
+  }
+
+  function duplicateJob(j: BackupJob) {
+    openEdit(j);
+    editing = null;
+    jName = j.name + ' (copy)';
+    jEnabled = false;
+  }
+
+  async function saveJob(e: Event) {
+    e.preventDefault();
+    const targetConfig = jTargetType === 's3'
+      ? { endpoint: jS3Endpoint, bucket: jS3Bucket, access_key: jS3AccessKey, secret_key: jS3SecretKey, region: jS3Region, use_ssl: jS3SSL }
+      : { path: jLocalPath };
+    const sources: BackupSource[] = jSources.filter(s => s.name.trim()).map(s => ({ type: s.type as 'volume' | 'stack', name: s.name.trim() }));
+    const preHooks: BackupHook[] = jPreHooks.filter(h => h.container && h.cmd).map(h => ({ container: h.container, cmd: h.cmd.split(/\s+/) }));
+    const postHooks: BackupHook[] = jPostHooks.filter(h => h.container && h.cmd).map(h => ({ container: h.container, cmd: h.cmd.split(/\s+/) }));
+    const payload: BackupJobInput = {
+      name: jName, target_type: jTargetType, target_config: targetConfig,
+      sources, schedule: jSchedule, retention_count: jRetentionCount,
+      retention_days: jRetentionDays, encrypt: jEncrypt, pre_hooks: preHooks,
+      post_hooks: postHooks, enabled: jEnabled
+    };
+    try {
+      if (editing) { await api.backups.updateJob(editing.id, payload); toast.success('Updated', jName); }
+      else { await api.backups.createJob(payload); toast.success('Created', jName); }
+      showJob = false; await loadJobs();
+    } catch (err) { toast.error('Save failed', err instanceof ApiError ? err.message : (err as Error).message); }
+  }
+
+  async function deleteJob(j: BackupJob) {
+    if (!confirm(`Delete backup job "${j.name}"?`)) return;
+    try { await api.backups.deleteJob(j.id); toast.success('Deleted'); await loadJobs(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
+  }
+
+  async function runJob(j: BackupJob) {
+    if (!confirm(`Run "${j.name}" now?`)) return;
+    try { await api.backups.runJob(j.id); toast.success('Backup started'); await loadJobs(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
+  }
+
+  async function toggleJob(j: BackupJob) {
+    try {
+      const input: BackupJobInput = { name: j.name, target_type: j.target_type, target_config: j.target_config, sources: j.sources, schedule: j.schedule, retention_count: j.retention_count, retention_days: j.retention_days, encrypt: j.encrypt, pre_hooks: j.pre_hooks, post_hooks: j.post_hooks, enabled: !j.enabled };
+      await api.backups.updateJob(j.id, input);
+      await loadJobs();
+    } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
+  }
+
+  function openRestore(r: BackupRun) {
+    restoreRun = r; restoreConfirm = '';
+    const vol = r.sources.find(s => s.type === 'volume');
+    restoreVolume = vol ? `${vol.name}-restored` : '';
+    showRestore = true;
+  }
+  async function doRestore() {
+    if (!restoreRun || restoreConfirm !== restoreVolume) return;
+    try { await api.backups.restore(restoreRun.id, restoreVolume.trim()); toast.success('Restored', restoreVolume); showRestore = false; } catch (err) { toast.error('Restore failed', err instanceof ApiError ? err.message : undefined); }
+  }
+
+  function addSource() { jSources = [...jSources, { type: 'volume', name: '' }]; }
+  function removeSource(i: number) { jSources = jSources.filter((_, idx) => idx !== i); }
+  function addPreHook() { jPreHooks = [...jPreHooks, { container: '', cmd: '' }]; }
+  function addPostHook() { jPostHooks = [...jPostHooks, { container: '', cmd: '' }]; }
 </script>
 
-<section class="space-y-6">
+<section class="space-y-4">
+  <!-- Header + summary -->
   <div class="flex items-center justify-between flex-wrap gap-3">
     <div>
       <h2 class="text-2xl font-semibold tracking-tight">Backups</h2>
       <p class="text-sm text-[var(--fg-muted)] mt-0.5">
-        Volume + stack snapshots with optional age encryption, scheduled or on-demand.
+        {activeJobs} active job{activeJobs === 1 ? '' : 's'}
+        {#if recentRuns.length > 0}
+          · 24h: <span class="text-[var(--color-success-400)]">{recentSuccess} ok</span>{#if recentFailed > 0}, <span class="text-[var(--color-danger-400)]">{recentFailed} failed</span>{/if}
+        {/if}
+        {#if nextRun} · next: {fmtTime(nextRun)}{/if}
       </p>
     </div>
     <div class="flex gap-2">
-      <Button variant="secondary" size="sm" onclick={() => (tab === 'jobs' ? loadJobs() : loadRuns())}>
+      <Button variant="secondary" size="sm" onclick={() => tab === 'jobs' ? loadJobs() : loadRuns()}>
         <RefreshCw class="w-3.5 h-3.5 {loading ? 'animate-spin' : ''}" /> Refresh
       </Button>
       {#if tab === 'jobs'}
-        <Button variant="primary" onclick={openNew}>
-          <Plus class="w-4 h-4" /> New job
-        </Button>
+        <Button variant="primary" size="sm" onclick={openNew}><Plus class="w-3.5 h-3.5" /> New job</Button>
       {/if}
     </div>
   </div>
 
+  <!-- Tabs -->
   <div class="border-b border-[var(--border)] flex gap-1">
-    <button
-      class="px-4 py-2.5 text-sm border-b-2 transition-colors flex items-center gap-2
-             {tab === 'jobs' ? 'border-[var(--color-brand-500)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}"
-      onclick={() => (tab = 'jobs')}
-    >
+    <button class="px-4 py-2.5 text-sm border-b-2 transition-colors flex items-center gap-2 {tab === 'jobs' ? 'border-[var(--color-brand-500)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}" onclick={() => (tab = 'jobs')}>
       <Archive class="w-3.5 h-3.5" /> Jobs
     </button>
-    <button
-      class="px-4 py-2.5 text-sm border-b-2 transition-colors flex items-center gap-2
-             {tab === 'runs' ? 'border-[var(--color-brand-500)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}"
-      onclick={() => (tab = 'runs')}
-    >
-      <Play class="w-3.5 h-3.5" /> Runs
+    <button class="px-4 py-2.5 text-sm border-b-2 transition-colors flex items-center gap-2 {tab === 'runs' ? 'border-[var(--color-brand-500)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}" onclick={() => (tab = 'runs')}>
+      <Clock class="w-3.5 h-3.5" /> Runs
     </button>
   </div>
 
+  <!-- ===== JOBS TAB ===== -->
   {#if tab === 'jobs'}
     {#if loading && jobs.length === 0}
-      <Card><Skeleton class="m-5" width="70%" height="1rem" /></Card>
+      <Card><Skeleton class="m-5" width="70%" height="3rem" /></Card>
     {:else if jobs.length === 0}
-      <Card>
-        <EmptyState
-          icon={Archive}
-          title="No backup jobs"
-          description="Create a job to snapshot volumes or stacks on a schedule. Local target writes tar.gz files to a directory; S3 uploads to AWS, MinIO, Wasabi, Backblaze, etc."
-        >
-          {#snippet action()}
-            <Button variant="primary" onclick={openNew}>
-              <Plus class="w-4 h-4" /> Create job
-            </Button>
-          {/snippet}
-        </EmptyState>
-      </Card>
+      <Card><EmptyState icon={Archive} title="No backup jobs" description="Create a job to snapshot volumes or stacks on a schedule." /></Card>
     {:else}
       <Card>
-        <div class="divide-y divide-[var(--border)]">
-          {#each jobs as j}
-            <div class="flex items-center gap-3 px-5 py-3 hover:bg-[var(--surface-hover)] transition-colors">
-              <div class="w-10 h-10 rounded-lg bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] text-[var(--color-brand-400)] flex items-center justify-center shrink-0">
-                {#if j.target_type === 's3'}
-                  <Cloud class="w-5 h-5" />
-                {:else}
-                  <HardDrive class="w-5 h-5" />
-                {/if}
-              </div>
-              <button class="flex-1 min-w-0 text-left" onclick={() => openEdit(j)}>
-                <div class="font-medium text-sm flex items-center gap-2">
-                  {j.name}
-                  {#if j.encrypt}<Lock class="w-3 h-3 text-[var(--color-brand-400)]" />{/if}
-                  {#if !j.enabled}<Badge variant="default">disabled</Badge>{/if}
-                </div>
-                <div class="text-xs text-[var(--fg-muted)] font-mono truncate">
-                  {j.target_type} · {j.sources.length} source(s)
-                  {#if j.schedule}· cron: {j.schedule}{/if}
-                  · last run: {fmtTime(j.last_run_at)}
-                </div>
-              </button>
-              <Button size="xs" variant="ghost" onclick={() => runJob(j)} aria-label="Run now">
-                <Play class="w-3.5 h-3.5 text-[var(--color-success-400)]" />
-              </Button>
-              <Button size="xs" variant="ghost" onclick={() => deleteJob(j)} aria-label="Delete">
-                <Trash2 class="w-3.5 h-3.5 text-[var(--color-danger-400)]" />
-              </Button>
-            </div>
-          {/each}
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-[var(--border)] text-[var(--fg-muted)] text-xs uppercase tracking-wider">
+                <th class="text-center px-3 py-3 w-14">Enabled</th>
+                <th class="text-left px-3 py-3">Name</th>
+                <th class="text-left px-3 py-3">Target</th>
+                <th class="text-left px-3 py-3">Sources</th>
+                <th class="text-left px-3 py-3">Schedule</th>
+                <th class="text-left px-3 py-3">Last Run</th>
+                <th class="text-left px-3 py-3">Next Run</th>
+                <th class="text-right px-3 py-3 w-28">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[var(--border)]">
+              {#each jobs as j (j.id)}
+                <tr class="hover:bg-[var(--surface-hover)]">
+                  <td class="px-3 py-2.5 text-center">
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" class="sr-only peer" checked={j.enabled} onchange={() => toggleJob(j)} />
+                      <div class="w-8 h-4.5 bg-[var(--surface)] border border-[var(--border)] rounded-full peer-checked:bg-[var(--color-brand-500)] peer-checked:border-[var(--color-brand-500)] after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-3.5 after:w-3.5 after:transition-transform peer-checked:after:translate-x-3.5"></div>
+                    </label>
+                  </td>
+                  <td class="px-3 py-2.5">
+                    <button class="text-left" onclick={() => openEdit(j)}>
+                      <div class="font-medium text-sm flex items-center gap-1.5">
+                        {j.name}
+                        {#if j.encrypt}<Lock class="w-3 h-3 text-[var(--color-brand-400)]" />{/if}
+                      </div>
+                    </button>
+                  </td>
+                  <td class="px-3 py-2.5">
+                    <Badge variant={j.target_type === 's3' ? 'info' : 'default'}>
+                      {j.target_type === 's3' ? 'S3' : 'Local'}
+                    </Badge>
+                  </td>
+                  <td class="px-3 py-2.5 text-xs text-[var(--fg-muted)]" title={j.sources.map(s => `${s.type}:${s.name}`).join(', ')}>
+                    {j.sources.length} source{j.sources.length === 1 ? '' : 's'}
+                  </td>
+                  <td class="px-3 py-2.5 text-xs">
+                    <div class="font-mono text-[var(--fg-muted)]">{cronHuman(j.schedule)}</div>
+                  </td>
+                  <td class="px-3 py-2.5 text-xs text-[var(--fg-muted)]">{fmtTime(j.last_run_at)}</td>
+                  <td class="px-3 py-2.5 text-xs text-[var(--fg-muted)]">{fmtTime(j.next_run_at)}</td>
+                  <td class="px-3 py-2.5">
+                    <div class="flex gap-0.5 justify-end">
+                      <button class="p-1.5 rounded-md text-[var(--color-success-400)] hover:bg-[var(--surface-hover)]" title="Run now" onclick={() => runJob(j)}>
+                        <Play class="w-3.5 h-3.5" />
+                      </button>
+                      <button class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]" title="Duplicate" onclick={() => duplicateJob(j)}>
+                        <Copy class="w-3.5 h-3.5" />
+                      </button>
+                      <button class="p-1.5 rounded-md text-[var(--color-danger-400)] hover:bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)]" title="Delete" onclick={() => deleteJob(j)}>
+                        <Trash2 class="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
         </div>
       </Card>
     {/if}
-  {:else if loading && runs.length === 0}
-    <Card><Skeleton class="m-5" width="70%" height="1rem" /></Card>
-  {:else if runs.length === 0}
-    <Card>
-      <EmptyState icon={Play} title="No runs yet" description="Trigger a backup job manually or wait for its schedule to fire." />
-    </Card>
+
+  <!-- ===== RUNS TAB ===== -->
   {:else}
-    <Card>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="text-left text-xs text-[var(--fg-muted)] uppercase tracking-wider bg-[var(--bg-elevated)]">
-            <tr>
-              <th class="px-5 py-3 font-medium">Job</th>
-              <th class="px-5 py-3 font-medium">Status</th>
-              <th class="px-5 py-3 font-medium">Started</th>
-              <th class="px-5 py-3 font-medium">Size</th>
-              <th class="px-5 py-3 font-medium">SHA-256</th>
-              <th class="px-5 py-3 font-medium"></th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-[var(--border)]">
-            {#each runs as r}
-              <tr class="hover:bg-[var(--surface-hover)]">
-                <td class="px-5 py-3">{r.job_name}</td>
-                <td class="px-5 py-3">
-                  <Badge variant={statusVariant(r.status)} dot>{r.status}</Badge>
-                  {#if r.encrypted}<Lock class="w-3 h-3 inline ml-1 text-[var(--color-brand-400)]" />{/if}
-                </td>
-                <td class="px-5 py-3 text-xs text-[var(--fg-muted)] font-mono whitespace-nowrap">{fmtTime(r.started_at)}</td>
-                <td class="px-5 py-3 font-mono text-xs">{fmtBytes(r.size_bytes)}</td>
-                <td class="px-5 py-3 font-mono text-xs text-[var(--fg-subtle)] truncate max-w-[140px]">{r.sha256 ? r.sha256.slice(0, 12) : '—'}</td>
-                <td class="px-5 py-3 text-right">
-                  {#if r.status === 'success'}
-                    <Button size="xs" variant="ghost" onclick={() => openRestore(r)}>
-                      <Undo2 class="w-3.5 h-3.5" /> Restore
-                    </Button>
-                  {/if}
-                </td>
-              </tr>
-              {#if r.error}
-                <tr><td colspan="6" class="px-5 pb-3 text-xs text-[var(--color-danger-400)] font-mono">{r.error}</td></tr>
-              {/if}
-            {/each}
-          </tbody>
-        </table>
+    <!-- Filters -->
+    <div class="flex flex-wrap items-center gap-3">
+      <select class="dm-input !py-1 !px-2 !w-auto text-xs" bind:value={runJobFilter}>
+        <option value="">All jobs</option>
+        {#each jobs as j}<option value={j.name}>{j.name}</option>{/each}
+      </select>
+      <div class="flex gap-1 text-xs">
+        {#each [['all', 'All'], ['success', 'Success'], ['failed', 'Failed'], ['running', 'Running']] as [key, label]}
+          <button
+            class="px-2.5 py-1 rounded-full border transition-colors {runStatusFilter === key
+              ? 'bg-[var(--surface)] border-[var(--border-strong)] text-[var(--fg)]'
+              : 'border-[var(--border)] text-[var(--fg-muted)] hover:bg-[var(--surface-hover)]'}"
+            onclick={() => (runStatusFilter = key as typeof runStatusFilter)}
+          >{label}</button>
+        {/each}
       </div>
-    </Card>
+      <span class="text-xs text-[var(--fg-subtle)] ml-auto">{filteredRuns.length} run{filteredRuns.length === 1 ? '' : 's'}</span>
+    </div>
+
+    {#if loading && runs.length === 0}
+      <Card><Skeleton class="m-5" width="70%" height="3rem" /></Card>
+    {:else if runs.length === 0}
+      <Card><EmptyState icon={Clock} title="No runs yet" description="Trigger a backup job or wait for its schedule." /></Card>
+    {:else if filteredRuns.length === 0}
+      <Card class="p-8 text-center text-sm text-[var(--fg-muted)]">No runs match this filter.</Card>
+    {:else}
+      <Card>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-[var(--border)] text-[var(--fg-muted)] text-xs uppercase tracking-wider">
+                <th class="text-left px-5 py-3">Job</th>
+                <th class="text-left px-3 py-3">Status</th>
+                <th class="text-left px-3 py-3">Started</th>
+                <th class="text-left px-3 py-3">Duration</th>
+                <th class="text-left px-3 py-3">Size</th>
+                <th class="text-right px-3 py-3 w-20">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[var(--border)]">
+              {#each filteredRuns as r (r.id)}
+                <tr class="hover:bg-[var(--surface-hover)]">
+                  <td class="px-5 py-2.5 font-medium">{r.job_name}</td>
+                  <td class="px-3 py-2.5">
+                    <Badge variant={statusVariant(r.status)} dot>{r.status}</Badge>
+                    {#if r.encrypted}<Lock class="w-3 h-3 inline ml-1 text-[var(--color-brand-400)]" />{/if}
+                  </td>
+                  <td class="px-3 py-2.5 text-xs text-[var(--fg-muted)]">{fmtTime(r.started_at)}</td>
+                  <td class="px-3 py-2.5 text-xs font-mono tabular-nums">{fmtDuration(r.started_at, r.finished_at)}</td>
+                  <td class="px-3 py-2.5 text-xs font-mono tabular-nums">{fmtBytes(r.size_bytes)}</td>
+                  <td class="px-3 py-2.5 text-right">
+                    {#if r.status === 'success'}
+                      <button class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]" title="Restore" onclick={() => openRestore(r)}>
+                        <Undo2 class="w-3.5 h-3.5" />
+                      </button>
+                    {/if}
+                  </td>
+                </tr>
+                {#if r.error}
+                  <tr><td colspan="6" class="px-5 pb-3 text-xs text-[var(--color-danger-400)] font-mono break-all">{r.error}</td></tr>
+                {/if}
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    {/if}
   {/if}
 </section>
 
-<Modal bind:open={showJob} title={editing ? 'Edit backup job' : 'New backup job'} maxWidth="max-w-2xl">
-  <form onsubmit={saveJob} class="space-y-3" id="backup-form">
-    <div class="grid grid-cols-2 gap-3">
-      <Input label="Name" bind:value={form.name} />
+<!-- ===== JOB MODAL (simplified, structured) ===== -->
+<Modal bind:open={showJob} title={editing ? `Edit: ${editing.name}` : 'New backup job'} maxWidth="max-w-2xl" onclose={resetForm}>
+  <form onsubmit={saveJob} class="space-y-5" id="backup-form">
+    <!-- Basics -->
+    <fieldset class="space-y-3">
+      <legend class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">Basics</legend>
+      <div class="grid grid-cols-2 gap-3">
+        <Input label="Job name" bind:value={jName} placeholder="Daily stack backup" />
+        <div>
+          <label class="flex items-center gap-2 text-sm mt-6 cursor-pointer">
+            <input type="checkbox" bind:checked={jEnabled} class="accent-[var(--color-brand-500)]" /> Enabled
+          </label>
+        </div>
+      </div>
+    </fieldset>
+
+    <!-- Sources -->
+    <fieldset class="space-y-3">
+      <legend class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">What to back up</legend>
+      {#each jSources as src, i}
+        <div class="flex gap-2 items-end">
+          <div class="w-28">
+            <label for="src-type-{i}" class="block text-xs text-[var(--fg-muted)] mb-1">Type</label>
+            <select id="src-type-{i}" class="dm-input text-sm" bind:value={jSources[i].type}>
+              <option value="volume">Volume</option>
+              <option value="stack">Stack</option>
+              <option value="system">System</option>
+            </select>
+          </div>
+          <div class="flex-1">
+            <label for="src-name-{i}" class="block text-xs text-[var(--fg-muted)] mb-1">Name</label>
+            <input id="src-name-{i}" type="text" class="dm-input text-sm" placeholder={src.type === 'system' ? 'dockmesh' : `my-${src.type}`} bind:value={jSources[i].name} />
+          </div>
+          {#if jSources.length > 1}
+            <button type="button" class="p-1.5 text-[var(--color-danger-400)]" onclick={() => removeSource(i)}><Trash2 class="w-3.5 h-3.5" /></button>
+          {/if}
+        </div>
+      {/each}
+      <button type="button" class="text-xs text-[var(--color-brand-400)] hover:underline" onclick={addSource}>+ Add source</button>
+    </fieldset>
+
+    <!-- Target -->
+    <fieldset class="space-y-3">
+      <legend class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">Where to store</legend>
       <div>
-        <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Target type</span>
-        <select class="dm-input" bind:value={form.target_type}>
+        <label for="target-type" class="block text-xs text-[var(--fg-muted)] mb-1">Target</label>
+        <select id="target-type" class="dm-input text-sm" bind:value={jTargetType}>
           <option value="local">Local directory</option>
           <option value="s3">S3 / MinIO / Wasabi / Backblaze</option>
         </select>
       </div>
-    </div>
-
-    <div>
-      <label for="targetcfg" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Target config (JSON)</label>
-      <textarea
-        id="targetcfg"
-        class="dm-input font-mono text-xs h-24 resize-y"
-        bind:value={targetConfigText}
-        placeholder={form.target_type === 's3' ? '{"endpoint":"s3.amazonaws.com","bucket":"my-bucket","access_key":"...","secret_key":"...","use_ssl":true}' : '{"path":"/srv/dockmesh-backups"}'}
-      ></textarea>
-    </div>
-
-    <div>
-      <label for="sources" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Sources</label>
-      <textarea
-        id="sources"
-        class="dm-input font-mono text-xs h-20 resize-y"
-        bind:value={sourcesText}
-        placeholder={'volume:my-data\nstack:nextcloud'}
-      ></textarea>
-      <div class="text-xs text-[var(--fg-subtle)] mt-1">One per line: <code>volume:NAME</code> or <code>stack:NAME</code></div>
-    </div>
-
-    <div class="grid grid-cols-3 gap-3">
-      <Input label="Schedule (cron)" placeholder="0 3 * * *" bind:value={form.schedule} />
-      <Input label="Keep last N" type="number" value={String(form.retention_count)} oninput={(e) => (form.retention_count = parseInt((e.target as HTMLInputElement).value || '0', 10))} />
-      <Input label="Keep N days" type="number" value={String(form.retention_days)} oninput={(e) => (form.retention_days = parseInt((e.target as HTMLInputElement).value || '0', 10))} />
-    </div>
-
-    <div class="flex gap-4">
-      <label class="flex items-center gap-2 text-sm">
-        <input type="checkbox" bind:checked={form.encrypt} class="accent-[var(--color-brand-500)]" />
-        Encrypt with age (uses Dockmesh secrets key)
+      {#if jTargetType === 'local'}
+        <Input label="Path" bind:value={jLocalPath} placeholder="./data/backups" hint="Absolute or relative to Dockmesh working directory" />
+      {:else}
+        <div class="grid grid-cols-2 gap-3">
+          <Input label="Endpoint" bind:value={jS3Endpoint} placeholder="s3.amazonaws.com" />
+          <Input label="Bucket" bind:value={jS3Bucket} placeholder="my-backups" />
+          <Input label="Access Key" bind:value={jS3AccessKey} />
+          <Input label="Secret Key" type="password" bind:value={jS3SecretKey} />
+          <Input label="Region" bind:value={jS3Region} placeholder="us-east-1" />
+          <label class="flex items-center gap-2 text-sm mt-6 cursor-pointer">
+            <input type="checkbox" bind:checked={jS3SSL} class="accent-[var(--color-brand-500)]" /> Use SSL
+          </label>
+        </div>
+      {/if}
+      <label class="flex items-center gap-2 text-sm cursor-pointer">
+        <input type="checkbox" bind:checked={jEncrypt} class="accent-[var(--color-brand-500)]" />
+        Encrypt with age (uses server's secrets key)
       </label>
-      <label class="flex items-center gap-2 text-sm">
-        <input type="checkbox" bind:checked={form.enabled} class="accent-[var(--color-brand-500)]" />
-        Enabled
-      </label>
-    </div>
+    </fieldset>
 
-    <div>
-      <label for="prehooks" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Pre-hooks (JSON, optional)</label>
-      <textarea
-        id="prehooks"
-        class="dm-input font-mono text-xs h-20 resize-y"
-        bind:value={preHooksText}
-        placeholder={'[{"container":"postgres","cmd":["pg_dumpall","-U","postgres","-f","/var/lib/postgresql/data/dump.sql"]}]'}
-      ></textarea>
-    </div>
-    <div>
-      <label for="posthooks" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Post-hooks (JSON, optional)</label>
-      <textarea
-        id="posthooks"
-        class="dm-input font-mono text-xs h-16 resize-y"
-        bind:value={postHooksText}
-      ></textarea>
-    </div>
+    <!-- Schedule -->
+    <fieldset class="space-y-3">
+      <legend class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">Schedule</legend>
+      <div class="flex flex-wrap gap-1.5 mb-2">
+        {#each cronPresets as p}
+          <button type="button"
+            class="text-[10px] px-2 py-1 rounded border transition-colors {jSchedule === p.cron ? 'border-[var(--color-brand-500)] bg-[color-mix(in_srgb,var(--color-brand-500)_10%,transparent)] text-[var(--color-brand-400)]' : 'border-[var(--border)] text-[var(--fg-muted)] hover:border-[var(--color-brand-500)]'}"
+            onclick={() => (jSchedule = p.cron)}
+          >{p.label}</button>
+        {/each}
+      </div>
+      <div class="grid grid-cols-3 gap-3">
+        <Input label="Cron expression" bind:value={jSchedule} placeholder="0 3 * * *" hint={cronHuman(jSchedule)} />
+        <Input label="Keep last N backups" type="number" bind:value={jRetentionCount as any} />
+        <Input label="Keep N days" type="number" bind:value={jRetentionDays as any} />
+      </div>
+    </fieldset>
+
+    <!-- Hooks (collapsible) -->
+    <details class="border border-[var(--border)] rounded-lg">
+      <summary class="px-4 py-2.5 text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider cursor-pointer hover:bg-[var(--surface-hover)]">
+        Pre/Post Hooks (optional)
+      </summary>
+      <div class="px-4 pb-4 space-y-3">
+        <div class="text-xs text-[var(--fg-subtle)]">Run commands via docker exec before/after the backup. Useful for pg_dump, mysqldump, etc.</div>
+        <div class="text-xs font-medium text-[var(--fg-muted)]">Pre-hooks</div>
+        {#each jPreHooks as hook, i}
+          <div class="flex gap-2">
+            <input type="text" class="dm-input text-xs flex-1" placeholder="container name" bind:value={jPreHooks[i].container} />
+            <input type="text" class="dm-input text-xs flex-[2]" placeholder="pg_dumpall -U postgres -f /tmp/dump.sql" bind:value={jPreHooks[i].cmd} />
+            <button type="button" class="text-[var(--color-danger-400)]" onclick={() => (jPreHooks = jPreHooks.filter((_, idx) => idx !== i))}><Trash2 class="w-3 h-3" /></button>
+          </div>
+        {/each}
+        <button type="button" class="text-[10px] text-[var(--color-brand-400)] hover:underline" onclick={addPreHook}>+ Add pre-hook</button>
+
+        <div class="text-xs font-medium text-[var(--fg-muted)] pt-2">Post-hooks</div>
+        {#each jPostHooks as hook, i}
+          <div class="flex gap-2">
+            <input type="text" class="dm-input text-xs flex-1" placeholder="container name" bind:value={jPostHooks[i].container} />
+            <input type="text" class="dm-input text-xs flex-[2]" placeholder="command" bind:value={jPostHooks[i].cmd} />
+            <button type="button" class="text-[var(--color-danger-400)]" onclick={() => (jPostHooks = jPostHooks.filter((_, idx) => idx !== i))}><Trash2 class="w-3 h-3" /></button>
+          </div>
+        {/each}
+        <button type="button" class="text-[10px] text-[var(--color-brand-400)] hover:underline" onclick={addPostHook}>+ Add post-hook</button>
+      </div>
+    </details>
   </form>
 
   {#snippet footer()}
     <Button variant="secondary" onclick={() => (showJob = false)}>Cancel</Button>
-    <Button variant="primary" type="submit" form="backup-form">{editing ? 'Save' : 'Create'}</Button>
+    <Button variant="primary" type="submit" form="backup-form" disabled={!jName.trim() || jSources.every(s => !s.name.trim())}>
+      {editing ? 'Save' : 'Create'}
+    </Button>
   {/snippet}
 </Modal>
 
+<!-- Restore modal with confirmation -->
 <Modal bind:open={showRestore} title="Restore backup" maxWidth="max-w-md">
   {#if restoreRun}
-    <p class="text-sm text-[var(--fg-muted)] mb-4">
-      Untar this archive into a fresh docker volume. The volume will be created if it
-      doesn't exist; existing data is overwritten. Stop any container using the
-      target volume first.
-    </p>
-    <Input label="Destination volume name" bind:value={restoreVolume} />
+    <div class="space-y-4">
+      <div class="p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-warning-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-warning-500)_30%,transparent)] text-xs text-[var(--color-warning-400)]">
+        This will untar the archive into a Docker volume. Existing data in the target volume will be <strong>overwritten</strong>. Stop any container using the volume first.
+      </div>
+      <Input label="Destination volume name" bind:value={restoreVolume} hint="Will be created if it doesn't exist" />
+      <div>
+        <label for="restore-confirm" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Type the volume name to confirm</label>
+        <input id="restore-confirm" type="text" class="dm-input text-sm font-mono" bind:value={restoreConfirm} placeholder={restoreVolume} />
+      </div>
+    </div>
   {/if}
   {#snippet footer()}
     <Button variant="secondary" onclick={() => (showRestore = false)}>Cancel</Button>
-    <Button variant="primary" onclick={doRestore} disabled={!restoreVolume.trim()}>Restore</Button>
+    <Button variant="danger" onclick={doRestore} disabled={!restoreVolume.trim() || restoreConfirm !== restoreVolume}>
+      <Undo2 class="w-4 h-4" /> Restore
+    </Button>
   {/snippet}
 </Modal>
