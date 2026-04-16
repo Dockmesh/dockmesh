@@ -2,7 +2,7 @@
   import { api, ApiError } from '$lib/api';
   import { Card, Badge, Button, EmptyState, Skeleton, Modal, Input } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
-  import { Variable, Plus, Trash2, Search, RefreshCw, FolderOpen } from 'lucide-svelte';
+  import { Variable, Plus, Trash2, Search, RefreshCw, FolderOpen, BookTemplate, ChevronDown } from 'lucide-svelte';
 
   interface EnvVar {
     id: number;
@@ -24,6 +24,85 @@
   let editingVar = $state<EnvVar | null>(null);
   let form = $state({ key: '', value: '', group_name: '' });
   let saving = $state(false);
+
+  // Template categories
+  const templates = [
+    {
+      group: 'System',
+      icon: '⚙️',
+      vars: [
+        { key: 'TZ', value: 'Europe/Vienna', hint: 'Container timezone' },
+        { key: 'PUID', value: '1000', hint: 'Process user ID for file permissions' },
+        { key: 'PGID', value: '1000', hint: 'Process group ID for file permissions' },
+        { key: 'UMASK', value: '022', hint: 'File creation mask' }
+      ]
+    },
+    {
+      group: 'Database',
+      icon: '🗄️',
+      vars: [
+        { key: 'DB_HOST', value: '', hint: 'Database hostname' },
+        { key: 'DB_PORT', value: '5432', hint: 'Database port' },
+        { key: 'DB_USER', value: '', hint: 'Database username' },
+        { key: 'DB_PASSWORD', value: '', hint: 'Database password' },
+        { key: 'DB_NAME', value: '', hint: 'Database name' }
+      ]
+    },
+    {
+      group: 'SMTP',
+      icon: '📧',
+      vars: [
+        { key: 'SMTP_HOST', value: '', hint: 'Mail server hostname' },
+        { key: 'SMTP_PORT', value: '587', hint: 'Mail server port (587 for TLS)' },
+        { key: 'SMTP_USER', value: '', hint: 'Mail server username' },
+        { key: 'SMTP_PASSWORD', value: '', hint: 'Mail server password' },
+        { key: 'SMTP_FROM', value: '', hint: 'Sender email address' }
+      ]
+    },
+    {
+      group: 'Proxy',
+      icon: '🌐',
+      vars: [
+        { key: 'HTTP_PROXY', value: '', hint: 'HTTP proxy URL' },
+        { key: 'HTTPS_PROXY', value: '', hint: 'HTTPS proxy URL' },
+        { key: 'NO_PROXY', value: 'localhost,127.0.0.1', hint: 'Comma-separated bypass list' }
+      ]
+    }
+  ];
+
+  let showTemplates = $state(false);
+
+  async function addFromTemplate(tpl: { key: string; value: string; hint: string }, group: string) {
+    // Check if already exists
+    if (vars.some(v => v.key === tpl.key)) {
+      toast.warning('Already exists', `${tpl.key} is already defined`);
+      return;
+    }
+    try {
+      await api.globalEnv.create({ key: tpl.key, value: tpl.value, group_name: group.toLowerCase() });
+      toast.success('Added', tpl.key);
+      await load();
+    } catch (err) {
+      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
+  async function addAllFromGroup(group: { group: string; vars: Array<{ key: string; value: string; hint: string }> }) {
+    let added = 0;
+    for (const tpl of group.vars) {
+      if (vars.some(v => v.key === tpl.key)) continue;
+      try {
+        await api.globalEnv.create({ key: tpl.key, value: tpl.value, group_name: group.group.toLowerCase() });
+        added++;
+      } catch { /* skip duplicates */ }
+    }
+    if (added > 0) {
+      toast.success(`Added ${added} variable(s)`, group.group);
+      await load();
+    } else {
+      toast.info('All variables already exist');
+    }
+  }
 
   async function load() {
     loading = true;
@@ -102,6 +181,41 @@
       </p>
     </div>
     <div class="flex items-center gap-2">
+      <div class="relative">
+        <Button variant="secondary" size="sm" onclick={() => (showTemplates = !showTemplates)}>
+          <BookTemplate class="w-3.5 h-3.5" /> Templates <ChevronDown class="w-3 h-3" />
+        </Button>
+        {#if showTemplates}
+          <button class="fixed inset-0 z-30 cursor-default" aria-label="Close templates" onclick={() => (showTemplates = false)}></button>
+          <div class="absolute right-0 top-full mt-1 z-40 w-80 bg-[var(--bg-elevated)] border border-[var(--border-strong)] rounded-lg shadow-2xl overflow-hidden">
+            {#each templates as tplGroup}
+              <div class="border-b border-[var(--border)] last:border-0">
+                <div class="flex items-center justify-between px-3 py-2 bg-[var(--surface)]">
+                  <span class="text-xs font-medium">{tplGroup.icon} {tplGroup.group}</span>
+                  <button
+                    class="text-[10px] text-[var(--color-brand-400)] hover:underline"
+                    onclick={() => { addAllFromGroup(tplGroup); showTemplates = false; }}
+                  >Add all</button>
+                </div>
+                {#each tplGroup.vars as tpl}
+                  {@const exists = vars.some(v => v.key === tpl.key)}
+                  <button
+                    class="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-hover)] flex items-center justify-between gap-2 disabled:opacity-40"
+                    disabled={exists}
+                    onclick={() => { addFromTemplate(tpl, tplGroup.group); showTemplates = false; }}
+                  >
+                    <div>
+                      <code class="font-mono font-medium">{tpl.key}</code>
+                      <span class="text-[var(--fg-muted)] ml-1">{tpl.hint}</span>
+                    </div>
+                    {#if exists}<span class="text-[var(--fg-subtle)] shrink-0">added</span>{/if}
+                  </button>
+                {/each}
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
       <Button variant="primary" size="sm" onclick={openNew}>
         <Plus class="w-3.5 h-3.5" /> Add variable
       </Button>
