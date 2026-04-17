@@ -2472,6 +2472,272 @@ paths:
               schema: { $ref: "#/components/schemas/BackupStatus" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  # -----------------------------------------------------------------------
+  # users — local-user CRUD + self-profile
+  # -----------------------------------------------------------------------
+  /me:
+    get:
+      operationId: users.me
+      tags: [users]
+      summary: The authenticated user's own profile
+      description: Includes role, scope_tags, and MFA state — used by the UI to gate buttons.
+      responses:
+        "200":
+          description: Profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /users:
+    get:
+      operationId: users.list
+      tags: [users]
+      summary: List all local users
+      responses:
+        "200":
+          description: Users.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: users.create
+      tags: [users]
+      summary: Create a new local user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, role]
+              properties:
+                username: { type: string, minLength: 1 }
+                email: { type: string, format: email }
+                password: { type: string, format: password, minLength: 8 }
+                role:
+                  type: string
+                  description: Role name — `admin`, `operator`, `viewer`, or a custom role.
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Username already taken.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UserIDPath"
+    put:
+      operationId: users.update
+      tags: [users]
+      summary: Update user email, role, and scope tags
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string, format: email }
+                role: { type: string }
+                scope_tags:
+                  type: array
+                  items: { type: string }
+                  description: Host tag scope. Empty = access to all hosts.
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: users.delete
+      tags: [users]
+      summary: Delete a local user
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /users/{id}/password:
+    put:
+      operationId: users.change_password
+      tags: [users]
+      summary: Admin-set a user's password
+      description: Minimum 8 chars. Admin-only — regular users change their own password via a (future) self-service endpoint.
+      parameters:
+        - $ref: "#/components/parameters/UserIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, format: password, minLength: 8 }
+      responses:
+        "204": { description: Password updated. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /users/{id}/mfa:
+    delete:
+      operationId: users.mfa_reset
+      tags: [users]
+      summary: "Admin: clear MFA for a user"
+      description: Used when a user has lost access to their TOTP device and recovery codes.
+      parameters:
+        - $ref: "#/components/parameters/UserIDPath"
+      responses:
+        "204": { description: MFA cleared. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # -----------------------------------------------------------------------
+  # roles — custom role definitions + permission catalogue
+  # -----------------------------------------------------------------------
+  /roles:
+    get:
+      operationId: roles.list
+      tags: [roles]
+      summary: List roles (built-in + custom)
+      responses:
+        "200":
+          description: Roles.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CustomRole" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: roles.create
+      tags: [roles]
+      summary: Create a custom role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RoleInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomRole" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Role name already exists.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /roles/permissions:
+    get:
+      operationId: roles.permissions
+      tags: [roles]
+      summary: Catalogue of permissions that can be granted to a role
+      description: |
+        Returns all `Perm` values the server knows about with a
+        human-readable description. Used by the role-create dialog to
+        render the permission-picker.
+      responses:
+        "200":
+          description: Permission catalogue.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [name]
+                  properties:
+                    name: { type: string, example: container.control }
+                    description: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /roles/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: roles.get
+      tags: [roles]
+      summary: Inspect one role
+      responses:
+        "200":
+          description: Role.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomRole" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: roles.update
+      tags: [roles]
+      summary: Update a custom role's display name + permissions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RoleInput" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomRole" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Role is built-in (cannot be renamed).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: roles.delete
+      tags: [roles]
+      summary: Delete a custom role
+      description: Built-in roles cannot be deleted — returns 409.
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Role is built-in or still referenced by users.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /containers/{id}/metrics:
     get:
       operationId: containers.metrics
@@ -2624,6 +2890,29 @@ components:
         max_replicas: { type: integer }
         cooldown_seconds: { type: integer }
         duration_seconds: { type: integer }
+
+    CustomRole:
+      type: object
+      required: [name, display, permissions]
+      properties:
+        name: { type: string, example: operator }
+        display: { type: string, example: "Operator — manages running containers" }
+        builtin:
+          type: boolean
+          description: Built-in roles (admin, operator, viewer) cannot be renamed or deleted.
+        permissions:
+          type: array
+          items: { type: string }
+
+    RoleInput:
+      type: object
+      required: [name, display, permissions]
+      properties:
+        name: { type: string, example: deploy-bot }
+        display: { type: string }
+        permissions:
+          type: array
+          items: { type: string }
 
     BackupSource:
       type: object
@@ -3099,6 +3388,14 @@ components:
         type: integer
         format: int64
       description: Integer primary key.
+    UserIDPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: User id (UUID).
 
   responses:
     Unauthorized:
