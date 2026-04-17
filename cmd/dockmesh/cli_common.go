@@ -112,6 +112,10 @@ Agent enrollment:
 Secrets:
   secrets rotate         Rotate the .env.age secrets key
 
+Migration:
+  import compose-dir     Import stacks from a directory of compose files
+                         (--path ./src [--prefix ...] [--force] [--dry-run])
+
 Diagnostics:
   config show            Print effective config (secrets redacted)
   doctor                 Run health checks (DB, docker, disk, TLS)
