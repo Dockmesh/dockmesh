@@ -34,7 +34,7 @@ _dockmesh_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local commands="serve admin db ca enroll secrets config doctor completion version help"
+    local commands="serve admin db ca enroll secrets import config doctor completion version help"
 
     if [ $COMP_CWORD -eq 1 ]; then
         COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
@@ -47,6 +47,7 @@ _dockmesh_complete() {
         ca)          COMPREPLY=( $(compgen -W "export rotate" -- "$cur") ) ;;
         enroll)      COMPREPLY=( $(compgen -W "create revoke list" -- "$cur") ) ;;
         secrets)     COMPREPLY=( $(compgen -W "rotate" -- "$cur") ) ;;
+        import)      COMPREPLY=( $(compgen -W "compose-dir" -- "$cur") ) ;;
         config)      COMPREPLY=( $(compgen -W "show" -- "$cur") ) ;;
         completion)  COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") ) ;;
     esac
@@ -66,6 +67,7 @@ _dockmesh() {
         'ca:Agent PKI operations'
         'enroll:Agent enrollment'
         'secrets:Secrets management'
+        'import:Import stacks from another tool'
         'config:Configuration inspection'
         'doctor:Run health checks'
         'completion:Print shell completion script'
@@ -82,6 +84,7 @@ _dockmesh() {
         ca)         _values 'ca subcommand' export rotate ;;
         enroll)     _values 'enroll subcommand' create revoke list ;;
         secrets)    _values 'secrets subcommand' rotate ;;
+        import)     _values 'import source' compose-dir ;;
         config)     _values 'config subcommand' show ;;
         completion) _values 'shell' bash zsh fish ;;
     esac
@@ -98,6 +101,7 @@ complete -c dockmesh -n '__fish_use_subcommand' -a db     -d 'Database operation
 complete -c dockmesh -n '__fish_use_subcommand' -a ca     -d 'Agent PKI operations'
 complete -c dockmesh -n '__fish_use_subcommand' -a enroll -d 'Agent enrollment'
 complete -c dockmesh -n '__fish_use_subcommand' -a secrets -d 'Secrets management'
+complete -c dockmesh -n '__fish_use_subcommand' -a import  -d 'Import stacks from another tool'
 complete -c dockmesh -n '__fish_use_subcommand' -a config  -d 'Show config'
 complete -c dockmesh -n '__fish_use_subcommand' -a doctor  -d 'Health checks'
 complete -c dockmesh -n '__fish_use_subcommand' -a completion -d 'Shell completion'
@@ -109,6 +113,7 @@ complete -c dockmesh -n '__fish_seen_subcommand_from db'     -a 'migrate backup'
 complete -c dockmesh -n '__fish_seen_subcommand_from ca'     -a 'export rotate'
 complete -c dockmesh -n '__fish_seen_subcommand_from enroll' -a 'create revoke list'
 complete -c dockmesh -n '__fish_seen_subcommand_from secrets' -a 'rotate'
+complete -c dockmesh -n '__fish_seen_subcommand_from import' -a 'compose-dir'
 complete -c dockmesh -n '__fish_seen_subcommand_from config' -a 'show'
 complete -c dockmesh -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish'
 `
