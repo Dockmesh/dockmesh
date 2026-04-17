@@ -2738,6 +2738,417 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  # -----------------------------------------------------------------------
+  # oidc — provider configuration (admin-only)
+  # -----------------------------------------------------------------------
+  /oidc/providers:
+    get:
+      operationId: oidc.list_providers
+      tags: [oidc]
+      summary: List configured OIDC providers (includes disabled + secrets redacted)
+      responses:
+        "200":
+          description: Providers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/OIDCProvider" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: oidc.create_provider
+      tags: [oidc]
+      summary: Add an OIDC provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OIDCProviderInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OIDCProvider" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Slug already in use.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /oidc/providers/reload:
+    post:
+      operationId: oidc.reload
+      tags: [oidc]
+      summary: Re-discover metadata for all enabled providers
+      description: Forces a refresh of well-known endpoints (jwks, authorize, token URLs).
+      responses:
+        "200":
+          description: Reload summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reloaded: { type: integer }
+                  failed: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /oidc/providers/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    put:
+      operationId: oidc.update_provider
+      tags: [oidc]
+      summary: Update an OIDC provider
+      description: Send an empty `client_secret` to keep the existing secret.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OIDCProviderInput" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OIDCProvider" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: oidc.delete_provider
+      tags: [oidc]
+      summary: Delete an OIDC provider
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # -----------------------------------------------------------------------
+  # api-tokens — long-lived bearer tokens for CI (P.11.1)
+  # -----------------------------------------------------------------------
+  /settings/api-tokens:
+    get:
+      operationId: api_tokens.list
+      tags: [api-tokens]
+      summary: List API tokens (plaintext is NOT returned — only the prefix)
+      responses:
+        "200":
+          description: Tokens.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ApiToken" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: api_tokens.create
+      tags: [api-tokens]
+      summary: Create a new API token
+      description: |
+        The plaintext token is returned ONCE in the `token` field. It is
+        never retrievable afterwards — lose it and you must revoke +
+        recreate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, role]
+              properties:
+                name: { type: string, example: github-deploy }
+                role: { type: string, example: operator }
+                expires_in_days:
+                  type: integer
+                  minimum: 0
+                  default: 90
+                  description: 0 = never expires.
+      responses:
+        "201":
+          description: Created with one-time plaintext.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiToken"
+                  - type: object
+                    required: [token]
+                    properties:
+                      token:
+                        type: string
+                        description: Full plaintext `dmt_…` value. Save it now.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /settings/api-tokens/{id}:
+    delete:
+      operationId: api_tokens.revoke
+      tags: [api-tokens]
+      summary: Revoke an API token (soft delete — sets revoked_at)
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "204": { description: Revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # -----------------------------------------------------------------------
+  # registries — private-image credentials (P.11.7)
+  # -----------------------------------------------------------------------
+  /settings/registries:
+    get:
+      operationId: registries.list
+      tags: [registries]
+      summary: List saved registry credentials (passwords redacted)
+      responses:
+        "200":
+          description: Registries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Registry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: registries.create
+      tags: [registries]
+      summary: Save a new registry credential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegistryInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Registry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: A registry with this URL already exists.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /settings/registries/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    put:
+      operationId: registries.update
+      tags: [registries]
+      summary: Update a saved registry
+      description: |
+        `password` empty = keep existing. Set `clear_password: true` to
+        explicitly wipe the stored password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegistryInput" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Registry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Another registry already has this URL.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: registries.delete
+      tags: [registries]
+      summary: Delete a registry entry
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /settings/registries/{id}/test:
+    post:
+      operationId: registries.test
+      tags: [registries]
+      summary: Verify credentials by calling docker RegistryLogin
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "200":
+          description: Login succeeded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+                  status: { type: string }
+                  identity: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: Registry rejected the credentials.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: false }
+                  error: { type: string }
+
+  # -----------------------------------------------------------------------
+  # settings — server-wide runtime config (DB-backed)
+  # -----------------------------------------------------------------------
+  /settings:
+    get:
+      operationId: settings.list
+      tags: [settings]
+      summary: Effective server settings (runtime-overridable key/value pairs)
+      responses:
+        "200":
+          description: Settings.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [key, value]
+                  properties:
+                    key: { type: string }
+                    value: { type: string }
+                    from_env: { type: boolean, description: True when the value was read from env vars instead of DB. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: settings.update
+      tags: [settings]
+      summary: Update one or more settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: { type: string }
+              example:
+                DOCKMESH_BASE_URL: "https://dockmesh.example.com"
+      responses:
+        "204": { description: Saved. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # -----------------------------------------------------------------------
+  # global-env — shared env variables available to every stack deploy
+  # -----------------------------------------------------------------------
+  /global-env:
+    get:
+      operationId: global_env.list
+      tags: [global-env]
+      summary: List shared env variables across all groups
+      responses:
+        "200":
+          description: Variables.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/GlobalEnvItem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: global_env.create
+      tags: [global-env]
+      summary: Add a shared env variable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GlobalEnvInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GlobalEnvItem" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Key already exists within the group.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /global-env/groups:
+    get:
+      operationId: global_env.list_groups
+      tags: [global-env]
+      summary: Distinct group names defined on the global-env items
+      responses:
+        "200":
+          description: Groups.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /global-env/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    put:
+      operationId: global_env.update
+      tags: [global-env]
+      summary: Update a shared env variable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GlobalEnvInput" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GlobalEnvItem" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: global_env.delete
+      tags: [global-env]
+      summary: Remove a shared env variable
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /containers/{id}/metrics:
     get:
       operationId: containers.metrics
@@ -2890,6 +3301,125 @@ components:
         max_replicas: { type: integer }
         cooldown_seconds: { type: integer }
         duration_seconds: { type: integer }
+
+    OIDCProvider:
+      type: object
+      required: [id, slug, display_name, issuer_url, client_id, default_role, enabled]
+      description: Configured OIDC provider. `client_secret` is redacted.
+      properties:
+        id: { type: integer, format: int64 }
+        slug: { type: string, example: google }
+        display_name: { type: string }
+        issuer_url: { type: string, format: uri }
+        client_id: { type: string }
+        scopes: { type: string, example: "openid profile email" }
+        group_claim: { type: string }
+        admin_group: { type: string }
+        operator_group: { type: string }
+        default_role: { type: string }
+        default_scope_tags:
+          type: array
+          items: { type: string }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    OIDCProviderInput:
+      type: object
+      required: [slug, display_name, issuer_url, client_id, default_role]
+      properties:
+        slug: { type: string }
+        display_name: { type: string }
+        issuer_url: { type: string, format: uri }
+        client_id: { type: string }
+        client_secret:
+          type: string
+          format: password
+          description: Omit / empty on update to keep the existing secret.
+        scopes: { type: string }
+        group_claim: { type: string }
+        admin_group: { type: string }
+        operator_group: { type: string }
+        default_role: { type: string }
+        enabled: { type: boolean }
+
+    ApiToken:
+      type: object
+      description: Long-lived bearer token (P.11.1). Plaintext is NEVER returned except the one-time create response.
+      required: [id, prefix, name, role, created_at]
+      properties:
+        id: { type: integer, format: int64 }
+        prefix: { type: string, example: "dmt_A7f3X9c4" }
+        name: { type: string }
+        role: { type: string }
+        created_by: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        last_used_ip: { type: string }
+        revoked_at: { type: string, format: date-time }
+
+    Registry:
+      type: object
+      description: Saved private-registry credentials (P.11.7).
+      required: [id, name, url, has_password, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        url: { type: string, example: ghcr.io }
+        username: { type: string }
+        has_password:
+          type: boolean
+          description: True when a password is stored. The plaintext is never returned.
+        scope_tags:
+          type: array
+          items: { type: string }
+          description: Host tag scope. Empty = apply to all hosts.
+        last_tested_at: { type: string, format: date-time }
+        last_test_ok: { type: boolean }
+        last_test_error: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    RegistryInput:
+      type: object
+      required: [name, url]
+      properties:
+        name: { type: string }
+        url: { type: string }
+        username: { type: string }
+        password:
+          type: string
+          format: password
+          description: Omit / empty on update to keep the existing password.
+        clear_password:
+          type: boolean
+          description: Explicitly wipe the stored password. Takes precedence over `password`.
+        scope_tags:
+          type: array
+          items: { type: string }
+
+    GlobalEnvItem:
+      type: object
+      required: [id, key, value, group_name, encrypted]
+      properties:
+        id: { type: integer, format: int64 }
+        key: { type: string }
+        value: { type: string }
+        group_name: { type: string }
+        encrypted:
+          type: boolean
+          description: True when the value is age-encrypted at rest.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    GlobalEnvInput:
+      type: object
+      required: [key, value, group_name]
+      properties:
+        key: { type: string }
+        value: { type: string }
+        group_name: { type: string, example: production }
 
     CustomRole:
       type: object
