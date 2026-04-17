@@ -1836,6 +1836,642 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  # -----------------------------------------------------------------------
+  # backups — jobs, runs, targets (P.3.4)
+  # -----------------------------------------------------------------------
+  /backups/jobs:
+    get:
+      operationId: backups.list_jobs
+      tags: [backups]
+      summary: List all backup jobs
+      responses:
+        "200":
+          description: Jobs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/BackupJob" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: backups.create_job
+      tags: [backups]
+      summary: Create a new backup job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BackupJobInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupJob" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /backups/jobs/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    get:
+      operationId: backups.get_job
+      tags: [backups]
+      summary: Inspect one backup job
+      responses:
+        "200":
+          description: Job.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupJob" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: backups.update_job
+      tags: [backups]
+      summary: Update a backup job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BackupJobInput" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupJob" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: backups.delete_job
+      tags: [backups]
+      summary: Delete a backup job (does not delete existing runs)
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /backups/jobs/{id}/run:
+    post:
+      operationId: backups.run_job
+      tags: [backups]
+      summary: Trigger a job to run immediately
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "202":
+          description: Run queued — poll `/backups/runs` for progress.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run_id: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Job is already running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /backups/runs:
+    get:
+      operationId: backups.list_runs
+      tags: [backups]
+      summary: Recent backup runs, newest first
+      parameters:
+        - name: job_id
+          in: query
+          schema: { type: integer, format: int64 }
+          description: Optional filter to one job's runs.
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, maximum: 500 }
+      responses:
+        "200":
+          description: Runs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/BackupRun" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /backups/runs/{id}/restore:
+    post:
+      operationId: backups.restore_run
+      tags: [backups]
+      summary: Restore a specific backup run onto a target
+      description: |
+        For volume/stack backups this extracts the tar into a fresh volume
+        or stack directory; for system backups it writes the snapshot DB
+        + stacks tree to a specified path for the operator to swap in.
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_host_id: { type: string }
+                target_volume: { type: string }
+                target_stack: { type: string }
+                target_path: { type: string, description: "For system backups — filesystem destination." }
+      responses:
+        "200":
+          description: Restore started.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  extracted_paths:
+                    type: array
+                    items: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /backups/targets:
+    get:
+      operationId: backups.list_targets
+      tags: [backups]
+      summary: List saved backup targets (SFTP, SMB, WebDAV, S3, local)
+      responses:
+        "200":
+          description: Targets.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/BackupTarget" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: backups.create_target
+      tags: [backups]
+      summary: Create a new backup target
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BackupTargetInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupTarget" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /backups/targets/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    put:
+      operationId: backups.update_target
+      tags: [backups]
+      summary: Update a backup target
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BackupTargetInput" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupTarget" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: backups.delete_target
+      tags: [backups]
+      summary: Delete a backup target
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Target is referenced by one or more jobs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /backups/targets/{id}/test:
+    post:
+      operationId: backups.test_target
+      tags: [backups]
+      summary: Verify connectivity to a saved target
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "200":
+          description: Connection OK.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupTargetTestResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: Connection failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupTargetTestResult" }
+
+  /backups/targets/test-config:
+    post:
+      operationId: backups.test_target_config
+      tags: [backups]
+      summary: Verify an unsaved target config (pre-create smoke test)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BackupTargetInput" }
+      responses:
+        "200":
+          description: Connection OK.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupTargetTestResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "502":
+          description: Connection failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupTargetTestResult" }
+
+  /backups/targets/discover-shares:
+    post:
+      operationId: backups.discover_shares
+      tags: [backups]
+      summary: List SMB shares on a host (pre-create helper)
+      description: Used by the target-create dialog to autocomplete share names.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host, username, password]
+              properties:
+                host: { type: string }
+                username: { type: string }
+                password: { type: string, format: password }
+                domain: { type: string }
+      responses:
+        "200":
+          description: Shares.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "502":
+          description: Connection failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /backups/system/enabled:
+    put:
+      operationId: backups.toggle_system
+      tags: [backups]
+      summary: Enable / disable the default daily system backup (P.6.5)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: New backup status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # -----------------------------------------------------------------------
+  # alerts + notifications
+  # -----------------------------------------------------------------------
+  /alerts/rules:
+    get:
+      operationId: alerts.list_rules
+      tags: [alerts]
+      summary: List alert rules (built-in + user-defined)
+      responses:
+        "200":
+          description: Rules.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AlertRule" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: alerts.create_rule
+      tags: [alerts]
+      summary: Create a user-defined alert rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AlertRuleInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertRule" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /alerts/rules/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    put:
+      operationId: alerts.update_rule
+      tags: [alerts]
+      summary: Update an alert rule (including enabled flag on built-ins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AlertRuleInput" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertRule" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: alerts.delete_rule
+      tags: [alerts]
+      summary: Delete a user-defined alert rule
+      description: Built-in rules cannot be deleted — disable them instead (P.11.5). Returns 409 for built-ins.
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Rule is built-in and cannot be deleted — disable instead.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /alerts/history:
+    get:
+      operationId: alerts.history
+      tags: [alerts]
+      summary: Recent alert events (fire + resolve), newest first
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+      responses:
+        "200":
+          description: History.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AlertHistoryEntry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /notifications/channels:
+    get:
+      operationId: notifications.list_channels
+      tags: [alerts]
+      summary: List configured notification channels
+      responses:
+        "200":
+          description: Channels.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/NotificationChannel" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: notifications.create_channel
+      tags: [alerts]
+      summary: Create a notification channel (webhook, email, slack, …)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotificationChannelInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationChannel" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /notifications/channels/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    put:
+      operationId: notifications.update_channel
+      tags: [alerts]
+      summary: Update a notification channel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotificationChannelInput" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationChannel" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: notifications.delete_channel
+      tags: [alerts]
+      summary: Delete a notification channel
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /notifications/channels/{id}/test:
+    post:
+      operationId: notifications.test_channel
+      tags: [alerts]
+      summary: Send a test notification through the channel
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "204": { description: Test sent. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502":
+          description: Delivery failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # -----------------------------------------------------------------------
+  # audit log (tamper-evident)
+  # -----------------------------------------------------------------------
+  /audit:
+    get:
+      operationId: audit.list
+      tags: [audit]
+      summary: Audit log entries, newest first
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, maximum: 1000 }
+        - name: action
+          in: query
+          schema: { type: string }
+          description: Filter by action prefix (e.g. `container.`).
+        - name: user_id
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AuditEntry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /audit/verify:
+    get:
+      operationId: audit.verify
+      tags: [audit]
+      summary: Verify the hash chain from genesis to the latest entry
+      description: |
+        Re-computes each row's `row_hash` from the prior hash + canonical
+        fields. A broken chain indicates tampering.
+      responses:
+        "200":
+          description: Verification result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, verified_rows]
+                properties:
+                  ok: { type: boolean }
+                  verified_rows: { type: integer }
+                  first_broken_id: { type: integer, format: int64 }
+                  message: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # -----------------------------------------------------------------------
+  # system — server-wide runtime info and host metrics
+  # -----------------------------------------------------------------------
+  /system/info:
+    get:
+      operationId: system.info
+      tags: [metrics]
+      summary: Dockmesh version + build info
+      responses:
+        "200":
+          description: Instance info.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: { type: string }
+                  commit: { type: string }
+                  build_date: { type: string }
+                  go_version: { type: string }
+                  os: { type: string }
+                  arch: { type: string }
+                  uptime_seconds: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /system/metrics:
+    get:
+      operationId: system.metrics
+      tags: [metrics]
+      summary: Host-level CPU / memory / disk / uptime snapshot
+      description: Used by the dashboard's System Health panel. Works across local and remote hosts.
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cpu_percent: { type: number }
+                  cpu_cores: { type: integer }
+                  cpu_used_cores: { type: number }
+                  mem_percent: { type: number }
+                  mem_total: { type: integer, format: int64 }
+                  mem_used: { type: integer, format: int64 }
+                  disk_percent: { type: number }
+                  disk_total: { type: integer, format: int64 }
+                  disk_used: { type: integer, format: int64 }
+                  uptime_seconds: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /system/backup-status:
+    get:
+      operationId: system.backup_status
+      tags: [metrics]
+      summary: Default system backup summary for the sidebar pill
+      responses:
+        "200":
+          description: Backup status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /containers/{id}/metrics:
     get:
       operationId: containers.metrics
@@ -1988,6 +2624,239 @@ components:
         max_replicas: { type: integer }
         cooldown_seconds: { type: integer }
         duration_seconds: { type: integer }
+
+    BackupSource:
+      type: object
+      required: [type, name]
+      properties:
+        type:
+          type: string
+          enum: [volume, stack, system]
+          description: "`system` snapshots the Dockmesh server's own DB + stacks tree."
+        name: { type: string, description: "Ignored for system source." }
+
+    BackupHook:
+      type: object
+      description: docker-exec invocation used to quiesce a container before the snapshot (e.g. pg_dump).
+      required: [container, cmd]
+      properties:
+        container: { type: string }
+        cmd:
+          type: array
+          items: { type: string }
+
+    BackupJob:
+      type: object
+      required: [id, name, target_type, sources, schedule, enabled]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        target_type: { type: string, enum: [local, sftp, smb, webdav, s3] }
+        target_config:
+          type: object
+          description: Target-specific credentials/paths. Secrets redacted in responses.
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/BackupSource" }
+        schedule: { type: string, description: Cron expression. }
+        retention_count: { type: integer, minimum: 0 }
+        retention_days: { type: integer, minimum: 0 }
+        encrypt: { type: boolean, description: Encrypt the tarball with the age key. }
+        pre_hooks:
+          type: array
+          items: { $ref: "#/components/schemas/BackupHook" }
+        post_hooks:
+          type: array
+          items: { $ref: "#/components/schemas/BackupHook" }
+        enabled: { type: boolean }
+        last_run_at: { type: string, format: date-time }
+        next_run_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    BackupJobInput:
+      type: object
+      required: [name, target_type, sources, schedule]
+      properties:
+        name: { type: string }
+        target_type: { type: string, enum: [local, sftp, smb, webdav, s3] }
+        target_config: { type: object }
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/BackupSource" }
+        schedule: { type: string }
+        retention_count: { type: integer, minimum: 0 }
+        retention_days: { type: integer, minimum: 0 }
+        encrypt: { type: boolean }
+        pre_hooks:
+          type: array
+          items: { $ref: "#/components/schemas/BackupHook" }
+        post_hooks:
+          type: array
+          items: { $ref: "#/components/schemas/BackupHook" }
+        enabled: { type: boolean }
+
+    BackupRun:
+      type: object
+      required: [id, job_id, job_name, status, started_at]
+      properties:
+        id: { type: integer, format: int64 }
+        job_id: { type: integer, format: int64 }
+        job_name: { type: string }
+        status: { type: string, enum: [running, success, failed] }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        size_bytes: { type: integer, format: int64 }
+        target_path: { type: string }
+        sha256: { type: string }
+        encrypted: { type: boolean }
+        error: { type: string }
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/BackupSource" }
+
+    BackupTarget:
+      type: object
+      required: [id, name, type, status]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        type: { type: string, enum: [local, sftp, smb, webdav, s3] }
+        config:
+          type: object
+          description: Credentials redacted.
+        status: { type: string, enum: [unknown, ok, degraded, unreachable] }
+        total_bytes: { type: integer, format: int64 }
+        used_bytes: { type: integer, format: int64 }
+        last_checked_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    BackupTargetInput:
+      type: object
+      required: [name, type, config]
+      properties:
+        name: { type: string }
+        type: { type: string, enum: [local, sftp, smb, webdav, s3] }
+        config: { type: object }
+
+    BackupTargetTestResult:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        latency_ms: { type: integer }
+        total_bytes: { type: integer, format: int64 }
+        free_bytes: { type: integer, format: int64 }
+        error: { type: string }
+
+    BackupStatus:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        last_run_at: { type: string, format: date-time }
+        last_run_status: { type: string, enum: [success, failed, running] }
+        last_run_size_bytes: { type: integer, format: int64 }
+        last_run_age_seconds: { type: integer }
+        next_run_at: { type: string, format: date-time }
+
+    AlertRule:
+      type: object
+      required: [id, name, metric, operator, threshold, enabled]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        container_filter: { type: string, description: Glob pattern matched against container names. }
+        metric: { type: string, enum: [cpu_percent, mem_percent] }
+        operator: { type: string, enum: [gt, lt] }
+        threshold: { type: number }
+        duration_seconds: { type: integer, minimum: 0 }
+        cooldown_seconds: { type: integer, minimum: 0 }
+        channel_ids:
+          type: array
+          items: { type: integer, format: int64 }
+        severity: { type: string, enum: [info, warning, critical] }
+        enabled: { type: boolean }
+        builtin:
+          type: boolean
+          description: "Built-in rules (P.11.5) cannot be deleted; disable instead."
+        muted_until: { type: string, format: date-time }
+        firing_since: { type: string, format: date-time }
+        last_triggered_at: { type: string, format: date-time }
+        last_resolved_at: { type: string, format: date-time }
+
+    AlertRuleInput:
+      type: object
+      required: [name, metric, operator, threshold]
+      properties:
+        name: { type: string }
+        container_filter: { type: string }
+        metric: { type: string, enum: [cpu_percent, mem_percent] }
+        operator: { type: string, enum: [gt, lt] }
+        threshold: { type: number }
+        duration_seconds: { type: integer, minimum: 0 }
+        cooldown_seconds: { type: integer, minimum: 0 }
+        channel_ids:
+          type: array
+          items: { type: integer, format: int64 }
+        severity: { type: string, enum: [info, warning, critical] }
+        enabled: { type: boolean }
+        muted_until: { type: string, format: date-time }
+
+    AlertHistoryEntry:
+      type: object
+      required: [id, rule_id, rule_name, status, occurred_at]
+      properties:
+        id: { type: integer, format: int64 }
+        rule_id: { type: integer, format: int64 }
+        rule_name: { type: string }
+        container_name: { type: string }
+        status: { type: string, enum: [fired, resolved] }
+        message: { type: string }
+        value: { type: number }
+        threshold: { type: number }
+        occurred_at: { type: string, format: date-time }
+
+    NotificationChannel:
+      type: object
+      required: [id, name, type]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        type:
+          type: string
+          enum: [webhook, email, slack, discord, telegram, ntfy, gotify, msteams]
+        config:
+          type: object
+          description: Channel-type-specific. Secrets redacted.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    NotificationChannelInput:
+      type: object
+      required: [name, type, config]
+      properties:
+        name: { type: string }
+        type: { type: string }
+        config: { type: object }
+
+    AuditEntry:
+      type: object
+      required: [id, ts, action]
+      description: |
+        Tamper-evident: each row's `row_hash` chains to the previous
+        entry's `prev_hash`. The genesis row anchors the chain against a
+        file stored outside the DB.
+      properties:
+        id: { type: integer, format: int64 }
+        ts: { type: string, format: date-time }
+        user_id: { type: string }
+        username: { type: string }
+        action: { type: string, example: container.start }
+        target: { type: string }
+        details: { type: string, description: JSON-encoded contextual metadata. }
+        prev_hash: { type: string }
+        row_hash: { type: string }
 
     VolumeEntry:
       type: object
@@ -2222,6 +3091,14 @@ components:
       required: true
       schema:
         type: string
+    IntIDPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: Integer primary key.
 
   responses:
     Unauthorized:
