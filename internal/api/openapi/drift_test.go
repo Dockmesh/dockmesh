@@ -64,9 +64,6 @@ var undocumentedRoutes = map[string]bool{
 	// -- Initial migration scaffolding (P.11.10) --
 	// Shrink by moving each entry into openapi.yaml, per endpoint group.
 	"DELETE /api/v1/proxy/routes/{id}":                    true,
-	"GET /api/v1/hosts/{id}/drain/{drain_id}":             true,
-	"GET /api/v1/migrations":                              true,
-	"GET /api/v1/migrations/active":                       true,
 	"GET /api/v1/proxy/routes":                            true,
 	"GET /api/v1/proxy/status":                            true,
 	"GET /api/v1/ws/events":                               true,
@@ -74,11 +71,6 @@ var undocumentedRoutes = map[string]bool{
 	"GET /api/v1/ws/logs/{id}":                            true,
 	"GET /api/v1/ws/stats/{id}":                           true,
 	"POST /api/v1/convert/run-to-compose":                 true,
-	"POST /api/v1/hosts/{id}/drain/execute":               true,
-	"POST /api/v1/hosts/{id}/drain/plan":                  true,
-	"POST /api/v1/hosts/{id}/drain/{drain_id}/abort":      true,
-	"POST /api/v1/hosts/{id}/drain/{drain_id}/pause":      true,
-	"POST /api/v1/hosts/{id}/drain/{drain_id}/resume":     true,
 	"POST /api/v1/proxy/disable":                          true,
 	"POST /api/v1/proxy/enable":                           true,
 	"POST /api/v1/proxy/routes":                           true,

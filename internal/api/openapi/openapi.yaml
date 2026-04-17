@@ -3149,6 +3149,201 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  # -----------------------------------------------------------------------
+  # migrations — stack migration listings (detail lives under /stacks)
+  # -----------------------------------------------------------------------
+  /migrations:
+    get:
+      operationId: migrations.list
+      tags: [migrations]
+      summary: Recent migrations across all stacks (history)
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+      responses:
+        "200":
+          description: Migrations.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MigrationStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /migrations/active:
+    get:
+      operationId: migrations.active
+      tags: [migrations]
+      summary: Currently-running migrations
+      responses:
+        "200":
+          description: In-flight migrations only.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MigrationStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # -----------------------------------------------------------------------
+  # drain — safely evacuate a host before maintenance (P.10)
+  # -----------------------------------------------------------------------
+  /hosts/{id}/drain/plan:
+    post:
+      operationId: drain.plan
+      tags: [migrations]
+      summary: Dry-run a drain — list what would move and where
+      description: |
+        Given a set of candidate target hosts, produces a plan that maps
+        each stack on the source host to a target host. Safe to call —
+        does not start any migration.
+      parameters:
+        - $ref: "#/components/parameters/HostIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_host_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                  description: Candidate target hosts. If omitted, all online hosts are considered.
+                strategy:
+                  type: string
+                  enum: [least-loaded, explicit, round-robin]
+                  default: least-loaded
+      responses:
+        "200":
+          description: Plan.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DrainPlan" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /hosts/{id}/drain/execute:
+    post:
+      operationId: drain.execute
+      tags: [migrations]
+      summary: Start the drain — migrate stacks off the source host
+      description: |
+        Kicks off sequential stack migrations according to the plan (or
+        a computed default plan). Returns a drain id for progress polling.
+      parameters:
+        - $ref: "#/components/parameters/HostIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                plan: { $ref: "#/components/schemas/DrainPlan" }
+                target_host_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                strategy:
+                  type: string
+                  enum: [least-loaded, explicit, round-robin]
+      responses:
+        "202":
+          description: Drain accepted — poll `/hosts/{id}/drain/{drain_id}`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  drain_id: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: A drain is already running for this host.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /hosts/{id}/drain/{drain_id}:
+    parameters:
+      - $ref: "#/components/parameters/HostIDPath"
+      - $ref: "#/components/parameters/DrainIDPath"
+    get:
+      operationId: drain.status
+      tags: [migrations]
+      summary: Poll drain progress
+      responses:
+        "200":
+          description: Current state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DrainStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /hosts/{id}/drain/{drain_id}/pause:
+    post:
+      operationId: drain.pause
+      tags: [migrations]
+      summary: Pause a running drain between stacks
+      parameters:
+        - $ref: "#/components/parameters/HostIDPath"
+        - $ref: "#/components/parameters/DrainIDPath"
+      responses:
+        "200":
+          description: Paused.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DrainStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Drain is not in a state that can be paused.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /hosts/{id}/drain/{drain_id}/resume:
+    post:
+      operationId: drain.resume
+      tags: [migrations]
+      summary: Resume a paused drain
+      parameters:
+        - $ref: "#/components/parameters/HostIDPath"
+        - $ref: "#/components/parameters/DrainIDPath"
+      responses:
+        "200":
+          description: Resumed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DrainStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /hosts/{id}/drain/{drain_id}/abort:
+    post:
+      operationId: drain.abort
+      tags: [migrations]
+      summary: Abort a drain; in-flight migrations are rolled back
+      parameters:
+        - $ref: "#/components/parameters/HostIDPath"
+        - $ref: "#/components/parameters/DrainIDPath"
+      responses:
+        "200":
+          description: Aborted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DrainStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /containers/{id}/metrics:
     get:
       operationId: containers.metrics
@@ -3677,6 +3872,46 @@ components:
         prev_hash: { type: string }
         row_hash: { type: string }
 
+    DrainPlan:
+      type: object
+      description: |
+        Map of source-host stacks to target hosts. Returned by
+        `/hosts/{id}/drain/plan` and accepted as the input to
+        `/hosts/{id}/drain/execute`.
+      properties:
+        source_host_id: { type: string, format: uuid }
+        strategy: { type: string, enum: [least-loaded, explicit, round-robin] }
+        assignments:
+          type: array
+          items:
+            type: object
+            required: [stack, target_host_id]
+            properties:
+              stack: { type: string }
+              target_host_id: { type: string, format: uuid }
+              target_host_name: { type: string }
+              volume_bytes: { type: integer, format: int64 }
+
+    DrainStatus:
+      type: object
+      required: [id, source_host_id, status]
+      properties:
+        id: { type: integer, format: int64 }
+        source_host_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [pending, running, paused, completed, failed, aborted]
+        plan: { $ref: "#/components/schemas/DrainPlan" }
+        progress:
+          type: object
+          properties:
+            total: { type: integer }
+            done: { type: integer }
+            current_stack: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        message: { type: string }
+
     VolumeEntry:
       type: object
       description: One row in a volume directory listing (P.11.8).
@@ -3926,6 +4161,14 @@ components:
         type: string
         format: uuid
       description: User id (UUID).
+    DrainIDPath:
+      name: drain_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: Drain run id.
 
   responses:
     Unauthorized:
