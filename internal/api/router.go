@@ -81,6 +81,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Put("/users/{id}/password", h.ChangeUserPassword) // self or admin (enforced inside)
 			r.Post("/ws/ticket", h.WSTicket)
 
+			// P.12.1 — session management (self). Any authenticated
+			// user can see + revoke their own sessions.
+			r.Get("/sessions", h.ListMySessions)
+			r.Delete("/sessions/{family_id}", h.RevokeMySession)
+
 			// Self MFA enrollment / disable
 			r.Post("/mfa/enroll/start", h.MFAEnrollStart)
 			r.Post("/mfa/enroll/verify", h.MFAEnrollVerify)
@@ -318,6 +323,14 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Put("/users/{id}", h.UpdateUser)
 				r.Delete("/users/{id}", h.DeleteUser)
 				r.Delete("/users/{id}/mfa", h.MFAReset)
+
+				// P.12.1 — admin-only account unlock + password
+				// policy CRUD. Policy endpoints are GET too because
+				// only admins should see the numbers (they indicate
+				// deployment hardening level).
+				r.Post("/users/{id}/unlock", h.UnlockUser)
+				r.Get("/auth/policy", h.GetPasswordPolicy)
+				r.Put("/auth/policy", h.UpdatePasswordPolicy)
 			})
 
 			// -------------------------- AUDIT READ ---------------------------

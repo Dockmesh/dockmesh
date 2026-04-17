@@ -290,6 +290,10 @@ func main() {
 	if err := settingsStore.Load(ctx); err != nil {
 		slog.Warn("settings store load", "err", err)
 	}
+	// P.12.1 — hand the settings store to auth.Service so password
+	// policy + per-user lockout thresholds + rotation-day setting
+	// are live-editable via the UI without a restart.
+	authSvc.SetSettings(settingsStore)
 
 	globalEnvStore := globalenv.NewStore(database)
 
