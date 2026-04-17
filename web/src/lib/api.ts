@@ -282,6 +282,20 @@ export interface RegistryTestResult {
   error?: string;
 }
 
+// P.11.14 — audit webhook.
+export interface AuditWebhookConfig {
+  url?: string;
+  has_secret: boolean;
+  filter_actions?: string[];
+}
+
+export interface AuditWebhookInput {
+  url: string;
+  secret?: string;
+  clear_secret?: boolean;
+  filter_actions?: string[];
+}
+
 // P.11.13 — audit retention.
 export interface AuditRetentionConfig {
   mode: 'forever' | 'days' | 'archive_local' | 'archive_target';
@@ -1217,7 +1231,16 @@ export const api = {
         body: JSON.stringify(cfg)
       }),
     runRetention: () =>
-      request<AuditRetentionResult>('/audit/retention/run', { method: 'POST' })
+      request<AuditRetentionResult>('/audit/retention/run', { method: 'POST' }),
+    getWebhook: () => request<AuditWebhookConfig>('/audit/webhook'),
+    setWebhook: (cfg: AuditWebhookInput) =>
+      request<AuditWebhookConfig>('/audit/webhook', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg)
+      }),
+    testWebhook: () =>
+      request<{ status: string }>('/audit/webhook/test', { method: 'POST' })
   },
 
   convert: {

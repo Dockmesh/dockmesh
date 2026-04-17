@@ -351,6 +351,14 @@ func main() {
 	auditRetention.Start(ctx)
 	defer auditRetention.Stop()
 
+	// Audit webhook (P.11.14). Posts each audit entry to a configured
+	// URL with optional HMAC signing + exponential-backoff retry.
+	// Nil-safe — doesn't dispatch if URL is empty in settings.
+	auditWebhook := audit.NewWebhook(settingsStore, settingsStore.Set)
+	auditWebhook.Start(ctx)
+	auditSvc.SetWebhook(auditWebhook)
+	defer auditWebhook.Stop()
+
 	// Host tags (P.11.2). In-memory cache loaded once at startup; kept
 	// fresh after every mutation via Load() inside the service.
 	hostTagsSvc := hosttags.New(database)
@@ -399,6 +407,7 @@ func main() {
 		GitSource:    gitSourceSvc,
 		Templates:      templatesSvc,
 		AuditRetention: auditRetention,
+		AuditWebhook:   auditWebhook,
 		Prom:           promMetrics,
 		JWTSecret:    cfg.JWTSecret,
 	})

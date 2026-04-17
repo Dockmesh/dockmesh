@@ -2594,6 +2594,70 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /audit/webhook:
+    get:
+      operationId: audit.webhook_get
+      tags: [audit]
+      summary: Current audit-webhook config (P.11.14)
+      description: The plaintext secret is never returned — the `has_secret` flag tells the UI whether one is stored.
+      responses:
+        "200":
+          description: Config.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditWebhookConfig" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: audit.webhook_set
+      tags: [audit]
+      summary: Update audit-webhook config
+      description: |
+        URL must be http:// or https://. Empty `secret` with
+        `clear_secret: false` keeps the existing secret; set
+        `clear_secret: true` to wipe it. `filter_actions` accepts
+        exact matches ("stack.deploy") or prefix wildcards
+        ("stack.*"); empty = deliver every entry.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuditWebhookInput" }
+      responses:
+        "200":
+          description: Updated config.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditWebhookConfig" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /audit/webhook/test:
+    post:
+      operationId: audit.webhook_test
+      tags: [audit]
+      summary: Send a synthetic test event to the configured URL
+      description: |
+        Bypasses the filter. Useful for verifying the receiver /
+        HMAC signature before flipping on the live feed.
+      responses:
+        "200":
+          description: Test dispatched.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "502":
+          description: Receiver rejected or was unreachable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /audit/verify:
     get:
       operationId: audit.verify
@@ -4572,6 +4636,34 @@ components:
           format: int64
           description: The id of the `audit.chain_bridge` row inserted before the prune.
         duration_ms: { type: integer, format: int64 }
+
+    AuditWebhookConfig:
+      type: object
+      description: |
+        Realtime webhook that posts every audit entry to an external URL
+        (P.11.14). Payload = audit entry JSON; signed with HMAC-SHA256
+        on `X-Audit-Signature` when a secret is configured.
+      properties:
+        url: { type: string, format: uri }
+        has_secret: { type: boolean }
+        filter_actions:
+          type: array
+          items: { type: string }
+          description: Action names or prefix-wildcards (e.g. "stack.*"). Empty = deliver every entry.
+
+    AuditWebhookInput:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, format: uri, description: "http:// or https:// — empty value disables dispatch." }
+        secret:
+          type: string
+          format: password
+          description: "HMAC shared secret. Empty on update keeps existing; use `clear_secret: true` to wipe."
+        clear_secret: { type: boolean }
+        filter_actions:
+          type: array
+          items: { type: string }
 
     AuditEntry:
       type: object
