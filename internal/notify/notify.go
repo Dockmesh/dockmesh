@@ -160,7 +160,8 @@ var ErrUnknownType = errors.New("unknown channel type")
 
 func validType(t string) bool {
 	switch t {
-	case "webhook", "ntfy", "discord", "slack", "teams", "gotify", "email":
+	case "webhook", "ntfy", "discord", "slack", "teams", "gotify", "email",
+		"pagerduty", "pushover":
 		return true
 	}
 	return false
@@ -242,6 +243,10 @@ func buildChannel(c *Channel, hc *http.Client) (channelImpl, error) {
 		return parseGotify(c.Config, hc)
 	case "email":
 		return parseEmail(c.Config)
+	case "pagerduty":
+		return parsePagerDuty(c.Config, hc)
+	case "pushover":
+		return parsePushover(c.Config, hc)
 	}
 	return nil, fmt.Errorf("%w: %s", ErrUnknownType, c.Type)
 }

@@ -4573,7 +4573,7 @@ components:
         name: { type: string }
         type:
           type: string
-          enum: [webhook, email, slack, discord, telegram, ntfy, gotify, msteams]
+          enum: [webhook, email, slack, discord, ntfy, gotify, teams, pagerduty, pushover]
         config:
           type: object
           description: Channel-type-specific. Secrets redacted.
