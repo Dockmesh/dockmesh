@@ -80,9 +80,17 @@ type RuleInput struct {
 	MutedUntil      string  `json:"muted_until,omitempty"` // ISO timestamp or empty
 }
 
+// PromRecorder is the alerts-side hook into the prometheus collector.
+// Decoupled via interface so main() can wire the concrete collector
+// without the alerts package importing internal/metrics.
+type PromRecorder interface {
+	IncAlertFired(severity, rule string)
+}
+
 type Service struct {
 	db     *sql.DB
 	notify *notify.Service
+	prom   PromRecorder
 
 	stop chan struct{}
 	wg   sync.WaitGroup
@@ -92,6 +100,9 @@ type Service struct {
 	stateMu sync.Mutex
 	firing  map[string]bool
 }
+
+// SetProm attaches a prom recorder after construction. Nil clears it.
+func (s *Service) SetProm(p PromRecorder) { s.prom = p }
 
 func NewService(db *sql.DB, notifier *notify.Service) *Service {
 	return &Service{
@@ -464,6 +475,13 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, container string, value
 		`UPDATE alert_rules SET firing_since = ?, last_triggered_at = ? WHERE id = ?`,
 		ts, ts, r.ID)
 	slog.Info("alert fired", "rule", r.Name, "container", container, "value", value)
+	if s.prom != nil {
+		sev := r.Severity
+		if sev == "" {
+			sev = "warning"
+		}
+		s.prom.IncAlertFired(sev, r.Name)
+	}
 
 	if s.notify != nil && len(r.ChannelIDs) > 0 {
 		level := notify.LevelWarning

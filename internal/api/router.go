@@ -16,7 +16,7 @@ import (
 	"github.com/go-chi/cors"
 )
 
-func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Handler {
+func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metricsAuth bool) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
@@ -29,6 +29,20 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		AllowCredentials: true,
 	}))
+
+	// P.11.9 — Prometheus scrape endpoint mounted at router root so
+	// operators configure prometheus.yml with just the host (no API
+	// version in the path). When metricsAuth is true (default), the
+	// scraper must present a Bearer token with metrics.read perm.
+	if metricsAuth {
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.NewAuth(authSvc))
+			r.Use(middleware.RequirePerm(rbac.PermMetricsRead))
+			r.Get("/metrics", h.PromMetrics)
+		})
+	} else {
+		r.Get("/metrics", h.PromMetrics)
+	}
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/health", h.Health)

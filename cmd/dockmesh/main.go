@@ -201,11 +201,20 @@ func main() {
 	metricsCol.Start(ctx)
 	defer metricsCol.Stop()
 
+	// P.11.9 — prometheus registry + background gauge refresher.
+	// Wired via setter methods so the audit / alerts / middleware
+	// packages don't import internal/metrics and create cycles.
+	promMetrics := metrics.NewPromMetrics(database)
+	promMetrics.StartRefresher(ctx)
+	middleware.PromMetrics = promMetrics
+	auditSvc.SetProm(promMetrics)
+
 	notifySvc := notify.NewService(database)
 	if err := notifySvc.Reload(ctx); err != nil {
 		slog.Warn("notify reload", "err", err)
 	}
 	alertsSvc := alerts.NewService(database, notifySvc)
+	alertsSvc.SetProm(promMetrics)
 	alertsSvc.Start(ctx)
 	defer alertsSvc.Stop()
 
@@ -345,9 +354,10 @@ func main() {
 		GlobalEnv:    globalEnvStore,
 		APITokens:    apiTokensSvc,
 		Registries:   registriesSvc,
+		Prom:         promMetrics,
 		JWTSecret:    cfg.JWTSecret,
 	})
-	router := api.NewRouter(h, authSvc, webFS)
+	router := api.NewRouter(h, authSvc, webFS, cfg.MetricsAuth)
 
 	// Backfill stack deployments (P.7): scan local containers to detect
 	// which stacks are already deployed. Remote-agent containers are

@@ -25,7 +25,12 @@ type Config struct {
 	AgentListen       string
 	AgentPublicURL    string
 	AgentSANs         string
-	JWTSecret         []byte
+	// MetricsAuth gates the /metrics endpoint. Default true (require
+	// metrics.read perm, so API-token scraping is needed). Set
+	// DOCKMESH_METRICS_AUTH=false on trusted networks where the
+	// scrape comes from a host-only firewalled Prometheus.
+	MetricsAuth bool
+	JWTSecret   []byte
 }
 
 func Load() (*Config, error) {
@@ -51,6 +56,7 @@ func Load() (*Config, error) {
 		AgentListen:    envOr("DOCKMESH_AGENT_LISTEN", ":8443"),
 		AgentPublicURL: envOr("DOCKMESH_AGENT_PUBLIC_URL", ""),
 		AgentSANs:      envOr("DOCKMESH_AGENT_SANS", ""),
+		MetricsAuth:    envOr("DOCKMESH_METRICS_AUTH", "true") != "false",
 	}
 	secret, err := loadOrCreateJWTSecret(cfg.SecretsPath)
 	if err != nil {
