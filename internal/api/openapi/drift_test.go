@@ -38,21 +38,19 @@ import (
 )
 
 // undocumentedRoutes lists operations that legitimately don't appear
-// in openapi.yaml. Keep this list short and explain each entry.
+// in openapi.yaml. Keep this list short — each entry is a spec hole,
+// and every hole should have a one-line justification.
 //
-// The long list below is P.11.10's "initial migration scaffolding" —
-// when we shipped the skeleton + tooling commit, 159 existing routes
-// pre-dated the spec. Each subsequent endpoint-group commit adds the
-// group's operations to openapi.yaml and removes those lines from
-// here. When the list shrinks to only the four genuinely-undocumented
-// entries at the top (health + the spec endpoints themselves), the
-// initial migration is complete. Until then a shrinking allow-list
-// is the progress indicator.
+// The P.11.10 initial migration is complete: all 151 routes that
+// pre-dated the spec are now documented. Only the four entries below
+// remain, and none of them should grow into a pattern.
 //
-// **Do not add new entries below the "initial migration" header for
-// new endpoints.** New endpoints must go directly into openapi.yaml.
+// **Do not add new entries here for new endpoints.** New routes must
+// go directly into openapi.yaml, per the rule in CLAUDE.md
+// ("OpenAPI Contract"). If you find yourself wanting to add to this
+// list, it's almost certainly the wrong move — document the endpoint
+// instead.
 var undocumentedRoutes = map[string]bool{
-	// -- Genuinely undocumented (permanent) --
 	// Health probe — pure liveness, not an API endpoint.
 	"GET /api/v1/health": true,
 	// The spec endpoints themselves — we don't declare them inside the
@@ -60,22 +58,6 @@ var undocumentedRoutes = map[string]bool{
 	"GET /api/v1/openapi.json": true,
 	"GET /api/v1/openapi.yaml": true,
 	"GET /api/v1/docs":         true,
-
-	// -- Initial migration scaffolding (P.11.10) --
-	// Shrink by moving each entry into openapi.yaml, per endpoint group.
-	"DELETE /api/v1/proxy/routes/{id}":                    true,
-	"GET /api/v1/proxy/routes":                            true,
-	"GET /api/v1/proxy/status":                            true,
-	"GET /api/v1/ws/events":                               true,
-	"GET /api/v1/ws/exec/{id}":                            true,
-	"GET /api/v1/ws/logs/{id}":                            true,
-	"GET /api/v1/ws/stats/{id}":                           true,
-	"POST /api/v1/convert/run-to-compose":                 true,
-	"POST /api/v1/proxy/disable":                          true,
-	"POST /api/v1/proxy/enable":                           true,
-	"POST /api/v1/proxy/routes":                           true,
-	"POST /api/v1/ws/ticket":                              true,
-	"PUT /api/v1/proxy/routes/{id}":                       true,
 }
 
 func TestOpenAPIDriftAgainstRoutes(t *testing.T) {
