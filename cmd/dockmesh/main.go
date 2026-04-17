@@ -45,6 +45,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/scaling"
 	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
+	"github.com/dockmesh/dockmesh/internal/registries"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -293,6 +294,12 @@ func main() {
 	apiTokensSvc.Start(ctx)
 	middleware.APITokensStore = apiTokensSvc
 
+	// Registry credentials (P.11.7). Stateless — no background workers.
+	// Passwords encrypt via the shared secrets service; without secrets
+	// encryption the store still works but passwords sit as plaintext
+	// bytes in the DB, same trade-off as the existing .env storage.
+	registriesSvc := registries.New(database, secretsSvc)
+
 	// Host tags (P.11.2). In-memory cache loaded once at startup; kept
 	// fresh after every mutation via Load() inside the service.
 	hostTagsSvc := hosttags.New(database)
@@ -337,6 +344,7 @@ func main() {
 		Settings:     settingsStore,
 		GlobalEnv:    globalEnvStore,
 		APITokens:    apiTokensSvc,
+		Registries:   registriesSvc,
 		JWTSecret:    cfg.JWTSecret,
 	})
 	router := api.NewRouter(h, authSvc, webFS)

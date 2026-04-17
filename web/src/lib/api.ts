@@ -249,6 +249,39 @@ export interface ApiToken {
   revoked_at?: string;
 }
 
+// P.11.7. Password is never returned — `has_password` tells the UI
+// whether one is stored so the edit dialog can render
+// "leave blank to keep existing".
+export interface Registry {
+  id: number;
+  name: string;
+  url: string;
+  username?: string;
+  has_password: boolean;
+  scope_tags?: string[];
+  last_tested_at?: string;
+  last_test_ok?: boolean;
+  last_test_error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RegistryInput {
+  name: string;
+  url: string;
+  username?: string;
+  password?: string;       // optional on update — empty = keep existing
+  clear_password?: boolean; // explicit wipe; takes precedence over password
+  scope_tags?: string[];
+}
+
+export interface RegistryTestResult {
+  ok: boolean;
+  status?: string;
+  identity?: boolean;
+  error?: string;
+}
+
 export interface SystemMetrics {
   cpu_percent: number;
   cpu_cores: number;
@@ -713,6 +746,26 @@ export const api = {
       }),
     revoke: (id: number) =>
       request<void>(`/settings/api-tokens/${id}`, { method: 'DELETE' })
+  },
+
+  registries: {
+    list: () => request<Registry[]>('/settings/registries'),
+    create: (input: RegistryInput) =>
+      request<Registry>('/settings/registries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input)
+      }),
+    update: (id: number, input: RegistryInput) =>
+      request<Registry>(`/settings/registries/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input)
+      }),
+    delete: (id: number) =>
+      request<void>(`/settings/registries/${id}`, { method: 'DELETE' }),
+    test: (id: number) =>
+      request<RegistryTestResult>(`/settings/registries/${id}/test`, { method: 'POST' })
   },
 
   globalEnv: {
