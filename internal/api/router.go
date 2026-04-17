@@ -30,6 +30,15 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 		AllowCredentials: true,
 	}))
 
+	// Kubernetes-style health probes (P.12.2). Mounted at the router
+	// root, unauthenticated, so k8s / docker-compose healthchecks /
+	// any load balancer reach them without an API version or token.
+	// /healthz/live = process alive. /healthz/ready = DB pingable AND
+	// not draining. Load balancers flip /ready to 503 during SIGTERM
+	// drain so new requests route elsewhere while in-flight ones finish.
+	r.Get("/healthz/live", h.Live)
+	r.Get("/healthz/ready", h.Ready)
+
 	// P.11.9 — Prometheus scrape endpoint mounted at router root so
 	// operators configure prometheus.yml with just the host (no API
 	// version in the path). When metricsAuth is true (default), the

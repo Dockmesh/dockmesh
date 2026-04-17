@@ -59,6 +59,9 @@ var undocumentedRoutes = map[string]bool{
 	"GET /api/v1/openapi.yaml": true,
 	"GET /api/v1/docs":         true,
 }
+// Note: the k8s /healthz/live + /healthz/ready probes (P.12.2) live
+// at the router root, not under /api/v1, so the drift-test walker's
+// prefix filter skips them entirely. No allow-list entry needed.
 
 func TestOpenAPIDriftAgainstRoutes(t *testing.T) {
 	spec, err := openapi.Load()

@@ -494,10 +494,23 @@ func main() {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
 
-	slog.Info("shutting down")
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// P.12.2 — graceful shutdown.
+	//
+	// Flip the readiness flag FIRST so any load balancer in front
+	// of us starts routing new traffic elsewhere (every LB I've seen
+	// polls readiness every few seconds; give it a moment to catch
+	// up before we start rejecting). Then Shutdown() stops accepting
+	// new connections and waits up to 30s for in-flight handlers
+	// (including WebSocket log / exec streams) to finish cleanly.
+	slog.Info("shutting down — draining readiness")
+	handlers.MarkShuttingDown()
+	time.Sleep(2 * time.Second)
+	slog.Info("shutdown: stop accepting new connections")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
-	_ = srv.Shutdown(shutdownCtx)
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("http shutdown", "err", err)
+	}
 }
 
 // auditTargetsAdapter bridges audit.Retention's TargetWriter interface
