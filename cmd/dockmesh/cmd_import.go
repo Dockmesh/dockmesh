@@ -113,9 +113,8 @@ func importComposeDir(args []string) error {
 		name, nameErr := slugifyStackName(*prefix + e.Name())
 		res := importResult{source: subdir, stack: name}
 
-		switch {
-		case nameErr != nil:
-			res.action = fail3(*dryRun, "fail")
+		if nameErr != nil {
+			res.action = failAction(*dryRun)
 			res.reason = nameErr.Error()
 			results = append(results, res)
 			continue
@@ -123,7 +122,7 @@ func importComposeDir(args []string) error {
 
 		composeBytes, readErr := os.ReadFile(composePath)
 		if readErr != nil {
-			res.action = fail3(*dryRun, "fail")
+			res.action = failAction(*dryRun)
 			res.reason = "read compose: " + readErr.Error()
 			results = append(results, res)
 			continue
@@ -225,12 +224,14 @@ func slugifyStackName(raw string) (string, error) {
 	return s, nil
 }
 
-// fail3 picks between "fail"/"would-fail" depending on dry-run mode.
-func fail3(dryRun bool, base string) string {
+// failAction returns the status string for a failure, branching on
+// whether we're in dry-run mode so the report can tell would-fail
+// from an actual fail.
+func failAction(dryRun bool) string {
 	if dryRun {
-		return "would-" + base
+		return "would-fail"
 	}
-	return base
+	return "failed"
 }
 
 func printImportReport(results []importResult, dryRun bool) error {
