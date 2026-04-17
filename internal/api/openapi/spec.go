@@ -93,10 +93,22 @@ type Operation struct {
 	Path   string // "/containers/{id}"
 }
 
+// httpVerbs is the set of map keys under a path item that map to actual
+// HTTP operations. OpenAPI also allows `parameters`, `summary`,
+// `description`, `servers` at the path-item level — those are metadata,
+// not routes, so we filter them out.
+var httpVerbs = map[string]bool{
+	"get": true, "put": true, "post": true, "delete": true,
+	"options": true, "head": true, "patch": true, "trace": true,
+}
+
 func (s *Spec) Operations() []Operation {
 	out := []Operation{}
 	for path, methods := range s.Paths {
 		for m := range methods {
+			if !httpVerbs[m] {
+				continue
+			}
 			out = append(out, Operation{Method: upperASCII(m), Path: path})
 		}
 	}
