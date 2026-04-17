@@ -1,10 +1,10 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { api, ApiError, type Agent, type AgentCreateResult, type DrainPlan } from '$lib/api';
+  import { api, ApiError, type Agent, type AgentCreateResult, type DrainPlan, type AgentUpgradePolicy } from '$lib/api';
   import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
-  import { Server, Plus, Trash2, RefreshCw, Copy, CheckCircle2, ArrowDownToLine, Tag, X } from 'lucide-svelte';
+  import { Server, Plus, Trash2, RefreshCw, Copy, CheckCircle2, ArrowDownToLine, Tag, X, ArrowUpCircle } from 'lucide-svelte';
 
   let agents = $state<Agent[]>([]);
   let loading = $state(true);
@@ -139,6 +139,58 @@
     }
   }
 
+  // --- P.11.16 Upgrade policy ---
+  let upgradePolicy = $state<AgentUpgradePolicy | null>(null);
+  let upgradeBusy = $state(false);
+  let upgradingAgent = $state<string | null>(null);
+
+  async function loadUpgradePolicy() {
+    if (!allowed('user.manage')) return;
+    try { upgradePolicy = await api.agents.getUpgradePolicy(); } catch { /* ignore */ }
+  }
+
+  async function setUpgradeMode(mode: 'auto' | 'manual' | 'staged') {
+    upgradeBusy = true;
+    try {
+      upgradePolicy = await api.agents.setUpgradePolicy({
+        mode,
+        stage_percent: upgradePolicy?.stage_percent || 10,
+        stage_gap_sec: upgradePolicy?.stage_gap_sec || 300
+      });
+      toast.success(`Upgrade mode: ${mode}`);
+    } catch (err) {
+      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      upgradeBusy = false;
+    }
+  }
+
+  async function runUpgradeNow() {
+    upgradeBusy = true;
+    try {
+      upgradePolicy = await api.agents.runUpgradePolicy();
+      toast.success('Evaluation triggered');
+    } catch (err) {
+      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      upgradeBusy = false;
+    }
+  }
+
+  async function upgradeAgent(id: string, name: string) {
+    upgradingAgent = id;
+    try {
+      const res = await api.agents.upgrade(id);
+      toast.success('Upgrade dispatched', `${name} → ${res.version}`);
+      // Refresh both agent list + policy so the counts update.
+      await Promise.all([load(), loadUpgradePolicy()]);
+    } catch (err) {
+      toast.error('Upgrade failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      upgradingAgent = null;
+    }
+  }
+
   async function create(e: Event) {
     e.preventDefault();
     creating = true;
@@ -196,9 +248,10 @@
       return;
     }
     load();
+    loadUpgradePolicy();
     // Poll every 5s so status flips from pending → online without a manual refresh.
     const timer = setInterval(() => {
-      if (document.visibilityState === 'visible') load();
+      if (document.visibilityState === 'visible') { load(); loadUpgradePolicy(); }
     }, 5000);
     return () => clearInterval(timer);
   });
@@ -221,6 +274,54 @@
       </Button>
     </div>
   </div>
+
+  <!-- P.11.16 Upgrade-policy panel -->
+  {#if upgradePolicy}
+    <Card class="p-4">
+      <div class="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="flex items-center gap-2">
+            <ArrowUpCircle class="w-4 h-4 text-[var(--fg-muted)]" />
+            <h3 class="text-sm font-semibold">Agent upgrade policy</h3>
+          </div>
+          <p class="text-xs text-[var(--fg-muted)] mt-1">
+            Server: <span class="font-mono">{upgradePolicy.server_version}</span>
+            · {upgradePolicy.connected_up_to_date} / {upgradePolicy.connected_total} agents up-to-date
+            {#if upgradePolicy.connected_pending > 0}
+              · <span class="text-[var(--color-warning-400)]">{upgradePolicy.connected_pending} drifted</span>
+            {/if}
+          </p>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <div class="inline-flex rounded-md border border-[var(--border)] p-0.5 text-xs">
+            {#each ['manual', 'staged', 'auto'] as mode}
+              <button
+                class="px-2 py-1 rounded-sm {upgradePolicy.mode === mode ? 'bg-[var(--bg-muted)] text-[var(--fg)]' : 'text-[var(--fg-muted)] hover:text-[var(--fg)]'}"
+                disabled={upgradeBusy}
+                onclick={() => setUpgradeMode(mode as 'auto' | 'manual' | 'staged')}
+              >{mode}</button>
+            {/each}
+          </div>
+          <Button variant="secondary" onclick={runUpgradeNow} disabled={upgradeBusy || upgradePolicy.mode === 'manual' || upgradePolicy.connected_pending === 0}>
+            Run now
+          </Button>
+        </div>
+      </div>
+      {#if upgradePolicy.mode === 'staged'}
+        <p class="text-xs text-[var(--fg-muted)] mt-2">
+          Staged: {upgradePolicy.stage_percent ?? 10}% of drifted agents per tick (60s cadence). Safer for large fleets when a new binary might be incompatible.
+        </p>
+      {:else if upgradePolicy.mode === 'auto'}
+        <p class="text-xs text-[var(--fg-muted)] mt-2">
+          Auto: every drifted agent gets upgraded on the next tick. Good for homelabs, risky for large fleets.
+        </p>
+      {:else}
+        <p class="text-xs text-[var(--fg-muted)] mt-2">
+          Manual: nothing happens automatically — use the per-agent Upgrade button below.
+        </p>
+      {/if}
+    </Card>
+  {/if}
 
   {#if loading && agents.length === 0}
     <Card><Skeleton class="m-5" width="80%" height="6rem" /></Card>
@@ -268,6 +369,18 @@
               <Tag class="w-3.5 h-3.5 text-[var(--fg-muted)]" />
             </Button>
             {#if a.status === 'online'}
+              {#if upgradePolicy && a.version && a.version !== upgradePolicy.server_version}
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onclick={() => upgradeAgent(a.id, a.name)}
+                  disabled={upgradingAgent === a.id}
+                  aria-label="Upgrade agent"
+                  title="Upgrade to {upgradePolicy.server_version}"
+                >
+                  <ArrowUpCircle class="w-3.5 h-3.5 text-[var(--color-brand-400)] {upgradingAgent === a.id ? 'animate-pulse' : ''}" />
+                </Button>
+              {/if}
               <Button size="xs" variant="ghost" onclick={() => openDrain(a.id)} aria-label="Drain host">
                 <ArrowDownToLine class="w-3.5 h-3.5 text-[var(--color-warning-400)]" />
               </Button>
