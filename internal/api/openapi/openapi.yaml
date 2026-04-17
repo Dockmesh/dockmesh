@@ -382,6 +382,282 @@ paths:
         "204": { description: MFA disabled. }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  # -----------------------------------------------------------------------
+  # hosts — inventory of the local daemon + registered agents
+  # -----------------------------------------------------------------------
+  /hosts:
+    get:
+      operationId: hosts.list
+      tags: [hosts]
+      summary: List all hosts visible to the caller
+      description: |
+        Returns the local docker daemon plus every registered agent (online
+        or offline), decorated with host tags. Scoped users (P.11.3) see
+        only hosts whose tags match their scope.
+      responses:
+        "200":
+          description: Host list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/HostInfo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # -----------------------------------------------------------------------
+  # host-tags — free-form host tagging
+  # -----------------------------------------------------------------------
+  /hosts/tags/all:
+    get:
+      operationId: host_tags.all
+      tags: [host-tags]
+      summary: Global distinct set of tags across all hosts
+      description: Used by the UI chip-input to autocomplete existing tags.
+      responses:
+        "200":
+          description: Tag list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /hosts/{id}/tags:
+    parameters:
+      - $ref: "#/components/parameters/HostIDPath"
+    get:
+      operationId: host_tags.list
+      tags: [host-tags]
+      summary: Tags assigned to one host
+      responses:
+        "200":
+          description: Tags.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      operationId: host_tags.set
+      tags: [host-tags]
+      summary: Replace the full tag list for a host
+      description: |
+        Canonicalises the input (lowercase, dedupes) and validates the
+        `[a-z0-9][a-z0-9-]{0,31}` per-tag syntax. Max 20 tags per host.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tags]
+              properties:
+                tags:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: The canonicalised tag list that was stored.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: Too many tags (max 20).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      operationId: host_tags.add
+      tags: [host-tags]
+      summary: Add a single tag to a host
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tag]
+              properties:
+                tag: { type: string, example: prod }
+      responses:
+        "200":
+          description: Updated tag list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /hosts/{id}/tags/{tag}:
+    delete:
+      operationId: host_tags.remove
+      tags: [host-tags]
+      summary: Remove one tag from a host
+      parameters:
+        - $ref: "#/components/parameters/HostIDPath"
+        - name: tag
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # -----------------------------------------------------------------------
+  # agents — remote-host lifecycle (enroll, list, revoke, self-upgrade)
+  # -----------------------------------------------------------------------
+  /agents:
+    get:
+      operationId: agents.list
+      tags: [agents]
+      summary: List all registered remote agents
+      responses:
+        "200":
+          description: Agents.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Agent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: agents.create
+      tags: [agents]
+      summary: Register a new agent and issue a one-time install token
+      description: |
+        Allocates the agent row in `pending` state and returns a one-time
+        enrollment token the admin pastes into the agent host's install
+        command. The plaintext token is shown ONCE — lose it and you
+        revoke + recreate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, example: prod-01 }
+      responses:
+        "201":
+          description: Agent registered; install hint returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentCreateResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Name already taken.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /agents/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: agents.get
+      tags: [agents]
+      summary: Inspect one agent
+      responses:
+        "200":
+          description: Agent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: agents.delete
+      tags: [agents]
+      summary: Revoke an agent
+      description: |
+        Removes the DB row. The agent's client cert is no longer recognised
+        by the mTLS listener on the next reconnect. Host tags are dropped
+        automatically.
+      responses:
+        "204": { description: Revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /agents/{id}/upgrade:
+    post:
+      operationId: agents.upgrade
+      tags: [agents]
+      summary: Trigger a self-upgrade on a connected agent
+      description: |
+        The agent downloads a fresh `dockmesh-agent-linux-<arch>` binary
+        from the server's `/install/` path and restarts its systemd unit.
+        Agent must be currently connected.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Upgrade dispatched.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: upgrading }
+                  version: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          description: Agent is not currently connected.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /agents/enroll:
+    post:
+      operationId: agents.enroll
+      tags: [agents]
+      summary: "Public: swap a one-time token for an agent client cert"
+      description: |
+        Called by the agent binary on first boot. There is NO Bearer auth
+        on this route — the one-time token IS the authentication.
+        Returns the freshly-signed client cert, key, CA cert, and the
+        wss URL the agent should dial.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentEnrollRequest" }
+      responses:
+        "200":
+          description: Enrollment successful — cert issued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentEnrollResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Invalid or already-used token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -423,6 +699,86 @@ components:
           description: Host tags this user is scoped to. Empty / omitted = access to all hosts.
         mfa_enabled: { type: boolean }
 
+    HostInfo:
+      type: object
+      required: [id, name, kind, status]
+      properties:
+        id:
+          type: string
+          description: '"local" for the central daemon, otherwise an agent UUID.'
+        name: { type: string }
+        kind:
+          type: string
+          enum: [local, agent]
+        status:
+          type: string
+          enum: [online, offline, pending, revoked]
+        tags:
+          type: array
+          items: { type: string }
+
+    Agent:
+      type: object
+      required: [id, name, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        status:
+          type: string
+          enum: [pending, online, offline, revoked]
+        version: { type: string }
+        os: { type: string }
+        arch: { type: string }
+        hostname: { type: string }
+        docker_version: { type: string }
+        cert_fingerprint: { type: string }
+        last_seen_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    AgentCreateResult:
+      type: object
+      required: [agent, token, install_hint]
+      description: |
+        Returned ONCE on agent creation. `token` is shown only here —
+        losing it means you have to delete and recreate the agent.
+      properties:
+        agent: { $ref: "#/components/schemas/Agent" }
+        token:
+          type: string
+          description: One-time enrollment token. Paste into the install command on the agent host.
+        enroll_url:
+          type: string
+          format: uri
+        agent_url:
+          type: string
+          description: wss:// URL the agent will dial after enrollment.
+        install_hint:
+          type: string
+          description: Single-line install command to run on the agent host as root.
+
+    AgentEnrollRequest:
+      type: object
+      required: [token, hostname, os, arch, version]
+      properties:
+        token: { type: string }
+        hostname: { type: string }
+        os: { type: string, example: linux }
+        arch: { type: string, example: amd64 }
+        version: { type: string }
+        docker_version: { type: string }
+
+    AgentEnrollResponse:
+      type: object
+      required: [agent_id, agent_name, client_cert, client_key, ca_cert, agent_url]
+      properties:
+        agent_id: { type: string, format: uuid }
+        agent_name: { type: string }
+        client_cert: { type: string, description: PEM-encoded client cert. }
+        client_key: { type: string, description: PEM-encoded private key (shown once). }
+        ca_cert: { type: string, description: PEM-encoded CA cert the agent should pin. }
+        agent_url: { type: string, description: wss:// URL the agent should dial. }
+
     LoginResult:
       type: object
       description: |
@@ -449,11 +805,18 @@ components:
     HostQuery:
       name: host
       in: query
-      description: Target host id. Empty or `local` = central server's daemon; otherwise an agent UUID. `all` fans out to every online host.
+      description: "Target host id. Empty or `local` = central server's daemon; otherwise an agent UUID. `all` fans out to every online host."
       required: false
       schema:
         type: string
         default: local
+    HostIDPath:
+      name: id
+      in: path
+      description: Host id — "local" for the central daemon, otherwise an agent UUID.
+      required: true
+      schema:
+        type: string
 
   responses:
     Unauthorized:
