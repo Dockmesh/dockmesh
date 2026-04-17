@@ -52,6 +52,14 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
+	if errors.Is(err, auth.ErrAccountLocked) {
+		if h.Audit != nil {
+			h.Audit.Write(r.Context(), "", audit.ActionLoginFailed, req.Username,
+				map[string]string{"ip": ip, "reason": "locked"})
+		}
+		writeError(w, http.StatusLocked, "account locked — contact an administrator to unlock")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "login failed")
 		return

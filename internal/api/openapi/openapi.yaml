@@ -385,6 +385,106 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   # -----------------------------------------------------------------------
+  # sessions — list / revoke own login sessions (P.12.1)
+  # -----------------------------------------------------------------------
+  /sessions:
+    get:
+      operationId: auth.sessions_list
+      tags: [auth]
+      summary: List the caller's own login sessions
+      description: |
+        Returns every session family-id the current user owns with
+        user_agent + IP + created_at + expires_at + revoked_at. No
+        cross-user view — admins see only their own, not everyone's.
+      responses:
+        "200":
+          description: Sessions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /sessions/{family_id}:
+    delete:
+      operationId: auth.sessions_revoke
+      tags: [auth]
+      summary: Revoke one of the caller's sessions
+      description: |
+        Idempotent — calling on an already-revoked session returns 404 so
+        callers can distinguish "not mine" from "already done" without
+        leaking which case it was. Revoking the current session logs
+        the caller out on the next refresh.
+      parameters:
+        - name: family_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Session not found or not owned by the caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # -----------------------------------------------------------------------
+  # auth/policy — password complexity + lockout + rotation (P.12.1)
+  # -----------------------------------------------------------------------
+  /auth/policy:
+    get:
+      operationId: auth.policy_get
+      tags: [auth]
+      summary: Current password + lockout + rotation policy
+      description: Admin-only. The numbers themselves hint at the deployment's hardening level.
+      responses:
+        "200":
+          description: Policy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PasswordPolicy" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: auth.policy_set
+      tags: [auth]
+      summary: Update password / lockout / rotation settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PasswordPolicy" }
+      responses:
+        "200":
+          description: Updated policy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PasswordPolicy" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /users/{id}/unlock:
+    post:
+      operationId: users.unlock
+      tags: [users]
+      summary: "Admin: clear a user's lockout state (P.12.1)"
+      description: |
+        After too many failed logins a user's account is locked. This
+        endpoint clears the lockout + failed-attempts counter so they
+        can log in again. Admin-only — call after verifying via another
+        channel that the real user is who asked for the unlock.
+      parameters:
+        - $ref: "#/components/parameters/UserIDPath"
+      responses:
+        "204": { description: Unlocked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # -----------------------------------------------------------------------
   # hosts — inventory of the local daemon + registered agents
   # -----------------------------------------------------------------------
   /hosts:
@@ -4197,6 +4297,48 @@ components:
     Empty:
       type: object
       description: Empty body — use for 204 No Content endpoints.
+
+    Session:
+      type: object
+      required: [family_id, created_at, expires_at, is_current]
+      description: One active login session — owned by the caller.
+      properties:
+        family_id: { type: string }
+        user_agent: { type: string }
+        ip: { type: string }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+        is_current:
+          type: boolean
+          description: True when this is the session the request came from.
+
+    PasswordPolicy:
+      type: object
+      description: |
+        Password-complexity + account-lockout + rotation config
+        (P.12.1). All fields are optional — omitted values keep their
+        current stored value on PUT. Defaults on a fresh install:
+        min_length=8, no class requirements, lockout_max_attempts=5
+        after 15-minute window.
+      properties:
+        min_length: { type: integer, minimum: 1, maximum: 256 }
+        require_upper: { type: boolean }
+        require_lower: { type: boolean }
+        require_digit: { type: boolean }
+        require_symbol: { type: boolean }
+        rotation_days:
+          type: integer
+          minimum: 0
+          description: 0 = disabled. When > 0, logins after this many days since the last password change trigger a reminder on /me.
+        lockout_max_attempts:
+          type: integer
+          minimum: 0
+          description: 0 = disabled. Consecutive failed logins before the account is locked.
+        lockout_duration_minutes:
+          type: integer
+          minimum: 0
+          description: 0 = disabled. How long the account stays locked once the threshold is hit.
 
     User:
       type: object

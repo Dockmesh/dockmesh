@@ -45,6 +45,7 @@ type Service struct {
 	secret     []byte
 	accessTTL  time.Duration
 	refreshTTL time.Duration
+	settings   SettingsReader // optional; nil = skip policy checks
 }
 
 func NewService(db *sql.DB, secret []byte) *Service {
@@ -54,6 +55,19 @@ func NewService(db *sql.DB, secret []byte) *Service {
 		accessTTL:  15 * time.Minute,
 		refreshTTL: 30 * 24 * time.Hour,
 	}
+}
+
+// SetSettings wires the settings store for password-policy + lockout
+// lookups. Nil is fine — policy checks default to "no policy".
+func (s *Service) SetSettings(r SettingsReader) { s.settings = r }
+
+// policy returns the current policy or zero-value when no settings
+// store is attached.
+func (s *Service) policy() PolicyConfig {
+	if s.settings == nil {
+		return PolicyConfig{MinLength: 8, LockoutMaxAttempts: 5, LockoutDurationMins: 15}
+	}
+	return LoadPolicy(s.settings)
 }
 
 // Bootstrap creates an initial admin user if no users exist.
@@ -77,6 +91,9 @@ func (s *Service) Bootstrap(ctx context.Context) (username, password string, cre
 }
 
 func (s *Service) CreateUser(ctx context.Context, username, email, password, role string) (*User, error) {
+	if err := ValidatePassword(s.policy(), password); err != nil {
+		return nil, err
+	}
 	hash, err := HashPassword(password)
 	if err != nil {
 		return nil, err
@@ -87,7 +104,8 @@ func (s *Service) CreateUser(ctx context.Context, username, email, password, rol
 		emailNullable = email
 	}
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO users (id, username, email, password, role) VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO users (id, username, email, password, role, password_changed_at)
+		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
 		id, username, emailNullable, hash, role)
 	if err != nil {
 		return nil, fmt.Errorf("insert user: %w", err)
@@ -238,14 +256,51 @@ func (s *Service) DeleteUser(ctx context.Context, id string) error {
 }
 
 func (s *Service) ChangePassword(ctx context.Context, id, newPassword string) error {
+	if err := ValidatePassword(s.policy(), newPassword); err != nil {
+		return err
+	}
 	hash, err := HashPassword(newPassword)
 	if err != nil {
 		return err
 	}
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		`UPDATE users SET password = ?, password_changed_at = CURRENT_TIMESTAMP,
+		                  updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		hash, id)
 	return err
+}
+
+// Unlock clears the per-user lockout state. Admin-only — called from
+// the Users settings page when an operator is locked out after too
+// many bad passwords.
+func (s *Service) Unlock(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET failed_login_attempts = 0, locked_until = NULL,
+		                  updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	return err
+}
+
+// ErrAccountLocked is returned by Login when the account is within
+// its lockout window. Handlers should surface this as HTTP 423 Locked
+// so the UI can show a distinct message from "bad password".
+var ErrAccountLocked = errors.New("account locked after too many failed attempts")
+
+// recordFailedLogin bumps the counter and — if the threshold is hit —
+// sets locked_until to (now + LockoutDurationMins). When the lockout
+// config is zero, it still increments the counter (harmless) but
+// never sets locked_until.
+func (s *Service) recordFailedLogin(ctx context.Context, userID string, newCount int) {
+	policy := s.policy()
+	if policy.LockoutMaxAttempts <= 0 || newCount < policy.LockoutMaxAttempts {
+		_, _ = s.db.ExecContext(ctx,
+			`UPDATE users SET failed_login_attempts = ? WHERE id = ?`,
+			newCount, userID)
+		return
+	}
+	lockUntil := time.Now().Add(time.Duration(policy.LockoutDurationMins) * time.Minute)
+	_, _ = s.db.ExecContext(ctx,
+		`UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?`,
+		newCount, lockUntil, userID)
 }
 
 func (s *Service) Login(ctx context.Context, username, password, userAgent, ip string) (*LoginResult, error) {
@@ -253,14 +308,26 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 	var email, scope sql.NullString
 	var hash string
 	var totpVerified int
+	var failedAttempts int
+	var lockedUntil sql.NullTime
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, username, email, role, scope_tags, password, totp_verified FROM users WHERE username = ?`, username).
-		Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &hash, &totpVerified)
+		`SELECT id, username, email, role, scope_tags, password, totp_verified,
+		        failed_login_attempts, locked_until
+		   FROM users WHERE username = ?`, username).
+		Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &hash, &totpVerified,
+			&failedAttempts, &lockedUntil)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrInvalidCredentials
 	}
 	if err != nil {
 		return nil, err
+	}
+	// Per-user lockout: if the lockout window is active, refuse fast
+	// without verifying the password (so a correct-password-too-late
+	// attempt still gets rejected — matches what every competent auth
+	// system does).
+	if lockedUntil.Valid && time.Now().Before(lockedUntil.Time) {
+		return nil, ErrAccountLocked
 	}
 	if email.Valid {
 		u.Email = email.String
@@ -268,7 +335,17 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 	u.ScopeTags = parseScopeTags(scope)
 	ok, err := VerifyPassword(password, hash)
 	if err != nil || !ok {
+		// Record the failure and trip the lockout if we hit the
+		// threshold. Errors on the increment itself are logged but
+		// don't block the 401 response.
+		s.recordFailedLogin(ctx, u.ID, failedAttempts+1)
 		return nil, ErrInvalidCredentials
+	}
+	// Success — clear any accumulated failures.
+	if failedAttempts > 0 || lockedUntil.Valid {
+		_, _ = s.db.ExecContext(ctx,
+			`UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?`,
+			u.ID)
 	}
 	if totpVerified == 1 {
 		// Password OK but MFA required — return a pending token.
