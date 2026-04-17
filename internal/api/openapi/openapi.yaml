@@ -919,6 +919,447 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  # -----------------------------------------------------------------------
+  # stacks — compose-file CRUD, deploy/stop, status, scaling, migration
+  # -----------------------------------------------------------------------
+  /stacks:
+    get:
+      operationId: stacks.list
+      tags: [stacks]
+      summary: List all stacks known to the filesystem
+      description: Enriched with deployment info (host + status) when deployed.
+      responses:
+        "200":
+          description: Stacks.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/StackListEntry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: stacks.create
+      tags: [stacks]
+      summary: Create a new stack (compose.yaml + optional .env)
+      description: |
+        Writes the stack to the filesystem under `<stacks_root>/<name>/`.
+        Name must match `[a-z0-9][a-z0-9-]*[a-z0-9]` (2..63 chars, not a
+        reserved word). `.env` is encrypted at rest via the age key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StackInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StackDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: A stack with this name already exists.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /stacks/{name}:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+    get:
+      operationId: stacks.get
+      tags: [stacks]
+      summary: Fetch compose.yaml + .env for one stack
+      responses:
+        "200":
+          description: Detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StackDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: stacks.update
+      tags: [stacks]
+      summary: Update compose.yaml and/or .env for an existing stack
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StackInput" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StackDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: stacks.delete
+      tags: [stacks]
+      summary: Remove a stack's files (does NOT stop running containers)
+      description: |
+        Call `/stacks/{name}/stop` first if the stack is deployed. Deleting
+        the files while containers run orphans them — intentional, so
+        operators can recover by `git pull` restoring the file tree.
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /stacks/{name}/deploy:
+    post:
+      operationId: stacks.deploy
+      tags: [stacks]
+      summary: Deploy a stack onto a target host
+      description: |
+        Ships the compose + env to the target host and runs `docker compose
+        up -d` via the embedded compose executor. On a fresh deploy the
+        deployment record is created; on an existing one, containers are
+        updated in place.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Deploy result with created/updated/unchanged services.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeployResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: Compose validation failed — see message.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /stacks/{name}/stop:
+    post:
+      operationId: stacks.stop
+      tags: [stacks]
+      summary: Stop a deployed stack (docker compose down without -v)
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "204": { description: Stopped. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /stacks/{name}/status:
+    get:
+      operationId: stacks.status
+      tags: [stacks]
+      summary: Current per-service status on the deployed host
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: One row per service.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    service: { type: string }
+                    container_id: { type: string }
+                    state: { type: string, enum: [running, exited, paused, restarting, dead, created] }
+                    status: { type: string }
+                    image: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /stacks/{name}/scale:
+    get:
+      operationId: stacks.scale_overview
+      tags: [stacks]
+      summary: Replica count per service
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Scale snapshot per service.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    service: { type: string }
+                    replicas: { type: integer }
+                    desired: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /stacks/{name}/services/{service}/scale:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+      - $ref: "#/components/parameters/ServicePath"
+      - $ref: "#/components/parameters/HostQuery"
+    get:
+      operationId: stacks.scale_check
+      tags: [stacks]
+      summary: Pre-flight check before scaling a service
+      description: Returns a list of blockers (container_name, hard ports, singleton volumes) that would prevent the scale, or an empty list if safe.
+      responses:
+        "200":
+          description: Check result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  safe: { type: boolean }
+                  blockers:
+                    type: array
+                    items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: stacks.scale_set
+      tags: [stacks]
+      summary: Scale a single service to N replicas
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [replicas]
+              properties:
+                replicas: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Scale result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  service: { type: string }
+                  replicas: { type: integer }
+                  created: { type: array, items: { type: string } }
+                  removed: { type: array, items: { type: string } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: Scale blocked by a safety check (singleton port/volume).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /stacks/{name}/scaling-rules:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+    get:
+      operationId: stacks.scaling_rules_get
+      tags: [stacks]
+      summary: Auto-scaling rules configured for this stack (P.8)
+      responses:
+        "200":
+          description: Rules.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ScalingRule" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: stacks.scaling_rules_set
+      tags: [stacks]
+      summary: Replace the auto-scaling rule set for this stack
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rules]
+              properties:
+                rules:
+                  type: array
+                  items: { $ref: "#/components/schemas/ScalingRule" }
+      responses:
+        "200":
+          description: Stored rules.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ScalingRule" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: stacks.scaling_rules_clear
+      tags: [stacks]
+      summary: Remove all auto-scaling rules for this stack
+      responses:
+        "204": { description: Cleared. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /stacks/{name}/migrate:
+    post:
+      operationId: stacks.migrate
+      tags: [stacks, migrations]
+      summary: Start a cross-host migration (P.9)
+      description: |
+        Snapshots volumes on the source host, ships them over the agent
+        mTLS tunnel to the target host, deploys the stack there, and
+        finally stops the source containers. The source files are kept
+        for rollback until `/migrate/{id}/source` is called.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_host_id]
+              properties:
+                target_host_id: { type: string, format: uuid }
+                include_volumes: { type: boolean, default: true }
+      responses:
+        "202":
+          description: Migration accepted — poll `/migrate/{id}` for progress.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  migration_id: { type: integer, format: int64 }
+                  status: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /stacks/{name}/migrate/preflight:
+    post:
+      operationId: stacks.migrate_preflight
+      tags: [stacks, migrations]
+      summary: Dry-run migration check — returns blockers without starting
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_host_id]
+              properties:
+                target_host_id: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Preflight result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  safe: { type: boolean }
+                  blockers:
+                    type: array
+                    items: { type: string }
+                  volumes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        size_bytes: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /stacks/{name}/migrate/{id}:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+        description: Migration id returned by `/stacks/{name}/migrate`.
+    get:
+      operationId: stacks.migrate_status
+      tags: [stacks, migrations]
+      summary: Poll a running migration
+      responses:
+        "200":
+          description: Current state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MigrationStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /stacks/{name}/migrate/{id}/rollback:
+    post:
+      operationId: stacks.migrate_rollback
+      tags: [stacks, migrations]
+      summary: Roll back a migration (restart source, drop target)
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Rolled back.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MigrationStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Migration in a state that cannot be rolled back.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /stacks/{name}/migrate/{id}/source:
+    delete:
+      operationId: stacks.migrate_finalize
+      tags: [stacks, migrations]
+      summary: Finalise a successful migration (remove source files + volumes)
+      description: |
+        Called by the operator once they've verified the target is healthy.
+        Removes the source host's stack files and (optionally) volumes,
+        giving up the rollback option.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Source cleaned up. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /containers/{id}/metrics:
     get:
       operationId: containers.metrics
@@ -1000,6 +1441,93 @@ components:
           items: { type: string }
           description: Host tags this user is scoped to. Empty / omitted = access to all hosts.
         mfa_enabled: { type: boolean }
+
+    StackInput:
+      type: object
+      required: [name, compose]
+      description: Payload for create / update.
+      properties:
+        name: { type: string, example: my-app }
+        compose:
+          type: string
+          description: Full compose.yaml content.
+        env:
+          type: string
+          description: Optional plaintext .env content. Stored age-encrypted when secrets encryption is enabled.
+
+    StackDetail:
+      type: object
+      required: [name, compose]
+      properties:
+        name: { type: string }
+        compose: { type: string }
+        env: { type: string }
+
+    StackDeployment:
+      type: object
+      description: Where and when a stack was last deployed.
+      properties:
+        host_id: { type: string }
+        host_name: { type: string }
+        deployed_at: { type: string, format: date-time }
+        status: { type: string, enum: [deployed, failed, stopped, unknown] }
+
+    StackListEntry:
+      type: object
+      properties:
+        name: { type: string }
+        compose_path: { type: string }
+        deployment: { $ref: "#/components/schemas/StackDeployment" }
+
+    DeployResult:
+      type: object
+      properties:
+        stack: { type: string }
+        created:
+          type: array
+          items: { type: string }
+          description: Services whose containers were created fresh.
+        updated:
+          type: array
+          items: { type: string }
+        unchanged:
+          type: array
+          items: { type: string }
+        skipped:
+          type: array
+          items: { type: string }
+        warnings:
+          type: array
+          items: { type: string }
+
+    ScalingRule:
+      type: object
+      required: [service, metric, operator, threshold]
+      properties:
+        service: { type: string }
+        metric: { type: string, enum: [cpu_percent, mem_percent] }
+        operator: { type: string, enum: [gt, lt] }
+        threshold: { type: number }
+        min_replicas: { type: integer }
+        max_replicas: { type: integer }
+        cooldown_seconds: { type: integer }
+        duration_seconds: { type: integer }
+
+    MigrationStatus:
+      type: object
+      required: [id, stack, status]
+      properties:
+        id: { type: integer, format: int64 }
+        stack: { type: string }
+        source_host_id: { type: string }
+        target_host_id: { type: string }
+        status:
+          type: string
+          enum: [pending, copying, deploying, verifying, succeeded, failed, rolled_back]
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        progress_percent: { type: number }
+        message: { type: string }
 
     Container:
       type: object
@@ -1169,6 +1697,20 @@ components:
       name: id
       in: path
       description: Container id (long or short form) or name.
+      required: true
+      schema:
+        type: string
+    StackNamePath:
+      name: name
+      in: path
+      description: Stack name — matches `[a-z0-9][a-z0-9-]*[a-z0-9]`, 2..63 chars.
+      required: true
+      schema:
+        type: string
+    ServicePath:
+      name: service
+      in: path
+      description: Service name as declared in the compose file.
       required: true
       schema:
         type: string
