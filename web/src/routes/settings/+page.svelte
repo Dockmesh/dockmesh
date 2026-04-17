@@ -729,10 +729,75 @@
     return ts.slice(0, 19).replace('T', ' ');
   }
 
+  // P.11.13 retention state
+  let retentionCfg = $state<import('$lib/api').AuditRetentionConfig | null>(null);
+  let retentionPreview = $state<import('$lib/api').AuditRetentionPreview | null>(null);
+  let retentionMode = $state<'forever' | 'days' | 'archive_local' | 'archive_target'>('forever');
+  let retentionDays = $state(90);
+  let retentionLocalDir = $state('');
+  let retentionTargetID = $state(0);
+  let retentionTargets = $state<Array<{ id: number; name: string; type: string }>>([]);
+  let retentionBusy = $state(false);
+  let retentionLastResult = $state<import('$lib/api').AuditRetentionResult | null>(null);
+
+  async function loadRetention() {
+    if (!allowed('user.manage')) return;
+    try {
+      const res = await api.audit.getRetention();
+      retentionCfg = res.config;
+      retentionPreview = res.preview;
+      retentionMode = res.config.mode;
+      retentionDays = res.config.days || 90;
+      retentionLocalDir = res.config.local_dir || '';
+      retentionTargetID = res.config.target_id || 0;
+    } catch {
+      /* ignore — setting unavailable is OK */
+    }
+    try {
+      // Reuse backup targets list for the archive_target picker.
+      const list = await api.backups.listTargets();
+      retentionTargets = list.map((t) => ({ id: t.id, name: t.name, type: t.type }));
+    } catch { /* ignore */ }
+  }
+
+  async function saveRetention() {
+    retentionBusy = true;
+    try {
+      const res = await api.audit.setRetention({
+        mode: retentionMode,
+        days: retentionMode === 'forever' ? undefined : retentionDays,
+        local_dir: retentionMode === 'archive_local' ? retentionLocalDir || undefined : undefined,
+        target_id: retentionMode === 'archive_target' ? retentionTargetID || undefined : undefined
+      });
+      retentionCfg = res.config;
+      retentionPreview = res.preview;
+      toast.success('Retention policy saved');
+    } catch (err) {
+      toast.error('Failed to save', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      retentionBusy = false;
+    }
+  }
+
+  async function runRetentionNow() {
+    if (retentionMode === 'forever') return;
+    if (!confirm(`Run the retention policy now? This will prune ${retentionPreview?.would_prune ?? 'some'} audit rows.`)) return;
+    retentionBusy = true;
+    try {
+      retentionLastResult = await api.audit.runRetention();
+      toast.success(`Pruned ${retentionLastResult.pruned} rows`);
+      await loadRetention();
+    } catch (err) {
+      toast.error('Run failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      retentionBusy = false;
+    }
+  }
+
   $effect(() => {
     if (tab === 'account') loadMe();
     else if (tab === 'users') { loadUsers(); loadRoles(); }
-    else if (tab === 'audit') loadAudit();
+    else if (tab === 'audit') { loadAudit(); loadRetention(); }
     else if (tab === 'sso') { loadOIDC(); loadRoles(); }
     else if (tab === 'system') { loadBackup(); loadSystemInfo(); }
     else if (tab === 'roles') loadRoles();
@@ -963,6 +1028,70 @@
       </Card>
     {/if}
   {:else if tab === 'audit'}
+    <!-- P.11.13 Retention panel — always above the list so admins see policy status first -->
+    {#if allowed('user.manage')}
+      <Card class="p-4 space-y-3">
+        <div class="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h3 class="text-sm font-semibold">Retention</h3>
+            <p class="text-xs text-[var(--fg-muted)]">
+              Older audit entries can be kept forever, pruned after N days, or archived before pruning.
+            </p>
+          </div>
+          {#if retentionCfg?.mode !== 'forever' && retentionPreview}
+            <div class="text-xs text-[var(--fg-muted)] text-right">
+              {retentionPreview.total_rows} total rows
+              {#if retentionPreview.would_prune > 0}
+                · <span class="text-[var(--color-warning-400)]">{retentionPreview.would_prune} would prune</span>
+              {:else}
+                · nothing due
+              {/if}
+            </div>
+          {/if}
+        </div>
+        <div class="grid sm:grid-cols-[160px_1fr] gap-3 items-start">
+          <label class="text-xs text-[var(--fg-muted)]" for="ret-mode">Mode</label>
+          <select id="ret-mode" class="dm-input max-w-xs" bind:value={retentionMode}>
+            <option value="forever">Forever (default)</option>
+            <option value="days">Keep last N days</option>
+            <option value="archive_local">Archive locally, then prune</option>
+            <option value="archive_target">Archive to backup target, then prune</option>
+          </select>
+          {#if retentionMode !== 'forever'}
+            <label class="text-xs text-[var(--fg-muted)]" for="ret-days">Retention (days)</label>
+            <input id="ret-days" type="number" min="1" class="dm-input max-w-xs" bind:value={retentionDays} />
+          {/if}
+          {#if retentionMode === 'archive_local'}
+            <label class="text-xs text-[var(--fg-muted)]" for="ret-local-dir">Local directory</label>
+            <input id="ret-local-dir" class="dm-input max-w-xs" placeholder="./data/audit-archive" bind:value={retentionLocalDir} />
+          {/if}
+          {#if retentionMode === 'archive_target'}
+            <label class="text-xs text-[var(--fg-muted)]" for="ret-target">Backup target</label>
+            <select id="ret-target" class="dm-input max-w-xs" bind:value={retentionTargetID}>
+              <option value={0}>— pick one —</option>
+              {#each retentionTargets as t}
+                <option value={t.id}>{t.name} ({t.type})</option>
+              {/each}
+            </select>
+          {/if}
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <Button variant="primary" onclick={saveRetention} disabled={retentionBusy}>
+            {retentionBusy ? 'Saving…' : 'Save'}
+          </Button>
+          <Button variant="secondary" onclick={runRetentionNow} disabled={retentionBusy || retentionMode === 'forever'}>
+            Run now
+          </Button>
+          {#if retentionLastResult}
+            <span class="text-xs text-[var(--fg-muted)]">
+              Last run: pruned {retentionLastResult.pruned}
+              {#if retentionLastResult.archived} · archived to <code>{retentionLastResult.archive_path}</code>{/if}
+            </span>
+          {/if}
+        </div>
+      </Card>
+    {/if}
+
     <div class="flex items-center gap-3 flex-wrap">
       <div class="relative flex-1 min-w-[180px] max-w-xs">
         <input type="search" placeholder="Search user, action, target…" bind:value={auditSearch} class="dm-input pl-3 pr-3 py-1.5 text-xs w-full" />

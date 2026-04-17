@@ -24,3 +24,29 @@ type Entry struct {
 	Size    int64     `json:"size"`
 	ModTime time.Time `json:"mod_time"`
 }
+
+// Build constructs a live Target from a stored type + config. Exported
+// so callers outside the backup package (e.g. audit retention) can
+// reuse the same adapter code without importing backup and creating a
+// cycle.
+func Build(typ string, cfg any) (Target, error) {
+	switch typ {
+	case "local":
+		return NewLocal(cfg)
+	case "s3":
+		return NewS3(cfg)
+	case "sftp":
+		return NewSFTP(cfg)
+	case "smb":
+		return NewSMB(cfg)
+	case "webdav":
+		return NewWebDAV(cfg)
+	}
+	return nil, errUnknownType
+}
+
+var errUnknownType = &targetError{"unknown target type"}
+
+type targetError struct{ msg string }
+
+func (e *targetError) Error() string { return e.msg }

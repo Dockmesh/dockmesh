@@ -2526,6 +2526,74 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /audit/retention:
+    get:
+      operationId: audit.retention_get
+      tags: [audit]
+      summary: Current retention config + preview of next prune run (P.11.13)
+      responses:
+        "200":
+          description: Config + preview.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  config: { $ref: "#/components/schemas/AuditRetentionConfig" }
+                  preview: { $ref: "#/components/schemas/AuditRetentionPreview" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: audit.retention_set
+      tags: [audit]
+      summary: Update retention config
+      description: |
+        Stored in the settings table. Takes effect on the next scheduled
+        run (03:00 server-local) or immediately via
+        `POST /audit/retention/run`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuditRetentionConfig" }
+      responses:
+        "200":
+          description: Updated config + fresh preview.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  config: { $ref: "#/components/schemas/AuditRetentionConfig" }
+                  preview: { $ref: "#/components/schemas/AuditRetentionPreview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /audit/retention/run:
+    post:
+      operationId: audit.retention_run
+      tags: [audit]
+      summary: Trigger the retention job now (admin-only)
+      description: |
+        Runs the configured policy immediately. For `archive_local` /
+        `archive_target` modes, writes the archive before pruning so a
+        failure to write does not lose data. A `chain.bridge` audit
+        entry is written before prune to document the transition.
+      responses:
+        "200":
+          description: Run result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditRetentionResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "502":
+          description: Archive step failed (credentials, disk space, …).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /audit/verify:
     get:
       operationId: audit.verify
@@ -4455,6 +4523,55 @@ components:
         name: { type: string }
         type: { type: string }
         config: { type: object }
+
+    AuditRetentionConfig:
+      type: object
+      required: [mode]
+      description: Retention policy for the tamper-evident audit log (P.11.13).
+      properties:
+        mode:
+          type: string
+          enum: [forever, days, archive_local, archive_target]
+          description: |
+            `forever` never prunes; `days` keeps the last N days;
+            `archive_local` writes older entries as NDJSON to a local
+            directory before prune; `archive_target` writes them to a
+            saved backup_target (SFTP/SMB/WebDAV/S3/local) before prune.
+        days:
+          type: integer
+          minimum: 1
+          description: Retention window in days (required unless mode=forever).
+        target_id:
+          type: integer
+          format: int64
+          description: backup_targets.id — required when mode=archive_target.
+        local_dir:
+          type: string
+          description: Filesystem directory for `archive_local`. Default `./data/audit-archive`.
+
+    AuditRetentionPreview:
+      type: object
+      properties:
+        mode: { type: string }
+        cutoff_at: { type: string, format: date-time }
+        would_prune: { type: integer }
+        total_rows: { type: integer }
+        oldest_at: { type: string, format: date-time }
+
+    AuditRetentionResult:
+      type: object
+      required: [mode, pruned, duration_ms]
+      properties:
+        mode: { type: string }
+        cutoff_at: { type: string, format: date-time }
+        pruned: { type: integer }
+        archived: { type: boolean }
+        archive_path: { type: string, description: "Local path or target-relative object name when archived." }
+        bridge_row_id:
+          type: integer
+          format: int64
+          description: The id of the `audit.chain_bridge` row inserted before the prune.
+        duration_ms: { type: integer, format: int64 }
 
     AuditEntry:
       type: object
