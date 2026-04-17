@@ -97,11 +97,290 @@ tags:
   - name: secrets
     description: age-encrypted secrets service state.
 
-paths: {}
-# Paths are filled in per endpoint-group commit. The drift test
-# (TestOpenAPIDriftAgainstRoutes) enforces that every registered chi
-# route has a matching operation here and vice versa — it will stay
-# red until each group is migrated.
+paths:
+  # -----------------------------------------------------------------------
+  # auth — session flow, MFA, OIDC redirects
+  # -----------------------------------------------------------------------
+  /auth/login:
+    post:
+      operationId: auth.login
+      tags: [auth]
+      summary: Log in with username + password
+      description: |
+        Exchanges a username + password for a session. If the user has MFA
+        enabled, the response contains `mfa_required: true` and an
+        `mfa_token` — clients must then call `POST /auth/mfa` with the
+        token plus the 6-digit code to finish the login.
+
+        Rate-limited per source IP — 10 failures / minute, 5 min lockout
+        after that threshold. A 429 response includes `Retry-After`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, example: admin }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Login succeeded. For MFA users, `mfa_required=true` and the client must complete `/auth/mfa`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: Too many failed attempts — try again later.
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until lockout expires.
+
+  /auth/logout:
+    post:
+      operationId: auth.logout
+      tags: [auth]
+      summary: Invalidate a refresh token
+      description: Revokes the refresh token's entire session family. Idempotent.
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "204": { description: Logged out. }
+
+  /auth/refresh:
+    post:
+      operationId: auth.refresh
+      tags: [auth]
+      summary: Rotate an access token
+      description: |
+        Exchanges a refresh token for a fresh access+refresh pair. Refresh
+        tokens are rotated on every use. Reusing a previously-rotated token
+        revokes the whole session family.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: New token pair.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Invalid, expired, or reused refresh token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/mfa:
+    post:
+      operationId: auth.login_mfa
+      tags: [auth]
+      summary: Complete a two-factor login
+      description: |
+        Second step of the login flow when the user has MFA enabled.
+        Accepts a 6-digit TOTP code or a recovery code.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mfa_token, code]
+              properties:
+                mfa_token:
+                  type: string
+                  description: Short-lived token issued by `/auth/login` when MFA is required.
+                code:
+                  type: string
+                  description: 6-digit TOTP or a recovery code.
+                  example: "123456"
+      responses:
+        "200":
+          description: MFA succeeded — session issued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Invalid or expired MFA token / code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/oidc/providers:
+    get:
+      operationId: auth.oidc_providers
+      tags: [auth]
+      summary: List SSO providers available on the login screen
+      description: Public — used by the login page to render SSO buttons.
+      security: []
+      responses:
+        "200":
+          description: Enabled OIDC providers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [slug, display_name]
+                  properties:
+                    slug: { type: string, example: google }
+                    display_name: { type: string, example: Sign in with Google }
+
+  /auth/oidc/{slug}/login:
+    get:
+      operationId: auth.oidc_login
+      tags: [auth]
+      summary: Start an OIDC authorization flow
+      description: Redirects to the provider's authorization URL with a signed state cookie.
+      security: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to provider.
+          headers:
+            Location:
+              schema: { type: string, format: uri }
+        "503":
+          description: OIDC is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/oidc/{slug}/callback:
+    get:
+      operationId: auth.oidc_callback
+      tags: [auth]
+      summary: Consume the OIDC callback and mint a Dockmesh session
+      security: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: code
+          in: query
+          required: true
+          schema: { type: string }
+        - name: state
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to the UI with the session token fragment.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: State mismatch or code exchange failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /mfa/enroll/start:
+    post:
+      operationId: auth.mfa_enroll_start
+      tags: [auth]
+      summary: Begin TOTP enrollment for the current user
+      description: |
+        Generates a fresh TOTP secret and returns the QR URL. The secret is
+        NOT active until `/mfa/enroll/verify` succeeds.
+      responses:
+        "200":
+          description: Enrollment in progress.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [secret, otpauth_url]
+                properties:
+                  secret: { type: string, description: Base32-encoded TOTP secret. }
+                  otpauth_url: { type: string, format: uri }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: MFA already enrolled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /mfa/enroll/verify:
+    post:
+      operationId: auth.mfa_enroll_verify
+      tags: [auth]
+      summary: Finalise TOTP enrollment and reveal recovery codes
+      description: |
+        Validates the first 6-digit code. On success, activates MFA and
+        returns single-use recovery codes — shown ONCE.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, example: "123456" }
+      responses:
+        "200":
+          description: MFA active. Recovery codes shown once only.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recovery_codes]
+                properties:
+                  recovery_codes:
+                    type: array
+                    items: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Invalid code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Already verified.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /mfa:
+    delete:
+      operationId: auth.mfa_disable
+      tags: [auth]
+      summary: Disable MFA for the current user
+      responses:
+        "204": { description: MFA disabled. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
 components:
   securitySchemes:
@@ -129,6 +408,42 @@ components:
     Empty:
       type: object
       description: Empty body — use for 204 No Content endpoints.
+
+    User:
+      type: object
+      required: [id, username, role, mfa_enabled]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        email: { type: string, format: email }
+        role: { type: string, example: operator }
+        scope_tags:
+          type: array
+          items: { type: string }
+          description: Host tags this user is scoped to. Empty / omitted = access to all hosts.
+        mfa_enabled: { type: boolean }
+
+    LoginResult:
+      type: object
+      description: |
+        Either a fresh session (access+refresh+user) or an MFA challenge
+        (`mfa_required: true` + `mfa_token`) that clients must complete via
+        `POST /auth/mfa` before getting a session.
+      properties:
+        access_token:
+          type: string
+          description: "15-minute-TTL JWT. Send as `Authorization: Bearer <token>`."
+        refresh_token:
+          type: string
+          description: "Opaque token for `/auth/refresh`. Rotates on every use."
+        user:
+          $ref: "#/components/schemas/User"
+        mfa_required:
+          type: boolean
+          description: "True when the user has MFA enabled — use `mfa_token` with `/auth/mfa`."
+        mfa_token:
+          type: string
+          description: "Short-lived challenge token for the `/auth/mfa` completion."
 
   parameters:
     HostQuery:
