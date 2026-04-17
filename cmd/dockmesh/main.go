@@ -359,6 +359,12 @@ func main() {
 	auditSvc.SetWebhook(auditWebhook)
 	defer auditWebhook.Stop()
 
+	// Agent upgrade controller (P.11.16) — auto / manual / staged
+	// rollout modes. Starts a 60s evaluator loop that pushes
+	// FrameReqAgentUpgrade to pending agents based on policy.
+	agentUpgrade := agents.NewUpgradeController(agentsSvc, settingsStore)
+	agentUpgrade.Start(ctx)
+
 	// Host tags (P.11.2). In-memory cache loaded once at startup; kept
 	// fresh after every mutation via Load() inside the service.
 	hostTagsSvc := hosttags.New(database)
@@ -408,6 +414,7 @@ func main() {
 		Templates:      templatesSvc,
 		AuditRetention: auditRetention,
 		AuditWebhook:   auditWebhook,
+		AgentUpgrade:   agentUpgrade,
 		Prom:           promMetrics,
 		JWTSecret:    cfg.JWTSecret,
 	})

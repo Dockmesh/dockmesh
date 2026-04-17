@@ -67,6 +67,7 @@ type Handlers struct {
 	Templates      *templates.Service
 	AuditRetention *audit.Retention
 	AuditWebhook   *audit.Webhook
+	AgentUpgrade   *agents.UpgradeController
 	Prom           *metrics.PromMetrics
 	JWTSecret      []byte // raw secret used to sign the short-lived OIDC state cookie
 }
@@ -104,6 +105,7 @@ type Deps struct {
 	Templates      *templates.Service
 	AuditRetention *audit.Retention
 	AuditWebhook   *audit.Webhook
+	AgentUpgrade   *agents.UpgradeController
 	Prom           *metrics.PromMetrics
 	JWTSecret      []byte
 }
@@ -142,6 +144,7 @@ func New(d Deps) *Handlers {
 		Templates:      d.Templates,
 		AuditRetention: d.AuditRetention,
 		AuditWebhook:   d.AuditWebhook,
+		AgentUpgrade:   d.AgentUpgrade,
 		Prom:           d.Prom,
 		JWTSecret:   d.JWTSecret,
 	}

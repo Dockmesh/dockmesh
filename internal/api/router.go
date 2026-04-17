@@ -378,6 +378,13 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/agents/{id}", h.GetAgent)
 				r.Delete("/agents/{id}", h.DeleteAgent)
 				r.Post("/agents/{id}/upgrade", h.UpgradeAgent)
+
+				// Fleet-wide upgrade policy (P.11.16). GET is safe
+				// for audit.read but keeping it under user.manage
+				// is simpler and the info is admin-oriented.
+				r.Get("/agents/upgrade-policy", h.GetAgentUpgradePolicy)
+				r.Put("/agents/upgrade-policy", h.UpdateAgentUpgradePolicy)
+				r.Post("/agents/upgrade-policy/run", h.RunAgentUpgradeEvaluation)
 			})
 
 			// -------------------------- BACKUPS (admin) -----------------------

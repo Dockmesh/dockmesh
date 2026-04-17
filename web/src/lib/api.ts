@@ -282,6 +282,24 @@ export interface RegistryTestResult {
   error?: string;
 }
 
+// P.11.16 — agent upgrade policy.
+export interface AgentUpgradePolicy {
+  mode: 'auto' | 'manual' | 'staged';
+  stage_percent?: number;
+  stage_gap_sec?: number;
+  server_version: string;
+  connected_total: number;
+  connected_up_to_date: number;
+  connected_pending: number;
+  last_run_at?: string;
+}
+
+export interface AgentUpgradeInput {
+  mode: 'auto' | 'manual' | 'staged';
+  stage_percent?: number;
+  stage_gap_sec?: number;
+}
+
 // P.11.14 — audit webhook.
 export interface AuditWebhookConfig {
   url?: string;
@@ -1296,7 +1314,19 @@ export const api = {
     get: (id: string) => request<Agent>(`/agents/${id}`),
     create: (name: string) =>
       request<AgentCreateResult>('/agents', { method: 'POST', body: JSON.stringify({ name }) }),
-    delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' })
+    delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' }),
+    upgrade: (id: string) =>
+      request<{ status: string; version: string }>(`/agents/${id}/upgrade`, { method: 'POST' }),
+    // P.11.16 upgrade policy
+    getUpgradePolicy: () => request<AgentUpgradePolicy>('/agents/upgrade-policy'),
+    setUpgradePolicy: (input: AgentUpgradeInput) =>
+      request<AgentUpgradePolicy>('/agents/upgrade-policy', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input)
+      }),
+    runUpgradePolicy: () =>
+      request<AgentUpgradePolicy>('/agents/upgrade-policy/run', { method: 'POST' })
   },
 
   proxy: {

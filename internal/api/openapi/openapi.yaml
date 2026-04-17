@@ -631,6 +631,58 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /agents/upgrade-policy:
+    get:
+      operationId: agents.upgrade_policy_get
+      tags: [agents]
+      summary: Current fleet-wide upgrade policy + snapshot (P.11.16)
+      responses:
+        "200":
+          description: Policy + fleet snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentUpgradePolicy" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: agents.upgrade_policy_set
+      tags: [agents]
+      summary: Update the fleet-wide upgrade mode
+      description: |
+        `auto` pushes FrameReqAgentUpgrade to every drifted agent on
+        every evaluation (60s tick). `staged` upgrades N% of drifted
+        agents per tick so an incompatible binary can't take down
+        the whole fleet at once. `manual` (default) only upgrades
+        when the admin hits the per-agent Upgrade button.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentUpgradeInput" }
+      responses:
+        "200":
+          description: Updated policy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentUpgradePolicy" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /agents/upgrade-policy/run:
+    post:
+      operationId: agents.upgrade_policy_run
+      tags: [agents]
+      summary: Force one evaluation pass now (no waiting for the 60s tick)
+      responses:
+        "200":
+          description: Evaluation completed; snapshot reflects any just-dispatched upgrades.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentUpgradePolicy" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /agents/enroll:
     post:
       operationId: agents.enroll
@@ -5046,6 +5098,41 @@ components:
         install_hint:
           type: string
           description: Single-line install command to run on the agent host as root.
+
+    AgentUpgradePolicy:
+      type: object
+      description: Fleet-wide agent upgrade policy (P.11.16) + live snapshot.
+      required: [mode, server_version, connected_total, connected_up_to_date, connected_pending]
+      properties:
+        mode:
+          type: string
+          enum: [auto, manual, staged]
+        stage_percent:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: Wave size as percent of drifted agents (staged mode).
+        stage_gap_sec:
+          type: integer
+          minimum: 60
+          description: Minimum seconds between staged waves.
+        server_version: { type: string }
+        connected_total: { type: integer }
+        connected_up_to_date: { type: integer }
+        connected_pending:
+          type: integer
+          description: Connected agents whose version != server_version.
+        last_run_at: { type: string, format: date-time }
+
+    AgentUpgradeInput:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [auto, manual, staged]
+        stage_percent: { type: integer, minimum: 1, maximum: 100 }
+        stage_gap_sec: { type: integer, minimum: 60 }
 
     AgentEnrollRequest:
       type: object
