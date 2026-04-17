@@ -1339,6 +1339,148 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /stacks/{name}/git:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+    get:
+      operationId: stacks.git_get
+      tags: [stacks]
+      summary: Inspect the git source configured for a stack (P.11.11)
+      responses:
+        "200":
+          description: Git source.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StackGitSource" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: No git source configured for this stack.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      operationId: stacks.git_configure
+      tags: [stacks]
+      summary: Configure / update the git source and do an initial sync
+      description: |
+        Upsert semantics: creates the source on first call, updates on
+        subsequent. Always kicks off an initial sync so the stack FS is
+        populated — the response includes a `sync` or `sync_error` field.
+        Passwords / SSH keys are age-encrypted at rest; leave those fields
+        empty on update to keep the existing values.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StackGitSourceInput" }
+      responses:
+        "200":
+          description: Configured. The sync result is embedded inline.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source: { $ref: "#/components/schemas/StackGitSource" }
+                  sync: { $ref: "#/components/schemas/StackGitSyncResult" }
+                  sync_error: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      operationId: stacks.git_disconnect
+      tags: [stacks]
+      summary: Disconnect the stack from its git source
+      description: Does NOT delete the stack's compose.yaml — only the sync config + the clone cache.
+      responses:
+        "204": { description: Disconnected. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: No git source configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /stacks/{name}/git/sync:
+    post:
+      operationId: stacks.git_sync
+      tags: [stacks]
+      summary: Manually pull the latest compose.yaml from the git source
+      description: |
+        Pulls the configured branch, copies compose.yaml (+ optional .env)
+        into the stack FS, and if the source has `auto_deploy: true` AND
+        the SHA changed, kicks off a deploy of the stack as well.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+      responses:
+        "200":
+          description: Sync result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StackGitSyncResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: No git source configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: "Sync failed — see message (auth rejected, branch not found, compose missing in repo, …)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /stacks/{name}/git/webhook:
+    post:
+      operationId: stacks.git_webhook
+      tags: [stacks]
+      summary: "Public: provider-triggered sync (GitHub / GitLab / Gitea)"
+      description: |
+        Public endpoint — no Bearer auth, since GitHub / GitLab / Gitea
+        can't send Authorization headers. When `webhook_secret` is set
+        on the source, the handler verifies the HMAC signature:
+
+        * **GitHub** / **Gitea** — `X-Hub-Signature-256` / `X-Gitea-Signature` (`sha256=<hex>`)
+        * **GitLab** — plain shared secret on `X-Gitlab-Token`
+
+        When no secret is configured the endpoint accepts any body — the
+        caller just has to know the stack name. Always returns 202 on
+        success; the actual sync runs in the background so providers don't
+        time out on slow clones.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Provider-specific push payload (ignored — only used for signature verification).
+      responses:
+        "202":
+          description: Sync queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "sync queued" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Signature mismatch.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: No git source configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /stacks/{name}/migrate/{id}/source:
     delete:
       operationId: stacks.migrate_finalize
@@ -4163,6 +4305,82 @@ components:
         details: { type: string, description: JSON-encoded contextual metadata. }
         prev_hash: { type: string }
         row_hash: { type: string }
+
+    StackGitSource:
+      type: object
+      description: Git repository a stack pulls its compose.yaml from (P.11.11). Secrets redacted.
+      required: [stack_name, repo_url, branch, path_in_repo, auth_kind, poll_interval_sec, auto_deploy, has_password, has_ssh_key, has_webhook_secret, created_at, updated_at]
+      properties:
+        stack_name: { type: string }
+        repo_url: { type: string, example: "https://github.com/acme/stack.git" }
+        branch: { type: string, default: main }
+        path_in_repo:
+          type: string
+          description: Directory containing compose.yaml (+ optional .env), or a direct file path.
+          default: "."
+        auth_kind:
+          type: string
+          enum: [none, http, ssh]
+        username: { type: string, description: HTTP basic-auth username or SSH user (defaults to `git`). }
+        has_password: { type: boolean }
+        has_ssh_key: { type: boolean }
+        auto_deploy:
+          type: boolean
+          description: When true, a successful sync with a new SHA triggers a deploy.
+        poll_interval_sec:
+          type: integer
+          minimum: 60
+          description: 0 = do not poll (webhook / manual sync only).
+        has_webhook_secret: { type: boolean }
+        last_sync_sha: { type: string }
+        last_sync_at: { type: string, format: date-time }
+        last_sync_error: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    StackGitSourceInput:
+      type: object
+      required: [repo_url]
+      properties:
+        repo_url: { type: string }
+        branch: { type: string }
+        path_in_repo: { type: string }
+        auth_kind:
+          type: string
+          enum: [none, http, ssh]
+        username: { type: string }
+        password:
+          type: string
+          format: password
+          description: HTTP basic auth password / PAT. Empty on update = keep existing.
+        clear_password: { type: boolean }
+        ssh_key:
+          type: string
+          description: OpenSSH private key (PEM). Empty on update = keep existing.
+        clear_ssh_key: { type: boolean }
+        auto_deploy: { type: boolean }
+        poll_interval_sec:
+          type: integer
+          minimum: 60
+        webhook_secret:
+          type: string
+          description: Shared secret for HMAC verification of incoming webhook pushes.
+        clear_webhook_secret: { type: boolean }
+
+    StackGitSyncResult:
+      type: object
+      required: [new_sha, changed, duration_ms]
+      properties:
+        old_sha: { type: string }
+        new_sha: { type: string }
+        changed: { type: boolean }
+        deployed:
+          type: boolean
+          description: True when auto_deploy fired and completed on this sync.
+        deploy_result:
+          type: object
+          description: Deploy result when `deployed` is true; mirrors /stacks/{name}/deploy.
+        duration_ms: { type: integer, format: int64 }
 
     ProxyRoute:
       type: object

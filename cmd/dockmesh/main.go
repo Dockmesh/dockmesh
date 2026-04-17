@@ -33,6 +33,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/metrics"
@@ -309,6 +310,26 @@ func main() {
 	// bytes in the DB, same trade-off as the existing .env storage.
 	registriesSvc := registries.New(database, secretsSvc)
 
+	// Git-backed stacks (P.11.11). Cache dir sits under the DB data
+	// dir so operators who override DOCKMESH_DB_PATH get the matching
+	// location automatically. Auto-deploy closure uses LocalHost for
+	// now; remote-agent git-auto-deploy is a follow-up slice.
+	gitCacheDir := filepath.Join(filepath.Dir(cfg.DBPath), "git-cache")
+	gitDeploy := func(ctx context.Context, stackName string) (any, error) {
+		if dockerCli == nil {
+			return nil, fmt.Errorf("docker unavailable")
+		}
+		detail, err := stacksMgr.Get(stackName)
+		if err != nil {
+			return nil, err
+		}
+		lh := host.NewLocal(dockerCli)
+		return lh.DeployStack(ctx, stackName, detail.Compose, detail.Env)
+	}
+	gitSourceSvc := gitsource.New(database, secretsSvc, stacksMgr, gitCacheDir, gitDeploy)
+	gitSourceSvc.Start(ctx)
+	defer gitSourceSvc.Stop()
+
 	// Host tags (P.11.2). In-memory cache loaded once at startup; kept
 	// fresh after every mutation via Load() inside the service.
 	hostTagsSvc := hosttags.New(database)
@@ -354,6 +375,7 @@ func main() {
 		GlobalEnv:    globalEnvStore,
 		APITokens:    apiTokensSvc,
 		Registries:   registriesSvc,
+		GitSource:    gitSourceSvc,
 		Prom:         promMetrics,
 		JWTSecret:    cfg.JWTSecret,
 	})
