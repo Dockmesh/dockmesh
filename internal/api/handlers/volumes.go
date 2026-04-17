@@ -3,7 +3,9 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"os"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
@@ -107,6 +109,73 @@ func (h *Handlers) RemoveVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(r, audit.ActionVolumeRemove, name, nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// BrowseVolume lists one directory level inside a volume. Admin-only
+// (wired at the router layer) and audited — browsing production data
+// is a sensitive operation, the audit trail is the only way to
+// reconstruct what was read after the fact. P.11.8.
+func (h *Handlers) BrowseVolume(w http.ResponseWriter, r *http.Request) {
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	name := chi.URLParam(r, "name")
+	sub := r.URL.Query().Get("path")
+	entries, err := target.VolumeBrowseEntries(r.Context(), name, sub)
+	if err != nil {
+		writeError(w, mapBrowseStatus(err), err.Error())
+		return
+	}
+	h.audit(r, audit.ActionVolumeBrowse, name, map[string]string{"path": sub, "host": target.ID()})
+	writeJSON(w, http.StatusOK, entries)
+}
+
+// ReadVolumeFile returns the first 1 MiB of a file inside a volume.
+// Binary files are flagged so the frontend can show a download button
+// instead of a garbled preview. P.11.8.
+func (h *Handlers) ReadVolumeFile(w http.ResponseWriter, r *http.Request) {
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	name := chi.URLParam(r, "name")
+	sub := r.URL.Query().Get("path")
+	if sub == "" {
+		writeError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+	res, err := target.VolumeReadFile(r.Context(), name, sub, 0)
+	if err != nil {
+		writeError(w, mapBrowseStatus(err), err.Error())
+		return
+	}
+	h.audit(r, audit.ActionVolumeReadFile, name, map[string]string{"path": sub, "host": target.ID()})
+	writeJSON(w, http.StatusOK, res)
+}
+
+// mapBrowseStatus picks a reasonable HTTP code for the shared
+// host-package browse errors so the UI can branch without string
+// sniffing.
+func mapBrowseStatus(err error) int {
+	switch {
+	case err == nil:
+		return http.StatusOK
+	case errors.Is(err, host.ErrVolumePathEscape),
+		errors.Is(err, host.ErrVolumePathTooLong),
+		errors.Is(err, host.ErrVolumeNotDir),
+		errors.Is(err, host.ErrVolumeNotFile):
+		return http.StatusBadRequest
+	case errors.Is(err, host.ErrVolumeMountpointMissing):
+		return http.StatusConflict
+	default:
+		if os.IsNotExist(err) {
+			return http.StatusNotFound
+		}
+		return http.StatusInternalServerError
+	}
 }
 
 func (h *Handlers) PruneVolumes(w http.ResponseWriter, r *http.Request) {

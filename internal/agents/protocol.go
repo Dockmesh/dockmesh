@@ -50,6 +50,12 @@ const (
 	FrameReqNetworkInspect = "req.networks.inspect"
 	FrameReqVolumeList     = "req.volumes.list"
 	FrameReqVolumeInspect  = "req.volumes.inspect"
+	// Volume content browsing (P.11.8). Read-only: list one directory
+	// level or read a single file capped at the caller's maxBytes.
+	// The stream frame for large-file download is deferred — the UI
+	// offers "too large, 5.2 MB" + a download button today.
+	FrameReqVolumeBrowse     = "req.volume.browse"
+	FrameReqVolumeBrowseFile = "req.volume.browse_file"
 	FrameReqDaemonInfo  = "req.daemon.info"
 
 	// Host-level system metrics (CPU / memory / disk / uptime) for the
@@ -210,6 +216,16 @@ type StackCheckScaleReq struct {
 // VolumeTarReq identifies the volume for tar export/import.
 type VolumeTarReq struct {
 	Volume string `json:"volume"`
+}
+
+// VolumeBrowseReq is the payload for directory-listing / file-read
+// requests (P.11.8). SubPath is relative to the volume root; empty or
+// "/" means the root itself. MaxBytes caps the read-file response —
+// callers pass 0 for the 1 MiB default.
+type VolumeBrowseReq struct {
+	Volume   string `json:"volume"`
+	SubPath  string `json:"sub_path,omitempty"`
+	MaxBytes int64  `json:"max_bytes,omitempty"`
 }
 
 // StackSyncReq carries the full compose + env + optional meta for

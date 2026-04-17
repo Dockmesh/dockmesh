@@ -52,6 +52,8 @@ const (
 	ActionVolumeCreate   = "volume.create"
 	ActionVolumeRemove   = "volume.remove"
 	ActionVolumePrune    = "volume.prune"
+	ActionVolumeBrowse   = "volume.browse"
+	ActionVolumeReadFile = "volume.read_file"
 	ActionGenesis        = "audit.genesis"
 )
 

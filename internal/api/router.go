@@ -250,6 +250,16 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Post("/volumes/prune", h.PruneVolumes)
 			})
 
+			// Volume content browsing (P.11.8). Admin-only — read access
+			// to volume data is as sensitive as reading the files on the
+			// host itself, so we gate behind user.manage and every call
+			// is audited by the handler.
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Get("/volumes/{name}/browse", h.BrowseVolume)
+				r.Get("/volumes/{name}/browse/file", h.ReadVolumeFile)
+			})
+
 			// -------------------------- USER MANAGE --------------------------
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermUserManage))
