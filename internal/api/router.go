@@ -47,6 +47,13 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/health", h.Health)
 
+		// OpenAPI 3.1 spec + Swagger UI (P.11.10). Public — the spec
+		// lists only endpoint shapes, not secrets; clients need it to
+		// integrate against the API.
+		r.Get("/openapi.json", h.ServeOpenAPIJSON)
+		r.Get("/openapi.yaml", h.ServeOpenAPIYAML)
+		r.Get("/docs", h.ServeSwaggerUI)
+
 		r.Post("/auth/login", h.Login)
 		r.Post("/auth/mfa", h.LoginMFA)
 		r.Post("/auth/logout", h.Logout)
