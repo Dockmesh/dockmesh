@@ -1360,6 +1360,482 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  # -----------------------------------------------------------------------
+  # images — list, pull (with registry-auth), remove, prune, CVE scan
+  # -----------------------------------------------------------------------
+  /images:
+    get:
+      operationId: images.list
+      tags: [images]
+      summary: List images on one or all hosts
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
+        - name: all
+          in: query
+          schema: { type: boolean, default: false }
+          description: Include intermediate / dangling image layers.
+      responses:
+        "200":
+          description: Image list (passthrough of Docker SDK ImageSummary plus host_id/host_name in fan-out mode).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items: { type: object }
+                  - $ref: "#/components/schemas/FanOutResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /images/pull:
+    post:
+      operationId: images.pull
+      tags: [images]
+      summary: Pull an image (streams progress as ndjson)
+      description: |
+        Streams Docker's pull-progress lines as `application/x-ndjson`.
+        Registry credentials from Settings → Registries (P.11.7) are
+        applied automatically based on the image reference. Only hits
+        the central server's local daemon; agent-side pulls with creds
+        are tracked as P.12.28.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image: { type: string, example: "ghcr.io/foo/bar:tag" }
+      responses:
+        "200":
+          description: Streaming ndjson of progress frames.
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                description: Newline-delimited JSON — one progress frame per line.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Docker daemon unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /images/{id}:
+    delete:
+      operationId: images.remove
+      tags: [images]
+      summary: Remove an image
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Image id or name:tag.
+        - $ref: "#/components/parameters/HostQuery"
+        - name: force
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: List of layers / references deleted.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Image is in use by a container.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /images/prune:
+    post:
+      operationId: images.prune
+      tags: [images]
+      summary: Remove dangling images
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Prune report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  space_reclaimed: { type: integer, format: int64 }
+                  images_deleted:
+                    type: array
+                    items: { type: object }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /images/{id}/scan:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Image id or name:tag.
+    post:
+      operationId: images.scan_start
+      tags: [images]
+      summary: Kick off a Grype vulnerability scan
+      responses:
+        "202":
+          description: Scan queued — poll `GET /images/{id}/scan` for results.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: queued }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503":
+          description: Scanner is disabled (grype not installed).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    get:
+      operationId: images.scan_result
+      tags: [images]
+      summary: Fetch the latest scan result for an image
+      responses:
+        "200":
+          description: Scan summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  image: { type: string }
+                  scanned_at: { type: string, format: date-time }
+                  critical: { type: integer }
+                  high: { type: integer }
+                  medium: { type: integer }
+                  low: { type: integer }
+                  negligible: { type: integer }
+                  vulnerabilities:
+                    type: array
+                    items: { type: object }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No scan has been run for this image.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # -----------------------------------------------------------------------
+  # volumes — CRUD + prune + content browse (P.11.8)
+  # -----------------------------------------------------------------------
+  /volumes:
+    get:
+      operationId: volumes.list
+      tags: [volumes]
+      summary: List volumes (fan-out capable)
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Volume list.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items: { type: object }
+                  - $ref: "#/components/schemas/FanOutResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: volumes.create
+      tags: [volumes]
+      summary: Create a volume on the central daemon
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                driver: { type: string, default: local }
+                labels:
+                  type: object
+                  additionalProperties: { type: string }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /volumes/prune:
+    post:
+      operationId: volumes.prune
+      tags: [volumes]
+      summary: Remove unused volumes
+      responses:
+        "200":
+          description: Prune report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  space_reclaimed: { type: integer, format: int64 }
+                  volumes_deleted:
+                    type: array
+                    items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /volumes/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+      - $ref: "#/components/parameters/HostQuery"
+    get:
+      operationId: volumes.inspect
+      tags: [volumes]
+      summary: Inspect one volume
+      responses:
+        "200":
+          description: Volume.
+          content:
+            application/json:
+              schema: { type: object }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: volumes.remove
+      tags: [volumes]
+      summary: Remove a volume (must be unused unless forced)
+      parameters:
+        - name: force
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Volume is in use.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /volumes/{name}/browse:
+    get:
+      operationId: volumes.browse
+      tags: [volumes]
+      summary: List one directory level inside a volume (P.11.8)
+      description: Admin-only; every call is audited. Read-only.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: "#/components/parameters/HostQuery"
+        - name: path
+          in: query
+          schema: { type: string, default: "/" }
+          description: Path relative to the volume root.
+      responses:
+        "200":
+          description: Directory entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/VolumeEntry" }
+        "400":
+          description: Path escapes volume root or is too long.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Volume driver doesn't expose a host-filesystem mountpoint.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /volumes/{name}/browse/file:
+    get:
+      operationId: volumes.browse_file
+      tags: [volumes]
+      summary: Read a single file inside a volume, capped at 1 MiB (P.11.8)
+      description: |
+        Returns up to 1 MiB of content. `truncated: true` signals the file
+        is larger — the UI then offers a download link instead of an inline
+        preview. `binary: true` is set when a NUL byte is found in the
+        first 8 KiB (same heuristic git uses).
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: "#/components/parameters/HostQuery"
+        - name: path
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: File content.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VolumeFileResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # -----------------------------------------------------------------------
+  # networks — CRUD + topology view + prune
+  # -----------------------------------------------------------------------
+  /networks:
+    get:
+      operationId: networks.list
+      tags: [networks]
+      summary: List networks (fan-out capable)
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Networks.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items: { type: object }
+                  - $ref: "#/components/schemas/FanOutResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: networks.create
+      tags: [networks]
+      summary: Create a network on the central daemon
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                driver: { type: string, default: bridge }
+                labels:
+                  type: object
+                  additionalProperties: { type: string }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /networks/prune:
+    post:
+      operationId: networks.prune
+      tags: [networks]
+      summary: Remove unused networks
+      responses:
+        "200":
+          description: Prune report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  networks_deleted:
+                    type: array
+                    items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /networks/topology:
+    get:
+      operationId: networks.topology
+      tags: [networks]
+      summary: Network → containers graph for the topology view
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Nodes + edges ready for the d3 force graph.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  networks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        driver: { type: string }
+                        containers:
+                          type: array
+                          items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /networks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - $ref: "#/components/parameters/HostQuery"
+    get:
+      operationId: networks.inspect
+      tags: [networks]
+      summary: Inspect one network
+      responses:
+        "200":
+          description: Network.
+          content:
+            application/json:
+              schema: { type: object }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: networks.remove
+      tags: [networks]
+      summary: Remove a network
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Network still has active endpoints.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /containers/{id}/metrics:
     get:
       operationId: containers.metrics
@@ -1512,6 +1988,38 @@ components:
         max_replicas: { type: integer }
         cooldown_seconds: { type: integer }
         duration_seconds: { type: integer }
+
+    VolumeEntry:
+      type: object
+      description: One row in a volume directory listing (P.11.8).
+      required: [name, type, size, mode, mod_time]
+      properties:
+        name: { type: string }
+        type:
+          type: string
+          enum: [file, dir, symlink]
+        size: { type: integer, format: int64 }
+        mode: { type: string, description: Unix-style "rwxr-xr-x" string. }
+        mod_time: { type: string, format: date-time }
+        link_dest: { type: string, description: For symlinks, the target path. }
+
+    VolumeFileResult:
+      type: object
+      description: Inline file read from a volume (P.11.8).
+      required: [content, size, truncated, binary]
+      properties:
+        content:
+          type: string
+          format: byte
+          description: Base64-encoded file bytes — capped at 1 MiB.
+        size:
+          type: integer
+          format: int64
+          description: Actual file size on disk (may exceed content length when truncated).
+        truncated: { type: boolean }
+        binary:
+          type: boolean
+          description: True when the first 8 KiB contain a NUL byte.
 
     MigrationStatus:
       type: object
