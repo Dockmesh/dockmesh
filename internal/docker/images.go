@@ -22,6 +22,13 @@ func (c *Client) PullImage(ctx context.Context, ref string) (io.ReadCloser, erro
 	return c.cli.ImagePull(ctx, ref, types.ImagePullOptions{})
 }
 
+// PullImageWithAuth is PullImage with a pre-built base64-encoded
+// X-Registry-Auth blob. registryAuth may be empty — in that case the
+// pull is anonymous, matching PullImage's behaviour exactly.
+func (c *Client) PullImageWithAuth(ctx context.Context, ref, registryAuth string) (io.ReadCloser, error) {
+	return c.cli.ImagePull(ctx, ref, types.ImagePullOptions{RegistryAuth: registryAuth})
+}
+
 func (c *Client) RemoveImage(ctx context.Context, id string, force bool) ([]image.DeleteResponse, error) {
 	return c.cli.ImageRemove(ctx, id, types.ImageRemoveOptions{Force: force, PruneChildren: true})
 }

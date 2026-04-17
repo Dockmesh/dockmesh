@@ -26,6 +26,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/oidc"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
+	"github.com/dockmesh/dockmesh/internal/registries"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/updater"
@@ -59,6 +60,7 @@ type Handlers struct {
 	Settings       *settings.Store
 	GlobalEnv      *globalenv.Store
 	APITokens      *apitokens.Service
+	Registries     *registries.Service
 	JWTSecret      []byte // raw secret used to sign the short-lived OIDC state cookie
 }
 
@@ -90,6 +92,7 @@ type Deps struct {
 	Settings       *settings.Store
 	GlobalEnv      *globalenv.Store
 	APITokens      *apitokens.Service
+	Registries     *registries.Service
 	JWTSecret      []byte
 }
 
@@ -122,6 +125,7 @@ func New(d Deps) *Handlers {
 		Settings:    d.Settings,
 		GlobalEnv:   d.GlobalEnv,
 		APITokens:   d.APITokens,
+		Registries:  d.Registries,
 		JWTSecret:   d.JWTSecret,
 	}
 }

@@ -168,6 +168,17 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Delete("/settings/api-tokens/{id}", h.RevokeAPIToken)
 			})
 
+			// Registry credentials (P.11.7, admin-only — stored passwords
+			// are production-critical secrets).
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Get("/settings/registries", h.ListRegistries)
+				r.Post("/settings/registries", h.CreateRegistry)
+				r.Put("/settings/registries/{id}", h.UpdateRegistry)
+				r.Delete("/settings/registries/{id}", h.DeleteRegistry)
+				r.Post("/settings/registries/{id}/test", h.TestRegistry)
+			})
+
 			// Host tags (P.11.2). Read for any authenticated user so
 			// list pages can show tag chips; mutations are admin-only.
 			r.Group(func(r chi.Router) {

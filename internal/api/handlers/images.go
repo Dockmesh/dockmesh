@@ -78,13 +78,40 @@ func (h *Handlers) PullImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "image required")
 		return
 	}
-	rc, err := h.Docker.PullImage(r.Context(), req.Image)
+	// Registry credentials lookup (P.11.7). Local-pull only — the host
+	// picker is not consulted because the PullImage endpoint itself runs
+	// against h.Docker, not a fanout. The scope check is still there:
+	// we pass empty hostTags so only "all hosts" registry entries match,
+	// which is the correct behaviour for pulls on the central server's
+	// own docker daemon.
+	var registryAuth string
+	var usedRegistryName string
+	if h.Registries != nil {
+		auth, reg, err := h.Registries.ResolveAuth(r.Context(), req.Image, nil)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "resolve registry auth: "+err.Error())
+			return
+		}
+		if reg != nil {
+			registryAuth = auth
+			usedRegistryName = reg.Name
+		}
+	}
+	rc, err := h.Docker.PullImageWithAuth(r.Context(), req.Image, registryAuth)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	defer rc.Close()
-	h.audit(r, audit.ActionImagePull, req.Image, nil)
+	auditMeta := map[string]string{}
+	if usedRegistryName != "" {
+		auditMeta["registry"] = usedRegistryName
+	}
+	if len(auditMeta) > 0 {
+		h.audit(r, audit.ActionImagePull, req.Image, auditMeta)
+	} else {
+		h.audit(r, audit.ActionImagePull, req.Image, nil)
+	}
 	// Stream the pull progress to the client as ndjson.
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.WriteHeader(http.StatusOK)
