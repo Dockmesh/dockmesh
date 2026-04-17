@@ -282,6 +282,32 @@ export interface RegistryTestResult {
   error?: string;
 }
 
+// P.11.13 — audit retention.
+export interface AuditRetentionConfig {
+  mode: 'forever' | 'days' | 'archive_local' | 'archive_target';
+  days?: number;
+  target_id?: number;
+  local_dir?: string;
+}
+
+export interface AuditRetentionPreview {
+  mode: string;
+  cutoff_at?: string;
+  would_prune: number;
+  total_rows: number;
+  oldest_at?: string;
+}
+
+export interface AuditRetentionResult {
+  mode: string;
+  cutoff_at?: string;
+  pruned: number;
+  archived?: boolean;
+  archive_path?: string;
+  bridge_row_id?: number;
+  duration_ms: number;
+}
+
 // P.11.12 — stack templates.
 export interface StackTemplateParam {
   name: string;
@@ -1181,7 +1207,17 @@ export const api = {
         break_reason?: string;
         genesis: string;
         warnings?: string[];
-      }>('/audit/verify')
+      }>('/audit/verify'),
+    getRetention: () =>
+      request<{ config: AuditRetentionConfig; preview: AuditRetentionPreview }>('/audit/retention'),
+    setRetention: (cfg: AuditRetentionConfig) =>
+      request<{ config: AuditRetentionConfig; preview: AuditRetentionPreview }>('/audit/retention', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg)
+      }),
+    runRetention: () =>
+      request<AuditRetentionResult>('/audit/retention/run', { method: 'POST' })
   },
 
   convert: {

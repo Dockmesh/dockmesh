@@ -65,6 +65,7 @@ type Handlers struct {
 	Registries     *registries.Service
 	GitSource      *gitsource.Service
 	Templates      *templates.Service
+	AuditRetention *audit.Retention
 	Prom           *metrics.PromMetrics
 	JWTSecret      []byte // raw secret used to sign the short-lived OIDC state cookie
 }
@@ -100,6 +101,7 @@ type Deps struct {
 	Registries     *registries.Service
 	GitSource      *gitsource.Service
 	Templates      *templates.Service
+	AuditRetention *audit.Retention
 	Prom           *metrics.PromMetrics
 	JWTSecret      []byte
 }
@@ -134,9 +136,10 @@ func New(d Deps) *Handlers {
 		GlobalEnv:   d.GlobalEnv,
 		APITokens:   d.APITokens,
 		Registries:  d.Registries,
-		GitSource:   d.GitSource,
-		Templates:   d.Templates,
-		Prom:        d.Prom,
+		GitSource:      d.GitSource,
+		Templates:      d.Templates,
+		AuditRetention: d.AuditRetention,
+		Prom:           d.Prom,
 		JWTSecret:   d.JWTSecret,
 	}
 }

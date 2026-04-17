@@ -5,6 +5,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -340,6 +341,16 @@ func main() {
 		slog.Warn("stack templates seed", "err", err)
 	}
 
+	// Audit retention (P.11.13). The TargetWriter adapter turns a
+	// backup_targets row into a live target.Build, streams NDJSON to
+	// it on archive_target runs. Nil-safe if the backup-targets store
+	// is ever unavailable — archive_target mode then reports an error.
+	backupTargetStore := targets.NewTargetStore(database)
+	auditTargetWriter := &auditTargetsAdapter{store: backupTargetStore}
+	auditRetention := audit.NewRetention(database, auditSvc, settingsStore, auditTargetWriter)
+	auditRetention.Start(ctx)
+	defer auditRetention.Stop()
+
 	// Host tags (P.11.2). In-memory cache loaded once at startup; kept
 	// fresh after every mutation via Load() inside the service.
 	hostTagsSvc := hosttags.New(database)
@@ -374,7 +385,7 @@ func main() {
 		Notify:       notifySvc,
 		Alerts:       alertsSvc,
 		Backups:       backupSvc,
-		BackupTargets: targets.NewTargetStore(database),
+		BackupTargets: backupTargetStore,
 		Migrations:   migrationSvc,
 		Drains:       drainSvc,
 		Agents:       agentsSvc,
@@ -386,8 +397,9 @@ func main() {
 		APITokens:    apiTokensSvc,
 		Registries:   registriesSvc,
 		GitSource:    gitSourceSvc,
-		Templates:    templatesSvc,
-		Prom:         promMetrics,
+		Templates:      templatesSvc,
+		AuditRetention: auditRetention,
+		Prom:           promMetrics,
 		JWTSecret:    cfg.JWTSecret,
 	})
 	router := api.NewRouter(h, authSvc, webFS, cfg.MetricsAuth)
@@ -466,6 +478,34 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+// auditTargetsAdapter bridges audit.Retention's TargetWriter interface
+// to the backup_targets store. Loads the target row, builds the live
+// target via targets.Build, opens a writer for the given name, and
+// streams the archive bytes through.
+type auditTargetsAdapter struct {
+	store *targets.TargetStore
+}
+
+func (a *auditTargetsAdapter) WriteFile(ctx context.Context, targetID int64, name string, body io.Reader) error {
+	stored, err := a.store.Get(ctx, targetID)
+	if err != nil {
+		return err
+	}
+	t, err := targets.Build(stored.Type, stored.Config)
+	if err != nil {
+		return err
+	}
+	w, err := t.Open(ctx, name)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(w, body); err != nil {
+		_ = w.Close()
+		return err
+	}
+	return w.Close()
 }
 
 // deriveAgentURL builds a default wss:// URL for the agent listener from

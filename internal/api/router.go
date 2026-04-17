@@ -325,6 +325,16 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Use(middleware.RequirePerm(rbac.PermAuditRead))
 				r.Get("/audit", h.ListAudit)
 				r.Get("/audit/verify", h.VerifyAudit)
+				r.Get("/audit/retention", h.GetAuditRetention)
+			})
+
+			// Audit retention config + manual-run (P.11.13). Writing
+			// retention config or triggering an on-demand prune are
+			// admin-only — they can destroy audit history.
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Put("/audit/retention", h.UpdateAuditRetention)
+				r.Post("/audit/retention/run", h.RunAuditRetention)
 			})
 
 			// -------------------------- OIDC ADMIN ---------------------------
