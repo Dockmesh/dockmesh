@@ -69,13 +69,25 @@ type Entry struct {
 	RowHash  string    `json:"row_hash,omitempty"`
 }
 
+// PromRecorder is the audit-side hook into the prometheus collector.
+// Interface-typed so the audit package doesn't import internal/metrics
+// and create a cycle; main() wires a concrete one at startup.
+type PromRecorder interface {
+	IncAuditEntry(action string)
+}
+
 type Service struct {
 	db          *sql.DB
 	genesisPath string
+	prom        PromRecorder
 
 	mu          sync.Mutex
 	lastRowHash string
 }
+
+// SetProm attaches a prom recorder after construction. Idempotent;
+// nil clears the hook.
+func (s *Service) SetProm(p PromRecorder) { s.prom = p }
 
 // NewService wires the DB and loads the genesis hash from disk. Callers
 // should subsequently call EnsureGenesis to make sure the chain has a
@@ -191,6 +203,9 @@ func (s *Service) Write(ctx context.Context, userID, action, target string, deta
 		return
 	}
 	s.lastRowHash = rowHash
+	if s.prom != nil {
+		s.prom.IncAuditEntry(action)
+	}
 }
 
 // List returns the most recent entries, newest first.

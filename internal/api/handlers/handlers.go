@@ -61,6 +61,7 @@ type Handlers struct {
 	GlobalEnv      *globalenv.Store
 	APITokens      *apitokens.Service
 	Registries     *registries.Service
+	Prom           *metrics.PromMetrics
 	JWTSecret      []byte // raw secret used to sign the short-lived OIDC state cookie
 }
 
@@ -93,6 +94,7 @@ type Deps struct {
 	GlobalEnv      *globalenv.Store
 	APITokens      *apitokens.Service
 	Registries     *registries.Service
+	Prom           *metrics.PromMetrics
 	JWTSecret      []byte
 }
 
@@ -126,6 +128,7 @@ func New(d Deps) *Handlers {
 		GlobalEnv:   d.GlobalEnv,
 		APITokens:   d.APITokens,
 		Registries:  d.Registries,
+		Prom:        d.Prom,
 		JWTSecret:   d.JWTSecret,
 	}
 }

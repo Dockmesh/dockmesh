@@ -31,6 +31,10 @@ const (
 
 	// Audit access (admin domain)
 	PermAuditRead Perm = "audit.read"
+
+	// Prometheus /metrics scraping. Separate from audit.read so a
+	// scraping API token can be narrowly scoped to just metrics.
+	PermMetricsRead Perm = "metrics.read"
 )
 
 // Role is one of "admin" | "operator" | "viewer".
@@ -61,6 +65,7 @@ var rolePerms = map[Role]map[Perm]bool{
 		PermVolumeWrite:      true,
 		PermUserManage:       true,
 		PermAuditRead:        true,
+		PermMetricsRead:      true,
 	},
 	RoleOperator: {
 		PermRead:             true,
