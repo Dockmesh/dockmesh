@@ -1,0 +1,33 @@
+slug: redis-7
+name: Redis 7
+description: Redis 7 with AOF persistence and optional password auth.
+icon_url: https://raw.githubusercontent.com/docker-library/docs/master/redis/logo.png
+version: "1.0"
+author: Dockmesh
+parameters:
+  - name: password
+    description: Optional auth password. Leave blank to disable auth.
+    default: ""
+  - name: port
+    default: "6379"
+    pattern: "^[0-9]{2,5}$"
+compose: |
+  services:
+    redis:
+      image: redis:7-alpine
+      restart: unless-stopped
+      command: >
+        redis-server
+        --appendonly yes
+        {{password|default:}}
+      volumes:
+        - redis_data:/data
+      ports:
+        - "{{port|default:6379}}:6379"
+      healthcheck:
+        test: ["CMD", "redis-cli", "ping"]
+        interval: 10s
+        timeout: 3s
+        retries: 5
+  volumes:
+    redis_data: {}

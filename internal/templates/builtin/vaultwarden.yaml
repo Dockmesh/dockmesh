@@ -1,0 +1,33 @@
+slug: vaultwarden
+name: Vaultwarden
+description: Self-hosted Bitwarden-compatible password manager.
+icon_url: https://raw.githubusercontent.com/dani-garcia/vaultwarden/main/resources/vaultwarden-icon.svg
+version: "1.0"
+author: Dockmesh
+parameters:
+  - name: port
+    description: Host port for the web vault + API.
+    default: "8080"
+    pattern: "^[0-9]{2,5}$"
+  - name: admin_token
+    description: Token for the /admin page. Auto-generated if blank. Store it somewhere safe.
+    secret: true
+    type: secret
+  - name: signups_allowed
+    description: Allow anyone to register a new account.
+    default: "false"
+    enum: ["true", "false"]
+compose: |
+  services:
+    vaultwarden:
+      image: vaultwarden/server:latest
+      restart: unless-stopped
+      environment:
+        ADMIN_TOKEN: "{{admin_token|secret}}"
+        SIGNUPS_ALLOWED: "{{signups_allowed|default:false}}"
+      volumes:
+        - vw_data:/data
+      ports:
+        - "{{port|default:8080}}:80"
+  volumes:
+    vw_data: {}

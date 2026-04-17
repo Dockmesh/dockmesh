@@ -137,7 +137,22 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Post("/stacks/{name}/git", h.ConfigureGitSource)
 				r.Delete("/stacks/{name}/git", h.DeleteGitSource)
 				r.Post("/stacks/{name}/git/sync", h.SyncGitSource)
+
+				// Stack templates (P.11.12). Listing is open to
+				// any authed user (templates are content), but CRUD
+				// + deploy write stack files and run compose up, so
+				// they ride on stack.write.
+				r.Post("/templates", h.CreateTemplate)
+				r.Put("/templates/{id}", h.UpdateTemplate)
+				r.Delete("/templates/{id}", h.DeleteTemplate)
+				r.Post("/templates/{id}/deploy", h.DeployTemplate)
 			})
+
+			// Templates — read-only endpoints available to any
+			// authenticated user.
+			r.Get("/templates", h.ListTemplates)
+			r.Get("/templates/{id}", h.GetTemplate)
+			r.Get("/templates/{id}/export", h.ExportTemplate)
 
 			// -------------------------- STACK DEPLOY -------------------------
 			r.Group(func(r chi.Router) {

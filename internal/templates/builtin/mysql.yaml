@@ -1,0 +1,44 @@
+slug: mysql-8
+name: MySQL 8
+description: MySQL 8 with a persistent volume and exposed port.
+icon_url: https://raw.githubusercontent.com/docker-library/docs/master/mysql/logo.png
+version: "1.0"
+author: Dockmesh
+parameters:
+  - name: db_name
+    default: app
+  - name: db_user
+    default: app
+  - name: db_password
+    description: Password for the app user. Auto-generated if blank.
+    secret: true
+    type: secret
+  - name: root_password
+    description: MySQL root password. Auto-generated if blank.
+    secret: true
+    type: secret
+  - name: port
+    default: "3306"
+    pattern: "^[0-9]{2,5}$"
+compose: |
+  services:
+    mysql:
+      image: mysql:8
+      restart: unless-stopped
+      command: --default-authentication-plugin=mysql_native_password
+      environment:
+        MYSQL_DATABASE: "{{db_name}}"
+        MYSQL_USER: "{{db_user}}"
+        MYSQL_PASSWORD: "{{db_password|secret}}"
+        MYSQL_ROOT_PASSWORD: "{{root_password|secret}}"
+      volumes:
+        - mysql_data:/var/lib/mysql
+      ports:
+        - "{{port|default:3306}}:3306"
+      healthcheck:
+        test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+        interval: 10s
+        timeout: 5s
+        retries: 10
+  volumes:
+    mysql_data: {}

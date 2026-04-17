@@ -94,6 +94,8 @@ tags:
     description: Cross-host stack migration + drain (P.9 / P.10).
   - name: proxy
     description: Embedded Caddy reverse-proxy configuration.
+  - name: templates
+    description: Stack templates with parameter substitution (P.11.12) — built-in library + user-created.
   - name: secrets
     description: age-encrypted secrets service state.
 
@@ -3487,6 +3489,172 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
 
   # -----------------------------------------------------------------------
+  # templates — stack templates with parameter substitution (P.11.12)
+  # -----------------------------------------------------------------------
+  /templates:
+    get:
+      operationId: templates.list
+      tags: [templates]
+      summary: List stack templates (built-in + user-created)
+      responses:
+        "200":
+          description: Templates.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/StackTemplate" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: templates.create
+      tags: [templates]
+      summary: Create a user-defined template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StackTemplateInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StackTemplate" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Slug already in use.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /templates/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    get:
+      operationId: templates.get
+      tags: [templates]
+      summary: Inspect a template (compose body, parameters, etc.)
+      responses:
+        "200":
+          description: Template.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StackTemplate" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: templates.update
+      tags: [templates]
+      summary: Update a user-defined template (built-ins rejected with 409)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StackTemplateInput" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StackTemplate" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Template is built-in or slug conflict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: templates.delete
+      tags: [templates]
+      summary: Delete a user-defined template
+      description: Built-in templates cannot be deleted — returns 409.
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Template is built-in.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /templates/{id}/deploy:
+    post:
+      operationId: templates.deploy
+      tags: [templates]
+      summary: Render the template with the given values and deploy as a new stack
+      description: |
+        Renders `{{param}}` placeholders with the supplied `values`,
+        auto-generates any `secret: true` parameter the caller left
+        blank, creates a stack on the filesystem, and runs
+        `docker compose up -d` against the chosen host. The response
+        echoes the rendered compose + the resolved values with secrets
+        redacted as `<generated>`.
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stack_name]
+              properties:
+                stack_name: { type: string, description: Name for the new stack. }
+                host_id: { type: string, description: Target host; empty / "local" for the central daemon. }
+                values:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: Parameter values, keyed by the parameter's name.
+      responses:
+        "201":
+          description: Deployed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stack: { type: string }
+                  compose: { type: string, description: The rendered compose.yaml. }
+                  values:
+                    type: object
+                    additionalProperties: { type: string }
+                    description: Resolved values; secrets show as `<generated>`.
+                  deploy_result: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: A stack with this name already exists.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /templates/{id}/export:
+    get:
+      operationId: templates.export
+      tags: [templates]
+      summary: Download the template as YAML (same shape as built-in files)
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "200":
+          description: YAML.
+          content:
+            application/yaml:
+              schema:
+                type: string
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # -----------------------------------------------------------------------
   # proxy — embedded Caddy reverse-proxy configuration
   # -----------------------------------------------------------------------
   /proxy/status:
@@ -4305,6 +4473,68 @@ components:
         details: { type: string, description: JSON-encoded contextual metadata. }
         prev_hash: { type: string }
         row_hash: { type: string }
+
+    StackTemplateParam:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, example: db_password }
+        description: { type: string }
+        type:
+          type: string
+          enum: [string, number, bool, secret]
+        default: { type: string }
+        secret:
+          type: boolean
+          description: When true, the server auto-generates a value if the caller leaves it blank.
+        enum:
+          type: array
+          items: { type: string }
+        pattern:
+          type: string
+          description: Regex the value must match.
+        required: { type: boolean }
+
+    StackTemplate:
+      type: object
+      required: [id, slug, name, compose, parameters, builtin, created_at, updated_at]
+      description: Stack template (P.11.12). Built-in templates ship with the binary and cannot be edited or deleted.
+      properties:
+        id: { type: integer, format: int64 }
+        slug: { type: string, example: postgres-16 }
+        name: { type: string }
+        description: { type: string }
+        icon_url: { type: string, format: uri }
+        compose:
+          type: string
+          description: "compose.yaml body with `{{param}}` placeholders."
+        env:
+          type: string
+          description: "Optional .env template (same placeholder syntax)."
+        parameters:
+          type: array
+          items: { $ref: "#/components/schemas/StackTemplateParam" }
+        author: { type: string }
+        version: { type: string }
+        builtin: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    StackTemplateInput:
+      type: object
+      required: [slug, name, compose]
+      properties:
+        slug: { type: string }
+        name: { type: string }
+        description: { type: string }
+        icon_url: { type: string, format: uri }
+        compose: { type: string }
+        env: { type: string }
+        parameters:
+          type: array
+          items: { $ref: "#/components/schemas/StackTemplateParam" }
+        author: { type: string }
+        version: { type: string }
 
     StackGitSource:
       type: object

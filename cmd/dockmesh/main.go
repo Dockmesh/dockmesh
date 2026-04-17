@@ -50,6 +50,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/dockmesh/dockmesh/internal/templates"
 	"github.com/dockmesh/dockmesh/internal/updater"
 	"github.com/dockmesh/dockmesh/pkg/version"
 )
@@ -330,6 +331,15 @@ func main() {
 	gitSourceSvc.Start(ctx)
 	defer gitSourceSvc.Stop()
 
+	// Stack templates (P.11.12). Seeds the built-in library from
+	// embedded YAML on every boot so template fixes ship with the
+	// binary. User-created templates are untouched — SeedBuiltins
+	// only upserts rows where builtin=1.
+	templatesSvc := templates.New(database)
+	if err := templatesSvc.SeedBuiltins(ctx); err != nil {
+		slog.Warn("stack templates seed", "err", err)
+	}
+
 	// Host tags (P.11.2). In-memory cache loaded once at startup; kept
 	// fresh after every mutation via Load() inside the service.
 	hostTagsSvc := hosttags.New(database)
@@ -376,6 +386,7 @@ func main() {
 		APITokens:    apiTokensSvc,
 		Registries:   registriesSvc,
 		GitSource:    gitSourceSvc,
+		Templates:    templatesSvc,
 		Prom:         promMetrics,
 		JWTSecret:    cfg.JWTSecret,
 	})

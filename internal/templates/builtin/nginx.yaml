@@ -1,0 +1,24 @@
+slug: nginx
+name: Nginx
+description: Nginx web server with a host-port mapping. Mount your config + content as bind mounts.
+icon_url: https://raw.githubusercontent.com/docker-library/docs/master/nginx/logo.png
+version: "1.0"
+author: Dockmesh
+parameters:
+  - name: port
+    description: Host port to expose nginx on.
+    default: "8080"
+    pattern: "^[0-9]{2,5}$"
+compose: |
+  services:
+    nginx:
+      image: nginx:alpine
+      restart: unless-stopped
+      ports:
+        - "{{port|default:8080}}:80"
+      volumes:
+        - nginx_html:/usr/share/nginx/html
+        - nginx_conf:/etc/nginx/conf.d
+  volumes:
+    nginx_html: {}
+    nginx_conf: {}
