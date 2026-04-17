@@ -637,8 +637,6 @@ paths:
       description: |
         Called by the agent binary on first boot. There is NO Bearer auth
         on this route — the one-time token IS the authentication.
-        Returns the freshly-signed client cert, key, CA cert, and the
-        wss URL the agent should dial.
       security: []
       requestBody:
         required: true
@@ -657,6 +655,310 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+
+  # -----------------------------------------------------------------------
+  # containers — lifecycle, logs, stats, exec (WS endpoints live separately)
+  # -----------------------------------------------------------------------
+  /containers:
+    get:
+      operationId: containers.list
+      tags: [containers]
+      summary: List containers across one or all hosts
+      description: |
+        Fan-out capable via `?host=all`. Each row is a Docker SDK
+        `Container` summary plus `host_id` / `host_name` when fanning out.
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
+        - name: all
+          in: query
+          schema: { type: boolean, default: false }
+          description: Include stopped containers.
+      responses:
+        "200":
+          description: Container list. Shape differs between single-host (array) and fan-out (FanOutResponse).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items: { $ref: "#/components/schemas/Container" }
+                  - $ref: "#/components/schemas/FanOutResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503":
+          description: Docker daemon is unreachable on the target host.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /containers/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ContainerIDPath"
+      - $ref: "#/components/parameters/HostQuery"
+    get:
+      operationId: containers.inspect
+      tags: [containers]
+      summary: Inspect one container
+      responses:
+        "200":
+          description: Full ContainerJSON from the Docker daemon.
+          content:
+            application/json:
+              schema: { type: object, description: Passthrough of the Docker SDK ContainerJSON. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: containers.remove
+      tags: [containers]
+      summary: Remove a container
+      parameters:
+        - name: force
+          in: query
+          schema: { type: boolean, default: false }
+          description: Kill running containers before removing.
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /containers/{id}/start:
+    post:
+      operationId: containers.start
+      tags: [containers]
+      summary: Start a container
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "204": { description: Started. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /containers/{id}/stop:
+    post:
+      operationId: containers.stop
+      tags: [containers]
+      summary: Stop a container (SIGTERM, then SIGKILL after timeout)
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "204": { description: Stopped. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /containers/{id}/restart:
+    post:
+      operationId: containers.restart
+      tags: [containers]
+      summary: Restart a container
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "204": { description: Restarted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /containers/{id}/pause:
+    post:
+      operationId: containers.pause
+      tags: [containers]
+      summary: Freeze all processes via the cgroup freezer
+      description: |
+        Pauses the container without losing state — useful for incident
+        inspection. Unpause with `/containers/{id}/unpause`. P.11.4.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "204": { description: Paused. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /containers/{id}/unpause:
+    post:
+      operationId: containers.unpause
+      tags: [containers]
+      summary: Resume a paused container
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "204": { description: Resumed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /containers/{id}/kill:
+    post:
+      operationId: containers.kill
+      tags: [containers]
+      summary: Send a signal to a container
+      description: |
+        Default signal is SIGKILL. Accepts any signal name Docker accepts
+        (SIGTERM, SIGHUP, SIGUSR1, …) in the request body. P.11.4.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                signal: { type: string, example: SIGTERM, default: SIGKILL }
+      responses:
+        "204": { description: Signal sent. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /containers/{id}/update:
+    post:
+      operationId: containers.update
+      tags: [containers]
+      summary: Pull a newer image tag and recreate the container
+      description: |
+        Checks for a newer image matching the container's tag, pulls it,
+        stops the old container, creates a new one with the same config,
+        and starts it. Rollback history is retained for
+        `/containers/{id}/rollback`.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+      responses:
+        "200":
+          description: Update complete.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  old_image: { type: string }
+                  new_image: { type: string }
+                  container_id: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /containers/{id}/rollback:
+    post:
+      operationId: containers.rollback
+      tags: [containers]
+      summary: Roll a container back to its previous image
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+      responses:
+        "200":
+          description: Rolled back.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  image: { type: string }
+                  container_id: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: No previous image to roll back to.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /containers/{id}/update-info:
+    get:
+      operationId: containers.update_info
+      tags: [containers]
+      summary: Check whether a newer image is available for this container
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+      responses:
+        "200":
+          description: Update availability.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  update_available: { type: boolean }
+                  current_image: { type: string }
+                  latest_image: { type: string }
+                  current_digest: { type: string }
+                  latest_digest: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /containers/{id}/update-history:
+    get:
+      operationId: containers.update_history
+      tags: [containers]
+      summary: List prior image updates for this container
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+      responses:
+        "200":
+          description: Update history entries, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: integer, format: int64 }
+                    old_image: { type: string }
+                    new_image: { type: string }
+                    updated_at: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /containers/{id}/metrics:
+    get:
+      operationId: containers.metrics
+      tags: [containers]
+      summary: Historical CPU / memory / network / disk samples
+      description: |
+        Returns time-series samples from the internal metrics collector
+        (30s raw, 1m, 1h retention per concept §15.4). Used by the
+        container detail page's charts.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - name: resolution
+          in: query
+          schema: { type: string, enum: [raw, 1m, 1h], default: raw }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Metric samples.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    ts: { type: string, format: date-time }
+                    cpu_percent: { type: number }
+                    mem_bytes: { type: integer, format: int64 }
+                    mem_percent: { type: number }
+                    net_rx_bytes: { type: integer, format: int64 }
+                    net_tx_bytes: { type: integer, format: int64 }
+                    block_read_bytes: { type: integer, format: int64 }
+                    block_write_bytes: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
 components:
   securitySchemes:
@@ -698,6 +1000,52 @@ components:
           items: { type: string }
           description: Host tags this user is scoped to. Empty / omitted = access to all hosts.
         mfa_enabled: { type: boolean }
+
+    Container:
+      type: object
+      description: |
+        Docker container summary. Mirrors the Docker SDK's
+        `types.Container` with `host_id` + `host_name` added when the
+        response comes from a fan-out list. Most fields are passthrough.
+      properties:
+        Id: { type: string }
+        Names:
+          type: array
+          items: { type: string }
+        Image: { type: string }
+        ImageID: { type: string }
+        Command: { type: string }
+        Created: { type: integer, format: int64 }
+        State:
+          type: string
+          enum: [created, restarting, running, removing, paused, exited, dead]
+        Status: { type: string, example: "Up 5 minutes" }
+        Labels:
+          type: object
+          additionalProperties: { type: string }
+        host_id: { type: string }
+        host_name: { type: string }
+
+    FanOutResponse:
+      type: object
+      description: |
+        Returned by list endpoints when `?host=all`. `items` is the flat
+        aggregated list; `errors` lists hosts that failed to respond so
+        the UI can show partial results with a warning banner.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { type: object }
+          description: Rows from every host that answered. Shape depends on the endpoint.
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              host_id: { type: string }
+              host_name: { type: string }
+              error: { type: string }
 
     HostInfo:
       type: object
@@ -814,6 +1162,13 @@ components:
       name: id
       in: path
       description: Host id — "local" for the central daemon, otherwise an agent UUID.
+      required: true
+      schema:
+        type: string
+    ContainerIDPath:
+      name: id
+      in: path
+      description: Container id (long or short form) or name.
       required: true
       schema:
         type: string
