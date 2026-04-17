@@ -66,6 +66,27 @@ func (h *LocalHost) RemoveContainer(ctx context.Context, id string, force bool) 
 	return h.cli.RemoveContainer(ctx, id, force)
 }
 
+func (h *LocalHost) PauseContainer(ctx context.Context, id string) error {
+	if h.cli == nil {
+		return ErrNoDocker
+	}
+	return h.cli.PauseContainer(ctx, id)
+}
+
+func (h *LocalHost) UnpauseContainer(ctx context.Context, id string) error {
+	if h.cli == nil {
+		return ErrNoDocker
+	}
+	return h.cli.UnpauseContainer(ctx, id)
+}
+
+func (h *LocalHost) KillContainer(ctx context.Context, id, signal string) error {
+	if h.cli == nil {
+		return ErrNoDocker
+	}
+	return h.cli.KillContainer(ctx, id, signal)
+}
+
 func (h *LocalHost) ContainerLogs(ctx context.Context, id, tail string, follow bool) (io.ReadCloser, error) {
 	if h.cli == nil {
 		return nil, ErrNoDocker

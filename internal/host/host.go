@@ -34,6 +34,14 @@ type Host interface {
 	RestartContainer(ctx context.Context, id string) error
 	RemoveContainer(ctx context.Context, id string, force bool) error
 
+	// Pause / unpause freeze and thaw all processes in a container via
+	// the freezer cgroup. No data lost, useful for incident-response
+	// inspection. KillContainer sends a signal (default SIGKILL if
+	// signal == ""). P.11.4.
+	PauseContainer(ctx context.Context, id string) error
+	UnpauseContainer(ctx context.Context, id string) error
+	KillContainer(ctx context.Context, id, signal string) error
+
 	// Container log stream (slice 3.1.2.2). The returned ReadCloser
 	// produces docker's multiplexed log frame format (8-byte mux header
 	// per chunk for non-tty containers) — the WS handler scans line-by-
@@ -93,8 +101,9 @@ type ExecSession interface {
 
 // Info is what /api/v1/hosts returns for the frontend host switcher.
 type Info struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Kind   string `json:"kind"`   // "local" | "agent"
-	Status string `json:"status"` // "online" | "offline"
+	ID     string   `json:"id"`
+	Name   string   `json:"name"`
+	Kind   string   `json:"kind"`           // "local" | "agent"
+	Status string   `json:"status"`         // "online" | "offline"
+	Tags   []string `json:"tags,omitempty"` // populated by the handler from hosttags service
 }

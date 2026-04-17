@@ -30,3 +30,23 @@ func (c *Client) RestartContainer(ctx context.Context, id string) error {
 func (c *Client) RemoveContainer(ctx context.Context, id string, force bool) error {
 	return c.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: force})
 }
+
+// PauseContainer freezes all processes in the container (SIGSTOP-equivalent
+// via the freezer cgroup). Data in memory is preserved. Used for incident
+// response when you want to inspect a misbehaving container without
+// killing it.
+func (c *Client) PauseContainer(ctx context.Context, id string) error {
+	return c.cli.ContainerPause(ctx, id)
+}
+
+// UnpauseContainer resumes a paused container.
+func (c *Client) UnpauseContainer(ctx context.Context, id string) error {
+	return c.cli.ContainerUnpause(ctx, id)
+}
+
+// KillContainer sends a signal to the container's main process. Empty
+// signal defaults to SIGKILL (Docker's default). Accepts the usual
+// "SIGKILL", "SIGTERM", "SIGHUP" names or numeric strings like "9".
+func (c *Client) KillContainer(ctx context.Context, id, signal string) error {
+	return c.cli.ContainerKill(ctx, id, signal)
+}

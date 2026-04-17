@@ -95,6 +95,21 @@ func (h *RemoteHost) RemoveContainer(ctx context.Context, id string, force bool)
 	return err
 }
 
+func (h *RemoteHost) PauseContainer(ctx context.Context, id string) error {
+	_, err := h.request(ctx, agents.FrameReqContainerPause, agents.ContainerIDReq{ID: id})
+	return err
+}
+
+func (h *RemoteHost) UnpauseContainer(ctx context.Context, id string) error {
+	_, err := h.request(ctx, agents.FrameReqContainerUnpause, agents.ContainerIDReq{ID: id})
+	return err
+}
+
+func (h *RemoteHost) KillContainer(ctx context.Context, id, signal string) error {
+	_, err := h.request(ctx, agents.FrameReqContainerKill, agents.ContainerKillReq{ID: id, Signal: signal})
+	return err
+}
+
 func (h *RemoteHost) ContainerLogs(ctx context.Context, id, tail string, follow bool) (io.ReadCloser, error) {
 	if h.agent == nil {
 		return nil, ErrAgentOffline

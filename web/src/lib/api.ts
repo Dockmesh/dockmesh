@@ -81,6 +81,7 @@ export interface HostInfo {
   name: string;
   kind: 'local' | 'agent' | 'all';
   status: 'online' | 'offline' | 'pending' | 'revoked';
+  tags?: string[];
 }
 
 // SystemMetrics is the host-level CPU / memory / disk / uptime snapshot
@@ -233,6 +234,19 @@ export interface CustomRole {
 export interface PermissionInfo {
   name: string;
   description: string;
+}
+
+export interface ApiToken {
+  id: number;
+  prefix: string;            // e.g. "dmt_A7f3X9c4"
+  name: string;
+  role: string;
+  created_by?: number;
+  created_at: string;
+  expires_at?: string;
+  last_used_at?: string;
+  last_used_ip?: string;
+  revoked_at?: string;
 }
 
 export interface SystemMetrics {
@@ -429,6 +443,10 @@ export interface AlertRule {
   severity: string;
   cooldown_seconds: number;
   muted_until?: string;
+  // Built-in rules (P.11.5) ship with the server. UI disables delete,
+  // keeps edit + enable/disable available so admins can tune thresholds
+  // or silence the rule without removing the baseline coverage.
+  builtin: boolean;
   firing_since?: string;
   last_triggered_at?: string;
   last_resolved_at?: string;
@@ -685,6 +703,18 @@ export const api = {
       request<void>(`/roles/${encodeURIComponent(name)}`, { method: 'DELETE' })
   },
 
+  apiTokens: {
+    list: () => request<ApiToken[]>('/settings/api-tokens'),
+    create: (input: { name: string; role: string; expires_in_days: number }) =>
+      request<ApiToken & { token: string }>('/settings/api-tokens', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input)
+      }),
+    revoke: (id: number) =>
+      request<void>(`/settings/api-tokens/${id}`, { method: 'DELETE' })
+  },
+
   globalEnv: {
     list: () => request<Array<{ id: number; key: string; value: string; group_name: string; encrypted: boolean; created_at: string; updated_at: string }>>('/global-env'),
     create: (data: { key: string; value: string; group_name: string }) =>
@@ -696,7 +726,28 @@ export const api = {
   },
 
   hosts: {
-    list: () => request<HostInfo[]>('/hosts')
+    list: () => request<HostInfo[]>('/hosts'),
+    // Host tag management (P.11.2). Reads work for any authenticated
+    // user; mutations require user.manage.
+    listTags: (hostId: string) =>
+      request<string[]>(`/hosts/${encodeURIComponent(hostId)}/tags`),
+    setTags: (hostId: string, tags: string[]) =>
+      request<string[]>(`/hosts/${encodeURIComponent(hostId)}/tags`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags })
+      }),
+    addTag: (hostId: string, tag: string) =>
+      request<string[]>(`/hosts/${encodeURIComponent(hostId)}/tags`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag })
+      }),
+    removeTag: (hostId: string, tag: string) =>
+      request<void>(`/hosts/${encodeURIComponent(hostId)}/tags/${encodeURIComponent(tag)}`, {
+        method: 'DELETE'
+      }),
+    allTags: () => request<string[]>('/hosts/tags/all')
   },
 
   containers: {
@@ -728,6 +779,22 @@ export const api = {
     restart: (id: string, host = 'local') => {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
       return request<void>(`/containers/${id}/restart${qs}`, { method: 'POST' });
+    },
+    pause: (id: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<void>(`/containers/${id}/pause${qs}`, { method: 'POST' });
+    },
+    unpause: (id: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<void>(`/containers/${id}/unpause${qs}`, { method: 'POST' });
+    },
+    kill: (id: string, signal = '', host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<void>(`/containers/${id}/kill${qs}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signal })
+      });
     },
     remove: (id: string, force = false, host = 'local') => {
       const params = new URLSearchParams();
@@ -837,17 +904,17 @@ export const api = {
   },
 
   users: {
-    me: () => request<{ id: string; username: string; email?: string; role: string }>('/me'),
-    list: () => request<Array<{ id: string; username: string; email?: string; role: string }>>('/users'),
+    me: () => request<{ id: string; username: string; email?: string; role: string; scope_tags?: string[] }>('/me'),
+    list: () => request<Array<{ id: string; username: string; email?: string; role: string; scope_tags?: string[] }>>('/users'),
     create: (username: string, password: string, role: string, email?: string) =>
       request<{ id: string; username: string; role: string }>('/users', {
         method: 'POST',
         body: JSON.stringify({ username, password, role, email })
       }),
-    update: (id: string, email: string, role: string) =>
-      request<{ id: string; username: string; role: string }>(`/users/${id}`, {
+    update: (id: string, email: string, role: string, scope_tags?: string[]) =>
+      request<{ id: string; username: string; role: string; scope_tags?: string[] }>(`/users/${id}`, {
         method: 'PUT',
-        body: JSON.stringify({ email, role })
+        body: JSON.stringify({ email, role, scope_tags: scope_tags ?? [] })
       }),
     delete: (id: string) => request<void>(`/users/${id}`, { method: 'DELETE' }),
     changePassword: (id: string, password: string) =>

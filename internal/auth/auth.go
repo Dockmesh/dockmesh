@@ -59,16 +59,18 @@ func VerifyPassword(password, encoded string) (bool, error) {
 }
 
 type Claims struct {
-	UserID string `json:"uid"`
-	Role   string `json:"role,omitempty"`
+	UserID    string   `json:"uid"`
+	Role      string   `json:"role,omitempty"`
+	ScopeTags []string `json:"scope,omitempty"` // P.11.3: host-tag scope; empty = all hosts
 	jwt.RegisteredClaims
 }
 
 // IssueAccessToken mints a short-lived (15 min) access token.
-func IssueAccessToken(secret []byte, userID, role string) (string, error) {
+func IssueAccessToken(secret []byte, userID, role string, scopeTags []string) (string, error) {
 	c := Claims{
-		UserID: userID,
-		Role:   role,
+		UserID:    userID,
+		Role:      role,
+		ScopeTags: scopeTags,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

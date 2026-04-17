@@ -67,6 +67,9 @@ func main() {
 		case "--version", "-v", "version":
 			fmt.Printf("dockmesh-agent %s %s/%s\n", agentVersion, runtime.GOOS, runtime.GOARCH)
 			return
+		case "status":
+			runStatusCmd()
+			return
 		}
 	}
 
@@ -745,6 +748,25 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		var req agents.ContainerIDReq
 		_ = json.Unmarshal(f.Payload, &req)
 		err := cli.ContainerRemove(ctx, req.ID, container.RemoveOptions{Force: req.Force})
+		respond(conn, f.ID, struct{}{}, err)
+
+	case agents.FrameReqContainerPause:
+		var req agents.ContainerIDReq
+		_ = json.Unmarshal(f.Payload, &req)
+		err := cli.ContainerPause(ctx, req.ID)
+		respond(conn, f.ID, struct{}{}, err)
+
+	case agents.FrameReqContainerUnpause:
+		var req agents.ContainerIDReq
+		_ = json.Unmarshal(f.Payload, &req)
+		err := cli.ContainerUnpause(ctx, req.ID)
+		respond(conn, f.ID, struct{}{}, err)
+
+	case agents.FrameReqContainerKill:
+		var req agents.ContainerKillReq
+		_ = json.Unmarshal(f.Payload, &req)
+		// Empty signal → Docker defaults to SIGKILL.
+		err := cli.ContainerKill(ctx, req.ID, req.Signal)
 		respond(conn, f.ID, struct{}{}, err)
 
 	case agents.FrameReqImageList:

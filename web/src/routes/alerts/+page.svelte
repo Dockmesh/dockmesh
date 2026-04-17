@@ -291,6 +291,7 @@
                       <div class="font-medium text-sm flex items-center gap-1.5">
                         {r.name}
                         <Badge variant={r.severity === 'critical' ? 'danger' : r.severity === 'info' ? 'info' : 'warning'}>{r.severity}</Badge>
+                        {#if r.builtin}<Badge variant="info">built-in</Badge>{/if}
                         {#if isMuted(r)}<Badge variant="default">muted</Badge>{/if}
                       </div>
                       <div class="text-[10px] text-[var(--fg-muted)] font-mono">{r.container_filter}</div>
@@ -329,9 +330,15 @@
                       <button class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]" title="Duplicate" onclick={() => duplicateRule(r)}>
                         <Copy class="w-3.5 h-3.5" />
                       </button>
-                      <button class="p-1.5 rounded-md text-[var(--color-danger-400)] hover:bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)]" title="Delete" onclick={() => deleteRule(r)}>
-                        <Trash2 class="w-3.5 h-3.5" />
-                      </button>
+                      {#if r.builtin}
+                        <button class="p-1.5 rounded-md text-[var(--fg-subtle)] cursor-not-allowed" title="Built-in rule cannot be deleted — disable it instead" disabled aria-label="Cannot delete built-in rule">
+                          <Trash2 class="w-3.5 h-3.5" />
+                        </button>
+                      {:else}
+                        <button class="p-1.5 rounded-md text-[var(--color-danger-400)] hover:bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)]" title="Delete" onclick={() => deleteRule(r)}>
+                          <Trash2 class="w-3.5 h-3.5" />
+                        </button>
+                      {/if}
                     </div>
                   </td>
                 </tr>

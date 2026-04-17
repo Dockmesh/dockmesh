@@ -4,7 +4,7 @@
   import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
-  import { Server, Plus, Trash2, RefreshCw, Copy, CheckCircle2, ArrowDownToLine } from 'lucide-svelte';
+  import { Server, Plus, Trash2, RefreshCw, Copy, CheckCircle2, ArrowDownToLine, Tag, X } from 'lucide-svelte';
 
   let agents = $state<Agent[]>([]);
   let loading = $state(true);
@@ -26,6 +26,77 @@
   let drainPlan = $state<DrainPlan | null>(null);
   let drainLoading = $state(false);
   let drainBusy = $state(false);
+
+  // Host tags state (P.11.2) — tags per host are loaded from a separate
+  // endpoint so the agents list stays cheap. The edit modal owns a
+  // scratch copy that flushes back via setTags on save.
+  let hostTags = $state<Record<string, string[]>>({});
+  let showTagsFor = $state<string | null>(null);
+  let tagsDraft = $state<string[]>([]);
+  let tagInput = $state('');
+  let allTagSuggestions = $state<string[]>([]);
+  let tagsBusy = $state(false);
+
+  async function loadTagsFor(hostId: string) {
+    try {
+      const tags = await api.hosts.listTags(hostId);
+      hostTags[hostId] = tags;
+    } catch (err) {
+      // Non-fatal — host may never have been tagged. Treat as empty.
+      hostTags[hostId] = [];
+    }
+  }
+
+  async function openTags(hostId: string) {
+    showTagsFor = hostId;
+    tagsDraft = [...(hostTags[hostId] ?? [])];
+    tagInput = '';
+    try {
+      allTagSuggestions = await api.hosts.allTags();
+    } catch {
+      allTagSuggestions = [];
+    }
+  }
+
+  function addTagDraft(tag: string) {
+    const t = tag.trim().toLowerCase();
+    if (!t) return;
+    // Same validation as server — surface early so the modal doesn't
+    // eat the input and then 400 on save.
+    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(t)) {
+      toast.error('Invalid tag', 'Use lowercase letters, digits, hyphens. 1-32 chars.');
+      return;
+    }
+    if (tagsDraft.includes(t)) {
+      tagInput = '';
+      return;
+    }
+    if (tagsDraft.length >= 20) {
+      toast.error('Too many tags', 'Max 20 per host.');
+      return;
+    }
+    tagsDraft = [...tagsDraft, t];
+    tagInput = '';
+  }
+
+  function removeTagDraft(tag: string) {
+    tagsDraft = tagsDraft.filter((t) => t !== tag);
+  }
+
+  async function saveTags() {
+    if (!showTagsFor) return;
+    tagsBusy = true;
+    try {
+      const saved = await api.hosts.setTags(showTagsFor, tagsDraft);
+      hostTags[showTagsFor] = saved;
+      toast.success('Tags updated');
+      showTagsFor = null;
+    } catch (err) {
+      toast.error('Failed to save tags', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      tagsBusy = false;
+    }
+  }
 
   async function openDrain(hostId: string) {
     drainHostId = hostId;
@@ -58,6 +129,9 @@
     loading = true;
     try {
       agents = await api.agents.list();
+      // Fetch tags in parallel per host. Tags can be seen by anyone
+      // (non-privileged read) so this works even for non-admins.
+      await Promise.all(agents.map((a) => loadTagsFor(a.id)));
     } catch (err) {
       toast.error('Failed to load agents', err instanceof ApiError ? err.message : undefined);
     } finally {
@@ -173,9 +247,14 @@
               <Server class="w-5 h-5" />
             </div>
             <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
                 <span class="font-medium text-sm">{a.name}</span>
                 <Badge variant={statusVariant(a.status)} dot>{a.status}</Badge>
+                {#each (hostTags[a.id] ?? []) as t}
+                  <span class="inline-flex items-center h-5 px-1.5 rounded text-[10px] font-mono bg-[var(--surface-hover)] text-[var(--fg-muted)] border border-[var(--border)]">
+                    {t}
+                  </span>
+                {/each}
               </div>
               <div class="text-xs text-[var(--fg-muted)] font-mono truncate mt-0.5">
                 {#if a.hostname}{a.hostname}{:else}—{/if}
@@ -185,6 +264,9 @@
                 · last seen {fmtTime(a.last_seen_at)}
               </div>
             </div>
+            <Button size="xs" variant="ghost" onclick={() => openTags(a.id)} aria-label="Manage tags">
+              <Tag class="w-3.5 h-3.5 text-[var(--fg-muted)]" />
+            </Button>
             {#if a.status === 'online'}
               <Button size="xs" variant="ghost" onclick={() => openDrain(a.id)} aria-label="Drain host">
                 <ArrowDownToLine class="w-3.5 h-3.5 text-[var(--color-warning-400)]" />
@@ -353,5 +435,72 @@
       <ArrowDownToLine class="w-4 h-4" />
       Execute drain
     </Button>
+  {/snippet}
+</Modal>
+
+<!-- Host tags modal (P.11.2) -->
+<Modal
+  open={showTagsFor !== null}
+  onclose={() => (showTagsFor = null)}
+  title="Manage host tags"
+  maxWidth="max-w-md"
+>
+  <div class="space-y-4">
+    <p class="text-sm text-[var(--fg-muted)]">
+      Tags drive RBAC scoping, alert routing, and backup job targeting. Use
+      lowercase letters, digits, and hyphens. Max 20 per host.
+    </p>
+
+    <div>
+      <span class="block text-xs font-medium text-[var(--fg-muted)] mb-2">Current tags</span>
+      {#if tagsDraft.length === 0}
+        <p class="text-sm text-[var(--fg-muted)] italic">No tags yet — add one below.</p>
+      {:else}
+        <div class="flex flex-wrap gap-1.5">
+          {#each tagsDraft as t}
+            <span class="inline-flex items-center gap-1 h-6 px-2 rounded text-xs font-mono bg-[var(--surface-hover)] border border-[var(--border)]">
+              {t}
+              <button
+                class="ml-0.5 text-[var(--fg-muted)] hover:text-[var(--danger)]"
+                onclick={() => removeTagDraft(t)}
+                aria-label="Remove {t}"
+                type="button"
+              >
+                <X class="w-3 h-3" />
+              </button>
+            </span>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    <div>
+      <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Add tag</span>
+      <div class="flex gap-2">
+        <input
+          class="dm-input flex-1"
+          placeholder="prod, eu-west, team-frontend..."
+          bind:value={tagInput}
+          onkeydown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); addTagDraft(tagInput); }
+          }}
+          list="tag-suggestions"
+        />
+        <datalist id="tag-suggestions">
+          {#each allTagSuggestions.filter((s) => !tagsDraft.includes(s)) as s}
+            <option value={s}></option>
+          {/each}
+        </datalist>
+        <Button variant="secondary" onclick={() => addTagDraft(tagInput)}>Add</Button>
+      </div>
+      {#if allTagSuggestions.length > 0}
+        <p class="text-xs text-[var(--fg-muted)] mt-1">Existing tags in your fleet will autocomplete.</p>
+      {/if}
+    </div>
+  </div>
+
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (showTagsFor = null)}>Cancel</Button>
+    <Button variant="primary" loading={tagsBusy} onclick={saveTags}>Save tags</Button>
   {/snippet}
 </Modal>

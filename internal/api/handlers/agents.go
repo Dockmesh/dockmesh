@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"runtime"
 
@@ -81,6 +82,13 @@ func (h *Handlers) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// Drop any tags the host had — they're meaningless now and the
+	// in-memory cache would keep them alive otherwise.
+	if h.HostTags != nil {
+		if err := h.HostTags.RemoveAllForHost(r.Context(), id); err != nil {
+			slog.Warn("host tags cleanup after agent delete", "id", id, "err", err)
+		}
 	}
 	h.audit(r, audit.ActionStackDelete, "agent:"+id, nil)
 	w.WriteHeader(http.StatusNoContent)

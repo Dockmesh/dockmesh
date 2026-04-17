@@ -54,6 +54,9 @@ func (f *fakeHost) RestartContainer(context.Context, string) error { panic("no")
 func (f *fakeHost) RemoveContainer(context.Context, string, bool) error {
 	panic("no")
 }
+func (f *fakeHost) PauseContainer(context.Context, string) error       { panic("no") }
+func (f *fakeHost) UnpauseContainer(context.Context, string) error     { panic("no") }
+func (f *fakeHost) KillContainer(context.Context, string, string) error { panic("no") }
 func (f *fakeHost) ContainerLogs(context.Context, string, string, bool) (io.ReadCloser, error) {
 	panic("no")
 }

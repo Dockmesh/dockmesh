@@ -37,6 +37,10 @@ const (
 	FrameReqContainerStop    = "req.containers.stop"
 	FrameReqContainerRestart = "req.containers.restart"
 	FrameReqContainerRemove  = "req.containers.remove"
+	// P.11.4 container lifecycle additions.
+	FrameReqContainerPause   = "req.containers.pause"
+	FrameReqContainerUnpause = "req.containers.unpause"
+	FrameReqContainerKill    = "req.containers.kill"
 
 	// Resource listings + mutations (server → agent)
 	FrameReqImageList   = "req.images.list"
@@ -148,6 +152,13 @@ type ContainerListReq struct {
 type ContainerIDReq struct {
 	ID    string `json:"id"`
 	Force bool   `json:"force,omitempty"`
+}
+
+// ContainerKillReq carries the target id plus the optional signal name.
+// Empty signal is treated by Docker as SIGKILL (its default for Kill).
+type ContainerKillReq struct {
+	ID     string `json:"id"`
+	Signal string `json:"signal,omitempty"`
 }
 
 // AgentUpgradeReq tells the agent to download a new binary and restart.
