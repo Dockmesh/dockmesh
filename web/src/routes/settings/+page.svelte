@@ -463,6 +463,39 @@
     } catch (err) {
       toast.error('Failed', err instanceof ApiError ? err.message : undefined);
     }
+    await loadSessions();
+  }
+
+  // P.12.1 — self sessions
+  let sessions = $state<import('$lib/api').Session[]>([]);
+  let sessionsBusy = $state(false);
+
+  async function loadSessions() {
+    try {
+      sessions = await api.auth.sessions();
+    } catch { /* ignore */ }
+  }
+
+  async function revokeSession(familyID: string, isCurrent: boolean) {
+    if (isCurrent && !confirm('Revoking the current session will log you out on the next refresh. Continue?')) return;
+    if (!isCurrent && !confirm('Revoke this session? Any client using it will be logged out.')) return;
+    sessionsBusy = true;
+    try {
+      await api.auth.revokeSession(familyID);
+      toast.success('Session revoked');
+      await loadSessions();
+    } catch (err) {
+      toast.error('Failed to revoke', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      sessionsBusy = false;
+    }
+  }
+
+  function fmtSessionAgent(ua?: string): string {
+    if (!ua) return 'unknown';
+    // Trim long UA strings so the table stays readable.
+    if (ua.length > 60) return ua.slice(0, 57) + '…';
+    return ua;
   }
 
   async function changeOwnPassword(e: Event) {
@@ -973,6 +1006,54 @@
               {/if}
             </div>
           </div>
+        </Card>
+
+        <!-- P.12.1 Session management -->
+        <Card class="p-5 space-y-3">
+          <div>
+            <h3 class="text-sm font-semibold">Active sessions</h3>
+            <p class="text-xs text-[var(--fg-muted)] mt-0.5">
+              Each row is a logged-in browser or CLI. Revoking a session logs that client out on its next refresh.
+            </p>
+          </div>
+          {#if sessions.length === 0}
+            <p class="text-xs text-[var(--fg-muted)]">No active sessions.</p>
+          {:else}
+            <ul class="text-sm divide-y divide-[var(--border)]">
+              {#each sessions as s (s.family_id)}
+                <li class="py-2 flex items-start gap-3">
+                  <div class="flex-1 min-w-0">
+                    <div class="font-mono text-xs truncate" title={s.user_agent}>
+                      {fmtSessionAgent(s.user_agent)}
+                      {#if s.is_current}
+                        <Badge variant="info">current</Badge>
+                      {/if}
+                      {#if s.revoked_at}
+                        <Badge variant="default">revoked</Badge>
+                      {/if}
+                    </div>
+                    <div class="text-[10px] text-[var(--fg-muted)] mt-0.5">
+                      {s.ip || 'unknown ip'} · created {new Date(s.created_at).toLocaleString()}
+                      {#if !s.revoked_at}
+                        · expires {new Date(s.expires_at).toLocaleString()}
+                      {/if}
+                    </div>
+                  </div>
+                  {#if !s.revoked_at}
+                    <button
+                      class="p-1.5 rounded text-[var(--color-danger-400)] hover:bg-[var(--bg-hover)]"
+                      onclick={() => revokeSession(s.family_id, s.is_current)}
+                      disabled={sessionsBusy}
+                      title="Revoke this session"
+                      aria-label="Revoke session"
+                    >
+                      <Trash2 class="w-3.5 h-3.5" />
+                    </button>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
         </Card>
       </div>
     {:else}
