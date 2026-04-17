@@ -21,6 +21,10 @@ var (
 	ErrInvalidMetric    = errors.New("metric must be cpu_percent or mem_percent")
 	ErrInvalidOperator  = errors.New("operator must be gt or lt")
 	ErrInvalidThreshold = errors.New("threshold required")
+	// ErrBuiltinImmutable is returned when a caller tries to delete a
+	// built-in alert rule. Disabling and editing are still allowed; only
+	// hard delete is blocked so new installs retain baseline coverage.
+	ErrBuiltinImmutable = errors.New("built-in rule cannot be deleted; disable it instead")
 )
 
 // Rule is one row of alert_rules.
@@ -34,9 +38,14 @@ type Rule struct {
 	DurationSeconds int        `json:"duration_seconds"`
 	ChannelIDs      []int64    `json:"channel_ids"`
 	Enabled         bool       `json:"enabled"`
-	Severity        string     `json:"severity"`          // critical | warning | info
-	CooldownSeconds int        `json:"cooldown_seconds"`  // suppress re-notify for this long
+	Severity        string     `json:"severity"`         // critical | warning | info
+	CooldownSeconds int        `json:"cooldown_seconds"` // suppress re-notify for this long
 	MutedUntil      *time.Time `json:"muted_until,omitempty"`
+	// Builtin rules ship with the server (P.11.5). The UI marks them
+	// with a badge and disables the Delete action. Admins can still
+	// disable, edit thresholds, and attach channels — only deletion is
+	// blocked so new installs always retain baseline coverage.
+	Builtin         bool       `json:"builtin"`
 	FiringSince     *time.Time `json:"firing_since,omitempty"`
 	LastTriggered   *time.Time `json:"last_triggered_at,omitempty"`
 	LastResolved    *time.Time `json:"last_resolved_at,omitempty"`
@@ -149,10 +158,10 @@ func (s *Service) ListRules(ctx context.Context) ([]Rule, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, container_filter, metric, operator, threshold,
 		       duration_seconds, channel_ids, enabled,
-		       severity, cooldown_seconds, muted_until,
+		       severity, cooldown_seconds, muted_until, builtin,
 		       firing_since, last_triggered_at, last_resolved_at,
 		       created_at, updated_at
-		FROM alert_rules ORDER BY id DESC`)
+		FROM alert_rules ORDER BY builtin DESC, id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +244,22 @@ func (s *Service) Update(ctx context.Context, id int64, in RuleInput) (*Rule, er
 }
 
 func (s *Service) Delete(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM alert_rules WHERE id = ?`, id)
+	// Guard against deleting builtins so the UI and API share the same
+	// rule. Builtins can still be disabled (Enabled=false) via Update.
+	var builtin int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT builtin FROM alert_rules WHERE id = ?`, id,
+	).Scan(&builtin)
+	if err == sql.ErrNoRows {
+		return nil // already gone, treat as success
+	}
+	if err != nil {
+		return err
+	}
+	if builtin == 1 {
+		return ErrBuiltinImmutable
+	}
+	_, err = s.db.ExecContext(ctx, `DELETE FROM alert_rules WHERE id = ?`, id)
 	return err
 }
 
@@ -502,7 +526,7 @@ func (s *Service) getRule(ctx context.Context, id int64) (*Rule, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, container_filter, metric, operator, threshold,
 		       duration_seconds, channel_ids, enabled,
-		       severity, cooldown_seconds, muted_until,
+		       severity, cooldown_seconds, muted_until, builtin,
 		       firing_since, last_triggered_at, last_resolved_at,
 		       created_at, updated_at
 		FROM alert_rules WHERE id = ?`, id)
@@ -516,19 +540,20 @@ type rowScanner interface {
 func scanRule(r rowScanner) (*Rule, error) {
 	var rule Rule
 	var ids string
-	var enabled int
+	var enabled, builtin int
 	var severity sql.NullString
 	var mutedUntil sql.NullTime
 	var firingSince, lastT, lastR sql.NullTime
 	if err := r.Scan(
 		&rule.ID, &rule.Name, &rule.ContainerFilter, &rule.Metric, &rule.Operator,
 		&rule.Threshold, &rule.DurationSeconds, &ids, &enabled,
-		&severity, &rule.CooldownSeconds, &mutedUntil,
+		&severity, &rule.CooldownSeconds, &mutedUntil, &builtin,
 		&firingSince, &lastT, &lastR, &rule.CreatedAt, &rule.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
 	rule.Enabled = enabled == 1
+	rule.Builtin = builtin == 1
 	rule.Severity = severity.String
 	if rule.Severity == "" {
 		rule.Severity = "warning"

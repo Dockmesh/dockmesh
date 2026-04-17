@@ -5,10 +5,10 @@
   import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, Skeleton, EmptyState } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
-  import { User, Users, Activity, Plus, Trash2, UserCog, ShieldCheck, ShieldOff, Copy, KeyRound, Link2, Globe, ExternalLink, HardDrive, ShieldAlert, AlertCircle, Shield } from 'lucide-svelte';
+  import { User, Users, Activity, Plus, Trash2, UserCog, ShieldCheck, ShieldOff, Copy, KeyRound, Link2, Globe, ExternalLink, HardDrive, ShieldAlert, AlertCircle, Shield, X } from 'lucide-svelte';
   import type { OIDCProvider, OIDCProviderInput } from '$lib/api';
 
-  type Tab = 'account' | 'users' | 'audit' | 'sso' | 'system' | 'roles';
+  type Tab = 'account' | 'users' | 'audit' | 'sso' | 'system' | 'roles' | 'api_tokens';
   // Initial tab honours ?tab=<id> so the sidebar last-backup pill can
   // deep-link straight into the System tab. Snapping back to the first
   // visible tab still happens below for invalid/unauthorised IDs.
@@ -106,6 +106,79 @@
   let showRole = $state(false);
   let editingRole = $state<CustomRole | null>(null);
   let roleForm = $state({ name: '', display: '', permissions: [] as string[] });
+
+  // --- API Tokens tab (P.11.1) ---
+  let apiTokens = $state<import('$lib/api').ApiToken[]>([]);
+  let apiTokensLoading = $state(false);
+  let showNewToken = $state(false);
+  let newTokenForm = $state({ name: '', role: 'operator', expires_in_days: 90 });
+  // After creation, the plaintext lives here for one-time display. Null
+  // when no token is pending reveal. Clearing this loses the plaintext
+  // forever — same semantics as the DB.
+  let freshTokenPlaintext = $state<string | null>(null);
+  let freshTokenName = $state<string>('');
+  let tokenCopied = $state(false);
+
+  async function loadApiTokens() {
+    apiTokensLoading = true;
+    try {
+      apiTokens = await api.apiTokens.list();
+    } catch (err) {
+      toast.error('Failed to load API tokens', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      apiTokensLoading = false;
+    }
+  }
+
+  async function createApiToken(e: Event) {
+    e.preventDefault();
+    if (!newTokenForm.name.trim() || !newTokenForm.role) return;
+    try {
+      const res = await api.apiTokens.create({
+        name: newTokenForm.name.trim(),
+        role: newTokenForm.role,
+        expires_in_days: newTokenForm.expires_in_days
+      });
+      freshTokenPlaintext = res.token;
+      freshTokenName = res.name;
+      showNewToken = false;
+      newTokenForm = { name: '', role: 'operator', expires_in_days: 90 };
+      await loadApiTokens();
+    } catch (err) {
+      toast.error('Failed to create token', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
+  async function revokeApiToken(id: number, name: string) {
+    if (!confirm(`Revoke token "${name}"? This cannot be undone. Any scripts using it will lose access.`)) return;
+    try {
+      await api.apiTokens.revoke(id);
+      toast.success('Token revoked');
+      await loadApiTokens();
+    } catch (err) {
+      toast.error('Failed to revoke', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
+  async function copyToken() {
+    if (!freshTokenPlaintext) return;
+    try {
+      await navigator.clipboard.writeText(freshTokenPlaintext);
+      tokenCopied = true;
+      setTimeout(() => (tokenCopied = false), 2000);
+    } catch {
+      toast.error('Copy failed', 'Select and copy the token manually');
+    }
+  }
+
+  function fmtAgo(ts?: string): string {
+    if (!ts) return 'never';
+    const diff = (Date.now() - new Date(ts).getTime()) / 1000;
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+  }
 
   async function loadRoles() {
     rolesLoading = true;
@@ -367,13 +440,68 @@
   }
 
   // Users
-  let users = $state<Array<{ id: string; username: string; email?: string; role: string }>>([]);
+  let users = $state<Array<{ id: string; username: string; email?: string; role: string; scope_tags?: string[] }>>([]);
   let usersLoading = $state(false);
   let showCreate = $state(false);
   let cUsername = $state('');
   let cPassword = $state('');
   let cRole = $state('viewer');
   let cEmail = $state('');
+
+  // P.11.3 scope editor state
+  let showScopeFor = $state<string | null>(null);
+  let scopeDraft = $state<string[]>([]);
+  let scopeInput = $state('');
+  let scopeSuggestions = $state<string[]>([]);
+  let scopeBusy = $state(false);
+  let scopeUserRole = $state('');
+  let scopeUserEmail = $state('');
+
+  async function openScope(user: { id: string; email?: string; role: string; scope_tags?: string[] }) {
+    showScopeFor = user.id;
+    scopeDraft = [...(user.scope_tags ?? [])];
+    scopeInput = '';
+    scopeUserRole = user.role;
+    scopeUserEmail = user.email ?? '';
+    try {
+      scopeSuggestions = await api.hosts.allTags();
+    } catch {
+      scopeSuggestions = [];
+    }
+  }
+
+  function addScopeDraft(tag: string) {
+    const t = tag.trim().toLowerCase();
+    if (!t || scopeDraft.includes(t)) {
+      scopeInput = '';
+      return;
+    }
+    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(t)) {
+      toast.error('Invalid tag', 'Use lowercase letters, digits, hyphens. 1-32 chars.');
+      return;
+    }
+    scopeDraft = [...scopeDraft, t];
+    scopeInput = '';
+  }
+
+  function removeScopeDraft(t: string) {
+    scopeDraft = scopeDraft.filter((x) => x !== t);
+  }
+
+  async function saveScope() {
+    if (!showScopeFor) return;
+    scopeBusy = true;
+    try {
+      await api.users.update(showScopeFor, scopeUserEmail, scopeUserRole, scopeDraft);
+      toast.success(scopeDraft.length === 0 ? 'Scope cleared (all hosts)' : 'Scope updated');
+      showScopeFor = null;
+      await loadUsers();
+    } catch (err) {
+      toast.error('Failed to save scope', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      scopeBusy = false;
+    }
+  }
 
   async function loadUsers() {
     usersLoading = true;
@@ -413,9 +541,11 @@
     }
   }
 
-  async function changeRole(id: string, email: string | undefined, role: string) {
+  async function changeRole(id: string, email: string | undefined, role: string, scopeTags: string[] | undefined) {
     try {
-      await api.users.update(id, email ?? '', role);
+      // Preserve existing scope when changing the role from the list
+      // dropdown. Scope edits go through the dedicated scope modal.
+      await api.users.update(id, email ?? '', role, scopeTags ?? []);
       toast.success('Role updated', role);
       await loadUsers();
     } catch (err) {
@@ -498,6 +628,7 @@
     else if (tab === 'sso') { loadOIDC(); loadRoles(); }
     else if (tab === 'system') { loadBackup(); loadSystemInfo(); }
     else if (tab === 'roles') loadRoles();
+    else if (tab === 'api_tokens') { loadApiTokens(); loadRoles(); }
   });
 
   const tabs: Array<{ id: Tab; label: string; icon: any; show: boolean }> = $derived([
@@ -506,6 +637,7 @@
     { id: 'sso', label: 'SSO', icon: Globe, show: allowed('user.manage') },
     { id: 'system', label: 'System', icon: HardDrive, show: allowed('user.manage') },
     { id: 'roles', label: 'Roles', icon: Shield, show: allowed('user.manage') },
+    { id: 'api_tokens', label: 'API Tokens', icon: KeyRound, show: allowed('user.manage') },
     { id: 'audit', label: 'Audit Log', icon: Activity, show: allowed('audit.read') }
   ]);
 
@@ -638,8 +770,9 @@
                 <th class="text-left px-5 py-3">User</th>
                 <th class="text-left px-3 py-3">Email</th>
                 <th class="text-left px-3 py-3">Role</th>
+                <th class="text-left px-3 py-3">Scope</th>
                 <th class="text-center px-3 py-3">2FA</th>
-                <th class="text-right px-3 py-3 w-24">Actions</th>
+                <th class="text-right px-3 py-3 w-28">Actions</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-[var(--border)]">
@@ -658,13 +791,35 @@
                     <select
                       class="dm-input !py-1 !px-2 !w-auto text-xs font-mono"
                       value={u.role}
-                      onchange={(e) => changeRole(u.id, u.email, (e.target as HTMLSelectElement).value)}
+                      onchange={(e) => changeRole(u.id, u.email, (e.target as HTMLSelectElement).value, u.scope_tags)}
                       disabled={u.id === me?.id}
                     >
                       {#each roles as r}
                         <option value={r.name}>{r.display || r.name}</option>
                       {/each}
                     </select>
+                  </td>
+                  <td class="px-3 py-3">
+                    <button
+                      class="flex items-center gap-1 hover:underline text-left"
+                      onclick={() => openScope(u)}
+                      aria-label="Edit scope for {u.username}"
+                    >
+                      {#if !u.scope_tags || u.scope_tags.length === 0}
+                        <span class="text-xs text-[var(--fg-muted)] italic">all hosts</span>
+                      {:else}
+                        <div class="flex flex-wrap gap-1">
+                          {#each u.scope_tags.slice(0, 3) as t}
+                            <span class="inline-flex items-center h-5 px-1.5 rounded text-[10px] font-mono bg-[var(--surface-hover)] text-[var(--fg-muted)] border border-[var(--border)]">
+                              {t}
+                            </span>
+                          {/each}
+                          {#if u.scope_tags.length > 3}
+                            <span class="text-[10px] text-[var(--fg-muted)]">+{u.scope_tags.length - 3}</span>
+                          {/if}
+                        </div>
+                      {/if}
+                    </button>
                   </td>
                   <td class="px-3 py-3 text-center">
                     {#if (u as any).mfa_enabled}
@@ -1126,6 +1281,267 @@
     {/if}
   </section>
 {/if}
+
+{#if tab === 'api_tokens' && allowed('user.manage')}
+  <section class="space-y-4">
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <h3 class="text-base font-semibold">API tokens</h3>
+        <p class="text-sm text-[var(--fg-muted)] mt-0.5">
+          Long-lived bearer tokens for CI/CD, scripts, and external integrations.
+          Unlike user sessions, these don't expire by default and can be revoked here.
+        </p>
+      </div>
+      <Button variant="primary" onclick={() => (showNewToken = true)}>
+        <Plus class="w-3.5 h-3.5" />
+        New token
+      </Button>
+    </div>
+
+    <Card>
+      {#if apiTokensLoading}
+        <Skeleton class="h-24" />
+      {:else if apiTokens.length === 0}
+        <EmptyState
+          icon={KeyRound}
+          title="No API tokens yet"
+          description="Create a token to authenticate CI pipelines or scripts against the Dockmesh API."
+        />
+      {:else}
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="text-xs uppercase tracking-wider text-[var(--fg-muted)] border-b border-[var(--border)]">
+              <tr>
+                <th class="text-left py-2 px-3 font-medium">Name</th>
+                <th class="text-left py-2 px-3 font-medium">Prefix</th>
+                <th class="text-left py-2 px-3 font-medium">Role</th>
+                <th class="text-left py-2 px-3 font-medium">Last used</th>
+                <th class="text-left py-2 px-3 font-medium">Expires</th>
+                <th class="text-left py-2 px-3 font-medium">Status</th>
+                <th class="w-10"></th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[var(--border)]">
+              {#each apiTokens as t (t.id)}
+                <tr class:opacity-50={!!t.revoked_at}>
+                  <td class="py-2 px-3 font-medium">{t.name}</td>
+                  <td class="py-2 px-3 font-mono text-xs text-[var(--fg-muted)]">{t.prefix}…</td>
+                  <td class="py-2 px-3"><Badge variant="default">{t.role}</Badge></td>
+                  <td class="py-2 px-3 text-[var(--fg-muted)]">
+                    {fmtAgo(t.last_used_at)}
+                    {#if t.last_used_ip}
+                      <span class="text-xs ml-1">({t.last_used_ip})</span>
+                    {/if}
+                  </td>
+                  <td class="py-2 px-3 text-[var(--fg-muted)]">
+                    {t.expires_at ? new Date(t.expires_at).toISOString().slice(0, 10) : 'never'}
+                  </td>
+                  <td class="py-2 px-3">
+                    {#if t.revoked_at}
+                      <Badge variant="danger">Revoked</Badge>
+                    {:else if t.expires_at && new Date(t.expires_at) < new Date()}
+                      <Badge variant="warning">Expired</Badge>
+                    {:else}
+                      <Badge variant="success">Active</Badge>
+                    {/if}
+                  </td>
+                  <td class="py-2 px-3">
+                    {#if !t.revoked_at}
+                      <button
+                        class="p-1.5 hover:bg-[var(--bg-hover)] rounded text-[var(--fg-muted)] hover:text-[var(--danger)]"
+                        onclick={() => revokeApiToken(t.id, t.name)}
+                        title="Revoke"
+                        aria-label="Revoke"
+                      >
+                        <Trash2 class="w-3.5 h-3.5" />
+                      </button>
+                    {/if}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+    </Card>
+
+    <div class="text-xs text-[var(--fg-muted)] bg-[var(--bg-muted)] rounded-md p-3 border border-[var(--border)]">
+      <p class="font-medium text-[var(--fg)] mb-1">Using a token</p>
+      <p>
+        Send it as <code class="text-[11px] font-mono bg-[var(--bg)] px-1 rounded">Authorization: Bearer dmt_...</code>
+        on any API request. Tokens assume the role they were created with — scope
+        narrowly to limit blast radius if leaked.
+      </p>
+    </div>
+  </section>
+{/if}
+
+<!-- New API token modal -->
+<Modal bind:open={showNewToken} title="Create API token" maxWidth="max-w-md">
+  <form onsubmit={createApiToken} id="new-token-form" class="space-y-4">
+    <Input
+      label="Name"
+      placeholder="github-actions-deploy"
+      hint="A label to identify the token. Cannot be changed later."
+      bind:value={newTokenForm.name}
+    />
+    <div>
+      <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Role</span>
+      <select class="dm-input" bind:value={newTokenForm.role}>
+        {#each roles as r}
+          <option value={r.name}>{r.name} — {r.display}</option>
+        {/each}
+        {#if roles.length === 0}
+          <option value="viewer">viewer</option>
+          <option value="operator">operator</option>
+          <option value="admin">admin</option>
+        {/if}
+      </select>
+      <p class="text-xs text-[var(--fg-muted)] mt-1">
+        The token will have the same permissions as this role. Prefer narrow roles for CI.
+      </p>
+    </div>
+    <div>
+      <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Expiration</span>
+      <select class="dm-input" bind:value={newTokenForm.expires_in_days}>
+        <option value={30}>30 days</option>
+        <option value={90}>90 days (recommended)</option>
+        <option value={180}>180 days</option>
+        <option value={365}>1 year</option>
+        <option value={0}>Never expire</option>
+      </select>
+      <p class="text-xs text-[var(--fg-muted)] mt-1">
+        Rotation is a good habit. Never-expire tokens should be the exception.
+      </p>
+    </div>
+  </form>
+
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (showNewToken = false)}>Cancel</Button>
+    <Button variant="primary" type="submit" form="new-token-form" disabled={!newTokenForm.name.trim()}>
+      Create token
+    </Button>
+  {/snippet}
+</Modal>
+
+<!-- Fresh token reveal modal (one-time) -->
+<Modal
+  open={freshTokenPlaintext !== null}
+  onclose={() => (freshTokenPlaintext = null)}
+  title="Token created"
+  maxWidth="max-w-lg"
+>
+  <div class="space-y-4">
+    <div class="flex items-start gap-2 p-3 rounded-md bg-[var(--warning-bg)] border border-[var(--warning-border)]">
+      <AlertCircle class="w-4 h-4 text-[var(--warning)] flex-shrink-0 mt-0.5" />
+      <div class="text-sm">
+        <p class="font-medium text-[var(--fg)]">Save this token now — you won't see it again.</p>
+        <p class="text-[var(--fg-muted)] mt-0.5">
+          Dockmesh only stores a hash. If you lose the plaintext, revoke this token and create a new one.
+        </p>
+      </div>
+    </div>
+
+    <div>
+      <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">
+        Token for <span class="text-[var(--fg)]">{freshTokenName}</span>
+      </span>
+      <div class="flex gap-2">
+        <code class="flex-1 font-mono text-xs bg-[var(--bg-muted)] border border-[var(--border)] rounded px-3 py-2.5 break-all select-all">
+          {freshTokenPlaintext}
+        </code>
+        <Button variant="secondary" onclick={copyToken}>
+          <Copy class="w-3.5 h-3.5" />
+          {tokenCopied ? 'Copied' : 'Copy'}
+        </Button>
+      </div>
+    </div>
+
+    <div class="text-xs text-[var(--fg-muted)]">
+      <p class="font-medium text-[var(--fg)] mb-1">Example usage</p>
+      <pre class="font-mono text-[11px] bg-[var(--bg-muted)] border border-[var(--border)] rounded p-2 overflow-x-auto"><code>curl -H "Authorization: Bearer {freshTokenPlaintext}" \
+  https://dockmesh.example.com/api/v1/stacks</code></pre>
+    </div>
+  </div>
+
+  {#snippet footer()}
+    <Button variant="primary" onclick={() => (freshTokenPlaintext = null)}>
+      I've saved it
+    </Button>
+  {/snippet}
+</Modal>
+
+<!-- User scope modal (P.11.3) -->
+<Modal
+  open={showScopeFor !== null}
+  onclose={() => (showScopeFor = null)}
+  title="Edit user scope"
+  maxWidth="max-w-md"
+>
+  <div class="space-y-4">
+    <p class="text-sm text-[var(--fg-muted)]">
+      Limit this user's role to hosts with matching tags. Leave empty to grant
+      access across all hosts — the default for new users. Tags use
+      <span class="font-medium text-[var(--fg)]">OR semantics</span>: a user with
+      scope <code class="font-mono text-xs">[prod, staging]</code> sees any host
+      tagged prod <em>or</em> staging.
+    </p>
+
+    <div>
+      <span class="block text-xs font-medium text-[var(--fg-muted)] mb-2">Allowed host tags</span>
+      {#if scopeDraft.length === 0}
+        <div class="px-3 py-2 rounded border border-dashed border-[var(--border)] text-sm text-[var(--fg-muted)] italic">
+          No scope — user has access to all hosts.
+        </div>
+      {:else}
+        <div class="flex flex-wrap gap-1.5">
+          {#each scopeDraft as t}
+            <span class="inline-flex items-center gap-1 h-6 px-2 rounded text-xs font-mono bg-[var(--surface-hover)] border border-[var(--border)]">
+              {t}
+              <button
+                class="ml-0.5 text-[var(--fg-muted)] hover:text-[var(--danger)]"
+                onclick={() => removeScopeDraft(t)}
+                aria-label="Remove {t}"
+                type="button"
+              >
+                <X class="w-3 h-3" />
+              </button>
+            </span>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    <div>
+      <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Add tag</span>
+      <div class="flex gap-2">
+        <input
+          class="dm-input flex-1"
+          placeholder="prod, team-backend..."
+          bind:value={scopeInput}
+          list="scope-suggestions"
+          onkeydown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); addScopeDraft(scopeInput); }
+          }}
+        />
+        <datalist id="scope-suggestions">
+          {#each scopeSuggestions.filter((s) => !scopeDraft.includes(s)) as s}
+            <option value={s}></option>
+          {/each}
+        </datalist>
+        <Button variant="secondary" onclick={() => addScopeDraft(scopeInput)}>Add</Button>
+      </div>
+      {#if scopeSuggestions.length > 0}
+        <p class="text-xs text-[var(--fg-muted)] mt-1">Tags from your fleet autocomplete.</p>
+      {/if}
+    </div>
+  </div>
+
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (showScopeFor = null)}>Cancel</Button>
+    <Button variant="primary" loading={scopeBusy} onclick={saveScope}>Save scope</Button>
+  {/snippet}
+</Modal>
 
 <!-- Role modal with grouped permissions -->
 <Modal bind:open={showRole} title={editingRole ? `Edit role: ${editingRole.display}` : 'Create role'} maxWidth="max-w-lg">

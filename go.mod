@@ -16,6 +16,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/hirochachacha/go-smb2 v1.1.0
 	github.com/mattn/go-shellwords v1.0.12
+	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/minio/minio-go/v7 v7.0.100
 	github.com/pkg/sftp v1.13.10
 	github.com/pquerna/otp v1.5.0
@@ -23,6 +24,7 @@ require (
 	github.com/studio-b12/gowebdav v0.12.0
 	golang.org/x/crypto v0.50.0
 	golang.org/x/oauth2 v0.36.0
+	golang.org/x/term v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.29.8
 )

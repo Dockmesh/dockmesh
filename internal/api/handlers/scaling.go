@@ -27,6 +27,9 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	if !h.requireHostAccess(w, r, target.ID()) {
+		return
+	}
 	name := chi.URLParam(r, "name")
 	service := chi.URLParam(r, "service")
 

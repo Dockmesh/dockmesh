@@ -159,6 +159,28 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Delete("/roles/{name}", h.DeleteRole)
 			})
 
+			// API tokens for CI/CD (admin-only — listing and creating
+			// tokens is the same sensitivity as managing users).
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Get("/settings/api-tokens", h.ListAPITokens)
+				r.Post("/settings/api-tokens", h.CreateAPIToken)
+				r.Delete("/settings/api-tokens/{id}", h.RevokeAPIToken)
+			})
+
+			// Host tags (P.11.2). Read for any authenticated user so
+			// list pages can show tag chips; mutations are admin-only.
+			r.Group(func(r chi.Router) {
+				r.Get("/hosts/tags/all", h.ListAllTags)
+				r.Get("/hosts/{id}/tags", h.ListHostTags)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Put("/hosts/{id}/tags", h.SetHostTags)
+				r.Post("/hosts/{id}/tags", h.AddHostTag)
+				r.Delete("/hosts/{id}/tags/{tag}", h.RemoveHostTag)
+			})
+
 			// Drain host (P.10, admin-only)
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermUserManage))
@@ -176,6 +198,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS) http.Ha
 				r.Post("/containers/{id}/start", h.StartContainer)
 				r.Post("/containers/{id}/stop", h.StopContainer)
 				r.Post("/containers/{id}/restart", h.RestartContainer)
+				r.Post("/containers/{id}/pause", h.PauseContainer)
+				r.Post("/containers/{id}/unpause", h.UnpauseContainer)
+				r.Post("/containers/{id}/kill", h.KillContainer)
 				r.Delete("/containers/{id}", h.RemoveContainer)
 				r.Get("/containers/{id}/update-info", h.PreviewUpdate)
 				r.Post("/containers/{id}/update", h.UpdateContainer)

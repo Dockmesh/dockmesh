@@ -186,6 +186,12 @@ func (h *Handlers) DeleteAlertRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Alerts.Delete(r.Context(), id); err != nil {
+		// Built-in rules are not deletable — surface 409 so the UI can
+		// suggest "disable instead of delete".
+		if errors.Is(err, alerts.ErrBuiltinImmutable) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

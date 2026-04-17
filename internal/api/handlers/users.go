@@ -17,8 +17,9 @@ type createUserRequest struct {
 }
 
 type updateUserRequest struct {
-	Email string `json:"email,omitempty"`
-	Role  string `json:"role"`
+	Email     string   `json:"email,omitempty"`
+	Role      string   `json:"role"`
+	ScopeTags []string `json:"scope_tags"` // empty = all hosts
 }
 
 type changePasswordRequest struct {
@@ -78,7 +79,21 @@ func (h *Handlers) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionUserUpdate, id, map[string]string{"role": u.Role})
+	// Scope update lives in the same request body so the UI can edit
+	// both in one save. Pass through nil vs [] distinction: nil means
+	// the client didn't send the field (omitted in JSON), [] means
+	// explicit clear. Simplest backend rule: always overwrite on
+	// update — if a caller wants to preserve scope they send it back
+	// unchanged.
+	u, err = h.Auth.UpdateUserScope(r.Context(), id, req.ScopeTags)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, audit.ActionUserUpdate, id, map[string]any{
+		"role":       u.Role,
+		"scope_tags": u.ScopeTags,
+	})
 	writeJSON(w, http.StatusOK, u)
 }
 

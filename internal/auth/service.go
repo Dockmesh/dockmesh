@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -20,11 +21,12 @@ var (
 )
 
 type User struct {
-	ID         string `json:"id"`
-	Username   string `json:"username"`
-	Email      string `json:"email,omitempty"`
-	Role       string `json:"role"`
-	MFAEnabled bool   `json:"mfa_enabled"`
+	ID         string   `json:"id"`
+	Username   string   `json:"username"`
+	Email      string   `json:"email,omitempty"`
+	Role       string   `json:"role"`
+	ScopeTags  []string `json:"scope_tags,omitempty"` // P.11.3: empty = all hosts
+	MFAEnabled bool     `json:"mfa_enabled"`
 }
 
 type LoginResult struct {
@@ -127,26 +129,42 @@ func (s *Service) StartSessionForSSO(ctx context.Context, u User, userAgent, ip 
 	return s.startSession(ctx, u, userAgent, ip)
 }
 
+// parseScopeTags decodes the stringified JSON array stored in
+// users.scope_tags. Nil / empty / NULL all return nil, which means
+// "all hosts" semantically. Malformed JSON is logged-worthy but we
+// treat it as no-scope rather than failing the whole request.
+func parseScopeTags(raw sql.NullString) []string {
+	if !raw.Valid || raw.String == "" || raw.String == "null" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(raw.String), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
 func (s *Service) GetUser(ctx context.Context, id string) (*User, error) {
 	var u User
-	var email sql.NullString
+	var email, scope sql.NullString
 	var totpVerified int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, username, email, role, totp_verified FROM users WHERE id = ?`, id).
-		Scan(&u.ID, &u.Username, &email, &u.Role, &totpVerified)
+		`SELECT id, username, email, role, scope_tags, totp_verified FROM users WHERE id = ?`, id).
+		Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &totpVerified)
 	if err != nil {
 		return nil, err
 	}
 	if email.Valid {
 		u.Email = email.String
 	}
+	u.ScopeTags = parseScopeTags(scope)
 	u.MFAEnabled = totpVerified == 1
 	return &u, nil
 }
 
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, username, email, role, totp_verified FROM users ORDER BY username`)
+		`SELECT id, username, email, role, scope_tags, totp_verified FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -154,20 +172,24 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	out := []User{}
 	for rows.Next() {
 		var u User
-		var email sql.NullString
+		var email, scope sql.NullString
 		var totp int
-		if err := rows.Scan(&u.ID, &u.Username, &email, &u.Role, &totp); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &totp); err != nil {
 			return nil, err
 		}
 		if email.Valid {
 			u.Email = email.String
 		}
+		u.ScopeTags = parseScopeTags(scope)
 		u.MFAEnabled = totp == 1
 		out = append(out, u)
 	}
 	return out, rows.Err()
 }
 
+// UpdateUser edits email + role. Scope changes go through
+// UpdateUserScope so callers don't need to pass scope on every role
+// change.
 func (s *Service) UpdateUser(ctx context.Context, id, email, role string) (*User, error) {
 	var emailNullable any
 	if email != "" {
@@ -176,6 +198,27 @@ func (s *Service) UpdateUser(ctx context.Context, id, email, role string) (*User
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE users SET email = ?, role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		emailNullable, role, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetUser(ctx, id)
+}
+
+// UpdateUserScope sets the user's scope_tags. Pass nil / empty slice
+// to clear scope (= access to all hosts).
+func (s *Service) UpdateUserScope(ctx context.Context, id string, scopeTags []string) (*User, error) {
+	var val any
+	if len(scopeTags) > 0 {
+		b, err := json.Marshal(scopeTags)
+		if err != nil {
+			return nil, err
+		}
+		val = string(b)
+	}
+	// val = nil → stores NULL
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET scope_tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		val, id)
 	if err != nil {
 		return nil, err
 	}
@@ -207,12 +250,12 @@ func (s *Service) ChangePassword(ctx context.Context, id, newPassword string) er
 
 func (s *Service) Login(ctx context.Context, username, password, userAgent, ip string) (*LoginResult, error) {
 	var u User
-	var email sql.NullString
+	var email, scope sql.NullString
 	var hash string
 	var totpVerified int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, username, email, role, password, totp_verified FROM users WHERE username = ?`, username).
-		Scan(&u.ID, &u.Username, &email, &u.Role, &hash, &totpVerified)
+		`SELECT id, username, email, role, scope_tags, password, totp_verified FROM users WHERE username = ?`, username).
+		Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &hash, &totpVerified)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrInvalidCredentials
 	}
@@ -222,6 +265,7 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 	if email.Valid {
 		u.Email = email.String
 	}
+	u.ScopeTags = parseScopeTags(scope)
 	ok, err := VerifyPassword(password, hash)
 	if err != nil || !ok {
 		return nil, ErrInvalidCredentials
@@ -354,12 +398,12 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 }
 
 // Validate parses an access token and returns (userID, role).
-func (s *Service) Validate(token string) (string, string, error) {
+func (s *Service) Validate(token string) (string, string, []string, error) {
 	c, err := ParseAccessToken(s.secret, token)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
-	return c.UserID, c.Role, nil
+	return c.UserID, c.Role, c.ScopeTags, nil
 }
 
 type refreshClaims struct {
@@ -369,7 +413,7 @@ type refreshClaims struct {
 }
 
 func (s *Service) mintPair(u User, familyID string, seq int, expiresAt time.Time) (*LoginResult, error) {
-	access, err := IssueAccessToken(s.secret, u.ID, u.Role)
+	access, err := IssueAccessToken(s.secret, u.ID, u.Role, u.ScopeTags)
 	if err != nil {
 		return nil, err
 	}

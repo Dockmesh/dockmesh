@@ -8,8 +8,10 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/alerts"
+	"github.com/dockmesh/dockmesh/internal/apitokens"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/hosttags"
 	"github.com/dockmesh/dockmesh/internal/migration"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/settings"
@@ -52,9 +54,11 @@ type Handlers struct {
 	Drains         *migration.DrainService
 	Agents         *agents.Service
 	Hosts          *host.Registry
+	HostTags       *hosttags.Service
 	Roles          *rbac.Store
 	Settings       *settings.Store
 	GlobalEnv      *globalenv.Store
+	APITokens      *apitokens.Service
 	JWTSecret      []byte // raw secret used to sign the short-lived OIDC state cookie
 }
 
@@ -81,9 +85,11 @@ type Deps struct {
 	Drains         *migration.DrainService
 	Agents         *agents.Service
 	Hosts          *host.Registry
+	HostTags       *hosttags.Service
 	Roles          *rbac.Store
 	Settings       *settings.Store
 	GlobalEnv      *globalenv.Store
+	APITokens      *apitokens.Service
 	JWTSecret      []byte
 }
 
@@ -111,9 +117,11 @@ func New(d Deps) *Handlers {
 		Drains:      d.Drains,
 		Agents:      d.Agents,
 		Hosts:       d.Hosts,
+		HostTags:    d.HostTags,
 		Roles:       d.Roles,
 		Settings:    d.Settings,
 		GlobalEnv:   d.GlobalEnv,
+		APITokens:   d.APITokens,
 		JWTSecret:   d.JWTSecret,
 	}
 }

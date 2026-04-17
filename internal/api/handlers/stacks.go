@@ -146,6 +146,9 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	if !h.requireHostAccess(w, r, target.ID()) {
+		return
+	}
 	name := chi.URLParam(r, "name")
 	// Always read the canonical compose+env from the central server's
 	// filesystem (where stacks live). The host abstraction takes the
@@ -181,6 +184,9 @@ func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
 	target, err := h.pickHost(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
 	name := chi.URLParam(r, "name")

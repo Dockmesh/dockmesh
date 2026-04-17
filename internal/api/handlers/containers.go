@@ -34,6 +34,7 @@ func (h *Handlers) ListContainers(w http.ResponseWriter, r *http.Request) {
 			hostID = "local"
 		} else {
 			targets := h.Hosts.PickAll(r.Context())
+			targets = h.filterHostsByScope(r, targets)
 			res := host.FanOut(r.Context(), targets, func(ctx context.Context, hh host.Host) ([]containerRow, error) {
 				list, err := hh.ListContainers(ctx, all)
 				if err != nil {
@@ -58,6 +59,9 @@ func (h *Handlers) ListContainers(w http.ResponseWriter, r *http.Request) {
 	target, err := h.pickHost(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
 	list, err := target.ListContainers(r.Context(), all)
@@ -94,10 +98,65 @@ func (h *Handlers) RestartContainer(w http.ResponseWriter, r *http.Request) {
 	h.containerAction(w, r, "restart", audit.ActionContainerKill)
 }
 
+// PauseContainer freezes a running container's processes via the freezer
+// cgroup. Data is preserved in memory — useful for incident response.
+//
+//	POST /api/v1/containers/:id/pause
+func (h *Handlers) PauseContainer(w http.ResponseWriter, r *http.Request) {
+	h.containerAction(w, r, "pause", "container.pause")
+}
+
+// UnpauseContainer resumes a paused container.
+//
+//	POST /api/v1/containers/:id/unpause
+func (h *Handlers) UnpauseContainer(w http.ResponseWriter, r *http.Request) {
+	h.containerAction(w, r, "unpause", "container.unpause")
+}
+
+// KillContainer sends a signal to the container's main process. Body
+// may specify {"signal": "SIGKILL"}; empty/missing body defaults to
+// SIGKILL (Docker's default). Separate from the generic action helper
+// because it takes a body + derives the signal label for audit.
+//
+//	POST /api/v1/containers/:id/kill
+func (h *Handlers) KillContainer(w http.ResponseWriter, r *http.Request) {
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if !h.requireHostAccess(w, r, target.ID()) {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	var body struct {
+		Signal string `json:"signal"`
+	}
+	if r.ContentLength > 0 {
+		_ = decodeJSON(r, &body)
+	}
+	if err := target.KillContainer(r.Context(), id, body.Signal); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	signalStr := body.Signal
+	if signalStr == "" {
+		signalStr = "SIGKILL"
+	}
+	h.audit(r, "container.kill", id, map[string]string{
+		"host":   target.ID(),
+		"signal": signalStr,
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handlers) RemoveContainer(w http.ResponseWriter, r *http.Request) {
 	target, err := h.pickHost(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
 	id := chi.URLParam(r, "id")
@@ -118,6 +177,9 @@ func (h *Handlers) containerAction(w http.ResponseWriter, r *http.Request, op st
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	if !h.requireHostAccess(w, r, target.ID()) {
+		return
+	}
 	id := chi.URLParam(r, "id")
 	switch op {
 	case "start":
@@ -126,6 +188,10 @@ func (h *Handlers) containerAction(w http.ResponseWriter, r *http.Request, op st
 		err = target.StopContainer(r.Context(), id)
 	case "restart":
 		err = target.RestartContainer(r.Context(), id)
+	case "pause":
+		err = target.PauseContainer(r.Context(), id)
+	case "unpause":
+		err = target.UnpauseContainer(r.Context(), id)
 	default:
 		err = errors.New("unknown op: " + op)
 	}

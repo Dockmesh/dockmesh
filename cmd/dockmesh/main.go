@@ -22,7 +22,9 @@ import (
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/api"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/apitokens"
 	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/hosttags"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/api/handlers"
 	"github.com/dockmesh/dockmesh/internal/audit"
@@ -57,12 +59,45 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
-	// Subcommand dispatch (§15.2: `dockmesh secrets rotate`).
+	// Subcommand dispatch (§15.2, P.11.6 admin CLI suite).
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "serve":
+			// fall through to server startup
 		case "secrets":
 			runSecretsCmd(os.Args[2:])
 			return
+		case "admin":
+			runAdminCmd(os.Args[2:])
+			return
+		case "db":
+			runDBCmd(os.Args[2:])
+			return
+		case "ca":
+			runCACmd(os.Args[2:])
+			return
+		case "enroll":
+			runEnrollCmd(os.Args[2:])
+			return
+		case "config":
+			runConfigCmd(os.Args[2:])
+			return
+		case "doctor":
+			runDoctorCmd(os.Args[2:])
+			return
+		case "completion":
+			runCompletionCmd(os.Args[2:])
+			return
+		case "version", "--version", "-v":
+			fmt.Printf("dockmesh %s (commit %s, built %s)\n", version.Version, version.Commit, version.Date)
+			return
+		case "help", "--help", "-h":
+			printRootHelp()
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n\n", os.Args[1])
+			printRootHelp()
+			os.Exit(2)
 		}
 	}
 
@@ -249,6 +284,19 @@ func main() {
 	}
 	middleware.RBACStore = rolesStore
 
+	// API tokens for CI/CD (P.11.1). The service is stateless beyond
+	// the DB; Start() just kicks the background last-used-at flusher.
+	apiTokensSvc := apitokens.New(database)
+	apiTokensSvc.Start(ctx)
+	middleware.APITokensStore = apiTokensSvc
+
+	// Host tags (P.11.2). In-memory cache loaded once at startup; kept
+	// fresh after every mutation via Load() inside the service.
+	hostTagsSvc := hosttags.New(database)
+	if err := hostTagsSvc.Load(ctx); err != nil {
+		slog.Warn("host tags load", "err", err)
+	}
+
 	deployStore := stacks.NewDeploymentStore(database)
 	migrationSvc := migration.NewService(database, hostRegistry, stacksMgr, deployStore)
 	if err := migrationSvc.Start(ctx); err != nil {
@@ -281,9 +329,11 @@ func main() {
 		Drains:       drainSvc,
 		Agents:       agentsSvc,
 		Hosts:        hostRegistry,
+		HostTags:     hostTagsSvc,
 		Roles:        rolesStore,
 		Settings:     settingsStore,
 		GlobalEnv:    globalEnvStore,
+		APITokens:    apiTokensSvc,
 		JWTSecret:    cfg.JWTSecret,
 	})
 	router := api.NewRouter(h, authSvc, webFS)

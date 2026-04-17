@@ -30,7 +30,10 @@
     Info,
     Network,
     HardDrive,
-    Tag
+    Tag,
+    Pause,
+    PlayCircle,
+    Zap
   } from 'lucide-svelte';
 
   const id = $derived($page.params.id);
@@ -345,16 +348,31 @@
   }
 
   // ---------- Actions ----------
-  async function action(op: 'start' | 'stop' | 'restart') {
+  async function action(op: 'start' | 'stop' | 'restart' | 'pause' | 'unpause') {
     try {
       if (op === 'start') await api.containers.start(id, targetHost);
       else if (op === 'stop') await api.containers.stop(id, targetHost);
-      else await api.containers.restart(id, targetHost);
+      else if (op === 'restart') await api.containers.restart(id, targetHost);
+      else if (op === 'pause') await api.containers.pause(id, targetHost);
+      else if (op === 'unpause') await api.containers.unpause(id, targetHost);
       toast.success(op);
       await loadInfo();
       if (tab === 'logs') connectLogs();
     } catch (err) {
       toast.error(`${op} failed`, err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
+  // Kill is separate because it's destructive + carries a signal. Default
+  // signal "" lets Docker pick SIGKILL.
+  async function killContainer() {
+    if (!confirm('Send SIGKILL to this container? In-flight data may be lost. The container will exit immediately.')) return;
+    try {
+      await api.containers.kill(id, '', targetHost);
+      toast.success('Killed', 'SIGKILL sent');
+      await loadInfo();
+    } catch (err) {
+      toast.error('Kill failed', err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -502,12 +520,27 @@
       </div>
       {#if canControl}
         <div class="flex gap-2 flex-wrap">
-          {#if info.State?.Running}
+          {#if info.State?.Paused}
+            <!-- Paused containers: resume is the primary action, kill is
+                 still available. Restart / Stop don't apply to paused. -->
+            <Button variant="primary" onclick={() => action('unpause')}>
+              <PlayCircle class="w-4 h-4" /> Resume
+            </Button>
+            <Button variant="secondary" onclick={killContainer}>
+              <Zap class="w-4 h-4" /> Kill
+            </Button>
+          {:else if info.State?.Running}
             <Button variant="secondary" onclick={() => action('restart')}>
               <RotateCw class="w-4 h-4" /> Restart
             </Button>
+            <Button variant="secondary" onclick={() => action('pause')}>
+              <Pause class="w-4 h-4" /> Pause
+            </Button>
             <Button variant="secondary" onclick={() => action('stop')}>
               <Square class="w-4 h-4" /> Stop
+            </Button>
+            <Button variant="secondary" onclick={killContainer}>
+              <Zap class="w-4 h-4" /> Kill
             </Button>
           {:else}
             <Button variant="primary" onclick={() => action('start')}>
