@@ -3344,6 +3344,298 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  # -----------------------------------------------------------------------
+  # proxy — embedded Caddy reverse-proxy configuration
+  # -----------------------------------------------------------------------
+  /proxy/status:
+    get:
+      operationId: proxy.status
+      tags: [proxy]
+      summary: Embedded Caddy proxy state
+      responses:
+        "200":
+          description: Status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  container_state: { type: string, enum: [running, stopped, missing] }
+                  routes_count: { type: integer }
+                  last_sync_at: { type: string, format: date-time }
+                  last_error: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /proxy/enable:
+    post:
+      operationId: proxy.enable
+      tags: [proxy]
+      summary: Start the embedded Caddy container + begin serving routes
+      responses:
+        "204": { description: Enabled. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Docker unavailable — cannot start the container.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /proxy/disable:
+    post:
+      operationId: proxy.disable
+      tags: [proxy]
+      summary: Stop the embedded Caddy container
+      responses:
+        "204": { description: Disabled. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /proxy/routes:
+    get:
+      operationId: proxy.list_routes
+      tags: [proxy]
+      summary: List configured proxy routes
+      responses:
+        "200":
+          description: Routes.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ProxyRoute" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: proxy.create_route
+      tags: [proxy]
+      summary: Add a new proxy route
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProxyRouteInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxyRoute" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Hostname already taken by another route.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /proxy/routes/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    put:
+      operationId: proxy.update_route
+      tags: [proxy]
+      summary: Update a proxy route
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProxyRouteInput" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxyRoute" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: proxy.delete_route
+      tags: [proxy]
+      summary: Remove a proxy route
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # -----------------------------------------------------------------------
+  # convert — docker-run command → compose translation
+  # -----------------------------------------------------------------------
+  /convert/run-to-compose:
+    post:
+      operationId: convert.run_to_compose
+      tags: [stacks]
+      summary: Translate a `docker run ...` CLI command into a compose service
+      description: Used by the "paste docker run" helper in the new-stack dialog.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [command]
+              properties:
+                command:
+                  type: string
+                  description: Full `docker run ...` command line.
+                  example: "docker run -d --name nginx -p 8080:80 nginx:alpine"
+      responses:
+        "200":
+          description: Parsed result — a service name + a compose snippet.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [service, compose]
+                properties:
+                  service: { type: string }
+                  compose:
+                    type: string
+                    description: YAML for one service, ready to paste into compose.yaml.
+                  warnings:
+                    type: array
+                    items: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # -----------------------------------------------------------------------
+  # ws — websocket endpoints (documented here for discoverability)
+  # -----------------------------------------------------------------------
+  /ws/ticket:
+    post:
+      operationId: ws.ticket
+      tags: [auth]
+      summary: Mint a 30-second ticket for WebSocket upgrade URLs
+      description: |
+        WebSocket upgrade requests cannot carry custom Authorization
+        headers from browsers. Clients POST here with a normal Bearer
+        token, get back a short-lived (30s) JWT ticket, and pass it as
+        `?ticket=<jwt>` on the ws:// URL.
+      responses:
+        "200":
+          description: Ticket.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ticket]
+                properties:
+                  ticket: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /ws/logs/{id}:
+    get:
+      operationId: ws.logs
+      tags: [containers]
+      summary: WebSocket stream of container stdout/stderr
+      description: |
+        Upgrade path for container log streaming. Pass `?ticket=<jwt>`
+        for auth (see `POST /ws/ticket`). Server writes lines as text
+        frames. The HTTP response code only shows up if the upgrade
+        fails — otherwise it's 101 Switching Protocols.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Container id.
+        - $ref: "#/components/parameters/HostQuery"
+        - name: ticket
+          in: query
+          required: true
+          schema: { type: string }
+        - name: tail
+          in: query
+          schema: { type: string, default: "100" }
+          description: "`all` or an integer — number of existing lines to send before following."
+        - name: follow
+          in: query
+          schema: { type: boolean, default: true }
+      responses:
+        "101":
+          description: Upgraded to WebSocket.
+        "401":
+          description: Missing / invalid ticket.
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /ws/stats/{id}:
+    get:
+      operationId: ws.stats
+      tags: [containers]
+      summary: WebSocket stream of per-container stats samples
+      description: Ticket auth via `?ticket=`. Server emits JSON frames (cpu %, mem, network, block IO) at docker's cadence.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: "#/components/parameters/HostQuery"
+        - name: ticket
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "101":
+          description: Upgraded to WebSocket.
+        "401":
+          description: Missing / invalid ticket.
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /ws/exec/{id}:
+    get:
+      operationId: ws.exec
+      tags: [containers]
+      summary: Interactive exec session (pty) over WebSocket
+      description: |
+        Bidirectional: server writes merged stdout/stderr as binary
+        frames; client writes stdin the same way. Control frames
+        (JSON) carry tty-resize events.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: "#/components/parameters/HostQuery"
+        - name: ticket
+          in: query
+          required: true
+          schema: { type: string }
+        - name: cmd
+          in: query
+          schema: { type: string, default: "/bin/sh" }
+          description: Command to exec. `sh` or `bash` are the usual picks.
+      responses:
+        "101":
+          description: Upgraded to WebSocket.
+        "401":
+          description: Missing / invalid ticket.
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /ws/events:
+    get:
+      operationId: ws.events
+      tags: [containers]
+      summary: WebSocket fan-out of container / stack change events
+      description: |
+        Global event stream — container state transitions, stack file
+        changes (fsnotify), deploy completions. The UI subscribes once
+        and invalidates its client-side caches as events arrive.
+      parameters:
+        - name: ticket
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "101":
+          description: Upgraded to WebSocket.
+        "401":
+          description: Missing / invalid ticket.
+
   /containers/{id}/metrics:
     get:
       operationId: containers.metrics
@@ -3871,6 +4163,40 @@ components:
         details: { type: string, description: JSON-encoded contextual metadata. }
         prev_hash: { type: string }
         row_hash: { type: string }
+
+    ProxyRoute:
+      type: object
+      required: [id, hostname, upstream, enabled]
+      properties:
+        id: { type: integer, format: int64 }
+        hostname: { type: string, example: app.example.com }
+        upstream:
+          type: string
+          description: Target URL like `http://container-name:8080` or `unix:///path.sock`.
+        tls:
+          type: string
+          enum: [auto, off, internal]
+          description: "`auto` provisions a Let's Encrypt cert; `internal` uses the Caddy-signed CA."
+        basic_auth_username: { type: string }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ProxyRouteInput:
+      type: object
+      required: [hostname, upstream]
+      properties:
+        hostname: { type: string }
+        upstream: { type: string }
+        tls:
+          type: string
+          enum: [auto, off, internal]
+        basic_auth_username: { type: string }
+        basic_auth_password:
+          type: string
+          format: password
+          description: Omit to keep existing. Cleared when explicitly empty on update.
+        enabled: { type: boolean }
 
     DrainPlan:
       type: object
