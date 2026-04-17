@@ -282,6 +282,53 @@ export interface RegistryTestResult {
   error?: string;
 }
 
+// P.11.12 — stack templates.
+export interface StackTemplateParam {
+  name: string;
+  description?: string;
+  type?: 'string' | 'number' | 'bool' | 'secret';
+  default?: string;
+  secret?: boolean;
+  enum?: string[];
+  pattern?: string;
+  required?: boolean;
+}
+
+export interface StackTemplate {
+  id: number;
+  slug: string;
+  name: string;
+  description?: string;
+  icon_url?: string;
+  compose: string;
+  env?: string;
+  parameters: StackTemplateParam[];
+  author?: string;
+  version?: string;
+  builtin: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StackTemplateInput {
+  slug: string;
+  name: string;
+  description?: string;
+  icon_url?: string;
+  compose: string;
+  env?: string;
+  parameters?: StackTemplateParam[];
+  author?: string;
+  version?: string;
+}
+
+export interface TemplateDeployResponse {
+  stack: string;
+  compose: string;
+  values: Record<string, string>;
+  deploy_result?: unknown;
+}
+
 // P.11.11 — git-backed stacks.
 export interface StackGitSource {
   stack_name: string;
@@ -850,6 +897,31 @@ export const api = {
       request<any>(`/global-env/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
     delete: (id: number) => request<void>(`/global-env/${id}`, { method: 'DELETE' }),
     groups: () => request<string[]>('/global-env/groups')
+  },
+
+  templates: {
+    list: () => request<StackTemplate[]>('/templates'),
+    get: (id: number) => request<StackTemplate>(`/templates/${id}`),
+    create: (input: StackTemplateInput) =>
+      request<StackTemplate>('/templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input)
+      }),
+    update: (id: number, input: StackTemplateInput) =>
+      request<StackTemplate>(`/templates/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input)
+      }),
+    delete: (id: number) => request<void>(`/templates/${id}`, { method: 'DELETE' }),
+    deploy: (id: number, payload: { stack_name: string; host_id?: string; values?: Record<string, string> }) =>
+      request<TemplateDeployResponse>(`/templates/${id}/deploy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }),
+    exportURL: (id: number) => `/api/v1/templates/${id}/export`
   },
 
   hosts: {

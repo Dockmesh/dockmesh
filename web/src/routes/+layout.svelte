@@ -31,7 +31,8 @@
     ArrowRightLeft,
     ShieldCheck,
     ShieldAlert,
-    ShieldOff
+    ShieldOff,
+    Package
   } from 'lucide-svelte';
 
   let { children } = $props();
@@ -163,6 +164,7 @@
           items: [
             { href: '/', label: 'Dashboard', icon: LayoutDashboard, show: true },
             { href: '/stacks', label: 'Stacks', icon: Layers, show: true },
+            { href: '/templates', label: 'Templates', icon: Package, show: true },
             { href: '/containers', label: 'Containers', icon: Box, show: true },
             { href: '/images', label: 'Images', icon: ImageIcon, show: allowed('image.write') || allowed('read') },
             { href: '/volumes', label: 'Volumes', icon: HardDrive, show: allowed('read') },

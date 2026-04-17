@@ -1,0 +1,41 @@
+slug: postgres-16
+name: PostgreSQL 16
+description: PostgreSQL 16 with a persistent volume and exposed port.
+icon_url: https://raw.githubusercontent.com/docker-library/docs/master/postgres/logo.png
+version: "1.0"
+author: Dockmesh
+parameters:
+  - name: db_name
+    description: Database name created on first boot.
+    default: app
+  - name: db_user
+    description: Superuser username.
+    default: postgres
+  - name: db_password
+    description: Superuser password. Auto-generated if blank.
+    secret: true
+    type: secret
+  - name: port
+    description: Host port to expose 5432 on.
+    default: "5432"
+    pattern: "^[0-9]{2,5}$"
+compose: |
+  services:
+    postgres:
+      image: postgres:16-alpine
+      restart: unless-stopped
+      environment:
+        POSTGRES_DB: "{{db_name}}"
+        POSTGRES_USER: "{{db_user}}"
+        POSTGRES_PASSWORD: "{{db_password|secret}}"
+      volumes:
+        - postgres_data:/var/lib/postgresql/data
+      ports:
+        - "{{port|default:5432}}:5432"
+      healthcheck:
+        test: ["CMD-SHELL", "pg_isready -U {{db_user}}"]
+        interval: 10s
+        timeout: 5s
+        retries: 5
+  volumes:
+    postgres_data: {}

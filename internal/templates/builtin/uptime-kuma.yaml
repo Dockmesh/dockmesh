@@ -1,0 +1,22 @@
+slug: uptime-kuma
+name: Uptime Kuma
+description: Self-hosted uptime monitoring dashboard.
+icon_url: https://raw.githubusercontent.com/louislam/uptime-kuma/master/public/icon.svg
+version: "1.0"
+author: Dockmesh
+parameters:
+  - name: port
+    description: Host port for the Uptime Kuma web UI.
+    default: "3001"
+    pattern: "^[0-9]{2,5}$"
+compose: |
+  services:
+    uptime-kuma:
+      image: louislam/uptime-kuma:1
+      restart: unless-stopped
+      volumes:
+        - kuma_data:/app/data
+      ports:
+        - "{{port|default:3001}}:3001"
+  volumes:
+    kuma_data: {}

@@ -30,6 +30,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/registries"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/dockmesh/dockmesh/internal/templates"
 	"github.com/dockmesh/dockmesh/internal/updater"
 )
 
@@ -63,6 +64,7 @@ type Handlers struct {
 	APITokens      *apitokens.Service
 	Registries     *registries.Service
 	GitSource      *gitsource.Service
+	Templates      *templates.Service
 	Prom           *metrics.PromMetrics
 	JWTSecret      []byte // raw secret used to sign the short-lived OIDC state cookie
 }
@@ -97,6 +99,7 @@ type Deps struct {
 	APITokens      *apitokens.Service
 	Registries     *registries.Service
 	GitSource      *gitsource.Service
+	Templates      *templates.Service
 	Prom           *metrics.PromMetrics
 	JWTSecret      []byte
 }
@@ -132,6 +135,7 @@ func New(d Deps) *Handlers {
 		APITokens:   d.APITokens,
 		Registries:  d.Registries,
 		GitSource:   d.GitSource,
+		Templates:   d.Templates,
 		Prom:        d.Prom,
 		JWTSecret:   d.JWTSecret,
 	}
