@@ -66,6 +66,7 @@ type Handlers struct {
 	GitSource      *gitsource.Service
 	Templates      *templates.Service
 	AuditRetention *audit.Retention
+	AuditWebhook   *audit.Webhook
 	Prom           *metrics.PromMetrics
 	JWTSecret      []byte // raw secret used to sign the short-lived OIDC state cookie
 }
@@ -102,6 +103,7 @@ type Deps struct {
 	GitSource      *gitsource.Service
 	Templates      *templates.Service
 	AuditRetention *audit.Retention
+	AuditWebhook   *audit.Webhook
 	Prom           *metrics.PromMetrics
 	JWTSecret      []byte
 }
@@ -139,6 +141,7 @@ func New(d Deps) *Handlers {
 		GitSource:      d.GitSource,
 		Templates:      d.Templates,
 		AuditRetention: d.AuditRetention,
+		AuditWebhook:   d.AuditWebhook,
 		Prom:           d.Prom,
 		JWTSecret:   d.JWTSecret,
 	}

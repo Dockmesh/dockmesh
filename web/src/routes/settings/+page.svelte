@@ -729,6 +729,60 @@
     return ts.slice(0, 19).replace('T', ' ');
   }
 
+  // P.11.14 webhook state
+  let webhookCfg = $state<import('$lib/api').AuditWebhookConfig | null>(null);
+  let webhookURL = $state('');
+  let webhookSecret = $state('');
+  let webhookClearSecret = $state(false);
+  let webhookFilter = $state('');
+  let webhookBusy = $state(false);
+
+  async function loadWebhook() {
+    if (!allowed('user.manage')) return;
+    try {
+      webhookCfg = await api.audit.getWebhook();
+      webhookURL = webhookCfg.url ?? '';
+      webhookFilter = (webhookCfg.filter_actions ?? []).join(', ');
+      webhookSecret = '';
+      webhookClearSecret = false;
+    } catch { /* ignore */ }
+  }
+
+  async function saveWebhook() {
+    webhookBusy = true;
+    try {
+      const filter = webhookFilter
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      webhookCfg = await api.audit.setWebhook({
+        url: webhookURL,
+        secret: webhookSecret || undefined,
+        clear_secret: webhookClearSecret || undefined,
+        filter_actions: filter.length > 0 ? filter : undefined
+      });
+      webhookSecret = '';
+      webhookClearSecret = false;
+      toast.success('Webhook config saved');
+    } catch (err) {
+      toast.error('Failed to save', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      webhookBusy = false;
+    }
+  }
+
+  async function testWebhook() {
+    webhookBusy = true;
+    try {
+      await api.audit.testWebhook();
+      toast.success('Test event delivered');
+    } catch (err) {
+      toast.error('Test failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      webhookBusy = false;
+    }
+  }
+
   // P.11.13 retention state
   let retentionCfg = $state<import('$lib/api').AuditRetentionConfig | null>(null);
   let retentionPreview = $state<import('$lib/api').AuditRetentionPreview | null>(null);
@@ -797,7 +851,7 @@
   $effect(() => {
     if (tab === 'account') loadMe();
     else if (tab === 'users') { loadUsers(); loadRoles(); }
-    else if (tab === 'audit') { loadAudit(); loadRetention(); }
+    else if (tab === 'audit') { loadAudit(); loadRetention(); loadWebhook(); }
     else if (tab === 'sso') { loadOIDC(); loadRoles(); }
     else if (tab === 'system') { loadBackup(); loadSystemInfo(); }
     else if (tab === 'roles') loadRoles();
@@ -1088,6 +1142,42 @@
               {#if retentionLastResult.archived} · archived to <code>{retentionLastResult.archive_path}</code>{/if}
             </span>
           {/if}
+        </div>
+      </Card>
+
+      <!-- P.11.14 Webhook panel — each audit entry fires off an HTTP POST -->
+      <Card class="p-4 space-y-3">
+        <div>
+          <h3 class="text-sm font-semibold">Webhook</h3>
+          <p class="text-xs text-[var(--fg-muted)]">
+            Stream every audit entry to an external URL. Payload is JSON; body is signed with HMAC-SHA256 on <code>X-Audit-Signature</code> when a secret is set.
+          </p>
+        </div>
+        <div class="grid sm:grid-cols-[160px_1fr] gap-3 items-start">
+          <label class="text-xs text-[var(--fg-muted)]" for="wh-url">Receiver URL</label>
+          <input id="wh-url" class="dm-input" placeholder="https://siem.example.com/hook" bind:value={webhookURL} />
+          <label class="text-xs text-[var(--fg-muted)]" for="wh-secret">
+            HMAC secret
+            {#if webhookCfg?.has_secret && !webhookClearSecret}<span class="font-normal normal-case block">— stored; leave blank to keep</span>{/if}
+          </label>
+          <div class="space-y-1">
+            <input id="wh-secret" type="password" class="dm-input" placeholder={webhookCfg?.has_secret ? '••••••••' : 'Optional shared secret'} bind:value={webhookSecret} />
+            {#if webhookCfg?.has_secret}
+              <label class="flex items-center gap-1 text-xs text-[var(--fg-muted)]">
+                <input type="checkbox" bind:checked={webhookClearSecret} /> Remove stored secret
+              </label>
+            {/if}
+          </div>
+          <label class="text-xs text-[var(--fg-muted)]" for="wh-filter">Filter actions</label>
+          <input id="wh-filter" class="dm-input" placeholder="stack.*, user.manage (empty = all)" bind:value={webhookFilter} />
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <Button variant="primary" onclick={saveWebhook} disabled={webhookBusy}>
+            {webhookBusy ? 'Saving…' : 'Save'}
+          </Button>
+          <Button variant="secondary" onclick={testWebhook} disabled={webhookBusy || !(webhookCfg?.url)}>
+            Send test event
+          </Button>
         </div>
       </Card>
     {/if}

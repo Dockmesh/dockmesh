@@ -76,10 +76,18 @@ type PromRecorder interface {
 	IncAuditEntry(action string)
 }
 
+// WebhookDispatcher is the hook into the audit webhook (P.11.14).
+// Decoupled via interface so the core Service doesn't depend on the
+// webhook goroutine plumbing at construction time.
+type WebhookDispatcher interface {
+	Dispatch(entry WebhookEntry)
+}
+
 type Service struct {
 	db          *sql.DB
 	genesisPath string
 	prom        PromRecorder
+	webhook     WebhookDispatcher
 
 	mu          sync.Mutex
 	lastRowHash string
@@ -88,6 +96,10 @@ type Service struct {
 // SetProm attaches a prom recorder after construction. Idempotent;
 // nil clears the hook.
 func (s *Service) SetProm(p PromRecorder) { s.prom = p }
+
+// SetWebhook attaches a webhook dispatcher. Safe to call even before
+// the dispatcher's own goroutine is started — Dispatch is non-blocking.
+func (s *Service) SetWebhook(w WebhookDispatcher) { s.webhook = w }
 
 // NewService wires the DB and loads the genesis hash from disk. Callers
 // should subsequently call EnsureGenesis to make sure the chain has a
@@ -194,7 +206,7 @@ func (s *Service) Write(ctx context.Context, userID, action, target string, deta
 	canon := canonical(prev, ts.Format(time.RFC3339Nano), userID, action, target, detailStr)
 	rowHash := sha256Hex(canon)
 
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO audit_log (ts, user_id, action, target, details, prev_hash, row_hash)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		ts, nullable(userID), action, nullable(target), nullable(detailStr), prev, rowHash)
@@ -205,6 +217,20 @@ func (s *Service) Write(ctx context.Context, userID, action, target string, deta
 	s.lastRowHash = rowHash
 	if s.prom != nil {
 		s.prom.IncAuditEntry(action)
+	}
+	if s.webhook != nil {
+		// Non-blocking dispatch — the Webhook struct handles
+		// queueing + retry + backoff; we only feed it structured data.
+		id, _ := res.LastInsertId()
+		s.webhook.Dispatch(WebhookEntry{
+			ID:      id,
+			TS:      ts,
+			UserID:  userID,
+			Action:  action,
+			Target:  target,
+			Details: detailStr,
+			RowHash: rowHash,
+		})
 	}
 }
 

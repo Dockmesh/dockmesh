@@ -335,6 +335,13 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Use(middleware.RequirePerm(rbac.PermUserManage))
 				r.Put("/audit/retention", h.UpdateAuditRetention)
 				r.Post("/audit/retention/run", h.RunAuditRetention)
+
+				// Audit webhook (P.11.14) — GET is audit.read-gated
+				// above; PUT / test write to settings + fire a
+				// synthetic event, so admin-only.
+				r.Get("/audit/webhook", h.GetAuditWebhook)
+				r.Put("/audit/webhook", h.UpdateAuditWebhook)
+				r.Post("/audit/webhook/test", h.TestAuditWebhook)
 			})
 
 			// -------------------------- OIDC ADMIN ---------------------------
