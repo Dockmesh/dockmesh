@@ -67,6 +67,12 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 		// Agent enrollment — token is the auth, no JWT required.
 		r.Post("/agents/enroll", h.EnrollAgent)
 
+		// Git webhook endpoint (P.11.11). Public — GitHub / GitLab /
+		// Gitea cannot send Bearer tokens. Signature verification is
+		// done inside the handler using the stack's stored webhook
+		// secret when one is configured.
+		r.Post("/stacks/{name}/git/webhook", h.GitWebhook)
+
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.NewAuth(authSvc))
 
@@ -123,6 +129,14 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Put("/stacks/{name}", h.UpdateStack)
 				r.Delete("/stacks/{name}", h.DeleteStack)
 				r.Post("/convert/run-to-compose", h.ConvertRunToCompose)
+
+				// Git source CRUD (P.11.11) — configuring a source
+				// writes compose.yaml into the stack FS, so it needs
+				// stack.write. Authenticated sync lives here too.
+				r.Get("/stacks/{name}/git", h.GetGitSource)
+				r.Post("/stacks/{name}/git", h.ConfigureGitSource)
+				r.Delete("/stacks/{name}/git", h.DeleteGitSource)
+				r.Post("/stacks/{name}/git/sync", h.SyncGitSource)
 			})
 
 			// -------------------------- STACK DEPLOY -------------------------

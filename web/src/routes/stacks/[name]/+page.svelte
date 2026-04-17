@@ -7,7 +7,8 @@
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import { EventStream } from '$lib/events';
-  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2 } from 'lucide-svelte';
+  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2, GitBranch, Link as LinkIcon, Unlink } from 'lucide-svelte';
+  import type { StackGitSource, StackGitSourceInput } from '$lib/api';
 
   import { isAllHosts } from '$lib/stores/host.svelte';
 
@@ -165,10 +166,104 @@
     }
   });
 
+  // P.11.11 — git source state
+  let gitSource = $state<StackGitSource | null>(null);
+  let gitLoading = $state(false);
+  let gitBusy = $state(false);
+  let showGitDialog = $state(false);
+  let gitForm = $state<StackGitSourceInput>({
+    repo_url: '', branch: 'main', path_in_repo: '.', auth_kind: 'none',
+    auto_deploy: false, poll_interval_sec: 300
+  });
+
+  async function loadGitSource() {
+    gitLoading = true;
+    try {
+      gitSource = await api.stacks.getGitSource(name);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        gitSource = null;
+      } else {
+        gitSource = null;
+      }
+    } finally {
+      gitLoading = false;
+    }
+  }
+
+  function openGitDialog() {
+    if (gitSource) {
+      gitForm = {
+        repo_url: gitSource.repo_url,
+        branch: gitSource.branch,
+        path_in_repo: gitSource.path_in_repo,
+        auth_kind: gitSource.auth_kind,
+        username: gitSource.username ?? '',
+        auto_deploy: gitSource.auto_deploy,
+        poll_interval_sec: gitSource.poll_interval_sec
+      };
+    } else {
+      gitForm = { repo_url: '', branch: 'main', path_in_repo: '.', auth_kind: 'none', auto_deploy: false, poll_interval_sec: 300 };
+    }
+    showGitDialog = true;
+  }
+
+  async function saveGitSource(e: Event) {
+    e.preventDefault();
+    if (!gitForm.repo_url.trim()) return;
+    gitBusy = true;
+    try {
+      const res = await api.stacks.configureGitSource(name, gitForm);
+      if (res.sync_error) {
+        toast.error('Saved, but first sync failed', res.sync_error);
+      } else {
+        toast.success('Git source saved', res.sync?.changed ? `synced ${res.sync.new_sha.slice(0, 7)}` : 'up to date');
+      }
+      showGitDialog = false;
+      await loadGitSource();
+      await load();
+    } catch (err) {
+      toast.error('Failed to save', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      gitBusy = false;
+    }
+  }
+
+  async function syncNow() {
+    if (!gitSource) return;
+    gitBusy = true;
+    try {
+      const res = await api.stacks.syncGitSource(name);
+      toast.success(res.changed ? `Synced ${res.new_sha.slice(0, 7)}` : 'Already up to date');
+      if (res.deployed) toast.success('Auto-deploy triggered');
+      await loadGitSource();
+      await load();
+    } catch (err) {
+      toast.error('Sync failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      gitBusy = false;
+    }
+  }
+
+  async function disconnectGit() {
+    if (!confirm('Disconnect git source? The compose.yaml stays in place; future pushes to the repo will no longer sync.')) return;
+    gitBusy = true;
+    try {
+      await api.stacks.deleteGitSource(name);
+      toast.success('Git source disconnected');
+      gitSource = null;
+    } catch (err) {
+      toast.error('Failed to disconnect', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      gitBusy = false;
+    }
+  }
+
   async function load() {
     loading = true;
     externalChange = null;
     dirty = false;
+    loadGitSource();
     try {
       const detail = await api.stacks.get(name);
       compose = detail.compose;
@@ -349,6 +444,63 @@
         <Button size="sm" variant="ghost" onclick={() => (externalChange = null)}>Ignore</Button>
       </div>
     </div>
+  {/if}
+
+  <!-- Git source (P.11.11) -->
+  {#if !gitLoading}
+    {#if gitSource}
+      <Card class="p-4">
+        <div class="flex items-start gap-3 flex-wrap">
+          <GitBranch class="w-4 h-4 text-[var(--fg-muted)] mt-0.5 shrink-0" />
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-sm font-medium truncate">{gitSource.repo_url}</span>
+              <Badge variant="default">{gitSource.branch}</Badge>
+              {#if gitSource.auto_deploy}
+                <Badge variant="success">auto-deploy</Badge>
+              {/if}
+              {#if gitSource.has_webhook_secret}
+                <Badge variant="info">webhook</Badge>
+              {/if}
+            </div>
+            <div class="text-xs text-[var(--fg-muted)] mt-1 font-mono">
+              {#if gitSource.last_sync_sha}
+                {gitSource.last_sync_sha.slice(0, 7)}
+                {#if gitSource.last_sync_at}
+                  · synced {new Date(gitSource.last_sync_at).toLocaleString()}
+                {/if}
+              {:else}
+                never synced
+              {/if}
+            </div>
+            {#if gitSource.last_sync_error}
+              <div class="text-xs text-[var(--color-danger-400)] mt-1">
+                <AlertTriangle class="w-3 h-3 inline mr-1" />
+                {gitSource.last_sync_error}
+              </div>
+            {/if}
+          </div>
+          {#if canWrite}
+            <div class="flex items-center gap-1 shrink-0">
+              <Button variant="secondary" onclick={syncNow} disabled={gitBusy}>
+                <RefreshCw class="w-3.5 h-3.5 {gitBusy ? 'animate-spin' : ''}" />
+                Sync now
+              </Button>
+              <Button variant="ghost" onclick={openGitDialog} disabled={gitBusy}>Edit</Button>
+              <Button variant="ghost" onclick={disconnectGit} disabled={gitBusy}>
+                <Unlink class="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          {/if}
+        </div>
+      </Card>
+    {:else if canWrite}
+      <div class="flex items-center gap-2 text-xs text-[var(--fg-muted)]">
+        <GitBranch class="w-3.5 h-3.5" />
+        No git source.
+        <button class="underline hover:text-[var(--fg)]" onclick={openGitDialog}>Connect a repository</button>
+      </div>
+    {/if}
   {/if}
 
   <!-- Active migration banner -->
@@ -576,6 +728,90 @@
     >
       <ArrowRightLeft class="w-4 h-4" />
       Start migration
+    </Button>
+  {/snippet}
+</Modal>
+
+<!-- Git source configure dialog (P.11.11) -->
+<Modal bind:open={showGitDialog} title={gitSource ? 'Edit git source' : 'Connect a git repository'} maxWidth="max-w-lg">
+  <form onsubmit={saveGitSource} id="git-form" class="space-y-4">
+    <div>
+      <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-repo">Repository URL</label>
+      <input id="git-repo" class="dm-input" placeholder="https://github.com/acme/stack.git" bind:value={gitForm.repo_url} />
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-branch">Branch</label>
+        <input id="git-branch" class="dm-input" bind:value={gitForm.branch as any} />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-path">Path in repo</label>
+        <input id="git-path" class="dm-input" placeholder="." bind:value={gitForm.path_in_repo as any} />
+      </div>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-auth">Authentication</label>
+      <select id="git-auth" class="dm-input" bind:value={gitForm.auth_kind as any}>
+        <option value="none">None (public repo)</option>
+        <option value="http">HTTPS username + password / token</option>
+        <option value="ssh">SSH private key</option>
+      </select>
+    </div>
+    {#if gitForm.auth_kind === 'http'}
+      <div>
+        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-user">Username</label>
+        <input id="git-user" class="dm-input" bind:value={gitForm.username as any} />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-pass">
+          Password / Token
+          {#if gitSource?.has_password}<span class="font-normal normal-case">— leave blank to keep existing</span>{/if}
+        </label>
+        <input id="git-pass" type="password" class="dm-input" bind:value={gitForm.password as any} />
+      </div>
+    {:else if gitForm.auth_kind === 'ssh'}
+      <div>
+        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-sshuser">SSH user</label>
+        <input id="git-sshuser" class="dm-input" placeholder="git" bind:value={gitForm.username as any} />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-sshkey">
+          Private key (PEM)
+          {#if gitSource?.has_ssh_key}<span class="font-normal normal-case">— leave blank to keep existing</span>{/if}
+        </label>
+        <textarea id="git-sshkey" class="dm-input font-mono text-xs" rows="5" bind:value={gitForm.ssh_key as any}></textarea>
+      </div>
+    {/if}
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-poll">Poll interval (sec)</label>
+        <input id="git-poll" type="number" min="60" class="dm-input" bind:value={gitForm.poll_interval_sec as any} />
+        <p class="text-xs text-[var(--fg-muted)] mt-1">60+ sec, or 0 for manual / webhook-only.</p>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-webhook">
+          Webhook secret (HMAC)
+          {#if gitSource?.has_webhook_secret}<span class="font-normal normal-case">— set to keep</span>{/if}
+        </label>
+        <input id="git-webhook" type="password" class="dm-input" bind:value={gitForm.webhook_secret as any} />
+      </div>
+    </div>
+    <label class="flex items-center gap-2 text-sm">
+      <input type="checkbox" bind:checked={gitForm.auto_deploy as any} />
+      Auto-deploy on new commits
+    </label>
+    {#if gitSource?.has_webhook_secret || (gitSource && !gitSource.has_webhook_secret)}
+      <div class="text-xs text-[var(--fg-muted)] bg-[var(--bg-muted)] rounded p-2 border border-[var(--border)]">
+        <p class="font-medium text-[var(--fg)] mb-1">Webhook URL</p>
+        <code class="text-[11px] font-mono break-all">POST /api/v1/stacks/{name}/git/webhook</code>
+      </div>
+    {/if}
+  </form>
+  {#snippet footer()}
+    <Button variant="ghost" onclick={() => (showGitDialog = false)}>Cancel</Button>
+    <Button variant="primary" onclick={saveGitSource} disabled={gitBusy || !gitForm.repo_url}>
+      <LinkIcon class="w-3.5 h-3.5" />
+      {gitBusy ? 'Saving…' : gitSource ? 'Save' : 'Connect & sync'}
     </Button>
   {/snippet}
 </Modal>

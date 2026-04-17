@@ -20,6 +20,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
 	"github.com/dockmesh/dockmesh/internal/metrics"
 	"github.com/dockmesh/dockmesh/internal/notify"
@@ -61,6 +62,7 @@ type Handlers struct {
 	GlobalEnv      *globalenv.Store
 	APITokens      *apitokens.Service
 	Registries     *registries.Service
+	GitSource      *gitsource.Service
 	Prom           *metrics.PromMetrics
 	JWTSecret      []byte // raw secret used to sign the short-lived OIDC state cookie
 }
@@ -94,6 +96,7 @@ type Deps struct {
 	GlobalEnv      *globalenv.Store
 	APITokens      *apitokens.Service
 	Registries     *registries.Service
+	GitSource      *gitsource.Service
 	Prom           *metrics.PromMetrics
 	JWTSecret      []byte
 }
@@ -128,6 +131,7 @@ func New(d Deps) *Handlers {
 		GlobalEnv:   d.GlobalEnv,
 		APITokens:   d.APITokens,
 		Registries:  d.Registries,
+		GitSource:   d.GitSource,
 		Prom:        d.Prom,
 		JWTSecret:   d.JWTSecret,
 	}

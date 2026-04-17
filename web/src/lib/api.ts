@@ -282,6 +282,51 @@ export interface RegistryTestResult {
   error?: string;
 }
 
+// P.11.11 — git-backed stacks.
+export interface StackGitSource {
+  stack_name: string;
+  repo_url: string;
+  branch: string;
+  path_in_repo: string;
+  auth_kind: 'none' | 'http' | 'ssh';
+  username?: string;
+  has_password: boolean;
+  has_ssh_key: boolean;
+  auto_deploy: boolean;
+  poll_interval_sec: number;
+  has_webhook_secret: boolean;
+  last_sync_sha?: string;
+  last_sync_at?: string;
+  last_sync_error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StackGitSourceInput {
+  repo_url: string;
+  branch?: string;
+  path_in_repo?: string;
+  auth_kind?: 'none' | 'http' | 'ssh';
+  username?: string;
+  password?: string;
+  clear_password?: boolean;
+  ssh_key?: string;
+  clear_ssh_key?: boolean;
+  auto_deploy?: boolean;
+  poll_interval_sec?: number;
+  webhook_secret?: string;
+  clear_webhook_secret?: boolean;
+}
+
+export interface StackGitSyncResult {
+  old_sha?: string;
+  new_sha: string;
+  changed: boolean;
+  deployed?: boolean;
+  deploy_result?: unknown;
+  duration_ms: number;
+}
+
 // P.11.8 — volume content browsing.
 export interface VolumeEntry {
   name: string;
@@ -656,6 +701,18 @@ export const api = {
       request<{ name: string }>(`/stacks/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify({ compose, env }) }),
     delete: (name: string) =>
       request<void>(`/stacks/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+    // Git source (P.11.11)
+    getGitSource: (name: string) =>
+      request<StackGitSource>(`/stacks/${encodeURIComponent(name)}/git`),
+    configureGitSource: (name: string, input: StackGitSourceInput) =>
+      request<{ source: StackGitSource; sync?: StackGitSyncResult; sync_error?: string }>(
+        `/stacks/${encodeURIComponent(name)}/git`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }
+      ),
+    deleteGitSource: (name: string) =>
+      request<void>(`/stacks/${encodeURIComponent(name)}/git`, { method: 'DELETE' }),
+    syncGitSource: (name: string) =>
+      request<StackGitSyncResult>(`/stacks/${encodeURIComponent(name)}/git/sync`, { method: 'POST' }),
     deploy: (name: string, host = 'local') => {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
       return request<{ stack: string; services: Array<{ name: string; container_id: string; image: string }> }>(
