@@ -282,6 +282,28 @@ export interface RegistryTestResult {
   error?: string;
 }
 
+// P.12.1 — sessions + password policy.
+export interface Session {
+  family_id: string;
+  user_agent?: string;
+  ip?: string;
+  created_at: string;
+  expires_at: string;
+  revoked_at?: string;
+  is_current: boolean;
+}
+
+export interface PasswordPolicy {
+  min_length: number;
+  require_upper: boolean;
+  require_lower: boolean;
+  require_digit: boolean;
+  require_symbol: boolean;
+  rotation_days: number;
+  lockout_max_attempts: number;
+  lockout_duration_minutes: number;
+}
+
 // P.11.16 — agent upgrade policy.
 export interface AgentUpgradePolicy {
   mode: 'auto' | 'manual' | 'staged';
@@ -782,7 +804,20 @@ export const api = {
     logout: () => {
       const body = auth.refreshToken ? JSON.stringify({ refresh_token: auth.refreshToken }) : '{}';
       return request<void>('/auth/logout', { method: 'POST', body }).finally(() => auth.clear());
-    }
+    },
+    // P.12.1 — session management + policy
+    sessions: () => request<Session[]>('/sessions'),
+    revokeSession: (familyId: string) =>
+      request<void>(`/sessions/${encodeURIComponent(familyId)}`, { method: 'DELETE' }),
+    getPolicy: () => request<PasswordPolicy>('/auth/policy'),
+    setPolicy: (p: PasswordPolicy) =>
+      request<PasswordPolicy>('/auth/policy', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(p)
+      }),
+    unlockUser: (id: string) =>
+      request<void>(`/users/${encodeURIComponent(id)}/unlock`, { method: 'POST' })
   },
 
   mfa: {
