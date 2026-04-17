@@ -67,6 +67,16 @@ type Host interface {
 	ListVolumes(ctx context.Context) ([]any, error)
 	InspectVolume(ctx context.Context, name string) (volume.Volume, error)
 
+	// VolumeBrowseEntries lists one directory level inside a docker
+	// volume. subpath is relative to the volume root; "" or "/" means
+	// the volume root itself. Rejects path-traversal attempts (P.11.8).
+	VolumeBrowseEntries(ctx context.Context, name, subpath string) ([]VolumeEntry, error)
+	// VolumeReadFile reads a single regular file inside the volume,
+	// capped at maxBytes. Returns truncated=true when the file is
+	// larger than the cap so the UI can offer a download link
+	// (stream support is a follow-up).
+	VolumeReadFile(ctx context.Context, name, subpath string, maxBytes int64) (*VolumeFileResult, error)
+
 	// Stack operations (slice 3.1.3). The handler reads the compose+env
 	// from the central server's filesystem once and passes the content
 	// to whichever host — local writes to a tmpdir + parses + runs;

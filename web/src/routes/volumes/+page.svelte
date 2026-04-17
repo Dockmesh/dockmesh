@@ -270,7 +270,11 @@
                   </td>
                 {/if}
                 <td class="px-3 py-2.5">
-                  <span class="font-mono text-sm truncate block max-w-[250px]" title={v.Name}>{v.Name}</span>
+                  <a
+                    href={`/volumes/${encodeURIComponent(v.Name)}${v.host_id && v.host_id !== 'local' ? `?host=${encodeURIComponent(v.host_id)}` : ''}`}
+                    class="font-mono text-sm truncate block max-w-[250px] text-[var(--fg)] hover:text-[var(--color-brand-500)] hover:underline"
+                    title={v.Name}
+                  >{v.Name}</a>
                 </td>
                 <td class="px-3 py-2.5 text-xs text-[var(--fg-muted)]">{v.Driver}</td>
                 <td class="px-3 py-2.5"><Badge variant={v.Scope === 'local' ? 'default' : 'info'}>{v.Scope}</Badge></td>

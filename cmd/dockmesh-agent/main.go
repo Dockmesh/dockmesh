@@ -809,6 +809,51 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		// server gets a JSON array directly.
 		respond(conn, f.ID, list.Volumes, nil)
 
+	case agents.FrameReqVolumeBrowse:
+		// P.11.8. Resolve volume mountpoint, sanitize sub-path, list dir.
+		// All path sanitization goes through the shared host helpers so
+		// the agent can't drift from the server's validation rules.
+		var req agents.VolumeBrowseReq
+		_ = json.Unmarshal(f.Payload, &req)
+		vol, err := cli.VolumeInspect(ctx, req.Volume)
+		if err != nil {
+			respond(conn, f.ID, nil, err)
+			return
+		}
+		mp, err := host.ExtractMountpoint(vol.Mountpoint)
+		if err != nil {
+			respond(conn, f.ID, nil, err)
+			return
+		}
+		abs, err := host.SanitizeVolumePath(mp, req.SubPath)
+		if err != nil {
+			respond(conn, f.ID, nil, err)
+			return
+		}
+		entries, err := host.BrowseDir(abs)
+		respond(conn, f.ID, entries, err)
+
+	case agents.FrameReqVolumeBrowseFile:
+		var req agents.VolumeBrowseReq
+		_ = json.Unmarshal(f.Payload, &req)
+		vol, err := cli.VolumeInspect(ctx, req.Volume)
+		if err != nil {
+			respond(conn, f.ID, nil, err)
+			return
+		}
+		mp, err := host.ExtractMountpoint(vol.Mountpoint)
+		if err != nil {
+			respond(conn, f.ID, nil, err)
+			return
+		}
+		abs, err := host.SanitizeVolumePath(mp, req.SubPath)
+		if err != nil {
+			respond(conn, f.ID, nil, err)
+			return
+		}
+		res, err := host.ReadFile(abs, req.MaxBytes)
+		respond(conn, f.ID, res, err)
+
 	case agents.FrameReqDaemonInfo:
 		info, err := cli.Info(ctx)
 		respond(conn, f.ID, info, err)

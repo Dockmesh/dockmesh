@@ -236,6 +236,47 @@ func (h *LocalHost) InspectVolume(ctx context.Context, name string) (volume.Volu
 	return h.cli.InspectVolume(ctx, name)
 }
 
+// VolumeBrowseEntries resolves the requested path against the volume's
+// mountpoint on the docker host's own filesystem, then walks it via
+// the shared helper. P.11.8 — admin-only at the handler layer.
+func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath string) ([]VolumeEntry, error) {
+	if h.cli == nil {
+		return nil, ErrNoDocker
+	}
+	vol, err := h.cli.InspectVolume(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	mp, err := ExtractMountpoint(vol.Mountpoint)
+	if err != nil {
+		return nil, err
+	}
+	abs, err := SanitizeVolumePath(mp, subpath)
+	if err != nil {
+		return nil, err
+	}
+	return BrowseDir(abs)
+}
+
+func (h *LocalHost) VolumeReadFile(ctx context.Context, name, subpath string, maxBytes int64) (*VolumeFileResult, error) {
+	if h.cli == nil {
+		return nil, ErrNoDocker
+	}
+	vol, err := h.cli.InspectVolume(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	mp, err := ExtractMountpoint(vol.Mountpoint)
+	if err != nil {
+		return nil, err
+	}
+	abs, err := SanitizeVolumePath(mp, subpath)
+	if err != nil {
+		return nil, err
+	}
+	return ReadFile(abs, maxBytes)
+}
+
 func (h *LocalHost) ListVolumes(ctx context.Context) ([]any, error) {
 	if h.cli == nil {
 		return nil, ErrNoDocker

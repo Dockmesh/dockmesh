@@ -293,6 +293,34 @@ func (h *RemoteHost) InspectVolume(ctx context.Context, name string) (volume.Vol
 	return out, nil
 }
 
+// VolumeBrowseEntries / VolumeReadFile proxy to the agent via the
+// browse frames. The agent runs the same BrowseDir / ReadFile helpers
+// locally against its own mounted volume fs. P.11.8.
+func (h *RemoteHost) VolumeBrowseEntries(ctx context.Context, name, subpath string) ([]VolumeEntry, error) {
+	data, err := h.request(ctx, agents.FrameReqVolumeBrowse, agents.VolumeBrowseReq{Volume: name, SubPath: subpath})
+	if err != nil {
+		return nil, err
+	}
+	var out []VolumeEntry
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode volume browse: %w", err)
+	}
+	return out, nil
+}
+
+func (h *RemoteHost) VolumeReadFile(ctx context.Context, name, subpath string, maxBytes int64) (*VolumeFileResult, error) {
+	data, err := h.request(ctx, agents.FrameReqVolumeBrowseFile,
+		agents.VolumeBrowseReq{Volume: name, SubPath: subpath, MaxBytes: maxBytes})
+	if err != nil {
+		return nil, err
+	}
+	var out VolumeFileResult
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode volume browse file: %w", err)
+	}
+	return &out, nil
+}
+
 func (h *RemoteHost) RemoveImage(ctx context.Context, id string, force bool) ([]dtypes.ImageDeleteResponseItem, error) {
 	data, err := h.request(ctx, agents.FrameReqImageRemove, agents.ImageRemoveReq{ID: id, Force: force})
 	if err != nil {

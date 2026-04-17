@@ -282,6 +282,23 @@ export interface RegistryTestResult {
   error?: string;
 }
 
+// P.11.8 — volume content browsing.
+export interface VolumeEntry {
+  name: string;
+  type: 'file' | 'dir' | 'symlink';
+  size: number;
+  mode: string;
+  mod_time: string;
+  link_dest?: string;
+}
+
+export interface VolumeFileResult {
+  content: string; // base64 (Go []byte marshals to base64)
+  size: number;
+  truncated: boolean;
+  binary: boolean;
+}
+
 export interface SystemMetrics {
   cpu_percent: number;
   cpu_cores: number;
@@ -921,7 +938,20 @@ export const api = {
       request<any>('/volumes', { method: 'POST', body: JSON.stringify({ name, driver }) }),
     remove: (name: string, force = false) =>
       request<void>(`/volumes/${encodeURIComponent(name)}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
-    prune: () => request<any>('/volumes/prune', { method: 'POST' })
+    prune: () => request<any>('/volumes/prune', { method: 'POST' }),
+    // P.11.8 — volume content browsing. Admin-only; every call is audited.
+    browse: (name: string, path = '', host = 'local') => {
+      const qs = new URLSearchParams();
+      if (path) qs.set('path', path);
+      if (host && host !== 'local') qs.set('host', host);
+      const suffix = qs.toString() ? `?${qs.toString()}` : '';
+      return request<VolumeEntry[]>(`/volumes/${encodeURIComponent(name)}/browse${suffix}`);
+    },
+    readFile: (name: string, path: string, host = 'local') => {
+      const qs = new URLSearchParams({ path });
+      if (host && host !== 'local') qs.set('host', host);
+      return request<VolumeFileResult>(`/volumes/${encodeURIComponent(name)}/browse/file?${qs.toString()}`);
+    }
   },
 
   backups: {
