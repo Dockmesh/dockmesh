@@ -50,6 +50,9 @@ coverage.txt
 /logo-*.png
 /p5-*.png
 
+# Local marketing assets — pushed to dockmesh.dev, not the app repo
+/marketing/screenshots/
+
 # Temporary working files
 /tmp_*.md
 /tmp_*.json
