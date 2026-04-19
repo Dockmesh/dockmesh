@@ -8,18 +8,36 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/XSAM/otelsql"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	_ "modernc.org/sqlite"
 )
 
 //go:embed migrations/*.sql
 var migrations embed.FS
 
+// Open opens the Dockmesh DB. The returned *sql.DB is wrapped by
+// otelsql so every QueryContext / ExecContext becomes a `db.query`
+// span under whatever parent trace is on the context. When tracing
+// is disabled (no OTLP endpoint configured) the wrapper is a cheap
+// passthrough — spans have no exporter, so they're dropped.
+//
+// P.12.3.1 — deep tracing.
 func Open(path string) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
 	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", path)
-	db, err := sql.Open("sqlite", dsn)
+	db, err := otelsql.Open("sqlite", dsn, otelsql.WithAttributes(
+		semconv.DBSystemSqlite,
+	), otelsql.WithSpanOptions(otelsql.SpanOptions{
+		Ping:                 false, // readiness probe fires this every few seconds; too noisy
+		DisableErrSkip:       true,
+		OmitConnectorConnect: true,
+		OmitConnResetSession: true,
+		OmitConnPrepare:      true,
+		OmitRows:             true,
+	}))
 	if err != nil {
 		return nil, err
 	}

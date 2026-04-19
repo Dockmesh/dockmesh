@@ -20,7 +20,15 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// composeTracer is the tracer for every compose-phase span. Global
+// no-op provider when tracing is disabled, so calling Start is cheap.
+var composeTracer = otel.Tracer("dockmesh.compose")
 
 // Project labels applied to every resource we create so Stop/Status
 // can find them back without a DB entry.
@@ -113,14 +121,27 @@ func (s *Service) DeployProject(ctx context.Context, proj *composetypes.Project)
 	if s.docker == nil {
 		return nil, errors.New("docker unavailable")
 	}
+	ctx, span := composeTracer.Start(ctx, "compose.deploy",
+		trace.WithAttributes(
+			attribute.String("stack", proj.Name),
+			attribute.Int("service.count", len(proj.Services)),
+			attribute.Int("network.count", len(proj.Networks)),
+			attribute.Int("volume.count", len(proj.Volumes)),
+		))
+	defer span.End()
+
 	cli := s.docker.Raw()
 	result := &DeployResult{Stack: proj.Name}
 
 	netNames, err := s.reconcileNetworks(ctx, cli, proj, result)
 	if err != nil {
+		span.SetStatus(codes.Error, "reconcile networks")
+		span.RecordError(err)
 		return nil, err
 	}
 	if err := s.reconcileVolumes(ctx, cli, proj, result); err != nil {
+		span.SetStatus(codes.Error, "reconcile volumes")
+		span.RecordError(err)
 		return nil, err
 	}
 
@@ -135,6 +156,8 @@ func (s *Service) DeployProject(ctx context.Context, proj *composetypes.Project)
 		svc := proj.Services[name]
 		sr, err := s.deployService(ctx, cli, proj, svc, netNames)
 		if err != nil {
+			span.SetStatus(codes.Error, "service "+name)
+			span.RecordError(err)
 			return nil, fmt.Errorf("service %s: %w", name, err)
 		}
 		result.Services = append(result.Services, *sr)
@@ -294,20 +317,31 @@ func (s *Service) deployService(ctx context.Context, cli *client.Client, proj *c
 		}
 	}
 
-	// Ensure image is present locally.
+	// Ensure image is present locally (spans image_pull only when we actually pull).
 	if _, _, err := cli.ImageInspectWithRaw(ctx, svc.Image); err != nil {
 		if !errdefs.IsNotFound(err) {
 			return nil, fmt.Errorf("image inspect %s: %w", svc.Image, err)
 		}
-		rc, err := cli.ImagePull(ctx, svc.Image, dtypes.ImagePullOptions{})
+		pullCtx, pullSpan := composeTracer.Start(ctx, "compose.pull_image",
+			trace.WithAttributes(
+				attribute.String("stack", proj.Name),
+				attribute.String("service", svc.Name),
+				attribute.String("image", svc.Image),
+			))
+		rc, err := cli.ImagePull(pullCtx, svc.Image, dtypes.ImagePullOptions{})
 		if err != nil {
+			pullSpan.SetStatus(codes.Error, err.Error())
+			pullSpan.End()
 			return nil, fmt.Errorf("image pull %s: %w", svc.Image, err)
 		}
 		if _, err := io.Copy(io.Discard, rc); err != nil {
 			rc.Close()
+			pullSpan.SetStatus(codes.Error, err.Error())
+			pullSpan.End()
 			return nil, fmt.Errorf("image pull read %s: %w", svc.Image, err)
 		}
 		rc.Close()
+		pullSpan.End()
 	}
 
 	cfg, hostCfg, netCfg, err := serviceToContainerConfig(proj, svc, netNames)
@@ -315,11 +349,25 @@ func (s *Service) deployService(ctx context.Context, cli *client.Client, proj *c
 		return nil, err
 	}
 
-	resp, err := cli.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, containerName)
+	startCtx, startSpan := composeTracer.Start(ctx, "compose.start_container",
+		trace.WithAttributes(
+			attribute.String("stack", proj.Name),
+			attribute.String("service", svc.Name),
+			attribute.String("image", svc.Image),
+			attribute.String("container.name", containerName),
+		))
+	defer startSpan.End()
+
+	resp, err := cli.ContainerCreate(startCtx, cfg, hostCfg, netCfg, nil, containerName)
 	if err != nil {
+		startSpan.SetStatus(codes.Error, "create")
+		startSpan.RecordError(err)
 		return nil, fmt.Errorf("container create %s: %w", containerName, err)
 	}
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	startSpan.SetAttributes(attribute.String("container.id", resp.ID))
+	if err := cli.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
+		startSpan.SetStatus(codes.Error, "start")
+		startSpan.RecordError(err)
 		return nil, fmt.Errorf("container start %s: %w", containerName, err)
 	}
 	return &ServiceResult{Name: svc.Name, ContainerID: resp.ID, Image: svc.Image}, nil
