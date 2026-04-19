@@ -33,7 +33,7 @@
 
 {#if confirm.current}
 	{@const req = confirm.current}
-	<Modal bind:open title={req.title} maxWidth="max-w-md">
+	<Modal bind:open title={req.title} maxWidth="max-w-md" {footer}>
 		<div class="space-y-3 text-sm">
 			{#if req.danger}
 				<div
@@ -54,11 +54,15 @@
 				{/if}
 			{/if}
 		</div>
-		<svelte:fragment slot="footer">
-			<Button variant="secondary" onclick={reject}>{req.cancelLabel ?? 'Cancel'}</Button>
-			<Button variant={req.danger ? 'danger' : 'primary'} onclick={accept}>
-				{req.confirmLabel ?? 'Confirm'}
-			</Button>
-		</svelte:fragment>
 	</Modal>
 {/if}
+
+{#snippet footer()}
+	{#if confirm.current}
+		{@const req = confirm.current}
+		<Button variant="secondary" onclick={reject}>{req.cancelLabel ?? 'Cancel'}</Button>
+		<Button variant={req.danger ? 'danger' : 'primary'} onclick={accept}>
+			{req.confirmLabel ?? 'Confirm'}
+		</Button>
+	{/if}
+{/snippet}

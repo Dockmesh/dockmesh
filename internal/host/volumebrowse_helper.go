@@ -46,17 +46,25 @@ func BrowseDirViaHelper(ctx context.Context, cli *docker.Client, volumeName, sub
 		return nil, fmt.Errorf("invalid subpath")
 	}
 
-	// find output: <type>|<size>|<octal-mode>|<mtime>|<linkdest>|<name>
-	// Use a rare separator so filenames with spaces/tabs don't split
-	// incorrectly. Names with literal '|' or newlines will still break
-	// (rare for real-world container volumes); the browse UI surfaces
-	// "unparseable row" rather than crashing.
-	script := `cd /mnt/target && find . -mindepth 1 -maxdepth 1 -printf '%y|%s|%m|%T@|%l|%f\n' 2>/dev/null || true`
+	// Output format per line: <type>|<size>|<octal-mode>|<mtime>|<linkdest>|<name>
+	// BusyBox alpine's find doesn't have GNU's -printf, so we loop
+	// through `ls -A` and run `stat` per entry. Filenames with literal
+	// '|' or newlines will mis-parse (rare for container volumes); the
+	// browse UI skips unparseable rows rather than crashing.
 	mountTarget := "/mnt/target"
 	if sub != "" {
 		mountTarget = "/mnt/target/" + sub
-		script = `cd ` + mountTarget + ` && find . -mindepth 1 -maxdepth 1 -printf '%y|%s|%m|%T@|%l|%f\n' 2>/dev/null || true`
 	}
+	script := `cd ` + shellEscape(mountTarget) + ` && ls -A | while IFS= read -r n; do
+  if [ -L "$n" ]; then
+    l=$(readlink "$n")
+    printf 'l|0|%s|%s|%s|%s\n' "$(stat -c '%a' "$n")" "$(stat -c '%Y' "$n")" "$l" "$n"
+  elif [ -d "$n" ]; then
+    printf 'd|%s|%s|%s||%s\n' "$(stat -c '%s' "$n")" "$(stat -c '%a' "$n")" "$(stat -c '%Y' "$n")" "$n"
+  else
+    printf 'f|%s|%s|%s||%s\n' "$(stat -c '%s' "$n")" "$(stat -c '%a' "$n")" "$(stat -c '%Y' "$n")" "$n"
+  fi
+done`
 
 	raw, err := runHelperCommand(ctx, cli, volumeName, script)
 	if err != nil {
@@ -75,13 +83,13 @@ func BrowseDirViaHelper(ctx context.Context, cli *docker.Client, volumeName, sub
 		}
 		sizeBytes, _ := strconv.ParseInt(parts[1], 10, 64)
 		modeOctal, _ := strconv.ParseUint(parts[2], 8, 32)
-		mtimeFloat, _ := strconv.ParseFloat(parts[3], 64)
+		mtimeSecs, _ := strconv.ParseInt(parts[3], 10, 64)
 
 		entry := VolumeEntry{
 			Name:    parts[5],
 			Size:    sizeBytes,
 			Mode:    fmt.Sprintf("%04o", modeOctal),
-			ModTime: time.Unix(int64(mtimeFloat), int64((mtimeFloat-float64(int64(mtimeFloat)))*1e9)),
+			ModTime: time.Unix(mtimeSecs, 0),
 		}
 		switch parts[0] {
 		case "d":
