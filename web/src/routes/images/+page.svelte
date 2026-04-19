@@ -4,6 +4,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { allowed } from '$lib/rbac';
+  import { autoRefresh } from '$lib/autorefresh';
   import { hosts } from '$lib/stores/host.svelte';
   import {
     Image as ImageIcon, Trash2, RefreshCw, Shield, ShieldAlert, AlertTriangle,
@@ -83,6 +84,7 @@
   }
 
   $effect(() => { hosts.id; load(); });
+  $effect(() => autoRefresh(load, 10_000));
 
   // Filtering + sorting
   const visible = $derived(

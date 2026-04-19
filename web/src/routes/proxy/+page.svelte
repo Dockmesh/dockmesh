@@ -5,6 +5,7 @@
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
+  import { autoRefresh } from '$lib/autorefresh';
   import {
     Globe, Plus, Trash2, Power, PowerOff, RefreshCw, Lock, ShieldCheck,
     Search, ExternalLink, Pencil, ChevronUp, ChevronDown
@@ -60,6 +61,9 @@
     if (!allowed('user.manage')) { goto('/'); return; }
     load();
   });
+  // Caddy container status + route certificate lifecycle change over
+  // time — poll every 10s.
+  $effect(() => autoRefresh(load, 10_000));
 
   // Filtering + sorting
   const visible = $derived(

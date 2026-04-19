@@ -7,6 +7,7 @@
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
+  import { autoRefresh } from '$lib/autorefresh';
   import {
     Bell, Plus, Trash2, Send, Activity, BellRing, BellOff, AlertTriangle, CheckCircle2,
     Search, Copy, Power
@@ -215,6 +216,18 @@
     if (tab === 'channels') loadChannels();
     else if (tab === 'rules') { loadRules(); loadChannels(); }
     else if (tab === 'history') loadHistory();
+  });
+
+  // Poll the active tab every 10s. Rules / channels rarely change
+  // at runtime (config edits are rare) but the history tab is the
+  // live-alert feed operators actually watch.
+  $effect(() => {
+    const refresh = () => {
+      if (tab === 'history') loadHistory();
+      else if (tab === 'rules') loadRules();
+      else if (tab === 'channels') loadChannels();
+    };
+    return autoRefresh(refresh, 10_000);
   });
 </script>
 

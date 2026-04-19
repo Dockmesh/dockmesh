@@ -4,6 +4,7 @@
   import { Button, Modal, EmptyState, Input, Skeleton, Badge } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
+  import { autoRefresh } from '$lib/autorefresh';
   import { hosts } from '$lib/stores/host.svelte';
   import { Layers, Plus, FileCode2, Terminal, Search, Server, RefreshCw, Play, Square, ArrowUpDown, Clock, ArrowRightLeft } from 'lucide-svelte';
 
@@ -152,6 +153,11 @@
     hosts.id;
     load();
   });
+
+  // Poll every 5s so deploy/stop actions on other tabs, remote-host
+  // state changes, and auto-deploy git syncs show up without manually
+  // hitting Refresh.
+  $effect(() => autoRefresh(load, 5_000));
 
   const counts = $derived({
     all: stackCards.length,
