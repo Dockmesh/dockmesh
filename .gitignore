@@ -9,6 +9,8 @@
 /dockmesh.exe
 /dockmesh-agent
 /dockmesh-agent.exe
+/dmctl
+/dmctl.exe
 /bin/
 /dist/
 /cmd/dockmesh/web_dist/*
