@@ -38,3 +38,6 @@ Thumbs.db
 # Test / coverage
 *.out
 coverage.txt
+/web/playwright-report/
+/web/test-results/
+/web/playwright/.cache/

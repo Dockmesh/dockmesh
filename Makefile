@@ -1,4 +1,4 @@
-.PHONY: dev build test lint docker clean tidy frontend-install frontend-build backend-build agent agent-linux agent-bundle dmctl dmctl-bundle
+.PHONY: dev build test test-e2e lint docker clean tidy frontend-install frontend-build backend-build agent agent-linux agent-bundle dmctl dmctl-bundle
 
 VERSION ?= dev
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -62,6 +62,12 @@ build: frontend-build agent-bundle dmctl-bundle backend-build
 test:
 	go test -race ./...
 	cd web && npm run check
+
+# Run the v1 regression suite (web/e2e/). Defaults to the dev host at
+# 192.168.10.164:8080 with admin credentials. Override with
+# DOCKMESH_URL / DOCKMESH_USER / DOCKMESH_PASS env vars.
+test-e2e:
+	cd web && npx playwright test --project=v1-regression
 
 lint:
 	golangci-lint run
