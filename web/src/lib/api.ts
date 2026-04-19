@@ -282,6 +282,23 @@ export interface RegistryTestResult {
   error?: string;
 }
 
+// P.12.4 — backup verification (upload or by-run-id).
+export interface BackupVerifyCheck {
+  name: string;
+  status: 'ok' | 'warn' | 'fail';
+  message?: string;
+}
+
+export interface BackupVerifyResult {
+  filename?: string;
+  counts?: { files: number; bytes: number };
+  sanity: {
+    passed: boolean;
+    summary?: string;
+    checks: BackupVerifyCheck[];
+  };
+}
+
 // P.12.1 — sessions + password policy.
 export interface Session {
   family_id: string;
@@ -1205,7 +1222,24 @@ export const api = {
       request<void>(`/backups/runs/${runId}/restore`, {
         method: 'POST',
         body: JSON.stringify({ dest_volume: destVolume })
-      })
+      }),
+    // P.12.4 — verify an uploaded system-backup tarball. Never touches
+    // the live install; extracts to a temp dir, runs sanity, deletes.
+    verifyUpload: async (file: File): Promise<BackupVerifyResult> => {
+      const form = new FormData();
+      form.append('file', file);
+      const token = auth.accessToken;
+      const res = await fetch(`${BASE}/restore/verify`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: form
+      });
+      const data = await res.json();
+      if (!res.ok && res.status !== 422) throw new ApiError(data?.error ?? res.statusText, res.status);
+      return data as BackupVerifyResult;
+    },
+    verifyRun: (runId: number) =>
+      request<BackupVerifyResult>(`/backups/runs/${runId}/verify`, { method: 'POST' })
   },
 
   users: {

@@ -324,6 +324,16 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/volumes/{name}/browse/file", h.ReadVolumeFile)
 			})
 
+			// -------------------------- DISASTER RECOVERY --------------------
+			// Backup verification (P.12.4). Admin-only — processing an
+			// uploaded tarball touches disk + runs DB migrations in a
+			// temp context, so a narrower permission wouldn't buy much.
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Post("/restore/verify", h.VerifyUploadedBackup)
+				r.Post("/backups/runs/{id}/verify", h.VerifyBackupRun)
+			})
+
 			// -------------------------- USER MANAGE --------------------------
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermUserManage))
