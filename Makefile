@@ -1,4 +1,4 @@
-.PHONY: dev build test lint docker clean tidy frontend-install frontend-build backend-build agent agent-linux agent-bundle
+.PHONY: dev build test lint docker clean tidy frontend-install frontend-build backend-build agent agent-linux agent-bundle dmctl dmctl-bundle
 
 VERSION ?= dev
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -39,8 +39,25 @@ agent-bundle:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/dockmesh-agent-linux-arm64 ./cmd/dockmesh-agent
 	@ls -lh bin/
 
-build: frontend-build agent-bundle backend-build
-	@echo ">> built ./dockmesh + bin/dockmesh-agent-linux-{amd64,arm64}"
+# User-facing CLI (P.12.9). Native-host build for local dev; see
+# dmctl-bundle for the cross-compile matrix shipped via the /install/
+# endpoint.
+dmctl:
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o dmctl ./cmd/dmctl
+
+# Cross-compile dmctl for the platforms we expect operators to run it on.
+# Lands in ./bin/ alongside the agent binaries so the same /install/ path
+# serves everything.
+dmctl-bundle:
+	mkdir -p bin
+	CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/dmctl-linux-amd64   ./cmd/dmctl
+	CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/dmctl-linux-arm64   ./cmd/dmctl
+	CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/dmctl-darwin-amd64  ./cmd/dmctl
+	CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/dmctl-darwin-arm64  ./cmd/dmctl
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/dmctl-windows-amd64.exe ./cmd/dmctl
+
+build: frontend-build agent-bundle dmctl-bundle backend-build
+	@echo ">> built ./dockmesh + bin/dockmesh-agent-linux-{amd64,arm64} + bin/dmctl-{linux,darwin,windows}-*"
 
 test:
 	go test -race ./...
