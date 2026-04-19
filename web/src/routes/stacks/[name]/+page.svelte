@@ -55,7 +55,11 @@
   async function loadHistory() {
     historyLoading = true;
     try {
-      historyEntries = await api.stacks.listDeployments(name);
+      const raw = await api.stacks.listDeployments(name);
+      // Defense-in-depth: backend returns [] for empty, but treat null
+      // (older servers, proxy quirks) as empty too so the UI never
+      // crashes on a .length access.
+      historyEntries = raw ?? [];
       historyLoadedOnce = true;
     } catch (err) {
       toast.error('Load history failed', err instanceof ApiError ? err.message : undefined);

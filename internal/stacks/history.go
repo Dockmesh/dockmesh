@@ -94,7 +94,9 @@ func (s *HistoryStore) List(ctx context.Context, stackName string, limit int) ([
 	}
 	defer rows.Close()
 
-	var out []DeployHistoryEntry
+	// Non-nil slice — callers (and the JSON response) should see `[]`, not
+	// `null`, when a stack has no history yet.
+	out := make([]DeployHistoryEntry, 0)
 	for rows.Next() {
 		var e DeployHistoryEntry
 		var servicesJSON, note, deployedBy, deployedByEmail sql.NullString
