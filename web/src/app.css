@@ -44,24 +44,27 @@
    ---------------------------------------------------------------------------*/
 :root,
 :root[data-theme="dark"] {
-  /* Backgrounds — neutral dark, very slight cool tint. Previously the
-     palette was "navy-black" which read too blue next to modern tools;
-     these values are closer to Vercel/Supabase/Linear. */
-  --bg:           #0b0b0e;
-  --bg-elevated:  #111115;
-  --surface:      #17171c;
-  --surface-hover:#1c1c22;
-  --surface-active:#22222a;
+  /* Backgrounds — slate palette, matching the dockmesh.dev marketing
+     hero. slate-950 for the page, slate-900 for cards, slate-800 for
+     hover / active. The cyan brand pops against these without being
+     grating. */
+  --bg:           #020617;
+  --bg-elevated:  #0b1120;
+  --surface:      #0f172a;
+  --surface-hover:#1e293b;
+  --surface-active:#283548;
 
-  /* Borders */
-  --border:        #23232a;
-  --border-subtle: #17171c;
-  --border-strong: #2e2e37;
+  /* Borders — slate-800 / slate-700 tones so they separate panels
+     without shouting. */
+  --border:        #1e293b;
+  --border-subtle: #0f172a;
+  --border-strong: #334155;
 
-  /* Foreground — neutral greys, no blue tint */
-  --fg:         #ededee;
-  --fg-muted:   #9a9aa4;
-  --fg-subtle:  #62626d;
+  /* Foreground — slightly cool whites (slate-100 → slate-400) to
+     stay harmonious with the bluish backgrounds. */
+  --fg:         #f1f5f9;
+  --fg-muted:   #94a3b8;
+  --fg-subtle:  #64748b;
 
   /* Focus ring */
   --ring: color-mix(in srgb, var(--color-brand-500) 60%, transparent);
