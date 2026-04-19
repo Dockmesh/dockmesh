@@ -34,7 +34,7 @@ _dockmesh_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local commands="serve admin db ca enroll secrets import config doctor completion version help"
+    local commands="serve admin db ca enroll secrets import restore config doctor completion version help"
 
     if [ $COMP_CWORD -eq 1 ]; then
         COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
