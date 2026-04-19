@@ -647,19 +647,16 @@
       </div>
 
       <div>
-        <div class="text-xs text-[var(--fg-muted)] mb-1">One-time manual upgrade command (on the agent host)</div>
+        <div class="text-xs text-[var(--fg-muted)] mb-1">One-time manual upgrade command (run on the agent host as a user with sudo)</div>
         <div class="relative">
-          <pre class="dm-card p-3 font-mono text-xs whitespace-pre-wrap break-all max-h-64 overflow-auto">{`systemctl stop dockmesh-agent
-curl -fsSL ${window.location.origin}/install/dockmesh-agent-linux-amd64 \\
+          <pre class="dm-card p-3 font-mono text-xs whitespace-pre-wrap break-all max-h-64 overflow-auto">{`sudo systemctl stop dockmesh-agent
+sudo curl -fsSL ${window.location.origin}/install/dockmesh-agent-linux-amd64 \\
   -o /usr/local/bin/dockmesh-agent
-chmod +x /usr/local/bin/dockmesh-agent
-systemctl start dockmesh-agent`}</pre>
+sudo chmod +x /usr/local/bin/dockmesh-agent
+sudo systemctl start dockmesh-agent`}</pre>
           <button
             class="absolute top-2 right-2 px-2 py-1 text-xs rounded bg-[var(--surface)] border border-[var(--border)] hover:bg-[var(--surface-hover)]"
-            onclick={() => copyText(`systemctl stop dockmesh-agent
-curl -fsSL ${window.location.origin}/install/dockmesh-agent-linux-amd64 -o /usr/local/bin/dockmesh-agent
-chmod +x /usr/local/bin/dockmesh-agent
-systemctl start dockmesh-agent`)}
+            onclick={() => copyText(`sudo systemctl stop dockmesh-agent && sudo curl -fsSL ${window.location.origin}/install/dockmesh-agent-linux-amd64 -o /usr/local/bin/dockmesh-agent && sudo chmod +x /usr/local/bin/dockmesh-agent && sudo systemctl start dockmesh-agent`)}
           >
             <Copy class="w-3 h-3 inline" /> copy
           </button>
