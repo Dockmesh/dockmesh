@@ -41,6 +41,7 @@ type Handlers struct {
 	Docker       *docker.Client // may be nil if the daemon was unreachable at startup
 	Stacks       *stacks.Manager
 	Deployments  *stacks.DeploymentStore
+	DeployHistory *stacks.HistoryStore
 	Compose      *compose.Service
 	LoginLimiter *ratelimit.Limiter
 	Scanner      scanner.Scanner
@@ -79,6 +80,7 @@ type Deps struct {
 	Docker       *docker.Client
 	Stacks       *stacks.Manager
 	Deployments  *stacks.DeploymentStore
+	DeployHistory *stacks.HistoryStore
 	Compose      *compose.Service
 	LoginLimiter *ratelimit.Limiter
 	Scanner      scanner.Scanner
@@ -118,6 +120,7 @@ func New(d Deps) *Handlers {
 		Docker:      d.Docker,
 		Stacks:      d.Stacks,
 		Deployments: d.Deployments,
+		DeployHistory: d.DeployHistory,
 		Compose:     d.Compose,
 		LoginLimiter: d.LoginLimiter,
 		Scanner:     d.Scanner,

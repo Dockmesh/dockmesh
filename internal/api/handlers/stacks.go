@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
@@ -167,6 +168,19 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 	if h.Deployments != nil {
 		if err := h.Deployments.Set(r.Context(), name, target.ID(), "deployed"); err != nil {
 			slog.Warn("set stack deployment", "stack", name, "host", target.ID(), "err", err)
+		}
+	}
+	// Deploy history (P.12.6) — snapshot compose + resolved images per
+	// service so operators can roll back to this exact point. Env is
+	// deliberately not captured so secrets stay under the at-rest age
+	// encryption the stacks manager owns.
+	if h.DeployHistory != nil {
+		services := make([]stacks.DeployHistoryService, 0, len(res.Services))
+		for _, s := range res.Services {
+			services = append(services, stacks.DeployHistoryService{Service: s.Name, Image: s.Image})
+		}
+		if _, err := h.DeployHistory.Record(r.Context(), name, target.ID(), detail.Compose, "", middleware.UserID(r.Context()), services); err != nil {
+			slog.Warn("record deploy history", "stack", name, "err", err)
 		}
 	}
 	// Compose-file mirroring (P.7): push canonical files to the agent

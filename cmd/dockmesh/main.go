@@ -406,6 +406,7 @@ func main() {
 	}
 
 	deployStore := stacks.NewDeploymentStore(database)
+	deployHistoryStore := stacks.NewHistoryStore(database)
 	migrationSvc := migration.NewService(database, hostRegistry, stacksMgr, deployStore)
 	if err := migrationSvc.Start(ctx); err != nil {
 		slog.Warn("migration service start", "err", err)
@@ -421,6 +422,7 @@ func main() {
 		Docker:       dockerCli,
 		Stacks:       stacksMgr,
 		Deployments:  deployStore,
+		DeployHistory: deployHistoryStore,
 		Compose:      composeSvc,
 		LoginLimiter: loginLimiter,
 		Scanner:      scannerSvc,
