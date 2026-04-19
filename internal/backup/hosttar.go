@@ -42,20 +42,38 @@ func tarHostDir(dir string, w io.Writer) (int64, error) {
 		if hdr.Name == "." {
 			return nil
 		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
 		if d.IsDir() {
-			return nil
+			return tw.WriteHeader(hdr)
 		}
+		// Lock in size via the open fd — same race as tarSystem: walker
+		// saw stat-A, but a live writer can grow the file before we
+		// stream bytes, and tar errors out with "write too long". Use
+		// the at-open-time size; any later growth is ignored.
 		f, err := os.Open(p)
 		if err != nil {
 			return err
 		}
-		n, copyErr := io.Copy(tw, f)
-		f.Close()
+		defer f.Close()
+		st, err := f.Stat()
+		if err != nil {
+			return err
+		}
+		hdr.Size = st.Size()
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		n, copyErr := io.CopyN(tw, f, st.Size())
 		total += n
-		return copyErr
+		if copyErr != nil && copyErr != io.EOF {
+			return copyErr
+		}
+		if n < st.Size() {
+			pad := make([]byte, st.Size()-n)
+			if _, err := tw.Write(pad); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return total, err

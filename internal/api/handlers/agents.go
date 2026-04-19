@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/audit"
@@ -138,7 +139,18 @@ func (h *Handlers) UpgradeAgent(w http.ResponseWriter, r *http.Request) {
 		Payload: payload,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		// An agent too old to know the upgrade frame returns
+		// "unknown request type: req.agent.upgrade" — surface this as
+		// a 422 with an actionable hint rather than a bare 500, since
+		// the fix is a manual one-time install, not a server bug.
+		msg := err.Error()
+		if strings.Contains(msg, "unknown request type") && strings.Contains(msg, "req.agent.upgrade") {
+			writeError(w, http.StatusUnprocessableEntity,
+				"agent version too old to self-upgrade — run the install script on the host once ("+
+					baseURL+"/install/agent.sh with a fresh enrollment token), then future upgrades will work from the UI")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, msg)
 		return
 	}
 	if !resp.OK {
