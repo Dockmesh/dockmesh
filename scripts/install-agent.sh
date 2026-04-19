@@ -244,7 +244,12 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictNamespaces=yes
 LockPersonality=yes
-ReadWritePaths=$DATA_DIR
+# Self-upgrade (UpgradeAgent frame) writes a new binary to
+# /usr/local/bin/dockmesh-agent.new and atomic-renames it over the
+# running binary. Under ProtectSystem=strict, /usr is read-only by
+# default — whitelist the install dir so the upgrade succeeds
+# without requiring an out-of-band sudo edit of this unit.
+ReadWritePaths=$DATA_DIR /usr/local/bin
 
 [Install]
 WantedBy=multi-user.target
