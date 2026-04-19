@@ -177,6 +177,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/stacks/{name}/scale", h.ListServiceScale)
 				r.Get("/stacks/{name}/services/{service}/scale", h.GetScale)
 				r.Post("/stacks/{name}/services/{service}/scale", h.ScaleService)
+				// Rolling updates (P.12.5b)
+				r.Post("/stacks/{name}/services/{service}/rolling-update", h.RollingUpdateService)
 				// Auto-scaling rules (P.8)
 				r.Get("/stacks/{name}/scaling-rules", h.GetScalingRules)
 				r.Put("/stacks/{name}/scaling-rules", h.SetScalingRules)

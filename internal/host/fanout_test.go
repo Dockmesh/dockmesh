@@ -104,6 +104,9 @@ func (f *fakeHost) ScaleService(context.Context, string, string, string, string,
 func (f *fakeHost) CheckScale(context.Context, string, string, string, string) (*compose.ScaleCheck, error) {
 	panic("no")
 }
+func (f *fakeHost) RollingReplace(context.Context, string, string, string, string, compose.RollingOptions) (*compose.RollingResult, error) {
+	panic("no")
+}
 func (f *fakeHost) SystemMetrics(context.Context) (system.Metrics, error) {
 	return system.Metrics{}, nil
 }

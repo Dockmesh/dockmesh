@@ -374,6 +374,14 @@ func (h *RemoteHost) CheckScale(ctx context.Context, name, composeYAML, envConte
 	return &out, nil
 }
 
+// RollingReplace is not yet implemented on remote hosts — the agent
+// protocol does not carry a rolling-update frame type. Callers get a
+// clear error so the HTTP handler can surface a 501 rather than a
+// generic "frame not handled" from the agent. P.12.5b scope-cut.
+func (h *RemoteHost) RollingReplace(ctx context.Context, name, composeYAML, envContent, service string, opts compose.RollingOptions) (*compose.RollingResult, error) {
+	return nil, fmt.Errorf("rolling updates on remote hosts are not yet implemented — the agent needs a matching frame type (follow-up slice). Run the stack on the dockmesh server host for now")
+}
+
 // Errors
 var (
 	ErrAgentOffline = errors.New("agent offline")

@@ -92,6 +92,11 @@ type Host interface {
 	ScaleService(ctx context.Context, name, composeYAML, envContent, service string, replicas int) (*compose.ScaleResult, error)
 	CheckScale(ctx context.Context, name, composeYAML, envContent, service string) (*compose.ScaleCheck, error)
 
+	// Rolling replace of a single service's replicas (P.12.5b). Remote
+	// hosts return an explicit NotImplemented-style error until the
+	// agent protocol gains the matching frame type.
+	RollingReplace(ctx context.Context, name, composeYAML, envContent, service string, opts compose.RollingOptions) (*compose.RollingResult, error)
+
 	// Host-level system metrics (CPU / memory / disk / uptime). Locally
 	// this reads /proc and statfs; remotely it asks the agent to do the
 	// same and ships the result back. Used by the dashboard's all-mode

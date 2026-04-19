@@ -3,8 +3,10 @@ package handlers
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/scaling"
 	"github.com/go-chi/chi/v5"
 )
@@ -92,6 +94,105 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 		"stack", name, "service", service,
 		"previous", res.Previous, "current", res.Current,
 		"host", target.ID())
+	writeJSON(w, http.StatusOK, res)
+}
+
+// rollingUpdateRequest is the body for POST /rolling-update. All fields
+// are optional — omitted fields fall back to the compose-spec
+// `deploy.update_config` on the service, and from there to the engine
+// defaults (parallelism=1, order=stop-first, failure_action=pause).
+type rollingUpdateRequest struct {
+	Parallelism   int    `json:"parallelism,omitempty"`
+	DelaySeconds  int    `json:"delay_seconds,omitempty"`
+	Order         string `json:"order,omitempty"`
+	FailureAction string `json:"failure_action,omitempty"`
+}
+
+// RollingUpdateService performs a rolling replacement of all replicas
+// of a single service in a stack.
+//
+//	POST /api/v1/stacks/{name}/services/{service}/rolling-update
+//	Body (all optional): {
+//	  "parallelism":   1,
+//	  "delay_seconds": 0,
+//	  "order":         "start-first" | "stop-first",
+//	  "failure_action":"pause" | "continue" | "rollback"
+//	}
+//
+// Behaviour:
+//   - Loads compose+env from the stacks filesystem
+//   - Merges body overrides on top of `deploy.update_config` in compose
+//   - Calls the host's RollingReplace (Local runs the engine; Remote
+//     returns 501 since the agent protocol doesn't carry a rolling-
+//     update frame type yet)
+//
+// P.12.5b.
+func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) {
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if !h.requireHostAccess(w, r, target.ID()) {
+		return
+	}
+	name := chi.URLParam(r, "name")
+	service := chi.URLParam(r, "service")
+
+	var req rollingUpdateRequest
+	// Body is optional — treat missing body as "use compose defaults".
+	if r.ContentLength > 0 {
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+	}
+
+	detail, err := h.Stacks.Get(name)
+	if err != nil {
+		writeStackError(w, err)
+		return
+	}
+
+	opts := compose.RollingOptions{
+		Parallelism:   req.Parallelism,
+		Order:         compose.UpdateOrder(req.Order),
+		FailureAction: compose.FailureAction(req.FailureAction),
+	}
+	if req.DelaySeconds > 0 {
+		opts.Delay = time.Duration(req.DelaySeconds) * time.Second
+	}
+	// Zero fields bubble into the engine, which fills them from the
+	// service's compose `deploy.update_config` and then applies defaults.
+
+	res, err := target.RollingReplace(r.Context(), name, detail.Compose, detail.Env, service, opts)
+	if err != nil {
+		// RemoteHost surfaces its own "not implemented" text — 501 is the
+		// honest status for that path. For other errors default to 500,
+		// but pass through a mid-rollout result if the engine returned one.
+		status := http.StatusInternalServerError
+		if res == nil {
+			writeError(w, status, err.Error())
+			return
+		}
+		writeJSON(w, status, map[string]any{
+			"error":  err.Error(),
+			"result": res,
+		})
+		return
+	}
+	h.audit(r, audit.ActionStackDeploy, name, map[string]any{
+		"action":     "rolling-update",
+		"service":    service,
+		"updated":    res.Updated,
+		"failed":     res.Failed,
+		"rolled_back": res.RolledBack,
+		"host":       target.ID(),
+	})
+	slog.Info("rolling update",
+		"stack", name, "service", service,
+		"updated", res.Updated, "failed", res.Failed,
+		"rolled_back", res.RolledBack, "host", target.ID())
 	writeJSON(w, http.StatusOK, res)
 }
 
