@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // PromRecorder is what Logging uses to increment the prom request
@@ -27,14 +28,23 @@ func Logging(next http.Handler) http.Handler {
 		ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
 		next.ServeHTTP(ww, r)
 		status := ww.Status()
-		slog.Info("http",
+		attrs := []any{
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", status,
 			"bytes", ww.BytesWritten(),
 			"dur_ms", time.Since(start).Milliseconds(),
 			"req_id", chimw.GetReqID(r.Context()),
-		)
+		}
+		// P.12.3 — when OTel tracing is on the request context carries
+		// the active span; cross-reference trace/span IDs into the log
+		// line so operators can pivot from a log event to the trace.
+		if sc := trace.SpanContextFromContext(r.Context()); sc.IsValid() {
+			attrs = append(attrs,
+				"trace_id", sc.TraceID().String(),
+				"span_id", sc.SpanID().String())
+		}
+		slog.Info("http", attrs...)
 		if PromMetrics != nil {
 			// RoutePattern gives the chi route template
 			// ("/api/v1/containers/{id}") which keeps cardinality

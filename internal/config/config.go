@@ -30,7 +30,15 @@ type Config struct {
 	// DOCKMESH_METRICS_AUTH=false on trusted networks where the
 	// scrape comes from a host-only firewalled Prometheus.
 	MetricsAuth bool
-	JWTSecret   []byte
+	// P.12.3 observability: slog format (json|text), slog level (debug|
+	// info|warn|error), and optional OTLP/gRPC trace exporter endpoint.
+	// All default to sensible production settings (json logs + info
+	// level + no tracing). Set DOCKMESH_OTEL_ENDPOINT to enable tracing.
+	LogFormat    string
+	LogLevel     string
+	OTelEndpoint string
+	OTelInsecure bool
+	JWTSecret    []byte
 }
 
 func Load() (*Config, error) {
@@ -57,6 +65,10 @@ func Load() (*Config, error) {
 		AgentPublicURL: envOr("DOCKMESH_AGENT_PUBLIC_URL", ""),
 		AgentSANs:      envOr("DOCKMESH_AGENT_SANS", ""),
 		MetricsAuth:    envOr("DOCKMESH_METRICS_AUTH", "true") != "false",
+		LogFormat:      strings.ToLower(envOr("DOCKMESH_LOG_FORMAT", "json")),
+		LogLevel:       strings.ToLower(envOr("DOCKMESH_LOG_LEVEL", "info")),
+		OTelEndpoint:   envOr("DOCKMESH_OTEL_ENDPOINT", ""),
+		OTelInsecure:   envOr("DOCKMESH_OTEL_INSECURE", "false") == "true",
 	}
 	secret, err := loadOrCreateJWTSecret(cfg.SecretsPath)
 	if err != nil {
