@@ -649,22 +649,25 @@
       <div>
         <div class="text-xs text-[var(--fg-muted)] mb-1">One-time manual upgrade command (run on the agent host as a user with sudo)</div>
         <div class="relative">
-          <pre class="dm-card p-3 font-mono text-xs whitespace-pre-wrap break-all max-h-64 overflow-auto">{`# Replace the binary and widen ReadWritePaths so future self-
-# upgrades from the UI can write to /usr/local/bin (the
-# ProtectSystem=strict hardening in older unit files blocks them).
+          <pre class="dm-card p-3 font-mono text-xs whitespace-pre-wrap break-all max-h-96 overflow-auto">{`# Move the binary into a directory the agent user owns, so future
+# self-upgrades from the UI can rename the new binary in place
+# without needing root (the old layout under /usr/local/bin is
+# root-owned and the agent runs unprivileged).
 sudo systemctl stop dockmesh-agent
+sudo install -d -m 0750 -o dockmesh-agent -g dockmesh-agent \\
+  /var/lib/dockmesh/bin
 sudo curl -fsSL ${window.location.origin}/install/dockmesh-agent-linux-amd64 \\
-  -o /usr/local/bin/dockmesh-agent
-sudo chmod +x /usr/local/bin/dockmesh-agent
-sudo sed -i 's|^ReadWritePaths=\\(.*\\)$|ReadWritePaths=\\1 /usr/local/bin|' \\
+  -o /var/lib/dockmesh/bin/dockmesh-agent
+sudo chown dockmesh-agent:dockmesh-agent /var/lib/dockmesh/bin/dockmesh-agent
+sudo chmod 0755 /var/lib/dockmesh/bin/dockmesh-agent
+sudo ln -sf /var/lib/dockmesh/bin/dockmesh-agent /usr/local/bin/dockmesh-agent
+sudo sed -i 's|^ExecStart=/usr/local/bin/dockmesh-agent$|ExecStart=/var/lib/dockmesh/bin/dockmesh-agent|' \\
   /etc/systemd/system/dockmesh-agent.service
-sudo grep -q ' /usr/local/bin' /etc/systemd/system/dockmesh-agent.service || \\
-  echo "ReadWritePaths=/usr/local/bin" | sudo tee -a /etc/systemd/system/dockmesh-agent.service
 sudo systemctl daemon-reload
 sudo systemctl start dockmesh-agent`}</pre>
           <button
             class="absolute top-2 right-2 px-2 py-1 text-xs rounded bg-[var(--surface)] border border-[var(--border)] hover:bg-[var(--surface-hover)]"
-            onclick={() => copyText(`sudo systemctl stop dockmesh-agent && sudo curl -fsSL ${window.location.origin}/install/dockmesh-agent-linux-amd64 -o /usr/local/bin/dockmesh-agent && sudo chmod +x /usr/local/bin/dockmesh-agent && sudo sed -i 's|^ReadWritePaths=\\(.*\\)$|ReadWritePaths=\\1 /usr/local/bin|' /etc/systemd/system/dockmesh-agent.service && (sudo grep -q ' /usr/local/bin' /etc/systemd/system/dockmesh-agent.service || echo "ReadWritePaths=/usr/local/bin" | sudo tee -a /etc/systemd/system/dockmesh-agent.service) && sudo systemctl daemon-reload && sudo systemctl start dockmesh-agent`)}
+            onclick={() => copyText(`sudo systemctl stop dockmesh-agent && sudo install -d -m 0750 -o dockmesh-agent -g dockmesh-agent /var/lib/dockmesh/bin && sudo curl -fsSL ${window.location.origin}/install/dockmesh-agent-linux-amd64 -o /var/lib/dockmesh/bin/dockmesh-agent && sudo chown dockmesh-agent:dockmesh-agent /var/lib/dockmesh/bin/dockmesh-agent && sudo chmod 0755 /var/lib/dockmesh/bin/dockmesh-agent && sudo ln -sf /var/lib/dockmesh/bin/dockmesh-agent /usr/local/bin/dockmesh-agent && sudo sed -i 's|^ExecStart=/usr/local/bin/dockmesh-agent$|ExecStart=/var/lib/dockmesh/bin/dockmesh-agent|' /etc/systemd/system/dockmesh-agent.service && sudo systemctl daemon-reload && sudo systemctl start dockmesh-agent`)}
           >
             <Copy class="w-3 h-3 inline" /> copy
           </button>
