@@ -2,6 +2,7 @@
   import { api, ApiError, type Migration } from '$lib/api';
   import { Card, Badge, Skeleton, EmptyState } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { autoRefresh } from '$lib/autorefresh';
   import { ArrowRightLeft, RefreshCw } from 'lucide-svelte';
 
   let migrations = $state<Migration[]>([]);
@@ -49,6 +50,8 @@
   }
 
   $effect(() => { load(); });
+  // Active migrations have rapid state transitions — poll every 5s.
+  $effect(() => autoRefresh(load, 5_000));
 </script>
 
 <section class="space-y-6">

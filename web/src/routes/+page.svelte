@@ -2,6 +2,7 @@
   import { api, isFanOut, type SystemMetrics } from '$lib/api';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
+  import { autoRefresh } from '$lib/autorefresh';
   import { Skeleton, Badge } from '$lib/components/ui';
   import {
     Box,
@@ -163,6 +164,12 @@
   $effect(() => {
     load();
   });
+
+  // Auto-refresh every 10s so the dashboard reflects container state
+  // changes, backup completions, new audit entries without requiring
+  // the user to hit Refresh. The returned cleanup stops the interval
+  // on unmount.
+  $effect(() => autoRefresh(load, 10_000));
 
   function actionColor(action: string): 'success' | 'warning' | 'danger' | 'info' | 'default' {
     if (action.includes('delete') || action.includes('remove') || action.includes('failed'))

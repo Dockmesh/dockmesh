@@ -7,6 +7,7 @@
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
+  import { autoRefresh } from '$lib/autorefresh';
   import {
     Archive, Plus, Play, Trash2, RefreshCw, Undo2, HardDrive, Cloud, Lock,
     Search, Clock, Copy, ChevronDown
@@ -232,6 +233,17 @@
     if (tab === 'jobs') { loadJobs(); loadTargets(); }
     else if (tab === 'runs') { loadRuns(); loadJobs(); }
     else if (tab === 'targets') loadTargets();
+  });
+
+  // Poll the current tab's data every 5s so "run now" + scheduled
+  // runs update their state without a manual refresh.
+  $effect(() => {
+    const refresh = () => {
+      if (tab === 'jobs') { loadJobs(); loadTargets(); }
+      else if (tab === 'runs') { loadRuns(); }
+      else if (tab === 'targets') loadTargets();
+    };
+    return autoRefresh(refresh, 5_000);
   });
 
   // Summary stats
