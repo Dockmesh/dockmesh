@@ -208,7 +208,7 @@
   <div class="flex h-screen overflow-hidden">
     <!-- Sidebar -->
     <aside
-      class="fixed md:static inset-y-0 left-0 z-40 {sidebarCollapsed ? 'md:w-16' : 'md:w-64'} w-64 bg-[var(--bg-elevated)] border-r border-[var(--border)] flex flex-col transform {mobileOpen
+      class="fixed md:static inset-y-0 left-0 z-40 {sidebarCollapsed ? 'md:w-16' : 'md:w-64'} w-64 bg-[var(--bg)] border-r border-[var(--border)] flex flex-col transform {mobileOpen
         ? 'translate-x-0'
         : '-translate-x-full'} md:translate-x-0 transition-[width,transform] duration-200 relative"
     >
@@ -496,7 +496,7 @@
     {/if}
 
     <!-- Main -->
-    <div class="flex-1 flex flex-col min-w-0">
+    <div class="flex-1 flex flex-col min-w-0 bg-[var(--bg-elevated)]">
       <!-- Mobile-only top bar: hamburger to toggle the off-canvas sidebar.
            On desktop the sidebar is always visible so we drop the whole
            header — each page provides its own H1 + sub-title, and the

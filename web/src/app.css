@@ -44,24 +44,28 @@
    ---------------------------------------------------------------------------*/
 :root,
 :root[data-theme="dark"] {
-  /* Backgrounds — slate palette, matching the dockmesh.dev marketing
-     hero. slate-950 for the page, slate-900 for cards, slate-800 for
-     hover / active. The cyan brand pops against these without being
-     grating. */
+  /* Backgrounds — three-tier slate palette, matches the marketing
+     hero's layering (sidebar darker, content mid, cards with border).
+     - --bg         slate-950: the page shell and the sidebar. DARKEST.
+     - --bg-elevated slate-900: the main content area behind all cards.
+     - --surface    slate-900: card / panel backgrounds, differentiated
+                    from the content area by border rather than tone
+                    (mirrors the mockup's subtle, border-led hierarchy).
+     - --surface-hover slate-800: hover state on rows, menu items, cards.
+     - --surface-active slate-700: pressed / currently-selected rows.*/
   --bg:           #020617;
-  --bg-elevated:  #0b1120;
-  --surface:      #0f172a;
+  --bg-elevated:  #0f172a;
+  --surface:      #111c32;
   --surface-hover:#1e293b;
-  --surface-active:#283548;
+  --surface-active:#334155;
 
-  /* Borders — slate-800 / slate-700 tones so they separate panels
-     without shouting. */
+  /* Borders — slate-800 / slate-700 so panels separate without shouting. */
   --border:        #1e293b;
-  --border-subtle: #0f172a;
+  --border-subtle: #101a2e;
   --border-strong: #334155;
 
-  /* Foreground — slightly cool whites (slate-100 → slate-400) to
-     stay harmonious with the bluish backgrounds. */
+  /* Foreground — cool whites (slate-100 → slate-500) harmonise with the
+     bluish backgrounds. */
   --fg:         #f1f5f9;
   --fg-muted:   #94a3b8;
   --fg-subtle:  #64748b;
@@ -133,21 +137,22 @@ body {
    Utility components
    ---------------------------------------------------------------------------*/
 @layer components {
-  /* Cards: subtle background shift only, no outer border. Matches the
-     modern 2024 dashboard look (Vercel / Supabase / Linear). Tables
-     and table-like lists keep their own borders where needed —
-     .dm-card is only the container, not the content separator. */
+  /* Cards: sit on --surface, which is one step lighter than the
+     --bg-elevated content area plus a thin border. Matches the marketing
+     hero's subtle border-led hierarchy over the slate-900 content bg. */
   .dm-card {
-    background: color-mix(in srgb, var(--fg) 3%, transparent);
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 8px;
-    transition: background-color 0.15s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
   }
   .dm-card-hover:hover {
-    background: color-mix(in srgb, var(--fg) 5%, transparent);
+    background: var(--surface-hover);
+    border-color: var(--border-strong);
   }
 
   .dm-input {
-    background: var(--bg-elevated);
+    background: var(--surface);
     border: 1px solid var(--border);
     color: var(--fg);
     border-radius: 8px;
