@@ -8,20 +8,22 @@
    Design tokens — Tailwind v4 theme
    ---------------------------------------------------------------------------*/
 @theme {
-  /* Brand: muted steel blue. Base = #5b7a99. Differentiates from the
-     usual container-tool cyan/teal (Docker, Portainer, Rancher) while
-     staying in the "trustworthy blue" family — low saturation keeps
-     the UI calm, not loud. */
-  --color-brand-50:  #f3f6fa;
-  --color-brand-100: #e0e8f0;
-  --color-brand-200: #b9c9dc;
-  --color-brand-300: #8faac5;
-  --color-brand-400: #6d8fb0;
-  --color-brand-500: #5b7a99;
-  --color-brand-600: #4c6880;
-  --color-brand-700: #3d5468;
-  --color-brand-800: #2e4050;
-  --color-brand-900: #202d37;
+  /* Brand: cyan, aligned with the dockmesh.dev marketing site.
+     Base = Tailwind cyan-500 (#06b6d4); the marketing hero accent
+     (#04d1eb) sits between 400 and 500 on this scale. Chosen over
+     the previous muted-steel-blue so the app + marketing site read
+     as one product, and because cyan is what the logo gradient
+     already uses (#04d1eb → #097d9a). */
+  --color-brand-50:  #ecfeff;
+  --color-brand-100: #cffafe;
+  --color-brand-200: #a5f3fc;
+  --color-brand-300: #67e8f9;
+  --color-brand-400: #22d3ee;
+  --color-brand-500: #06b6d4;
+  --color-brand-600: #0891b2;
+  --color-brand-700: #0e7490;
+  --color-brand-800: #155e75;
+  --color-brand-900: #164e63;
 
   /* Semantic status colors */
   --color-success-400: #4ade80;
