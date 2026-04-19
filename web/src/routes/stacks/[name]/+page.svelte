@@ -1,13 +1,13 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { api, ApiError, type ScaleCheck, type PreflightResult, type Migration } from '$lib/api';
+  import { api, ApiError, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry } from '$lib/api';
   import { Button, Card, Badge, Skeleton, Modal } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import { EventStream } from '$lib/events';
-  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2, GitBranch, Link as LinkIcon, Unlink } from 'lucide-svelte';
+  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2, GitBranch, Link as LinkIcon, Unlink, History, RotateCcw, FileText, User } from 'lucide-svelte';
   import type { StackGitSource, StackGitSourceInput } from '$lib/api';
 
   import { isAllHosts } from '$lib/stores/host.svelte';
@@ -32,6 +32,97 @@
 
   let externalChange = $state<{ file: string; type: string } | null>(null);
   let dirty = $state(false);
+
+  // Tab state (P.12.6 — tabs introduced to host the new History tab and
+  // leave room for future Logs / Events / Migrations tabs without
+  // further restructuring).
+  type TabKey = 'overview' | 'history';
+  let activeTab = $state<TabKey>('overview');
+
+  // Deploy history (P.12.6)
+  let historyEntries = $state<DeployHistoryEntry[]>([]);
+  let historyLoading = $state(false);
+  let historyLoadedOnce = $state(false);
+
+  // Modal state: view-yaml and rollback-confirm both operate on a
+  // selected entry we fetch-with-YAML on demand (list rows omit YAML).
+  let yamlEntry = $state<DeployHistoryEntry | null>(null);
+  let showYaml = $state(false);
+  let rollbackEntry = $state<DeployHistoryEntry | null>(null);
+  let showRollbackConfirm = $state(false);
+  let rollbackBusy = $state(false);
+
+  async function loadHistory() {
+    historyLoading = true;
+    try {
+      historyEntries = await api.stacks.listDeployments(name);
+      historyLoadedOnce = true;
+    } catch (err) {
+      toast.error('Load history failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      historyLoading = false;
+    }
+  }
+
+  async function openYaml(id: number) {
+    try {
+      yamlEntry = await api.stacks.getDeployment(name, id);
+      showYaml = true;
+    } catch (err) {
+      toast.error('Load snapshot failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
+  async function openRollbackConfirm(id: number) {
+    try {
+      rollbackEntry = await api.stacks.getDeployment(name, id);
+      showRollbackConfirm = true;
+    } catch (err) {
+      toast.error('Load snapshot failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
+  async function doRollback() {
+    if (!rollbackEntry) return;
+    rollbackBusy = true;
+    try {
+      const res = await api.stacks.rollback(name, rollbackEntry.id, stackHost);
+      toast.success(
+        `Rolled back to #${res.rolled_back_to}`,
+        `${res.result.services.length} service(s) redeployed`
+      );
+      showRollbackConfirm = false;
+      rollbackEntry = null;
+      // Reload everything that moved.
+      await load();
+      await loadHistory();
+    } catch (err) {
+      toast.error('Rollback failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      rollbackBusy = false;
+    }
+  }
+
+  function relTime(iso: string): string {
+    const d = new Date(iso).getTime();
+    const diff = Date.now() - d;
+    const m = Math.floor(diff / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const days = Math.floor(h / 24);
+    if (days < 30) return `${days}d ago`;
+    return new Date(iso).toLocaleDateString();
+  }
+
+  // Lazy-load history the first time the tab is opened, and refresh after
+  // every deploy so a fresh row appears without a manual reload.
+  $effect(() => {
+    if (activeTab === 'history' && !historyLoadedOnce) {
+      loadHistory();
+    }
+  });
 
   // Scaling state (P.8)
   let replicaCounts = $state<Map<string, number>>(new Map());
@@ -324,6 +415,9 @@
       const res = await api.stacks.deploy(name, stackHost);
       toast.success('Deployed', `${res.services.length} service(s) on ${hosts.selected?.name ?? 'local'}`);
       await refreshStatus();
+      // If the user has opened History at least once, freshen it so
+      // this deploy's new row appears without a manual reload.
+      if (historyLoadedOnce) loadHistory();
     } catch (err) {
       toast.error('Deploy failed', err instanceof ApiError ? err.message : undefined);
     } finally {
@@ -524,6 +618,30 @@
     </Card>
   {/if}
 
+  <!-- Tabs (P.12.6 — added to host History; future home for Logs / Events / Migrations) -->
+  <div class="border-b border-[var(--border)]">
+    <div class="flex gap-1" role="tablist" aria-label="Stack sections">
+      <button
+        role="tab"
+        aria-selected={activeTab === 'overview'}
+        class="px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors {activeTab === 'overview' ? 'border-[var(--color-brand-500)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}"
+        onclick={() => (activeTab = 'overview')}
+      >
+        Overview
+      </button>
+      <button
+        role="tab"
+        aria-selected={activeTab === 'history'}
+        class="px-4 py-2 text-sm font-medium border-b-2 -mb-px inline-flex items-center gap-1.5 transition-colors {activeTab === 'history' ? 'border-[var(--color-brand-500)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}"
+        onclick={() => (activeTab = 'history')}
+      >
+        <History class="w-3.5 h-3.5" />
+        History
+      </button>
+    </div>
+  </div>
+
+  {#if activeTab === 'overview'}
   <!-- Services -->
   {#if loading}
     <Card class="p-5 space-y-3">
@@ -596,7 +714,171 @@
       placeholder="KEY=value"
     ></textarea>
   </Card>
+  {/if}
+
+  <!-- History tab (P.12.6) -->
+  {#if activeTab === 'history'}
+    {#if historyLoading && historyEntries.length === 0}
+      <Card class="p-5 space-y-3">
+        <Skeleton width="40%" height="1rem" />
+        <Skeleton width="100%" height="2.5rem" />
+        <Skeleton width="100%" height="2.5rem" />
+      </Card>
+    {:else if historyEntries.length === 0}
+      <Card class="p-8 text-center">
+        <History class="w-8 h-8 text-[var(--fg-subtle)] mx-auto mb-2" />
+        <div class="text-sm font-medium">No deploy history yet</div>
+        <div class="text-xs text-[var(--fg-muted)] mt-1">
+          The next successful deploy will show up here and you'll be able to roll back to it.
+        </div>
+      </Card>
+    {:else}
+      <Card>
+        <div class="px-5 py-3 border-b border-[var(--border)] text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider flex items-center justify-between">
+          <span>Deploy history</span>
+          <button
+            class="inline-flex items-center gap-1 normal-case text-[var(--fg-muted)] hover:text-[var(--fg)]"
+            onclick={loadHistory}
+            disabled={historyLoading}
+            title="Refresh"
+            aria-label="Refresh history"
+          >
+            <RefreshCw class="w-3.5 h-3.5 {historyLoading ? 'animate-spin' : ''}" />
+          </button>
+        </div>
+        <div class="divide-y divide-[var(--border)]">
+          {#each historyEntries as entry, i}
+            <div class="px-5 py-3 flex items-start gap-3 hover:bg-[var(--surface-hover)] transition-colors">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="text-sm font-medium" title={new Date(entry.deployed_at).toLocaleString()}>
+                    {relTime(entry.deployed_at)}
+                  </span>
+                  {#if i === 0}
+                    <Badge variant="success">current</Badge>
+                  {/if}
+                  {#if entry.note}
+                    <Badge variant="info">{entry.note}</Badge>
+                  {/if}
+                </div>
+                <div class="text-xs text-[var(--fg-muted)] mt-1 flex items-center gap-3 flex-wrap">
+                  {#if entry.deployed_by_name}
+                    <span class="inline-flex items-center gap-1">
+                      <User class="w-3 h-3" />
+                      {entry.deployed_by_name}
+                    </span>
+                  {/if}
+                  <span class="font-mono">#{entry.id}</span>
+                  {#if entry.services && entry.services.length > 0}
+                    <span class="truncate">
+                      {entry.services.length} service{entry.services.length > 1 ? 's' : ''}:
+                      <span class="font-mono">{entry.services.map(s => s.image).join(', ')}</span>
+                    </span>
+                  {/if}
+                </div>
+              </div>
+              <div class="flex items-center gap-1 shrink-0">
+                <button
+                  class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+                  title="View compose.yaml"
+                  aria-label="View compose.yaml"
+                  onclick={() => openYaml(entry.id)}
+                >
+                  <FileText class="w-3.5 h-3.5" />
+                </button>
+                {#if canDeploy && i !== 0}
+                  <button
+                    class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--color-warning-400)] hover:bg-[var(--surface-hover)]"
+                    title="Roll back to this version"
+                    aria-label="Roll back to this version"
+                    onclick={() => openRollbackConfirm(entry.id)}
+                  >
+                    <RotateCcw class="w-3.5 h-3.5" />
+                  </button>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      </Card>
+    {/if}
+  {/if}
 </section>
+
+<!-- View YAML snapshot modal (P.12.6) -->
+<Modal bind:open={showYaml} title={yamlEntry ? `Deploy #${yamlEntry.id} — ${new Date(yamlEntry.deployed_at).toLocaleString()}` : 'Deploy snapshot'} maxWidth="max-w-3xl">
+  {#if yamlEntry}
+    <div class="space-y-3">
+      <div class="text-xs text-[var(--fg-muted)] flex items-center gap-3 flex-wrap">
+        {#if yamlEntry.deployed_by_name}
+          <span class="inline-flex items-center gap-1">
+            <User class="w-3 h-3" />
+            {yamlEntry.deployed_by_name}
+          </span>
+        {/if}
+        {#if yamlEntry.note}
+          <Badge variant="info">{yamlEntry.note}</Badge>
+        {/if}
+      </div>
+      {#if yamlEntry.services && yamlEntry.services.length > 0}
+        <div class="text-xs space-y-0.5 border border-[var(--border)] rounded-md p-3 bg-[var(--surface)]">
+          <div class="font-medium text-[var(--fg-muted)] uppercase tracking-wider text-[10px] mb-1">Resolved images</div>
+          {#each yamlEntry.services as svc}
+            <div class="font-mono flex gap-2">
+              <span class="text-[var(--fg-muted)]">{svc.service}</span>
+              <span>{svc.image}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+      <pre class="border border-[var(--border)] rounded-md p-3 bg-[var(--surface)] text-xs font-mono overflow-auto max-h-96 whitespace-pre-wrap">{yamlEntry.compose_yaml}</pre>
+    </div>
+  {/if}
+  <svelte:fragment slot="footer">
+    <Button variant="secondary" onclick={() => (showYaml = false)}>Close</Button>
+  </svelte:fragment>
+</Modal>
+
+<!-- Rollback confirm modal (P.12.6) -->
+<Modal bind:open={showRollbackConfirm} title="Roll back to deploy #{rollbackEntry?.id}" maxWidth="max-w-lg">
+  {#if rollbackEntry}
+    <div class="space-y-4 text-sm">
+      <div class="flex items-start gap-3 p-3 rounded-md border border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-500)_8%,transparent)]">
+        <AlertTriangle class="w-4 h-4 text-[var(--color-warning-400)] shrink-0 mt-0.5" />
+        <div class="space-y-1">
+          <div>
+            This will overwrite <span class="font-mono">compose.yaml</span> with the snapshot from
+            <span class="font-medium">{new Date(rollbackEntry.deployed_at).toLocaleString()}</span>
+            and redeploy the stack.
+          </div>
+          <div class="text-xs text-[var(--fg-muted)]">
+            Your current <span class="font-mono">.env</span> is kept as-is — secrets added or changed
+            since this deploy will still use their current values. If you need to roll env back too,
+            restore it manually after rollback.
+          </div>
+        </div>
+      </div>
+      {#if rollbackEntry.services && rollbackEntry.services.length > 0}
+        <div class="text-xs space-y-0.5 border border-[var(--border)] rounded-md p-3 bg-[var(--surface)]">
+          <div class="font-medium text-[var(--fg-muted)] uppercase tracking-wider text-[10px] mb-1">Images that will be redeployed</div>
+          {#each rollbackEntry.services as svc}
+            <div class="font-mono flex gap-2">
+              <span class="text-[var(--fg-muted)]">{svc.service}</span>
+              <span>{svc.image}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+  <svelte:fragment slot="footer">
+    <Button variant="secondary" onclick={() => (showRollbackConfirm = false)} disabled={rollbackBusy}>Cancel</Button>
+    <Button variant="primary" onclick={doRollback} loading={rollbackBusy} disabled={rollbackBusy}>
+      <RotateCcw class="w-4 h-4" />
+      Roll back
+    </Button>
+  </svelte:fragment>
+</Modal>
 
 <!-- Scale modal -->
 <Modal bind:open={showScale} title="Scale {scaleTarget}" maxWidth="max-w-sm">

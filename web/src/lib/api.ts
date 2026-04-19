@@ -164,6 +164,30 @@ export interface ThresholdConfig {
   duration_seconds: number;
 }
 
+// Deploy history + rollback (P.12.6)
+export interface DeployHistoryService {
+  service: string;
+  image: string;
+}
+
+export interface DeployHistoryEntry {
+  id: number;
+  stack_name: string;
+  host_id: string;
+  compose_yaml?: string; // only populated on the single-entry GET
+  services?: DeployHistoryService[];
+  note?: string;
+  deployed_by?: string;
+  deployed_by_name?: string;
+  deployed_at: string;
+}
+
+export interface RollbackResult {
+  rolled_back_to: number;
+  deployed_at_orig?: string;
+  result: { stack: string; services: Array<{ name: string; container_id: string; image: string }> };
+}
+
 // Migration (P.9)
 export interface Migration {
   id: string;
@@ -910,7 +934,19 @@ export const api = {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config)
       }),
     deleteScalingRules: (name: string) =>
-      request<void>(`/stacks/${encodeURIComponent(name)}/scaling-rules`, { method: 'DELETE' })
+      request<void>(`/stacks/${encodeURIComponent(name)}/scaling-rules`, { method: 'DELETE' }),
+    // Deploy history + rollback (P.12.6)
+    listDeployments: (name: string, limit = 50) =>
+      request<DeployHistoryEntry[]>(`/stacks/${encodeURIComponent(name)}/deployments?limit=${limit}`),
+    getDeployment: (name: string, id: number) =>
+      request<DeployHistoryEntry>(`/stacks/${encodeURIComponent(name)}/deployments/${id}`),
+    rollback: (name: string, id: number, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<RollbackResult>(
+        `/stacks/${encodeURIComponent(name)}/deployments/${id}/rollback${qs}`,
+        { method: 'POST' }
+      );
+    }
   },
 
   migrations: {
