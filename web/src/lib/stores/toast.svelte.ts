@@ -31,9 +31,15 @@ function createToastStore() {
       return toasts;
     },
     success: (title: string, description?: string) => push('success', title, description),
-    error: (title: string, description?: string) => push('error', title, description, 6000),
+    // Error toasts stay on screen until the user dismisses them. A 4-6s
+    // auto-hide is fine for "saved" confirmations but loses the signal
+    // for real failures — users kept missing backend errors that
+    // disappeared before they could read them. Pass a positive duration
+    // explicitly if you need an auto-hiding error (rare; most cases
+    // should stay sticky).
+    error: (title: string, description?: string, duration = 0) => push('error', title, description, duration),
     info: (title: string, description?: string) => push('info', title, description),
-    warning: (title: string, description?: string) => push('warning', title, description),
+    warning: (title: string, description?: string) => push('warning', title, description, 8000),
     dismiss
   };
 }

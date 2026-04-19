@@ -9,9 +9,13 @@
     warning: AlertTriangle
   };
 
+  // Errors get a fully-tinted background + full-width left border so
+  // they stand out from info/warning/success. They also stay on screen
+  // until dismissed (toast.svelte.ts sets duration=0 for errors) — a
+  // subtle border wasn't enough when the UI has background activity.
   const variantCls = {
     success: 'border-[color-mix(in_srgb,var(--color-success-500)_40%,transparent)] text-[var(--color-success-400)]',
-    error:   'border-[color-mix(in_srgb,var(--color-danger-500)_40%,transparent)] text-[var(--color-danger-400)]',
+    error:   'border border-[var(--color-danger-500)] bg-[color-mix(in_srgb,var(--color-danger-500)_10%,var(--surface))] text-[var(--color-danger-400)]',
     info:    'border-[color-mix(in_srgb,var(--color-brand-500)_40%,transparent)] text-[var(--color-brand-400)]',
     warning: 'border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] text-[var(--color-warning-400)]'
   };
@@ -21,8 +25,9 @@
   {#each toast.items as t (t.id)}
     {@const Icon = iconMap[t.variant]}
     <div
-      class="dm-card p-3 pr-9 flex gap-3 items-start pointer-events-auto shadow-xl dm-fade-in border-l-2 {variantCls[t.variant]}"
-      role="status"
+      class="dm-card p-3 pr-9 flex gap-3 items-start pointer-events-auto shadow-xl dm-fade-in {t.variant === 'error' ? variantCls[t.variant] : 'border-l-2 ' + variantCls[t.variant]}"
+      role={t.variant === 'error' ? 'alert' : 'status'}
+      aria-live={t.variant === 'error' ? 'assertive' : 'polite'}
     >
       <Icon class="w-5 h-5 shrink-0 mt-0.5" />
       <div class="flex-1 min-w-0">

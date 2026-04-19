@@ -182,13 +182,27 @@ install -d -m 0750 -o root -g "$RUN_GROUP" "$ENV_DIR"
 # -----------------------------------------------------------------------------
 # Binary download
 # -----------------------------------------------------------------------------
+# Install the binary into $DATA_DIR/bin/ owned by the service user so
+# self-upgrade (UpgradeAgent frame) can atomic-rename a new binary in
+# place without needing root. /usr/local/bin is root-owned everywhere
+# in the Linux world and non-root users can't create siblings there.
+BIN_DIR="$DATA_DIR/bin"
+AGENT_BIN="$BIN_DIR/dockmesh-agent"
+install -d -m 0750 -o "$RUN_USER" -g "$RUN_GROUP" "$BIN_DIR"
+
 TMP_BIN="$(mktemp)"
 log "downloading agent binary from $BINARY_URL"
 http_get "$BINARY_URL" "$TMP_BIN"
 chmod 0755 "$TMP_BIN"
-install -m 0755 -o root -g root "$TMP_BIN" /usr/local/bin/dockmesh-agent
+install -m 0755 -o "$RUN_USER" -g "$RUN_GROUP" "$TMP_BIN" "$AGENT_BIN"
 rm -f "$TMP_BIN"
-log "installed: $(/usr/local/bin/dockmesh-agent --version 2>&1 | head -1 || echo dockmesh-agent)"
+
+# Keep a symlink at /usr/local/bin/dockmesh-agent for convenience —
+# `dockmesh-agent --version` on a user shell still works, but the
+# systemd unit runs the real path in $DATA_DIR/bin.
+ln -sf "$AGENT_BIN" /usr/local/bin/dockmesh-agent
+
+log "installed: $($AGENT_BIN --version 2>&1 | head -1 || echo dockmesh-agent)"
 
 # -----------------------------------------------------------------------------
 # Environment file (holds the secret token + URLs)
@@ -229,7 +243,7 @@ Requires=docker.service
 Type=simple
 $USER_LINES
 EnvironmentFile=$ENV_FILE
-ExecStart=/usr/local/bin/dockmesh-agent
+ExecStart=$AGENT_BIN
 Restart=always
 RestartSec=10s
 StartLimitInterval=0
@@ -244,12 +258,7 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictNamespaces=yes
 LockPersonality=yes
-# Self-upgrade (UpgradeAgent frame) writes a new binary to
-# /usr/local/bin/dockmesh-agent.new and atomic-renames it over the
-# running binary. Under ProtectSystem=strict, /usr is read-only by
-# default — whitelist the install dir so the upgrade succeeds
-# without requiring an out-of-band sudo edit of this unit.
-ReadWritePaths=$DATA_DIR /usr/local/bin
+ReadWritePaths=$DATA_DIR
 
 [Install]
 WantedBy=multi-user.target
