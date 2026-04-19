@@ -49,8 +49,12 @@ const (
 //   - .env file resolution
 //
 // Explicitly NOT supported yet (will be ignored or error out clearly):
-//   - build:, secrets:, configs:, depends_on ordering, healthcheck, deploy:,
+//   - build:, secrets:, configs:, depends_on ordering, deploy:,
 //     profiles, extends, network aliases, ipam overrides
+//
+// healthcheck: is wired into the container config as of P.12.5a and
+// WaitHealthy is called after ContainerStart so a failing probe
+// surfaces at deploy time rather than silently in docker ps.
 type Service struct {
 	docker *docker.Client
 	stacks *stacks.Manager
@@ -370,6 +374,11 @@ func (s *Service) deployService(ctx context.Context, cli *client.Client, proj *c
 		startSpan.RecordError(err)
 		return nil, fmt.Errorf("container start %s: %w", containerName, err)
 	}
+	if err := WaitHealthy(startCtx, cli, resp.ID, &svc); err != nil {
+		startSpan.SetStatus(codes.Error, "unhealthy")
+		startSpan.RecordError(err)
+		return nil, fmt.Errorf("service %s did not become healthy: %w", svc.Name, err)
+	}
 	return &ServiceResult{Name: svc.Name, ContainerID: resp.ID, Image: svc.Image}, nil
 }
 
@@ -462,6 +471,7 @@ func serviceToContainerConfig(proj *composetypes.Project, svc composetypes.Servi
 		Hostname:     svc.Hostname,
 		Tty:          svc.Tty,
 		OpenStdin:    svc.StdinOpen,
+		Healthcheck:  composeHealthToDocker(svc.HealthCheck),
 	}
 
 	hostCfg := &container.HostConfig{
