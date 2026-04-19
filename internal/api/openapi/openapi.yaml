@@ -1318,6 +1318,51 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /stacks/{name}/services/{service}/rolling-update:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+      - $ref: "#/components/parameters/ServicePath"
+      - $ref: "#/components/parameters/HostQuery"
+    post:
+      operationId: stacks.rolling_update
+      tags: [stacks]
+      summary: Roll every replica of a service onto the current compose image (P.12.5b)
+      description: |
+        Replaces replicas in parallelism-sized batches. Each new replica is
+        gated behind a healthcheck wait (P.12.5a). Body fields override the
+        service's compose `deploy.update_config`; omitted fields fall back to
+        compose and then to engine defaults (parallelism=1, order=stop-first,
+        failure_action=pause).
+
+        Rolling on a remote host is **not yet supported** — remote hosts
+        return 500 with a clear message until the agent protocol carries the
+        matching frame type. Run the stack on the dockmesh server host to
+        use this endpoint.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RollingUpdateRequest" }
+      responses:
+        "200":
+          description: Rolling update result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RollingUpdateResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500":
+          description: Rollout paused or failed. When the engine produced a partial result it is returned inside `result`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:  { type: string }
+                  result: { $ref: "#/components/schemas/RollingUpdateResult" }
+
   /stacks/{name}/scaling-rules:
     parameters:
       - $ref: "#/components/parameters/StackNamePath"
@@ -4763,6 +4808,49 @@ components:
                     type: string
                     enum: [ok, warn, fail]
                   message: { type: string }
+
+    RollingUpdateRequest:
+      type: object
+      description: |
+        Override the service's compose `deploy.update_config`. All fields are
+        optional — omitted fields fall back to compose, then to engine
+        defaults (parallelism=1, order=stop-first, failure_action=pause).
+      properties:
+        parallelism:
+          type: integer
+          minimum: 1
+          description: Replicas replaced per batch.
+        delay_seconds:
+          type: integer
+          minimum: 0
+          description: Wait between batches.
+        order:
+          type: string
+          enum: [stop-first, start-first]
+          description: |
+            `stop-first` tears down an old replica before the new one starts.
+            `start-first` brings up a sibling, waits healthy, then tears down
+            the old replica — only safe when the service has no
+            `container_name` and no hard host-port bindings.
+        failure_action:
+          type: string
+          enum: [pause, continue, rollback]
+
+    RollingUpdateResult:
+      type: object
+      required: [service, total_replicas, updated, failed, skipped, rolled_back, new_image]
+      properties:
+        service: { type: string }
+        total_replicas: { type: integer }
+        updated: { type: integer, description: Replicas successfully replaced. }
+        failed:  { type: integer, description: Replicas whose replace attempt errored. }
+        skipped: { type: integer, description: Replicas not attempted because the rollout paused or rolled back. }
+        rolled_back: { type: boolean, description: True when failure_action=rollback kicked in and already-replaced replicas were reverted. }
+        previous_image: { type: string, description: Image running on the replicas before the rollout started (rollback target). }
+        new_image:      { type: string, description: Image the rollout was targeting. }
+        errors:
+          type: array
+          items: { type: string }
 
     BackupTarget:
       type: object

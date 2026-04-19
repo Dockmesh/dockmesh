@@ -324,6 +324,26 @@ func (h *LocalHost) CheckScale(ctx context.Context, name, composeYAML, envConten
 	return compose.NewService(h.cli, nil).CheckScale(ctx, proj, service)
 }
 
+// RollingReplace runs a rolling replacement of a service's replicas
+// against this local host. Remote hosts don't implement this yet —
+// the agent protocol gains a matching frame type in a follow-up slice.
+// P.12.5b.
+func (h *LocalHost) RollingReplace(ctx context.Context, name, composeYAML, envContent, service string, opts compose.RollingOptions) (*compose.RollingResult, error) {
+	if h.cli == nil {
+		return nil, ErrNoDocker
+	}
+	dir, cleanup, err := writeStagingDir(name, composeYAML, envContent)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	proj, err := compose.LoadProject(ctx, dir, name, envContent)
+	if err != nil {
+		return nil, err
+	}
+	return compose.NewService(h.cli, nil).RollingReplace(ctx, proj, service, opts)
+}
+
 // SystemMetrics reads host-level CPU / memory / disk / uptime via the
 // system package. On Linux it reads /proc and statfs; on other platforms
 // (dev builds) the system package stub returns zero values so the
