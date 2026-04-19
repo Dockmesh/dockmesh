@@ -11,6 +11,7 @@
   } from '$lib/api';
   import { Card, Button, Skeleton, EmptyState, Badge, Modal, Input } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { confirm } from '$lib/stores/confirm.svelte';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import { EventStream, type ConnStatus } from '$lib/events';
@@ -160,7 +161,7 @@
     }
   }
   async function deleteNetwork(n: NetworkRow) {
-    if (!confirm(`Delete network "${n.Name}"?`)) return;
+    if (!(await confirm.ask({ title: 'Delete network', message: `Delete network "${n.Name}"?`, body: 'Docker refuses the delete if any container is still attached — disconnect those first.', confirmLabel: 'Delete', danger: true }))) return;
     try {
       await api.networks.remove(n.Id);
       toast.success('Deleted', n.Name);
@@ -170,7 +171,7 @@
     }
   }
   async function bulkDelete() {
-    if (!confirm(`Delete ${selected.size} network(s)?`)) return;
+    if (!(await confirm.ask({ title: 'Delete networks', message: `Delete ${selected.size} network(s)?`, body: 'Networks with attached containers are skipped with an error; the rest are removed.', confirmLabel: 'Delete', danger: true }))) return;
     bulkBusy = true;
     let ok = 0, fail = 0;
     for (const n of networkList.filter(n => selected.has(n.Id))) {
@@ -182,7 +183,7 @@
     await loadList();
   }
   async function pruneNetworks() {
-    if (!confirm('Remove all unused networks? This cannot be undone.')) return;
+    if (!(await confirm.ask({ title: 'Prune unused networks', message: 'Remove all networks with no attached containers?', body: 'This cannot be undone. Default Docker networks (bridge, host, none) are always kept.', confirmLabel: 'Prune', danger: true }))) return;
     try {
       const res = await api.networks.prune();
       toast.success('Pruned', `${res?.NetworksDeleted?.length ?? 0} network(s) removed`);

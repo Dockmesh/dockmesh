@@ -2,6 +2,7 @@
   import { api, ApiError, isFanOut, type ScanReport, type Severity } from '$lib/api';
   import { Card, Button, EmptyState, Skeleton, Badge, Modal, Input } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { confirm } from '$lib/stores/confirm.svelte';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import {
@@ -156,7 +157,7 @@
 
   // Actions
   async function removeImage(id: string) {
-    if (!confirm('Remove this image?')) return;
+    if (!(await confirm.ask({ title: 'Remove image', message: 'Remove this image?', body: 'Docker refuses the remove if any container is still using it — stop those containers first.', confirmLabel: 'Remove', danger: true }))) return;
     try {
       await api.images.remove(id, true);
       toast.success('Removed');
@@ -166,7 +167,7 @@
     }
   }
   async function bulkRemove() {
-    if (!confirm(`Remove ${selected.size} image(s)?`)) return;
+    if (!(await confirm.ask({ title: 'Remove images', message: `Remove ${selected.size} image(s)?`, body: 'Images in use by containers are skipped with an error; the rest are removed.', confirmLabel: 'Remove', danger: true }))) return;
     bulkBusy = true;
     let ok = 0, fail = 0;
     for (const img of images.filter(i => selected.has(i.Id))) {
@@ -178,7 +179,7 @@
     await load();
   }
   async function prune() {
-    if (!confirm('Prune dangling images?')) return;
+    if (!(await confirm.ask({ title: 'Prune images', message: 'Remove all dangling images?', body: 'Dangling images are layers no tagged image references. Safe to remove — Docker re-pulls what\u2019s needed.', confirmLabel: 'Prune', danger: true }))) return;
     try {
       const r = await api.images.prune();
       toast.success('Pruned', `reclaimed ${formatSize(r.SpaceReclaimed)}`);

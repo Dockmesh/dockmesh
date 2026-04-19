@@ -2,6 +2,7 @@
   import { api, ApiError } from '$lib/api';
   import { Card, Badge, Button, EmptyState, Skeleton, Modal, Input } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { confirm } from '$lib/stores/confirm.svelte';
   import { Variable, Plus, Trash2, Search, RefreshCw, FolderOpen, BookTemplate, ChevronDown } from 'lucide-svelte';
 
   interface EnvVar {
@@ -161,7 +162,7 @@
   }
 
   async function deleteVar(v: EnvVar) {
-    if (!confirm(`Delete "${v.key}"?`)) return;
+    if (!(await confirm.ask({ title: 'Delete environment variable', message: `Delete "${v.key}"?`, body: 'Stacks that reference this variable via ${…} will fail to deploy until it\u2019s restored or the reference is removed.', confirmLabel: 'Delete', danger: true }))) return;
     try {
       await api.globalEnv.delete(v.id);
       toast.success('Deleted', v.key);

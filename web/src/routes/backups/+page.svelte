@@ -6,6 +6,7 @@
   import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { confirm } from '$lib/stores/confirm.svelte';
   import {
     Archive, Plus, Play, Trash2, RefreshCw, Undo2, HardDrive, Cloud, Lock,
     Search, Clock, Copy, ChevronDown
@@ -118,7 +119,7 @@
     finally { tSaving = false; }
   }
   async function deleteTarget(t: BackupTarget) {
-    if (!confirm(`Delete target "${t.name}"?`)) return;
+    if (!(await confirm.ask({ title: 'Delete backup target', message: `Delete target "${t.name}"?`, body: 'Backup jobs that write to this target will fail on their next run until you reassign them.', confirmLabel: 'Delete', danger: true }))) return;
     try { await api.backups.deleteTarget(t.id); toast.success('Deleted'); await loadTargets(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
   }
   async function testTarget(t: BackupTarget) {
@@ -340,12 +341,12 @@
   }
 
   async function deleteJob(j: BackupJob) {
-    if (!confirm(`Delete backup job "${j.name}"?`)) return;
+    if (!(await confirm.ask({ title: 'Delete backup job', message: `Delete backup job "${j.name}"?`, body: 'Existing backup runs are kept. The schedule is removed and no new runs will be triggered.', confirmLabel: 'Delete', danger: true }))) return;
     try { await api.backups.deleteJob(j.id); toast.success('Deleted'); await loadJobs(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
   }
 
   async function runJob(j: BackupJob) {
-    if (!confirm(`Run "${j.name}" now?`)) return;
+    if (!(await confirm.ask({ title: 'Run backup now', message: `Run "${j.name}" now?`, body: 'The backup starts in the background. Progress appears under the Runs tab.', confirmLabel: 'Run' }))) return;
     try { await api.backups.runJob(j.id); toast.success('Backup started'); await loadJobs(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
   }
 

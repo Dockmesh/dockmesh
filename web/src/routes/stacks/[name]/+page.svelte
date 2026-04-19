@@ -4,6 +4,7 @@
   import { api, ApiError, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments } from '$lib/api';
   import { Button, Card, Badge, Skeleton, Modal } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { confirm } from '$lib/stores/confirm.svelte';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import { EventStream } from '$lib/events';
@@ -424,7 +425,7 @@
   }
 
   async function disconnectGit() {
-    if (!confirm('Disconnect git source? The compose.yaml stays in place; future pushes to the repo will no longer sync.')) return;
+    if (!(await confirm.ask({ title: 'Disconnect git source', message: 'Disconnect git source?', body: 'The compose.yaml stays in place on disk. Future pushes to the repo will no longer sync automatically.', confirmLabel: 'Disconnect' }))) return;
     gitBusy = true;
     try {
       await api.stacks.deleteGitSource(name);
@@ -528,7 +529,13 @@
   }
 
   async function del() {
-    if (!confirm(`Delete stack "${name}"? This removes the compose file from disk.`)) return;
+    if (!(await confirm.ask({
+      title: `Delete stack ${name}`,
+      message: 'This removes compose.yaml from the stacks directory on disk.',
+      body: 'Running containers continue to run. Docker volumes, networks, and images are NOT removed — stop the stack first if you want the cleanup to run.',
+      confirmLabel: 'Delete',
+      danger: true
+    }))) return;
     busy = true;
     try {
       await api.stacks.delete(name);

@@ -6,7 +6,7 @@
   import { hosts } from '$lib/stores/host.svelte';
   import { api, type BackupStatus } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
-  import { Toaster } from '$lib/components/ui';
+  import { Toaster, ConfirmDialog } from '$lib/components/ui';
   import { allowed } from '$lib/rbac';
   import {
     LayoutDashboard,
@@ -201,6 +201,7 @@
 </script>
 
 <Toaster />
+<ConfirmDialog />
 
 {#if $page.url.pathname === '/login'}
   {@render children()}

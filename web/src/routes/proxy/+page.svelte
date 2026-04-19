@@ -4,6 +4,7 @@
   import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { confirm } from '$lib/stores/confirm.svelte';
   import {
     Globe, Plus, Trash2, Power, PowerOff, RefreshCw, Lock, ShieldCheck,
     Search, ExternalLink, Pencil, ChevronUp, ChevronDown
@@ -110,7 +111,7 @@
   }
 
   async function disable() {
-    if (!confirm('Stop and remove the Caddy container? Existing routes stay in the DB.')) return;
+    if (!(await confirm.ask({ title: 'Stop Caddy proxy', message: 'Stop and remove the Caddy container?', body: 'All route configurations stay in the database. Start the proxy again to reapply them.', confirmLabel: 'Stop', danger: true }))) return;
     busy = true;
     try {
       await api.proxy.disable();
@@ -160,7 +161,7 @@
   }
 
   async function deleteRoute(id: number, host: string) {
-    if (!confirm(`Remove route "${host}"?`)) return;
+    if (!(await confirm.ask({ title: 'Remove proxy route', message: `Remove route "${host}"?`, body: 'Incoming requests to this hostname will start returning 404 on next Caddy reload.', confirmLabel: 'Remove', danger: true }))) return;
     try {
       await api.proxy.deleteRoute(id);
       toast.success('Removed', host);
@@ -171,7 +172,7 @@
   }
 
   async function bulkDelete() {
-    if (!confirm(`Delete ${selected.size} route(s)?`)) return;
+    if (!(await confirm.ask({ title: 'Delete proxy routes', message: `Delete ${selected.size} route(s)?`, confirmLabel: 'Delete', danger: true }))) return;
     bulkBusy = true;
     let ok = 0, fail = 0;
     for (const r of routes.filter(r => selected.has(r.id))) {
