@@ -116,6 +116,10 @@ Migration:
   import compose-dir     Import stacks from a directory of compose files
                          (--path ./src [--prefix ...] [--force] [--dry-run])
 
+Disaster recovery:
+  restore                Restore DB + /stacks + /data from a system-backup
+                         tarball (--from ./backup.tar.gz [--force] [--dry-run])
+
 Diagnostics:
   config show            Print effective config (secrets redacted)
   doctor                 Run health checks (DB, docker, disk, TLS)
