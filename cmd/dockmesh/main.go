@@ -51,8 +51,10 @@ import (
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/dockmesh/dockmesh/internal/telemetry"
 	"github.com/dockmesh/dockmesh/internal/templates"
 	"github.com/dockmesh/dockmesh/internal/updater"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"github.com/dockmesh/dockmesh/pkg/version"
 )
 
@@ -114,6 +116,30 @@ func main() {
 	if err != nil {
 		slog.Error("config load failed", "err", err)
 		os.Exit(1)
+	}
+
+	// P.12.3 — reconfigure slog from config once we have it. The
+	// bootstrap logger above stays as-is; this replaces it so the
+	// rest of the process runs at the configured level / format.
+	slog.SetDefault(buildLogger(cfg.LogFormat, cfg.LogLevel))
+
+	// OTel tracing (optional — off when DOCKMESH_OTEL_ENDPOINT is
+	// empty). Init installs the global TracerProvider; otelhttp
+	// middleware below opens a span per request.
+	otelShutdown, err := telemetry.Init(context.Background(), telemetry.Config{
+		Endpoint:       cfg.OTelEndpoint,
+		Insecure:       cfg.OTelInsecure,
+		ServiceName:    "dockmesh",
+		ServiceVersion: version.Version,
+	})
+	if err != nil {
+		slog.Warn("otel init", "err", err)
+	} else {
+		defer func() {
+			sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer scancel()
+			_ = otelShutdown(sctx)
+		}()
 	}
 
 	database, err := db.Open(cfg.DBPath)
@@ -476,9 +502,17 @@ func main() {
 		}
 	}
 
+	// P.12.3 — wrap the router in otelhttp so every request gets a
+	// server-side span (route template, method, status, duration).
+	// When OTel is disabled (Endpoint empty) the global tracer is a
+	// no-op so this adds negligible overhead.
+	tracedRouter := otelhttp.NewHandler(router, "dockmesh.http",
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			return r.Method + " " + r.URL.Path
+		}))
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           router,
+		Handler:           tracedRouter,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -544,6 +578,28 @@ func (a *auditTargetsAdapter) WriteFile(ctx context.Context, targetID int64, nam
 // deriveAgentURL builds a default wss:// URL for the agent listener from
 // the API base URL and the agent listen address. Operator can override
 // with DOCKMESH_AGENT_PUBLIC_URL — recommended in production.
+// buildLogger returns a slog.Logger honouring the configured format
+// + level. Called AFTER config.Load so the bootstrap JSON logger
+// handles the narrow window between process start and config parse.
+func buildLogger(format, level string) *slog.Logger {
+	var lvl slog.Level
+	switch level {
+	case "debug":
+		lvl = slog.LevelDebug
+	case "warn":
+		lvl = slog.LevelWarn
+	case "error":
+		lvl = slog.LevelError
+	default:
+		lvl = slog.LevelInfo
+	}
+	opts := &slog.HandlerOptions{Level: lvl}
+	if format == "text" {
+		return slog.New(slog.NewTextHandler(os.Stdout, opts))
+	}
+	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+}
+
 func deriveAgentURL(baseURL, listen string) string {
 	u, err := url.Parse(baseURL)
 	if err != nil || u.Host == "" {
