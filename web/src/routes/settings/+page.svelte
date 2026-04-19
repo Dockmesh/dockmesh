@@ -14,8 +14,30 @@
   // visible tab still happens below for invalid/unauthorised IDs.
   let tab = $state<Tab>((new URLSearchParams($page.url.search).get('tab') as Tab) || 'account');
 
-  // --- System tab (P.6.5) ---
+  // --- System tab (P.6.5 + P.12.4) ---
   let backupStatus = $state<BackupStatus | null>(null);
+  let verifyBackupBusy = $state(false);
+  let verifyBackupResult = $state<import('$lib/api').BackupVerifyResult | null>(null);
+  async function onVerifyFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    verifyBackupBusy = true;
+    verifyBackupResult = null;
+    try {
+      verifyBackupResult = await api.backups.verifyUpload(file);
+      if (verifyBackupResult.sanity.passed) {
+        toast.success('Backup verified', 'all sanity checks passed');
+      } else {
+        toast.error('Verify failed', verifyBackupResult.sanity.summary);
+      }
+    } catch (err) {
+      toast.error('Upload failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      verifyBackupBusy = false;
+      input.value = '';
+    }
+  }
   let backupLoading = $state(false);
   let backupBusy = $state(false);
   async function loadBackup() {
@@ -1619,19 +1641,72 @@
       {/if}
     </Card>
 
+    <Card class="p-4 space-y-3">
+      <div>
+        <div class="font-medium text-sm flex items-center gap-1.5">
+          <ShieldCheck class="w-3.5 h-3.5" /> Verify a backup
+        </div>
+        <p class="text-xs text-[var(--fg-muted)] mt-0.5">
+          Upload a <code class="font-mono">dockmesh-system</code> tarball. Server extracts to a
+          temp dir, runs the same sanity checks as <code class="font-mono">dockmesh restore</code>,
+          then discards. Never touches this live install — answers
+          <em>"is my backup actually restorable?"</em> before you need it.
+        </p>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <input
+          id="verify-file"
+          type="file"
+          accept=".tar.gz,.tgz,application/gzip,application/x-gzip"
+          class="text-xs"
+          onchange={(e) => onVerifyFile(e)}
+          disabled={verifyBackupBusy}
+        />
+        {#if verifyBackupBusy}
+          <span class="text-xs text-[var(--fg-muted)]">Verifying…</span>
+        {/if}
+      </div>
+      {#if verifyBackupResult}
+        <div class="text-xs border-t border-[var(--border)] pt-3 space-y-1">
+          <div class="flex items-center gap-2">
+            {#if verifyBackupResult.sanity.passed}
+              <Badge variant="success">passed</Badge>
+            {:else}
+              <Badge variant="danger">failed</Badge>
+            {/if}
+            {#if verifyBackupResult.filename}<span class="font-mono text-[var(--fg-muted)]">{verifyBackupResult.filename}</span>{/if}
+            {#if verifyBackupResult.counts}
+              <span class="text-[var(--fg-muted)]">· {verifyBackupResult.counts.files} files, {verifyBackupResult.counts.bytes} bytes</span>
+            {/if}
+          </div>
+          <ul class="space-y-0.5 mt-2">
+            {#each verifyBackupResult.sanity.checks as c}
+              <li class="flex items-start gap-2">
+                <span class="font-mono text-[10px] mt-0.5 {c.status === 'ok' ? 'text-[var(--color-success-400)]' : c.status === 'warn' ? 'text-[var(--color-warning-400)]' : 'text-[var(--color-danger-400)]'}">[{c.status}]</span>
+                <span><span class="font-mono">{c.name}</span>{#if c.message}<span class="text-[var(--fg-muted)]"> — {c.message}</span>{/if}</span>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+    </Card>
+
     <Card class="p-4">
       <div class="text-xs text-[var(--fg-muted)] space-y-1.5">
         <div class="font-medium text-[var(--fg)] flex items-center gap-1.5">
           <ShieldCheck class="w-3.5 h-3.5" /> Recovery from backup
         </div>
         <ol class="list-decimal list-inside space-y-0.5">
-          <li>Stop the dockmesh service on the new host.</li>
-          <li>Extract the latest archive from <code class="font-mono">./data/backups/jobs/dockmesh-system/</code>
-            (decrypt with <code class="font-mono">age</code> if encrypted).</li>
-          <li>Copy <code class="font-mono">dockmesh.db</code> to <code class="font-mono">./data/dockmesh.db</code>
-            and restore <code class="font-mono">stacks/</code> + <code class="font-mono">data/</code> in place.</li>
-          <li>Start dockmesh; agents will reconnect automatically.</li>
+          <li>On a fresh host, install the Dockmesh binary and stop the service
+            (<code class="font-mono">systemctl stop dockmesh</code>).</li>
+          <li>Copy the latest <code class="font-mono">dockmesh-system-*.tar.gz</code> to the host.</li>
+          <li>Run <code class="font-mono">dockmesh restore --from &lt;path&gt;</code> — it
+            extracts DB + <code class="font-mono">/stacks</code> + <code class="font-mono">/data</code>
+            and prints a sanity report.</li>
+          <li>Point DNS at the new host. Start dockmesh; agents reconnect in ~60s
+            using the CA cert that came back with the restore.</li>
         </ol>
+        <p class="pt-1">Full playbook: <a class="underline" href="https://dockmesh.dev/docs/operations/disaster-recovery/">Disaster Recovery</a>.</p>
       </div>
     </Card>
   </section>

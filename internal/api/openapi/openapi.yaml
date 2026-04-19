@@ -2299,6 +2299,82 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /backups/runs/{id}/verify:
+    post:
+      operationId: backups.verify_run
+      tags: [backups]
+      summary: Verify that a saved system-backup run is restorable (P.12.4)
+      description: |
+        Streams the run's archive into a temp directory, applies the
+        same post-restore sanity checks as `dockmesh restore`, then
+        throws the temp dir away. Never touches the live install.
+        Only system-backup runs are supported; volume / stack runs
+        need ephemeral-stack verification (future slice).
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "200":
+          description: Verification passed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupVerifyResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: Verification failed or backup is encrypted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupVerifyResult" }
+        "501":
+          description: Verify-by-run-id not yet implemented for this backup type — use /restore/verify with the manually-downloaded tarball.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /restore/verify:
+    post:
+      operationId: restore.verify_upload
+      tags: [backups]
+      summary: Upload a backup tarball and verify it's restorable (P.12.4)
+      description: |
+        Multipart upload with a single `file` part containing a gzipped
+        tar produced by the `dockmesh-system` backup job. Server
+        extracts to a temp dir, runs the post-restore sanity checks,
+        tears down. Never touches the live install. Use this to
+        answer "is our backup actually restorable?" without spinning
+        up a separate Dockmesh host.
+
+        Rejects age-encrypted tarballs — the server's own age key is
+        inside the tarball, so self-encrypted system backups can't
+        self-verify.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Gzipped tar system backup (~MB scale).
+      responses:
+        "200":
+          description: Backup is restorable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupVerifyResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: Verification failed, sanity check broke, or tarball is encrypted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupVerifyResult" }
+
   /backups/targets:
     get:
       operationId: backups.list_targets
@@ -4656,6 +4732,37 @@ components:
         sources:
           type: array
           items: { $ref: "#/components/schemas/BackupSource" }
+
+    BackupVerifyResult:
+      type: object
+      description: |
+        Result of extracting a system backup into a temp directory and
+        running the post-restore sanity checks against the extracted
+        files (P.12.4). The live install is never touched.
+      properties:
+        filename: { type: string, description: "Uploaded filename (only set for /restore/verify)." }
+        counts:
+          type: object
+          properties:
+            files: { type: integer }
+            bytes: { type: integer, format: int64 }
+        sanity:
+          type: object
+          required: [passed, checks]
+          properties:
+            passed: { type: boolean }
+            summary: { type: string }
+            checks:
+              type: array
+              items:
+                type: object
+                required: [name, status]
+                properties:
+                  name: { type: string, example: users.admin }
+                  status:
+                    type: string
+                    enum: [ok, warn, fail]
+                  message: { type: string }
 
     BackupTarget:
       type: object
