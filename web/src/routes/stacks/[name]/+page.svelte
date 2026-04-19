@@ -1,13 +1,13 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { api, ApiError, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry } from '$lib/api';
+  import { api, ApiError, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies } from '$lib/api';
   import { Button, Card, Badge, Skeleton, Modal } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import { EventStream } from '$lib/events';
-  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2, GitBranch, Link as LinkIcon, Unlink, History, RotateCcw, FileText, User } from 'lucide-svelte';
+  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2, GitBranch, Link as LinkIcon, Unlink, History, RotateCcw, FileText, User, Network, Plus, X } from 'lucide-svelte';
   import type { StackGitSource, StackGitSourceInput } from '$lib/api';
 
   import { isAllHosts } from '$lib/stores/host.svelte';
@@ -127,6 +127,64 @@
       loadHistory();
     }
   });
+
+  // Dependencies (P.12.7)
+  let deps = $state<StackDependencies | null>(null);
+  let showDepsEditor = $state(false);
+  let depsEditList = $state<string[]>([]);
+  let depsNewEntry = $state('');
+  let depsBusy = $state(false);
+  // All stack names, for the picker dropdown in the editor.
+  let allStackNames = $state<string[]>([]);
+
+  async function loadDeps() {
+    try {
+      deps = await api.stacks.getDependencies(name);
+    } catch {
+      deps = null;
+    }
+  }
+
+  async function openDepsEditor() {
+    depsEditList = deps?.depends_on ? [...deps.depends_on] : [];
+    depsNewEntry = '';
+    try {
+      const list = await api.stacks.list();
+      allStackNames = list.map((s) => s.name).filter((n) => n !== name);
+    } catch {
+      allStackNames = [];
+    }
+    showDepsEditor = true;
+  }
+
+  function depAdd(entry: string) {
+    const v = entry.trim();
+    if (!v || v === name || depsEditList.includes(v)) return;
+    depsEditList = [...depsEditList, v];
+    depsNewEntry = '';
+  }
+
+  function depRemove(entry: string) {
+    depsEditList = depsEditList.filter((d) => d !== entry);
+  }
+
+  async function saveDeps() {
+    depsBusy = true;
+    try {
+      await api.stacks.setDependencies(name, depsEditList);
+      await loadDeps();
+      showDepsEditor = false;
+      toast.success('Dependencies updated');
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 422) {
+        toast.error('Cycle detected', 'That would create a dependency loop — pick a different edge.');
+      } else {
+        toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
+      }
+    } finally {
+      depsBusy = false;
+    }
+  }
 
   // Scaling state (P.8)
   let replicaCounts = $state<Map<string, number>>(new Map());
@@ -359,6 +417,7 @@
     externalChange = null;
     dirty = false;
     loadGitSource();
+    loadDeps();
     try {
       const detail = await api.stacks.get(name);
       compose = detail.compose;
@@ -692,6 +751,50 @@
     </Card>
   {/if}
 
+  <!-- Dependencies (P.12.7) -->
+  {#if deps && (deps.depends_on.length > 0 || deps.dependents.length > 0 || canWrite)}
+    <Card class="p-4">
+      <div class="flex items-start gap-3">
+        <Network class="w-4 h-4 text-[var(--fg-muted)] mt-0.5 shrink-0" />
+        <div class="flex-1 min-w-0 space-y-2">
+          <div class="flex items-center justify-between gap-2 flex-wrap">
+            <div class="text-xs font-medium uppercase tracking-wider text-[var(--fg-muted)]">Dependencies</div>
+            {#if canWrite}
+              <button
+                class="text-xs text-[var(--fg-muted)] hover:text-[var(--fg)] underline"
+                onclick={openDepsEditor}
+              >Edit</button>
+            {/if}
+          </div>
+          <div class="text-xs">
+            {#if deps.depends_on.length > 0}
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <span class="text-[var(--fg-muted)]">Needs:</span>
+                {#each deps.depends_on as d}
+                  <a href={`/stacks/${encodeURIComponent(d)}`} class="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-[var(--border)] font-mono hover:bg-[var(--surface-hover)]">
+                    {d}
+                  </a>
+                {/each}
+              </div>
+            {:else}
+              <div class="text-[var(--fg-muted)]">No prerequisites.</div>
+            {/if}
+          </div>
+          {#if deps.dependents.length > 0}
+            <div class="text-xs flex items-center gap-1.5 flex-wrap">
+              <span class="text-[var(--fg-muted)]">Needed by:</span>
+              {#each deps.dependents as d}
+                <a href={`/stacks/${encodeURIComponent(d)}`} class="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-[var(--border)] font-mono hover:bg-[var(--surface-hover)]">
+                  {d}
+                </a>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+    </Card>
+  {/if}
+
   <!-- Editor -->
   <Card>
     <div class="px-5 py-3 border-b border-[var(--border)] text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider flex items-center justify-between">
@@ -840,6 +943,66 @@
   {/if}
   <svelte:fragment slot="footer">
     <Button variant="secondary" onclick={() => (showYaml = false)}>Close</Button>
+  </svelte:fragment>
+</Modal>
+
+<!-- Dependencies editor modal (P.12.7) -->
+<Modal bind:open={showDepsEditor} title="Dependencies for {name}" maxWidth="max-w-lg">
+  <div class="space-y-4 text-sm">
+    <div class="text-xs text-[var(--fg-muted)]">
+      Stacks listed here will be deployed first (if they aren't already running) whenever you deploy
+      <span class="font-mono">{name}</span>. Deep chains deploy bottom-up. Cycles are rejected.
+    </div>
+    <div class="space-y-2">
+      {#if depsEditList.length === 0}
+        <div class="text-xs text-[var(--fg-muted)] italic">No prerequisites yet.</div>
+      {:else}
+        <div class="flex flex-wrap gap-1.5">
+          {#each depsEditList as d}
+            <div class="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-[var(--border)] font-mono text-xs">
+              <span>{d}</span>
+              <button
+                class="text-[var(--fg-muted)] hover:text-[var(--color-danger-400)]"
+                onclick={() => depRemove(d)}
+                title="Remove"
+                aria-label="Remove {d}"
+              >
+                <X class="w-3 h-3" />
+              </button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+    <div class="space-y-1">
+      <label class="text-xs font-medium text-[var(--fg-muted)]" for="dep-picker">Add a dependency</label>
+      <div class="flex gap-2">
+        <input
+          id="dep-picker"
+          class="dm-input flex-1"
+          list="dep-stack-options"
+          bind:value={depsNewEntry}
+          placeholder="Pick a stack…"
+          onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); depAdd(depsNewEntry); } }}
+        />
+        <datalist id="dep-stack-options">
+          {#each allStackNames as s}
+            <option value={s}></option>
+          {/each}
+        </datalist>
+        <Button variant="secondary" onclick={() => depAdd(depsNewEntry)} disabled={!depsNewEntry.trim()}>
+          <Plus class="w-3.5 h-3.5" />
+          Add
+        </Button>
+      </div>
+      <div class="text-[11px] text-[var(--fg-muted)]">
+        Unknown stack names are accepted — declaring an edge for a stack you haven't created yet is fine.
+      </div>
+    </div>
+  </div>
+  <svelte:fragment slot="footer">
+    <Button variant="secondary" onclick={() => (showDepsEditor = false)} disabled={depsBusy}>Cancel</Button>
+    <Button variant="primary" onclick={saveDeps} loading={depsBusy} disabled={depsBusy}>Save</Button>
   </svelte:fragment>
 </Modal>
 

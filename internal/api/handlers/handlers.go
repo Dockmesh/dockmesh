@@ -42,6 +42,7 @@ type Handlers struct {
 	Stacks       *stacks.Manager
 	Deployments  *stacks.DeploymentStore
 	DeployHistory *stacks.HistoryStore
+	Dependencies  *stacks.DependencyStore
 	Compose      *compose.Service
 	LoginLimiter *ratelimit.Limiter
 	Scanner      scanner.Scanner
@@ -81,6 +82,7 @@ type Deps struct {
 	Stacks       *stacks.Manager
 	Deployments  *stacks.DeploymentStore
 	DeployHistory *stacks.HistoryStore
+	Dependencies  *stacks.DependencyStore
 	Compose      *compose.Service
 	LoginLimiter *ratelimit.Limiter
 	Scanner      scanner.Scanner
@@ -121,6 +123,7 @@ func New(d Deps) *Handlers {
 		Stacks:      d.Stacks,
 		Deployments: d.Deployments,
 		DeployHistory: d.DeployHistory,
+		Dependencies: d.Dependencies,
 		Compose:     d.Compose,
 		LoginLimiter: d.LoginLimiter,
 		Scanner:     d.Scanner,
