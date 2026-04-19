@@ -381,11 +381,14 @@
                 href={item.href}
                 onclick={() => (mobileOpen = false)}
                 title={sidebarCollapsed ? item.label : undefined}
-                class="flex items-center {sidebarCollapsed ? 'justify-center px-2' : 'gap-3 px-3'} py-2 rounded-lg text-sm transition-colors
+                class="relative flex items-center {sidebarCollapsed ? 'justify-center px-2' : 'gap-3 px-3'} py-2 rounded-lg text-sm transition-colors
                        {active
-                  ? 'bg-[var(--surface)] text-[var(--fg)] font-medium'
+                  ? 'bg-[color-mix(in_srgb,var(--color-brand-500)_12%,transparent)] text-[var(--color-brand-300)] font-medium'
                   : 'text-[var(--fg-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]'}"
               >
+                {#if active && !sidebarCollapsed}
+                  <span class="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-r-full bg-[var(--color-brand-400)]"></span>
+                {/if}
                 <Icon class="w-4 h-4 shrink-0" />
                 {#if !sidebarCollapsed}<span>{item.label}</span>{/if}
               </a>
@@ -445,11 +448,14 @@
           href="/settings"
           onclick={() => (mobileOpen = false)}
           title={sidebarCollapsed ? 'Settings' : undefined}
-          class="flex items-center {sidebarCollapsed ? 'justify-center px-2' : 'gap-3 px-3'} py-2 rounded-lg text-sm transition-colors
+          class="relative flex items-center {sidebarCollapsed ? 'justify-center px-2' : 'gap-3 px-3'} py-2 rounded-lg text-sm transition-colors
                  {isActive('/settings')
-            ? 'bg-[var(--surface)] text-[var(--fg)] font-medium'
+            ? 'bg-[color-mix(in_srgb,var(--color-brand-500)_12%,transparent)] text-[var(--color-brand-300)] font-medium'
             : 'text-[var(--fg-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]'}"
         >
+          {#if isActive('/settings') && !sidebarCollapsed}
+            <span class="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-r-full bg-[var(--color-brand-400)]"></span>
+          {/if}
           <SettingsIcon class="w-4 h-4 shrink-0" />
           {#if !sidebarCollapsed}<span>Settings</span>{/if}
         </a>
