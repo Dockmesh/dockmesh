@@ -1017,9 +1017,9 @@
       <pre class="border border-[var(--border)] rounded-md p-3 bg-[var(--surface)] text-xs font-mono overflow-auto max-h-96 whitespace-pre-wrap">{yamlEntry.compose_yaml}</pre>
     </div>
   {/if}
-  <svelte:fragment slot="footer">
+  {#snippet footer()}
     <Button variant="secondary" onclick={() => (showYaml = false)}>Close</Button>
-  </svelte:fragment>
+  {/snippet}
 </Modal>
 
 <!-- Dependencies editor modal (P.12.7) -->
@@ -1076,10 +1076,10 @@
       </div>
     </div>
   </div>
-  <svelte:fragment slot="footer">
+  {#snippet footer()}
     <Button variant="secondary" onclick={() => (showDepsEditor = false)} disabled={depsBusy}>Cancel</Button>
     <Button variant="primary" onclick={saveDeps} loading={depsBusy} disabled={depsBusy}>Save</Button>
-  </svelte:fragment>
+  {/snippet}
 </Modal>
 
 <!-- Rollback confirm modal (P.12.6) -->
@@ -1114,13 +1114,13 @@
       {/if}
     </div>
   {/if}
-  <svelte:fragment slot="footer">
+  {#snippet footer()}
     <Button variant="secondary" onclick={() => (showRollbackConfirm = false)} disabled={rollbackBusy}>Cancel</Button>
     <Button variant="primary" onclick={doRollback} loading={rollbackBusy} disabled={rollbackBusy}>
       <RotateCcw class="w-4 h-4" />
       Roll back
     </Button>
-  </svelte:fragment>
+  {/snippet}
 </Modal>
 
 <!-- Scale modal -->

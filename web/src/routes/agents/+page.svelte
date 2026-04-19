@@ -5,7 +5,7 @@
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
-  import { Server, Plus, Trash2, RefreshCw, Copy, CheckCircle2, ArrowDownToLine, Tag, X, ArrowUpCircle } from 'lucide-svelte';
+  import { Server, Plus, Trash2, RefreshCw, Copy, CheckCircle2, ArrowDownToLine, Tag, X, ArrowUpCircle, AlertTriangle } from 'lucide-svelte';
 
   let agents = $state<Agent[]>([]);
   let loading = $state(true);
@@ -178,6 +178,12 @@
     }
   }
 
+  // Agents that pre-date the self-upgrade frame return 422 when the
+  // server tries to ship the new binary. We surface that as a modal
+  // with a one-shot manual-upgrade path instead of a toast the user
+  // has to scroll back to read.
+  let legacyUpgradeAgent = $state<{ id: string; name: string; message: string } | null>(null);
+
   async function upgradeAgent(id: string, name: string) {
     upgradingAgent = id;
     try {
@@ -186,7 +192,11 @@
       // Refresh both agent list + policy so the counts update.
       await Promise.all([load(), loadUpgradePolicy()]);
     } catch (err) {
-      toast.error('Upgrade failed', err instanceof ApiError ? err.message : undefined);
+      if (err instanceof ApiError && err.status === 422 && /too old to self-upgrade/i.test(err.message)) {
+        legacyUpgradeAgent = { id, name, message: err.message };
+      } else {
+        toast.error('Upgrade failed', err instanceof ApiError ? err.message : undefined);
+      }
     } finally {
       upgradingAgent = null;
     }
@@ -616,5 +626,52 @@
   {#snippet footer()}
     <Button variant="secondary" onclick={() => (showTagsFor = null)}>Cancel</Button>
     <Button variant="primary" loading={tagsBusy} onclick={saveTags}>Save tags</Button>
+  {/snippet}
+</Modal>
+
+<!-- Agent too old for self-upgrade (422) — shows a manual upgrade flow. -->
+<Modal
+  open={legacyUpgradeAgent !== null}
+  title="Agent too old to self-upgrade"
+  maxWidth="max-w-2xl"
+  onclose={() => (legacyUpgradeAgent = null)}
+>
+  {#if legacyUpgradeAgent}
+    {@const agent = legacyUpgradeAgent}
+    <div class="space-y-4 text-sm">
+      <div class="flex items-start gap-2 text-xs bg-[color-mix(in_srgb,var(--color-warning-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-warning-500)_30%,transparent)] rounded-lg px-3 py-2 text-[var(--color-warning-400)]">
+        <AlertTriangle class="w-4 h-4 shrink-0 mt-0.5" />
+        <div>
+          <strong>{agent.name}</strong> runs an agent binary from before the self-upgrade feature shipped. Run the command below once on the host; future upgrades go through the UI.
+        </div>
+      </div>
+
+      <div>
+        <div class="text-xs text-[var(--fg-muted)] mb-1">One-time manual upgrade command (on the agent host)</div>
+        <div class="relative">
+          <pre class="dm-card p-3 font-mono text-xs whitespace-pre-wrap break-all max-h-64 overflow-auto">{`systemctl stop dockmesh-agent
+curl -fsSL ${window.location.origin}/install/dockmesh-agent-linux-amd64 \\
+  -o /usr/local/bin/dockmesh-agent
+chmod +x /usr/local/bin/dockmesh-agent
+systemctl start dockmesh-agent`}</pre>
+          <button
+            class="absolute top-2 right-2 px-2 py-1 text-xs rounded bg-[var(--surface)] border border-[var(--border)] hover:bg-[var(--surface-hover)]"
+            onclick={() => copyText(`systemctl stop dockmesh-agent
+curl -fsSL ${window.location.origin}/install/dockmesh-agent-linux-amd64 -o /usr/local/bin/dockmesh-agent
+chmod +x /usr/local/bin/dockmesh-agent
+systemctl start dockmesh-agent`)}
+          >
+            <Copy class="w-3 h-3 inline" /> copy
+          </button>
+        </div>
+      </div>
+
+      <p class="text-xs text-[var(--fg-muted)]">
+        After the restart the agent reconnects within ~15s. Once you see it online again, click Upgrade and it will self-update from here on.
+      </p>
+    </div>
+  {/if}
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (legacyUpgradeAgent = null)}>Close</Button>
   {/snippet}
 </Modal>
