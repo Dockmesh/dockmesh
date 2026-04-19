@@ -64,20 +64,54 @@ func tarSystem(ctx context.Context, db *sql.DB, paths SystemPaths, w io.Writer) 
 			return err
 		}
 		hdr.Name = filepath.ToSlash(archivePath)
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
+
 		if info.IsDir() {
+			if err := tw.WriteHeader(hdr); err != nil {
+				return err
+			}
 			return nil
 		}
+
+		// Re-stat through the open fd to lock in the size we're about to
+		// copy. Without this, `info.Size()` is whatever the walker saw
+		// earlier; by the time we stream bytes a live file (audit log,
+		// DB-WAL) can have grown, and tar fails with "write too long"
+		// when io.Copy emits more bytes than the header declared.
+		//
+		// With this pattern the tar entry is a consistent at-open-time
+		// snapshot: subsequent growth is ignored (fine for logs), and a
+		// shrunk file gets zero-padded by io.CopyN returning EOF early.
 		f, err := os.Open(src)
 		if err != nil {
 			return err
 		}
-		n, copyErr := io.Copy(tw, f)
-		f.Close()
+		defer f.Close()
+
+		st, err := f.Stat()
+		if err != nil {
+			return err
+		}
+		hdr.Size = st.Size()
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+
+		n, copyErr := io.CopyN(tw, f, st.Size())
 		total += n
-		return copyErr
+		if copyErr != nil && copyErr != io.EOF {
+			return copyErr
+		}
+		// Zero-pad if the file shrank after we recorded its size in the
+		// header. tar.Writer requires exactly hdr.Size bytes between
+		// WriteHeader calls; without padding the next WriteHeader would
+		// fail with "wrote too little data".
+		if n < st.Size() {
+			pad := make([]byte, st.Size()-n)
+			if _, err := tw.Write(pad); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	// 1. DB snapshot → dockmesh.db

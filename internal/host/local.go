@@ -2,7 +2,9 @@ package host
 
 import (
 	"context"
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -239,6 +241,11 @@ func (h *LocalHost) InspectVolume(ctx context.Context, name string) (volume.Volu
 // VolumeBrowseEntries resolves the requested path against the volume's
 // mountpoint on the docker host's own filesystem, then walks it via
 // the shared helper. P.11.8 — admin-only at the handler layer.
+// VolumeBrowseEntries first tries direct filesystem access via the
+// volume's mountpoint. On EACCES (common — Docker volumes are
+// root:root 0700 and Dockmesh runs as an unprivileged user) we fall
+// back to spawning a short-lived alpine container with the volume
+// mounted, which sees everything as root inside its own namespace.
 func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath string) ([]VolumeEntry, error) {
 	if h.cli == nil {
 		return nil, ErrNoDocker
@@ -255,7 +262,11 @@ func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath strin
 	if err != nil {
 		return nil, err
 	}
-	return BrowseDir(abs)
+	entries, err := BrowseDir(abs)
+	if err != nil && errors.Is(err, fs.ErrPermission) {
+		return BrowseDirViaHelper(ctx, h.cli, name, subpath)
+	}
+	return entries, err
 }
 
 func (h *LocalHost) VolumeReadFile(ctx context.Context, name, subpath string, maxBytes int64) (*VolumeFileResult, error) {
@@ -274,7 +285,11 @@ func (h *LocalHost) VolumeReadFile(ctx context.Context, name, subpath string, ma
 	if err != nil {
 		return nil, err
 	}
-	return ReadFile(abs, maxBytes)
+	res, err := ReadFile(abs, maxBytes)
+	if err != nil && errors.Is(err, fs.ErrPermission) {
+		return ReadFileViaHelper(ctx, h.cli, name, subpath, maxBytes)
+	}
+	return res, err
 }
 
 func (h *LocalHost) ListVolumes(ctx context.Context) ([]any, error) {
