@@ -172,6 +172,12 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 			if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 				return nil, fmt.Errorf("start replica %d: %w", i, err)
 			}
+			// Gate the next replica behind this one becoming healthy —
+			// otherwise a crash-looping replica would still tick result.Created++
+			// and the scale-up reports success while nothing works.
+			if err := WaitHealthy(ctx, cli, resp.ID, &svc); err != nil {
+				return nil, fmt.Errorf("replica %d (%s): %w", i, name, err)
+			}
 			result.Created++
 		}
 
