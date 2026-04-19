@@ -8,6 +8,7 @@
   import '@xterm/xterm/css/xterm.css';
   import { Card, Badge, Button, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { confirm } from '$lib/stores/confirm.svelte';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import type { UpdatePreview, UpdateHistoryEntry, MetricsSample } from '$lib/api';
@@ -156,7 +157,7 @@
   }
 
   async function doUpdate() {
-    if (!confirm('Pull the latest image and recreate this container? The old image will be kept as a rollback snapshot.')) return;
+    if (!(await confirm.ask({ title: 'Update container', message: 'Pull the latest image and recreate this container?', body: 'The old image is kept as a rollback snapshot. Recreate preserves mounts and env vars.', confirmLabel: 'Update' }))) return;
     updateBusy = true;
     try {
       const res = await api.containers.doUpdate(id);
@@ -177,7 +178,7 @@
   }
 
   async function doRollback(historyId: number) {
-    if (!confirm('Roll back this container to the previous image version?')) return;
+    if (!(await confirm.ask({ title: 'Roll back container', message: 'Roll back this container to the previous image version?', body: 'The currently-running image is replaced with the snapshot captured during the last update.', confirmLabel: 'Roll back' }))) return;
     updateBusy = true;
     try {
       const res = await api.containers.rollback(id, historyId);
@@ -366,7 +367,7 @@
   // Kill is separate because it's destructive + carries a signal. Default
   // signal "" lets Docker pick SIGKILL.
   async function killContainer() {
-    if (!confirm('Send SIGKILL to this container? In-flight data may be lost. The container will exit immediately.')) return;
+    if (!(await confirm.ask({ title: 'Kill container', message: 'Send SIGKILL to this container?', body: 'In-flight writes may be lost. The container exits immediately without a graceful shutdown.', confirmLabel: 'Kill', danger: true }))) return;
     try {
       await api.containers.kill(id, '', targetHost);
       toast.success('Killed', 'SIGKILL sent');
@@ -377,7 +378,7 @@
   }
 
   async function remove() {
-    if (!confirm('Remove this container?')) return;
+    if (!(await confirm.ask({ title: 'Remove container', message: 'Remove this container?', body: 'Volumes are kept. Image stays available for redeploy.', confirmLabel: 'Remove', danger: true }))) return;
     try {
       await api.containers.remove(id, true, targetHost);
       toast.success('Removed');

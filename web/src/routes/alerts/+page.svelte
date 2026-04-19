@@ -6,6 +6,7 @@
   import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { confirm } from '$lib/stores/confirm.svelte';
   import {
     Bell, Plus, Trash2, Send, Activity, BellRing, BellOff, AlertTriangle, CheckCircle2,
     Search, Copy, Power
@@ -83,7 +84,7 @@
   }
 
   async function deleteCh(c: NotificationChannel) {
-    if (!confirm(`Delete channel "${c.name}"?`)) return;
+    if (!(await confirm.ask({ title: 'Delete notification channel', message: `Delete channel "${c.name}"?`, body: 'Rules that route to this channel will stop firing notifications until you reassign them.', confirmLabel: 'Delete', danger: true }))) return;
     try { await api.alerts.deleteChannel(c.id); toast.success('Deleted'); await loadChannels(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
   }
 
@@ -137,7 +138,7 @@
   }
 
   async function deleteRule(r: AlertRule) {
-    if (!confirm(`Delete rule "${r.name}"?`)) return;
+    if (!(await confirm.ask({ title: 'Delete alert rule', message: `Delete rule "${r.name}"?`, confirmLabel: 'Delete', danger: true }))) return;
     try { await api.alerts.deleteRule(r.id); toast.success('Deleted'); await loadRules(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
   }
 

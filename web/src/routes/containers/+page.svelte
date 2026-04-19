@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { Card, Badge, EmptyState, Button, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { confirm } from '$lib/stores/confirm.svelte';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import { EventStream, type ConnStatus } from '$lib/events';
@@ -180,7 +181,10 @@
       if (op === 'start') await api.containers.start(c.Id, targetHost);
       else if (op === 'stop') await api.containers.stop(c.Id, targetHost);
       else if (op === 'restart') await api.containers.restart(c.Id, targetHost);
-      else { if (!confirm('Remove this container?')) return; await api.containers.remove(c.Id, true, targetHost); }
+      else {
+        if (!(await confirm.ask({ title: 'Remove container', message: `Remove container "${nameOf(c)}"?`, body: 'Container volumes are kept. Image stays available for redeploy.', confirmLabel: 'Remove', danger: true }))) return;
+        await api.containers.remove(c.Id, true, targetHost);
+      }
       toast.success(op, nameOf(c));
       await load();
     } catch (err) {
@@ -190,7 +194,7 @@
 
   async function bulkAction(op: 'start' | 'stop' | 'restart' | 'remove') {
     if (selected.size === 0) return;
-    if (op === 'remove' && !confirm(`Remove ${selected.size} container(s)?`)) return;
+    if (op === 'remove' && !(await confirm.ask({ title: 'Remove containers', message: `Remove ${selected.size} container(s)?`, body: 'Volumes are kept. Running containers are force-stopped and removed.', confirmLabel: 'Remove', danger: true }))) return;
     bulkBusy = true;
     let ok = 0;
     let fail = 0;

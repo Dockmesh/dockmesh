@@ -2,6 +2,7 @@
   import { api, ApiError, isFanOut } from '$lib/api';
   import { Card, Badge, Skeleton, EmptyState, Button, Modal, Input } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { confirm } from '$lib/stores/confirm.svelte';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import {
@@ -125,7 +126,7 @@
   }
 
   async function deleteVolume(v: VolumeRow) {
-    if (!confirm(`Delete volume "${v.Name}"?`)) return;
+    if (!(await confirm.ask({ title: 'Delete volume', message: `Delete volume "${v.Name}"?`, body: 'Docker refuses if any container still mounts it. Data is not recoverable once deleted.', confirmLabel: 'Delete', danger: true }))) return;
     try {
       await api.volumes.remove(v.Name, true);
       toast.success('Deleted', v.Name);
@@ -136,7 +137,7 @@
   }
 
   async function bulkDelete() {
-    if (!confirm(`Delete ${selected.size} volume(s)?`)) return;
+    if (!(await confirm.ask({ title: 'Delete volumes', message: `Delete ${selected.size} volume(s)?`, body: 'Volumes in use by containers are skipped with an error. Deleted volume data cannot be recovered.', confirmLabel: 'Delete', danger: true }))) return;
     bulkBusy = true;
     let ok = 0, fail = 0;
     for (const v of volumes.filter(v => selected.has(vKey(v)))) {
@@ -149,7 +150,7 @@
   }
 
   async function pruneVolumes() {
-    if (!confirm('Remove all unused volumes? This cannot be undone.')) return;
+    if (!(await confirm.ask({ title: 'Prune unused volumes', message: 'Remove all volumes not used by any container?', body: 'This cannot be undone. Volume data is deleted. Named volumes from stopped compose stacks are included unless the stack is still registered.', confirmLabel: 'Prune', danger: true }))) return;
     try {
       const res = await api.volumes.prune();
       const count = res?.VolumesDeleted?.length ?? 0;

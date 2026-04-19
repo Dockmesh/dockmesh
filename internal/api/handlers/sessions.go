@@ -22,20 +22,38 @@ type Session struct {
 	IsCurrent bool       `json:"is_current"`
 }
 
-// ListMySessions returns every session the current user has. Filters
-// to the caller's user_id inside the query — there's no cross-user
-// view here.
+// ListMySessions returns the caller's sessions. By default only active
+// ones are included — the UI rarely wants to see long-dead sessions,
+// and including them in an unbounded list made the panel unreadable
+// for any user who's been around for more than a few days.
+//
+// Pass `?include_revoked=1` to get the full history, e.g. for a
+// "what happened to me lately" audit view. Regardless of the flag,
+// results are capped at 200 rows newest-first.
 func (h *Handlers) ListMySessions(w http.ResponseWriter, r *http.Request) {
 	uid := middleware.UserID(r.Context())
 	if uid == "" {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	rows, err := h.DB.QueryContext(r.Context(), `
+	includeRevoked := r.URL.Query().Get("include_revoked") == "1"
+	query := `
 		SELECT family_id, user_agent, ip, created_at, expires_at, revoked_at
 		  FROM sessions
 		 WHERE user_id = ?
-		 ORDER BY created_at DESC`, uid)
+		   AND revoked_at IS NULL
+		   AND expires_at > CURRENT_TIMESTAMP
+		 ORDER BY created_at DESC
+		 LIMIT 200`
+	if includeRevoked {
+		query = `
+		SELECT family_id, user_agent, ip, created_at, expires_at, revoked_at
+		  FROM sessions
+		 WHERE user_id = ?
+		 ORDER BY created_at DESC
+		 LIMIT 200`
+	}
+	rows, err := h.DB.QueryContext(r.Context(), query, uid)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

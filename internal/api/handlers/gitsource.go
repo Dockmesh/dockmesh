@@ -22,7 +22,11 @@ func (h *Handlers) GetGitSource(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	src, err := h.GitSource.Get(r.Context(), name)
 	if errors.Is(err, gitsource.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "no git source configured")
+		// Return 200 with null body instead of 404. The stack detail
+		// page loads git-source on every render; a 404 makes the browser
+		// console look broken for the common case where a stack simply
+		// has no git source. The UI treats null and 404 identically.
+		writeJSON(w, http.StatusOK, nil)
 		return
 	}
 	if err != nil {

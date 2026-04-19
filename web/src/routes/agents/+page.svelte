@@ -4,6 +4,7 @@
   import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { confirm } from '$lib/stores/confirm.svelte';
   import { Server, Plus, Trash2, RefreshCw, Copy, CheckCircle2, ArrowDownToLine, Tag, X, ArrowUpCircle } from 'lucide-svelte';
 
   let agents = $state<Agent[]>([]);
@@ -209,7 +210,7 @@
   }
 
   async function del(a: Agent) {
-    if (!confirm(`Delete agent "${a.name}"? This revokes its certificate.`)) return;
+    if (!(await confirm.ask({ title: `Delete agent ${a.name}`, message: `Delete agent "${a.name}"?`, body: 'The agent\u2019s certificate will be revoked. The remote host stays as-is — you can run the install script again to re-enroll.', confirmLabel: 'Delete', danger: true }))) return;
     try {
       await api.agents.delete(a.id);
       toast.success('Deleted', a.name);

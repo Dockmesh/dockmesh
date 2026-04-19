@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"strings"
+
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
@@ -237,7 +239,7 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 
 	res, err := target.DeployStack(r.Context(), name, composeYAML, detail.Env)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, deployErrorStatus(err), friendlyDeployError(err))
 		return
 	}
 	// Record the deployment association (P.7).
@@ -285,6 +287,51 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		out["dependencies_deployed"] = depsDeployed
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// deployErrorStatus classifies a deploy failure into the right HTTP
+// status so operators don't see a blanket 500 for problems they can
+// fix (port in use, image pull auth, compose syntax). "Unknown" errors
+// stay 500 because that's where server-side stack traces belong.
+func deployErrorStatus(err error) int {
+	if err == nil {
+		return http.StatusInternalServerError
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "port is already allocated"),
+		strings.Contains(msg, "address already in use"),
+		strings.Contains(msg, "bind: permission denied"),
+		strings.Contains(msg, "no such image"),
+		strings.Contains(msg, "manifest unknown"),
+		strings.Contains(msg, "pull access denied"),
+		strings.Contains(msg, "unauthorized"),
+		strings.Contains(msg, "yaml:"),
+		strings.Contains(msg, "invalid compose"):
+		return http.StatusUnprocessableEntity
+	}
+	return http.StatusInternalServerError
+}
+
+// friendlyDeployError translates gnarly docker / compose error strings
+// into something a UI can display without making operators grep through
+// an opaque stack trace. Falls back to the raw error when we have no
+// friendlier mapping, so nothing is hidden — it's still diagnosable.
+func friendlyDeployError(err error) string {
+	raw := err.Error()
+	lc := strings.ToLower(raw)
+	switch {
+	case strings.Contains(lc, "port is already allocated") ||
+		strings.Contains(lc, "address already in use"):
+		return "port already in use on the target host — pick a different host port (see compose.yaml ports:) or stop whatever is bound to it"
+	case strings.Contains(lc, "pull access denied") || strings.Contains(lc, "manifest unknown"):
+		return "could not pull image — check the tag exists and, for private registries, that credentials are configured: " + raw
+	case strings.Contains(lc, "unauthorized"):
+		return "registry authentication failed — configure credentials under Settings → Registries: " + raw
+	case strings.Contains(lc, "yaml:") || strings.Contains(lc, "invalid compose"):
+		return "compose file could not be parsed: " + raw
+	}
+	return raw
 }
 
 // stackRunning returns true when every service container for the

@@ -5,6 +5,7 @@
   import { allowed } from '$lib/rbac';
   import { Card, Button, Input, Modal, Badge, Skeleton, EmptyState } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { confirm } from '$lib/stores/confirm.svelte';
   import { User, Users, Activity, Plus, Trash2, UserCog, ShieldCheck, ShieldOff, Copy, KeyRound, Link2, Globe, ExternalLink, HardDrive, ShieldAlert, AlertCircle, Shield, X, Package, CheckCircle2, XCircle } from 'lucide-svelte';
   import type { OIDCProvider, OIDCProviderInput } from '$lib/api';
 
@@ -172,7 +173,7 @@
   }
 
   async function revokeApiToken(id: number, name: string) {
-    if (!confirm(`Revoke token "${name}"? This cannot be undone. Any scripts using it will lose access.`)) return;
+    if (!(await confirm.ask({ title: 'Revoke API token', message: `Revoke token "${name}"?`, body: 'Cannot be undone. Any scripts, CI jobs, or dmctl sessions using this token lose access on next request.', confirmLabel: 'Revoke', danger: true }))) return;
     try {
       await api.apiTokens.revoke(id);
       toast.success('Token revoked');
@@ -274,7 +275,7 @@
   }
 
   async function deleteRegistry(r: Registry) {
-    if (!confirm(`Delete registry "${r.name}"? Existing pulls will fall back to anonymous access.`)) return;
+    if (!(await confirm.ask({ title: 'Delete registry', message: `Delete registry "${r.name}"?`, body: 'Existing pulls fall back to anonymous access. Private images will fail to pull until the registry is re-added.', confirmLabel: 'Delete', danger: true }))) return;
     try {
       await api.registries.delete(r.id);
       toast.success('Registry deleted', r.name);
@@ -350,7 +351,7 @@
   }
 
   async function deleteRole(name: string) {
-    if (!confirm(`Delete role "${name}"?`)) return;
+    if (!(await confirm.ask({ title: 'Delete role', message: `Delete role "${name}"?`, body: 'Users currently assigned to this role lose its permissions immediately on next request.', confirmLabel: 'Delete', danger: true }))) return;
     try {
       await api.roles.delete(name);
       toast.success('Role deleted');
@@ -457,7 +458,7 @@
   }
 
   async function deleteOIDC(p: OIDCProvider) {
-    if (!confirm(`Delete provider "${p.display_name}"?`)) return;
+    if (!(await confirm.ask({ title: 'Delete SSO provider', message: `Delete provider "${p.display_name}"?`, body: 'Users who signed in via this provider must fall back to password login until it\u2019s re-added.', confirmLabel: 'Delete', danger: true }))) return;
     try {
       await api.oidc.delete(p.id);
       toast.success('Deleted', p.slug);
@@ -499,8 +500,11 @@
   }
 
   async function revokeSession(familyID: string, isCurrent: boolean) {
-    if (isCurrent && !confirm('Revoking the current session will log you out on the next refresh. Continue?')) return;
-    if (!isCurrent && !confirm('Revoke this session? Any client using it will be logged out.')) return;
+    if (isCurrent) {
+      if (!(await confirm.ask({ title: 'Revoke current session', message: 'Revoking the current session will log you out on the next refresh.', body: 'Continue?', confirmLabel: 'Revoke', danger: true }))) return;
+    } else {
+      if (!(await confirm.ask({ title: 'Revoke session', message: 'Revoke this session?', body: 'Any client using it (browser, CLI, script) will be logged out on next request.', confirmLabel: 'Revoke', danger: true }))) return;
+    }
     sessionsBusy = true;
     try {
       await api.auth.revokeSession(familyID);
@@ -513,11 +517,37 @@
     }
   }
 
+  // Parse a browser/CLI UA string into a short human-readable label so
+  // the session panel is actually scannable ("Chrome 147 on Windows"
+  // rather than a 120-char truncated UA). Falls back to the raw UA for
+  // unknown agents; the full UA is still available on hover via title=.
   function fmtSessionAgent(ua?: string): string {
     if (!ua) return 'unknown';
-    // Trim long UA strings so the table stays readable.
-    if (ua.length > 60) return ua.slice(0, 57) + '…';
-    return ua;
+    const cli = ua.match(/^([a-zA-Z0-9_.-]+)\/([0-9.]+)/);
+    if (cli && !ua.includes('Mozilla')) {
+      // curl/7.88.1, dmctl/1.0.0, etc.
+      return `${cli[1]} ${cli[2]}`;
+    }
+    let os = 'unknown OS';
+    if (/Windows NT 10\.0/i.test(ua)) os = 'Windows';
+    else if (/Windows NT 11/i.test(ua)) os = 'Windows 11';
+    else if (/Mac OS X/i.test(ua)) os = 'macOS';
+    else if (/Linux/i.test(ua)) os = 'Linux';
+    else if (/Android/i.test(ua)) os = 'Android';
+    else if (/iPhone|iPad|iOS/i.test(ua)) os = 'iOS';
+    let browser = 'unknown browser';
+    const chrome = ua.match(/Chrome\/(\d+)/);
+    const firefox = ua.match(/Firefox\/(\d+)/);
+    const safari = ua.match(/Version\/(\d+).*Safari/);
+    const edge = ua.match(/Edg\/(\d+)/);
+    if (edge) browser = `Edge ${edge[1]}`;
+    else if (chrome) browser = `Chrome ${chrome[1]}`;
+    else if (firefox) browser = `Firefox ${firefox[1]}`;
+    else if (safari) browser = `Safari ${safari[1]}`;
+    if (browser === 'unknown browser' && os === 'unknown OS') {
+      return ua.length > 60 ? ua.slice(0, 57) + '…' : ua;
+    }
+    return `${browser} on ${os}`;
   }
 
   async function changeOwnPassword(e: Event) {
@@ -566,7 +596,7 @@
   }
 
   async function disableMFA() {
-    if (!confirm('Disable two-factor authentication?')) return;
+    if (!(await confirm.ask({ title: 'Disable 2FA', message: 'Disable two-factor authentication?', body: 'Your account is only protected by the password again. You can re-enable 2FA any time.', confirmLabel: 'Disable', danger: true }))) return;
     try {
       await api.mfa.disable();
       toast.success('2FA disabled');
@@ -577,7 +607,7 @@
   }
 
   async function resetUserMFA(userId: string, username: string) {
-    if (!confirm(`Reset 2FA for "${username}"? The user will need to re-enroll.`)) return;
+    if (!(await confirm.ask({ title: 'Reset 2FA', message: `Reset 2FA for "${username}"?`, body: 'The user will need to re-enroll from the Account tab on next login.', confirmLabel: 'Reset', danger: true }))) return;
     try {
       await api.mfa.reset(userId);
       toast.success('2FA reset', username);
@@ -694,7 +724,7 @@
   }
 
   async function deleteUser(id: string, username: string) {
-    if (!confirm(`Delete user "${username}"?`)) return;
+    if (!(await confirm.ask({ title: 'Delete user', message: `Delete user "${username}"?`, body: 'All their API tokens are revoked. Active sessions log out on their next refresh.', confirmLabel: 'Delete', danger: true }))) return;
     try {
       await api.users.delete(id);
       toast.success('Deleted', username);
@@ -890,7 +920,7 @@
 
   async function runRetentionNow() {
     if (retentionMode === 'forever') return;
-    if (!confirm(`Run the retention policy now? This will prune ${retentionPreview?.would_prune ?? 'some'} audit rows.`)) return;
+    if (!(await confirm.ask({ title: 'Run retention now', message: `Run the retention policy now?`, body: `This will prune ${retentionPreview?.would_prune ?? 'some'} audit rows. Pruned rows cannot be recovered; the chain-bridge entry stays intact.`, confirmLabel: 'Prune', danger: true }))) return;
     retentionBusy = true;
     try {
       retentionLastResult = await api.audit.runRetention();
@@ -972,16 +1002,22 @@
               </div>
             </div>
           </div>
-          <div class="grid grid-cols-2 gap-4 text-xs">
-            <div>
-              <div class="text-[var(--fg-muted)] uppercase tracking-wider font-medium mb-0.5">Email</div>
-              <div class="font-mono text-sm">{me.email || '—'}</div>
+          {#if me.email || me.created_at}
+            <div class="grid grid-cols-2 gap-4 text-xs">
+              {#if me.email}
+                <div>
+                  <div class="text-[var(--fg-muted)] uppercase tracking-wider font-medium mb-0.5">Email</div>
+                  <div class="font-mono text-sm">{me.email}</div>
+                </div>
+              {/if}
+              {#if me.created_at}
+                <div>
+                  <div class="text-[var(--fg-muted)] uppercase tracking-wider font-medium mb-0.5">Member since</div>
+                  <div class="font-mono text-sm">{new Date(me.created_at).toLocaleDateString()}</div>
+                </div>
+              {/if}
             </div>
-            <div>
-              <div class="text-[var(--fg-muted)] uppercase tracking-wider font-medium mb-0.5">Member since</div>
-              <div class="font-mono text-sm">{me.created_at ? new Date(me.created_at).toLocaleDateString() : '—'}</div>
-            </div>
-          </div>
+          {/if}
         </Card>
 
         <!-- Security -->
@@ -995,6 +1031,15 @@
                 <p class="text-xs text-[var(--fg-muted)] mt-0.5">Set a new password (minimum 8 characters).</p>
               </div>
               <form onsubmit={changeOwnPassword} class="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={me?.username ?? ''}
+                  autocomplete="username"
+                  readonly
+                  tabindex="-1"
+                  aria-hidden="true"
+                  style="position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;"
+                />
                 <input
                   type="password"
                   placeholder="New password"
