@@ -1177,9 +1177,20 @@ paths:
         up -d` via the embedded compose executor. On a fresh deploy the
         deployment record is created; on an existing one, containers are
         updated in place.
+
+        When `?environment=<name>` is supplied (P.12.8), Dockmesh merges
+        `compose.yaml` with `compose.<name>.yaml` via the compose-spec
+        multi-file overlay rules and deploys the merged result. Without
+        the query param, falls back to `active_environment` in
+        `.dockmesh.meta.json`; without that, deploys the base compose.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
         - $ref: "#/components/parameters/HostQuery"
+        - in: query
+          name: environment
+          required: false
+          schema: { type: string }
+          description: Optional overlay name — overrides the stack's default `active_environment`.
       responses:
         "200":
           description: Deploy result with created/updated/unchanged services.
@@ -1344,6 +1355,76 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+
+  /stacks/{name}/environments:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+    get:
+      operationId: stacks.environments_list
+      tags: [stacks]
+      summary: Available compose overlay files + active default (P.12.8)
+      description: |
+        Discovers every `compose.<name>.yaml` overlay next to the base
+        `compose.yaml` in the stack directory, plus the
+        `active_environment` from `.dockmesh.meta.json` if set.
+      responses:
+        "200":
+          description: Environment state for this stack.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stack_name, available]
+                properties:
+                  stack_name: { type: string }
+                  active:
+                    type: string
+                    description: Currently-active overlay name (empty means the base compose is used as-is).
+                  available:
+                    type: array
+                    items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /stacks/{name}/environments/active:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+    put:
+      operationId: stacks.environment_set_active
+      tags: [stacks]
+      summary: Set the default environment overlay for this stack (P.12.8)
+      description: |
+        Writes `active_environment` into `.dockmesh.meta.json`. Empty
+        string clears the default. Subsequent deploys without an
+        explicit `?environment=` query param use this value.
+
+        The name is validated against the filesystem-safe pattern
+        (lowercase letters, digits, `-`, `_`) but NOT checked against
+        existing overlay files — git-synced stacks often have the meta
+        file update arrive before the overlay file lands in the same
+        sync cycle.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [active]
+              properties:
+                active: { type: string }
+      responses:
+        "200":
+          description: Updated active environment.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stack_name: { type: string }
+                  active:     { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /stacks/{name}/stop:
     post:

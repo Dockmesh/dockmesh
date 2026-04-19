@@ -195,6 +195,13 @@ export interface StackDependencies {
   dependents: string[];
 }
 
+// Environment overrides (P.12.8)
+export interface StackEnvironments {
+  stack_name: string;
+  active: string;
+  available: string[];
+}
+
 // Migration (P.9)
 export interface Migration {
   id: string;
@@ -901,12 +908,16 @@ export const api = {
       request<void>(`/stacks/${encodeURIComponent(name)}/git`, { method: 'DELETE' }),
     syncGitSource: (name: string) =>
       request<StackGitSyncResult>(`/stacks/${encodeURIComponent(name)}/git/sync`, { method: 'POST' }),
-    deploy: (name: string, host = 'local') => {
-      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
-      return request<{ stack: string; services: Array<{ name: string; container_id: string; image: string }> }>(
-        `/stacks/${encodeURIComponent(name)}/deploy${qs}`,
-        { method: 'POST' }
-      );
+    deploy: (name: string, host = 'local', environment?: string) => {
+      const params = new URLSearchParams();
+      if (host && host !== 'local') params.set('host', host);
+      if (environment) params.set('environment', environment);
+      const qs = params.toString() ? '?' + params.toString() : '';
+      return request<{
+        stack: string;
+        services: Array<{ name: string; container_id: string; image: string }>;
+        dependencies_deployed?: string[];
+      }>(`/stacks/${encodeURIComponent(name)}/deploy${qs}`, { method: 'POST' });
     },
     stop: (name: string, host = 'local') => {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
@@ -961,6 +972,14 @@ export const api = {
       request<{ stack_name: string; depends_on: string[] }>(
         `/stacks/${encodeURIComponent(name)}/dependencies`,
         { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ depends_on: dependsOn }) }
+      ),
+    // Environment overrides (P.12.8)
+    getEnvironments: (name: string) =>
+      request<StackEnvironments>(`/stacks/${encodeURIComponent(name)}/environments`),
+    setActiveEnvironment: (name: string, active: string) =>
+      request<{ stack_name: string; active: string }>(
+        `/stacks/${encodeURIComponent(name)}/environments/active`,
+        { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active }) }
       )
   },
 
