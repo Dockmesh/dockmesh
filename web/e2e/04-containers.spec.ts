@@ -15,10 +15,10 @@ const COMPOSE = `services:
 test.describe('containers', () => {
 	test.beforeAll(async ({ browser }) => {
 		const page = await browser.newPage();
-		const { login } = await import('./fixtures');
+		const { login, apiFromPage } = await import('./fixtures');
 		await login(page);
-		const api = page.request;
-		await api.post('/api/v1/stacks', { data: { name: STACK, compose: COMPOSE, env: '' } });
+		const api = await apiFromPage(page);
+		await api.post('/api/v1/stacks', { name: STACK, compose: COMPOSE, env: '' });
 		await api.post(`/api/v1/stacks/${STACK}/deploy`);
 		await waitForStackRunning(page, STACK, 1);
 		await page.close();

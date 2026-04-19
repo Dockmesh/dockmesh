@@ -11,9 +11,9 @@ test.describe('backups', () => {
 
 	test.afterAll(async ({ browser }) => {
 		const page = await browser.newPage();
-		const { login } = await import('./fixtures');
+		const { login, apiFromPage } = await import('./fixtures');
 		await login(page);
-		const api = page.request;
+		const api = await apiFromPage(page);
 		// Best-effort delete by name (find id first).
 		const list = await api.get('/api/v1/backups/targets').then((r) => r.json());
 		const row = (list as Array<{ id: number; name: string }>).find((r) => r.name === TARGET);
@@ -29,11 +29,9 @@ test.describe('backups', () => {
 	test('create a local backup target via API', async ({ authedPage: page }) => {
 		const api = await apiFromPage(page);
 		const resp = await api.post('/api/v1/backups/targets', {
-			data: {
-				name: TARGET,
-				type: 'local',
-				config: { path: '/tmp/e2e-backups' }
-			}
+			name: TARGET,
+			type: 'local',
+			config: { path: '/tmp/e2e-backups' }
 		});
 		expect([200, 201]).toContain(resp.status());
 	});
@@ -50,9 +48,9 @@ test.describe('alerts', () => {
 
 	test.afterAll(async ({ browser }) => {
 		const page = await browser.newPage();
-		const { login } = await import('./fixtures');
+		const { login, apiFromPage } = await import('./fixtures');
 		await login(page);
-		const api = page.request;
+		const api = await apiFromPage(page);
 		const list = await api.get('/api/v1/alerts/channels').then((r) => r.json());
 		const row = (list as Array<{ id: number; name: string }>).find((r) => r.name === CHANNEL);
 		if (row) await api.delete(`/api/v1/alerts/channels/${row.id}`);
@@ -67,12 +65,10 @@ test.describe('alerts', () => {
 	test('create a webhook notification channel', async ({ authedPage: page }) => {
 		const api = await apiFromPage(page);
 		const resp = await api.post('/api/v1/alerts/channels', {
-			data: {
-				name: CHANNEL,
-				type: 'webhook',
-				config: { url: 'http://example.invalid/hook' },
-				enabled: false
-			}
+			name: CHANNEL,
+			type: 'webhook',
+			config: { url: 'http://example.invalid/hook' },
+			enabled: false
 		});
 		expect([200, 201]).toContain(resp.status());
 	});

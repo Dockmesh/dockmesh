@@ -44,7 +44,8 @@ func (s *TargetStore) List(ctx context.Context) ([]StoredTarget, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []StoredTarget
+	// Non-nil slice so the JSON response is [] not null.
+	out := make([]StoredTarget, 0)
 	for rows.Next() {
 		t, err := scanTarget(rows)
 		if err != nil {

@@ -1,19 +1,19 @@
 // Shared fixtures + helpers for the v1 regression suite.
 //
-// The main value here is the `authed` fixture: a Playwright `page`
-// that has already logged in as the configured admin user. Every spec
-// that needs auth declares `test.use({ storageState: ... })` via the
-// extended test below.
+// The `test` export is an extended Playwright test with an
+// `authedPage` fixture: a Page that has already logged in as the
+// configured admin user. Specs that intentionally exercise the
+// login form itself should use the base `test` from @playwright/test.
 
-import { test as base, expect, type Page, type APIRequestContext } from '@playwright/test';
+import { test as base, expect, type Page, type APIResponse } from '@playwright/test';
 
 export const USER = process.env.DOCKMESH_USER || 'admin';
 export const PASS = process.env.DOCKMESH_PASS || 'admin123#';
 
 /**
- * Log in via the UI and return once the dashboard is loaded. Used by
- * the global setup and by any test that intentionally exercises the
- * login form itself.
+ * Log in via the UI and return once the dashboard is loaded.
+ * Side effect: the page's localStorage now holds the JWT access token,
+ * which `apiFromPage()` reads out to authenticate backend calls.
  */
 export async function login(page: Page) {
 	await page.goto('/login');
@@ -29,13 +29,40 @@ export function uniqueSuffix(): string {
 	return String(Date.now()).slice(-8);
 }
 
-/** Build an API client that reuses the admin's cookie auth from a
- *  logged-in page. Useful for tests that need to prep state quickly
- *  without going through the UI. */
-export async function apiFromPage(page: Page): Promise<APIRequestContext> {
-	// Playwright's `page.request` is already bound to the same storage
-	// context as the page — inherits the login cookie.
-	return page.request;
+/**
+ * Bearer-authed API client bound to a page's session. The web UI
+ * stores the JWT in localStorage['dockmesh_auth'] and attaches it as
+ * a Bearer header via its own fetch wrapper — plain Playwright
+ * `page.request` doesn't pick that up, so we read the token out of
+ * the browser and attach it manually.
+ */
+export interface AuthedAPI {
+	get(path: string): Promise<APIResponse>;
+	post(path: string, body?: unknown): Promise<APIResponse>;
+	put(path: string, body?: unknown): Promise<APIResponse>;
+	delete(path: string): Promise<APIResponse>;
+}
+
+export async function apiFromPage(page: Page): Promise<AuthedAPI> {
+	const token = await page.evaluate(() => {
+		const raw = localStorage.getItem('dockmesh_auth');
+		if (!raw) return null;
+		try {
+			return (JSON.parse(raw) as { accessToken?: string }).accessToken ?? null;
+		} catch {
+			return null;
+		}
+	});
+	if (!token) throw new Error('no access token in localStorage — call login() first');
+	const headers = { Authorization: `Bearer ${token}` };
+	return {
+		get: (path) => page.request.get(path, { headers }),
+		post: (path, body) =>
+			page.request.post(path, body !== undefined ? { headers, data: body } : { headers }),
+		put: (path, body) =>
+			page.request.put(path, body !== undefined ? { headers, data: body } : { headers }),
+		delete: (path) => page.request.delete(path, { headers })
+	};
 }
 
 /** Wait for a stack to reach a given service-count / state via the
@@ -57,7 +84,9 @@ export async function waitForStackRunning(
 		}
 		await page.waitForTimeout(1000);
 	}
-	throw new Error(`stack ${name} did not reach ${expectedServiceCount} running services within ${timeoutMs}ms`);
+	throw new Error(
+		`stack ${name} did not reach ${expectedServiceCount} running services within ${timeoutMs}ms`
+	);
 }
 
 /** Delete a stack + best-effort stop first. Called in afterEach /
