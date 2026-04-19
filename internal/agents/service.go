@@ -15,7 +15,16 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// rpcTracer is the tracer every agent-RPC span is attached to. Pulled
+// from the global provider so a no-op provider (tracing disabled) is a
+// cheap passthrough.
+var rpcTracer = otel.Tracer("dockmesh.agent")
 
 // Agent is the public-facing record returned to the UI.
 type Agent struct {
@@ -92,6 +101,15 @@ func (c *ConnectedAgent) Send(f Frame) {
 // matching ID arrives, the context is cancelled, or the request times
 // out (30s). The frame's ID is overwritten with a fresh UUID.
 func (c *ConnectedAgent) Request(ctx context.Context, f Frame) (*ResponseEnvelope, error) {
+	ctx, span := rpcTracer.Start(ctx, "agent.rpc",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			attribute.String("frame.type", f.Type),
+			attribute.String("agent.id", c.ID),
+			attribute.String("agent.name", c.Name),
+		))
+	defer span.End()
+
 	id := uuid.NewString()
 	f.ID = id
 
@@ -111,6 +129,7 @@ func (c *ConnectedAgent) Request(ctx context.Context, f Frame) (*ResponseEnvelop
 	select {
 	case c.send <- f:
 	case <-ctx.Done():
+		span.SetStatus(codes.Error, ctx.Err().Error())
 		return nil, ctx.Err()
 	}
 
@@ -118,15 +137,21 @@ func (c *ConnectedAgent) Request(ctx context.Context, f Frame) (*ResponseEnvelop
 	case resp := <-ch:
 		var env ResponseEnvelope
 		if err := json.Unmarshal(resp.Payload, &env); err != nil {
+			span.SetStatus(codes.Error, "decode response")
+			span.RecordError(err)
 			return nil, fmt.Errorf("decode response: %w", err)
 		}
 		if !env.OK {
+			span.SetStatus(codes.Error, env.Error)
+			span.SetAttributes(attribute.String("agent.error", env.Error))
 			return &env, fmt.Errorf("agent: %s", env.Error)
 		}
 		return &env, nil
 	case <-ctx.Done():
+		span.SetStatus(codes.Error, ctx.Err().Error())
 		return nil, ctx.Err()
 	case <-time.After(30 * time.Second):
+		span.SetStatus(codes.Error, "timeout")
 		return nil, fmt.Errorf("agent request %q timed out", f.Type)
 	}
 }
