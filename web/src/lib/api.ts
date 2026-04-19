@@ -188,6 +188,13 @@ export interface RollbackResult {
   result: { stack: string; services: Array<{ name: string; container_id: string; image: string }> };
 }
 
+// Stack dependencies (P.12.7)
+export interface StackDependencies {
+  stack_name: string;
+  depends_on: string[];
+  dependents: string[];
+}
+
 // Migration (P.9)
 export interface Migration {
   id: string;
@@ -946,7 +953,15 @@ export const api = {
         `/stacks/${encodeURIComponent(name)}/deployments/${id}/rollback${qs}`,
         { method: 'POST' }
       );
-    }
+    },
+    // Stack dependencies (P.12.7)
+    getDependencies: (name: string) =>
+      request<StackDependencies>(`/stacks/${encodeURIComponent(name)}/dependencies`),
+    setDependencies: (name: string, dependsOn: string[]) =>
+      request<{ stack_name: string; depends_on: string[] }>(
+        `/stacks/${encodeURIComponent(name)}/dependencies`,
+        { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ depends_on: dependsOn }) }
+      )
   },
 
   migrations: {

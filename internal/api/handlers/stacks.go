@@ -12,6 +12,8 @@ import (
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
 )
@@ -133,6 +135,17 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("delete stack deployment row", "stack", name, "err", err)
 		}
 	}
+	// Remove every dependency edge this stack participates in (P.12.7)
+	// so the graph doesn't drag around references to a stack that no
+	// longer exists. Other stacks that depended on this one will now
+	// fail-fast on their next deploy with "dependency X missing on disk",
+	// which is the right signal — the operator has to decide whether
+	// to drop the edge or restore the dep.
+	if h.Dependencies != nil {
+		if err := h.Dependencies.DeleteAll(r.Context(), name); err != nil {
+			slog.Warn("delete stack dependency edges", "stack", name, "err", err)
+		}
+	}
 	// Tell the agent to drop its local copy (P.7 compose-file mirroring).
 	if deployHostID != "" {
 		h.deleteStackFromAgent(r.Context(), deployHostID, name)
@@ -151,9 +164,58 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
-	// Always read the canonical compose+env from the central server's
-	// filesystem (where stacks live). The host abstraction takes the
-	// content as parameters so local + remote share the same call shape.
+
+	// Dependency resolution (P.12.7). For any declared prerequisite
+	// stack whose containers aren't already running, deploy it first
+	// on the same target host. Walks the full transitive graph in
+	// topo order so a deep chain (api -> postgres -> consul) deploys
+	// bottom-up.
+	//
+	// Policy: all prerequisites land on the current target host. We
+	// don't try to honour each dep's own preferred host — that's a
+	// future slice. Homelab users deploy everything locally anyway,
+	// and operators with specific placements can deploy deps manually
+	// first.
+	var depsDeployed []string
+	if h.Dependencies != nil {
+		order, terr := h.Dependencies.TopoOrder(r.Context(), name)
+		if terr != nil {
+			if errors.Is(terr, stacks.ErrDependencyCycle) {
+				writeError(w, http.StatusUnprocessableEntity, terr.Error())
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "resolve dependencies: "+terr.Error())
+			return
+		}
+		// Last element is name itself; everything before is a prerequisite.
+		for _, depName := range order[:len(order)-1] {
+			satisfied, sErr := h.stackRunning(r.Context(), target, depName)
+			if sErr != nil {
+				// Logging is enough — a status read failing on a dep
+				// shouldn't abort a deploy the operator explicitly asked for.
+				slog.Warn("dependency status check", "stack", depName, "err", sErr)
+			}
+			if satisfied {
+				continue
+			}
+			depDetail, dErr := h.Stacks.Get(depName)
+			if dErr != nil {
+				// Operator declared a dep on a stack that isn't on disk yet.
+				// Don't block the main deploy for a mis-declared edge;
+				// surface it clearly instead.
+				writeError(w, http.StatusFailedDependency,
+					"dependency "+depName+" is declared but missing on disk: "+dErr.Error())
+				return
+			}
+			if err := h.deployStackOnce(r, target, depName, depDetail); err != nil {
+				writeError(w, http.StatusFailedDependency,
+					"deploy dependency "+depName+": "+err.Error())
+				return
+			}
+			depsDeployed = append(depsDeployed, depName)
+		}
+	}
+
 	detail, err := h.Stacks.Get(name)
 	if err != nil {
 		writeStackError(w, err)
@@ -188,10 +250,68 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 	// — a sync failure must not block the deploy response.
 	h.syncStackToAgent(r.Context(), target.ID(), name, detail.Compose, detail.Env)
 	h.audit(r, audit.ActionStackDeploy, name, map[string]any{
-		"services": len(res.Services),
-		"host":     target.ID(),
+		"services":       len(res.Services),
+		"host":           target.ID(),
+		"deps_deployed": depsDeployed,
 	})
-	writeJSON(w, http.StatusOK, res)
+	out := map[string]any{
+		"stack":    res.Stack,
+		"services": res.Services,
+		"networks": res.Networks,
+		"volumes":  res.Volumes,
+	}
+	if len(depsDeployed) > 0 {
+		out["dependencies_deployed"] = depsDeployed
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// stackRunning returns true when every service container for the
+// named stack is in state=running on the given host. "Every" covers
+// the realistic homelab case where a stack with no services (not yet
+// deployed) returns zero rows — that's NOT running. P.12.7.
+func (h *Handlers) stackRunning(ctx context.Context, target interface {
+	StackStatus(context.Context, string) ([]compose.StatusEntry, error)
+}, stackName string) (bool, error) {
+	status, err := target.StackStatus(ctx, stackName)
+	if err != nil {
+		return false, err
+	}
+	if len(status) == 0 {
+		return false, nil
+	}
+	for _, s := range status {
+		if s.State != "running" {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// deployStackOnce is the single-stack slice of DeployStack, factored
+// out so the dependency-resolution path can reuse it without the
+// audit / history / sync side-effects for every transitive dep (those
+// still run via a direct DeployStack call later if the operator
+// deploys the dep explicitly). Dependency-driven deploys get one
+// audit entry at the end under the main stack, not one per dep. P.12.7.
+func (h *Handlers) deployStackOnce(r *http.Request, target host.Host, name string, detail *stacks.Detail) error {
+	res, err := target.DeployStack(r.Context(), name, detail.Compose, detail.Env)
+	if err != nil {
+		return err
+	}
+	if h.Deployments != nil {
+		_ = h.Deployments.Set(r.Context(), name, target.ID(), "deployed")
+	}
+	if h.DeployHistory != nil {
+		services := make([]stacks.DeployHistoryService, 0, len(res.Services))
+		for _, s := range res.Services {
+			services = append(services, stacks.DeployHistoryService{Service: s.Name, Image: s.Image})
+		}
+		_, _ = h.DeployHistory.Record(r.Context(), name, target.ID(), detail.Compose,
+			"auto-deployed as dependency", middleware.UserID(r.Context()), services)
+	}
+	h.syncStackToAgent(r.Context(), target.ID(), name, detail.Compose, detail.Env)
+	return nil
 }
 
 func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {

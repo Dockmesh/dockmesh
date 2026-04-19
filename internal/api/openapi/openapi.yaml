@@ -1277,6 +1277,74 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /stacks/{name}/dependencies:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+    get:
+      operationId: stacks.dependencies_get
+      tags: [stacks]
+      summary: Direct deps + reverse deps for this stack (P.12.7)
+      description: |
+        `depends_on` is what this stack needs up before it can deploy.
+        `dependents` is what will break if this stack goes down.
+      responses:
+        "200":
+          description: Dependency state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stack_name, depends_on, dependents]
+                properties:
+                  stack_name: { type: string }
+                  depends_on:
+                    type: array
+                    items: { type: string }
+                  dependents:
+                    type: array
+                    items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      operationId: stacks.dependencies_set
+      tags: [stacks]
+      summary: Replace the dependency list for this stack (P.12.7)
+      description: |
+        Replaces the full `depends_on` set. Cycle detection runs against
+        the post-write graph — a request that would close a loop returns
+        422. Unknown stack names are allowed (you can declare edges before
+        the depending stacks exist); they fail at deploy time, not at
+        declaration time.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [depends_on]
+              properties:
+                depends_on:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: Updated dependency list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stack_name: { type: string }
+                  depends_on:
+                    type: array
+                    items: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422":
+          description: Request would create a dependency cycle.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /stacks/{name}/stop:
     post:
       operationId: stacks.stop
