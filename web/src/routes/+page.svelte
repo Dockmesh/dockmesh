@@ -631,7 +631,7 @@
         {#snippet pill(key: 'all' | 'running' | 'stopped' | 'unhealthy', label: string, n: number)}
           <button
             class="px-2.5 py-1 rounded-full border transition-colors {stackFilter === key
-              ? 'bg-[var(--surface)] border-[var(--border-strong)] text-[var(--fg)]'
+              ? 'bg-[color-mix(in_srgb,var(--color-brand-500)_12%,transparent)] border-[color-mix(in_srgb,var(--color-brand-500)_40%,transparent)] text-[var(--color-brand-300)]'
               : 'border-[var(--border)] text-[var(--fg-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]'}"
             onclick={() => (stackFilter = key)}
           >
