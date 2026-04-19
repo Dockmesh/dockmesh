@@ -304,7 +304,9 @@ func (s *Service) List(ctx context.Context) ([]Token, error) {
 	}
 	defer rows.Close()
 
-	var out []Token
+	// Non-nil slice so the JSON response is [] not null — the UI does
+	// .length checks directly on the result.
+	out := make([]Token, 0)
 	for rows.Next() {
 		t, err := scanRowListing(rows)
 		if err != nil {

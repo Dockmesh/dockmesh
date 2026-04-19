@@ -44,7 +44,9 @@ func (s *Store) List(ctx context.Context) ([]Var, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Var
+	// Non-nil slice so the JSON response is [] not null — keeps the UI
+	// from doing .length on null.
+	out := make([]Var, 0)
 	for rows.Next() {
 		var v Var
 		var enc int

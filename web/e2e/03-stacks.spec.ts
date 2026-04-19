@@ -36,9 +36,7 @@ test.describe('stacks — full lifecycle', () => {
 
 	test('create via API (faster than clicking the modal every run)', async ({ authedPage: page }) => {
 		const api = await apiFromPage(page);
-		const resp = await api.post('/api/v1/stacks', {
-			data: { name: STACK, compose: COMPOSE, env: '' }
-		});
+		const resp = await api.post('/api/v1/stacks', { name: STACK, compose: COMPOSE, env: '' });
 		expect(resp.ok()).toBeTruthy();
 	});
 
@@ -70,10 +68,8 @@ test.describe('stacks — full lifecycle', () => {
 		// roll back to the first.
 		const api = await apiFromPage(page);
 		await api.put(`/api/v1/stacks/${STACK}`, {
-			data: {
-				compose: COMPOSE.replace('nginx:alpine', 'nginx:1.27-alpine'),
-				env: ''
-			}
+			compose: COMPOSE.replace('nginx:alpine', 'nginx:1.27-alpine'),
+			env: ''
 		});
 		await page.goto(`/stacks/${STACK}`);
 		await page.getByRole('button', { name: 'Deploy' }).click();
