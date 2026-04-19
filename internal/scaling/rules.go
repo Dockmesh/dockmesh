@@ -83,8 +83,9 @@ func validateThreshold(name string, t ThresholdConfig) error {
 // MetaFile represents the full .dockmesh.meta.json content. Other
 // slices (migration hooks, etc.) add their own fields here.
 type MetaFile struct {
-	Scaling   *ScalingConfig `json:"scaling,omitempty"`
-	Migration json.RawMessage `json:"migration,omitempty"` // preserved for future P.9
+	Scaling            *ScalingConfig  `json:"scaling,omitempty"`
+	Migration          json.RawMessage `json:"migration,omitempty"` // preserved for future P.9
+	ActiveEnvironment  string          `json:"active_environment,omitempty"` // P.12.8 — name of the compose.<name>.yaml overlay to apply by default
 }
 
 // LoadMeta reads and parses the .dockmesh.meta.json from a stack dir.

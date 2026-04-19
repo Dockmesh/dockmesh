@@ -221,7 +221,21 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		writeStackError(w, err)
 		return
 	}
-	res, err := target.DeployStack(r.Context(), name, detail.Compose, detail.Env)
+	// Resolve environment override (P.12.8). Query param wins; falls
+	// back to .dockmesh.meta.json's active_environment; falls back to
+	// no override. The empty-string fallback makes this a no-op for
+	// stacks that don't use the overlay pattern at all.
+	composeYAML := detail.Compose
+	envOverride, mergedYAML, envErr := h.resolveEnvOverride(r, name, detail.Compose, detail.Env)
+	if envErr != nil {
+		writeError(w, http.StatusUnprocessableEntity, envErr.Error())
+		return
+	}
+	if mergedYAML != "" {
+		composeYAML = mergedYAML
+	}
+
+	res, err := target.DeployStack(r.Context(), name, composeYAML, detail.Env)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -241,7 +255,14 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		for _, s := range res.Services {
 			services = append(services, stacks.DeployHistoryService{Service: s.Name, Image: s.Image})
 		}
-		if _, err := h.DeployHistory.Record(r.Context(), name, target.ID(), detail.Compose, "", middleware.UserID(r.Context()), services); err != nil {
+		// History stores the MERGED compose (what was actually deployed)
+		// so rollback can reproduce the deploy without needing the
+		// override file to still be present at the same contents.
+		note := ""
+		if envOverride != "" {
+			note = "env: " + envOverride
+		}
+		if _, err := h.DeployHistory.Record(r.Context(), name, target.ID(), composeYAML, note, middleware.UserID(r.Context()), services); err != nil {
 			slog.Warn("record deploy history", "stack", name, "err", err)
 		}
 	}

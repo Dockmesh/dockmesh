@@ -1,13 +1,13 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { api, ApiError, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies } from '$lib/api';
+  import { api, ApiError, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments } from '$lib/api';
   import { Button, Card, Badge, Skeleton, Modal } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import { EventStream } from '$lib/events';
-  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2, GitBranch, Link as LinkIcon, Unlink, History, RotateCcw, FileText, User, Network, Plus, X } from 'lucide-svelte';
+  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2, GitBranch, Link as LinkIcon, Unlink, History, RotateCcw, FileText, User, Network, Plus, X, Layers } from 'lucide-svelte';
   import type { StackGitSource, StackGitSourceInput } from '$lib/api';
 
   import { isAllHosts } from '$lib/stores/host.svelte';
@@ -166,6 +166,31 @@
 
   function depRemove(entry: string) {
     depsEditList = depsEditList.filter((d) => d !== entry);
+  }
+
+  // Environments (P.12.8)
+  let envs = $state<StackEnvironments | null>(null);
+  let envBusy = $state(false);
+
+  async function loadEnvs() {
+    try {
+      envs = await api.stacks.getEnvironments(name);
+    } catch {
+      envs = null;
+    }
+  }
+
+  async function setActiveEnv(active: string) {
+    envBusy = true;
+    try {
+      await api.stacks.setActiveEnvironment(name, active);
+      await loadEnvs();
+      toast.success(active ? `Active environment: ${active}` : 'Environment cleared');
+    } catch (err) {
+      toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      envBusy = false;
+    }
   }
 
   async function saveDeps() {
@@ -418,6 +443,7 @@
     dirty = false;
     loadGitSource();
     loadDeps();
+    loadEnvs();
     try {
       const detail = await api.stacks.get(name);
       compose = detail.compose;
@@ -747,6 +773,49 @@
             {/if}
           </div>
         {/each}
+      </div>
+    </Card>
+  {/if}
+
+  <!-- Environment overrides (P.12.8) -->
+  {#if envs && envs.available.length > 0}
+    <Card class="p-4">
+      <div class="flex items-start gap-3">
+        <Layers class="w-4 h-4 text-[var(--fg-muted)] mt-0.5 shrink-0" />
+        <div class="flex-1 min-w-0 space-y-2">
+          <div class="flex items-center justify-between gap-2 flex-wrap">
+            <div class="text-xs font-medium uppercase tracking-wider text-[var(--fg-muted)]">Environment</div>
+            {#if envs.active}
+              <Badge variant="info">{envs.active}</Badge>
+            {:else}
+              <Badge variant="default">base</Badge>
+            {/if}
+          </div>
+          <div class="text-xs text-[var(--fg-muted)]">
+            This stack has {envs.available.length} overlay{envs.available.length > 1 ? 's' : ''} next to <span class="font-mono">compose.yaml</span>.
+            {#if envs.active}
+              Deploys merge <span class="font-mono">compose.{envs.active}.yaml</span> on top.
+            {:else}
+              Deploys use the base <span class="font-mono">compose.yaml</span> as-is.
+            {/if}
+          </div>
+          {#if canWrite}
+            <div class="flex items-center gap-1.5 flex-wrap pt-1">
+              <button
+                class="px-2 py-0.5 rounded border text-xs {envs.active === '' ? 'border-[var(--color-brand-500)] bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)]' : 'border-[var(--border)] hover:bg-[var(--surface-hover)]'}"
+                onclick={() => setActiveEnv('')}
+                disabled={envBusy}
+              >base</button>
+              {#each envs.available as e}
+                <button
+                  class="px-2 py-0.5 rounded border text-xs font-mono {envs.active === e ? 'border-[var(--color-brand-500)] bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)]' : 'border-[var(--border)] hover:bg-[var(--surface-hover)]'}"
+                  onclick={() => setActiveEnv(e)}
+                  disabled={envBusy}
+                >{e}</button>
+              {/each}
+            </div>
+          {/if}
+        </div>
       </div>
     </Card>
   {/if}
