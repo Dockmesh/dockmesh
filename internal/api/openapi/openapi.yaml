@@ -1195,6 +1195,88 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /stacks/{name}/deployments:
+    get:
+      operationId: stacks.deployments_list
+      tags: [stacks]
+      summary: Past deploys of this stack (P.12.6)
+      description: |
+        Newest first. Each successful deploy creates one row. Compose YAML
+        is NOT included in list responses — fetch a specific entry via
+        `GET /deployments/{id}` to see the full snapshot.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: History entries (newest first).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DeployHistoryEntry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /stacks/{name}/deployments/{id}:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+      - in: path
+        name: id
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: stacks.deployment_get
+      tags: [stacks]
+      summary: Full snapshot of a single past deploy, including compose YAML
+      responses:
+        "200":
+          description: History entry with compose_yaml populated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeployHistoryEntry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /stacks/{name}/deployments/{id}/rollback:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+      - $ref: "#/components/parameters/HostQuery"
+      - in: path
+        name: id
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: stacks.deployment_rollback
+      tags: [stacks]
+      summary: Roll back the stack to a specific past deploy (P.12.6)
+      description: |
+        Overwrites `compose.yaml` with the snapshot from the given history
+        row and re-runs Deploy. Env is deliberately kept as-is so current
+        secrets aren't clobbered. The rollback itself becomes a new
+        history row tagged "rollback to #ID".
+      responses:
+        "200":
+          description: Rollback completed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rolled_back_to, result]
+                properties:
+                  rolled_back_to:   { type: integer, format: int64 }
+                  deployed_at_orig: { type: string, format: date-time }
+                  result:           { $ref: "#/components/schemas/DeployResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500":
+          description: Redeploy failed — the compose.yaml has already been swapped, inspect and retry or roll forward.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /stacks/{name}/stop:
     post:
       operationId: stacks.stop
@@ -4808,6 +4890,30 @@ components:
                     type: string
                     enum: [ok, warn, fail]
                   message: { type: string }
+
+    DeployHistoryEntry:
+      type: object
+      required: [id, stack_name, host_id, deployed_at]
+      description: |
+        One past deploy snapshot (P.12.6). `compose_yaml` is only populated
+        on the single-entry GET; list responses omit it to stay small.
+      properties:
+        id:              { type: integer, format: int64 }
+        stack_name:      { type: string }
+        host_id:         { type: string }
+        compose_yaml:    { type: string }
+        services:
+          type: array
+          items:
+            type: object
+            required: [service, image]
+            properties:
+              service: { type: string }
+              image:   { type: string }
+        note:             { type: string }
+        deployed_by:      { type: string, description: users.id (UUID-style). }
+        deployed_by_name: { type: string, description: Email captured at query time for display. }
+        deployed_at:      { type: string, format: date-time }
 
     RollingUpdateRequest:
       type: object
