@@ -212,15 +212,42 @@
   }
 
   // ---------- Logs ----------
+  // Auto-reconnect state. `userClosed` distinguishes an intentional
+  // disconnect (leaving the tab, clicking Disconnect) from a server-side
+  // close (dockmesh restart, agent reconnect). Only the latter triggers
+  // the backoff retry — otherwise leaving the page would kick off a
+  // reconnect loop against a torn-down component.
+  let logsUserClosed = false;
+  let logsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let logsReconnectAttempt = 0;
+  let statsUserClosed = false;
+  let statsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let statsReconnectAttempt = 0;
+
+  // Exponential backoff capped at 30s so a long outage doesn't spin
+  // the browser, but a brief dockmesh restart reconnects in ~1s.
+  function backoffMs(attempt: number): number {
+    return Math.min(30_000, 500 * 2 ** Math.min(attempt, 6));
+  }
+
   async function connectLogs() {
     disconnectLogs();
     logs = [];
+    logsUserClosed = false;
+    logsReconnectAttempt = 0;
+    await openLogsSocket();
+  }
+
+  async function openLogsSocket() {
     try {
       const { ticket } = await api.ws.ticket();
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const hostQs = isRemote ? `&host=${encodeURIComponent(targetHost)}` : '';
       ws = new WebSocket(`${proto}//${location.host}/api/v1/ws/logs/${id}?ticket=${ticket}&tail=200${hostQs}`);
-      ws.onopen = () => { wsConnected = true; };
+      ws.onopen = () => {
+        wsConnected = true;
+        logsReconnectAttempt = 0;
+      };
       ws.onmessage = async (ev) => {
         logs = [...logs, ev.data as string];
         if (logs.length > 5000) logs = logs.slice(-5000);
@@ -229,13 +256,34 @@
           if (logContainer) logContainer.scrollTop = logContainer.scrollHeight;
         }
       };
-      ws.onclose = () => { wsConnected = false; };
-      ws.onerror = () => { wsConnected = false; };
+      ws.onclose = () => {
+        wsConnected = false;
+        scheduleLogsReconnect();
+      };
+      ws.onerror = () => {
+        wsConnected = false;
+      };
     } catch (err) {
-      toast.error('Logs connect failed', err instanceof ApiError ? err.message : undefined);
+      if (logsReconnectAttempt === 0) {
+        toast.error('Logs connect failed', err instanceof ApiError ? err.message : undefined);
+      }
+      scheduleLogsReconnect();
     }
   }
+
+  function scheduleLogsReconnect() {
+    if (logsUserClosed || tab !== 'logs') return;
+    if (logsReconnectTimer) return;
+    const delay = backoffMs(logsReconnectAttempt++);
+    logsReconnectTimer = setTimeout(() => {
+      logsReconnectTimer = null;
+      if (!logsUserClosed && tab === 'logs') openLogsSocket();
+    }, delay);
+  }
+
   function disconnectLogs() {
+    logsUserClosed = true;
+    if (logsReconnectTimer) { clearTimeout(logsReconnectTimer); logsReconnectTimer = null; }
     if (ws) { ws.close(); ws = null; }
     wsConnected = false;
   }
@@ -244,12 +292,21 @@
   async function connectStats() {
     disconnectStats();
     statsHistory = [];
+    statsUserClosed = false;
+    statsReconnectAttempt = 0;
+    await openStatsSocket();
+  }
+
+  async function openStatsSocket() {
     try {
       const { ticket } = await api.ws.ticket();
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const hostQs = isRemote ? `&host=${encodeURIComponent(targetHost)}` : '';
       statsWs = new WebSocket(`${proto}//${location.host}/api/v1/ws/stats/${id}?ticket=${ticket}${hostQs}`);
-      statsWs.onopen = () => { statsConnected = true; };
+      statsWs.onopen = () => {
+        statsConnected = true;
+        statsReconnectAttempt = 0;
+      };
       statsWs.onmessage = (ev) => {
         try {
           const s = JSON.parse(ev.data);
@@ -258,10 +315,28 @@
           statsHistory = [...statsHistory, s].slice(-60);
         } catch { /* ignore */ }
       };
-      statsWs.onclose = () => { statsConnected = false; };
-    } catch { /* ignore */ }
+      statsWs.onclose = () => {
+        statsConnected = false;
+        scheduleStatsReconnect();
+      };
+    } catch {
+      scheduleStatsReconnect();
+    }
   }
+
+  function scheduleStatsReconnect() {
+    if (statsUserClosed || tab !== 'overview') return;
+    if (statsReconnectTimer) return;
+    const delay = backoffMs(statsReconnectAttempt++);
+    statsReconnectTimer = setTimeout(() => {
+      statsReconnectTimer = null;
+      if (!statsUserClosed && tab === 'overview') openStatsSocket();
+    }, delay);
+  }
+
   function disconnectStats() {
+    statsUserClosed = true;
+    if (statsReconnectTimer) { clearTimeout(statsReconnectTimer); statsReconnectTimer = null; }
     if (statsWs) { statsWs.close(); statsWs = null; }
     statsConnected = false;
   }
