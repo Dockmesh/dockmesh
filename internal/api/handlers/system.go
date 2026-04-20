@@ -284,9 +284,13 @@ func (h *Handlers) SystemHealth(w http.ResponseWriter, r *http.Request) {
 		checks = append(checks, c)
 	}
 
-	// Aggregate worst status: fail > warn > off > ok.
-	rank := map[string]int{"ok": 0, "off": 1, "warn": 2, "fail": 3}
-	overall := "ok"
+	// Aggregate worst status: fail > warn > ok > off.
+	// "off" ranks BELOW "ok" on purpose — a feature being disabled by
+	// choice (no agents enrolled, scanner off, …) is not a warning;
+	// the dot should stay calm-green so long as every ENABLED
+	// subsystem is healthy. If nothing is enabled, overall is "off".
+	rank := map[string]int{"off": 0, "ok": 1, "warn": 2, "fail": 3}
+	overall := "off"
 	for _, c := range checks {
 		if rank[c.Status] > rank[overall] {
 			overall = c.Status
