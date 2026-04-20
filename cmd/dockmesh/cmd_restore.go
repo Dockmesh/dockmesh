@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -51,7 +52,7 @@ func runRestore(args []string) error {
 	}
 	defer src.Close()
 
-	counts, err := restore.Extract(nil, src, cfg, restore.Options{Force: *force, DryRun: *dryRun})
+	counts, err := restore.Extract(context.Background(), src, cfg, restore.Options{Force: *force, DryRun: *dryRun})
 	if err != nil {
 		if errors.Is(err, restore.ErrEncryptedBackup) {
 			return err
