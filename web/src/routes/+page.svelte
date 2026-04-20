@@ -3,7 +3,7 @@
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import { autoRefresh } from '$lib/autorefresh';
-  import { Skeleton, Badge } from '$lib/components/ui';
+  import { Skeleton, Badge, AnimatedNumber } from '$lib/components/ui';
   import {
     Box,
     Cpu,
@@ -396,7 +396,7 @@
         <Skeleton class="mt-2" width="100%" height="0.25rem" />
       {:else}
         <div class="mt-1.5 text-xl font-semibold font-mono tabular-nums leading-tight" style:color={textColor(sysMetrics.cpu_percent)}>
-          {sysMetrics.cpu_percent.toFixed(0)}%
+          <AnimatedNumber value={sysMetrics.cpu_percent} format={(n) => n.toFixed(0) + '%'} />
         </div>
         <div class="mt-2 h-1 rounded-full overflow-hidden bg-[var(--surface-hover)]">
           <div
@@ -406,7 +406,7 @@
           ></div>
         </div>
         <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)] tabular-nums">
-          {sysMetrics.cpu_used_cores.toFixed(2)} / {sysMetrics.cpu_cores.toFixed(2)} cores
+          <AnimatedNumber value={sysMetrics.cpu_used_cores} format={(n) => n.toFixed(2)} /> / {sysMetrics.cpu_cores.toFixed(2)} cores
         </div>
       {/if}
     </div>
@@ -431,7 +431,7 @@
         <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)]">unavailable on this host</div>
       {:else}
         <div class="mt-1.5 text-xl font-semibold font-mono tabular-nums leading-tight" style:color={textColor(sysMetrics.mem_percent)}>
-          {sysMetrics.mem_percent.toFixed(0)}%
+          <AnimatedNumber value={sysMetrics.mem_percent} format={(n) => n.toFixed(0) + '%'} />
         </div>
         <div class="mt-2 h-1 rounded-full overflow-hidden bg-[var(--surface-hover)]">
           <div
@@ -441,7 +441,7 @@
           ></div>
         </div>
         <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)] tabular-nums">
-          {fmtBytes(sysMetrics.mem_used)} / {fmtBytes(sysMetrics.mem_total)}
+          <AnimatedNumber value={sysMetrics.mem_used} format={fmtBytes} /> / {fmtBytes(sysMetrics.mem_total)}
         </div>
       {/if}
     </div>
@@ -468,7 +468,7 @@
         <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)]">unavailable on this host</div>
       {:else}
         <div class="mt-1.5 text-xl font-semibold font-mono tabular-nums leading-tight" style:color={textColor(sysMetrics.disk_percent)}>
-          {sysMetrics.disk_percent.toFixed(0)}%
+          <AnimatedNumber value={sysMetrics.disk_percent} format={(n) => n.toFixed(0) + '%'} />
         </div>
         <div class="mt-2 h-1 rounded-full overflow-hidden bg-[var(--surface-hover)]">
           <div
@@ -478,7 +478,7 @@
           ></div>
         </div>
         <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)] tabular-nums">
-          {fmtBytes(sysMetrics.disk_used)} / {fmtBytes(sysMetrics.disk_total)}
+          <AnimatedNumber value={sysMetrics.disk_used} format={fmtBytes} /> / {fmtBytes(sysMetrics.disk_total)}
         </div>
       {/if}
     </div>
@@ -501,23 +501,25 @@
         <Skeleton class="mt-3" width="100%" height="0.75rem" />
       {:else}
         <div class="mt-1.5 text-xl font-semibold leading-tight">
-          <span class="font-mono tabular-nums">{containerStats.running}</span><span class="text-sm font-normal text-[var(--fg-subtle)]"> / {containerStats.total}</span>
+          <span class="font-mono tabular-nums">
+            <AnimatedNumber value={containerStats.running} format={(n) => Math.round(n).toString()} />
+          </span><span class="text-sm font-normal text-[var(--fg-subtle)]"> / <AnimatedNumber value={containerStats.total} format={(n) => Math.round(n).toString()} /></span>
         </div>
         <div class="mt-2.5 flex items-center gap-3 text-[11px]">
           <span class="flex items-center gap-1 text-[var(--fg-muted)]">
             <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-success-500)]"></span>
-            {containerStats.running} running
+            <AnimatedNumber value={containerStats.running} format={(n) => Math.round(n).toString()} /> running
           </span>
           {#if containerStats.stopped > 0}
             <span class="flex items-center gap-1 text-[var(--fg-muted)]">
               <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-danger-500)]"></span>
-              {containerStats.stopped} stopped
+              <AnimatedNumber value={containerStats.stopped} format={(n) => Math.round(n).toString()} /> stopped
             </span>
           {/if}
           {#if containerStats.unhealthy > 0}
             <span class="flex items-center gap-1 text-[var(--fg-muted)]">
               <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-warning-500)]"></span>
-              {containerStats.unhealthy} unhealthy
+              <AnimatedNumber value={containerStats.unhealthy} format={(n) => Math.round(n).toString()} /> unhealthy
             </span>
           {/if}
         </div>

@@ -8,3 +8,4 @@ export { default as Toaster } from './Toaster.svelte';
 export { default as EmptyState } from './EmptyState.svelte';
 export { default as ConfirmDialog } from './ConfirmDialog.svelte';
 export { default as HealthDot } from './HealthDot.svelte';
+export { default as AnimatedNumber } from './AnimatedNumber.svelte';
