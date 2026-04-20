@@ -280,8 +280,40 @@
     return 'var(--color-danger-400)';
   }
 
+  // Dashboard's stack grid is a preview, NOT the canonical list — at
+  // 100+ stacks the 3-column card view becomes a wall of noise and
+  // pushes Recent Activity / Quick Actions off-screen. Cap the grid
+  // and prioritise by "what's likely to need attention":
+  //   1. unhealthy/partial stacks first (something's wrong)
+  //   2. running stacks next (operational surface)
+  //   3. stopped stacks last (cold storage)
+  // The full list lives on /stacks which has search + sort.
+  const STACK_PREVIEW_LIMIT = 12;
+  const stackRank: Record<string, number> = {
+    unhealthy: 0,
+    partial: 0,
+    running: 1,
+    stopped: 2
+  };
+  const rankedStacks = $derived(
+    [...stackCards].sort((a, b) => {
+      const ra = stackRank[a.state] ?? 3;
+      const rb = stackRank[b.state] ?? 3;
+      if (ra !== rb) return ra - rb;
+      return a.name.localeCompare(b.name);
+    })
+  );
   const filteredStacks = $derived(
-    stackFilter === 'all' ? stackCards : stackCards.filter((s) => s.state === stackFilter)
+    (stackFilter === 'all' ? rankedStacks : rankedStacks.filter((s) => s.state === stackFilter))
+      .slice(0, STACK_PREVIEW_LIMIT)
+  );
+  const hiddenStackCount = $derived(
+    Math.max(
+      0,
+      (stackFilter === 'all'
+        ? stackCards.length
+        : stackCards.filter((s) => s.state === stackFilter).length) - STACK_PREVIEW_LIMIT
+    )
   );
   const stackCounts = $derived({
     all: stackCards.length,
@@ -724,6 +756,16 @@
           </a>
         {/each}
       </div>
+      {#if hiddenStackCount > 0}
+        <!-- Overflow pointer: "+N more" link to the real list page.
+             Avoids the 3-column card wall that the dashboard becomes
+             once an install crosses ~30 stacks. -->
+        <div class="mt-3 text-center text-xs text-[var(--fg-muted)]">
+          <a href="/stacks" class="hover:text-[var(--color-brand-400)] hover:underline">
+            +{hiddenStackCount} more — view all on the Stacks page →
+          </a>
+        </div>
+      {/if}
     {/if}
   </div>
 
