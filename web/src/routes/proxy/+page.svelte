@@ -224,17 +224,21 @@
     {#if loading}
       <Skeleton width="60%" height="1.25rem" />
     {:else if !status?.enabled}
-      <div class="flex items-start gap-3">
-        <div class="w-10 h-10 rounded-lg bg-[var(--surface)] border border-[var(--border)] flex items-center justify-center shrink-0">
-          <PowerOff class="w-5 h-5 text-[var(--fg-muted)]" />
+      <div class="flex items-start justify-between gap-4 flex-wrap">
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 rounded-lg bg-[var(--surface)] border border-[var(--border)] flex items-center justify-center shrink-0">
+            <PowerOff class="w-5 h-5 text-[var(--fg-muted)]" />
+          </div>
+          <div>
+            <h3 class="font-semibold">Proxy disabled</h3>
+            <p class="text-xs text-[var(--fg-muted)] mt-1 max-w-prose">
+              Enabling pulls the Caddy image (if missing), starts a managed container,
+              and applies every route below. Toggle on also pins the setting in
+              <a href="/settings?tab=system" class="text-[var(--color-brand-400)] hover:underline">Settings → System</a>.
+            </p>
+          </div>
         </div>
-        <div>
-          <h3 class="font-semibold">Proxy disabled</h3>
-          <p class="text-xs text-[var(--fg-muted)] mt-1 max-w-prose">
-            Enable the reverse proxy in <a href="/settings?tab=system" class="text-[var(--color-brand-400)] hover:underline">Settings → System</a>
-            to let Dockmesh manage a Caddy container for automatic HTTPS.
-          </p>
-        </div>
+        <Button variant="primary" size="sm" loading={busy} onclick={enable}>Enable proxy</Button>
       </div>
     {:else}
       <div class="flex items-start justify-between flex-wrap gap-4">
