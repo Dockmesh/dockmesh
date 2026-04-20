@@ -76,7 +76,7 @@
   </button>
 
   {#if open}
-    <div class="absolute right-0 mt-2 z-40 w-72 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg py-2 text-sm">
+    <div class="absolute bottom-full right-0 mb-2 z-40 w-72 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg py-2 text-sm">
       <div class="px-3 py-1.5 border-b border-[var(--border)]">
         <div class="font-medium {health ? statusText[health.overall] : ''}">
           {health ? statusLabel[health.overall] : 'Loading…'}
