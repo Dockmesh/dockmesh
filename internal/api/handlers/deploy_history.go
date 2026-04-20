@@ -119,7 +119,7 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Re-deploy with the restored compose.
-	res, err := target.DeployStack(r.Context(), name, entry.ComposeYAML, current.Env)
+	res, err := target.DeployStack(r.Context(), name, entry.ComposeYAML, h.mergeGlobalEnv(r.Context(), current.Env))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "redeploy failed: "+err.Error()+
 			". The stack's compose.yaml has already been overwritten with the rollback target; inspect the stack and either retry or roll forward.")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -19,6 +20,32 @@ import (
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
 )
+
+// mergeGlobalEnv prepends the global env vars to the stack's .env so
+// compose substitution resolves ${KEY} against them, while a stack-level
+// .env line with the same KEY still wins (the stack's KEY= lines come
+// after globals in the resulting string and later definitions
+// override earlier ones in .env resolution).
+func (h *Handlers) mergeGlobalEnv(ctx context.Context, stackEnv string) string {
+	if h.GlobalEnv == nil {
+		return stackEnv
+	}
+	vars, err := h.GlobalEnv.List(ctx)
+	if err != nil || len(vars) == 0 {
+		return stackEnv
+	}
+	var b strings.Builder
+	for _, v := range vars {
+		fmt.Fprintf(&b, "%s=%s\n", v.Key, v.Value)
+	}
+	if stackEnv != "" {
+		if !strings.HasSuffix(stackEnv, "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString(stackEnv)
+	}
+	return b.String()
+}
 
 type stackRequest struct {
 	Name    string `json:"name"`
@@ -237,7 +264,8 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		composeYAML = mergedYAML
 	}
 
-	res, err := target.DeployStack(r.Context(), name, composeYAML, detail.Env)
+	mergedEnv := h.mergeGlobalEnv(r.Context(), detail.Env)
+	res, err := target.DeployStack(r.Context(), name, composeYAML, mergedEnv)
 	if err != nil {
 		writeError(w, deployErrorStatus(err), friendlyDeployError(err))
 		return
@@ -363,7 +391,8 @@ func (h *Handlers) stackRunning(ctx context.Context, target interface {
 // deploys the dep explicitly). Dependency-driven deploys get one
 // audit entry at the end under the main stack, not one per dep. P.12.7.
 func (h *Handlers) deployStackOnce(r *http.Request, target host.Host, name string, detail *stacks.Detail) error {
-	res, err := target.DeployStack(r.Context(), name, detail.Compose, detail.Env)
+	mergedEnv := h.mergeGlobalEnv(r.Context(), detail.Env)
+	res, err := target.DeployStack(r.Context(), name, detail.Compose, mergedEnv)
 	if err != nil {
 		return err
 	}
