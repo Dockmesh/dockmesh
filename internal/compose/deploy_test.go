@@ -100,8 +100,8 @@ func TestServiceToContainerConfig(t *testing.T) {
 	if !ok {
 		t.Fatalf("network endpoint missing: %v", netCfg.EndpointsConfig)
 	}
-	if len(ep.Aliases) != 1 || ep.Aliases[0] != "api" {
-		t.Errorf("aliases = %v", ep.Aliases)
+	if len(ep.Aliases) != 2 || ep.Aliases[0] != "web" || ep.Aliases[1] != "api" {
+		t.Errorf("aliases = %v (want [web api] — service name + user alias)", ep.Aliases)
 	}
 }
 
