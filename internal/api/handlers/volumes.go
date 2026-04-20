@@ -89,7 +89,9 @@ func (h *Handlers) CreateVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	vol, err := h.Docker.CreateVolume(r.Context(), req.Name, req.Driver, req.Labels)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		// Reuse the image-error classifier — docker returns similar
+		// "plugin not found" strings for volume driver lookup failures.
+		writeError(w, imageErrorStatus(err), err.Error())
 		return
 	}
 	h.audit(r, audit.ActionVolumeCreate, req.Name, nil)
@@ -104,7 +106,7 @@ func (h *Handlers) RemoveVolume(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	force := r.URL.Query().Get("force") == "true"
 	if err := h.Docker.RemoveVolume(r.Context(), name, force); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, imageErrorStatus(err), err.Error())
 		return
 	}
 	h.audit(r, audit.ActionVolumeRemove, name, nil)

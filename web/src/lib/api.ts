@@ -1243,8 +1243,10 @@ export const api = {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
       return request<any>(`/volumes/${encodeURIComponent(name)}${qs}`);
     },
-    create: (name: string, driver?: string) =>
-      request<any>('/volumes', { method: 'POST', body: JSON.stringify({ name, driver }) }),
+    create: (name: string, driver?: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<any>(`/volumes${qs}`, { method: 'POST', body: JSON.stringify({ name, driver }) });
+    },
     remove: (name: string, force = false) =>
       request<void>(`/volumes/${encodeURIComponent(name)}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
     prune: () => request<any>('/volumes/prune', { method: 'POST' }),

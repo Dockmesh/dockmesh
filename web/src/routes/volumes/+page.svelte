@@ -40,6 +40,7 @@
   let showCreate = $state(false);
   let newName = $state('');
   let newDriver = $state('local');
+  let newHost = $state('local');
   let creating = $state(false);
 
   const isAll = $derived(hosts.isAll);
@@ -115,10 +116,11 @@
     e.preventDefault();
     creating = true;
     try {
-      await api.volumes.create(newName, newDriver);
+      await api.volumes.create(newName, newDriver, newHost);
       toast.success('Volume created', newName);
       showCreate = false;
       newName = '';
+      newHost = hosts.id && hosts.id !== 'all' ? hosts.id : 'local';
       await load();
     } catch (err) {
       toast.error('Create failed', err instanceof ApiError ? err.message : undefined);
@@ -318,7 +320,27 @@
 <Modal bind:open={showCreate} title="Create volume" maxWidth="max-w-sm">
   <form onsubmit={createVolume} id="create-vol-form" class="space-y-3">
     <Input label="Name" placeholder="my-volume" bind:value={newName} disabled={creating} />
-    <Input label="Driver" bind:value={newDriver} disabled={creating} hint="Usually 'local'" />
+    <div>
+      <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="vol-host">Host</label>
+      <select id="vol-host" class="dm-input" bind:value={newHost} disabled={creating}>
+        <option value="local">Local (central daemon)</option>
+        {#each hosts.available.filter((h) => h.id !== 'local' && h.kind !== 'all') as h}
+          <option value={h.id} disabled={h.status !== 'online'}>
+            {h.name}{h.status !== 'online' ? ` (${h.status})` : ''}
+          </option>
+        {/each}
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="vol-driver">Driver</label>
+      <select id="vol-driver" class="dm-input" bind:value={newDriver} disabled={creating}>
+        <option value="local">local (default)</option>
+        <option value="nfs">nfs</option>
+        <option value="cifs">cifs</option>
+        <option value="tmpfs">tmpfs</option>
+      </select>
+      <p class="text-xs text-[var(--fg-muted)] mt-1">Docker volume driver. Plugin drivers (nfs, cifs) must be installed on the target host.</p>
+    </div>
   </form>
   {#snippet footer()}
     <Button variant="secondary" onclick={() => (showCreate = false)}>Cancel</Button>
