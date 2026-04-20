@@ -20,6 +20,38 @@
   let targetHost = $state('local');
   let values = $state<Record<string, string>>({});
   let deployErr = $state<string | null>(null);
+  // host-ports already bound on the target host — used to warn inline
+  // when a port-shaped parameter conflicts with an existing container.
+  let usedPorts = $state<Set<number>>(new Set());
+
+  // Heuristic: parameters whose name contains "port" are treated as
+  // host-port inputs. Close enough for the six built-in templates and
+  // typical community templates.
+  function isPortParam(p: StackTemplateParam): boolean {
+    return /port/i.test(p.name);
+  }
+
+  async function refreshUsedPorts(hostId: string) {
+    usedPorts = new Set();
+    try {
+      const res: any = await api.containers.list(false, hostId);
+      const list: any[] = Array.isArray(res) ? res : (res?.items ?? []);
+      const s = new Set<number>();
+      for (const c of list) {
+        for (const p of (c.host_ports ?? c.ports ?? [])) {
+          const v = typeof p === 'number' ? p : Number(p.host ?? p.public ?? p.PublicPort ?? p);
+          if (Number.isFinite(v) && v > 0) s.add(v);
+        }
+      }
+      usedPorts = s;
+    } catch {
+      // Best effort — if we can't read the list, silently skip the warning.
+    }
+  }
+
+  $effect(() => {
+    if (deployOpen) void refreshUsedPorts(targetHost);
+  });
 
   async function load() {
     loading = true;
@@ -173,8 +205,15 @@
       </div>
       <div>
         <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="tpl-host">Host</label>
-        <input id="tpl-host" class="dm-input" bind:value={targetHost} placeholder="local" />
-        <p class="text-xs text-[var(--fg-muted)] mt-1">"local" for the central daemon, or an agent UUID.</p>
+        <select id="tpl-host" class="dm-input" bind:value={targetHost}>
+          <option value="local">Local (central daemon)</option>
+          {#each hosts.available.filter((h) => h.id !== 'local' && h.kind !== 'all') as h}
+            <option value={h.id} disabled={h.status !== 'online'}>
+              {h.name}{h.status !== 'online' ? ` (${h.status})` : ''}
+            </option>
+          {/each}
+        </select>
+        <p class="text-xs text-[var(--fg-muted)] mt-1">Target host for the stack.</p>
       </div>
       {#if selected.parameters.length > 0}
         <div class="pt-2 border-t border-[var(--border)] space-y-3">
@@ -202,7 +241,12 @@
                   pattern={p.pattern ?? undefined}
                 />
               {/if}
-              {#if p.description}
+              {#if isPortParam(p) && usedPorts.has(Number(values[p.name]))}
+                <p class="text-xs text-[var(--color-warning-500)] mt-1">
+                  <AlertCircle class="w-3.5 h-3.5 inline mr-1" />
+                  Port {values[p.name]} is already bound on this host. Pick a different port or free the existing one first.
+                </p>
+              {:else if p.description}
                 <p class="text-xs text-[var(--fg-muted)] mt-1">{p.description}</p>
               {/if}
             </div>
