@@ -22,7 +22,9 @@ func imageErrorStatus(err error) int {
 	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "conflict"),
-		strings.Contains(msg, "is being used by"):
+		strings.Contains(msg, "is being used by"),
+		strings.Contains(msg, "volume is in use"),
+		strings.Contains(msg, "is in use"):
 		return http.StatusConflict
 	case strings.Contains(msg, "pull access denied"),
 		strings.Contains(msg, "repository does not exist"),
