@@ -1630,19 +1630,6 @@
       <div class="space-y-4">
         <div class="flex items-center justify-between">
           <div>
-            <div class="text-sm font-medium">Reverse Proxy (Caddy)</div>
-            <p class="text-xs text-[var(--fg-muted)]">Enable the embedded Caddy reverse proxy for automatic HTTPS.</p>
-          </div>
-          <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" class="sr-only peer"
-              checked={getSetting('proxy_enabled') === 'true'}
-              onchange={(e) => setSetting('proxy_enabled', (e.target as HTMLInputElement).checked ? 'true' : 'false')} />
-            <div class="w-11 h-6 bg-[var(--surface)] border border-[var(--border)] rounded-full peer-checked:bg-[var(--color-brand-500)] peer-checked:border-[var(--color-brand-500)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-transform peer-checked:after:translate-x-5"></div>
-          </label>
-        </div>
-        <div class="border-t border-[var(--border)]"></div>
-        <div class="flex items-center justify-between">
-          <div>
             <div class="text-sm font-medium">Vulnerability Scanner (Grype)</div>
             <p class="text-xs text-[var(--fg-muted)]">Enable CVE scanning for Docker images.</p>
           </div>
