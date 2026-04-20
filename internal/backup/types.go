@@ -12,6 +12,7 @@ import (
 type Job struct {
 	ID             int64      `json:"id"`
 	Name           string     `json:"name"`
+	HostID         string     `json:"host_id,omitempty"`
 	TargetType     string     `json:"target_type"`
 	TargetConfig   any        `json:"target_config"`
 	Sources        []Source   `json:"sources"`
@@ -31,6 +32,7 @@ type Job struct {
 // JobInput is the create/update payload from the API.
 type JobInput struct {
 	Name           string   `json:"name"`
+	HostID         string   `json:"host_id,omitempty"` // empty or "local" → central daemon. P.12 multi-host backup.
 	TargetType     string   `json:"target_type"`
 	TargetConfig   any      `json:"target_config"`
 	Sources        []Source `json:"sources"`

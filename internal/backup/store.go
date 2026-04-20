@@ -20,7 +20,7 @@ func newStore(db *sql.DB) *store { return &store{db: db} }
 
 func (s *store) listJobs(ctx context.Context) ([]Job, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, target_type, target_config, sources, schedule,
+		SELECT id, name, COALESCE(host_id, ''), target_type, target_config, sources, schedule,
 		       retention_count, retention_days, encrypt, pre_hooks, post_hooks,
 		       enabled, last_run_at, next_run_at, created_at, updated_at
 		FROM backup_jobs ORDER BY id`)
@@ -41,7 +41,7 @@ func (s *store) listJobs(ctx context.Context) ([]Job, error) {
 
 func (s *store) getJob(ctx context.Context, id int64) (*Job, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, target_type, target_config, sources, schedule,
+		SELECT id, name, COALESCE(host_id, ''), target_type, target_config, sources, schedule,
 		       retention_count, retention_days, encrypt, pre_hooks, post_hooks,
 		       enabled, last_run_at, next_run_at, created_at, updated_at
 		FROM backup_jobs WHERE id = ?`, id)
@@ -59,10 +59,10 @@ func (s *store) createJob(ctx context.Context, in JobInput) (int64, error) {
 	post, _ := json.Marshal(in.PostHooks)
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO backup_jobs
-			(name, target_type, target_config, sources, schedule,
+			(name, host_id, target_type, target_config, sources, schedule,
 			 retention_count, retention_days, encrypt, pre_hooks, post_hooks, enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.Name, in.TargetType, string(tcfg), string(srcs), in.Schedule,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.Name, in.HostID, in.TargetType, string(tcfg), string(srcs), in.Schedule,
 		in.RetentionCount, in.RetentionDays, boolInt(in.Encrypt),
 		string(pre), string(post), boolInt(in.Enabled))
 	if err != nil {
@@ -79,12 +79,12 @@ func (s *store) updateJob(ctx context.Context, id int64, in JobInput) error {
 	post, _ := json.Marshal(in.PostHooks)
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE backup_jobs SET
-			name = ?, target_type = ?, target_config = ?, sources = ?,
+			name = ?, host_id = ?, target_type = ?, target_config = ?, sources = ?,
 			schedule = ?, retention_count = ?, retention_days = ?,
 			encrypt = ?, pre_hooks = ?, post_hooks = ?, enabled = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
-		in.Name, in.TargetType, string(tcfg), string(srcs), in.Schedule,
+		in.Name, in.HostID, in.TargetType, string(tcfg), string(srcs), in.Schedule,
 		in.RetentionCount, in.RetentionDays, boolInt(in.Encrypt),
 		string(pre), string(post), boolInt(in.Enabled), id)
 	return err
@@ -207,7 +207,7 @@ func scanJob(r rowScanner) (*Job, error) {
 	var enabled, encrypt int
 	var lastRun, nextRun sql.NullTime
 	if err := r.Scan(
-		&j.ID, &j.Name, &j.TargetType, &tcfg, &srcs, &j.Schedule,
+		&j.ID, &j.Name, &j.HostID, &j.TargetType, &tcfg, &srcs, &j.Schedule,
 		&j.RetentionCount, &j.RetentionDays, &encrypt, &pre, &post,
 		&enabled, &lastRun, &nextRun, &j.CreatedAt, &j.UpdatedAt,
 	); err != nil {

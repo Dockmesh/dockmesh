@@ -29,6 +29,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/registries"
 	"github.com/dockmesh/dockmesh/internal/scanner"
+	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/templates"
 	"github.com/dockmesh/dockmesh/internal/updater"
@@ -55,6 +56,7 @@ type Handlers struct {
 	Alerts       *alerts.Service
 	Backups        *backup.Service
 	BackupTargets  *targets.TargetStore
+	Secrets        *secrets.Service
 	Migrations     *migration.Service
 	Drains         *migration.DrainService
 	Agents         *agents.Service
@@ -95,6 +97,7 @@ type Deps struct {
 	Alerts       *alerts.Service
 	Backups        *backup.Service
 	BackupTargets  *targets.TargetStore
+	Secrets        *secrets.Service
 	Migrations     *migration.Service
 	Drains         *migration.DrainService
 	Agents         *agents.Service
@@ -136,6 +139,7 @@ func New(d Deps) *Handlers {
 		Alerts:      d.Alerts,
 		Backups:       d.Backups,
 		BackupTargets: d.BackupTargets,
+		Secrets:       d.Secrets,
 		Migrations:    d.Migrations,
 		Drains:      d.Drains,
 		Agents:      d.Agents,
