@@ -308,6 +308,40 @@ func (h *RemoteHost) VolumeBrowseEntries(ctx context.Context, name, subpath stri
 	return out, nil
 }
 
+// VolumeTar opens a volume_export stream on the remote agent and
+// returns an io.ReadCloser of the tar.gz bytes. FINDING-33.
+func (h *RemoteHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser, error) {
+	if h.agent == nil {
+		return nil, fmt.Errorf("agent connection unavailable")
+	}
+	s, err := h.agent.OpenStream(ctx, "volume_export", "", map[string]any{"volume": name})
+	if err != nil {
+		return nil, fmt.Errorf("open volume_export stream: %w", err)
+	}
+	return s, nil
+}
+
+// ContainerExec runs a command in the remote container via a new frame.
+// Blocks until exit. Used by backup pre-hooks. The agent can already
+// exec via the "exec" stream (interactive TTY) but we want request/
+// response semantics here; piggy-back on the existing exec-stream but
+// wait for it to close.
+func (h *RemoteHost) ContainerExec(ctx context.Context, containerID string, cmd []string) ([]byte, int, error) {
+	if h.agent == nil {
+		return nil, -1, fmt.Errorf("agent connection unavailable")
+	}
+	data, err := h.request(ctx, agents.FrameReqContainerExecRun,
+		agents.ContainerExecRunReq{Container: containerID, Cmd: cmd, MaxOutputBytes: 1 << 20})
+	if err != nil {
+		return nil, -1, err
+	}
+	var res agents.ContainerExecRunRes
+	if err := json.Unmarshal(data, &res); err != nil {
+		return nil, -1, err
+	}
+	return res.Stdout, res.ExitCode, nil
+}
+
 func (h *RemoteHost) VolumeReadFile(ctx context.Context, name, subpath string, maxBytes int64) (*VolumeFileResult, error) {
 	data, err := h.request(ctx, agents.FrameReqVolumeBrowseFile,
 		agents.VolumeBrowseReq{Volume: name, SubPath: subpath, MaxBytes: maxBytes})

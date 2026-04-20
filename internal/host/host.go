@@ -77,6 +77,19 @@ type Host interface {
 	// (stream support is a follow-up).
 	VolumeReadFile(ctx context.Context, name, subpath string, maxBytes int64) (*VolumeFileResult, error)
 
+	// VolumeTar opens a tar.gz stream of the whole volume (used by
+	// backup jobs that target this host). Caller Close()s when done.
+	// Local hosts spawn a helper container against the docker socket;
+	// remote hosts run the same helper on the agent side and relay
+	// bytes over the existing stream framing.
+	VolumeTar(ctx context.Context, name string) (io.ReadCloser, error)
+
+	// ContainerExec runs `cmd` inside `container` and blocks until the
+	// command exits. Stdout/stderr go into the returned buffer (capped).
+	// Used by backup pre-hooks (e.g. pg_dump) so operators can quiesce
+	// a database before the tar. Works on both local and remote hosts.
+	ContainerExec(ctx context.Context, containerID string, cmd []string) (stdout []byte, exitCode int, err error)
+
 	// Stack operations (slice 3.1.3). The handler reads the compose+env
 	// from the central server's filesystem once and passes the content
 	// to whichever host — local writes to a tmpdir + parses + runs;

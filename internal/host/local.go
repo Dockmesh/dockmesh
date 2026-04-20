@@ -292,6 +292,24 @@ func (h *LocalHost) VolumeReadFile(ctx context.Context, name, subpath string, ma
 	return res, err
 }
 
+// VolumeTar spawns a busybox helper against the docker socket and
+// returns a tar.gz stream of the volume. FINDING-33 multi-host backup.
+func (h *LocalHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser, error) {
+	if h.cli == nil {
+		return nil, ErrNoDocker
+	}
+	return tarVolumeHelper(ctx, h.cli, name)
+}
+
+// ContainerExec runs cmd inside the container, collects stdout+stderr.
+// Used by backup pre-hooks.
+func (h *LocalHost) ContainerExec(ctx context.Context, containerID string, cmd []string) ([]byte, int, error) {
+	if h.cli == nil {
+		return nil, -1, ErrNoDocker
+	}
+	return execHelper(ctx, h.cli, containerID, cmd)
+}
+
 func (h *LocalHost) ListVolumes(ctx context.Context) ([]any, error) {
 	if h.cli == nil {
 		return nil, ErrNoDocker

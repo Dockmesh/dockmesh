@@ -314,6 +314,12 @@ func main() {
 	agentsSvc := agents.NewService(database, pkiMgr, cfg.BaseURL, agentPublic)
 	hostRegistry := host.NewRegistry(dockerCli, agentsSvc)
 
+	// Wire host routing into the backup executor so jobs with host_id
+	// != "" dispatch to the right agent. Must be post-construction
+	// because backupSvc was created before hostRegistry existed.
+	// FINDING-33 multi-host backup.
+	backupSvc.SetHostResolver(backup.NewHostResolverFromRegistry(hostRegistry))
+
 	// DB-backed system settings — reads from DB, falls back to env vars.
 	settingsStore := settings.NewStore(database)
 	if err := settingsStore.Load(ctx); err != nil {

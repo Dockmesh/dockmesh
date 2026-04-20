@@ -1,11 +1,11 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -27,13 +27,27 @@ type Executor struct {
 	store   *store
 	db      *sql.DB
 	docker  *docker.Client
+	hosts   hostResolver
 	stacks  *stacks.Manager
 	secrets *secrets.Service
 	paths   SystemPaths
 }
 
-func newExecutor(s *store, db *sql.DB, dc *docker.Client, sm *stacks.Manager, sec *secrets.Service, paths SystemPaths) *Executor {
-	return &Executor{store: s, db: db, docker: dc, stacks: sm, secrets: sec, paths: paths}
+// hostResolver lets the executor route to local vs remote hosts without
+// importing internal/host (that would create a cycle — host imports
+// internal/compose which we also need).
+type hostResolver interface {
+	Pick(id string) (hostBackupTarget, error)
+}
+
+// hostBackupTarget is the subset of host.Host the executor needs.
+type hostBackupTarget interface {
+	VolumeTar(ctx context.Context, name string) (io.ReadCloser, error)
+	ContainerExec(ctx context.Context, containerID string, cmd []string) ([]byte, int, error)
+}
+
+func newExecutor(s *store, db *sql.DB, dc *docker.Client, hosts hostResolver, sm *stacks.Manager, sec *secrets.Service, paths SystemPaths) *Executor {
+	return &Executor{store: s, db: db, docker: dc, hosts: hosts, stacks: sm, secrets: sec, paths: paths}
 }
 
 // Run executes one backup job, persisting a backup_runs row throughout.
@@ -44,12 +58,10 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 		return nil, err
 	}
 
-	// Multi-host backup: reject remote agent jobs explicitly rather than
-	// silently run against local. The plumbing (HostID field, store,
-	// validation) is in place; the tar-stream-over-WebSocket frame for
-	// agents is a v1.1 feature. Clear 501 beats silent wrong-data.
-	if job.HostID != "" && job.HostID != "local" {
-		err := errors.New("remote-agent backup jobs are not yet implemented — use the central dockmesh host for now (tracked as v1.1). Set host_id to '' or 'local' to run against the central daemon.")
+	// Multi-host backup: resolve the target host once so the source
+	// extractors + pre-hooks go against the right Docker daemon.
+	hostTarget, err := e.resolveHost(job.HostID)
+	if err != nil {
 		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", err)
 		return e.store.getRun(ctx, runID)
 	}
@@ -60,7 +72,7 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 		return e.store.getRun(ctx, runID)
 	}
 
-	if err := e.runHooks(ctx, job.PreHooks); err != nil {
+	if err := e.runHooks(ctx, hostTarget, job.PreHooks); err != nil {
 		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", fmt.Errorf("pre-hooks: %w", err))
 		return e.store.getRun(ctx, runID)
 	}
@@ -82,9 +94,9 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 		return e.store.getRun(ctx, runID)
 	}
 
-	written, copyErr := e.streamSources(ctx, job.Sources, encWriter)
+	written, copyErr := e.streamSources(ctx, job.Sources, hostTarget, encWriter)
 	closeErr := encWriter.Close()
-	hookErr := e.runHooks(ctx, job.PostHooks)
+	hookErr := e.runHooks(ctx, hostTarget, job.PostHooks)
 
 	switch {
 	case copyErr != nil:
@@ -115,18 +127,13 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 // archives — each inner stream is itself a gzipped tar from the helper.
 //
 // For a single source we just stream its tar directly so simple jobs
-// stay one well-known archive at the destination.
-func (e *Executor) streamSources(ctx context.Context, sources []Source, w io.Writer) (int64, error) {
+// stay one well-known archive at the destination. hostTarget is the
+// resolved host (local docker or remote agent) for the job.
+func (e *Executor) streamSources(ctx context.Context, sources []Source, hostTarget hostBackupTarget, w io.Writer) (int64, error) {
 	var total int64
 	if len(sources) == 0 {
 		return 0, fmt.Errorf("no sources configured")
 	}
-
-	// Multiple sources: concat with a small header file marker. Simpler
-	// than embedded tar-of-tars for MVP; restores are run one-source-at-
-	// a-time so we just stream each volume as its own .tar.gz wrapped in
-	// a tar shell. For the MVP we require exactly one source per job and
-	// document multi-source as a follow-up.
 	if len(sources) > 1 {
 		return 0, fmt.Errorf("multiple sources per job not supported yet — create one job per source")
 	}
@@ -134,7 +141,7 @@ func (e *Executor) streamSources(ctx context.Context, sources []Source, w io.Wri
 	src := sources[0]
 	switch src.Type {
 	case "volume":
-		rc, err := tarVolume(ctx, e.docker, src.Name)
+		rc, err := hostTarget.VolumeTar(ctx, src.Name)
 		if err != nil {
 			return 0, fmt.Errorf("tar volume %s: %w", src.Name, err)
 		}
@@ -143,58 +150,89 @@ func (e *Executor) streamSources(ctx context.Context, sources []Source, w io.Wri
 		total += n
 		return total, err
 	case "stack":
-		// Tar the on-disk stack dir AND every named volume the compose
-		// file references, in a single .tar.gz with the layout:
-		//   stack/<files>
-		//   volumes/<volname>.tar        (each = inner tar from docker helper)
-		// So a restore can pull compose + env + every data volume back.
+		// Tar the on-disk stack dir (central server) AND every named
+		// volume the compose references (pulled from hostTarget — the
+		// stack's deployment host, which may be a remote agent).
 		dir, err := e.stacks.Dir(src.Name)
 		if err != nil {
 			return 0, fmt.Errorf("stack dir: %w", err)
 		}
-		return tarStackWithVolumes(ctx, e.docker, dir, src.Name, w)
+		return tarStackWithVolumes(ctx, hostTarget, dir, src.Name, w)
 	case "system":
+		// System backup always lives on the central server, not on any
+		// agent. Host routing is irrelevant here.
 		return tarSystem(ctx, e.db, e.paths, w)
 	default:
 		return 0, fmt.Errorf("%w: %s", ErrUnknownSourceType, src.Type)
 	}
 }
 
-func (e *Executor) runHooks(ctx context.Context, hooks []Hook) error {
-	if len(hooks) == 0 || e.docker == nil {
+func (e *Executor) runHooks(ctx context.Context, hostTarget hostBackupTarget, hooks []Hook) error {
+	if len(hooks) == 0 || hostTarget == nil {
 		return nil
 	}
-	cli := e.docker.Raw()
 	for _, h := range hooks {
 		if h.Container == "" || len(h.Cmd) == 0 {
 			continue
 		}
-		exec, err := cli.ContainerExecCreate(ctx, h.Container, dtypes.ExecConfig{
-			Cmd: h.Cmd,
-		})
+		hookCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		_, exitCode, err := hostTarget.ContainerExec(hookCtx, h.Container, h.Cmd)
+		cancel()
 		if err != nil {
-			return fmt.Errorf("exec create %s: %w", h.Container, err)
+			return fmt.Errorf("exec %s: %w", h.Container, err)
 		}
-		if err := cli.ContainerExecStart(ctx, exec.ID, dtypes.ExecStartCheck{}); err != nil {
-			return fmt.Errorf("exec start %s: %w", h.Container, err)
-		}
-		// Poll for completion (max 5 min).
-		deadline := time.Now().Add(5 * time.Minute)
-		for time.Now().Before(deadline) {
-			info, err := cli.ContainerExecInspect(ctx, exec.ID)
-			if err != nil {
-				return err
-			}
-			if !info.Running {
-				if info.ExitCode != 0 {
-					return fmt.Errorf("exec %s exit %d", h.Container, info.ExitCode)
-				}
-				break
-			}
-			time.Sleep(500 * time.Millisecond)
+		if exitCode != 0 {
+			return fmt.Errorf("exec %s exit %d", h.Container, exitCode)
 		}
 	}
 	return nil
+}
+
+// resolveHost returns a hostBackupTarget for the job's host_id. Empty
+// or "local" returns a wrapper around the central docker client.
+// Anything else is looked up in the host registry (agent connection).
+func (e *Executor) resolveHost(hostID string) (hostBackupTarget, error) {
+	if hostID == "" || hostID == "local" {
+		if e.docker == nil {
+			return nil, fmt.Errorf("local docker unavailable")
+		}
+		return &localBackupTarget{dc: e.docker}, nil
+	}
+	if e.hosts == nil {
+		return nil, fmt.Errorf("host registry not configured — backup of remote hosts unavailable")
+	}
+	return e.hosts.Pick(hostID)
+}
+
+// localBackupTarget adapts the central docker client to hostBackupTarget.
+type localBackupTarget struct {
+	dc *docker.Client
+}
+
+func (l *localBackupTarget) VolumeTar(ctx context.Context, name string) (io.ReadCloser, error) {
+	return tarVolume(ctx, l.dc, name)
+}
+
+func (l *localBackupTarget) ContainerExec(ctx context.Context, containerID string, cmd []string) ([]byte, int, error) {
+	cli := l.dc.Raw()
+	exec, err := cli.ContainerExecCreate(ctx, containerID, dtypes.ExecConfig{
+		Cmd: cmd, AttachStdout: true, AttachStderr: true,
+	})
+	if err != nil {
+		return nil, -1, err
+	}
+	attach, err := cli.ContainerExecAttach(ctx, exec.ID, dtypes.ExecStartCheck{})
+	if err != nil {
+		return nil, -1, err
+	}
+	defer attach.Close()
+	var out bytes.Buffer
+	_, _ = io.CopyN(&out, attach.Reader, 1<<20)
+	insp, inspErr := cli.ContainerExecInspect(ctx, exec.ID)
+	if inspErr != nil {
+		return out.Bytes(), -1, inspErr
+	}
+	return out.Bytes(), insp.ExitCode, nil
 }
 
 // applyRetention deletes runs older than RetentionDays AND keeps only
