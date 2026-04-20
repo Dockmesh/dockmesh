@@ -101,6 +101,15 @@ func (s *Service) EnableProxy(ctx context.Context) error {
 	if err := ensureAdmin(ctx); err != nil {
 		return err
 	}
+	// Flip the in-memory gate BEFORE pushing config so SyncFromDB
+	// doesn't early-return on the enabled check. CreateRoute /
+	// UpdateRoute / DeleteRoute all call SyncFromDB, which skips
+	// everything when `!s.enabled` — and the flag used to only ever
+	// be set from the boot-time config, so toggling the proxy on at
+	// runtime left routes silently un-synced.
+	s.mu.Lock()
+	s.enabled = true
+	s.mu.Unlock()
 	// Push the current routes so the container boots into the right state.
 	routes, err := s.listRoutes(ctx)
 	if err != nil {
@@ -125,7 +134,13 @@ func (s *Service) DisableProxy(ctx context.Context) error {
 		return err
 	}
 	_ = cli.ContainerStop(ctx, info.ID, container.StopOptions{})
-	return cli.ContainerRemove(ctx, info.ID, container.RemoveOptions{Force: true})
+	if err := cli.ContainerRemove(ctx, info.ID, container.RemoveOptions{Force: true}); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.enabled = false
+	s.mu.Unlock()
+	return nil
 }
 
 // tarSingleFile wraps a single in-memory file as a tar stream suitable for

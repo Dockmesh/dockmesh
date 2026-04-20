@@ -220,12 +220,10 @@ func main() {
 	}
 	scanStore := scanner.NewStore(database)
 
-	proxySvc := proxy.NewService(database, dockerCli, cfg.ProxyEnabled)
-	if cfg.ProxyEnabled {
-		if err := proxySvc.SyncFromDB(ctx); err != nil {
-			slog.Warn("proxy sync failed — caddy container may not be running yet", "err", err)
-		}
-	}
+	// Proxy service is created with `enabled=false`; the real boot
+	// decision is made below once the settings store is loaded so the
+	// DB-backed `proxy_enabled` setting outranks the env var default.
+	proxySvc := proxy.NewService(database, dockerCli, false)
 	updaterSvc := updater.NewService(dockerCli, database)
 	oidcSvc := oidc.NewService(database, authSvc, secretsSvc, cfg.BaseURL)
 
@@ -329,6 +327,18 @@ func main() {
 	// policy + per-user lockout thresholds + rotation-day setting
 	// are live-editable via the UI without a restart.
 	authSvc.SetSettings(settingsStore)
+
+	// Proxy: the boot-time config flag is just the *default* — the
+	// DB-backed `proxy_enabled` setting overrides it so an admin
+	// flipping the toggle persists across restarts without env-var
+	// edits. If enabled, bring the Caddy container up now (idempotent
+	// — EnableProxy removes any stale container + reseeds bootstrap
+	// config + pushes the current routes).
+	if settingsStore.GetBool("proxy_enabled", cfg.ProxyEnabled) {
+		if err := proxySvc.EnableProxy(ctx); err != nil {
+			slog.Warn("proxy boot-up failed — toggle off/on in Settings once Docker is reachable", "err", err)
+		}
+	}
 
 	globalEnvStore := globalenv.NewStore(database)
 
