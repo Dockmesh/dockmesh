@@ -60,18 +60,22 @@ func (h *Handlers) ConfigureGitSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// First sync fills the stack FS. Failures here are reported as
-	// a partial result — the config itself saved successfully.
+	// First sync fills the stack FS. Save the config either way (so the
+	// user can fix creds and retry) but surface sync failure with 422 +
+	// clear `sync_ok: false` so the UI can display it loudly instead of
+	// silently pretending the connect succeeded. Fixes FINDING-9.
 	syncResult, syncErr := h.GitSource.Sync(r.Context(), name)
 	h.audit(r, "stack.git_configure", name, map[string]any{"repo": in.RepoURL})
 	res := map[string]any{
-		"source": src,
+		"source":  src,
+		"sync_ok": syncErr == nil,
 	}
 	if syncErr != nil {
 		res["sync_error"] = syncErr.Error()
-	} else {
-		res["sync"] = syncResult
+		writeJSON(w, http.StatusUnprocessableEntity, res)
+		return
 	}
+	res["sync"] = syncResult
 	writeJSON(w, http.StatusOK, res)
 }
 
