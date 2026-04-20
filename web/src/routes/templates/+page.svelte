@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { api, ApiError, type StackTemplate, type StackTemplateParam } from '$lib/api';
+  import { api, ApiError, type StackTemplate, type StackTemplateParam, type StackTemplateInput } from '$lib/api';
   import { Card, Button, Badge, Skeleton, EmptyState, Modal, Input } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { confirm } from '$lib/stores/confirm.svelte';
   import { goto } from '$app/navigation';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
-  import { Package, Rocket, Download, AlertCircle } from 'lucide-svelte';
+  import { Package, Rocket, Download, AlertCircle, Plus, Trash2 } from 'lucide-svelte';
 
   const canDeploy = $derived(allowed('stack.write'));
 
@@ -53,6 +54,88 @@
   $effect(() => {
     if (deployOpen) void refreshUsedPorts(targetHost);
   });
+
+  // --- Custom template authoring ---------------------------------------
+  // Users can create their own templates from the UI. The server parses
+  // {{placeholders}} out of the compose + env strings and auto-discovers
+  // declared parameters, so the modal only needs slug + name + compose.
+  let createOpen = $state(false);
+  let createBusy = $state(false);
+  let createErr = $state<string | null>(null);
+  let editingId = $state<number | null>(null);
+  let form = $state<StackTemplateInput>({
+    slug: '',
+    name: '',
+    description: '',
+    compose: 'services:\n  app:\n    image: alpine:3.20\n',
+    parameters: []
+  });
+  function openCreate() {
+    editingId = null;
+    form = {
+      slug: '',
+      name: '',
+      description: '',
+      compose: 'services:\n  app:\n    image: alpine:3.20\n',
+      parameters: []
+    };
+    createErr = null;
+    createOpen = true;
+  }
+  function openEdit(t: StackTemplate) {
+    editingId = t.id;
+    form = {
+      slug: t.slug,
+      name: t.name,
+      description: t.description ?? '',
+      icon_url: t.icon_url,
+      compose: t.compose,
+      parameters: (t.parameters ?? []).map(p => ({ ...p }))
+    };
+    createErr = null;
+    createOpen = true;
+  }
+  function addParam() {
+    form.parameters = [...(form.parameters ?? []), { name: '', default: '' }];
+  }
+  function removeParam(i: number) {
+    form.parameters = (form.parameters ?? []).filter((_, idx) => idx !== i);
+  }
+  async function doSave(e: Event) {
+    e.preventDefault();
+    if (!form.slug.trim() || !form.name.trim() || !form.compose.trim()) return;
+    createBusy = true;
+    createErr = null;
+    try {
+      if (editingId == null) {
+        await api.templates.create(form);
+        toast.success('Template created', form.name);
+      } else {
+        await api.templates.update(editingId, form);
+        toast.success('Template updated', form.name);
+      }
+      createOpen = false;
+      await load();
+    } catch (err) {
+      createErr = err instanceof ApiError ? err.message : 'save failed';
+    } finally {
+      createBusy = false;
+    }
+  }
+  async function doDelete(t: StackTemplate) {
+    if (!(await confirm.ask({
+      title: `Delete template "${t.name}"?`,
+      message: 'This removes the template from the library. Already-deployed stacks are unaffected.',
+      confirmLabel: 'Delete'
+    }))) return;
+    try {
+      await api.templates.delete(t.id);
+      toast.success('Template deleted', t.name);
+      await load();
+    } catch (err) {
+      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
 
   async function load() {
     loading = true;
@@ -127,6 +210,12 @@
     </div>
     <div class="flex items-center gap-2">
       <Input bind:value={search} placeholder="Search templates…" class="w-60" />
+      {#if canDeploy}
+        <Button variant="primary" onclick={openCreate}>
+          <Plus class="w-3.5 h-3.5" />
+          New template
+        </Button>
+      {/if}
     </div>
   </div>
 
@@ -181,6 +270,26 @@
               >
                 <Download class="w-3.5 h-3.5" />
               </a>
+              {#if canDeploy && !t.builtin}
+                <button
+                  type="button"
+                  onclick={() => openEdit(t)}
+                  class="p-1.5 rounded hover:bg-[var(--bg-hover)] text-[var(--fg-muted)] hover:text-[var(--fg)]"
+                  title="Edit template"
+                  aria-label="Edit template"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </button>
+                <button
+                  type="button"
+                  onclick={() => doDelete(t)}
+                  class="p-1.5 rounded hover:bg-[var(--bg-hover)] text-[var(--fg-muted)] hover:text-[var(--color-danger-400)]"
+                  title="Delete template"
+                  aria-label="Delete template"
+                >
+                  <Trash2 class="w-3.5 h-3.5" />
+                </button>
+              {/if}
               {#if canDeploy}
                 <Button variant="primary" onclick={() => openDeploy(t)}>
                   <Rocket class="w-3.5 h-3.5" />
@@ -267,6 +376,68 @@
     <Button variant="primary" onclick={doDeploy} disabled={deployBusy || !stackName.trim()}>
       <Rocket class="w-3.5 h-3.5" />
       {deployBusy ? 'Deploying…' : 'Deploy'}
+    </Button>
+  {/snippet}
+</Modal>
+
+<!-- Create / edit template -->
+<Modal bind:open={createOpen} title={editingId == null ? 'New template' : 'Edit template'} maxWidth="max-w-2xl">
+  <form onsubmit={doSave} id="create-template-form" class="space-y-3">
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="tpl-slug">Slug</label>
+        <input id="tpl-slug" class="dm-input" bind:value={form.slug} placeholder="my-app" pattern="^[a-z0-9][a-z0-9_-]*$" required />
+        <p class="text-xs text-[var(--fg-muted)] mt-1">Lowercase, dashes, underscores. Used in API URLs.</p>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="tpl-tname">Display name</label>
+        <input id="tpl-tname" class="dm-input" bind:value={form.name} placeholder="My App" required />
+      </div>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="tpl-desc">Description</label>
+      <input id="tpl-desc" class="dm-input" bind:value={form.description} placeholder="Short description shown on the card" />
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="tpl-compose">Compose YAML</label>
+      <textarea id="tpl-compose" class="dm-input font-mono text-xs" rows="12" bind:value={form.compose} spellcheck="false" required></textarea>
+      <p class="text-xs text-[var(--fg-muted)] mt-1">Placeholders <code>{'{{param}}'}</code> / <code>{'{{param|default:x}}'}</code> / <code>{'{{param|secret}}'}</code> get substituted at deploy time.</p>
+    </div>
+    <div>
+      <div class="flex items-center justify-between mb-1.5">
+        <label class="block text-xs font-medium text-[var(--fg-muted)]">Parameters (optional — declared placeholders are auto-discovered)</label>
+        <Button variant="ghost" onclick={addParam} type="button">
+          <Plus class="w-3.5 h-3.5" /> Add parameter
+        </Button>
+      </div>
+      {#if (form.parameters ?? []).length === 0}
+        <p class="text-xs text-[var(--fg-muted)]">No explicit parameter definitions. Any <code>{'{{name}}'}</code> in the compose will still be prompted on deploy.</p>
+      {:else}
+        <div class="space-y-2">
+          {#each (form.parameters ?? []) as p, i}
+            <div class="grid grid-cols-5 gap-2 items-center">
+              <input class="dm-input text-xs" placeholder="name" bind:value={p.name} />
+              <input class="dm-input text-xs" placeholder="default" bind:value={p.default} />
+              <input class="dm-input text-xs col-span-2" placeholder="description" bind:value={p.description} />
+              <button type="button" onclick={() => removeParam(i)} class="p-1.5 rounded hover:bg-[var(--bg-hover)] text-[var(--fg-muted)] hover:text-[var(--color-danger-400)]" aria-label="Remove parameter">
+                <Trash2 class="w-3.5 h-3.5" />
+              </button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+    {#if createErr}
+      <div class="p-3 text-xs rounded border border-[var(--color-danger-400)] text-[var(--color-danger-500)]">
+        <AlertCircle class="w-4 h-4 inline mr-1" />
+        {createErr}
+      </div>
+    {/if}
+  </form>
+  {#snippet footer()}
+    <Button variant="ghost" onclick={() => (createOpen = false)}>Cancel</Button>
+    <Button variant="primary" onclick={doSave} disabled={createBusy || !form.slug.trim() || !form.name.trim() || !form.compose.trim()}>
+      {createBusy ? 'Saving…' : (editingId == null ? 'Create' : 'Save')}
     </Button>
   {/snippet}
 </Modal>

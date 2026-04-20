@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/restore"
 	"github.com/go-chi/chi/v5"
@@ -39,7 +40,7 @@ func (h *Handlers) VerifyUploadedBackup(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
-		writeError(w, http.StatusBadRequest, "extract: "+err.Error())
+		writeError(w, http.StatusBadRequest, "extract: "+sanitizeExtractErr(err, dir))
 		return
 	}
 	defer os.RemoveAll(dir)
@@ -97,10 +98,67 @@ func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 	// TODO: backup.Service.ReadRun(ctx, runID) → io.ReadCloser.
 	// Until then, operators use the upload endpoint after downloading
 	// the tarball manually from their backup target.
-	_ = id
-	writeError(w, http.StatusNotImplemented,
-		"verify-by-run-id requires a ReadRun helper on the backup service — not yet shipped. "+
-			"Workaround: download the archive from your backup target and POST it to /api/v1/restore/verify instead.")
+	src, err := h.Backups.ReadRun(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	defer src.Close()
+
+	dir, cfg, counts, err := restore.ExtractToTemp(r.Context(), src, "run")
+	if err != nil {
+		if errors.Is(err, restore.ErrEncryptedBackup) {
+			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, "extract: "+sanitizeExtractErr(err, dir))
+		return
+	}
+	defer os.RemoveAll(dir)
+
+	result, err := restore.Sanity(cfg)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, "backup.verify_run", strconv.FormatInt(id, 10), map[string]any{
+		"files":  counts.Files,
+		"bytes":  counts.Bytes,
+		"passed": result.Passed,
+	})
+	status := http.StatusOK
+	if !result.Passed {
+		status = http.StatusUnprocessableEntity
+	}
+	writeJSON(w, status, map[string]any{
+		"run_id": id,
+		"counts": counts,
+		"sanity": result,
+	})
+}
+
+// sanitizeExtractErr strips the temp-dir prefix from error messages so
+// external API consumers don't see server filesystem layout. The
+// original error is still available in logs.
+func sanitizeExtractErr(err error, tmpDir string) string {
+	msg := err.Error()
+	if tmpDir != "" {
+		msg = strings.ReplaceAll(msg, tmpDir, "<tmp>")
+	}
+	// Also strip common OS-temp prefixes in case the error didn't use the
+	// final tmpDir but a sub-path.
+	for _, p := range []string{"/tmp/dockmesh-verify-"} {
+		if i := strings.Index(msg, p); i >= 0 {
+			// replace up to next whitespace
+			end := strings.IndexAny(msg[i:], " \"\t\n")
+			if end == -1 {
+				msg = msg[:i] + "<tmp>"
+			} else {
+				msg = msg[:i] + "<tmp>" + msg[i+end:]
+			}
+		}
+	}
+	return msg
 }
 
 // uploadLimit is the upper bound we accept for an incoming backup

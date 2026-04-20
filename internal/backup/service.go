@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io"
 	"sync"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
@@ -153,6 +154,57 @@ func (s *Service) RunNow(ctx context.Context, id int64) (*Run, error) {
 
 func (s *Service) ListRuns(ctx context.Context, limit int) ([]Run, error) {
 	return s.store.listRuns(ctx, limit)
+}
+
+// ReadRun opens the archive for a saved run and returns a reader.
+// Caller must Close() it. If the run was encrypted, the reader is
+// wrapped so the consumer sees plaintext. Used by the verify-by-run
+// endpoint so operators don't have to download archives manually.
+func (s *Service) ReadRun(ctx context.Context, runID int64) (io.ReadCloser, error) {
+	run, err := s.store.getRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if run.Status != "success" {
+		return nil, errors.New("can only read from a successful run")
+	}
+	job, err := s.store.getJob(ctx, run.JobID)
+	if err != nil {
+		return nil, err
+	}
+	target, err := buildTarget(job.TargetType, job.TargetConfig)
+	if err != nil {
+		return nil, err
+	}
+	src, err := target.Read(ctx, run.TargetPath)
+	if err != nil {
+		return nil, err
+	}
+	if !run.Encrypted {
+		return src, nil
+	}
+	dec, err := wrapDecrypt(src, s.secrets)
+	if err != nil {
+		_ = src.Close()
+		return nil, err
+	}
+	return &readRunCloser{r: dec, underlying: src}, nil
+}
+
+// readRunCloser closes the decrypt wrapper then the underlying source.
+type readRunCloser struct {
+	r          io.ReadCloser
+	underlying io.ReadCloser
+}
+
+func (c *readRunCloser) Read(p []byte) (int, error) { return c.r.Read(p) }
+func (c *readRunCloser) Close() error {
+	err1 := c.r.Close()
+	err2 := c.underlying.Close()
+	if err1 != nil {
+		return err1
+	}
+	return err2
 }
 
 // Restore fetches the run's archive from its target, decrypts if needed,

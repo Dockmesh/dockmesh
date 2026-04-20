@@ -227,6 +227,44 @@ func (s *Service) Create(ctx context.Context, name string) (*CreateResult, error
 	}, nil
 }
 
+// RotateEnrollToken generates a fresh enrollment token for an existing
+// agent, invalidating the previous one. Used when the original token
+// was leaked or lost — the agent DB row + cert chain are preserved.
+// Only allowed for agents that haven't yet completed enrollment OR for
+// explicit token rotation triggered by the operator. Returns the same
+// CreateResult shape so the UI can reuse the "install command" modal.
+func (s *Service) RotateEnrollToken(ctx context.Context, id string) (*CreateResult, error) {
+	token, err := newToken()
+	if err != nil {
+		return nil, err
+	}
+	tokenHash := hashToken(token)
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE agents SET enrollment_token_hash = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?`, tokenHash, id)
+	if err != nil {
+		return nil, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil, ErrNotFound
+	}
+	a, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	installHint := fmt.Sprintf(
+		"curl -fsSL %s/install/agent.sh?token=%s | sudo bash",
+		s.publicURL, token)
+	return &CreateResult{
+		Agent:       *a,
+		Token:       token,
+		EnrollURL:   s.publicURL + "/api/v1/agents/enroll",
+		AgentURL:    s.agentURL,
+		InstallHint: installHint,
+	}, nil
+}
+
 func (s *Service) List(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, status, version, os, arch, hostname, docker_version,

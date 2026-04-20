@@ -470,6 +470,7 @@
 
   // Account
   let me = $state<any>(null);
+  let currentPassword = $state('');
   let newPassword = $state('');
 
   // MFA enrollment state
@@ -552,13 +553,18 @@
 
   async function changeOwnPassword(e: Event) {
     e.preventDefault();
+    if (currentPassword.length === 0) {
+      toast.error('Current password required');
+      return;
+    }
     if (newPassword.length < 8) {
       toast.error('Password too short', 'min 8 characters');
       return;
     }
     try {
-      await api.users.changePassword(me.id, newPassword);
+      await api.users.changePassword(me.id, newPassword, currentPassword);
       toast.success('Password updated');
+      currentPassword = '';
       newPassword = '';
     } catch (err) {
       toast.error('Failed', err instanceof ApiError ? err.message : undefined);
@@ -1042,12 +1048,19 @@
                 />
                 <input
                   type="password"
+                  placeholder="Current password"
+                  bind:value={currentPassword}
+                  autocomplete="current-password"
+                  class="dm-input text-sm !py-1.5 !w-48"
+                />
+                <input
+                  type="password"
                   placeholder="New password"
                   bind:value={newPassword}
                   autocomplete="new-password"
                   class="dm-input text-sm !py-1.5 !w-48"
                 />
-                <Button variant="primary" size="sm" type="submit" disabled={newPassword.length < 8}>Update</Button>
+                <Button variant="primary" size="sm" type="submit" disabled={newPassword.length < 8 || currentPassword.length === 0}>Update</Button>
               </form>
             </div>
             <div class="border-t border-[var(--border)]"></div>
