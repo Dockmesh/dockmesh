@@ -4,12 +4,37 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/go-chi/chi/v5"
 )
+
+// imageErrorStatus classifies docker-daemon image errors into the right
+// HTTP status so the UI can show actionable messages. "Unknown" errors
+// still return 500.
+func imageErrorStatus(err error) int {
+	if err == nil {
+		return http.StatusInternalServerError
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "conflict"),
+		strings.Contains(msg, "is being used by"):
+		return http.StatusConflict
+	case strings.Contains(msg, "pull access denied"),
+		strings.Contains(msg, "repository does not exist"),
+		strings.Contains(msg, "manifest unknown"),
+		strings.Contains(msg, "unauthorized"),
+		strings.Contains(msg, "no such image"),
+		strings.Contains(msg, "invalid reference format"),
+		strings.Contains(msg, "not found"):
+		return http.StatusUnprocessableEntity
+	}
+	return http.StatusInternalServerError
+}
 
 type pullRequest struct {
 	Image string `json:"image"`
@@ -99,7 +124,7 @@ func (h *Handlers) PullImage(w http.ResponseWriter, r *http.Request) {
 	}
 	rc, err := h.Docker.PullImageWithAuth(r.Context(), req.Image, registryAuth)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, imageErrorStatus(err), err.Error())
 		return
 	}
 	defer rc.Close()
@@ -142,7 +167,7 @@ func (h *Handlers) RemoveImage(w http.ResponseWriter, r *http.Request) {
 	force := r.URL.Query().Get("force") == "true"
 	deleted, err := target.RemoveImage(r.Context(), id, force)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, imageErrorStatus(err), err.Error())
 		return
 	}
 	h.audit(r, audit.ActionImageRemove, id, map[string]string{"host": target.ID()})
