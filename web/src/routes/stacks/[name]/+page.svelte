@@ -8,7 +8,7 @@
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import { EventStream } from '$lib/events';
-  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2, GitBranch, Link as LinkIcon, Unlink, History, RotateCcw, FileText, User, Network, Plus, X, Layers } from 'lucide-svelte';
+  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2, GitBranch, Link as LinkIcon, Unlink, History, RotateCcw, FileText, User, Network, Plus, X, Layers, Repeat } from 'lucide-svelte';
   import type { StackGitSource, StackGitSourceInput } from '$lib/api';
 
   import { isAllHosts } from '$lib/stores/host.svelte';
@@ -220,6 +220,42 @@
   let scaleCheck = $state<ScaleCheck | null>(null);
   let scaleBusy = $state(false);
   let scaleForce = $state(false);
+
+  // Rolling update state (P.12.5b)
+  let showRolling = $state(false);
+  let rollingTarget = $state('');
+  let rollingOrder = $state<'stop-first' | 'start-first'>('stop-first');
+  let rollingParallel = $state(1);
+  let rollingFailure = $state<'pause' | 'continue' | 'rollback'>('pause');
+  let rollingBusy = $state(false);
+  let rollingErr = $state<string | null>(null);
+  function openRolling(service: string) {
+    rollingTarget = service;
+    rollingOrder = 'stop-first';
+    rollingParallel = 1;
+    rollingFailure = 'pause';
+    rollingErr = null;
+    showRolling = true;
+  }
+  async function doRolling() {
+    rollingBusy = true;
+    rollingErr = null;
+    try {
+      const res = await api.stacks.rollingUpdate(name, rollingTarget, {
+        order: rollingOrder,
+        parallelism: rollingParallel,
+        failure_action: rollingFailure
+      }, stackHost);
+      toast.success('Rolling update complete', `${rollingTarget}: ${res.updated}/${res.total_replicas} updated${res.rolled_back ? ' (rolled back)' : ''}`);
+      showRolling = false;
+      await loadReplicaCounts();
+      await refreshStatus();
+    } catch (err) {
+      rollingErr = err instanceof ApiError ? err.message : 'rolling update failed';
+    } finally {
+      rollingBusy = false;
+    }
+  }
 
   async function loadReplicaCounts() {
     try {
@@ -771,6 +807,14 @@
             {#if canDeploy}
               <button
                 class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)] shrink-0"
+                title="Rolling update {s.service}"
+                aria-label="Rolling update {s.service}"
+                onclick={() => openRolling(s.service)}
+              >
+                <Repeat class="w-3.5 h-3.5" />
+              </button>
+              <button
+                class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)] shrink-0"
                 title="Scale {s.service}"
                 aria-label="Scale {s.service}"
                 onclick={() => openScale(s.service)}
@@ -1184,6 +1228,50 @@
       onclick={doScale}
     >
       Scale to {scaleValue}
+    </Button>
+  {/snippet}
+</Modal>
+
+<!-- Rolling update modal (P.12.5b) -->
+<Modal bind:open={showRolling} title="Rolling update: {rollingTarget}" maxWidth="max-w-md">
+  <div class="space-y-3">
+    <p class="text-xs text-[var(--fg-muted)]">
+      Replaces every replica of <span class="font-mono">{rollingTarget}</span> one batch at a time. The container count stays the same; use Scale to change replica count.
+    </p>
+    <div>
+      <label for="rolling-order" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Order</label>
+      <select id="rolling-order" class="dm-input" bind:value={rollingOrder}>
+        <option value="stop-first">stop-first (stop old, then start new)</option>
+        <option value="start-first">start-first (start new, then stop old)</option>
+      </select>
+      <p class="text-xs text-[var(--fg-muted)] mt-1">
+        start-first needs no hard host-port or container_name — it'll briefly run 2× the replicas.
+      </p>
+    </div>
+    <div>
+      <label for="rolling-parallel" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Parallelism</label>
+      <input id="rolling-parallel" type="number" min="1" max="10" class="dm-input" bind:value={rollingParallel} />
+      <p class="text-xs text-[var(--fg-muted)] mt-1">How many replicas to replace at once. 1 = safest.</p>
+    </div>
+    <div>
+      <label for="rolling-failure" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">On failure</label>
+      <select id="rolling-failure" class="dm-input" bind:value={rollingFailure}>
+        <option value="pause">pause — stop at first failed replica</option>
+        <option value="continue">continue — replace remaining anyway</option>
+        <option value="rollback">rollback — restart old replicas and abort</option>
+      </select>
+    </div>
+    {#if rollingErr}
+      <div class="p-3 text-xs rounded border border-[var(--color-danger-400)] text-[var(--color-danger-500)]">
+        <AlertTriangle class="w-4 h-4 inline mr-1" />
+        {rollingErr}
+      </div>
+    {/if}
+  </div>
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (showRolling = false)}>Cancel</Button>
+    <Button variant="primary" loading={rollingBusy} disabled={rollingBusy} onclick={doRolling}>
+      <Repeat class="w-3.5 h-3.5" /> Roll
     </Button>
   {/snippet}
 </Modal>

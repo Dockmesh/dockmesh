@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"filippo.io/age"
 )
@@ -53,6 +54,24 @@ func (s *Service) Identity() (age.Identity, error) {
 		return nil, errors.New("secrets service has no identity loaded")
 	}
 	return s.identity, nil
+}
+
+// ExportKeyFile returns the age-keygen-compatible key file contents so
+// operators can save the DR key out of band. Fixes FINDING-37: without
+// a way to retrieve this file the server's own encrypted backup can't
+// be decrypted after a total server loss (key lives inside the
+// encrypted archive — chicken-and-egg).
+//
+// Format: age-keygen-compatible — dockmesh or `age` CLI can consume it.
+func (s *Service) ExportKeyFile() (string, error) {
+	if s.identity == nil {
+		return "", errors.New("secrets service has no identity loaded")
+	}
+	pub := s.identity.Recipient().String()
+	sec := s.identity.String()
+	return "# created: " + time.Now().UTC().Format(time.RFC3339) + "\n" +
+		"# public key: " + pub + "\n" +
+		sec + "\n", nil
 }
 
 func (s *Service) loadOrCreateKey() error {

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -41,6 +42,16 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 	runID, err := e.store.startRun(ctx, job)
 	if err != nil {
 		return nil, err
+	}
+
+	// Multi-host backup: reject remote agent jobs explicitly rather than
+	// silently run against local. The plumbing (HostID field, store,
+	// validation) is in place; the tar-stream-over-WebSocket frame for
+	// agents is a v1.1 feature. Clear 501 beats silent wrong-data.
+	if job.HostID != "" && job.HostID != "local" {
+		err := errors.New("remote-agent backup jobs are not yet implemented — use the central dockmesh host for now (tracked as v1.1). Set host_id to '' or 'local' to run against the central daemon.")
+		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", err)
+		return e.store.getRun(ctx, runID)
 	}
 
 	target, err := buildTarget(job.TargetType, job.TargetConfig)
@@ -132,18 +143,16 @@ func (e *Executor) streamSources(ctx context.Context, sources []Source, w io.Wri
 		total += n
 		return total, err
 	case "stack":
-		// For stacks we tar the on-disk stack dir using the same helper
-		// (mounted at /source) plus the volumes referenced by the
-		// compose file.
-		// MVP: just snapshot the stack dir; volumes can be backed up via
-		// separate volume jobs. Document as a follow-up.
+		// Tar the on-disk stack dir AND every named volume the compose
+		// file references, in a single .tar.gz with the layout:
+		//   stack/<files>
+		//   volumes/<volname>.tar        (each = inner tar from docker helper)
+		// So a restore can pull compose + env + every data volume back.
 		dir, err := e.stacks.Dir(src.Name)
 		if err != nil {
 			return 0, fmt.Errorf("stack dir: %w", err)
 		}
-		// Walk dir, tar manually since we don't want a docker helper for
-		// host paths.
-		return tarHostDir(dir, w)
+		return tarStackWithVolumes(ctx, e.docker, dir, src.Name, w)
 	case "system":
 		return tarSystem(ctx, e.db, e.paths, w)
 	default:

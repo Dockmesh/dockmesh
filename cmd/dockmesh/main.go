@@ -437,6 +437,7 @@ func main() {
 		Alerts:       alertsSvc,
 		Backups:       backupSvc,
 		BackupTargets: backupTargetStore,
+		Secrets:       secretsSvc,
 		Migrations:   migrationSvc,
 		Drains:       drainSvc,
 		Agents:       agentsSvc,

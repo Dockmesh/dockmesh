@@ -945,6 +945,19 @@ export const api = {
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replicas, force }) }
       );
     },
+    // P.12.5b — rolling-replace existing replicas (no replica count change).
+    rollingUpdate: (name: string, service: string, opts: {
+      order?: 'stop-first' | 'start-first';
+      parallelism?: number;
+      delay_seconds?: number;
+      failure_action?: 'pause' | 'continue' | 'rollback';
+    }, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<any>(
+        `/stacks/${encodeURIComponent(name)}/services/${encodeURIComponent(service)}/rolling-update${qs}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(opts) }
+      );
+    },
     getScalingRules: (name: string) =>
       request<ScalingConfig>(`/stacks/${encodeURIComponent(name)}/scaling-rules`),
     setScalingRules: (name: string, config: ScalingConfig) =>

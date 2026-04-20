@@ -440,17 +440,40 @@ func (s *Service) rollback(ctx context.Context, m *Migration) {
 	source, err := s.hosts.Pick(m.SourceHostID)
 	if err != nil {
 		slog.Error("rollback: source host unavailable", "err", err)
+		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", "source host unavailable: "+err.Error())
 		return
 	}
 	detail, err := s.stacks.Get(m.StackName)
 	if err != nil {
 		slog.Error("rollback: stack get failed", "err", err)
+		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", "stack read failed: "+err.Error())
 		return
+	}
+	// Rollback on a COMPLETED migration means: undo the move. Stop the
+	// target first (stack is currently running there), then restart on
+	// source. The source's stopped containers + volumes are still on
+	// disk as long as purge-source wasn't called — restarting just
+	// re-attaches the pre-migration volumes. Fixes FINDING-26.
+	if m.Status == StatusCompleted {
+		if target, terr := s.hosts.Pick(m.TargetHostID); terr == nil {
+			if err := target.StopStack(ctx, m.StackName); err != nil {
+				slog.Warn("rollback: stop target failed (proceeding anyway)", "err", err)
+			}
+		} else {
+			slog.Warn("rollback: target host unavailable — source restart may race", "err", terr)
+		}
 	}
 	if _, err := source.DeployStack(ctx, m.StackName, detail.Compose, detail.Env); err != nil {
 		slog.Error("rollback: restart source failed", "err", err)
+		_ = s.store.UpdateStatus(ctx, m.ID, StatusFailed, "rollback", "source restart failed: "+err.Error())
+		return
 	}
-	_ = s.store.UpdateStatus(ctx, m.ID, StatusRolledBack, "rollback", "auto-rollback after failure")
+	// Reassert deployment ownership on source, clearing any lingering
+	// target-side record from the completed migration.
+	if s.deployments != nil {
+		_ = s.deployments.Set(ctx, m.StackName, m.SourceHostID, "deployed")
+	}
+	_ = s.store.UpdateStatus(ctx, m.ID, StatusRolledBack, "rollback", "rollback complete; stack restored on source")
 }
 
 // Preflight runs the pre-flight checks without starting a migration.

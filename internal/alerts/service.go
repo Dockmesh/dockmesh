@@ -387,13 +387,23 @@ func (s *Service) evalRule(ctx context.Context, r *Rule) error {
 		args = append(args, r.ContainerFilter)
 	}
 
-	// We pull (container, min, max, sample_count, last_value) per container.
-	// "all samples breach" means: for op=gt, min > threshold; for op=lt, max < threshold.
+	// We pull (container, min, max, sample_count, last_value, min_ts) per
+	// container. "all samples breach AND oldest sample covers the full
+	// duration" is the firing condition:
+	//   - op=gt → every sample in window > threshold  (MIN > threshold)
+	//   - op=lt → every sample in window < threshold  (MAX < threshold)
+	//   - AND MIN(ts) is at least `duration` seconds old, so we're sure
+	//     the container has actually been breaching that long, not just
+	//     since-it-started-getting-monitored-30-seconds-ago. Fixes
+	//     FINDING-31: previously a stack that breached within the
+	//     duration tripped the alert immediately because all samples
+	//     (of the short existence) breached.
 	q := fmt.Sprintf(`
 		SELECT container_name,
 		       MIN(%s) AS min_val,
 		       MAX(%s) AS max_val,
 		       COUNT(*) AS n,
+		       MIN(ts) AS oldest_ts,
 		       (SELECT %s FROM metrics_raw m2 WHERE m2.container_name = m.container_name ORDER BY ts DESC LIMIT 1) AS last_val
 		FROM metrics_raw m
 		WHERE ts >= ?%s
@@ -410,7 +420,8 @@ func (s *Service) evalRule(ctx context.Context, r *Rule) error {
 		var name string
 		var minV, maxV, lastV float64
 		var n int
-		if err := rows.Scan(&name, &minV, &maxV, &n, &lastV); err != nil {
+		var oldestTS int64
+		if err := rows.Scan(&name, &minV, &maxV, &n, &oldestTS, &lastV); err != nil {
 			return err
 		}
 		if n < 1 {
@@ -423,6 +434,15 @@ func (s *Service) evalRule(ctx context.Context, r *Rule) error {
 			breach = minV > r.Threshold
 		case "<":
 			breach = maxV < r.Threshold
+		}
+		// Duration gate: don't fire unless the breach has lasted at
+		// least `duration_seconds`. Samples younger than that don't
+		// prove persistence.
+		if r.DurationSeconds > 0 {
+			age := now2.Unix() - oldestTS
+			if age < int64(r.DurationSeconds) {
+				breach = false
+			}
 		}
 
 		key := stateKey(r.ID, name)
