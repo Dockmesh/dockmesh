@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -22,11 +23,20 @@ var upgrader = websocket.Upgrader{
 // as ?ticket= on the WS URL.
 func (h *Handlers) WSTicket(w http.ResponseWriter, r *http.Request) {
 	uid := middleware.UserID(r.Context())
+	role := middleware.Role(r.Context())
+	// API-token auth produces no user id but does carry a role. dmctl
+	// needs WS tickets for logs/exec. Fall back to a synthetic subject
+	// derived from the token id so the ticket JWT stays unique + the
+	// server knows it's a token-backed session.
+	if uid == "" {
+		if tokID := middleware.APITokenID(r.Context()); tokID != 0 {
+			uid = "api-token:" + strconv.FormatInt(tokID, 10)
+		}
+	}
 	if uid == "" {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	role := middleware.Role(r.Context())
 	ticket, err := h.Auth.IssueWSTicket(uid, role)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "ticket generation failed")
