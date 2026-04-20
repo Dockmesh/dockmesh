@@ -1328,10 +1328,14 @@ export const api = {
         body: JSON.stringify({ email, role, scope_tags: scope_tags ?? [] })
       }),
     delete: (id: string) => request<void>(`/users/${id}`, { method: 'DELETE' }),
-    changePassword: (id: string, password: string) =>
+    changePassword: (id: string, password: string, currentPassword?: string) =>
       request<void>(`/users/${id}/password`, {
         method: 'PUT',
-        body: JSON.stringify({ password })
+        body: JSON.stringify(
+          currentPassword
+            ? { password, current_password: currentPassword }
+            : { password }
+        )
       })
   },
 

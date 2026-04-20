@@ -98,6 +98,30 @@ func (h *Handlers) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// RotateAgentEnrollToken mints a fresh one-time token for an existing
+// agent, invalidating the old one. Response shape matches CreateAgent
+// so the UI can reuse the install-command modal.
+//
+//	POST /api/v1/agents/{id}/rotate-token
+func (h *Handlers) RotateAgentEnrollToken(w http.ResponseWriter, r *http.Request) {
+	if h.Agents == nil {
+		writeError(w, http.StatusServiceUnavailable, "agents not configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	res, err := h.Agents.RotateEnrollToken(r.Context(), id)
+	if errors.Is(err, agents.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, "agent.rotate_token", "agent:"+id, nil)
+	writeJSON(w, http.StatusOK, res)
+}
+
 // UpgradeAgent pushes a self-upgrade request to a connected agent.
 // The agent downloads the new binary from the server's /install/ endpoint
 // and restarts via systemd.
