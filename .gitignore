@@ -48,3 +48,4 @@ coverage.txt
 # is tracked via the explicit !docker-compose.yml rule below.
 /*.yml
 !/docker-compose.yml
+/*.png
