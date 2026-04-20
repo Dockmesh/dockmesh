@@ -282,29 +282,19 @@
 
   // Dashboard's stack grid is a preview, NOT the canonical list — at
   // 100+ stacks the 3-column card view becomes a wall of noise and
-  // pushes Recent Activity / Quick Actions off-screen. Cap the grid
-  // and prioritise by "what's likely to need attention":
-  //   1. unhealthy/partial stacks first (something's wrong)
-  //   2. running stacks next (operational surface)
-  //   3. stopped stacks last (cold storage)
-  // The full list lives on /stacks which has search + sort.
+  // pushes Recent Activity / Quick Actions off-screen.
+  //
+  // Sort is deliberately stable alphabetical, NOT by state. The auto-
+  // refresh ticks every few seconds, and sorting by `running/stopped`
+  // made cards flip positions each tick while containers settled —
+  // jumpy, distracting, and useless for the user. Filter buttons on
+  // top already surface how many stacks are in each state.
   const STACK_PREVIEW_LIMIT = 12;
-  const stackRank: Record<string, number> = {
-    unhealthy: 0,
-    partial: 0,
-    running: 1,
-    stopped: 2
-  };
-  const rankedStacks = $derived(
-    [...stackCards].sort((a, b) => {
-      const ra = stackRank[a.state] ?? 3;
-      const rb = stackRank[b.state] ?? 3;
-      if (ra !== rb) return ra - rb;
-      return a.name.localeCompare(b.name);
-    })
+  const sortedStacks = $derived(
+    [...stackCards].sort((a, b) => a.name.localeCompare(b.name))
   );
   const filteredStacks = $derived(
-    (stackFilter === 'all' ? rankedStacks : rankedStacks.filter((s) => s.state === stackFilter))
+    (stackFilter === 'all' ? sortedStacks : sortedStacks.filter((s) => s.state === stackFilter))
       .slice(0, STACK_PREVIEW_LIMIT)
   );
   const hiddenStackCount = $derived(
@@ -704,7 +694,7 @@
       </div>
     {:else}
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {#each filteredStacks as s}
+        {#each filteredStacks as s (s.name)}
           <a
             href="/stacks/{s.name}"
             class="dm-card p-4 hover:border-[var(--border-strong)] transition-colors group"
