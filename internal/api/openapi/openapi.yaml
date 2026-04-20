@@ -3304,6 +3304,41 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /system/secrets/rotate:
+    post:
+      operationId: system.secrets_rotate
+      tags: [metrics]
+      summary: Rotate the age encryption key used for stack .env files
+      description: |
+        Generates a new age key, re-encrypts every stack `.env.age` against
+        it, atomically swaps the in-memory key on the running server, and
+        archives the previous key to `<path>.old` so legacy external
+        backups can still be decrypted out-of-band. Equivalent to
+        `dockmesh secrets rotate` but safe to run on a live server.
+      responses:
+        "200":
+          description: Rotation summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reencrypted:   { type: integer }
+                  old_recipient: { type: string }
+                  new_recipient: { type: string }
+        "400":
+          description: Secrets encryption disabled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Secrets or stacks service not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   # -----------------------------------------------------------------------
   # users — local-user CRUD + self-profile
   # -----------------------------------------------------------------------
