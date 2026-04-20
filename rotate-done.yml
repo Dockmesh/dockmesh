@@ -1,0 +1,252 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - button "Collapse sidebar" [ref=e5]:
+      - img [ref=e6]
+    - link "Dockmesh home" [ref=e8] [cursor=pointer]:
+      - /url: /
+      - img [ref=e9]:
+        - generic [ref=e19]: dockmesh
+    - generic [ref=e20]:
+      - generic [ref=e21]: Host
+      - button "Local" [ref=e23]:
+        - img [ref=e24]
+        - generic [ref=e25]: Local
+        - img [ref=e27]
+    - navigation [ref=e28]:
+      - generic [ref=e29]:
+        - link "Dashboard" [ref=e30] [cursor=pointer]:
+          - /url: /
+          - img [ref=e31]
+          - generic [ref=e32]: Dashboard
+        - link "Stacks" [ref=e33] [cursor=pointer]:
+          - /url: /stacks
+          - img [ref=e34]
+          - generic [ref=e35]: Stacks
+        - link "Templates" [ref=e36] [cursor=pointer]:
+          - /url: /templates
+          - img [ref=e37]
+          - generic [ref=e38]: Templates
+        - link "Containers" [ref=e39] [cursor=pointer]:
+          - /url: /containers
+          - img [ref=e40]
+          - generic [ref=e41]: Containers
+        - link "Images" [ref=e42] [cursor=pointer]:
+          - /url: /images
+          - img [ref=e43]
+          - generic [ref=e44]: Images
+        - link "Volumes" [ref=e45] [cursor=pointer]:
+          - /url: /volumes
+          - img [ref=e46]
+          - generic [ref=e47]: Volumes
+        - link "Agents" [ref=e48] [cursor=pointer]:
+          - /url: /agents
+          - img [ref=e49]
+          - generic [ref=e50]: Agents
+        - link "Migrations" [ref=e51] [cursor=pointer]:
+          - /url: /migrations
+          - img [ref=e52]
+          - generic [ref=e53]: Migrations
+      - generic [ref=e54]: Network
+      - generic [ref=e55]:
+        - link "Networks" [ref=e56] [cursor=pointer]:
+          - /url: /networks
+          - img [ref=e57]
+          - generic [ref=e58]: Networks
+        - link "Proxy" [ref=e59] [cursor=pointer]:
+          - /url: /proxy
+          - img [ref=e60]
+          - generic [ref=e61]: Proxy
+      - generic [ref=e62]: Automation
+      - generic [ref=e63]:
+        - link "Environment" [ref=e64] [cursor=pointer]:
+          - /url: /environment
+          - img [ref=e65]
+          - generic [ref=e66]: Environment
+        - link "Alerts" [ref=e67] [cursor=pointer]:
+          - /url: /alerts
+          - img [ref=e68]
+          - generic [ref=e69]: Alerts
+        - link "Backups" [ref=e70] [cursor=pointer]:
+          - /url: /backups
+          - img [ref=e71]
+          - generic [ref=e72]: Backups
+    - link "Backup 6h ago" [ref=e74] [cursor=pointer]:
+      - /url: /settings?tab=system
+      - img [ref=e75]
+      - generic [ref=e76]: Backup 6h ago
+    - link "Settings" [ref=e78] [cursor=pointer]:
+      - /url: /settings
+      - img [ref=e80]
+      - generic [ref=e81]: Settings
+    - generic [ref=e83]:
+      - generic [ref=e84]: A
+      - generic [ref=e85]:
+        - generic [ref=e86]: admin
+        - generic [ref=e87]: admin
+      - button "Toggle theme" [ref=e88]:
+        - img [ref=e89]
+      - button "Sign out" [ref=e90]:
+        - img [ref=e91]
+  - main [ref=e93]:
+    - generic [ref=e94]:
+      - generic [ref=e95]:
+        - generic [ref=e96]:
+          - heading "Settings" [level=2] [ref=e97]
+          - paragraph [ref=e98]: Manage your account, users and audit trail.
+        - generic [ref=e99]:
+          - button "Account" [ref=e100]:
+            - img [ref=e101]
+            - text: Account
+          - button "Users" [ref=e102]:
+            - img [ref=e103]
+            - text: Users
+          - button "SSO" [ref=e104]:
+            - img [ref=e105]
+            - text: SSO
+          - button "System" [ref=e106]:
+            - img [ref=e107]
+            - text: System
+          - button "Roles" [ref=e108]:
+            - img [ref=e109]
+            - text: Roles
+          - button "API Tokens" [ref=e110]:
+            - img [ref=e111]
+            - text: API Tokens
+          - button "Registries" [ref=e112]:
+            - img [ref=e113]
+            - text: Registries
+          - button "Audit Log" [ref=e114]:
+            - img [ref=e115]
+            - text: Audit Log
+      - generic [ref=e116]:
+        - generic [ref=e117]:
+          - heading "Instance" [level=3] [ref=e118]
+          - generic [ref=e119]:
+            - generic [ref=e120]:
+              - generic [ref=e121]: Version
+              - generic [ref=e122]: dev
+            - generic [ref=e123]:
+              - generic [ref=e124]: Commit
+              - generic [ref=e125]: d9420e0
+            - generic [ref=e126]:
+              - generic [ref=e127]: Built
+              - generic [ref=e128]: 2026-04-20
+            - generic [ref=e129]:
+              - generic [ref=e130]: Uptime
+              - generic [ref=e131]: 0m
+            - generic [ref=e132]:
+              - generic [ref=e133]: Go
+              - generic [ref=e134]: go1.25.0
+            - generic [ref=e135]:
+              - generic [ref=e136]: Platform
+              - generic [ref=e137]: linux/amd64
+        - generic [ref=e138]:
+          - heading "Configuration" [level=3] [ref=e139]
+          - generic [ref=e140]:
+            - generic [ref=e141]:
+              - generic [ref=e142]:
+                - generic [ref=e143]: Reverse Proxy (Caddy)
+                - paragraph [ref=e144]: Enable the embedded Caddy reverse proxy for automatic HTTPS.
+              - checkbox [ref=e146]
+            - generic [ref=e149]:
+              - generic [ref=e150]:
+                - generic [ref=e151]: Vulnerability Scanner (Grype)
+                - paragraph [ref=e152]: Enable CVE scanning for Docker images.
+              - checkbox [checked] [ref=e154]
+            - generic [ref=e157]:
+              - text: Base URL
+              - paragraph [ref=e158]: Used for OIDC callbacks and agent enrollment links.
+              - textbox "Base URL" [ref=e159]:
+                - /placeholder: https://dockmesh.example.com
+                - text: http://localhost:8080
+            - generic [ref=e160]:
+              - text: Agent Public URL
+              - paragraph [ref=e161]: The wss:// URL agents use to connect. Leave empty to auto-derive from base URL.
+              - textbox "Agent Public URL" [ref=e162]:
+                - /placeholder: wss://dockmesh.example.com:8443/connect
+                - text: wss://192.168.10.164:8443/connect
+            - button "Save settings" [ref=e164] [cursor=pointer]
+        - generic [ref=e165]:
+          - generic [ref=e166]:
+            - generic [ref=e167]:
+              - generic [ref=e168]:
+                - img [ref=e169]
+                - heading "Automated backups" [level=3] [ref=e170]
+              - paragraph [ref=e171]:
+                - text: Daily snapshot of the Dockmesh database,
+                - code [ref=e172]: /stacks
+                - text: directory, and server data dir. Runs at 03:00 server-local time, keeps the last 14 days. Single point of failure mitigation — restoring this archive is enough to bring a destroyed Dockmesh server back up.
+            - checkbox [checked] [ref=e174]
+          - generic [ref=e176]:
+            - generic [ref=e177]:
+              - generic [ref=e178]: State
+              - generic [ref=e180]: healthy
+            - generic [ref=e182]:
+              - generic [ref=e183]: Last run
+              - generic [ref=e184]: 6h ago
+            - generic [ref=e185]:
+              - generic [ref=e186]: Last size
+              - generic [ref=e187]: 726.2 MB
+            - generic [ref=e188]:
+              - generic [ref=e189]: Storage
+              - generic [ref=e190]: ./data/backups
+        - generic [ref=e191]:
+          - generic [ref=e192]:
+            - generic [ref=e193]:
+              - img [ref=e194]
+              - text: Verify a backup
+            - paragraph [ref=e195]:
+              - text: Upload a
+              - code [ref=e196]: dockmesh-system
+              - text: tarball. Server extracts to a temp dir, runs the same sanity checks as
+              - code [ref=e197]: dockmesh restore
+              - text: ", then discards. Never touches this live install — answers"
+              - emphasis [ref=e198]: "\"is my backup actually restorable?\""
+              - text: before you need it.
+          - button "Choose File" [ref=e200]
+        - generic [ref=e202]:
+          - generic [ref=e203]:
+            - img [ref=e204]
+            - text: Recovery from backup
+          - list [ref=e205]:
+            - listitem [ref=e206]:
+              - text: On a fresh host, install the Dockmesh binary and stop the service (
+              - code [ref=e207]: systemctl stop dockmesh
+              - text: ).
+            - listitem [ref=e208]:
+              - text: Copy the latest
+              - code [ref=e209]: dockmesh-system-*.tar.gz
+              - text: to the host.
+            - listitem [ref=e210]:
+              - text: Run
+              - code [ref=e211]: dockmesh restore --from <path>
+              - text: — it extracts DB +
+              - code [ref=e212]: /stacks
+              - text: +
+              - code [ref=e213]: /data
+              - text: and prints a sanity report.
+            - listitem [ref=e214]: Point DNS at the new host. Start dockmesh; agents reconnect in ~60s using the CA cert that came back with the restore.
+          - paragraph [ref=e215]:
+            - text: "Full playbook:"
+            - link "Disaster Recovery" [ref=e216] [cursor=pointer]:
+              - /url: https://dockmesh.dev/docs/operations/disaster-recovery/
+            - text: .
+        - generic [ref=e217]:
+          - generic [ref=e218]:
+            - generic [ref=e219]:
+              - img [ref=e220]
+              - text: Encryption key
+            - paragraph [ref=e221]:
+              - text: age key used to encrypt every stack's
+              - code [ref=e222]: .env.age
+              - text: and the system-backup tarball. Export once and keep it offline for DR — without it, encrypted backups can't be restored. Rotation generates a new key, re-encrypts all current
+              - code [ref=e223]: .env.age
+              - text: files, and swaps the key live without a server restart.
+          - generic [ref=e224]:
+            - link "Export key" [ref=e225] [cursor=pointer]:
+              - /url: /api/v1/system/backup-key/export
+            - button "Rotate encryption key" [ref=e226] [cursor=pointer]
+          - generic [ref=e250]:
+            - generic [ref=e251]: Rotation complete — 2 stack .env.age re-encrypted.
+            - generic [ref=e252]: "old: age1agdtv8rgk4xyn86mdlzv8z48m0fgmdcggxacthkxx4l2clyvsc5s0xsz0p"
+            - generic [ref=e253]: "new: age1kphs0fmyfrl3nr9q3hx45m33n729n026epa2wegmwe95cphncgmq9s4mtq"
