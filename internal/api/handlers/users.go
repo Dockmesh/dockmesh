@@ -3,9 +3,11 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -23,10 +25,27 @@ type updateUserRequest struct {
 }
 
 type changePasswordRequest struct {
-	Password string `json:"password"`
+	// CurrentPassword is required when a user changes their OWN password.
+	// Admins resetting another user's password may omit it (audited).
+	CurrentPassword string `json:"current_password,omitempty"`
+	Password        string `json:"password"`
 }
 
-var validRoles = map[string]bool{"admin": true, "operator": true, "viewer": true}
+// builtinRoles are always available regardless of what's in the rbac
+// store. Custom roles created via POST /api/v1/roles are looked up
+// dynamically at validation time.
+var builtinRoles = map[string]bool{"admin": true, "operator": true, "viewer": true}
+
+func (h *Handlers) isValidRole(name string) bool {
+	if builtinRoles[name] {
+		return true
+	}
+	if h.Roles == nil {
+		return false
+	}
+	_, ok := h.Roles.Get(name)
+	return ok
+}
 
 func (h *Handlers) ListUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := h.Auth.ListUsers(r.Context())
@@ -50,13 +69,25 @@ func (h *Handlers) CreateUser(w http.ResponseWriter, r *http.Request) {
 	if req.Role == "" {
 		req.Role = "viewer"
 	}
-	if !validRoles[req.Role] {
+	if !h.isValidRole(req.Role) {
 		writeError(w, http.StatusBadRequest, "invalid role")
 		return
 	}
 	u, err := h.Auth.CreateUser(r.Context(), req.Username, req.Email, req.Password, req.Role)
 	if err != nil {
-		writeError(w, http.StatusConflict, err.Error())
+		status := http.StatusConflict
+		msg := err.Error()
+		switch {
+		case errors.Is(err, auth.ErrUsernameTaken):
+			msg = "username already in use"
+		case errors.Is(err, auth.ErrEmailTaken):
+			msg = "email already in use"
+		case strings.Contains(msg, "password"):
+			// password-policy errors from ValidatePassword are user-input
+			// problems, not conflicts.
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, msg)
 		return
 	}
 	h.audit(r, audit.ActionUserCreate, u.ID, map[string]string{"username": u.Username, "role": u.Role})
@@ -70,7 +101,7 @@ func (h *Handlers) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if req.Role != "" && !validRoles[req.Role] {
+	if req.Role != "" && !h.isValidRole(req.Role) {
 		writeError(w, http.StatusBadRequest, "invalid role")
 		return
 	}
@@ -117,8 +148,12 @@ func (h *Handlers) DeleteUser(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) ChangeUserPassword(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	// Self or admin can change password.
-	if id != middleware.UserID(r.Context()) && middleware.Role(r.Context()) != "admin" {
+	callerID := middleware.UserID(r.Context())
+	isSelf := id == callerID
+	isAdmin := middleware.Role(r.Context()) == "admin"
+	// Self or admin can change password. Admin-for-other is allowed
+	// without current password; admin-for-self still needs it.
+	if !isSelf && !isAdmin {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -127,11 +162,31 @@ func (h *Handlers) ChangeUserPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "password must be at least 8 chars")
 		return
 	}
+	if isSelf {
+		if req.CurrentPassword == "" {
+			writeError(w, http.StatusBadRequest, "current_password required")
+			return
+		}
+		ok, err := h.Auth.VerifyUserPassword(r.Context(), id, req.CurrentPassword)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "current password is incorrect")
+			return
+		}
+	}
 	if err := h.Auth.ChangePassword(r.Context(), id, req.Password); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionUserPassword, id, nil)
+	meta := map[string]any{}
+	if !isSelf {
+		meta["admin_reset"] = true
+		meta["target_user"] = id
+	}
+	h.audit(r, audit.ActionUserPassword, id, meta)
 	w.WriteHeader(http.StatusNoContent)
 }
 

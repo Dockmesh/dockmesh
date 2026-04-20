@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/oidc"
@@ -172,7 +173,11 @@ func (h *Handlers) CreateOIDCProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := h.OIDC.CreateProvider(r.Context(), in)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		status, msg := http.StatusBadRequest, err.Error()
+		if strings.Contains(msg, "UNIQUE constraint failed: oidc_providers.slug") {
+			status, msg = http.StatusConflict, "a provider with that slug already exists"
+		}
+		writeError(w, status, msg)
 		return
 	}
 	h.audit(r, "oidc.provider_create", p.Slug, nil)

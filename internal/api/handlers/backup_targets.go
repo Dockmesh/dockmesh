@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/go-chi/chi/v5"
@@ -123,15 +125,26 @@ func (h *Handlers) TestBackupTarget(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Try list to verify access
-	_, listErr := tgt.List(r.Context(), "")
-	if listErr != nil {
-		// List might fail if dir doesn't exist yet — try Open as fallback
-		_ = h.BackupTargets.UpdateStatus(r.Context(), id, "connected", total, used)
-	} else {
-		_ = h.BackupTargets.UpdateStatus(r.Context(), id, "connected", total, used)
+	// Real reachability probe. For local + sftp the target's own Open
+	// path is idempotent ({create parent dirs}), so List on an empty
+	// dir succeeds. For S3 + WebDAV, List hits the remote service and
+	// a bad endpoint / bad creds surfaces here — we MUST report that
+	// as error instead of silently claiming "connected".
+	probeCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if _, listErr := tgt.List(probeCtx, ""); listErr != nil {
+		// Local "dir doesn't exist" is created by NewLocal itself, so a
+		// List failure at this point for any target really means the
+		// remote is unhappy.
+		_ = h.BackupTargets.UpdateStatus(r.Context(), id, "error", 0, 0)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "error",
+			"error":  listErr.Error(),
+		})
+		return
 	}
 
+	_ = h.BackupTargets.UpdateStatus(r.Context(), id, "connected", total, used)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":      "connected",
 		"total_bytes": total,

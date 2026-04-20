@@ -19,7 +19,7 @@ import (
 
 var (
 	ErrInvalidMetric    = errors.New("metric must be cpu_percent or mem_percent")
-	ErrInvalidOperator  = errors.New("operator must be gt or lt")
+	ErrInvalidOperator  = errors.New(`operator must be "gt" (or ">") or "lt" (or "<")`)
 	ErrInvalidThreshold = errors.New("threshold required")
 	// ErrBuiltinImmutable is returned when a caller tries to delete a
 	// built-in alert rule. Disabling and editing are still allowed; only
@@ -189,6 +189,7 @@ func (s *Service) ListRules(ctx context.Context) ([]Rule, error) {
 }
 
 func (s *Service) Create(ctx context.Context, in RuleInput) (*Rule, error) {
+	in.Operator = normalizeOperator(in.Operator)
 	if err := validateInput(in); err != nil {
 		return nil, err
 	}
@@ -222,6 +223,7 @@ func (s *Service) Create(ctx context.Context, in RuleInput) (*Rule, error) {
 }
 
 func (s *Service) Update(ctx context.Context, id int64, in RuleInput) (*Rule, error) {
+	in.Operator = normalizeOperator(in.Operator)
 	if err := validateInput(in); err != nil {
 		return nil, err
 	}
@@ -594,6 +596,18 @@ func scanRule(r rowScanner) (*Rule, error) {
 		rule.LastResolved = &t
 	}
 	return &rule, nil
+}
+
+// normalizeOperator accepts common symbol aliases (">", "<", ">=", "<=")
+// and folds them to the canonical "gt"/"lt" used internally.
+func normalizeOperator(op string) string {
+	switch op {
+	case ">", ">=", "gt", "GT":
+		return "gt"
+	case "<", "<=", "lt", "LT":
+		return "lt"
+	}
+	return op
 }
 
 func validateInput(in RuleInput) error {

@@ -169,8 +169,11 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 func decodeJSON(r *http.Request, dst any) error {
+	// Permissive: unknown fields are silently ignored so forward-compat
+	// clients (sending optional/future fields) don't get 400 "invalid body".
+	// Individual handlers that need strict validation can still enforce it
+	// on the decoded struct.
 	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
 	return dec.Decode(dst)
 }
 
