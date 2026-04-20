@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -167,4 +168,197 @@ func (h *Handlers) SetBackupEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.BackupStatus(w, r)
+}
+
+// -----------------------------------------------------------------------
+// /system/health — aggregated at-a-glance health for the sidebar-header
+// HealthDot. One request, everything an admin needs to know "is
+// anything burning?" without leaving the current page.
+// -----------------------------------------------------------------------
+
+// HealthCheck is one atomic fact about a subsystem. Severity follows
+// the "traffic light" model everyone recognises:
+//
+//	ok   — green
+//	warn — yellow (degraded, action optional)
+//	fail — red (action required)
+//	off  — grey (feature disabled; not a problem in itself)
+type HealthCheck struct {
+	Name    string `json:"name"`            // stable id: "backup" | "proxy" | "agents" | "disk" | "scanner"
+	Label   string `json:"label"`           // human string for the popover row
+	Status  string `json:"status"`          // ok | warn | fail | off
+	Detail  string `json:"detail,omitempty"` // sub-line shown under label
+	LinkTo  string `json:"link_to,omitempty"` // UI route to jump to on click
+	Message string `json:"message,omitempty"` // tooltip (surfaces raw errors)
+}
+
+// HealthResponse is what /system/health returns. `overall` aggregates
+// the worst status across all checks using the ranking
+// fail > warn > off > ok so a single red check flips the dot.
+type HealthResponse struct {
+	Overall string        `json:"overall"`
+	Checks  []HealthCheck `json:"checks"`
+}
+
+// SystemHealth aggregates the small status signals we already compute
+// separately (backup, proxy, agents, disk, scanner) into one response
+// so the sidebar's HealthDot can render everything from a single poll.
+func (h *Handlers) SystemHealth(w http.ResponseWriter, r *http.Request) {
+	checks := make([]HealthCheck, 0, 6)
+
+	// ---- backup
+	checks = append(checks, h.healthBackup(r.Context()))
+
+	// ---- proxy
+	if h.Proxy != nil {
+		st := h.Proxy.GetStatus(r.Context())
+		c := HealthCheck{Name: "proxy", Label: "Reverse proxy", LinkTo: "/proxy"}
+		switch {
+		case !st.Enabled:
+			c.Status = "off"
+			c.Detail = "disabled"
+		case !st.Running:
+			c.Status = "fail"
+			c.Detail = "container not running"
+		case !st.AdminOK:
+			c.Status = "warn"
+			c.Detail = "admin API unreachable"
+		default:
+			c.Status = "ok"
+			c.Detail = "Caddy " + st.Version
+		}
+		checks = append(checks, c)
+	}
+
+	// ---- agents: online / total, warn if any offline
+	if h.Agents != nil {
+		ags, _ := h.Agents.List(r.Context())
+		online := 0
+		for _, a := range ags {
+			if a.Status == "online" {
+				online++
+			}
+		}
+		c := HealthCheck{Name: "agents", Label: "Agents", LinkTo: "/agents"}
+		switch {
+		case len(ags) == 0:
+			c.Status = "off"
+			c.Detail = "no agents enrolled"
+		case online == len(ags):
+			c.Status = "ok"
+			c.Detail = fmt.Sprintf("%d/%d online", online, len(ags))
+		default:
+			c.Status = "warn"
+			c.Detail = fmt.Sprintf("%d/%d online", online, len(ags))
+		}
+		checks = append(checks, c)
+	}
+
+	// ---- disk: warn >80%, fail >95%, data directory is the critical one.
+	if m := system.Collect(); m.DiskTotal > 0 {
+		pct := m.DiskPercent
+		c := HealthCheck{Name: "disk", Label: "Disk", LinkTo: "/"}
+		c.Detail = fmt.Sprintf("%.0f%% used (%s)", pct, m.DiskPath)
+		switch {
+		case pct > 95:
+			c.Status = "fail"
+		case pct > 80:
+			c.Status = "warn"
+		default:
+			c.Status = "ok"
+		}
+		checks = append(checks, c)
+	}
+
+	// ---- scanner (Grype). Binary presence gates the feature; if disabled
+	// via settings we report "off".
+	if h.Settings != nil {
+		c := HealthCheck{Name: "scanner", Label: "CVE scanner", LinkTo: "/images"}
+		if h.Settings.GetBool("scanner_enabled", false) {
+			c.Status = "ok"
+			c.Detail = "Grype ready"
+		} else {
+			c.Status = "off"
+			c.Detail = "disabled"
+		}
+		checks = append(checks, c)
+	}
+
+	// Aggregate worst status: fail > warn > off > ok.
+	rank := map[string]int{"ok": 0, "off": 1, "warn": 2, "fail": 3}
+	overall := "ok"
+	for _, c := range checks {
+		if rank[c.Status] > rank[overall] {
+			overall = c.Status
+		}
+	}
+	writeJSON(w, http.StatusOK, HealthResponse{Overall: overall, Checks: checks})
+}
+
+// healthBackup adapts the existing BackupStatus flow into a HealthCheck
+// so the aggregated /system/health endpoint doesn't need to duplicate
+// its decision table.
+func (h *Handlers) healthBackup(ctx context.Context) HealthCheck {
+	c := HealthCheck{Name: "backup", Label: "System backup", LinkTo: "/settings?tab=system"}
+	if h.Backups == nil {
+		c.Status = "off"
+		c.Detail = "backups service unavailable"
+		return c
+	}
+	st, err := h.Backups.LastSystemRun(ctx)
+	if err != nil {
+		c.Status = "warn"
+		c.Detail = "status query failed"
+		c.Message = err.Error()
+		return c
+	}
+	if !st.Exists {
+		c.Status = "off"
+		c.Detail = "no default job"
+		return c
+	}
+	if !st.Enabled {
+		c.Status = "off"
+		c.Detail = "disabled"
+		return c
+	}
+	if st.Run == nil {
+		c.Status = "warn"
+		c.Detail = "never run yet"
+		return c
+	}
+	ts := st.Run.StartedAt
+	if st.Run.FinishedAt != nil {
+		ts = *st.Run.FinishedAt
+	}
+	age := time.Since(ts)
+	switch {
+	case st.Run.Status != "success":
+		c.Status = "fail"
+		c.Detail = "last run failed"
+		c.Message = st.Run.Error
+	case age > 36*time.Hour:
+		c.Status = "warn"
+		c.Detail = fmtAge(int64(age.Seconds())) + " ago (stale)"
+	default:
+		c.Status = "ok"
+		c.Detail = fmtAge(int64(age.Seconds())) + " ago"
+	}
+	return c
+}
+
+// fmtAge is a tiny human-readable duration formatter for health
+// detail strings. Mirrors the UI's fmtAge so the text lines up when
+// a user compares a popover row with the page the LinkTo points at.
+func fmtAge(sec int64) string {
+	if sec < 60 {
+		return fmt.Sprintf("%ds", sec)
+	}
+	if sec < 3600 {
+		return fmt.Sprintf("%dm", sec/60)
+	}
+	if sec < 86400 {
+		return fmt.Sprintf("%dh", sec/3600)
+	}
+	return fmt.Sprintf("%dd", sec/86400)
 }

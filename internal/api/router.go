@@ -133,6 +133,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				// Read-only — any authenticated viewer can see whether
 				// the server is self-protected.
 				r.Get("/system/backup-status", h.BackupStatus)
+				r.Get("/system/health", h.SystemHealth)
 				r.Get("/system/info", h.SystemInfo)
 			})
 

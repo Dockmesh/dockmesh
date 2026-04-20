@@ -3280,6 +3280,37 @@ paths:
               schema: { $ref: "#/components/schemas/BackupStatus" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /system/health:
+    get:
+      operationId: system.health
+      tags: [metrics]
+      summary: Aggregated system health for the HealthDot popover
+      description: |
+        One-shot fetch of every passive health signal (backup, proxy,
+        agents, disk, CVE scanner) so the UI can render the HealthDot
+        badge + its click popover without N parallel requests.
+      responses:
+        "200":
+          description: Health summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  overall: { type: string, enum: [ok, warn, fail, off] }
+                  checks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:    { type: string }
+                        label:   { type: string }
+                        status:  { type: string, enum: [ok, warn, fail, off] }
+                        detail:  { type: string }
+                        link_to: { type: string }
+                        message: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /system/backup-key/export:
     get:
       operationId: system.backup_key_export

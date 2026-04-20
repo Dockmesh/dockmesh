@@ -7,3 +7,4 @@ export { default as Skeleton } from './Skeleton.svelte';
 export { default as Toaster } from './Toaster.svelte';
 export { default as EmptyState } from './EmptyState.svelte';
 export { default as ConfirmDialog } from './ConfirmDialog.svelte';
+export { default as HealthDot } from './HealthDot.svelte';

@@ -4,7 +4,7 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { hosts } from '$lib/stores/host.svelte';
-  import { api, type BackupStatus } from '$lib/api';
+  import { api } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
   import { Toaster, ConfirmDialog } from '$lib/components/ui';
   import { allowed } from '$lib/rbac';
@@ -29,11 +29,9 @@
     ChevronsLeft,
     ChevronsRight,
     ArrowRightLeft,
-    ShieldCheck,
-    ShieldAlert,
-    ShieldOff,
     Package
   } from 'lucide-svelte';
+  import { HealthDot } from '$lib/components/ui';
 
   let { children } = $props();
   let theme = $state<'light' | 'dark'>('dark');
@@ -79,43 +77,6 @@
       hostPollTimer = null;
     }
   });
-
-  // Sidebar "last backup" pill: refreshed on login, then every 60s. A
-  // stale/failed pill is the single load-bearing signal that
-  // automated DR coverage is actually working — worth the tiny
-  // polling cost. 60s is well below the 36h staleness threshold.
-  let backupStatus = $state<BackupStatus | null>(null);
-  let backupPollTimer: ReturnType<typeof setInterval> | null = null;
-  async function refreshBackupStatus() {
-    if (!auth.isAuthenticated) return;
-    try {
-      backupStatus = await api.system.backupStatus();
-    } catch {
-      /* ignore — surfaced on next tick */
-    }
-  }
-  $effect(() => {
-    if (auth.isAuthenticated) {
-      refreshBackupStatus();
-      if (!backupPollTimer) {
-        backupPollTimer = setInterval(refreshBackupStatus, 60000);
-      }
-    } else if (backupPollTimer) {
-      clearInterval(backupPollTimer);
-      backupPollTimer = null;
-      backupStatus = null;
-    }
-  });
-
-  // Humanised "X ago" for the pill tooltip. Server sends age_seconds
-  // so we don't have to fight timezones on the client.
-  function fmtAge(secs?: number): string {
-    if (secs == null) return '—';
-    if (secs < 60) return 'just now';
-    if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-    if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
-    return `${Math.floor(secs / 86400)}d ago`;
-  }
 
   $effect(() => {
     if (typeof document !== 'undefined') {
@@ -398,48 +359,6 @@
         {/each}
       </nav>
 
-      <!-- Last-backup pill: sits just above Settings so admins see
-           DR coverage the moment they land on any page. Clicking
-           jumps to the System tab where the toggle + recovery docs
-           live. Hidden entirely for users without user.manage since
-           non-admins can't act on the status anyway. -->
-      {#if allowed('user.manage') && backupStatus}
-        {@const st = backupStatus.state}
-        {@const cls = st === 'ok'
-          ? 'text-[var(--color-success-400)] bg-[color-mix(in_srgb,var(--color-success-500)_10%,transparent)]'
-          : st === 'stale'
-          ? 'text-[var(--color-warning-400)] bg-[color-mix(in_srgb,var(--color-warning-500)_12%,transparent)]'
-          : st === 'failed'
-          ? 'text-[var(--color-danger-400)] bg-[color-mix(in_srgb,var(--color-danger-500)_12%,transparent)]'
-          : 'text-[var(--fg-muted)] bg-[var(--surface)]'}
-        {@const label = st === 'ok'
-          ? `Backup ${fmtAge(backupStatus.age_seconds)}`
-          : st === 'stale'
-          ? `Backup stale (${fmtAge(backupStatus.age_seconds)})`
-          : st === 'failed'
-          ? 'Backup failed'
-          : st === 'disabled'
-          ? 'Backups off'
-          : 'No backups yet'}
-        <div class="border-t border-[var(--border)] {sidebarCollapsed ? 'px-2' : 'px-3'} pt-2 pb-1">
-          <a
-            href="/settings?tab=system"
-            onclick={() => (mobileOpen = false)}
-            class="flex items-center {sidebarCollapsed ? 'justify-center px-2 py-2' : 'gap-2 px-2.5 py-1.5'} rounded-md text-[11px] font-medium {cls}"
-            title={backupStatus.last_error || label}
-          >
-            {#if st === 'ok'}
-              <ShieldCheck class="w-3.5 h-3.5 shrink-0" />
-            {:else if st === 'failed'}
-              <ShieldAlert class="w-3.5 h-3.5 shrink-0" />
-            {:else}
-              <ShieldOff class="w-3.5 h-3.5 shrink-0" />
-            {/if}
-            {#if !sidebarCollapsed}<span class="truncate">{label}</span>{/if}
-          </a>
-        </div>
-      {/if}
-
       <!-- Sidebar footer: Settings (tool config) sits directly above the
            user card (identity) — both are "meta" actions, visually anchored
            at the bottom of the sidebar. This pairing is the default
@@ -472,6 +391,14 @@
               <div class="text-sm font-medium text-[var(--fg)] truncate">{auth.user?.username}</div>
               <div class="text-[11px] text-[var(--fg-muted)] truncate">{auth.user?.role}</div>
             </div>
+          {/if}
+          <!-- Passive always-on system health dot. Click for the
+               breakdown (backup / proxy / agents / disk / scanner).
+               Replaces the old "Backup Nh ago" pill so everything
+               stays in one unified control instead of per-feature
+               sidebar real estate. -->
+          {#if auth.isAuthenticated}
+            <HealthDot />
           {/if}
           <button
             onclick={() => (theme = theme === 'dark' ? 'light' : 'dark')}

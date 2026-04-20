@@ -108,6 +108,22 @@ export interface BackupStatus {
   age_seconds?: number;
 }
 
+export type HealthStatus = 'ok' | 'warn' | 'fail' | 'off';
+
+export interface HealthCheck {
+  name: string;
+  label: string;
+  status: HealthStatus;
+  detail?: string;
+  link_to?: string;
+  message?: string;
+}
+
+export interface HealthResponse {
+  overall: HealthStatus;
+  checks: HealthCheck[];
+}
+
 // StackDeployment tracks which host a stack is deployed on (P.7).
 export interface StackDeployment {
   stack_name: string;
@@ -1485,6 +1501,10 @@ export const api = {
         '/system/secrets/rotate',
         { method: 'POST' }
       )
+  },
+
+  health: {
+    get: () => request<HealthResponse>('/system/health')
   },
 
   agents: {
