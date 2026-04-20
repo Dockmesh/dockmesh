@@ -59,13 +59,30 @@
     goto(route);
   }
 
-  // Worst-status colour classes. The dot itself is always visible, the
-  // popover shows the breakdown.
+  // Worst-status colour + motion. The dot is always visible; motion
+  // (glow + ring + ping) scales with severity so a user scanning the
+  // sidebar at a glance gets the right urgency signal:
+  //   ok   — steady green glow
+  //   warn — pulsing yellow
+  //   fail — red with expanding ping
+  //   off  — dim grey, no motion
   const statusRing: Record<string, string> = {
-    ok:   'bg-[var(--color-success-500)]',
-    warn: 'bg-[var(--color-warning-500)]',
-    fail: 'bg-[var(--color-danger-500)]',
-    off:  'bg-[var(--fg-muted)]'
+    ok:   'bg-emerald-500',
+    warn: 'bg-amber-500',
+    fail: 'bg-rose-500',
+    off:  'bg-slate-500'
+  };
+  const statusGlow: Record<string, string> = {
+    ok:   'shadow-[0_0_10px_2px_rgba(16,185,129,0.65)]',
+    warn: 'shadow-[0_0_10px_2px_rgba(245,158,11,0.75)]',
+    fail: 'shadow-[0_0_12px_3px_rgba(244,63,94,0.85)]',
+    off:  ''
+  };
+  const statusMotion: Record<string, string> = {
+    ok:   '',
+    warn: 'animate-pulse',
+    fail: 'animate-ping',
+    off:  ''
   };
   const statusLabel: Record<string, string> = {
     ok: 'All systems healthy',
@@ -74,10 +91,10 @@
     off: 'Some features disabled'
   };
   const statusText: Record<string, string> = {
-    ok:   'text-[var(--color-success-400)]',
-    warn: 'text-[var(--color-warning-400)]',
-    fail: 'text-[var(--color-danger-400)]',
-    off:  'text-[var(--fg-muted)]'
+    ok:   'text-emerald-400',
+    warn: 'text-amber-400',
+    fail: 'text-rose-400',
+    off:  'text-slate-400'
   };
 </script>
 
@@ -91,14 +108,23 @@
     onclick={toggle}
   >
     <span class="relative flex items-center justify-center">
-      <span class="absolute inline-flex h-2.5 w-2.5 rounded-full opacity-50 {health ? statusRing[health.overall] : 'bg-[var(--fg-muted)]'} {health?.overall === 'fail' ? 'animate-ping' : ''}"></span>
-      <span class="relative inline-flex h-2 w-2 rounded-full {health ? statusRing[health.overall] : 'bg-[var(--fg-muted)]'}"></span>
+      {#if health && health.overall !== 'off'}
+        <!-- Animated halo — ping for fail, pulse for warn, slow pulse
+             for ok. `off` renders no halo so the dot stays calm when
+             features are merely disabled rather than broken. -->
+        <span
+          class="absolute inline-flex h-3 w-3 rounded-full opacity-60 {statusRing[health.overall]} {statusMotion[health.overall] || 'animate-pulse'}"
+        ></span>
+      {/if}
+      <span
+        class="relative inline-flex h-2 w-2 rounded-full {health ? statusRing[health.overall] : 'bg-slate-500'} {health ? statusGlow[health.overall] : ''}"
+      ></span>
     </span>
   </button>
 
   {#if open}
     <div
-      class="fixed z-50 w-72 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg py-2 text-sm"
+      class="fixed z-50 w-72 bg-[var(--surface)] border border-[var(--border)] rounded-lg shadow-xl py-2 text-sm backdrop-blur"
       style="left: {popoverLeft}px; bottom: {popoverBottom}px;"
     >
       <div class="px-3 py-1.5 border-b border-[var(--border)]">
