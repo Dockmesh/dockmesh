@@ -13,8 +13,14 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/compose"
-	"github.com/dockmesh/dockmesh/internal/docker"
 )
+
+// volumeTarSource is the minimum capability hosttar needs — a way to
+// open a tar stream for one named volume. Satisfied by the executor's
+// hostBackupTarget (via either local docker or a remote agent).
+type volumeTarSource interface {
+	VolumeTar(ctx context.Context, name string) (io.ReadCloser, error)
+}
 
 // tarHostDir writes a gzipped tar of dir into w. Used to back up stack
 // directories on the host filesystem (compose.yaml, .env, .env.age,
@@ -105,7 +111,7 @@ func tarHostDir(dir string, w io.Writer) (int64, error) {
 // and per-volume restore each `volumes/<vol>.tar.gz` into the
 // recreated named volume. Fixes FINDING-32 (stack backup was
 // compose-only — worthless for disaster recovery).
-func tarStackWithVolumes(ctx context.Context, dc *docker.Client, stackDir, stackName string, w io.Writer) (int64, error) {
+func tarStackWithVolumes(ctx context.Context, vts volumeTarSource, stackDir, stackName string, w io.Writer) (int64, error) {
 	// Try to load the compose to discover referenced volumes. If parsing
 	// fails we fall through to a stack-dir-only archive — better to save
 	// what we can than fail the whole backup.
@@ -188,10 +194,10 @@ func tarStackWithVolumes(ctx context.Context, dc *docker.Client, stackDir, stack
 	// Buffer each volume stream on disk so we have a known size for the
 	// outer tar header. Cleanup on return.
 	for _, vn := range volumeNames {
-		if dc == nil {
+		if vts == nil {
 			continue
 		}
-		rc, err := tarVolume(ctx, dc, vn)
+		rc, err := vts.VolumeTar(ctx, vn)
 		if err != nil {
 			// Volume might legitimately not exist yet (stack never
 			// deployed). Skip quietly; stack config is still captured.

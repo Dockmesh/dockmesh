@@ -34,7 +34,7 @@ func NewService(db *sql.DB, dc *docker.Client, sm *stacks.Manager, sec *secrets.
 	st := newStore(db)
 	return &Service{
 		store:    st,
-		exec:     newExecutor(st, db, dc, sm, sec, paths),
+		exec:     newExecutor(st, db, dc, nil, sm, sec, paths),
 		docker:   dc,
 		stacks:   sm,
 		secrets:  sec,
@@ -42,6 +42,17 @@ func NewService(db *sql.DB, dc *docker.Client, sm *stacks.Manager, sec *secrets.
 		cron:     cron.New(),
 		entryIDs: make(map[int64]cron.EntryID),
 	}
+}
+
+// SetHostResolver wires in the host registry post-construction so the
+// executor can route per-job to local vs remote agents. Called by
+// main.go after both backup and host registry are constructed (they
+// can't be created in a single line — host registry needs the DB, backup
+// registers restorers on host etc.). Optional: if never called, backup
+// falls back to local-only behavior with a clear error on non-local
+// host_id values.
+func (s *Service) SetHostResolver(hr hostResolver) {
+	s.exec.hosts = hr
 }
 
 // Start loads enabled jobs and schedules them.

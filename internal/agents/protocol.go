@@ -86,6 +86,11 @@ const (
 	FrameReqVolumeTarExport = "req.volume.tar_export" // source: start tar czf - on volume
 	FrameReqVolumeTarImport = "req.volume.tar_import" // target: start tar xzf - into volume
 
+	// Synchronous exec — server blocks until the command exits. Used by
+	// backup pre-hooks (pg_dump etc.) where request/response is the right
+	// shape (no stdin, bounded stdout, we need the exit code).
+	FrameReqContainerExecRun = "req.container.exec_run"
+
 	// Compose-file mirroring (P.7) — server pushes the canonical
 	// compose+env content to the agent after a successful deploy so
 	// each agent retains a local copy in case the main server is lost.
@@ -226,6 +231,21 @@ type VolumeBrowseReq struct {
 	Volume   string `json:"volume"`
 	SubPath  string `json:"sub_path,omitempty"`
 	MaxBytes int64  `json:"max_bytes,omitempty"`
+}
+
+// ContainerExecRunReq is the payload for FrameReqContainerExecRun.
+// Used by backup pre-hooks to run (e.g.) pg_dump inside a container
+// running on a remote agent. Bounded output — 1 MiB default cap.
+type ContainerExecRunReq struct {
+	Container      string   `json:"container"`
+	Cmd            []string `json:"cmd"`
+	MaxOutputBytes int64    `json:"max_output_bytes,omitempty"`
+}
+
+// ContainerExecRunRes is the response.
+type ContainerExecRunRes struct {
+	Stdout   []byte `json:"stdout"`
+	ExitCode int    `json:"exit_code"`
 }
 
 // StackSyncReq carries the full compose + env + optional meta for
