@@ -1379,6 +1379,8 @@ export const api = {
     },
     // Default-system-backup status for the sidebar pill + settings.
     backupStatus: () => request<BackupStatus>('/system/backup-status'),
+    // Aggregated health for the HealthDot popover.
+    health: () => request<HealthResponse>('/system/health'),
     info: () => request<{ version: string; commit: string; build_date: string; go_version: string; os: string; arch: string; uptime_seconds: number }>('/system/info'),
     settings: () => request<Array<{ key: string; value: string }>>('/settings'),
     updateSettings: (entries: Array<{ key: string; value: string }>) =>
@@ -1503,9 +1505,6 @@ export const api = {
       )
   },
 
-  health: {
-    get: () => request<HealthResponse>('/system/health')
-  },
 
   agents: {
     list: () => request<Agent[]>('/agents'),
