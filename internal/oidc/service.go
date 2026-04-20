@@ -224,6 +224,42 @@ func (s *Service) DeleteProvider(ctx context.Context, id int64) error {
 	return err
 }
 
+// DiscoveryReport is what TestDiscovery returns on success.
+type DiscoveryReport struct {
+	Issuer                string
+	AuthorizationEndpoint string
+	TokenEndpoint         string
+	UserinfoEndpoint      string
+}
+
+// TestDiscovery fetches /.well-known/openid-configuration from the given
+// issuer and verifies the `issuer` claim matches. Called by the UI's
+// "Test connection" button so admins don't configure a bad URL and only
+// find out at the first real login. The goidc library already does the
+// issuer-URL-equality check internally, so any mismatch (localhost vs
+// public URL, trailing slash, …) surfaces as a clear error here.
+func (s *Service) TestDiscovery(ctx context.Context, issuer string) (*DiscoveryReport, error) {
+	p, err := goidc.NewProvider(ctx, issuer)
+	if err != nil {
+		return nil, err
+	}
+	var meta struct {
+		Issuer                string `json:"issuer"`
+		AuthorizationEndpoint string `json:"authorization_endpoint"`
+		TokenEndpoint         string `json:"token_endpoint"`
+		UserinfoEndpoint      string `json:"userinfo_endpoint"`
+	}
+	if err := p.Claims(&meta); err != nil {
+		return nil, fmt.Errorf("read discovery metadata: %w", err)
+	}
+	return &DiscoveryReport{
+		Issuer:                meta.Issuer,
+		AuthorizationEndpoint: meta.AuthorizationEndpoint,
+		TokenEndpoint:         meta.TokenEndpoint,
+		UserinfoEndpoint:      meta.UserinfoEndpoint,
+	}, nil
+}
+
 // ReloadAll flushes the entire provider cache so the next login
 // re-discovers every issuer. Useful after changing provider config
 // at the IdP side without touching the Dockmesh row.

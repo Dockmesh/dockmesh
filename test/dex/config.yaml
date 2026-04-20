@@ -12,7 +12,7 @@
 #   group claim:   groups
 #   admin group:   dockmesh-admins
 
-issuer: http://localhost:5556/dex
+issuer: http://192.168.10.164:5556/dex
 
 storage:
   type: memory
@@ -37,11 +37,11 @@ enablePasswordDB: true
 # bcrypt of "password" — generated with: htpasswd -bnBC 10 "" password | tr -d ':\n'
 staticPasswords:
   - email: admin@dockmesh.local
-    hash: "$2y$10$i2.tSLkchjnpGkHlz3JJd.X6c8cPnPR3UAHZ4fMOsKj4D97WqWcsm"
+    hash: "$2y$10$QIbyOfZAkEGKpxR6jH3kFet0rmCVzvm7Rsneyseo59nkuxCYzixAK"
     username: admin
     userID: 00000000-0000-0000-0000-000000000001
 
   - email: user@dockmesh.local
-    hash: "$2y$10$i2.tSLkchjnpGkHlz3JJd.X6c8cPnPR3UAHZ4fMOsKj4D97WqWcsm"
+    hash: "$2y$10$QIbyOfZAkEGKpxR6jH3kFet0rmCVzvm7Rsneyseo59nkuxCYzixAK"
     username: user
     userID: 00000000-0000-0000-0000-000000000002

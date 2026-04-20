@@ -396,6 +396,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Put("/oidc/providers/{id}", h.UpdateOIDCProvider)
 				r.Delete("/oidc/providers/{id}", h.DeleteOIDCProvider)
 				r.Post("/oidc/providers/reload", h.ReloadOIDCProviders)
+			r.Post("/oidc/providers/test-discovery", h.TestOIDCDiscovery)
 			})
 
 			// -------------------------- ALERTS (admin) -----------------------
