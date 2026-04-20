@@ -10,7 +10,7 @@
 
   async function load() {
     try {
-      health = await api.health.get();
+      health = await api.system.health();
       error = null;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
