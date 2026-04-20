@@ -731,6 +731,34 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /agents/{id}/rotate-token:
+    post:
+      operationId: agents.rotate_enroll_token
+      tags: [agents]
+      summary: Rotate the enrollment token of an existing agent
+      description: |
+        Generates a new bootstrap token so the old one (which may have
+        leaked or been committed to git) cannot re-enroll. The connected
+        agent keeps its mTLS cert — only future fresh enrollments change.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: New enrollment token.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enroll_token: { type: string }
+                  enroll_url:   { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /agents/upgrade-policy:
     get:
       operationId: agents.upgrade_policy_get
@@ -3252,6 +3280,30 @@ paths:
               schema: { $ref: "#/components/schemas/BackupStatus" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /system/backup-key/export:
+    get:
+      operationId: system.backup_key_export
+      tags: [metrics]
+      summary: Download the age identity used for system-backup encryption
+      description: |
+        Returns the age private key used to encrypt system backups, so the
+        admin can store it offline for disaster recovery. Without this
+        key, an encrypted system backup cannot be restored on a fresh
+        host. Admin-only.
+      responses:
+        "200":
+          description: age key file (text/plain).
+          content:
+            text/plain:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Age encryption not configured on this server.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   # -----------------------------------------------------------------------
   # users — local-user CRUD + self-profile
   # -----------------------------------------------------------------------
@@ -3576,6 +3628,42 @@ paths:
                 properties:
                   reloaded: { type: integer }
                   failed: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /oidc/providers/test-discovery:
+    post:
+      operationId: oidc.test_discovery
+      tags: [oidc]
+      summary: Validate an OIDC issuer URL without saving a provider
+      description: |
+        Fetches /.well-known/openid-configuration from the given issuer and
+        verifies the `issuer` claim matches — catches typos and localhost/IP
+        mismatches before the first real login attempt.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [issuer_url]
+              properties:
+                issuer_url: { type: string, example: "https://login.example.com" }
+      responses:
+        "200":
+          description: "Discovery result. `ok: false` carries the reason in `error`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:                     { type: boolean }
+                  error:                  { type: string }
+                  issuer:                 { type: string }
+                  authorization_endpoint: { type: string }
+                  token_endpoint:         { type: string }
+                  userinfo_endpoint:      { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 

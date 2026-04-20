@@ -387,6 +387,40 @@
     default_role: 'viewer',
     enabled: true
   });
+  let oidcTestState = $state<'idle' | 'testing' | 'ok' | 'fail'>('idle');
+  let oidcTestMessage = $state<string>('');
+
+  async function testOIDCDiscovery() {
+    const url = oForm.issuer_url.trim();
+    if (!url) {
+      oidcTestState = 'fail';
+      oidcTestMessage = 'Enter an issuer URL first';
+      return;
+    }
+    oidcTestState = 'testing';
+    oidcTestMessage = '';
+    try {
+      const res = await api.oidc.testDiscovery(url);
+      if (res.ok) {
+        oidcTestState = 'ok';
+        oidcTestMessage = `Discovery OK — issuer: ${res.issuer}`;
+      } else {
+        oidcTestState = 'fail';
+        oidcTestMessage = res.error || 'Discovery failed';
+      }
+    } catch (err) {
+      oidcTestState = 'fail';
+      oidcTestMessage = err instanceof ApiError ? err.message : String(err);
+    }
+  }
+
+  $effect(() => {
+    // Reset test state whenever the issuer URL changes so a stale OK
+    // badge doesn't mislead after the admin edits the URL.
+    oForm.issuer_url;
+    oidcTestState = 'idle';
+    oidcTestMessage = '';
+  });
 
   async function loadOIDC() {
     oidcLoading = true;
@@ -2368,7 +2402,23 @@
     <!-- OIDC configuration -->
     <fieldset class="space-y-3">
       <legend class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-1">OIDC Configuration</legend>
-      <Input label="Issuer URL" placeholder="https://login.microsoftonline.com/your-tenant/v2.0" bind:value={oForm.issuer_url} hint="OIDC discovery root (.well-known/openid-configuration)" />
+      <div>
+        <div class="flex items-end gap-2">
+          <div class="flex-1">
+            <Input label="Issuer URL" placeholder="https://login.microsoftonline.com/your-tenant/v2.0" bind:value={oForm.issuer_url} hint="OIDC discovery root (.well-known/openid-configuration)" />
+          </div>
+          <button type="button" class="dm-btn dm-btn-secondary shrink-0 mb-[22px]"
+            disabled={oidcTestState === 'testing' || !oForm.issuer_url.trim()}
+            onclick={testOIDCDiscovery}>
+            {oidcTestState === 'testing' ? 'Testing…' : 'Test connection'}
+          </button>
+        </div>
+        {#if oidcTestState === 'ok'}
+          <p class="mt-1 text-xs text-green-600 dark:text-green-400">{oidcTestMessage}</p>
+        {:else if oidcTestState === 'fail'}
+          <p class="mt-1 text-xs text-red-600 dark:text-red-400">{oidcTestMessage}</p>
+        {/if}
+      </div>
       <div class="grid grid-cols-2 gap-3">
         <Input label="Client ID" bind:value={oForm.client_id} />
         <Input label="Client secret" type="password" bind:value={oForm.client_secret}

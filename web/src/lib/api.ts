@@ -1464,7 +1464,19 @@ export const api = {
     update: (id: number, input: OIDCProviderInput) =>
       request<OIDCProvider>(`/oidc/providers/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
     delete: (id: number) =>
-      request<void>(`/oidc/providers/${id}`, { method: 'DELETE' })
+      request<void>(`/oidc/providers/${id}`, { method: 'DELETE' }),
+    testDiscovery: (issuerURL: string) =>
+      request<{
+        ok: boolean;
+        error?: string;
+        issuer?: string;
+        authorization_endpoint?: string;
+        token_endpoint?: string;
+        userinfo_endpoint?: string;
+      }>('/oidc/providers/test-discovery', {
+        method: 'POST',
+        body: JSON.stringify({ issuer_url: issuerURL })
+      })
   },
 
   agents: {

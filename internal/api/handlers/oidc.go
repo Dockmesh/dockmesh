@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -226,6 +227,46 @@ func (h *Handlers) DeleteOIDCProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(r, "oidc.provider_delete", idStr, nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// TestOIDCDiscovery validates a candidate issuer URL without saving it.
+// Called from the Add/Edit provider modal so admins find a bad issuer
+// BEFORE users hit "Sign in with …" and see a 404 about mismatched
+// issuer. Returns { ok: true, issuer, endpoints } on success.
+func (h *Handlers) TestOIDCDiscovery(w http.ResponseWriter, r *http.Request) {
+	if h.OIDC == nil {
+		writeError(w, http.StatusServiceUnavailable, "oidc not configured")
+		return
+	}
+	var in struct {
+		IssuerURL string `json:"issuer_url"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	in.IssuerURL = strings.TrimSpace(in.IssuerURL)
+	if in.IssuerURL == "" {
+		writeError(w, http.StatusBadRequest, "issuer_url required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	report, err := h.OIDC.TestDiscovery(ctx, in.IssuerURL)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":    false,
+			"error": err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                     true,
+		"issuer":                 report.Issuer,
+		"authorization_endpoint": report.AuthorizationEndpoint,
+		"token_endpoint":         report.TokenEndpoint,
+		"userinfo_endpoint":      report.UserinfoEndpoint,
+	})
 }
 
 // ReloadOIDCProviders flushes the OIDC provider cache so the next
