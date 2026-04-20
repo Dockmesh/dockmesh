@@ -8,6 +8,13 @@
   let error = $state<string | null>(null);
   let timer: ReturnType<typeof setInterval> | null = null;
 
+  // HealthDot lives in the sidebar footer; the sidebar has overflow
+  // clipping rules that would chop a popover positioned inside it.
+  // We portal the popover via `position: fixed` and compute its
+  // anchor from the button's bounding box each time we open.
+  let popoverLeft = $state(0);
+  let popoverBottom = $state(0);
+
   async function load() {
     try {
       health = await api.system.health();
@@ -28,9 +35,22 @@
   });
 
   let root: HTMLDivElement;
+  let trigger: HTMLButtonElement;
   function onOutside(e: MouseEvent) {
     if (!open) return;
     if (root && !root.contains(e.target as Node)) open = false;
+  }
+
+  function toggle() {
+    if (!open) {
+      // Anchor above+aligned-to-left-edge of the trigger, just
+      // outside the sidebar so we don't fight its overflow rules.
+      const r = trigger.getBoundingClientRect();
+      popoverLeft = Math.max(r.left, 12);
+      popoverBottom = Math.max(window.innerHeight - r.top + 8, 12);
+      load();
+    }
+    open = !open;
   }
 
   function jumpTo(route: string | undefined) {
@@ -63,11 +83,12 @@
 
 <div bind:this={root} class="relative">
   <button
+    bind:this={trigger}
     type="button"
     class="relative w-7 h-7 rounded-md flex items-center justify-center hover:bg-[var(--surface)] transition-colors"
     title={health ? statusLabel[health.overall] : 'System health'}
     aria-label="System health"
-    onclick={() => { open = !open; if (open) load(); }}
+    onclick={toggle}
   >
     <span class="relative flex items-center justify-center">
       <span class="absolute inline-flex h-2.5 w-2.5 rounded-full opacity-50 {health ? statusRing[health.overall] : 'bg-[var(--fg-muted)]'} {health?.overall === 'fail' ? 'animate-ping' : ''}"></span>
@@ -76,7 +97,10 @@
   </button>
 
   {#if open}
-    <div class="absolute bottom-full right-0 mb-2 z-40 w-72 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg py-2 text-sm">
+    <div
+      class="fixed z-50 w-72 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg py-2 text-sm"
+      style="left: {popoverLeft}px; bottom: {popoverBottom}px;"
+    >
       <div class="px-3 py-1.5 border-b border-[var(--border)]">
         <div class="font-medium {health ? statusText[health.overall] : ''}">
           {health ? statusLabel[health.overall] : 'Loading…'}
