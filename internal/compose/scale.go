@@ -129,11 +129,28 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 	}
 
 	// Current containers for this service, sorted by replica index.
-	existing, err := listServiceContainers(ctx, cli, proj.Name, serviceName)
+	// Only RUNNING replicas count toward `current` — stopped/exited
+	// replicas are replaced on the next scale so a killed container
+	// can be auto-healed with "scale to same N". Fixes FINDING-13.
+	allContainers, err := listServiceContainers(ctx, cli, proj.Name, serviceName)
 	if err != nil {
 		return nil, err
 	}
-	sortByReplicaIndex(existing, proj.Name, serviceName)
+	sortByReplicaIndex(allContainers, proj.Name, serviceName)
+	// Separate running from non-running. Non-running ones get cleaned
+	// up before we create replacements so the replica names are free.
+	var existing []dtypes.Container
+	var stale []dtypes.Container
+	for _, c := range allContainers {
+		if c.State == "running" || c.State == "restarting" || c.State == "paused" {
+			existing = append(existing, c)
+		} else {
+			stale = append(stale, c)
+		}
+	}
+	for _, c := range stale {
+		_ = cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true})
+	}
 
 	current := len(existing)
 	result := &ScaleResult{Service: serviceName, Previous: current}
@@ -159,6 +176,15 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 			cfg, hostCfg, netCfg, err := serviceToContainerConfig(proj, svc, netNames)
 			if err != nil {
 				return nil, fmt.Errorf("config replica %d: %w", i, err)
+			}
+			// Force unless-stopped on scaled replicas if the compose
+			// didn't set a restart policy. Docker's default (no
+			// restart) means a crashing scaled replica stays dead and
+			// auto-heal via "scale to same N" is the only recovery —
+			// this also works because we clean up stale replicas above.
+			// FINDING-13.
+			if hostCfg.RestartPolicy.Name == "" || hostCfg.RestartPolicy.Name == "no" {
+				hostCfg.RestartPolicy.Name = "unless-stopped"
 			}
 			// Remove stale container with the same name if it exists.
 			if old, inspErr := cli.ContainerInspect(ctx, name); inspErr == nil {

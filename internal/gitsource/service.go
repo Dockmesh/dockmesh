@@ -440,12 +440,18 @@ func (s *Service) cloneOrPull(ctx context.Context, src *Source, dir string, auth
 // copyIntoStack reads compose.yaml (+ optional .env) from the clone's
 // path_in_repo and pushes them through stacks.Manager so fsnotify fires
 // and the normal deploy path sees the change.
+//
+// When path_in_repo points at a directory, ALL sibling files in that
+// directory are also mirrored into the stack dir so compose `build:`
+// references (Dockerfiles, config files, etc.) resolve correctly.
+// Files prefixed with . are skipped except .env / .env.age (the
+// canonical secrets). Fixes FINDING-8.
 func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string) error {
 	src := filepath.Join(cloneDir, pathInRepo)
 	composePath := src
-	// path_in_repo can be either a dir or a direct compose.yaml path.
+	isDir := false
 	if info, err := os.Stat(src); err == nil && info.IsDir() {
-		// Try canonical names in order.
+		isDir = true
 		for _, name := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
 			p := filepath.Join(src, name)
 			if _, err := os.Stat(p); err == nil {
@@ -458,23 +464,82 @@ func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string) error {
 	if err != nil {
 		return ErrComposeMissing
 	}
-	// Optional .env next to the compose file.
 	envContent := ""
 	envPath := filepath.Join(filepath.Dir(composePath), ".env")
 	if b, err := os.ReadFile(envPath); err == nil {
 		envContent = string(b)
 	}
+	// Create/update the stack with compose + .env first; the Manager
+	// wires up the stack directory we'll then copy siblings into.
 	if _, err := s.stacks.Get(stackName); err != nil {
-		// Stack doesn't exist yet — create it.
 		if _, err := s.stacks.Create(stackName, string(compose), envContent); err != nil {
 			return fmt.Errorf("create stack from git: %w", err)
 		}
+	} else {
+		if _, err := s.stacks.Update(stackName, string(compose), envContent); err != nil {
+			return fmt.Errorf("update stack from git: %w", err)
+		}
+	}
+	// Mirror sibling files when path_in_repo was a directory.
+	if !isDir {
 		return nil
 	}
-	if _, err := s.stacks.Update(stackName, string(compose), envContent); err != nil {
-		return fmt.Errorf("update stack from git: %w", err)
+	dstDir, err := s.stacks.Dir(stackName)
+	if err != nil {
+		return nil // non-fatal — compose + env are already in place
 	}
-	return nil
+	return copyTreeSiblings(filepath.Dir(composePath), dstDir)
+}
+
+// copyTreeSiblings mirrors all non-dotfile entries under src into dst,
+// recursively, EXCEPT the compose / .env files the main copy already
+// handled. Tops out at 64 MiB per file to keep build-contexts sane.
+func copyTreeSiblings(src, dst string) error {
+	const maxFile = 64 << 20
+	skip := map[string]bool{
+		"compose.yaml":        true,
+		"compose.yml":         true,
+		"docker-compose.yaml": true,
+		"docker-compose.yml":  true,
+		".env":                true,
+		".git":                true,
+	}
+	return filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		if rel == "." {
+			return nil
+		}
+		// skip top-level compose / .env (already written) and anything
+		// git-adjacent.
+		if skip[rel] || strings.HasPrefix(rel, ".git") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		dstPath := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(dstPath, 0o755)
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return ierr
+		}
+		if info.Size() > maxFile {
+			return fmt.Errorf("file %s exceeds %d bytes — refusing to copy into stack dir", rel, maxFile)
+		}
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dstPath, b, info.Mode().Perm())
+	})
 }
 
 // -----------------------------------------------------------------------------
