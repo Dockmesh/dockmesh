@@ -393,6 +393,15 @@ func (m *Manager) Update(name, compose, env string) (*Detail, error) {
 // after the key has been swapped out. The old plaintext is held only in
 // memory for the duration of each stack's rotation.
 func (m *Manager) ReencryptAll(oldSvc *secrets.Service) (int, error) {
+	return m.ReencryptAllBetween(oldSvc, m.secrets)
+}
+
+// ReencryptAllBetween re-encrypts every `.env.age` by decrypting with
+// oldSvc and re-encrypting with newSvc. Neither service needs to be the
+// live one — the live-server rotation path passes a detached snapshot
+// as oldSvc so the in-memory live service can already be rotated to the
+// new key before the disk migration runs.
+func (m *Manager) ReencryptAllBetween(oldSvc, newSvc *secrets.Service) (int, error) {
 	entries, err := os.ReadDir(m.root)
 	if err != nil {
 		return 0, err
@@ -414,7 +423,7 @@ func (m *Manager) ReencryptAll(oldSvc *secrets.Service) (int, error) {
 		if err != nil {
 			return count, fmt.Errorf("decrypt %s: %w", agePath, err)
 		}
-		newCT, err := m.secrets.Encrypt(pt)
+		newCT, err := newSvc.Encrypt(pt)
 		if err != nil {
 			return count, fmt.Errorf("encrypt %s: %w", agePath, err)
 		}

@@ -1479,6 +1479,14 @@ export const api = {
       })
   },
 
+  secrets: {
+    rotate: () =>
+      request<{ reencrypted: number; old_recipient: string; new_recipient: string }>(
+        '/system/secrets/rotate',
+        { method: 'POST' }
+      )
+  },
+
   agents: {
     list: () => request<Agent[]>('/agents'),
     get: (id: string) => request<Agent>(`/agents/${id}`),

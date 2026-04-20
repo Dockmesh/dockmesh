@@ -454,6 +454,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				// Toggle the auto-created daily system backup job.
 				r.Put("/backups/system/enabled", h.SetBackupEnabled)
 				r.Get("/system/backup-key/export", h.ExportBackupKey)
+				r.Post("/system/secrets/rotate", h.RotateSecretsKey)
 			})
 
 			// -------------------------- PROXY (admin) ------------------------

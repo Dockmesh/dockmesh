@@ -85,6 +85,30 @@
   let systemInfo = $state<{ version: string; commit: string; build_date: string; go_version: string; os: string; arch: string; uptime_seconds: number } | null>(null);
   let sysSettings = $state<Map<string, string>>(new Map());
   let settingsBusy = $state(false);
+  let secretsRotateBusy = $state(false);
+  let secretsRotateResult = $state<{ reencrypted: number; old_recipient: string; new_recipient: string } | null>(null);
+
+  async function rotateEncryptionKey() {
+    const ok = await confirm.ask({
+      title: 'Rotate encryption key?',
+      message: 'Generates a new age key and re-encrypts every stack .env.age.',
+      body: 'External backups encrypted with the old key must be re-encrypted or re-created separately — dockmesh does not track them yet.',
+      confirmLabel: 'Rotate',
+      danger: true
+    });
+    if (!ok) return;
+    secretsRotateBusy = true;
+    try {
+      const res = await api.secrets.rotate();
+      secretsRotateResult = res;
+      toast.success('Key rotated', `${res.reencrypted} .env.age re-encrypted`);
+    } catch (err) {
+      toast.error('Rotate failed', err instanceof ApiError ? err.message : String(err));
+    } finally {
+      secretsRotateBusy = false;
+    }
+  }
+
   async function loadSystemInfo() {
     try { systemInfo = await api.system.info(); } catch { /* ignore */ }
     try {
@@ -1800,6 +1824,42 @@
         </ol>
         <p class="pt-1">Full playbook: <a class="underline" href="https://dockmesh.dev/docs/operations/disaster-recovery/">Disaster Recovery</a>.</p>
       </div>
+    </Card>
+
+    <Card class="p-5 space-y-3">
+      <div>
+        <div class="font-semibold flex items-center gap-2">
+          <KeyRound class="w-4 h-4 text-[var(--color-brand-400)]" /> Encryption key
+        </div>
+        <p class="text-xs text-[var(--fg-muted)] mt-1">
+          age key used to encrypt every stack's <code class="font-mono">.env.age</code>
+          and the system-backup tarball. Export once and keep it offline for DR —
+          without it, encrypted backups can't be restored. Rotation generates a
+          new key, re-encrypts all current <code class="font-mono">.env.age</code> files, and
+          swaps the key live without a server restart.
+        </p>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <a class="dm-btn dm-btn-secondary text-xs"
+          href="/api/v1/system/backup-key/export"
+          download="dockmesh-backup-key.txt">
+          Export key
+        </a>
+        <Button variant="secondary" size="sm" loading={secretsRotateBusy} onclick={rotateEncryptionKey}>
+          Rotate encryption key
+        </Button>
+      </div>
+      {#if secretsRotateResult}
+        <div class="text-xs border-t border-[var(--border)] pt-3 space-y-1">
+          <div class="font-medium text-green-600 dark:text-green-400">
+            Rotation complete — {secretsRotateResult.reencrypted} stack .env.age re-encrypted.
+          </div>
+          <div class="font-mono text-[var(--fg-muted)] break-all">
+            old: {secretsRotateResult.old_recipient}
+          </div>
+          <div class="font-mono break-all">new: {secretsRotateResult.new_recipient}</div>
+        </div>
+      {/if}
     </Card>
   </section>
 {/if}
