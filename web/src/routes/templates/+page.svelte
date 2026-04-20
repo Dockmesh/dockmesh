@@ -38,8 +38,9 @@
       const list: any[] = Array.isArray(res) ? res : (res?.items ?? []);
       const s = new Set<number>();
       for (const c of list) {
-        for (const p of (c.host_ports ?? c.ports ?? [])) {
-          const v = typeof p === 'number' ? p : Number(p.host ?? p.public ?? p.PublicPort ?? p);
+        // Docker SDK shape: Ports: [{PrivatePort, PublicPort, IP, Type}]
+        for (const p of (c.Ports ?? c.ports ?? [])) {
+          const v = Number(p?.PublicPort ?? p?.public ?? p?.host);
           if (Number.isFinite(v) && v > 0) s.add(v);
         }
       }
