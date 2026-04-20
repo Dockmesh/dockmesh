@@ -84,6 +84,9 @@ func (h *Handlers) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Force-close the live WebSocket so a deleted agent can't continue
+	// holding an authenticated session. Safe to call if not connected.
+	h.Agents.Disconnect(id)
 	// Drop any tags the host had — they're meaningless now and the
 	// in-memory cache would keep them alive otherwise.
 	if h.HostTags != nil {

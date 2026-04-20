@@ -81,6 +81,15 @@ func (l *Local) Delete(ctx context.Context, path string) error {
 	return os.Remove(filepath.Join(l.cfg.Path, filepath.FromSlash(path)))
 }
 
+// StorageInfo reports (total_bytes, used_bytes) for the volume hosting
+// the target path. Used by the test-connect endpoint so the UI can show
+// actual disk free instead of 0 bytes. "used" is total-free so the whole
+// filesystem is accounted for, which is honest when the backup dir
+// shares the fs with the rest of the server.
+func (l *Local) StorageInfo() (int64, int64, error) {
+	return diskUsage(l.cfg.Path)
+}
+
 // decodeConfig converts an arbitrary `any` (most often a map[string]any
 // from the JSON column) into a typed config struct without going through
 // reflection or third-party decoders.

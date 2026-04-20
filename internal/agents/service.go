@@ -413,6 +413,14 @@ func (s *Service) disconnect(id string) {
 	}
 }
 
+// Disconnect forcibly severs the active WebSocket connection (if any)
+// for the given agent id. Called by the delete-agent handler so a
+// revoked agent can't keep holding an authenticated session. Safe to
+// call on ids that aren't currently connected.
+func (s *Service) Disconnect(id string) {
+	s.disconnect(id)
+}
+
 // Connected returns a snapshot of currently-connected agents (for status
 // pages / metrics).
 func (s *Service) Connected() []string {

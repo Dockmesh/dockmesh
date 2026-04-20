@@ -173,6 +173,21 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# Stale-enrollment guard
+# -----------------------------------------------------------------------------
+# If the host was previously enrolled, its mTLS certs are in $DATA_DIR.
+# Running this installer with a *new* enrollment token implies the
+# operator wants to re-enroll. The old certs would otherwise survive
+# and the agent would reconnect as the previous (now-deleted) identity,
+# producing "dial: websocket: bad handshake" forever. Wipe them so the
+# agent uses the new token.
+if [[ -d "$DATA_DIR/certs" ]]; then
+  systemctl stop dockmesh-agent 2>/dev/null || true
+  log "detected existing $DATA_DIR/certs — removing so the new token takes effect"
+  rm -rf "$DATA_DIR/certs"
+fi
+
+# -----------------------------------------------------------------------------
 # Filesystem layout
 # -----------------------------------------------------------------------------
 log "creating directories"

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -18,6 +19,8 @@ var (
 	ErrInvalidToken       = errors.New("invalid token")
 	ErrTokenReused        = errors.New("refresh token reused")
 	ErrUserExists         = errors.New("user already exists")
+	ErrUsernameTaken      = errors.New("username already in use")
+	ErrEmailTaken         = errors.New("email already in use")
 )
 
 type User struct {
@@ -108,6 +111,12 @@ func (s *Service) CreateUser(ctx context.Context, username, email, password, rol
 		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
 		id, username, emailNullable, hash, role)
 	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: users.username") {
+			return nil, ErrUsernameTaken
+		}
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: users.email") {
+			return nil, ErrEmailTaken
+		}
 		return nil, fmt.Errorf("insert user: %w", err)
 	}
 	return &User{ID: id, Username: username, Email: email, Role: role}, nil
@@ -268,6 +277,20 @@ func (s *Service) ChangePassword(ctx context.Context, id, newPassword string) er
 		                  updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		hash, id)
 	return err
+}
+
+// VerifyUserPassword checks if the supplied plaintext matches the
+// stored hash for the given user id. Used by self-password-change to
+// require the caller prove they know the current password before
+// accepting a new one, so a stolen access token alone can't take
+// over the account.
+func (s *Service) VerifyUserPassword(ctx context.Context, id, password string) (bool, error) {
+	var hash string
+	err := s.db.QueryRowContext(ctx, `SELECT password FROM users WHERE id = ?`, id).Scan(&hash)
+	if err != nil {
+		return false, err
+	}
+	return VerifyPassword(password, hash)
 }
 
 // Unlock clears the per-user lockout state. Admin-only — called from

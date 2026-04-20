@@ -146,6 +146,20 @@ func (h *Handlers) UpdateStack(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	// Dependents check: if another stack declared this one as a dep,
+	// refuse with 409 unless ?force=true. Prevents silently orphaning
+	// a dep chain. P.12.7.
+	if h.Dependencies != nil && r.URL.Query().Get("force") != "true" {
+		if deps, err := h.Dependencies.Dependents(r.Context(), name); err == nil && len(deps) > 0 {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":       "stack has dependents",
+				"dependents":  deps,
+				"force_needed": true,
+				"message":     "The following stacks depend on this one: " + strings.Join(deps, ", ") + ". Re-send with ?force=true to delete anyway; their depends_on edges will be purged.",
+			})
+			return
+		}
+	}
 	// Look up which host this stack was deployed to BEFORE deleting,
 	// so we can tell the agent to remove its local copy.
 	var deployHostID string
@@ -421,6 +435,19 @@ func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	// Dependents check (same policy as DeleteStack). Stopping a base
+	// stack that living dependents need is a foot-gun; 409 unless forced.
+	if h.Dependencies != nil && r.URL.Query().Get("force") != "true" {
+		if deps, err := h.Dependencies.Dependents(r.Context(), name); err == nil && len(deps) > 0 {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":       "stack has live dependents",
+				"dependents":  deps,
+				"force_needed": true,
+				"message":     "The following stacks depend on this one: " + strings.Join(deps, ", ") + ". Stopping it will likely break them. Re-send with ?force=true to stop anyway.",
+			})
+			return
+		}
+	}
 	if err := target.StopStack(r.Context(), name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

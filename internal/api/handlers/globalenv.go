@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -36,7 +37,11 @@ func (h *Handlers) CreateGlobalEnv(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := h.GlobalEnv.Create(r.Context(), in)
 	if err != nil {
-		writeError(w, http.StatusConflict, err.Error())
+		if errors.Is(err, globalenv.ErrDuplicateKey) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, v)
@@ -59,6 +64,10 @@ func (h *Handlers) UpdateGlobalEnv(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := h.GlobalEnv.Update(r.Context(), id, in)
 	if err != nil {
+		if errors.Is(err, globalenv.ErrDuplicateKey) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

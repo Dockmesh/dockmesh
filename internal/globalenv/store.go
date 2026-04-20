@@ -7,6 +7,7 @@ package globalenv
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -25,10 +26,14 @@ type Var struct {
 
 // VarInput is the create/update payload.
 type VarInput struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-	Group string `json:"group_name"`
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	Group     string `json:"group_name"`
+	Encrypted bool   `json:"encrypted,omitempty"`
 }
+
+// ErrDuplicateKey is returned by Create/Update when the key is taken.
+var ErrDuplicateKey = errors.New("a global variable with that key already exists")
 
 type Store struct {
 	db *sql.DB
@@ -63,10 +68,17 @@ func (s *Store) Create(ctx context.Context, in VarInput) (*Var, error) {
 	if in.Key == "" {
 		return nil, fmt.Errorf("key required")
 	}
+	enc := 0
+	if in.Encrypted {
+		enc = 1
+	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO global_env (key, value, group_name) VALUES (?, ?, ?)`,
-		in.Key, in.Value, in.Group)
+		`INSERT INTO global_env (key, value, group_name, encrypted) VALUES (?, ?, ?, ?)`,
+		in.Key, in.Value, in.Group, enc)
 	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: global_env.key") {
+			return nil, ErrDuplicateKey
+		}
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
@@ -74,10 +86,17 @@ func (s *Store) Create(ctx context.Context, in VarInput) (*Var, error) {
 }
 
 func (s *Store) Update(ctx context.Context, id int64, in VarInput) (*Var, error) {
+	enc := 0
+	if in.Encrypted {
+		enc = 1
+	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE global_env SET key = ?, value = ?, group_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		in.Key, in.Value, in.Group, id)
+		`UPDATE global_env SET key = ?, value = ?, group_name = ?, encrypted = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		in.Key, in.Value, in.Group, enc, id)
 	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: global_env.key") {
+			return nil, ErrDuplicateKey
+		}
 		return nil, err
 	}
 	return s.get(ctx, id)
