@@ -338,6 +338,15 @@ func validateInput(in Input) error {
 	if strings.TrimSpace(in.Compose) == "" {
 		return errors.New("compose is required")
 	}
+	// Structural YAML check only — we don't fully load with compose-go
+	// here because unrendered `{{param}}` placeholders are legitimate
+	// and fail deeper validation. Passing the plain YAML parser keeps
+	// brace-expressions valid (they're scalar strings) while catching
+	// tab/indent/colon mistakes before a deploy wastes a round trip.
+	var probe any
+	if err := yaml.Unmarshal([]byte(in.Compose), &probe); err != nil {
+		return fmt.Errorf("compose is not valid YAML: %w", err)
+	}
 	return nil
 }
 
