@@ -181,10 +181,11 @@ fi
 # and the agent would reconnect as the previous (now-deleted) identity,
 # producing "dial: websocket: bad handshake" forever. Wipe them so the
 # agent uses the new token.
-if [[ -d "$DATA_DIR/certs" ]]; then
+if [[ -f "$DATA_DIR/agent.crt" ]] || [[ -f "$DATA_DIR/agent.key" ]] || [[ -d "$DATA_DIR/certs" ]]; then
   systemctl stop dockmesh-agent 2>/dev/null || true
-  log "detected existing $DATA_DIR/certs — removing so the new token takes effect"
-  rm -rf "$DATA_DIR/certs"
+  log "detected existing enrollment in $DATA_DIR — removing certs so the new token takes effect"
+  rm -f "$DATA_DIR/agent.crt" "$DATA_DIR/agent.key" "$DATA_DIR/agent.url" "$DATA_DIR/ca.crt"
+  rm -rf "$DATA_DIR/certs" "$DATA_DIR/staging"
 fi
 
 # -----------------------------------------------------------------------------

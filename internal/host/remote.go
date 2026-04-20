@@ -310,6 +310,8 @@ func (h *RemoteHost) VolumeBrowseEntries(ctx context.Context, name, subpath stri
 
 // VolumeTar opens a volume_export stream on the remote agent and
 // returns an io.ReadCloser of the tar.gz bytes. FINDING-33.
+// The agent ships raw docker hijack bytes (with 8-byte mux headers)
+// so we wrap the stream in a demuxer to recover stdout-only content.
 func (h *RemoteHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser, error) {
 	if h.agent == nil {
 		return nil, fmt.Errorf("agent connection unavailable")
@@ -318,7 +320,69 @@ func (h *RemoteHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser,
 	if err != nil {
 		return nil, fmt.Errorf("open volume_export stream: %w", err)
 	}
-	return s, nil
+	return &dockerMuxStripper{src: s}, nil
+}
+
+// dockerMuxStripper demuxes docker's attach-stream format: repeating
+//   [stream_id(1), 0, 0, 0, size(4 BE)] + <size bytes>
+// across arbitrary chunk boundaries. Only stream_id=1 (stdout) is
+// forwarded; stderr (stream_id=2) is discarded. Used by RemoteHost
+// backup path.
+type dockerMuxStripper struct {
+	src       io.ReadCloser
+	remaining int  // bytes remaining in the current frame payload
+	skipping  bool // true when the current frame is stderr — drop
+	hdrBuf    [8]byte
+	hdrFill   int
+	leftover  []byte
+}
+
+func (d *dockerMuxStripper) Read(p []byte) (int, error) {
+	if len(d.leftover) > 0 {
+		n := copy(p, d.leftover)
+		d.leftover = d.leftover[n:]
+		return n, nil
+	}
+	// Need to read next header
+	if d.remaining == 0 {
+		for d.hdrFill < 8 {
+			n, err := d.src.Read(d.hdrBuf[d.hdrFill:])
+			d.hdrFill += n
+			if err != nil {
+				if d.hdrFill == 0 {
+					return 0, err
+				}
+				return 0, io.ErrUnexpectedEOF
+			}
+		}
+		streamID := d.hdrBuf[0]
+		size := int(d.hdrBuf[4])<<24 | int(d.hdrBuf[5])<<16 | int(d.hdrBuf[6])<<8 | int(d.hdrBuf[7])
+		d.remaining = size
+		d.skipping = streamID != 1
+		d.hdrFill = 0
+		if size == 0 {
+			return d.Read(p)
+		}
+	}
+	// Read up to min(remaining, len(p))
+	toRead := d.remaining
+	if toRead > len(p) {
+		toRead = len(p)
+	}
+	n, err := d.src.Read(p[:toRead])
+	d.remaining -= n
+	if d.skipping {
+		// discard; recurse for stdout bytes
+		if err != nil {
+			return 0, err
+		}
+		return d.Read(p)
+	}
+	return n, err
+}
+
+func (d *dockerMuxStripper) Close() error {
+	return d.src.Close()
 }
 
 // ContainerExec runs a command in the remote container via a new frame.
