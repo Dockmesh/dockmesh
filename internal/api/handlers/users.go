@@ -190,9 +190,24 @@ func (h *Handlers) ChangeUserPassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Me returns the currently authenticated user.
+// Me returns the currently authenticated caller — user OR api-token.
+// dmctl hits this as a post-login sanity check, so it must succeed for
+// token-authed requests even though there's no user record behind them.
 func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 	uid := middleware.UserID(r.Context())
+	if uid == "" {
+		// API token path — no user session. Return a token-shaped
+		// identity so callers can confirm they're authenticated and
+		// which role the token carries.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"kind":         "api_token",
+			"username":     "api-token",
+			"role":         middleware.Role(r.Context()),
+			"api_token_id": middleware.APITokenID(r.Context()),
+			"mfa_enabled":  false,
+		})
+		return
+	}
 	u, err := h.Auth.GetUser(r.Context(), uid)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "user not found")
