@@ -88,7 +88,7 @@ func (h *Handlers) CreateNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.Docker.CreateNetwork(r.Context(), req.Name, req.Driver, req.Labels)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, imageErrorStatus(err), err.Error())
 		return
 	}
 	h.audit(r, audit.ActionNetworkCreate, req.Name, nil)
@@ -102,7 +102,7 @@ func (h *Handlers) RemoveNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 	id := chi.URLParam(r, "id")
 	if err := h.Docker.RemoveNetwork(r.Context(), id); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, imageErrorStatus(err), err.Error())
 		return
 	}
 	h.audit(r, audit.ActionNetworkRemove, id, nil)
