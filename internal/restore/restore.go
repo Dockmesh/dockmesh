@@ -291,6 +291,12 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 				return nil, err
 			}
+			// DR bootstrap: the user has to pre-seed secrets.age-key (0400)
+			// before running restore so we can decrypt the tarball. The
+			// tarball also contains secrets.age-key, and overwriting a
+			// 0400 file via O_TRUNC fails with EACCES — unlink-then-create
+			// makes this idempotent.
+			_ = os.Remove(targetPath)
 			out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&0o777)
 			if err != nil {
 				return nil, fmt.Errorf("create %q: %w", targetPath, err)
