@@ -505,9 +505,21 @@ func serviceToContainerConfig(proj *composetypes.Project, svc composetypes.Servi
 				actual = proj.Name + "_" + k
 			}
 			endpoint := &dnetwork.EndpointSettings{}
-			if nc := svc.Networks[k]; nc != nil && len(nc.Aliases) > 0 {
-				endpoint.Aliases = nc.Aliases
+			// Mirror Docker Compose CLI default: every replica of a service
+			// shares the service name as a network alias so Docker's embedded
+			// DNS round-robins across them. Without this, scaling `app` to 3
+			// replicas gives three containers that are only reachable by
+			// their full `<stack>-<service>-<N>` name, defeating load
+			// distribution for in-network callers.
+			aliases := []string{svc.Name}
+			if nc := svc.Networks[k]; nc != nil {
+				for _, a := range nc.Aliases {
+					if a != svc.Name {
+						aliases = append(aliases, a)
+					}
+				}
 			}
+			endpoint.Aliases = aliases
 			netCfg.EndpointsConfig[actual] = endpoint
 		}
 	}
