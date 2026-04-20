@@ -198,7 +198,9 @@ func (h *Handlers) DeployTemplate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Leave the stack on disk — the operator might want to
 		// fix the compose and retry via /stacks/{name}/deploy.
-		writeError(w, http.StatusBadGateway, err.Error())
+		// Classify user-fixable errors (yaml parse, port in use, pull
+		// auth, etc.) as 422 instead of the generic 502.
+		writeError(w, deployErrorStatus(err), friendlyDeployError(err))
 		return
 	}
 
