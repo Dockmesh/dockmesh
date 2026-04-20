@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -148,6 +149,27 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	switch req.Order {
+	case "", "stop-first", "start-first":
+	default:
+		writeError(w, http.StatusBadRequest, `invalid order: must be "stop-first" or "start-first"`)
+		return
+	}
+	switch req.FailureAction {
+	case "", "pause", "continue", "rollback":
+	default:
+		writeError(w, http.StatusBadRequest, `invalid failure_action: must be "pause", "continue", or "rollback"`)
+		return
+	}
+	if req.Parallelism < 0 {
+		writeError(w, http.StatusBadRequest, "parallelism must be >= 0")
+		return
+	}
+	if req.DelaySeconds < 0 {
+		writeError(w, http.StatusBadRequest, "delay_seconds must be >= 0")
+		return
+	}
+
 	detail, err := h.Stacks.Get(name)
 	if err != nil {
 		writeStackError(w, err)
@@ -167,10 +189,11 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 
 	res, err := target.RollingReplace(r.Context(), name, detail.Compose, detail.Env, service, opts)
 	if err != nil {
-		// RemoteHost surfaces its own "not implemented" text — 501 is the
-		// honest status for that path. For other errors default to 500,
-		// but pass through a mid-rollout result if the engine returned one.
+		// User-correctable precondition failures are 422, not 500.
 		status := http.StatusInternalServerError
+		if errors.Is(err, compose.ErrRollingStartFirstUnsafe) {
+			status = http.StatusUnprocessableEntity
+		}
 		if res == nil {
 			writeError(w, status, err.Error())
 			return
