@@ -145,11 +145,26 @@ func runInitCmd(args []string) {
 		AgentPublicURL:   agentURL,
 	}
 
-	if err := initDBAndAdmin(cfg, admin, password); err != nil {
+	adminCreated, err := initDBAndAdmin(cfg, admin, password)
+	if err != nil {
 		die("bootstrap DB", err)
 	}
 	initOK("database initialised       " + cfg.DBPath)
-	initOK("admin '" + admin + "' created")
+	if adminCreated {
+		initOK("admin '" + admin + "' created")
+	} else {
+		// User already exists in this DB. DON'T silently ignore — the
+		// old behaviour let re-runs display a fake "new password" while
+		// the stored hash stayed untouched, producing real lockouts
+		// when users tried to log in with the value init showed them.
+		initWarn("admin '" + admin + "' already exists — password NOT changed")
+		initWarn("to reset it: sudo dockmesh admin reset-password --user " + admin + " --password <new>")
+		// Suppress the auto-generated password box + replace the login
+		// line in the summary so the user doesn't assume the printed
+		// password is the live one.
+		generated = false
+		password = ""
+	}
 
 	if err := writeEnvFile(dd, cfg); err != nil {
 		die("write env file", err)
@@ -552,25 +567,30 @@ func randomPassword(n int) string {
 	return base64.RawURLEncoding.EncodeToString(raw)[:n]
 }
 
-func initDBAndAdmin(cfg *config.Config, username, password string) error {
+// initDBAndAdmin opens the DB, runs migrations, and creates the admin
+// user if it doesn't already exist. Returns created=true only when a
+// fresh user was made — on re-run (user already exists) we return
+// created=false so the caller can warn the operator that the password
+// they just typed was NOT applied.
+func initDBAndAdmin(cfg *config.Config, username, password string) (bool, error) {
 	database, err := db.Open(cfg.DBPath)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer database.Close()
 	if err := db.Migrate(database); err != nil {
-		return err
+		return false, err
 	}
 	authSvc := auth.NewService(database, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := authSvc.CreateUser(ctx, username, "", password, "admin"); err != nil {
 		if errors.Is(err, auth.ErrUsernameTaken) {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
-	return nil
+	return true, nil
 }
 
 func writeEnvFile(dataDir string, cfg *config.Config) error {
