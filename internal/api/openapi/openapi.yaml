@@ -872,6 +872,47 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /containers/summary:
+    get:
+      operationId: containers.summary
+      tags: [containers]
+      summary: Aggregated container counts + per-stack rollup
+      description: |
+        Server-side aggregation of container state used by the dashboard's
+        auto-refresh — cuts a ~15 KB full-list response down to ~1 KB of
+        counts. Fan-out capable via `?host=all`: merges per-host rollups
+        into a single summary.
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Summary snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:     { type: integer }
+                  running:   { type: integer }
+                  stopped:   { type: integer }
+                  unhealthy: { type: integer }
+                  by_stack:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        total:     { type: integer }
+                        running:   { type: integer }
+                        unhealthy: { type: integer }
+                        hosts:     { type: array, items: { type: string } }
+                        services:  { type: array, items: { type: string } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503":
+          description: Docker daemon is unreachable on the target host.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /containers/{id}:
     parameters:
       - $ref: "#/components/parameters/ContainerIDPath"

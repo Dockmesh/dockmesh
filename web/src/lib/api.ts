@@ -124,6 +124,20 @@ export interface HealthResponse {
   checks: HealthCheck[];
 }
 
+export interface ContainerSummary {
+  total: number;
+  running: number;
+  stopped: number;
+  unhealthy: number;
+  by_stack: Record<string, {
+    total: number;
+    running: number;
+    unhealthy: number;
+    hosts: string[];
+    services: string[];
+  }>;
+}
+
 export interface UpdateStatus {
   current_version: string;
   latest_version: string;
@@ -1184,6 +1198,12 @@ export const api = {
       if (host && host !== 'local') params.set('host', host);
       const qs = params.toString();
       return request<any[] | FanOutResponse<any>>(`/containers${qs ? '?' + qs : ''}`);
+    },
+    // Compact container summary (counts + per-stack rollup). Used by
+    // the dashboard's auto-refresh — ~1 KB instead of ~15 KB.
+    summary: (host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<ContainerSummary>(`/containers/summary${qs}`);
     },
     inspect: (id: string, host = 'local') => {
       const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';

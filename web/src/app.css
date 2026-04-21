@@ -70,6 +70,15 @@
   --fg-muted:   #94a3b8;
   --fg-subtle:  #64748b;
 
+  /* Theme-adaptive accent tokens. On dark-bg the LIGHT cyan shades
+     (300/400) pop against the near-black surface; on light-bg they
+     disappear and the DARK cyan shades (600/700) become the readable
+     choice. Both themes reference the same tokens so component CSS
+     doesn't need to branch. */
+  --accent:     var(--color-brand-400);   /* default / dark */
+  --accent-fg:  var(--color-brand-300);   /* text-on-surface highlight */
+  --accent-bg:  color-mix(in srgb, var(--color-brand-500) 12%, transparent);
+
   /* Focus ring */
   --ring: color-mix(in srgb, var(--color-brand-500) 60%, transparent);
 
@@ -80,16 +89,37 @@
   --bg:           #fafbfc;
   --bg-elevated:  #ffffff;
   --surface:      #ffffff;
-  --surface-hover:#f4f6fa;
-  --surface-active:#eef1f7;
+  --surface-hover:#f1f5f9;
+  --surface-active:#e2e8f0;
 
-  --border:        #e5e9f0;
-  --border-subtle: #eff2f7;
-  --border-strong: #d3dae6;
+  /* Borders darkened vs. the original pastel values — on a near-white
+     background #e5e9f0 disappeared visually which made cards feel
+     floating and subdivisions between rows invisible. */
+  --border:        #d1d5db;
+  --border-subtle: #e5e7eb;
+  --border-strong: #9ca3af;
 
+  /* Text-color tokens calibrated for ≥4.5:1 contrast on var(--bg).
+     Previously --fg-subtle was #8892a8 which is only 3:1 (LARGE-TEXT
+     tier on WCAG AA) — it made labels like "Host" barely readable. */
   --fg:         #0f1524;
-  --fg-muted:   #5b6478;
-  --fg-subtle:  #8892a8;
+  --fg-muted:   #475569;   /* slate-600 — 7.6:1 on white */
+  --fg-subtle:  #64748b;   /* slate-500 — 4.9:1 on white */
+
+  /* Light-theme accents — dark cyan so text + outlines read cleanly
+     on white. The brand-300 that works on dark-bg is unreadable here. */
+  --accent:     var(--color-brand-600);
+  --accent-fg:  var(--color-brand-700);
+  --accent-bg:  color-mix(in srgb, var(--color-brand-500) 14%, transparent);
+
+  /* Remap the light-cyan 300/400 shades to their darker siblings in
+     light mode. This is a CSS-variable trick that flips contrast for
+     every component using var(--color-brand-300) or -400 as a text or
+     border colour — no per-component CSS touch needed. The original
+     light shades remain available via direct hex if specifically
+     wanted, but by default every "brand accent" now reads both ways. */
+  --color-brand-300: #0e7490;  /* was #67e8f9 — now equivalent to brand-700 */
+  --color-brand-400: #0891b2;  /* was #22d3ee — now equivalent to brand-600 */
 
   --ring: color-mix(in srgb, var(--color-brand-500) 40%, transparent);
 

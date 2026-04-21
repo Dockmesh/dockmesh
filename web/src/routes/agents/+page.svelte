@@ -126,13 +126,27 @@
     }
   }
 
+  // Tracks which host ids we've already loaded tags for so the 5s
+  // auto-refresh doesn't re-fetch them. Tags only change when the user
+  // saves the tag modal — saveTags() mutates hostTags directly in that
+  // flow, so polling them again every tick was ~24 calls/min of pure
+  // noise.
+  let tagsLoadedFor = $state<Set<string>>(new Set());
+
   async function load() {
     loading = true;
     try {
       agents = await api.agents.list();
-      // Fetch tags in parallel per host. Tags can be seen by anyone
-      // (non-privileged read) so this works even for non-admins.
-      await Promise.all(agents.map((a) => loadTagsFor(a.id)));
+      // Only load tags for agents we haven't seen yet. Existing tags
+      // stay in hostTags untouched; saveTags() updates the modified
+      // host's entry directly so no refetch is needed there either.
+      const missing = agents.filter((a) => !tagsLoadedFor.has(a.id));
+      if (missing.length > 0) {
+        await Promise.all(missing.map(async (a) => {
+          await loadTagsFor(a.id);
+          tagsLoadedFor.add(a.id);
+        }));
+      }
     } catch (err) {
       toast.error('Failed to load agents', err instanceof ApiError ? err.message : undefined);
     } finally {

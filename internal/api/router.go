@@ -112,6 +112,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/stacks/{name}/status", h.StackStatus)
 
 				r.Get("/containers", h.ListContainers)
+				r.Get("/containers/summary", h.ContainerSummaryEndpoint)
 				r.Get("/containers/{id}", h.InspectContainer)
 
 				r.Get("/images", h.ListImages)
