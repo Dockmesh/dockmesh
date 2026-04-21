@@ -29,7 +29,11 @@
     ChevronsLeft,
     ChevronsRight,
     ArrowRightLeft,
-    Package
+    Package,
+    Activity,
+    Users as UsersIcon,
+    ShieldCheck as ShieldCheckIcon,
+    KeyRound
   } from 'lucide-svelte';
   import { HealthDot } from '$lib/components/ui';
 
@@ -146,6 +150,21 @@
             { href: '/environment', label: 'Environment', icon: Box, show: allowed('user.manage') },
             { href: '/alerts', label: 'Alerts', icon: Bell, show: allowed('user.manage') },
             { href: '/backups', label: 'Backups', icon: Archive, show: allowed('user.manage') }
+          ]
+        },
+        // Platform-admin group — promoted out of Settings tabs to
+        // first-class sidebar entries. The old 8-tab Settings page
+        // buried compliance + user-management below fold; modern peers
+        // (Portainer Business, Rancher, Coolify) all expose these as
+        // top-level nav. RBAC-gated: non-admins don't see this group
+        // at all, so operator sidebars stay lean.
+        {
+          title: 'Platform',
+          items: [
+            { href: '/users', label: 'Users & Roles', icon: UsersIcon, show: allowed('user.manage') },
+            { href: '/authentication', label: 'Authentication', icon: ShieldCheckIcon, show: allowed('user.manage') },
+            { href: '/registries', label: 'Registries', icon: KeyRound, show: allowed('user.manage') },
+            { href: '/audit', label: 'Audit Log', icon: Activity, show: allowed('audit.read') || allowed('user.manage') }
           ]
         }
       ] as NavSection[]

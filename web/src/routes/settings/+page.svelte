@@ -1069,6 +1069,10 @@
     else if (tab === 'registries') loadRegistries();
   });
 
+  // Audit Log has been promoted to /audit as its own top-level nav item.
+  // The {:else if tab === 'audit'} block in the template is left in for
+  // URL-backcompat (old bookmarks with ?tab=audit still resolve) but no
+  // visible tab button points here anymore.
   const tabs: Array<{ id: Tab; label: string; icon: any; show: boolean }> = $derived([
     { id: 'account', label: 'Account', icon: User, show: true },
     { id: 'users', label: 'Users', icon: Users, show: allowed('user.manage') },
@@ -1076,8 +1080,7 @@
     { id: 'system', label: 'System', icon: HardDrive, show: allowed('user.manage') },
     { id: 'roles', label: 'Roles', icon: Shield, show: allowed('user.manage') },
     { id: 'api_tokens', label: 'API Tokens', icon: KeyRound, show: allowed('user.manage') },
-    { id: 'registries', label: 'Registries', icon: Package, show: allowed('user.manage') },
-    { id: 'audit', label: 'Audit Log', icon: Activity, show: allowed('audit.read') }
+    { id: 'registries', label: 'Registries', icon: Package, show: allowed('user.manage') }
   ]);
 
   // If the user lands on a tab they're not allowed to see (e.g. deep link
