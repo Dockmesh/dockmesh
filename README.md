@@ -35,6 +35,16 @@ optional systemd unit. Two minutes, then browse to `http://<host>:8080`.
 
 Prefer Docker? See [Docker Compose](#docker-compose) below.
 
+## Platform support
+
+| Component | Linux | macOS | Windows |
+| --- | :-: | :-: | :-: |
+| Server (`dockmesh`)       | amd64 / arm64 | roadmap | roadmap |
+| Agent (`dockmesh-agent`)  | amd64 / arm64 | roadmap | roadmap |
+| CLI (`dmctl`)             | amd64 / arm64 | amd64 / arm64 | amd64 |
+
+For v1 the server + agent are Linux-native — systemd, `/var/lib/dockmesh`, unix sockets. The `dmctl` CLI is cross-platform so Mac and Windows users can already drive a Linux dockmesh server from their laptop. Native macOS + Windows server/agent support is on the near-term roadmap (driven by homelab demand for Mac-mini hosts).
+
 ## Features
 
 Everything is included in the single binary. There is no paid tier.
