@@ -33,7 +33,8 @@
     Activity,
     Users as UsersIcon,
     ShieldCheck as ShieldCheckIcon,
-    KeyRound
+    KeyRound,
+    UserCircle
   } from 'lucide-svelte';
   import { HealthDot } from '$lib/components/ui';
 
@@ -41,6 +42,7 @@
   let theme = $state<'light' | 'dark'>('dark');
   let mobileOpen = $state(false);
   let hostMenuOpen = $state(false);
+  let userMenuOpen = $state(false);
 
   // Desktop sidebar collapse — persisted in localStorage so the choice
   // survives reloads. Mobile always uses the off-canvas full-width
@@ -389,23 +391,33 @@
           {#if !sidebarCollapsed}<span>Settings</span>{/if}
         </a>
       </div>
-      <div class="{sidebarCollapsed ? 'px-2' : 'px-3'} py-2 border-t border-[var(--border)]">
+      <!-- User card with dropdown menu.
+           The avatar is the entry point for PERSONAL actions — Profile
+           (account settings, password, 2FA) and Personal API Tokens.
+           Matches the pattern GitHub/Linear/Vercel all use: click avatar
+           → dropdown → user-scoped choices. Theme toggle + HealthDot stay
+           outside the dropdown because they're one-click affordances
+           (nobody wants to click avatar → submenu → toggle theme). -->
+      <div class="{sidebarCollapsed ? 'px-2' : 'px-3'} py-2 border-t border-[var(--border)] relative">
         <div class="flex items-center {sidebarCollapsed ? 'flex-col gap-1' : 'gap-2 px-2'} py-1.5 rounded-lg">
-          <div class="w-8 h-8 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white text-xs font-semibold shrink-0"
-               title={sidebarCollapsed ? `${auth.user?.username} (${auth.user?.role})` : undefined}>
-            {auth.user?.username?.[0]?.toUpperCase() ?? '?'}
-          </div>
-          {#if !sidebarCollapsed}
-            <div class="flex-1 min-w-0">
-              <div class="text-sm font-medium text-[var(--fg)] truncate">{auth.user?.username}</div>
-              <div class="text-[11px] text-[var(--fg-muted)] truncate">{auth.user?.role}</div>
+          <button
+            type="button"
+            onclick={() => (userMenuOpen = !userMenuOpen)}
+            class="flex items-center gap-2 min-w-0 {sidebarCollapsed ? '' : 'flex-1'} rounded-md hover:bg-[var(--surface-hover)] p-0.5 -m-0.5 transition-colors"
+            title={sidebarCollapsed ? `${auth.user?.username} (${auth.user?.role})` : 'Open user menu'}
+            aria-haspopup="menu"
+            aria-expanded={userMenuOpen}
+          >
+            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white text-xs font-semibold shrink-0">
+              {auth.user?.username?.[0]?.toUpperCase() ?? '?'}
             </div>
-          {/if}
-          <!-- Passive always-on system health dot. Click for the
-               breakdown (backup / proxy / agents / disk / scanner).
-               Replaces the old "Backup Nh ago" pill so everything
-               stays in one unified control instead of per-feature
-               sidebar real estate. -->
+            {#if !sidebarCollapsed}
+              <div class="flex-1 min-w-0 text-left">
+                <div class="text-sm font-medium text-[var(--fg)] truncate">{auth.user?.username}</div>
+                <div class="text-[11px] text-[var(--fg-muted)] truncate">{auth.user?.role}</div>
+              </div>
+            {/if}
+          </button>
           {#if auth.isAuthenticated}
             <HealthDot />
           {/if}
@@ -417,15 +429,55 @@
           >
             {#if theme === 'dark'}<Sun class="w-4 h-4" />{:else}<Moon class="w-4 h-4" />{/if}
           </button>
-          <button
-            onclick={doLogout}
-            class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]"
-            title="Sign out"
-            aria-label="Sign out"
-          >
-            <LogOut class="w-4 h-4" />
-          </button>
         </div>
+
+        {#if userMenuOpen}
+          <!-- Backdrop captures outside-clicks without blocking the sidebar
+               layout. z-index stays below the dropdown itself. -->
+          <button
+            type="button"
+            class="fixed inset-0 z-30 cursor-default"
+            aria-label="Close menu"
+            onclick={() => (userMenuOpen = false)}
+          ></button>
+          <div
+            class="absolute bottom-full mb-1 {sidebarCollapsed ? 'left-10' : 'left-3 right-3'} z-40 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-xl overflow-hidden"
+            role="menu"
+          >
+            <div class="px-3 py-2 border-b border-[var(--border)]">
+              <div class="text-sm font-medium text-[var(--fg)] truncate">{auth.user?.username}</div>
+              <div class="text-xs text-[var(--fg-muted)] truncate">{auth.user?.role}</div>
+            </div>
+            <a
+              href="/settings?tab=account"
+              onclick={() => (userMenuOpen = false)}
+              class="flex items-center gap-2 px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+              role="menuitem"
+            >
+              <UserCircle class="w-4 h-4 text-[var(--fg-muted)]" />
+              Profile &amp; security
+            </a>
+            <a
+              href="/settings?tab=api_tokens"
+              onclick={() => (userMenuOpen = false)}
+              class="flex items-center gap-2 px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+              role="menuitem"
+            >
+              <KeyRound class="w-4 h-4 text-[var(--fg-muted)]" />
+              API tokens
+            </a>
+            <div class="border-t border-[var(--border)]"></div>
+            <button
+              type="button"
+              onclick={() => { userMenuOpen = false; doLogout(); }}
+              class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--surface-hover)] text-left"
+              role="menuitem"
+            >
+              <LogOut class="w-4 h-4 text-[var(--fg-muted)]" />
+              Sign out
+            </button>
+          </div>
+        {/if}
       </div>
     </aside>
 
