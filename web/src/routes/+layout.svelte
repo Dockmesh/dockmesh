@@ -193,29 +193,17 @@
       </button>
 
       <div class="h-16 flex items-center border-b border-[var(--border)] {sidebarCollapsed ? 'justify-center px-2' : 'px-4'}">
-        <a href="/" class="flex items-center min-w-0" aria-label="Dockmesh home">
-          {#if sidebarCollapsed}
-            <img src="/logo-mark.svg" alt="Dockmesh" class="h-9 w-9" />
-          {:else}
-            <!-- Inlined wordmark: the static SVG hard-codes the text
-                 fill to a dark slate which is unreadable on the dark
-                 theme. Inlining lets the text use currentColor and
-                 inherit var(--fg), so it reads in both themes. Bumped
-                 the intrinsic font-size from 16 → 19 for a chunkier
-                 look at the 40px render height. -->
-            <svg viewBox="0 0 180 36" class="h-10 text-[var(--fg)]" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <g transform="translate(18,18) scale(0.082) translate(-768,-390)">
-                <path fill="#2c3f4e" d="M 855.48 288.24 L 767.88 335.08 L 767.88 240.97 L 768.12 239.82 Z"/>
-                <path fill="#04d1eb" d="M 952.82 345.30 L 952.16 341.57 L 855.48 288.24 L 767.88 335.08 L 865.50 389.75 Z"/>
-                <path fill="#03a0c2" d="M 952.82 345.30 L 865.50 389.75 L 952.87 440.58 Z"/>
-                <path fill="#097d9a" d="M 865.50 389.75 L 952.87 440.58 L 858.10 493.81 L 767.88 444.59 Z"/>
-                <path fill="#136079" d="M 767.88 444.59 L 858.10 493.81 L 804.62 523.76 L 767.88 544.10 Z"/>
-                <path fill="#304a5b" d="M 767.88 444.59 L 767.88 544.10 L 676.54 493.21 Z"/>
-                <path fill="#416276" d="M 767.88 444.59 L 669.94 390.15 L 584.24 441.28 L 676.54 493.21 Z"/>
-                <path fill="#213342" d="M 767.88 335.08 L 669.94 390.15 L 584.24 441.28 L 583.01 440.24 L 583.01 342.70 L 583.42 341.94 L 763.56 242.12 L 767.88 240.97 Z"/>
-              </g>
-              <text x="40" y="24" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="19" font-weight="600" letter-spacing="0.3" fill="currentColor">dockmesh</text>
-            </svg>
+        <a href="/" class="flex items-center gap-2.5 min-w-0" aria-label="Dockmesh home">
+          <!-- Real brand mark from /static/logo-mark.svg (same artwork
+               the marketing site + favicon use). Previously the sidebar
+               inlined a simplified polygon approximation that drifted
+               from the actual brand — using the real SVG keeps product
+               UI + marketing + docs visually in sync. -->
+          <img src="/logo-mark.svg" alt="" aria-hidden="true" class="h-9 w-9 shrink-0" />
+          {#if !sidebarCollapsed}
+            <!-- Wordmark as HTML so the text inherits var(--fg) and
+                 stays readable under both light and dark themes. -->
+            <span class="text-[1.15rem] font-semibold tracking-tight text-[var(--fg)] select-none">Dockmesh</span>
           {/if}
         </a>
       </div>

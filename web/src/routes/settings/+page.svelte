@@ -114,11 +114,34 @@
   }
 
   async function copyUpgradeCmd(cmd: string) {
+    // navigator.clipboard is unavailable on plain-HTTP non-localhost
+    // origins (most self-hosted Dockmesh installs). Fall back to the
+    // legacy execCommand('copy') via a hidden textarea so the Copy
+    // button works without forcing HTTPS as a hard requirement.
+    if (typeof navigator !== 'undefined' && navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(cmd);
+        toast.success('Copied to clipboard');
+        return;
+      } catch {
+        /* fall through to legacy path */
+      }
+    }
     try {
-      await navigator.clipboard.writeText(cmd);
-      toast.success('Copied to clipboard');
+      const ta = document.createElement('textarea');
+      ta.value = cmd;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (ok) toast.success('Copied to clipboard');
+      else toast.error('Copy failed', 'Select the command manually and Ctrl+C');
     } catch {
-      toast.error('Copy failed', 'Browser blocked clipboard access');
+      toast.error('Copy failed', 'Select the command manually and Ctrl+C');
     }
   }
 
