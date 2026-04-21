@@ -135,6 +135,13 @@ func main() {
 		cancel()
 	}()
 
+	// Host-metrics sampler: mirrors the central server so every host
+	// (local and every remote agent) emits CPU% averaged over a 5s
+	// window. Without this the per-host rows on the dashboard would
+	// jitter between 15% and 20% each poll while local already
+	// reports a smoothed value.
+	system.StartSampler(ctx)
+
 	// Reconnect loop with exponential backoff capped at 60s.
 	backoff := time.Second
 	for ctx.Err() == nil {

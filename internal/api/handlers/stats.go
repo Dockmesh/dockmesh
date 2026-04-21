@@ -61,6 +61,13 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rc.Close()
 
+	// Rolling 5-sample CPU% window. Docker's stats stream ticks at
+	// ~1s, so this matches the 5-second smoothing we use on host
+	// metrics. Memory / net / block I/O stay instant: they're byte
+	// counters Docker reports directly, no delta-division noise.
+	const cpuWindow = 5
+	cpuSamples := make([]float64, 0, cpuWindow)
+
 	dec := json.NewDecoder(rc)
 	for {
 		if ctx.Err() != nil {
@@ -74,6 +81,15 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		norm := docker.Normalize(&raw)
+		cpuSamples = append(cpuSamples, norm.CPUPercent)
+		if len(cpuSamples) > cpuWindow {
+			cpuSamples = cpuSamples[len(cpuSamples)-cpuWindow:]
+		}
+		var sum float64
+		for _, s := range cpuSamples {
+			sum += s
+		}
+		norm.CPUPercent = sum / float64(len(cpuSamples))
 		b, err := json.Marshal(norm)
 		if err != nil {
 			continue

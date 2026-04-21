@@ -51,6 +51,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/dockmesh/dockmesh/internal/telemetry"
 	"github.com/dockmesh/dockmesh/internal/templates"
 	"github.com/dockmesh/dockmesh/internal/updater"
@@ -230,6 +231,11 @@ func main() {
 	metricsCol := metrics.NewCollector(database, dockerCli, 30*time.Second, metrics.DefaultRetention)
 	metricsCol.Start(ctx)
 	defer metricsCol.Stop()
+
+	// Host-metrics sampler: smooths CPU% over a 5s rolling window so
+	// the dashboard tiles don't jitter between polls. Runs for the
+	// lifetime of the process; no-op on non-Linux builds.
+	system.StartSampler(ctx)
 
 	// P.11.9 — prometheus registry + background gauge refresher.
 	// Wired via setter methods so the audit / alerts / middleware
