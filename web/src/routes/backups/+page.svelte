@@ -383,6 +383,33 @@
 
   function addSource() { jSources = [...jSources, { type: 'volume', name: '' }]; }
   function removeSource(i: number) { jSources = jSources.filter((_, idx) => idx !== i); }
+
+  // Chip-picker helpers — keep jSources' {type, name} shape so the
+  // saveJob serialiser stays untouched. Just drive it from clicks.
+  function toggleSystemSource() {
+    const has = jSources.some(s => s.type === 'system');
+    if (has) {
+      jSources = jSources.filter(s => s.type !== 'system');
+    } else {
+      jSources = [...jSources.filter(s => s.type !== 'system'), { type: 'system', name: 'dockmesh' }];
+    }
+  }
+  function toggleStackSource(name: string) {
+    const idx = jSources.findIndex(s => s.type === 'stack' && s.name === name);
+    if (idx >= 0) {
+      jSources = jSources.filter((_, i) => i !== idx);
+    } else {
+      jSources = [...jSources, { type: 'stack', name }];
+    }
+  }
+  function toggleVolumeSource(name: string) {
+    const idx = jSources.findIndex(s => s.type === 'volume' && s.name === name);
+    if (idx >= 0) {
+      jSources = jSources.filter((_, i) => i !== idx);
+    } else {
+      jSources = [...jSources, { type: 'volume', name }];
+    }
+  }
   function addPreHook() { jPreHooks = [...jPreHooks, { container: '', cmd: '' }]; }
   function addPostHook() { jPostHooks = [...jPostHooks, { container: '', cmd: '' }]; }
 </script>
@@ -750,44 +777,90 @@
       </div>
     </fieldset>
 
-    <!-- Sources -->
+    <!-- Sources — chip-picker. Multi-select by clicking. The underlying
+         jSources array stays the same shape (type+name) so saveJob is
+         untouched; we just drive it from chip toggles instead of a
+         per-row type+name form. Far faster to configure a "backup
+         postgres-primary + redis-cache + whole server" job in one
+         glance. -->
     <fieldset class="space-y-3">
       <legend class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">What to back up</legend>
-      {#each jSources as src, i}
-        <div class="flex gap-2 items-end">
-          <div class="w-28">
-            <label for="src-type-{i}" class="block text-xs text-[var(--fg-muted)] mb-1">Type</label>
-            <select id="src-type-{i}" class="dm-input text-sm" bind:value={jSources[i].type}
-              onchange={() => { jSources[i].name = jSources[i].type === 'system' ? 'dockmesh' : ''; }}>
-              <option value="volume">Volume</option>
-              <option value="stack">Stack</option>
-              <option value="system">System</option>
-            </select>
-          </div>
-          <div class="flex-1">
-            <label for="src-name-{i}" class="block text-xs text-[var(--fg-muted)] mb-1">Name</label>
-            {#if src.type === 'system'}
-              <input id="src-name-{i}" type="text" class="dm-input text-sm bg-[var(--surface)]" value="dockmesh" disabled />
-            {:else if src.type === 'volume' && availableVolumes.length > 0}
-              <select id="src-name-{i}" class="dm-input text-sm" bind:value={jSources[i].name}>
-                <option value="">Select volume…</option>
-                {#each availableVolumes as v}<option value={v}>{v}</option>{/each}
-              </select>
-            {:else if src.type === 'stack' && availableStacks.length > 0}
-              <select id="src-name-{i}" class="dm-input text-sm" bind:value={jSources[i].name}>
-                <option value="">Select stack…</option>
-                {#each availableStacks as s}<option value={s}>{s}</option>{/each}
-              </select>
-            {:else}
-              <input id="src-name-{i}" type="text" class="dm-input text-sm" placeholder={`my-${src.type}`} bind:value={jSources[i].name} />
+
+      <!-- Full-server toggle (one click covers DB + stacks dir + data/). -->
+      <button
+        type="button"
+        class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition-colors
+          {jSources.some(s => s.type === 'system')
+            ? 'border-[var(--color-brand-500)] bg-[color-mix(in_srgb,var(--color-brand-500)_8%,transparent)] text-[var(--color-brand-300)]'
+            : 'border-[var(--border)] bg-[var(--surface)] text-[var(--fg-muted)] hover:border-[var(--border-strong)]'}"
+        onclick={toggleSystemSource}
+      >
+        <span class="flex items-center gap-2.5">
+          <span class="w-4 h-4 rounded flex items-center justify-center {jSources.some(s => s.type === 'system') ? 'bg-[var(--color-brand-500)] text-white' : 'border border-[var(--border)]'}">
+            {#if jSources.some(s => s.type === 'system')}
+              <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             {/if}
+          </span>
+          <span class="text-sm font-medium">Full Dockmesh system</span>
+        </span>
+        <span class="text-[10px] font-mono text-[var(--fg-subtle)]">DB · stacks/ · data/</span>
+      </button>
+
+      <!-- Stacks chip grid — the happy-path use case. -->
+      {#if availableStacks.length > 0}
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="block text-xs text-[var(--fg-muted)]">Stacks</span>
+            <span class="text-[10px] text-[var(--fg-subtle)]">{jSources.filter(s => s.type === 'stack').length} selected</span>
           </div>
-          {#if jSources.length > 1}
-            <button type="button" class="p-1.5 text-[var(--color-danger-400)]" onclick={() => removeSource(i)}><Trash2 class="w-3.5 h-3.5" /></button>
-          {/if}
+          <div class="flex flex-wrap gap-1.5">
+            {#each availableStacks as stackName}
+              {@const on = jSources.some(s => s.type === 'stack' && s.name === stackName)}
+              <button
+                type="button"
+                class="px-2.5 py-1 rounded-md text-[11px] font-mono border transition-colors
+                  {on
+                    ? 'bg-[color-mix(in_srgb,var(--color-brand-500)_12%,transparent)] border-[var(--color-brand-500)]/40 text-[var(--color-brand-300)]'
+                    : 'bg-[var(--surface)] border-[var(--border)] text-[var(--fg-muted)] hover:border-[var(--border-strong)] hover:text-[var(--fg)]'}"
+                onclick={() => toggleStackSource(stackName)}
+              >
+                {on ? '✓ ' : ''}{stackName}
+              </button>
+            {/each}
+          </div>
         </div>
-      {/each}
-      <button type="button" class="text-xs text-[var(--color-brand-400)] hover:underline" onclick={addSource}>+ Add source</button>
+      {/if}
+
+      <!-- Volumes chip grid — same pattern, collapsed by default until
+           needed since most users only target stacks/system. -->
+      {#if availableVolumes.length > 0}
+        <details class="group">
+          <summary class="cursor-pointer text-xs text-[var(--fg-muted)] hover:text-[var(--fg)] select-none flex items-center gap-1.5">
+            <svg class="w-3 h-3 transition-transform group-open:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            Volumes
+            <span class="text-[10px] text-[var(--fg-subtle)]">({jSources.filter(s => s.type === 'volume').length} of {availableVolumes.length})</span>
+          </summary>
+          <div class="mt-2 flex flex-wrap gap-1.5">
+            {#each availableVolumes as volName}
+              {@const on = jSources.some(s => s.type === 'volume' && s.name === volName)}
+              <button
+                type="button"
+                class="px-2.5 py-1 rounded-md text-[11px] font-mono border transition-colors
+                  {on
+                    ? 'bg-[color-mix(in_srgb,var(--color-brand-500)_12%,transparent)] border-[var(--color-brand-500)]/40 text-[var(--color-brand-300)]'
+                    : 'bg-[var(--surface)] border-[var(--border)] text-[var(--fg-muted)] hover:border-[var(--border-strong)] hover:text-[var(--fg)]'}"
+                onclick={() => toggleVolumeSource(volName)}
+              >
+                {on ? '✓ ' : ''}{volName}
+              </button>
+            {/each}
+          </div>
+        </details>
+      {/if}
+
+      {#if jSources.length === 0}
+        <p class="text-xs text-[var(--color-warning-400)]">Pick at least one source above.</p>
+      {/if}
     </fieldset>
 
     <!-- Target -->
@@ -802,6 +875,25 @@
           {/each}
         </select>
       </div>
+      <!-- Preview card for the picked pre-configured target. Mirrors
+           the deep-dive marketing mock: type-badge + name + live
+           connected state so the admin sees what they're wiring up
+           without re-clicking the dropdown or switching tabs. -->
+      {#if jSelectedTarget.startsWith('t:')}
+        {@const selected = bTargets.find(t => `t:${t.id}` === jSelectedTarget)}
+        {#if selected}
+          <div class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+            <span class="px-1.5 py-0.5 rounded bg-[var(--surface-hover)] text-[9px] uppercase text-[var(--fg-muted)] font-medium">{selected.type}</span>
+            <span class="text-sm font-mono text-[var(--fg)] truncate">{selected.name}</span>
+            <span class="ml-auto text-[10px] flex items-center gap-1.5 shrink-0
+              {selected.status === 'connected' ? 'text-[var(--color-success-400)]' : 'text-[var(--color-warning-400)]'}">
+              <span class="w-1.5 h-1.5 rounded-full
+                {selected.status === 'connected' ? 'bg-[var(--color-success-500)]' : 'bg-[var(--color-warning-500)]'}"></span>
+              {selected.status ?? 'unknown'}
+            </span>
+          </div>
+        {/if}
+      {/if}
       {#if jSelectedTarget === 'inline'}
         <div>
           <label for="inline-target-type" class="block text-xs text-[var(--fg-muted)] mb-1">Type</label>
@@ -880,21 +972,62 @@
       </div>
     </fieldset>
 
-    <!-- Hooks (collapsible) -->
-    <details class="border border-[var(--border)] rounded-lg">
-      <summary class="px-4 py-2.5 text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider cursor-pointer hover:bg-[var(--surface-hover)]">
-        Pre/Post Hooks (optional)
-      </summary>
-      <div class="px-4 pb-4 space-y-3">
-        <!-- Quick-add presets -->
-        <div class="flex flex-wrap gap-1.5">
-          {#each hookPresets as preset}
-            <button type="button"
-              class="text-[10px] px-2 py-1 rounded border border-[var(--border)] text-[var(--fg-muted)] hover:border-[var(--color-brand-500)] hover:text-[var(--color-brand-400)] transition-colors"
-              onclick={() => { jPreHooks = [...jPreHooks, { container: preset.container, cmd: preset.cmd }]; }}
-            >{preset.label}</button>
+    <!-- Hooks — presets surfaced at the top as badged preset cards,
+         not buried in a collapsed "Pre/Post Hooks (optional)" accordion.
+         Mirrors the deep-dive marketing mock: one click gives you
+         a "PRESET · PostgreSQL · pg_dumpall" row.
+
+         Custom (non-preset) hooks stay inside a nested details below
+         for the advanced case. -->
+    <fieldset class="space-y-3">
+      <legend class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">
+        Pre/Post hooks <span class="text-[var(--fg-subtle)] normal-case tracking-normal">(consistent dumps before the tar)</span>
+      </legend>
+
+      <!-- Preset one-click chips -->
+      <div class="flex flex-wrap gap-1.5">
+        {#each hookPresets as preset}
+          <button type="button"
+            class="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--fg-muted)]
+                   hover:border-[var(--color-brand-500)]/40 hover:bg-[color-mix(in_srgb,var(--color-brand-500)_8%,transparent)]
+                   hover:text-[var(--color-brand-300)] transition-colors"
+            onclick={() => { jPreHooks = [...jPreHooks, { container: preset.container, cmd: preset.cmd }]; }}
+            title={preset.cmd}
+          >
+            <span class="text-[9px] px-1 py-0.5 rounded bg-[var(--surface-hover)] uppercase tracking-wider font-medium">Preset</span>
+            {preset.label}
+          </button>
+        {/each}
+      </div>
+
+      <!-- Picked pre-hooks as "chip cards" with PRESET badge if they
+           match a preset cmd exactly. -->
+      {#if jPreHooks.length > 0}
+        <div class="space-y-1.5">
+          {#each jPreHooks as hook, i}
+            {@const preset = hookPresets.find(p => p.cmd === hook.cmd)}
+            <div class="flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--color-brand-500)]/30 bg-[color-mix(in_srgb,var(--color-brand-500)_5%,transparent)]">
+              {#if preset}
+                <span class="px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--color-brand-500)_20%,transparent)] text-[9px] text-[var(--color-brand-300)] font-medium uppercase tracking-wider">Preset</span>
+                <span class="text-xs font-mono text-[var(--color-brand-200)]">{preset.label}</span>
+              {:else}
+                <span class="text-xs font-mono text-[var(--fg)] truncate">{hook.container}: {hook.cmd}</span>
+              {/if}
+              <button type="button" class="ml-auto p-1 text-[var(--color-danger-400)] hover:text-[var(--color-danger-300)]" onclick={() => (jPreHooks = jPreHooks.filter((_, idx) => idx !== i))}>
+                <Trash2 class="w-3 h-3" />
+              </button>
+            </div>
           {/each}
         </div>
+      {/if}
+
+      <!-- Advanced: custom hooks + post-hooks for operators who want
+           to write commands by hand. Hidden by default. -->
+      <details class="border border-[var(--border)] rounded-lg">
+        <summary class="px-3 py-2 text-[11px] text-[var(--fg-muted)] cursor-pointer hover:bg-[var(--surface-hover)]">
+          Advanced: custom hooks + post-hooks
+        </summary>
+        <div class="px-4 pb-4 pt-2 space-y-3">
 
         <div class="text-xs font-medium text-[var(--fg-muted)]">Pre-hooks (before backup)</div>
         {#each jPreHooks as hook, i}
@@ -933,8 +1066,9 @@
           </div>
         {/each}
         <button type="button" class="text-[10px] text-[var(--color-brand-400)] hover:underline" onclick={addPostHook}>+ Add post-hook</button>
-      </div>
-    </details>
+        </div>
+      </details>
+    </fieldset>
   </form>
 
   {#snippet footer()}
