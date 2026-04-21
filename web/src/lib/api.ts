@@ -877,7 +877,8 @@ export const api = {
       return request<void>('/auth/logout', { method: 'POST', body }).finally(() => auth.clear());
     },
     // P.12.1 — session management + policy
-    sessions: () => request<Session[]>('/sessions'),
+    sessions: (includeRevoked = false) =>
+      request<Session[]>('/sessions' + (includeRevoked ? '?include_revoked=1' : '')),
     revokeSession: (familyId: string) =>
       request<void>(`/sessions/${encodeURIComponent(familyId)}`, { method: 'DELETE' }),
     getPolicy: () => request<PasswordPolicy>('/auth/policy'),
