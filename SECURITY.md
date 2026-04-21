@@ -1,6 +1,6 @@
 # Security Policy
 
-Dockmesh takes security seriously. This document describes how to report security issues and what to expect in response.
+dockmesh takes security seriously. This document describes how to report security issues and what to expect in response.
 
 ## Supported Versions
 
@@ -19,7 +19,7 @@ Send reports to **security@dockmesh.dev** with:
 
 - A description of the vulnerability
 - Steps to reproduce or a minimal proof of concept
-- The Dockmesh version affected
+- The dockmesh version affected
 - Your contact information (optional — you may report anonymously)
 - Whether you want credit in the release notes
 
@@ -33,13 +33,13 @@ If the issue affects the agent protocol, mTLS certificate handling, RBAC enforce
 - **Disclosure:** coordinated with you before any public announcement
 - **Credit:** we'll credit you in release notes (by name, handle, or anonymously — your choice)
 
-Dockmesh is a community-maintained project. Maintainers work on this in their spare time, and there is no commercial support SLA. We do our best to respond quickly to security reports, but response times depend on volunteer availability.
+dockmesh is a community-maintained project. Maintainers work on this in their spare time, and there is no commercial support SLA. We do our best to respond quickly to security reports, but response times depend on volunteer availability.
 
 ## Scope
 
 **In scope:**
 
-- The Dockmesh server binary
+- The dockmesh server binary
 - The agent binary
 - The embedded SvelteKit UI
 - Documented APIs and protocols (REST, agent mTLS WebSocket)
@@ -47,7 +47,7 @@ Dockmesh is a community-maintained project. Maintainers work on this in their sp
 
 **Out of scope:**
 
-- Issues in third-party dependencies that don't affect Dockmesh's use of them (report those upstream)
+- Issues in third-party dependencies that don't affect dockmesh's use of them (report those upstream)
 - Social engineering of users or maintainers
 - Physical access attacks
 - Denial-of-service via resource exhaustion without a specific exploit (these are operational limits, not vulnerabilities)
@@ -59,7 +59,7 @@ We consider security research performed in good faith and in accordance with thi
 
 - Follow the responsible disclosure process above
 - Do not access, modify, or destroy data beyond what's necessary to demonstrate the issue
-- Do not attempt to exploit vulnerabilities against production Dockmesh installations that aren't their own
+- Do not attempt to exploit vulnerabilities against production dockmesh installations that aren't their own
 - Give us reasonable time to fix the issue before public disclosure
 
 ## Disclosure Timeline
@@ -74,4 +74,4 @@ _The project is new — no disclosures yet. Your name could be here._
 
 ---
 
-Thank you for helping keep Dockmesh and its users safe.
+Thank you for helping keep dockmesh and its users safe.

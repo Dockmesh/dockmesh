@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/banner.svg" alt="Dockmesh" width="880" />
+  <img src=".github/banner.svg" alt="dockmesh" width="880" />
 </p>
 
 <p align="center">
@@ -15,7 +15,7 @@
 
 ---
 
-Dockmesh is a lightweight Docker fleet-management platform. One Go binary,
+dockmesh is a lightweight Docker fleet-management platform. One Go binary,
 one SvelteKit UI, outbound-only agents on every other host. Stacks live on
 disk as plain `compose.yaml` files — the filesystem is the source of truth,
 the DB just indexes it. RBAC, SSO, audit log, encrypted backups, CVE
@@ -122,13 +122,13 @@ hero shots.
 ## Architecture
 
 <p align="center">
-  <img src=".github/architecture.svg" alt="Dockmesh architecture" width="880"/>
+  <img src=".github/architecture.svg" alt="dockmesh architecture" width="880"/>
 </p>
 
 - **Single binary**. Go 1.23+, SvelteKit UI embedded via `go:embed`. No sidecars, no helm-chart, no external runtime deps beyond Docker itself.
 - **Filesystem as source of truth**. Stacks live at `stacks/<name>/compose.yaml`. The DB indexes deployment state; the actual config is always on disk where you can grep, `git log`, and `vim` it.
 - **Outbound-only agents**. Remote hosts open a WebSocket to the server — no inbound port to firewall, no VPN, no reverse tunnel. mTLS client certs per agent, revokable.
-- **No Kubernetes**. Docker + Compose + a spine of management tooling. If you want K8s, use Rancher. If you want zero-config Docker across a fleet, use Dockmesh.
+- **No Kubernetes**. Docker + Compose + a spine of management tooling. If you want K8s, use Rancher. If you want zero-config Docker across a fleet, use dockmesh.
 
 ## Install options
 
@@ -207,7 +207,7 @@ Tech stack: Go 1.23+, SvelteKit 2 with Svelte 5 runes, Tailwind v4, SQLite
 
 ## License
 
-Dockmesh is released under the **GNU Affero General Public License v3.0**
+dockmesh is released under the **GNU Affero General Public License v3.0**
 (AGPL-3.0-only). See [LICENSE](LICENSE).
 
 The AGPL is chosen deliberately: modifications made available as a network

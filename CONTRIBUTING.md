@@ -1,4 +1,4 @@
-# Contributing to Dockmesh
+# Contributing to dockmesh
 
 Thanks for wanting to contribute. This is a short, honest guide so you
 don't waste time guessing what we expect.
