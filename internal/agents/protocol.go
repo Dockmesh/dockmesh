@@ -259,8 +259,16 @@ type StackSyncReq struct {
 
 // HelloPayload is what the agent sends as soon as the WS opens. It tells
 // the server which version, OS and docker daemon are on the other end.
+//
+// `Version` is the human-readable build label ("dev", "1.4.2", …) and
+// `Commit` is the short git hash. The auto-upgrade controller compares
+// Commit, not Version, because version-string matches fall apart once
+// ldflags start embedding a +<hash> suffix — that was the cause of an
+// infinite upgrade loop observed during Phase-2 testing (server said
+// "dev", agent said "dev+abc1234", strings mismatched every round).
 type HelloPayload struct {
 	Version       string `json:"version"`
+	Commit        string `json:"commit,omitempty"`
 	OS            string `json:"os"`
 	Arch          string `json:"arch"`
 	Hostname      string `json:"hostname"`
