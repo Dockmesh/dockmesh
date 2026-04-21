@@ -95,7 +95,8 @@ Server:
 
 Admin:
   admin create           Create a user (--username --email --password --role)
-  admin reset-password   Reset a user's password (--user)
+  admin reset-password   Reset a user's password (--user --password)
+  admin unlock           Clear a user's lockout (--user) — doesn't change the password
   admin list-users       List users
 
 Database:

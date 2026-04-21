@@ -42,7 +42,7 @@ _dockmesh_complete() {
     fi
 
     case "$prev" in
-        admin)       COMPREPLY=( $(compgen -W "create reset-password list-users" -- "$cur") ) ;;
+        admin)       COMPREPLY=( $(compgen -W "create reset-password unlock list-users" -- "$cur") ) ;;
         db)          COMPREPLY=( $(compgen -W "migrate backup" -- "$cur") ) ;;
         ca)          COMPREPLY=( $(compgen -W "export rotate" -- "$cur") ) ;;
         enroll)      COMPREPLY=( $(compgen -W "create revoke list" -- "$cur") ) ;;
@@ -79,7 +79,7 @@ _dockmesh() {
         return
     fi
     case "$words[2]" in
-        admin)      _values 'admin subcommand' create reset-password list-users ;;
+        admin)      _values 'admin subcommand' create reset-password unlock list-users ;;
         db)         _values 'db subcommand' migrate backup ;;
         ca)         _values 'ca subcommand' export rotate ;;
         enroll)     _values 'enroll subcommand' create revoke list ;;
@@ -108,7 +108,7 @@ complete -c dockmesh -n '__fish_use_subcommand' -a completion -d 'Shell completi
 complete -c dockmesh -n '__fish_use_subcommand' -a version -d 'Print version'
 complete -c dockmesh -n '__fish_use_subcommand' -a help    -d 'Show help'
 
-complete -c dockmesh -n '__fish_seen_subcommand_from admin'  -a 'create reset-password list-users'
+complete -c dockmesh -n '__fish_seen_subcommand_from admin'  -a 'create reset-password unlock list-users'
 complete -c dockmesh -n '__fish_seen_subcommand_from db'     -a 'migrate backup'
 complete -c dockmesh -n '__fish_seen_subcommand_from ca'     -a 'export rotate'
 complete -c dockmesh -n '__fish_seen_subcommand_from enroll' -a 'create revoke list'

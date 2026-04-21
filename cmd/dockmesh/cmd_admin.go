@@ -14,7 +14,7 @@ import (
 // + offline user creation without going through the HTTP API.
 func runAdminCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: dockmesh admin <create|reset-password|list-users> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: dockmesh admin <create|reset-password|unlock|list-users> [flags]")
 		os.Exit(2)
 	}
 	switch args[0] {
@@ -28,6 +28,11 @@ func runAdminCmd(args []string) {
 			fmt.Fprintln(os.Stderr, "admin reset-password:", err)
 			os.Exit(1)
 		}
+	case "unlock":
+		if err := adminUnlock(args[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, "admin unlock:", err)
+			os.Exit(1)
+		}
 	case "list-users":
 		if err := adminListUsers(args[1:]); err != nil {
 			fmt.Fprintln(os.Stderr, "admin list-users:", err)
@@ -37,6 +42,50 @@ func runAdminCmd(args []string) {
 		fmt.Fprintf(os.Stderr, "unknown admin subcommand: %s\n", args[0])
 		os.Exit(2)
 	}
+}
+
+// adminUnlock clears a user's lockout state without touching the stored
+// password. Lockouts auto-expire via policy.LockoutDurationMins, but
+// homelab single-admin installs sometimes want to bypass the wait —
+// especially when the admin KNOWS the password but got tripped by
+// browser autofill replaying a stale credential.
+func adminUnlock(args []string) error {
+	fs := flag.NewFlagSet("admin unlock", flag.ExitOnError)
+	userFlag := fs.String("user", "", "username or user id (required)")
+	_ = fs.Parse(args)
+
+	if *userFlag == "" {
+		return fmt.Errorf("--user is required")
+	}
+
+	_, database, err := loadCLIDB()
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+
+	var userID string
+	row := database.QueryRow(`SELECT id FROM users WHERE id = ? OR username = ?`, *userFlag, *userFlag)
+	if err := row.Scan(&userID); err != nil {
+		return fmt.Errorf("lookup user: %w", err)
+	}
+
+	// Wipe both fields — failed_login_attempts resets the counter so
+	// the NEXT wrong attempt starts at 1, not N+1 which would re-lock
+	// after one mistake.
+	res, err := database.Exec(
+		`UPDATE users SET locked_until = NULL, failed_login_attempts = 0 WHERE id = ?`,
+		userID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("no user updated (id %s)", userID)
+	}
+	fmt.Printf("unlocked user %s (id=%s) — failed-attempt counter reset\n", *userFlag, userID)
+	return nil
 }
 
 func adminCreate(args []string) error {
