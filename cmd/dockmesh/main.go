@@ -50,6 +50,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/registries"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
+	"github.com/dockmesh/dockmesh/internal/selfupdate"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/dockmesh/dockmesh/internal/telemetry"
@@ -337,6 +338,12 @@ func main() {
 	// are live-editable via the UI without a restart.
 	authSvc.SetSettings(settingsStore)
 
+	// Self-update checker: polls GitHub Releases once a day to surface
+	// "Update available" banner in the UI. Admins can disable via the
+	// update_check_enabled setting (air-gapped installs).
+	selfUpdateChk := selfupdate.New(settingsStore, version.Version)
+	selfUpdateChk.Start(ctx)
+
 	// Proxy: the boot-time config flag is just the *default* — the
 	// DB-backed `proxy_enabled` setting overrides it so an admin
 	// flipping the toggle persists across restarts without env-var
@@ -479,6 +486,7 @@ func main() {
 		AuditWebhook:   auditWebhook,
 		AgentUpgrade:   agentUpgrade,
 		Prom:           promMetrics,
+		SelfUpdate:     selfUpdateChk,
 		JWTSecret:    cfg.JWTSecret,
 	})
 	router := api.NewRouter(h, authSvc, webFS, cfg.MetricsAuth)

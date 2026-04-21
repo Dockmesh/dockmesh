@@ -85,6 +85,33 @@
   let systemInfo = $state<{ version: string; commit: string; build_date: string; go_version: string; os: string; arch: string; uptime_seconds: number } | null>(null);
   let sysSettings = $state<Map<string, string>>(new Map());
   let settingsBusy = $state(false);
+  let updateStatus = $state<import('$lib/api').UpdateStatus | null>(null);
+  let updateCheckBusy = $state(false);
+
+  async function loadUpdateStatus() {
+    try { updateStatus = await api.system.updateStatus(); } catch { /* ignore */ }
+  }
+
+  async function recheckUpdate() {
+    updateCheckBusy = true;
+    try {
+      updateStatus = await api.system.checkUpdateNow();
+      toast.success('Update check completed');
+    } catch (err) {
+      toast.error('Check failed', err instanceof ApiError ? err.message : String(err));
+    } finally {
+      updateCheckBusy = false;
+    }
+  }
+
+  function fmtRelative(iso: string | undefined): string {
+    if (!iso) return 'never';
+    const ms = Date.now() - new Date(iso).getTime();
+    if (ms < 60_000) return 'just now';
+    if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+    if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+    return `${Math.floor(ms / 86_400_000)}d ago`;
+  }
   let secretsRotateBusy = $state(false);
   let secretsRotateResult = $state<{ reencrypted: number; old_recipient: string; new_recipient: string } | null>(null);
 
@@ -1002,7 +1029,7 @@
     else if (tab === 'users') { loadUsers(); loadRoles(); }
     else if (tab === 'audit') { loadAudit(); loadRetention(); loadWebhook(); }
     else if (tab === 'sso') { loadOIDC(); loadRoles(); }
-    else if (tab === 'system') { loadBackup(); loadSystemInfo(); }
+    else if (tab === 'system') { loadBackup(); loadSystemInfo(); loadUpdateStatus(); }
     else if (tab === 'roles') loadRoles();
     else if (tab === 'api_tokens') { loadApiTokens(); loadRoles(); }
     else if (tab === 'registries') loadRegistries();
@@ -1623,6 +1650,88 @@
         </div>
       </Card>
     {/if}
+
+    <!-- Update check -->
+    <Card class="p-5">
+      <div class="flex items-start justify-between mb-3 gap-3">
+        <div>
+          <h3 class="font-semibold text-sm uppercase tracking-wider text-[var(--fg-muted)]">Updates</h3>
+          <p class="text-xs text-[var(--fg-muted)] mt-1">Dockmesh checks GitHub for new releases and shows a banner when one is available.</p>
+        </div>
+        <button type="button" class="dm-btn dm-btn-secondary text-xs"
+          disabled={updateCheckBusy} onclick={recheckUpdate}>
+          {updateCheckBusy ? 'Checking…' : 'Check now'}
+        </button>
+      </div>
+
+      {#if updateStatus}
+        <div class="grid grid-cols-2 gap-3 text-xs mb-4">
+          <div>
+            <div class="text-[var(--fg-muted)] mb-0.5">Current</div>
+            <div class="font-mono font-medium">{updateStatus.current_version}</div>
+          </div>
+          <div>
+            <div class="text-[var(--fg-muted)] mb-0.5">Latest</div>
+            <div class="font-mono {updateStatus.update_available ? 'text-cyan-400 font-semibold' : ''}">
+              {updateStatus.latest_version || '—'}
+            </div>
+          </div>
+          <div>
+            <div class="text-[var(--fg-muted)] mb-0.5">Last checked</div>
+            <div>{fmtRelative(updateStatus.checked_at)}</div>
+          </div>
+          <div>
+            <div class="text-[var(--fg-muted)] mb-0.5">Status</div>
+            <div>
+              {#if updateStatus.error}
+                <span class="text-red-400">error</span>
+              {:else if updateStatus.update_available}
+                <span class="text-cyan-400 font-medium">update available</span>
+              {:else if !updateStatus.enabled}
+                <span class="text-[var(--fg-muted)]">disabled</span>
+              {:else}
+                <span class="text-green-400">up to date</span>
+              {/if}
+            </div>
+          </div>
+        </div>
+
+        {#if updateStatus.error}
+          <div class="text-xs text-red-400 mb-3 font-mono bg-red-500/10 border border-red-500/20 rounded-md px-2.5 py-1.5">
+            {updateStatus.error}
+          </div>
+        {/if}
+
+        {#if updateStatus.update_available && updateStatus.release_url}
+          <a href={updateStatus.release_url} target="_blank" rel="noopener"
+             class="text-xs text-cyan-400 hover:text-cyan-300 underline underline-offset-2 mb-3 inline-block">
+            View release notes for {updateStatus.latest_version} →
+          </a>
+        {/if}
+      {/if}
+
+      <div class="space-y-4 pt-3 border-t border-[var(--border)]">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-sm font-medium">Automatic update checks</div>
+            <p class="text-xs text-[var(--fg-muted)]">Turn off for air-gapped installs.</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" class="sr-only peer"
+              checked={getSetting('update_check_enabled') === 'true'}
+              onchange={(e) => setSetting('update_check_enabled', (e.target as HTMLInputElement).checked ? 'true' : 'false')} />
+            <div class="w-11 h-6 bg-[var(--surface)] border border-[var(--border)] rounded-full peer-checked:bg-[var(--color-brand-500)] peer-checked:border-[var(--color-brand-500)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-transform peer-checked:after:translate-x-5"></div>
+          </label>
+        </div>
+        <div>
+          <label for="update-interval" class="text-sm font-medium">Check interval (minutes)</label>
+          <p class="text-xs text-[var(--fg-muted)] mb-1.5">How often to poll GitHub. Min 15, max 10080 (1 week). Default 120 (2h).</p>
+          <input id="update-interval" type="number" min="15" max="10080" class="dm-input text-sm w-32"
+            value={getSetting('update_check_interval_minutes') || '120'}
+            onchange={(e) => setSetting('update_check_interval_minutes', (e.target as HTMLInputElement).value)} />
+        </div>
+      </div>
+    </Card>
 
     <!-- Runtime settings -->
     <Card class="p-5">

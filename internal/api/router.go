@@ -135,6 +135,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/system/backup-status", h.BackupStatus)
 				r.Get("/system/health", h.SystemHealth)
 				r.Get("/system/info", h.SystemInfo)
+				r.Get("/system/update-status", h.GetUpdateStatus)
 			})
 
 			// -------------------------- STACK WRITE --------------------------
@@ -456,6 +457,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Put("/backups/system/enabled", h.SetBackupEnabled)
 				r.Get("/system/backup-key/export", h.ExportBackupKey)
 				r.Post("/system/secrets/rotate", h.RotateSecretsKey)
+				r.Post("/system/update-check", h.CheckUpdateNow)
 			})
 
 			// -------------------------- PROXY (admin) ------------------------

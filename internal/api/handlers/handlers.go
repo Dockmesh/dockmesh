@@ -30,6 +30,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/registries"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
+	"github.com/dockmesh/dockmesh/internal/selfupdate"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/templates"
 	"github.com/dockmesh/dockmesh/internal/updater"
@@ -73,6 +74,7 @@ type Handlers struct {
 	AuditWebhook   *audit.Webhook
 	AgentUpgrade   *agents.UpgradeController
 	Prom           *metrics.PromMetrics
+	SelfUpdate     *selfupdate.Checker
 	JWTSecret      []byte // raw secret used to sign the short-lived OIDC state cookie
 }
 
@@ -114,6 +116,7 @@ type Deps struct {
 	AuditWebhook   *audit.Webhook
 	AgentUpgrade   *agents.UpgradeController
 	Prom           *metrics.PromMetrics
+	SelfUpdate     *selfupdate.Checker
 	JWTSecret      []byte
 }
 
@@ -156,6 +159,7 @@ func New(d Deps) *Handlers {
 		AuditWebhook:   d.AuditWebhook,
 		AgentUpgrade:   d.AgentUpgrade,
 		Prom:           d.Prom,
+		SelfUpdate:     d.SelfUpdate,
 		JWTSecret:   d.JWTSecret,
 	}
 }

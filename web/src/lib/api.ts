@@ -124,6 +124,18 @@ export interface HealthResponse {
   checks: HealthCheck[];
 }
 
+export interface UpdateStatus {
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+  release_url: string;
+  release_notes: string;
+  published_at?: string;
+  checked_at?: string;
+  enabled: boolean;
+  error?: string;
+}
+
 // StackDeployment tracks which host a stack is deployed on (P.7).
 export interface StackDeployment {
   stack_name: string;
@@ -1395,7 +1407,11 @@ export const api = {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled })
-      })
+      }),
+    // Self-update check: cached status (24h poll) + manual recheck.
+    updateStatus: () => request<UpdateStatus>('/system/update-status'),
+    checkUpdateNow: () =>
+      request<UpdateStatus>('/system/update-check', { method: 'POST' })
   },
 
   audit: {

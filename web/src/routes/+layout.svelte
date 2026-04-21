@@ -6,7 +6,7 @@
   import { hosts } from '$lib/stores/host.svelte';
   import { api } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
-  import { Toaster, ConfirmDialog } from '$lib/components/ui';
+  import { Toaster, ConfirmDialog, UpdateBanner } from '$lib/components/ui';
   import { allowed } from '$lib/rbac';
   import {
     LayoutDashboard,
@@ -445,6 +445,7 @@
         </button>
       </header>
 
+      <UpdateBanner />
       <main class="flex-1 overflow-auto px-5 md:px-8 py-6 md:py-10">
         <div class="max-w-7xl mx-auto dm-fade-in">
           {@render children()}

@@ -3311,6 +3311,53 @@ paths:
                         message: { type: string }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /system/update-status:
+    get:
+      operationId: system.update_status
+      tags: [metrics]
+      summary: Cached self-update check result
+      description: |
+        Returns the last poll of the Dockmesh GitHub Releases API. The
+        checker runs once every 24h in the background; `POST /system/update-check`
+        forces an immediate refresh. `update_available` is computed against
+        the running binary's version — "dev" builds never show as upgradable.
+      responses:
+        "200":
+          description: Update status snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  current_version:  { type: string }
+                  latest_version:   { type: string }
+                  update_available: { type: boolean }
+                  release_url:      { type: string }
+                  release_notes:    { type: string }
+                  published_at:     { type: string, format: date-time }
+                  checked_at:       { type: string, format: date-time }
+                  enabled:          { type: boolean }
+                  error:            { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /system/update-check:
+    post:
+      operationId: system.update_check
+      tags: [metrics]
+      summary: Force an immediate GitHub Releases lookup
+      description: |
+        Manual refresh button for the Settings → System panel. Returns the
+        refreshed status synchronously. Admin-only.
+      responses:
+        "200":
+          description: Refreshed update status (same schema as GET).
+          content:
+            application/json:
+              schema:
+                type: object
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /system/backup-key/export:
     get:
       operationId: system.backup_key_export
