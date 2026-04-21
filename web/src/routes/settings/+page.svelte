@@ -6,7 +6,7 @@
   import { Card, Button, Input, Modal, Badge, Skeleton, EmptyState } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
-  import { User, Users, Activity, Plus, Trash2, UserCog, ShieldCheck, ShieldOff, Copy, KeyRound, Link2, Globe, ExternalLink, HardDrive, ShieldAlert, AlertCircle, Shield, X, Package, CheckCircle2, XCircle } from 'lucide-svelte';
+  import { User, Users, Activity, Plus, Trash2, UserCog, ShieldCheck, ShieldOff, Copy, KeyRound, Link2, Globe, ExternalLink, HardDrive, ShieldAlert, AlertCircle, Shield, X, Package, CheckCircle2, XCircle, Archive } from 'lucide-svelte';
   import type { OIDCProvider, OIDCProviderInput } from '$lib/api';
 
   type Tab = 'account' | 'users' | 'audit' | 'sso' | 'system' | 'roles' | 'api_tokens' | 'registries';
