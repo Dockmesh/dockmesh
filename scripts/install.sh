@@ -108,9 +108,14 @@ box() {
   printf '%s%s%s%*s%s%s%s\n' "$FG_ACCENT" "$BOX_V" "$RST" $((w-2)) '' "$FG_ACCENT" "$BOX_V" "$RST"
 
   for line in "$@"; do
-    # strip ANSI codes when measuring width so padding stays accurate
-    local stripped=${line//$'\033'[\[][0-9\;]*m/}
-    local pad=$((w - 4 - ${#stripped}))
+    # Strip ANSI sequences so ${#} measures visible width.
+    # The body line format is:
+    #   │<2sp><content><pad><2sp>│   → 1+2+N+2+1 = N+6 = w, so N = w-6.
+    # Previously we used w-4 which made every body line 2 chars too wide
+    # and left the right border misaligned.
+    local stripped
+    stripped=$(printf '%s' "$line" | sed -E $'s/\033\\[[0-9;]*m//g')
+    local pad=$((w - 6 - ${#stripped}))
     [ $pad -lt 0 ] && pad=0
     printf '%s%s%s  %s%*s  %s%s%s\n' \
       "$FG_ACCENT" "$BOX_V" "$RST" \
@@ -157,6 +162,7 @@ get_time() {
 #  Banner
 # ------------------------------------------------------------------
 cat >&2 <<BANNER
+
 
 ${FG_TITLE}${BOLD}██████╗   ██████╗   ██████╗██╗  ██╗███╗   ███╗███████╗███████╗██╗  ██╗${RST}
 ${FG_TITLE}${BOLD}██╔══██╗ ██╔═══██╗ ██╔════╝██║ ██╔╝████╗ ████║██╔════╝██╔════╝██║  ██║${RST}
@@ -281,12 +287,18 @@ package_for() {
 require_tool() {
   local cmd="$1" pkg
   if command -v "$cmd" >/dev/null 2>&1; then
-    # Take just the first two tokens of the first version line.
-    # curl --version otherwise dumps the full feature list on one line,
-    # which blows out the column alignment. "curl 7.88.1" is enough.
-    local ver
-    ver="$("$cmd" --version 2>/dev/null | head -1 | awk '{print $1, $2}' || echo '')"
-    ok "$(printf '%-16s %s' "$cmd" "${ver:-installed}")"
+    # Extract just the version number (e.g. 7.88.1, 9.1, 1.34) from the
+    # --version output. Using the first two tokens was naive — on GNU
+    # tools the second token is often a parenthesised vendor name
+    # ("tar (GNU tar) 1.34" → "tar (GNU", ugly). Regex-pick the first
+    # digit.digit[.digit] group instead.
+    local line ver
+    line="$("$cmd" --version 2>/dev/null | head -1 || true)"
+    ver="$(printf '%s' "$line" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
+    if [ -z "$ver" ]; then
+      ver="installed"
+    fi
+    ok "$(printf '%-16s %s' "$cmd" "$ver")"
     return 0
   fi
   pkg="$(package_for "$cmd")"
@@ -483,13 +495,18 @@ if [ "$IS_UPGRADE" = "1" ]; then
   fi
   step_done
 
+  # Rollback commands always show `sudo` regardless of current USE_SUDO,
+  # because the user who later runs them may not be root — "mv" without
+  # sudo will silently fail to replace a 0755 root-owned binary.
   box "Upgraded  ${PREV_VERSION:-prev} → $DM_VERSION" \
-    "" \
     "Data, stacks, and configuration are untouched." \
     "" \
+    "Release notes:" \
+    "  https://github.com/$REPO/releases/tag/$DM_VERSION" \
+    "" \
     "Rollback (keeps data, reverts the binary):" \
-    "  $USE_SUDO mv $INSTALL_DIR/dockmesh.bak $INSTALL_DIR/dockmesh" \
-    "  $USE_SUDO systemctl restart dockmesh"
+    "  sudo mv $INSTALL_DIR/dockmesh.bak $INSTALL_DIR/dockmesh" \
+    "  sudo systemctl restart dockmesh"
   exit 0
 fi
 
