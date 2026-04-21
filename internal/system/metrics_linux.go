@@ -4,38 +4,59 @@ package system
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
-// Collect returns a fresh snapshot. Sleeps ~100ms for the CPU delta
-// sample — callers should batch, not call per-frame.
+// Collect returns the latest cached snapshot from the background sampler.
+// If the sampler hasn't produced a value yet (very early in startup) it
+// falls back to a one-shot 100ms CPU delta so the API never returns
+// zeros.
+//
+// The old behaviour was a 100ms-window sample taken on every request,
+// which made the dashboard tiles jitter 15-20% between polls even on
+// an idle server (a single kernel context-switch landing inside the
+// 100ms window could swing the ratio by a few points). The sampler
+// now runs a 500ms tick on a 5-second rolling window and returns the
+// mean, so the number visually "breathes" instead of flickering.
 func Collect() Metrics {
+	samplerMu.RLock()
+	ready := samplerReady
+	snap := samplerSnap
+	samplerMu.RUnlock()
+	if ready {
+		return snap
+	}
+	return collectOneShot()
+}
+
+// collectOneShot is the old behaviour — used as a warm-up fallback
+// before the background sampler has filled its window.
+func collectOneShot() Metrics {
 	m := Metrics{
 		CPUCores: runtime.NumCPU(),
 		DiskPath: "/var/lib/docker",
 	}
-
-	m.CPUPercent = readCPUPercent()
+	m.CPUPercent = readCPUPercentOneShot()
 	m.CPUUsed = float64(m.CPUCores) * m.CPUPercent / 100.0
 	m.MemTotal, m.MemUsed, m.MemPercent = readMem()
-
 	path := "/var/lib/docker"
 	if _, err := os.Stat(path); err != nil {
 		path = "/"
 	}
 	m.DiskPath = path
 	m.DiskTotal, m.DiskUsed, m.DiskPercent = readDisk(path)
-
 	m.Uptime = readUptime()
 	return m
 }
 
-func readCPUPercent() float64 {
+func readCPUPercentOneShot() float64 {
 	a, ok := readCPUTimes()
 	if !ok {
 		return 0
@@ -45,6 +66,10 @@ func readCPUPercent() float64 {
 	if !ok {
 		return 0
 	}
+	return cpuPct(a, b)
+}
+
+func cpuPct(a, b cpuTimes) float64 {
 	totalDelta := float64(b.total - a.total)
 	idleDelta := float64(b.idle - a.idle)
 	if totalDelta <= 0 {
@@ -58,6 +83,86 @@ func readCPUPercent() float64 {
 		pct = 100
 	}
 	return pct
+}
+
+// Background sampler state. Writers hold samplerMu.Lock, readers
+// take RLock. Initialised by StartSampler at process boot.
+var (
+	samplerOnce  sync.Once
+	samplerMu    sync.RWMutex
+	samplerSnap  Metrics
+	samplerReady bool
+)
+
+// StartSampler spins a goroutine that takes a CPU/mem/disk sample
+// every 500ms and keeps a rolling mean over the last 5s. Called once
+// from main(); subsequent calls are no-ops.
+//
+// Window size rationale: 5s / 500ms = 10 samples. Long enough to
+// smooth a single context-switch spike, short enough that a real
+// load change shows up on the dashboard within ~2 seconds of the
+// next poll.
+func StartSampler(ctx context.Context) {
+	samplerOnce.Do(func() {
+		go runSampler(ctx)
+	})
+}
+
+func runSampler(ctx context.Context) {
+	const (
+		tick       = 500 * time.Millisecond
+		windowSize = 10
+	)
+	samples := make([]float64, 0, windowSize)
+
+	prev, ok := readCPUTimes()
+	if !ok {
+		// /proc/stat missing — leave sampler unready; Collect
+		// will fall back to the one-shot path forever.
+		return
+	}
+
+	ticker := time.NewTicker(tick)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cur, ok := readCPUTimes()
+			if !ok {
+				continue
+			}
+			pct := cpuPct(prev, cur)
+			prev = cur
+			samples = append(samples, pct)
+			if len(samples) > windowSize {
+				samples = samples[len(samples)-windowSize:]
+			}
+			var sum float64
+			for _, s := range samples {
+				sum += s
+			}
+			avg := sum / float64(len(samples))
+
+			m := Metrics{CPUCores: runtime.NumCPU()}
+			m.CPUPercent = avg
+			m.CPUUsed = float64(m.CPUCores) * avg / 100.0
+			m.MemTotal, m.MemUsed, m.MemPercent = readMem()
+			path := "/var/lib/docker"
+			if _, err := os.Stat(path); err != nil {
+				path = "/"
+			}
+			m.DiskPath = path
+			m.DiskTotal, m.DiskUsed, m.DiskPercent = readDisk(path)
+			m.Uptime = readUptime()
+
+			samplerMu.Lock()
+			samplerSnap = m
+			samplerReady = true
+			samplerMu.Unlock()
+		}
+	}
 }
 
 type cpuTimes struct {

@@ -2,7 +2,10 @@
 
 package system
 
-import "runtime"
+import (
+	"context"
+	"runtime"
+)
 
 // Collect is a dev-only stub for non-Linux builds (macOS/Windows). All
 // percentages and counts are zero; CPUCores is still populated so the
@@ -13,3 +16,7 @@ func Collect() Metrics {
 		DiskPath: "(unavailable)",
 	}
 }
+
+// StartSampler is a no-op on non-Linux builds so main.go can call it
+// unconditionally.
+func StartSampler(_ context.Context) {}
