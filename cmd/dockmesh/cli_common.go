@@ -90,6 +90,8 @@ Usage: dockmesh [command] [flags]
 
 Server:
   serve                  Start the HTTP + agent mTLS server (default if no command given)
+  init                   Interactive first-run setup (admin user, listen port,
+                         systemd unit, agent public URL). Run once after install.
 
 Admin:
   admin create           Create a user (--username --email --password --role)
