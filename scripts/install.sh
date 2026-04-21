@@ -437,62 +437,15 @@ trap 'rm -rf "$TMP"' EXIT
 
 info "$TARBALL"
 
-# Live themed progress bar.
-#
-# Approach: ask GitHub for the Content-Length via HEAD, start curl in
-# the background writing to disk, then in the foreground poll the
-# growing file's size every 100ms and redraw a bar with `\r`. When
-# curl finishes, clear the line and emit a summary.
-#
-# Why not curl's own `-#`? The hashmark bar works but doesn't match
-# the rest of our styling and can't show absolute bytes. Building our
-# own is ~15 lines and gives us a consistent cyan-themed bar.
-DL_TOTAL=$(curl -fsSIL --retry 2 "$URL" 2>/dev/null \
-  | grep -i '^content-length:' | tail -1 | awk '{print $2}' | tr -d '\r\n')
-
+# Silent download + post-summary (Homebrew / apt / cargo pattern).
+# A live progress bar isn't useful at sub-2-second timescales, and
+# release tarballs land in well under that on typical connections
+# (20 MiB at 30 MB/s = 0.7s). What the user actually wants is size +
+# speed confirmation after the fact — that's what this prints.
 DL_T0=$(get_time)
-curl -fL --retry 3 --retry-delay 2 --silent --show-error "$URL" -o "$TMP/$TARBALL" &
-DL_PID=$!
-
-BAR_WIDTH=40
-# We redraw only when progress actually advances (avoids terminal
-# flicker at 10Hz). On systems without a measurable total size, fall
-# back to a spinner-style tick that just shows "downloading... N MiB".
-DL_LAST_PCT=-1
-while kill -0 $DL_PID 2>/dev/null; do
-  if [ -f "$TMP/$TARBALL" ]; then
-    DL_CUR=$(wc -c < "$TMP/$TARBALL" 2>/dev/null || echo 0)
-    if [ -n "$DL_TOTAL" ] && [ "$DL_TOTAL" -gt 0 ]; then
-      DL_PCT=$((DL_CUR * 100 / DL_TOTAL))
-      [ "$DL_PCT" -gt 100 ] && DL_PCT=100
-      if [ "$DL_PCT" != "$DL_LAST_PCT" ]; then
-        DL_FILLED=$((DL_PCT * BAR_WIDTH / 100))
-        DL_BAR=""
-        for ((i=0; i<DL_FILLED; i++)); do DL_BAR="${DL_BAR}█"; done
-        for ((i=DL_FILLED; i<BAR_WIDTH; i++)); do DL_BAR="${DL_BAR}░"; done
-        DL_CUR_MB=$(awk "BEGIN { printf \"%.1f\", $DL_CUR/1048576 }")
-        DL_TOT_MB=$(awk "BEGIN { printf \"%.1f\", $DL_TOTAL/1048576 }")
-        printf '\r   %s%s%s  %3d%%  %s / %s MiB' \
-          "$FG_ACCENT" "$DL_BAR" "$RST" "$DL_PCT" "$DL_CUR_MB" "$DL_TOT_MB" >&2
-        DL_LAST_PCT=$DL_PCT
-      fi
-    else
-      DL_CUR_MB=$(awk "BEGIN { printf \"%.1f\", $DL_CUR/1048576 }")
-      printf '\r   %s⠿%s  %s MiB' "$FG_ACCENT" "$RST" "$DL_CUR_MB" >&2
-    fi
-  fi
-  sleep 0.1
-done
-
-# curl exited — check its return status. Clear the progress line so
-# subsequent `ok` / `die` lines start clean.
-wait $DL_PID
-DL_RC=$?
-printf '\r\033[2K' >&2
-if [ "$DL_RC" -ne 0 ]; then
+if ! curl -fL --retry 3 --retry-delay 2 --silent --show-error "$URL" -o "$TMP/$TARBALL"; then
   die "download failed — verify the release exists: $URL"
 fi
-
 DL_T1=$(get_time)
 DL_BYTES=$(wc -c < "$TMP/$TARBALL" | tr -d ' ')
 DL_DUR=$(awk "BEGIN { printf \"%.1f\", $DL_T1 - $DL_T0 }")
