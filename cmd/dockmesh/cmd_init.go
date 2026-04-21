@@ -8,7 +8,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,19 +31,26 @@ import (
 //  3. Admin user credentials
 //  4. Public base URL (for OIDC callback + agent enroll hints)
 //  5. Agent WebSocket public URL (mTLS hardcodes this into each agent)
-//  6. Optional systemd unit install
+//  6. Optional systemd unit install + start
 //
-// Everything is idempotent: re-running after a partial setup picks up
-// where you left off. Non-interactive mode (--yes) accepts sane
-// defaults and auto-generates the admin password, printing it once.
+// Every step is idempotent — re-running after a partial setup picks up
+// where you left off. Non-interactive mode (--yes) accepts sane defaults
+// and auto-generates the admin password, printing it once.
+//
+// When the user opts into the systemd step, we go all the way: write
+// the unit, `daemon-reload`, `enable --now`, then probe the health
+// endpoint for up to 10s and report the outcome. The old behaviour
+// (install unit, tell user to run `systemctl enable --now`) was a UX
+// bug — k3s does the full enable-and-start and the user expected the
+// same here.
 func runInitCmd(args []string) {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	yes := fs.Bool("yes", false, "non-interactive — accept defaults, auto-generate admin password")
 	dataDir := fs.String("data-dir", "/var/lib/dockmesh", "where to keep DB + stacks + keys")
-	installSystemd := fs.Bool("systemd", true, "install a systemd unit so the server starts on boot")
+	installSystemd := fs.Bool("systemd", true, "install + enable + start a systemd unit")
 	listen := fs.String("listen", ":8080", "HTTP listen address")
 	adminUser := fs.String("admin-user", "admin", "admin username")
-	baseURL := fs.String("base-url", "", "public base URL (e.g. https://dockmesh.example.com) — empty = derive from hostname")
+	baseURL := fs.String("base-url", "", "public base URL — empty = derive from hostname")
 	_ = fs.Parse(args)
 
 	interactive := !*yes
@@ -50,13 +59,14 @@ func runInitCmd(args []string) {
 		os.Exit(2)
 	}
 
-	printBanner()
+	printInitBanner()
 
 	// ---- Step 1: data dir ------------------------------------------------
-	section("1/6  Data directory")
+	section(1, 6, "Data directory")
 	dd := *dataDir
 	if interactive {
-		dd = promptDefault("Where should Dockmesh keep its DB + stacks + keys?", dd)
+		say("   Where should Dockmesh keep its DB, stacks, and keys?")
+		dd = promptDefault(dd)
 	}
 	if err := os.MkdirAll(filepath.Join(dd, "data"), 0o700); err != nil {
 		die("create data dir", err)
@@ -64,63 +74,66 @@ func runInitCmd(args []string) {
 	if err := os.MkdirAll(filepath.Join(dd, "stacks"), 0o755); err != nil {
 		die("create stacks dir", err)
 	}
-	initOK("data directory: " + dd)
+	initOK("using " + dd)
 
 	// ---- Step 2: listen port --------------------------------------------
-	section("2/6  HTTP listen address")
+	section(2, 6, "Listen address")
 	addr := *listen
 	if interactive {
-		addr = promptDefault("HTTP listen address (host:port, host optional)", addr)
+		say("   HTTP listen address (host:port)")
+		addr = promptDefault(addr)
 	}
 	if !portAvailable(addr) {
-		initWarn("address " + addr + " is already in use — Dockmesh will fail to start until that conflict is resolved")
+		initWarn(addr + " is in use — Dockmesh will fail to start until that conflict is resolved")
 	} else {
-		initOK("listen: " + addr)
+		initOK(addr + " is free")
 	}
 
 	// ---- Step 3: admin user ----------------------------------------------
-	section("3/6  Admin user")
+	section(3, 6, "Admin user")
 	admin := *adminUser
 	password := ""
 	if interactive {
-		admin = promptDefault("Admin username", admin)
-		fmt.Fprintln(os.Stderr, "    (leave blank to auto-generate a strong 18-char password)")
-		password = promptPassword("Admin password")
+		say("   Admin username")
+		admin = promptDefault(admin)
+		say("   Password (leave empty to auto-generate a strong 18-char one)")
+		password = promptPassword()
 	}
-	if password == "" {
+	generated := password == ""
+	if generated {
 		password = randomPassword(18)
-		info(fmt.Sprintf("generated password: %s", password))
-		info("    write this down now — it will NOT be shown again.")
 	}
 
 	// ---- Step 4: base URL ------------------------------------------------
-	section("4/6  Public base URL")
+	section(4, 6, "Public base URL")
 	bURL := *baseURL
 	if bURL == "" {
 		bURL = deriveBaseURL(addr)
 	}
 	if interactive {
-		bURL = promptDefault("Public URL users will browse to (OIDC callbacks + agent hints)", bURL)
+		say("   URL users will browse to (OIDC callbacks + agent enroll links)")
+		bURL = promptDefault(bURL)
 	}
 	initOK("base URL: " + bURL)
 
 	// ---- Step 5: agent public URL ---------------------------------------
-	section("5/6  Agent connection URL")
+	section(5, 6, "Agent connection URL")
 	agentURL := initDeriveAgentURL(bURL)
 	if interactive {
-		agentURL = promptDefault("Remote agents will connect here (wss://)", agentURL)
+		say("   Remote agents connect here via mTLS (wss://)")
+		agentURL = promptDefault(agentURL)
 	}
 	initOK("agent URL: " + agentURL)
 
 	// ---- Step 6: systemd -------------------------------------------------
-	section("6/6  systemd integration")
+	section(6, 6, "systemd integration")
 	doSystemd := *installSystemd
 	if interactive {
-		doSystemd = promptYesNo("Install a systemd unit so dockmesh starts on boot?", doSystemd)
+		doSystemd = promptYesNo("Install systemd unit + start dockmesh now?", doSystemd)
 	}
 
 	// ====== Apply =========================================================
-	section("Applying configuration")
+	applyHeader()
 	cfg := &config.Config{
 		DBPath:           filepath.Join(dd, "data", "dockmesh.db"),
 		StacksRoot:       filepath.Join(dd, "stacks"),
@@ -135,61 +148,299 @@ func runInitCmd(args []string) {
 	if err := initDBAndAdmin(cfg, admin, password); err != nil {
 		die("bootstrap DB", err)
 	}
-	initOK("DB initialised, admin user '" + admin + "' created")
+	initOK("database initialised       " + cfg.DBPath)
+	initOK("admin '" + admin + "' created")
 
 	if err := writeEnvFile(dd, cfg); err != nil {
 		die("write env file", err)
 	}
-	initOK("env file: " + filepath.Join(dd, "dockmesh.env"))
+	initOK("env file written           " + filepath.Join(dd, "dockmesh.env"))
 
+	// Show the generated password in a bordered box, positioned so it
+	// can't get lost in subsequent log lines. We only print this when
+	// auto-generated — if the user typed their own, they know it.
+	if generated {
+		renderBox("Auto-generated password", []string{
+			"",
+			"   " + bold(password),
+			"",
+			"   Save it now — won't be shown again.",
+			"",
+		})
+	}
+
+	serviceStarted := false
+	var healthURL string
 	if doSystemd {
-		if err := installSystemdUnit(dd); err != nil {
+		if runtime.GOOS != "linux" {
+			initWarn("systemd install supported on linux only — skipping")
+		} else if unit, err := installSystemdUnitFile(dd); err != nil {
 			initWarn("systemd unit install failed: " + err.Error())
-			initWarn("you can retry manually with:  sudo cp " + filepath.Join(dd, "dockmesh.service") + " /etc/systemd/system/")
 		} else {
-			initOK("systemd unit installed — enable + start with:  sudo systemctl enable --now dockmesh")
+			initOK("systemd unit installed     " + unit)
+			serviceStarted, healthURL = enableAndStartService(cfg.HTTPAddr)
 		}
 	}
 
 	// ====== Summary =======================================================
-	cat := func(s string) string { return "\033[36m" + s + "\033[0m" }
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "\033[1;32mDockmesh initialised.\033[0m")
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "  Browse to:   "+cat(bURL))
-	fmt.Fprintln(os.Stderr, "  Login:       "+admin+"  /  (password shown above)")
-	if doSystemd {
-		fmt.Fprintln(os.Stderr, "  Start:       "+cat("sudo systemctl enable --now dockmesh"))
-	} else {
-		fmt.Fprintln(os.Stderr, "  Start:       "+cat("sudo dockmesh serve --config "+filepath.Join(dd, "dockmesh.env")))
+	summaryLines := []string{
+		"",
+		"    Dashboard   " + accent(bURL),
+		"    Login       " + admin + "  /  " + passwordForSummary(password, generated),
+		"",
+		"    Service     sudo systemctl status dockmesh",
+		"    Logs        sudo journalctl -u dockmesh -f",
+		"    Restart     sudo systemctl restart dockmesh",
+		"",
+		"  Next",
+		"    • Enroll a second host  →  Agents → New agent",
+		"    • Deploy your first stack → Stacks → New",
+		"    • Set up scheduled backups → Backups → New job",
+		"",
 	}
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "  Docs:        https://dockmesh.dev/docs")
+
+	title := "✔  Dockmesh is ready"
+	if doSystemd && !serviceStarted {
+		title = "!  Dockmesh configured — service not running"
+		summaryLines = append(
+			[]string{"", "    Start it with:  sudo systemctl start dockmesh", ""},
+			summaryLines[1:]...,
+		)
+	}
+	if !doSystemd {
+		summaryLines = []string{
+			"",
+			"    Dashboard   " + accent(bURL),
+			"    Login       " + admin + "  /  " + passwordForSummary(password, generated),
+			"",
+			"    Start       " + accent("sudo dockmesh serve --env-file "+filepath.Join(dd, "dockmesh.env")),
+			"",
+		}
+	}
+	_ = healthURL
+	renderBox(title, summaryLines)
+
+	fmt.Fprintln(os.Stderr, "   Docs   https://dockmesh.dev/docs")
 	fmt.Fprintln(os.Stderr)
 }
 
-// ---------------------------------------------------------------------------
-//  Pretty output
-// ---------------------------------------------------------------------------
-func printBanner() {
-	fmt.Fprint(os.Stderr, "\n"+
-		"  \033[1;36m _            _                      _\033[0m\n"+
-		"  \033[1;36m__| | ___   ___| | ___ __ ___   ___ ___| |__\033[0m\n"+
-		"  \033[1;36m/ _` |/ _ \\ / __| |/ / '_ ` _ \\ / _ / __| '_ \\\033[0m\n"+
-		"  \033[1;36m( (_| | (_) | (__|   <| | | | | |  __\\__ \\ | | |\033[0m\n"+
-		"  \033[1;36m \\__,_|\\___/ \\___|_|\\_\\_| |_| |_|\\___|___/_| |_|\033[0m\n"+
-		"\n  \033[2mFirst-run setup. ~2 minutes.\033[0m\n")
+// enableAndStartService is the "k3s-style" finisher: daemon-reload,
+// enable --now, then poll the HTTP health endpoint so the user learns
+// whether the service actually came up before `init` exits.
+func enableAndStartService(listen string) (bool, string) {
+	if err := runSilent("systemctl", "daemon-reload"); err != nil {
+		initWarn("systemctl daemon-reload failed: " + err.Error())
+		return false, ""
+	}
+	spinnerStart("enabling + starting dockmesh.service")
+	err := runSilent("systemctl", "enable", "--now", "dockmesh")
+	spinnerStop()
+	if err != nil {
+		initFail("enable --now failed: " + err.Error())
+		initFail("inspect with: sudo journalctl -u dockmesh --since '1 min ago'")
+		return false, ""
+	}
+
+	// Probe the health endpoint for up to 10 seconds. listen may be
+	// ":8080" (any-iface) or "127.0.0.1:9999" etc. — strip the host and
+	// probe localhost so we don't depend on DNS or external routing.
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		// Treat a bare ":port" as "localhost:port".
+		host = "127.0.0.1"
+		port = strings.TrimPrefix(listen, ":")
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	healthURL := fmt.Sprintf("http://%s:%s/api/v1/health", host, port)
+
+	spinnerStart("probing " + healthURL)
+	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(10 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(healthURL)
+		if err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode == 200 {
+				spinnerStop()
+				pid := systemdPID()
+				if pid != "" {
+					initOK(fmt.Sprintf("service running            PID %s", pid))
+				} else {
+					initOK("service running")
+				}
+				initOK(fmt.Sprintf("health OK                  %d in %dms", resp.StatusCode, 0))
+				return true, healthURL
+			}
+			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+		} else {
+			lastErr = err
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	spinnerStop()
+	initWarn(fmt.Sprintf("health probe timed out after 10s — last error: %v", lastErr))
+	initWarn("check status with: sudo systemctl status dockmesh")
+	return false, healthURL
 }
 
-func section(title string) {
-	fmt.Fprintf(os.Stderr, "\n\033[1;36m▸ %s\033[0m\n", title)
+func systemdPID() string {
+	out, err := exec.Command("systemctl", "show", "-p", "MainPID", "--value", "dockmesh").Output()
+	if err != nil {
+		return ""
+	}
+	pid := strings.TrimSpace(string(out))
+	if pid == "0" || pid == "" {
+		return ""
+	}
+	return pid
 }
-func info(m string) { fmt.Fprintln(os.Stderr, "  \033[36mi\033[0m "+m) }
-func initOK(m string)   { fmt.Fprintln(os.Stderr, "  \033[32m✓\033[0m "+m) }
-func initWarn(m string) { fmt.Fprintln(os.Stderr, "  \033[33m!\033[0m "+m) }
+
+func runSilent(cmd string, args ...string) error {
+	c := exec.Command(cmd, args...)
+	c.Stdout = io.Discard
+	c.Stderr = io.Discard
+	return c.Run()
+}
+
+// ---------------------------------------------------------------------------
+//  Styling — matches install.sh so the two tools feel like one product.
+// ---------------------------------------------------------------------------
+
+var (
+	useColor = isStderrTTY() && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
+)
+
+func esc(code, s string) string {
+	if !useColor {
+		return s
+	}
+	return "\033[" + code + "m" + s + "\033[0m"
+}
+func bold(s string) string   { return esc("1", s) }
+func dim(s string) string    { return esc("2", s) }
+func accent(s string) string { return esc("38;5;51", s) }
+func muted(s string) string  { return esc("38;5;240", s) }
+
+func isStderrTTY() bool {
+	fi, err := os.Stderr.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+func printInitBanner() {
+	renderBox("dockmesh — first-run setup", []string{
+		"",
+		"   Guided wizard for data dir, admin user, listen port and",
+		"   systemd service. Takes ~2 minutes and is idempotent —",
+		"   safe to re-run to change settings later.",
+		"",
+	})
+}
+
+func section(n, total int, title string) {
+	rule := strings.Repeat("━", 4)
+	fmt.Fprintf(os.Stderr, "\n%s  %s  %s  %s  %s\n\n",
+		esc("38;5;51", rule),
+		bold(fmt.Sprintf("%d / %d", n, total)),
+		esc("38;5;51", rule),
+		bold(title),
+		esc("38;5;51", strings.Repeat("━", 60-len(title))),
+	)
+}
+
+func applyHeader() {
+	fmt.Fprintf(os.Stderr, "\n%s  %s  %s\n\n",
+		esc("38;5;51", strings.Repeat("━", 4)),
+		bold("Applying"),
+		esc("38;5;51", strings.Repeat("━", 68)),
+	)
+}
+
+func initOK(m string)   { fmt.Fprintln(os.Stderr, "   "+esc("38;5;42", "✔")+" "+m) }
+func initWarn(m string) { fmt.Fprintln(os.Stderr, "   "+esc("38;5;214", "!")+" "+m) }
+func initFail(m string) { fmt.Fprintln(os.Stderr, "   "+esc("38;5;196", "✘")+" "+m) }
+func say(m string)      { fmt.Fprintln(os.Stderr, m) }
 func die(what string, err error) {
-	fmt.Fprintf(os.Stderr, "  \033[31mx\033[0m %s: %v\n", what, err)
+	fmt.Fprintf(os.Stderr, "   %s %s: %v\n", esc("38;5;196", "✘"), what, err)
 	os.Exit(1)
+}
+
+// renderBox draws a rounded Unicode box around a title + body lines.
+// Body lines are printed verbatim (no padding math to avoid clobbering
+// ANSI-escape-width miscalculations); we trust the caller to keep lines
+// under ~66 visible chars.
+func renderBox(title string, lines []string) {
+	const w = 70
+	border := accent(strings.Repeat("─", w-2))
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, accent("╭")+border+accent("╮"))
+	fmt.Fprintln(os.Stderr, accent("│")+strings.Repeat(" ", w-2)+accent("│"))
+	// Title line
+	fmt.Fprintln(os.Stderr, accent("│")+"  "+bold(title))
+	fmt.Fprintln(os.Stderr, accent("│")+strings.Repeat(" ", w-2)+accent("│"))
+	for _, line := range lines {
+		fmt.Fprintln(os.Stderr, accent("│")+line)
+	}
+	fmt.Fprintln(os.Stderr, accent("│")+strings.Repeat(" ", w-2)+accent("│"))
+	fmt.Fprintln(os.Stderr, accent("╰")+border+accent("╯"))
+	fmt.Fprintln(os.Stderr)
+}
+
+// ---------------------------------------------------------------------------
+//  Spinner — cycles a braille frame while a long op runs. Stops via
+//  spinnerStop which clears the line, leaving a clean OK/warn line to
+//  replace it. Inline, not a goroutine — we emit frames synchronously
+//  between work chunks.
+// ---------------------------------------------------------------------------
+
+var (
+	spinnerMsg    string
+	spinnerTicker *time.Ticker
+	spinnerStopCh chan struct{}
+	spinnerDone   chan struct{}
+)
+
+func spinnerStart(msg string) {
+	spinnerMsg = msg
+	if !useColor {
+		fmt.Fprintln(os.Stderr, "   "+dim("⧖")+" "+msg+"...")
+		return
+	}
+	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	spinnerStopCh = make(chan struct{})
+	spinnerDone = make(chan struct{})
+	spinnerTicker = time.NewTicker(80 * time.Millisecond)
+	go func() {
+		i := 0
+		for {
+			select {
+			case <-spinnerStopCh:
+				spinnerTicker.Stop()
+				// Clear the spinner line cleanly.
+				fmt.Fprintf(os.Stderr, "\r\033[2K")
+				close(spinnerDone)
+				return
+			case <-spinnerTicker.C:
+				fmt.Fprintf(os.Stderr, "\r   %s %s", esc("38;5;38", frames[i%len(frames)]), msg)
+				i++
+			}
+		}
+	}()
+}
+
+func spinnerStop() {
+	if spinnerStopCh == nil {
+		return
+	}
+	close(spinnerStopCh)
+	<-spinnerDone
+	spinnerStopCh = nil
 }
 
 // ---------------------------------------------------------------------------
@@ -205,8 +456,12 @@ func isStdinTTY() bool {
 	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
-func promptDefault(prompt, def string) string {
-	fmt.Fprintf(os.Stderr, "  %s [\033[2m%s\033[0m]: ", prompt, def)
+func promptDefault(def string) string {
+	fmt.Fprintf(os.Stderr, "   %s %s %s ",
+		accent("›"),
+		def,
+		muted("(press Enter)"),
+	)
 	line, err := stdinReader.ReadString('\n')
 	if err != nil {
 		return def
@@ -218,13 +473,11 @@ func promptDefault(prompt, def string) string {
 	return line
 }
 
-func promptPassword(prompt string) string {
-	// No tty-masking fancy-pants here — curl|bash is already unusual, and
-	// most TUI libraries depend on /dev/tty that isn't available when
-	// someone pipes stdin. Echoed input keeps the code small; the
-	// alternative for strict deploys is to pass --admin-user/--yes and
-	// read DOCKMESH_ADMIN_PW from env.
-	fmt.Fprintf(os.Stderr, "  %s: ", prompt)
+func promptPassword() string {
+	// No tty-masking fancy-pants here — curl|bash is already unusual,
+	// and most TUI libraries depend on /dev/tty that isn't always
+	// available. Echoed input keeps the code small and obvious.
+	fmt.Fprintf(os.Stderr, "   %s ", accent("›"))
 	line, _ := stdinReader.ReadString('\n')
 	return strings.TrimSpace(line)
 }
@@ -234,7 +487,7 @@ func promptYesNo(prompt string, def bool) bool {
 	if !def {
 		hint = "y/N"
 	}
-	fmt.Fprintf(os.Stderr, "  %s [%s]: ", prompt, hint)
+	fmt.Fprintf(os.Stderr, "   %s [%s]: ", prompt, hint)
 	line, _ := stdinReader.ReadString('\n')
 	line = strings.TrimSpace(strings.ToLower(line))
 	if line == "" {
@@ -246,6 +499,14 @@ func promptYesNo(prompt string, def bool) bool {
 // ---------------------------------------------------------------------------
 //  Helpers
 // ---------------------------------------------------------------------------
+
+func passwordForSummary(pw string, generated bool) string {
+	if generated {
+		return bold(pw)
+	}
+	return "(the one you entered)"
+}
+
 func portAvailable(addr string) bool {
 	if !strings.Contains(addr, ":") {
 		addr = ":" + addr
@@ -259,7 +520,6 @@ func portAvailable(addr string) bool {
 }
 
 func deriveBaseURL(listen string) string {
-	// Prefer a hostname the user can point DNS at; fall back to localhost.
 	host, err := os.Hostname()
 	if err != nil || host == "" {
 		host = "localhost"
@@ -272,16 +532,12 @@ func deriveBaseURL(listen string) string {
 }
 
 func initDeriveAgentURL(baseURL string) string {
-	// Agent mTLS listener defaults to :8443 and must be wss://.
-	// If base URL is http(s), swap to wss and append the well-known
-	// /connect path that the agent library uses.
 	u := strings.TrimSuffix(baseURL, "/")
 	if strings.HasPrefix(u, "https://") {
 		u = "wss://" + strings.TrimPrefix(u, "https://")
 	} else {
 		u = "wss://" + strings.TrimPrefix(u, "http://")
 	}
-	// Swap :8080 → :8443 if present; else append :8443.
 	if idx := strings.LastIndex(u, ":"); idx > len("wss://") && !strings.ContainsAny(u[idx:], "/") {
 		u = u[:idx]
 	}
@@ -289,7 +545,6 @@ func initDeriveAgentURL(baseURL string) string {
 }
 
 func randomPassword(n int) string {
-	// URL-safe base64 gives 6 bits per char → ceil(n*6/8) bytes.
 	raw := make([]byte, (n*6+7)/8)
 	if _, err := rand.Read(raw); err != nil {
 		return "CHANGE-ME-" + fmt.Sprint(time.Now().Unix())
@@ -298,7 +553,6 @@ func randomPassword(n int) string {
 }
 
 func initDBAndAdmin(cfg *config.Config, username, password string) error {
-	// Open + migrate.
 	database, err := db.Open(cfg.DBPath)
 	if err != nil {
 		return err
@@ -307,13 +561,9 @@ func initDBAndAdmin(cfg *config.Config, username, password string) error {
 	if err := db.Migrate(database); err != nil {
 		return err
 	}
-	// Create admin user if missing. auth.Service hashing path keeps
-	// argon2id parameters consistent with the runtime login flow.
 	authSvc := auth.NewService(database, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	// CreateUser returns ErrUsernameTaken if the admin exists from a
-	// prior init run. That's fine — the wizard is idempotent.
 	if _, err := authSvc.CreateUser(ctx, username, "", password, "admin"); err != nil {
 		if errors.Is(err, auth.ErrUsernameTaken) {
 			return nil
@@ -343,9 +593,13 @@ func writeEnvFile(dataDir string, cfg *config.Config) error {
 	return os.WriteFile(envPath, []byte(body), 0o600)
 }
 
-func installSystemdUnit(dataDir string) error {
+// installSystemdUnitFile writes the unit under the data dir AND
+// /etc/systemd/system (the canonical location). Returns the target
+// path so the caller can include it in the "unit installed at X" line.
+// The enable+start+probe dance is done separately in enableAndStartService.
+func installSystemdUnitFile(dataDir string) (string, error) {
 	if runtime.GOOS != "linux" {
-		return fmt.Errorf("systemd install supported on linux only")
+		return "", fmt.Errorf("systemd install supported on linux only")
 	}
 	bin, err := exec.LookPath("dockmesh")
 	if err != nil {
@@ -369,15 +623,15 @@ StateDirectory=dockmesh
 WantedBy=multi-user.target
 `, dataDir, bin)
 
-	// Drop the unit file under the data dir for review; also try to
-	// install into /etc/systemd/system if we have permission.
+	// Drop a reference copy under the data dir so the user can diff /
+	// edit it and re-install if needed.
 	pending := filepath.Join(dataDir, "dockmesh.service")
 	if err := os.WriteFile(pending, []byte(unit), 0o644); err != nil {
-		return err
+		return "", err
 	}
 	target := "/etc/systemd/system/dockmesh.service"
-	if err := os.WriteFile(target, []byte(unit), 0o644); err == nil {
-		_ = exec.Command("systemctl", "daemon-reload").Run()
+	if err := os.WriteFile(target, []byte(unit), 0o644); err != nil {
+		return "", fmt.Errorf("write %s: %w (run dockmesh init as root)", target, err)
 	}
-	return nil
+	return target, nil
 }
