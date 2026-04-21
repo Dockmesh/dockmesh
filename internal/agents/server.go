@@ -90,6 +90,13 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("agent hello payload", "agent", agent.Name, "err", err)
 		return
 	}
+	// Stash the hello on the ConnectedAgent so downstream code (notably
+	// the upgrade controller's version/commit compare) sees the
+	// reported build identity. Without this the field stayed zero-value
+	// and every connected agent looked "outdated" to the server, which
+	// manifested as an infinite auto-upgrade loop during Phase-2
+	// testing even after the commit-hash compare landed.
+	ag.Hello = hello
 
 	if err := h.svc.markOnline(r.Context(), ag, hello); err != nil {
 		slog.Warn("agent markOnline", "agent", agent.Name, "err", err)
