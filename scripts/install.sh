@@ -172,7 +172,10 @@ BANNER
 #  Inputs
 # ------------------------------------------------------------------
 REPO="dockmesh/dockmesh"
-VERSION="${DOCKMESH_VERSION:-latest}"
+# DM_VERSION instead of VERSION because /etc/os-release (sourced below)
+# defines $VERSION as the distro release ("12 (bookworm)" on Debian)
+# which silently clobbers any local VERSION var we set.
+DM_VERSION="${DOCKMESH_VERSION:-latest}"
 CHANNEL="${DOCKMESH_CHANNEL:-stable}"
 INSTALL_DIR="${DOCKMESH_INSTALL_DIR:-/usr/local/bin}"
 USE_SUDO="sudo"
@@ -209,7 +212,7 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 
 if [ "$IS_UPGRADE" = "1" ]; then
-  box "dockmesh — upgrade detected" ""
+  printf '\n   %supgrade detected%s\n' "$FG_TITLE$BOLD" "$RST" >&2
 fi
 
 # ------------------------------------------------------------------
@@ -278,8 +281,11 @@ package_for() {
 require_tool() {
   local cmd="$1" pkg
   if command -v "$cmd" >/dev/null 2>&1; then
+    # Take just the first two tokens of the first version line.
+    # curl --version otherwise dumps the full feature list on one line,
+    # which blows out the column alignment. "curl 7.88.1" is enough.
     local ver
-    ver="$("$cmd" --version 2>/dev/null | head -1 || echo '')"
+    ver="$("$cmd" --version 2>/dev/null | head -1 | awk '{print $1, $2}' || echo '')"
     ok "$(printf '%-16s %s' "$cmd" "${ver:-installed}")"
     return 0
   fi
@@ -374,7 +380,7 @@ step_done
 step 2 $TOTAL_STEPS "Resolving release"
 info "channel         $CHANNEL"
 
-if [ "$VERSION" = "latest" ]; then
+if [ "$DM_VERSION" = "latest" ]; then
   META_URL="https://api.github.com/repos/$REPO/releases/latest"
   if [ "$CHANNEL" = "testing" ]; then
     # 'testing' means "include pre-releases" — pull the full list and
@@ -384,14 +390,14 @@ if [ "$VERSION" = "latest" ]; then
   if ! META="$(curl -fsSL --retry 3 --retry-delay 2 "$META_URL" 2>&1)"; then
     die "failed to query $META_URL — check network + that the repo is public"
   fi
-  VERSION="$(printf '%s' "$META" | grep -oE '"tag_name"\s*:\s*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
-  [ -z "$VERSION" ] && die "could not parse latest release tag from GitHub API response"
+  DM_VERSION="$(printf '%s' "$META" | grep -oE '"tag_name"\s*:\s*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
+  [ -z "$DM_VERSION" ] && die "could not parse latest release tag from GitHub API response"
 fi
-ok "latest          $VERSION"
+ok "latest          $DM_VERSION"
 
 TARBALL="dockmesh_linux_${ARCH}.tar.gz"
-URL="https://github.com/$REPO/releases/download/$VERSION/$TARBALL"
-CHECKSUMS_URL="https://github.com/$REPO/releases/download/$VERSION/checksums.txt"
+URL="https://github.com/$REPO/releases/download/$DM_VERSION/$TARBALL"
+CHECKSUMS_URL="https://github.com/$REPO/releases/download/$DM_VERSION/checksums.txt"
 info "artifact        $TARBALL"
 step_done
 
@@ -427,7 +433,7 @@ if curl -fsSL --retry 2 -o "$TMP/checksums.txt" "$CHECKSUMS_URL" 2>/dev/null; th
     warn "no checksum entry for $TARBALL — continuing without verification"
   fi
 else
-  warn "no checksums.txt published for $VERSION — continuing without verification"
+  warn "no checksums.txt published for $DM_VERSION — continuing without verification"
 fi
 step_done
 
@@ -449,8 +455,8 @@ if [ "$IS_UPGRADE" = "1" ]; then
   fi
 
   $USE_SUDO install -m 0755 "$TMP/dockmesh" "$INSTALL_DIR/dockmesh"
-  NEW_VERSION_LINE="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || echo "$VERSION")"
-  ok "replaced        $INSTALL_DIR/dockmesh      ($VERSION)"
+  NEW_VERSION_LINE="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || echo "$DM_VERSION")"
+  ok "replaced        $INSTALL_DIR/dockmesh      ($DM_VERSION)"
 
   if [ "$HAS_SYSTEMD_UNIT" = "1" ]; then
     info "restarting dockmesh.service..."
@@ -477,7 +483,7 @@ if [ "$IS_UPGRADE" = "1" ]; then
   fi
   step_done
 
-  box "Upgraded  ${PREV_VERSION:-prev} → $VERSION" \
+  box "Upgraded  ${PREV_VERSION:-prev} → $DM_VERSION" \
     "" \
     "Data, stacks, and configuration are untouched." \
     "" \
@@ -500,7 +506,7 @@ step_done
 #  [6]  Summary / next step
 # ------------------------------------------------------------------
 step 6 $TOTAL_STEPS "Ready"
-INSTALLED="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || echo "$VERSION")"
+INSTALLED="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || echo "$DM_VERSION")"
 ok "installed       $INSTALLED"
 TOTAL_ELAPSED=$(awk "BEGIN { printf \"%.1f\", $(get_time) - $START_TS }")
 printf '   %s%ss total%s\n' "$FG_MUTED" "$TOTAL_ELAPSED" "$RST" >&2
