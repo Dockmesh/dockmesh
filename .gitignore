@@ -35,17 +35,9 @@
 .DS_Store
 Thumbs.db
 
-# Test / coverage
+# Test + coverage artifacts (every contributor generates these)
 *.out
 coverage.txt
 /web/playwright-report/
 /web/test-results/
 /web/playwright/.cache/
-/.playwright-mcp/
-
-# Ad-hoc debug dumps from Playwright MCP (accessibility-snapshot yaml)
-# Live in repo root. Only repo-root *.yml is ignored; docker-compose.yml
-# is tracked via the explicit !docker-compose.yml rule below.
-/*.yml
-!/docker-compose.yml
-/*.png
