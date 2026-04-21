@@ -1,0 +1,155 @@
+# Build + publish release tarballs when a v* tag is pushed.
+#
+# Triggers
+#   - tag push: v*.*.* (normal release)
+#   - manual: workflow_dispatch with a tag input (re-run a failed release
+#     without re-tagging)
+#
+# Outputs (attached to the GitHub Release)
+#   dockmesh_linux_amd64.tar.gz   — server + agent + dmctl binaries
+#   dockmesh_linux_arm64.tar.gz   — same, ARM64
+#   checksums.txt                 — SHA-256 of every tarball (BSD-style
+#                                   so `shasum -a 256 -c` also works)
+#
+# The install.sh served from get.dockmesh.dev expects the asset names
+# exactly as above — don't rename without updating the installer.
+name: release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v1.2.3)'
+        required: true
+
+permissions:
+  contents: write  # needed to create the release + attach assets
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: set VERSION
+        id: v
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "version=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: setup Node (for SvelteKit build)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: build frontend
+        run: |
+          cd web
+          npm ci
+          npm run build
+          # main Dockmesh Makefile expects the build dir embed target
+          mkdir -p ../cmd/dockmesh/web_dist
+          cp -r build/* ../cmd/dockmesh/web_dist/
+
+      - name: build binaries
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          LDFLAGS="-s -w -X github.com/dockmesh/dockmesh/pkg/version.Version=${VERSION} \
+                   -X github.com/dockmesh/dockmesh/pkg/version.Commit=${COMMIT} \
+                   -X github.com/dockmesh/dockmesh/pkg/version.Date=${DATE}"
+          mkdir -p dist
+          go build -trimpath -ldflags "$LDFLAGS" -o dist/dockmesh        ./cmd/dockmesh
+          go build -trimpath -ldflags "$LDFLAGS" -o dist/dockmesh-agent  ./cmd/dockmesh-agent
+          go build -trimpath -ldflags "$LDFLAGS" -o dist/dmctl           ./cmd/dmctl
+
+      - name: package tarball
+        run: |
+          TARBALL="dockmesh_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
+          cd dist
+          cp ../LICENSE .
+          cp ../README.md .
+          cp ../scripts/install-agent.sh .
+          tar -czf "../$TARBALL" dockmesh dockmesh-agent dmctl LICENSE README.md install-agent.sh
+          cd ..
+          sha256sum "$TARBALL" > "${TARBALL}.sha256"
+
+      - name: upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dockmesh_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: |
+            dockmesh_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+            dockmesh_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz.sha256
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: set VERSION
+        id: v
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "version=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: assemble release dir
+        run: |
+          mkdir -p release
+          find artifacts -name '*.tar.gz' -exec mv {} release/ \;
+          # Combined checksums.txt — one sha256 line per asset.
+          cd release
+          sha256sum *.tar.gz > checksums.txt
+          cat checksums.txt
+
+      - name: publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.v.outputs.version }}
+          name: Dockmesh ${{ steps.v.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(steps.v.outputs.version, '-') }}
+          generate_release_notes: true
+          files: |
+            release/*.tar.gz
+            release/checksums.txt

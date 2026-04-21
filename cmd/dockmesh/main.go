@@ -101,6 +101,9 @@ func main() {
 		case "restore":
 			runRestoreCmd(os.Args[2:])
 			return
+		case "init":
+			runInitCmd(os.Args[2:])
+			return
 		case "version", "--version", "-v":
 			fmt.Printf("dockmesh %s (commit %s, built %s)\n", version.Version, version.Commit, version.Date)
 			return
