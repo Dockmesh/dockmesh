@@ -15,6 +15,22 @@
   // ?tab=account redirect cleanly via the snap-back $effect below.
   let tab = $state<Tab>((new URLSearchParams($page.url.search).get('tab') as Tab) || 'system');
 
+  // System sub-tab: General = instance config, Data & secrets = destructive
+  // operations. Read initial value from ?sub= so the sidebar can deep-link
+  // if we ever surface "take me to Data & secrets" from an alert.
+  type SystemSub = 'general' | 'data';
+  let systemSub = $state<SystemSub>(
+    (new URLSearchParams($page.url.search).get('sub') as SystemSub) === 'data' ? 'data' : 'general'
+  );
+  function setSystemSub(s: SystemSub) {
+    systemSub = s;
+    if (typeof window !== 'undefined') {
+      const u = new URL(window.location.href);
+      u.searchParams.set('sub', s);
+      history.replaceState(null, '', u);
+    }
+  }
+
   // --- System tab (P.6.5 + P.12.4) ---
   let backupStatus = $state<BackupStatus | null>(null);
   let verifyBackupBusy = $state(false);
@@ -1089,23 +1105,30 @@
 <section class="space-y-6">
   <div>
     <h2 class="text-2xl font-semibold tracking-tight">Settings</h2>
-    <p class="text-sm text-[var(--fg-muted)] mt-0.5">Manage your account, users and audit trail.</p>
+    <p class="text-sm text-[var(--fg-muted)] mt-0.5">Instance-level configuration and data management.</p>
   </div>
 
-  <div class="border-b border-[var(--border)] flex gap-1">
-    {#each tabs.filter((t) => t.show) as t}
-      {@const Icon = t.icon}
-      <button
-        class="px-4 py-2.5 text-sm border-b-2 transition-colors flex items-center gap-2
-               {tab === t.id
-          ? 'border-[var(--color-brand-500)] text-[var(--fg)]'
-          : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}"
-        onclick={() => (tab = t.id)}
-      >
-        <Icon class="w-3.5 h-3.5" />
-        {t.label}
-      </button>
-    {/each}
+  <!-- Sub-tabs: General vs. Data & secrets. System owns both instance-
+       config knobs (URLs, scanner, update-check) and destructive data
+       ops (backup/restore/key-rotation/wipe) — splitting them keeps the
+       former scannable while making the latter feel deliberate. -->
+  <div class="flex gap-1 border-b border-[var(--border)]">
+    <button
+      type="button"
+      class="px-3 py-2 text-sm font-medium border-b-2 transition-colors {systemSub === 'general' ? 'border-[var(--accent)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}"
+      onclick={() => setSystemSub('general')}
+    >
+      <HardDrive class="w-3.5 h-3.5 inline -mt-0.5" />
+      General
+    </button>
+    <button
+      type="button"
+      class="px-3 py-2 text-sm font-medium border-b-2 transition-colors {systemSub === 'data' ? 'border-[var(--accent)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}"
+      onclick={() => setSystemSub('data')}
+    >
+      <Archive class="w-3.5 h-3.5 inline -mt-0.5" />
+      Data &amp; secrets
+    </button>
   </div>
 
   {#if tab === 'account'}
@@ -1650,14 +1673,7 @@
 
 {#if tab === 'system' && allowed('user.manage')}
   <section class="space-y-6 max-w-3xl">
-    <!-- ── Section: General ─────────────────────────────────────────────
-         Instance-level info + runtime toggles (base URL, agent URL,
-         scanner, update-check). Nothing destructive here. -->
-    <div>
-      <h3 class="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--accent-fg)] mb-0.5">General</h3>
-      <p class="text-xs text-[var(--fg-muted)]">Instance info, URLs, and runtime toggles.</p>
-    </div>
-
+    {#if systemSub === 'general'}
     <!-- Instance info -->
     {#if systemInfo}
       <Card class="p-5">
@@ -1835,14 +1851,7 @@
       </div>
     </Card>
 
-    <!-- ── Section: Data & secrets ──────────────────────────────────────
-         Everything that writes to disk or rotates keys. Grouped together
-         because these all need the same caution + admin awareness. -->
-    <div class="pt-4">
-      <h3 class="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--accent-fg)] mb-0.5">Data &amp; secrets</h3>
-      <p class="text-xs text-[var(--fg-muted)]">Backups, key rotation, restore. Destructive actions live here.</p>
-    </div>
-
+    {:else}
     <!-- Automated backups -->
     <Card class="p-5">
       <div class="flex items-start justify-between gap-4">
@@ -2032,6 +2041,7 @@
         </div>
       {/if}
     </Card>
+    {/if}
   </section>
 {/if}
 
