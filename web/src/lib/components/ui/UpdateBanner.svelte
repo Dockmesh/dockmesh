@@ -60,12 +60,21 @@
         <Download class="w-4 h-4 text-cyan-400" />
       </div>
       <div class="flex-1 min-w-0">
-        <span class="font-medium text-[var(--fg)]">
-          Update available: {status.latest_version}
-        </span>
-        <span class="text-[var(--fg-muted)] ml-1">
-          · running {status.current_version}
-        </span>
+        {#if status.is_dev_build}
+          <span class="font-medium text-[var(--fg)]">
+            Release available: {status.latest_version}
+          </span>
+          <span class="text-[var(--fg-muted)] ml-1">
+            · you're on a dev build
+          </span>
+        {:else}
+          <span class="font-medium text-[var(--fg)]">
+            Update available: {status.latest_version}
+          </span>
+          <span class="text-[var(--fg-muted)] ml-1">
+            · running {status.current_version}
+          </span>
+        {/if}
       </div>
       {#if status.release_url}
         <a

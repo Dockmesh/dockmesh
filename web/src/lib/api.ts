@@ -128,6 +128,7 @@ export interface UpdateStatus {
   current_version: string;
   latest_version: string;
   update_available: boolean;
+  is_dev_build: boolean;
   release_url: string;
   release_notes: string;
   published_at?: string;

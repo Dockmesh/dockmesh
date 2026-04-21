@@ -50,6 +50,7 @@ type Result struct {
 	CurrentVersion  string    `json:"current_version"`
 	LatestVersion   string    `json:"latest_version"`
 	UpdateAvailable bool      `json:"update_available"`
+	IsDevBuild      bool      `json:"is_dev_build"`
 	ReleaseURL      string    `json:"release_url"`
 	ReleaseNotes    string    `json:"release_notes"`
 	PublishedAt     time.Time `json:"published_at,omitempty"`
@@ -209,7 +210,7 @@ func (c *Checker) CheckNow(ctx context.Context) error {
 	_ = c.settings.Set(ctx, "update_published_at", published)
 
 	c.recordErr(nil)
-	slog.Info("selfupdate: checked", "current", c.current, "latest", rel.TagName, "update_available", isNewer(c.current, rel.TagName))
+	slog.Info("selfupdate: checked", "current", c.current, "latest", rel.TagName, "update_available", isNewer(c.current, rel.TagName) || isDevVersion(c.current))
 	return nil
 }
 
@@ -242,10 +243,24 @@ func (c *Checker) Status() Result {
 	lastErr := c.lastErr
 	c.mu.RUnlock()
 
+	// Dev builds: any published release is treated as "newer" so the
+	// self-hosted-from-source operator still gets the upgrade banner.
+	// A proper tagged build only shows available when semver says so.
+	dev := isDevVersion(c.current)
+	available := false
+	if latest != "" {
+		if dev {
+			available = true
+		} else {
+			available = isNewer(c.current, latest)
+		}
+	}
+
 	return Result{
 		CurrentVersion:  c.current,
 		LatestVersion:   latest,
-		UpdateAvailable: isNewer(c.current, latest),
+		UpdateAvailable: available,
+		IsDevBuild:      dev,
 		ReleaseURL:      c.settings.Get("update_release_url", ""),
 		ReleaseNotes:    c.settings.Get("update_release_notes", ""),
 		PublishedAt:     publishedAt,
@@ -253,6 +268,22 @@ func (c *Checker) Status() Result {
 		Enabled:         c.settings.GetBool("update_check_enabled", true),
 		Error:           lastErr,
 	}
+}
+
+// isDevVersion returns true for locally-built binaries where no release
+// tag was injected via ldflags. These should still see the banner so
+// the operator knows a published release exists.
+func isDevVersion(v string) bool {
+	if v == "" || v == "dev" || v == "unknown" {
+		return true
+	}
+	// Anything not starting with a digit or "v" is also a dev build
+	// (branch name, commit sha, "HEAD", etc.).
+	s := strings.TrimPrefix(v, "v")
+	if s == "" || s[0] < '0' || s[0] > '9' {
+		return true
+	}
+	return false
 }
 
 // isNewer returns true when `latest` is a newer semver tag than `current`.

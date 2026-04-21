@@ -112,6 +112,17 @@
     if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
     return `${Math.floor(ms / 86_400_000)}d ago`;
   }
+
+  async function copyUpgradeCmd(cmd: string) {
+    try {
+      await navigator.clipboard.writeText(cmd);
+      toast.success('Copied to clipboard');
+    } catch {
+      toast.error('Copy failed', 'Browser blocked clipboard access');
+    }
+  }
+
+  const upgradeOneLiner = 'curl -fsSL https://get.dockmesh.dev | sudo bash && sudo systemctl restart dockmesh';
   let secretsRotateBusy = $state(false);
   let secretsRotateResult = $state<{ reencrypted: number; old_recipient: string; new_recipient: string } | null>(null);
 
@@ -1685,6 +1696,8 @@
             <div>
               {#if updateStatus.error}
                 <span class="text-red-400">error</span>
+              {:else if updateStatus.is_dev_build && updateStatus.latest_version}
+                <span class="text-amber-400 font-medium">dev build</span>
               {:else if updateStatus.update_available}
                 <span class="text-cyan-400 font-medium">update available</span>
               {:else if !updateStatus.enabled}
@@ -1702,11 +1715,36 @@
           </div>
         {/if}
 
-        {#if updateStatus.update_available && updateStatus.release_url}
-          <a href={updateStatus.release_url} target="_blank" rel="noopener"
-             class="text-xs text-cyan-400 hover:text-cyan-300 underline underline-offset-2 mb-3 inline-block">
-            View release notes for {updateStatus.latest_version} →
-          </a>
+        {#if updateStatus.update_available}
+          <div class="border border-cyan-500/30 bg-cyan-500/5 rounded-lg p-3.5 mb-4">
+            <div class="flex items-start justify-between gap-3 mb-2.5">
+              <div>
+                <div class="text-sm font-semibold text-[var(--fg)]">
+                  {updateStatus.is_dev_build ? `Release ${updateStatus.latest_version} available` : `Upgrade to ${updateStatus.latest_version}`}
+                </div>
+                {#if updateStatus.release_url}
+                  <a href={updateStatus.release_url} target="_blank" rel="noopener"
+                     class="text-xs text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
+                    View release notes →
+                  </a>
+                {/if}
+              </div>
+            </div>
+
+            <div class="text-xs text-[var(--fg-muted)] mb-1.5">Run on this host:</div>
+            <div class="flex items-stretch gap-2">
+              <code class="flex-1 px-2.5 py-2 bg-[var(--bg)] border border-[var(--border)] rounded-md text-xs font-mono text-[var(--fg)] overflow-x-auto whitespace-nowrap">
+                {upgradeOneLiner}
+              </code>
+              <button type="button" class="dm-btn dm-btn-secondary text-xs shrink-0"
+                onclick={() => copyUpgradeCmd(upgradeOneLiner)}>
+                Copy
+              </button>
+            </div>
+            <p class="text-[11px] text-[var(--fg-muted)] mt-2">
+              Keeps your data and stacks. Installer swaps the binary and the service restart does the rest — typical downtime &lt; 3s.
+            </p>
+          </div>
         {/if}
       {/if}
 
