@@ -197,7 +197,8 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 	hostname, _ := os.Hostname()
 	dockerVersion := dockerDaemonVersion(ctx)
 	hello := agents.HelloPayload{
-		Version:       agentVersion(),
+		Version:       version.Version,
+		Commit:        version.Commit,
 		OS:            runtime.GOOS,
 		Arch:          runtime.GOARCH,
 		Hostname:      hostname,
@@ -1170,7 +1171,7 @@ func enroll(cfg agentConfig, certPath, keyPath, caPath, urlPath string) error {
 		Hostname:      hostname,
 		OS:            runtime.GOOS,
 		Arch:          runtime.GOARCH,
-		Version:       agentVersion(),
+		Version:       version.Version,
 		DockerVersion: dockerDaemonVersion(context.Background()),
 	}
 	buf, _ := json.Marshal(body)

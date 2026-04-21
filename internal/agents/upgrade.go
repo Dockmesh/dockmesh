@@ -108,7 +108,7 @@ func (c *UpgradeController) Policy() UpgradePolicy {
 	c.agents.mu.RLock()
 	for _, ca := range c.agents.connected {
 		p.ConnectedTotal++
-		if ca.Hello.Version == version.Version {
+		if agentIsUpToDate(ca) {
 			p.ConnectedUpToDate++
 		} else {
 			p.ConnectedPending++
@@ -265,11 +265,25 @@ func (c *UpgradeController) pendingAgents() []*ConnectedAgent {
 	c.agents.mu.RLock()
 	defer c.agents.mu.RUnlock()
 	for _, ca := range c.agents.connected {
-		if ca.Hello.Version != version.Version {
+		if !agentIsUpToDate(ca) {
 			out = append(out, ca)
 		}
 	}
 	return out
+}
+
+// agentIsUpToDate is the single source of truth for "does this agent
+// match the server build". Commit hash is the canonical identity —
+// Version is a human label that can (and did) include a +<hash>
+// suffix after the ldflags rework, which broke the naive string
+// compare the controller used to do. Older agents that predate the
+// Commit field fall back to the Version compare so they still upgrade
+// during the rollout transition.
+func agentIsUpToDate(ca *ConnectedAgent) bool {
+	if ca.Hello.Commit != "" && version.Commit != "" && version.Commit != "none" {
+		return ca.Hello.Commit == version.Commit
+	}
+	return ca.Hello.Version == version.Version
 }
 
 func pendingIDs(list []*ConnectedAgent) []string {
