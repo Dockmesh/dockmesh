@@ -114,9 +114,9 @@ hero shots.
 
 | | |
 | :-: | :-: |
-| ![Dashboard](https://dockmesh.dev/shots/01-dashboard-hero.png) | ![Multi-host fleet](https://dockmesh.dev/shots/06-agents-fleet.png) |
+| ![Dashboard](.github/shots/01-dashboard-hero.png) | ![Multi-host fleet](.github/shots/06-agents-fleet.png) |
 | Dashboard with live fleet overview | Multi-host agents with mTLS |
-| ![CVE scan](https://dockmesh.dev/shots/05-cve-scan.png) | ![Backups](https://dockmesh.dev/shots/08-backups-runs.png) |
+| ![CVE scan](.github/shots/05-cve-scan.png) | ![Backups](.github/shots/08-backups-runs.png) |
 | CVE scanning via Grype | Scheduled encrypted backups |
 
 ## Architecture
