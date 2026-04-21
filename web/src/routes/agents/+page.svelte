@@ -355,27 +355,29 @@
       <div class="divide-y divide-[var(--border)]">
         {#each agents as a (a.id)}
           <div class="flex items-center gap-3 px-5 py-3 hover:bg-[var(--surface-hover)]">
-            <div class="w-10 h-10 rounded-lg bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] text-[var(--color-brand-400)] flex items-center justify-center shrink-0">
-              <Server class="w-5 h-5" />
-            </div>
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-medium text-sm">{a.name}</span>
-                <Badge variant={statusVariant(a.status)} dot>{a.status}</Badge>
-                {#each (hostTags[a.id] ?? []) as t}
-                  <span class="inline-flex items-center h-5 px-1.5 rounded text-[10px] font-mono bg-[var(--surface-hover)] text-[var(--fg-muted)] border border-[var(--border)]">
-                    {t}
-                  </span>
-                {/each}
+            <a href="/agents/{a.id}" class="flex items-center gap-3 flex-1 min-w-0 -my-3 py-3 rounded">
+              <div class="w-10 h-10 rounded-lg bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] text-[var(--color-brand-400)] flex items-center justify-center shrink-0">
+                <Server class="w-5 h-5" />
               </div>
-              <div class="text-xs text-[var(--fg-muted)] font-mono truncate mt-0.5">
-                {#if a.hostname}{a.hostname}{:else}—{/if}
-                {#if a.os}· {a.os}/{a.arch}{/if}
-                {#if a.docker_version}· docker {a.docker_version}{/if}
-                {#if a.version}· agent {a.version}{/if}
-                · last seen {fmtTime(a.last_seen_at)}
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="font-medium text-sm">{a.name}</span>
+                  <Badge variant={statusVariant(a.status)} dot>{a.status}</Badge>
+                  {#each (hostTags[a.id] ?? []) as t}
+                    <span class="inline-flex items-center h-5 px-1.5 rounded text-[10px] font-mono bg-[var(--surface-hover)] text-[var(--fg-muted)] border border-[var(--border)]">
+                      {t}
+                    </span>
+                  {/each}
+                </div>
+                <div class="text-xs text-[var(--fg-muted)] font-mono truncate mt-0.5">
+                  {#if a.hostname}{a.hostname}{:else}—{/if}
+                  {#if a.os}· {a.os}/{a.arch}{/if}
+                  {#if a.docker_version}· docker {a.docker_version}{/if}
+                  {#if a.version}· agent {a.version}{/if}
+                  · last seen {fmtTime(a.last_seen_at)}
+                </div>
               </div>
-            </div>
+            </a>
             <Button size="xs" variant="ghost" onclick={() => openTags(a.id)} aria-label="Manage tags">
               <Tag class="w-3.5 h-3.5 text-[var(--fg-muted)]" />
             </Button>
