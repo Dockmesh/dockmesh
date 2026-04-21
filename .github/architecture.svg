@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 520" font-family="-apple-system, 'Segoe UI', Roboto, sans-serif">
+  <!-- Background -->
+  <rect width="960" height="520" fill="#020617"/>
+
+  <!-- Subtle grid for depth -->
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#0f172a" stroke-width="1"/>
+    </pattern>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#04d1eb" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#04d1eb" stop-opacity="0"/>
+    </radialGradient>
+    <marker id="arrowCyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#04d1eb"/>
+    </marker>
+    <marker id="arrowMuted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect width="960" height="520" fill="url(#grid)"/>
+
+  <!-- Center glow behind the server box -->
+  <ellipse cx="480" cy="260" rx="380" ry="200" fill="url(#glow)"/>
+
+  <!-- ============================================================ -->
+  <!-- TOP: Browser + Clients                                        -->
+  <!-- ============================================================ -->
+  <g>
+    <!-- Browser -->
+    <rect x="60" y="32" width="180" height="64" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+    <circle cx="78" cy="46" r="3" fill="#334155"/>
+    <circle cx="88" cy="46" r="3" fill="#334155"/>
+    <circle cx="98" cy="46" r="3" fill="#334155"/>
+    <rect x="110" y="40" width="120" height="12" rx="2" fill="#1e293b"/>
+    <text x="150" y="84" fill="#94a3b8" font-size="12" text-anchor="middle">Browser (UI)</text>
+
+    <!-- dmctl -->
+    <rect x="280" y="32" width="180" height="64" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+    <text x="370" y="64" fill="#04d1eb" font-size="16" font-family="ui-monospace,SFMono-Regular,monospace" text-anchor="middle" font-weight="600">$ dmctl</text>
+    <text x="370" y="84" fill="#94a3b8" font-size="12" text-anchor="middle">CLI · CI/CD</text>
+
+    <!-- Webhooks -->
+    <rect x="500" y="32" width="180" height="64" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+    <text x="590" y="60" fill="#e2e8f0" font-size="14" text-anchor="middle" font-weight="600">Git push</text>
+    <text x="590" y="80" fill="#94a3b8" font-size="12" text-anchor="middle">webhook auto-deploy</text>
+
+    <!-- API tokens -->
+    <rect x="720" y="32" width="180" height="64" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+    <text x="810" y="60" fill="#e2e8f0" font-size="14" text-anchor="middle" font-weight="600">OIDC / API</text>
+    <text x="810" y="80" fill="#94a3b8" font-size="12" text-anchor="middle">SSO · Azure · Keycloak</text>
+  </g>
+
+  <!-- Arrows from top clients to server -->
+  <path d="M 150 96 L 150 156" stroke="#475569" stroke-width="1.5" fill="none" stroke-dasharray="4,4" marker-end="url(#arrowMuted)"/>
+  <path d="M 370 96 L 370 156" stroke="#475569" stroke-width="1.5" fill="none" stroke-dasharray="4,4" marker-end="url(#arrowMuted)"/>
+  <path d="M 590 96 L 590 156" stroke="#475569" stroke-width="1.5" fill="none" stroke-dasharray="4,4" marker-end="url(#arrowMuted)"/>
+  <path d="M 810 96 L 810 156" stroke="#475569" stroke-width="1.5" fill="none" stroke-dasharray="4,4" marker-end="url(#arrowMuted)"/>
+
+  <!-- ============================================================ -->
+  <!-- CENTER: Dockmesh server                                       -->
+  <!-- ============================================================ -->
+  <g>
+    <rect x="60" y="160" width="840" height="200" rx="14" fill="#0a1020" stroke="#04d1eb" stroke-width="1.5" stroke-opacity="0.35"/>
+
+    <!-- Header bar -->
+    <text x="82" y="192" fill="#04d1eb" font-size="11" font-weight="700" letter-spacing="2">DOCKMESH SERVER · SINGLE GO BINARY</text>
+    <rect x="82" y="200" width="64" height="2" fill="#04d1eb" opacity="0.5"/>
+
+    <!-- Sub-components -->
+    <!-- HTTP API + UI -->
+    <g>
+      <rect x="82" y="220" width="180" height="120" rx="8" fill="#0f172a" stroke="#1e293b"/>
+      <text x="172" y="248" fill="#e2e8f0" font-size="14" font-weight="600" text-anchor="middle">HTTP API + UI</text>
+      <text x="172" y="272" fill="#64748b" font-size="11" text-anchor="middle">Chi router</text>
+      <text x="172" y="290" fill="#64748b" font-size="11" text-anchor="middle">SvelteKit (embedded)</text>
+      <text x="172" y="308" fill="#64748b" font-size="11" text-anchor="middle">JWT · RBAC · audit</text>
+      <text x="172" y="326" fill="#64748b" font-size="11" text-anchor="middle">Prometheus metrics</text>
+    </g>
+
+    <!-- Storage -->
+    <g>
+      <rect x="282" y="220" width="180" height="120" rx="8" fill="#0f172a" stroke="#1e293b"/>
+      <text x="372" y="248" fill="#e2e8f0" font-size="14" font-weight="600" text-anchor="middle">Storage</text>
+      <text x="372" y="272" fill="#64748b" font-size="11" text-anchor="middle">SQLite (WAL) default</text>
+      <text x="372" y="290" fill="#64748b" font-size="11" text-anchor="middle">or Postgres</text>
+      <text x="372" y="308" fill="#64748b" font-size="11" text-anchor="middle">+ /stacks/ filesystem</text>
+      <text x="372" y="326" fill="#64748b" font-size="11" text-anchor="middle">= source of truth</text>
+    </g>
+
+    <!-- Extensions -->
+    <g>
+      <rect x="482" y="220" width="180" height="120" rx="8" fill="#0f172a" stroke="#1e293b"/>
+      <text x="572" y="248" fill="#e2e8f0" font-size="14" font-weight="600" text-anchor="middle">Built-in add-ons</text>
+      <text x="572" y="272" fill="#64748b" font-size="11" text-anchor="middle">Caddy reverse proxy</text>
+      <text x="572" y="290" fill="#64748b" font-size="11" text-anchor="middle">Grype CVE scanner</text>
+      <text x="572" y="308" fill="#64748b" font-size="11" text-anchor="middle">age encryption</text>
+      <text x="572" y="326" fill="#64748b" font-size="11" text-anchor="middle">OIDC SSO · TOTP 2FA</text>
+    </g>
+
+    <!-- mTLS listener -->
+    <g>
+      <rect x="682" y="220" width="196" height="120" rx="8" fill="#0f172a" stroke="#04d1eb" stroke-opacity="0.45"/>
+      <text x="780" y="248" fill="#04d1eb" font-size="14" font-weight="600" text-anchor="middle">Agent mTLS listener</text>
+      <text x="780" y="272" fill="#64748b" font-size="11" text-anchor="middle">wss://host:8443/connect</text>
+      <text x="780" y="290" fill="#64748b" font-size="11" text-anchor="middle">per-agent client certs</text>
+      <text x="780" y="308" fill="#64748b" font-size="11" text-anchor="middle">fleet-wide auto-upgrade</text>
+      <text x="780" y="326" fill="#64748b" font-size="11" text-anchor="middle">log + stats stream mux</text>
+    </g>
+  </g>
+
+  <!-- ============================================================ -->
+  <!-- BOTTOM: Docker hosts                                          -->
+  <!-- ============================================================ -->
+  <g>
+    <!-- Local Docker -->
+    <rect x="80" y="410" width="260" height="80" rx="10" fill="#0f172a" stroke="#1e293b"/>
+    <text x="210" y="440" fill="#e2e8f0" font-size="14" font-weight="600" text-anchor="middle">Local Docker daemon</text>
+    <text x="210" y="462" fill="#64748b" font-size="11" text-anchor="middle">/var/run/docker.sock</text>
+    <text x="210" y="478" fill="#64748b" font-size="11" text-anchor="middle">same host as server</text>
+
+    <!-- Remote agent(s) -->
+    <rect x="540" y="410" width="340" height="80" rx="10" fill="#0f172a" stroke="#1e293b"/>
+    <text x="710" y="440" fill="#e2e8f0" font-size="14" font-weight="600" text-anchor="middle">Remote host · dockmesh-agent</text>
+    <text x="710" y="462" fill="#64748b" font-size="11" text-anchor="middle">outbound-only WebSocket + mTLS client cert</text>
+    <text x="710" y="478" fill="#64748b" font-size="11" text-anchor="middle">no inbound ports · NAT/VPN-friendly</text>
+
+    <!-- Agent icons: suggest a fleet -->
+    <circle cx="890" cy="420" r="6" fill="#04d1eb" opacity="0.4"/>
+    <circle cx="895" cy="436" r="6" fill="#04d1eb" opacity="0.25"/>
+    <circle cx="900" cy="452" r="6" fill="#04d1eb" opacity="0.15"/>
+  </g>
+
+  <!-- Arrows: server → local docker (Docker SDK) -->
+  <path d="M 172 340 L 172 410" stroke="#64748b" stroke-width="1.5" fill="none" marker-end="url(#arrowMuted)"/>
+  <text x="172" y="378" fill="#94a3b8" font-size="11" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,monospace">Docker SDK</text>
+
+  <!-- Arrow: agent → server (outbound, cyan) -->
+  <path d="M 710 410 Q 710 375 780 340" stroke="#04d1eb" stroke-width="1.8" fill="none" marker-end="url(#arrowCyan)"/>
+  <text x="830" y="395" fill="#04d1eb" font-size="11" font-family="ui-monospace,SFMono-Regular,monospace">outbound WSS</text>
+
+  <!-- Footer caption -->
+  <text x="480" y="508" fill="#475569" font-size="11" text-anchor="middle" font-style="italic">One binary. One UI. One mTLS protocol across the whole fleet.</text>
+</svg>

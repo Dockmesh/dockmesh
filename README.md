@@ -121,29 +121,14 @@ hero shots.
 
 ## Architecture
 
-```
-  ┌───────────────────────────────────────────┐
-  │  Dockmesh server (single Go binary)       │
-  │    ├─ HTTP API + embedded SvelteKit UI    │
-  │    ├─ SQLite (default) or Postgres        │
-  │    ├─ /stacks/ filesystem = source of     │
-  │    │   truth for compose + env files      │
-  │    └─ Agent mTLS listener (:8443/connect) │
-  └──────┬─────────────────┬──────────────────┘
-         │ Docker SDK       │ WebSocket, outbound-initiated
-         ▼                  ▼
-  ┌──────────────┐   ┌──────────────────────┐
-  │  local       │   │  remote host         │
-  │  Docker      │   │  dockmesh-agent      │
-  │  daemon      │   │  ├─ Docker SDK       │
-  └──────────────┘   │  └─ mTLS client cert │
-                     └──────────────────────┘
-```
+<p align="center">
+  <img src=".github/architecture.svg" alt="Dockmesh architecture" width="880"/>
+</p>
 
-- **Single binary**: Go 1.23+, SvelteKit build embedded via `go:embed`.
-- **Filesystem as source of truth**: `compose.yaml` on disk, DB caches deployment state.
-- **Outbound-only agents**: remote hosts open WebSocket to the server. No inbound port on the agent side — traverses NAT, VPN, and tight firewalls with nothing to configure.
-- **No Kubernetes**. Docker + Compose + a spine of management tooling. If you want K8s, use Rancher; if you want zero-config Docker, use Dockmesh.
+- **Single binary**. Go 1.23+, SvelteKit UI embedded via `go:embed`. No sidecars, no helm-chart, no external runtime deps beyond Docker itself.
+- **Filesystem as source of truth**. Stacks live at `stacks/<name>/compose.yaml`. The DB indexes deployment state; the actual config is always on disk where you can grep, `git log`, and `vim` it.
+- **Outbound-only agents**. Remote hosts open a WebSocket to the server — no inbound port to firewall, no VPN, no reverse tunnel. mTLS client certs per agent, revokable.
+- **No Kubernetes**. Docker + Compose + a spine of management tooling. If you want K8s, use Rancher. If you want zero-config Docker across a fleet, use Dockmesh.
 
 ## Install options
 
@@ -204,15 +189,6 @@ After `dockmesh init`:
 - **Feature requests**: same — use the "enhancement" label
 - **Website**: [dockmesh.dev](https://dockmesh.dev)
 
-## Contributing
-
-PRs welcome. Before opening one:
-
-1. `make lint` — golangci-lint + svelte-check
-2. `make test` — Go + Playwright E2E
-3. Keep AGPL-3.0 license headers intact
-4. Open an issue first for larger changes so we can align on scope
-
 ## Development
 
 ```bash
@@ -231,8 +207,18 @@ Tech stack: Go 1.23+, SvelteKit 2 with Svelte 5 runes, Tailwind v4, SQLite
 
 ## License
 
-[AGPL-3.0](LICENSE) — Dockmesh is free to run, modify, and redistribute.
-If you offer Dockmesh as a hosted network service (i.e. a commercial
-Dockmesh-as-a-service), you must share your modifications under the same
-license. Self-hosting for your own organisation? No obligations beyond the
-license notice.
+Dockmesh is released under the **GNU Affero General Public License v3.0**
+(AGPL-3.0-only). See [LICENSE](LICENSE).
+
+The AGPL is chosen deliberately: modifications made available as a network
+service must be contributed back. That keeps the project sustainable and
+prevents SaaS-loophole exploitation.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). By contributing you agree that
+your work is licensed under AGPL-3.0.
+
+## Security
+
+Never report vulnerabilities in public issues. See [SECURITY.md](SECURITY.md).
