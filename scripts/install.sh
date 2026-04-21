@@ -65,6 +65,27 @@ if [ "$(id -u)" = "0" ] || [ "${DOCKMESH_NO_SUDO:-0}" = "1" ]; then
   USE_SUDO=""
 fi
 
+# Detect upgrade-vs-fresh early so the post-install banner can show
+# the right next-step. An "upgrade" is: binary already on disk AND we
+# successfully run --version on it. If the binary exists but is broken
+# we treat it as fresh so the user still gets the init hint.
+IS_UPGRADE=0
+PREV_VERSION=""
+if [ -x "$INSTALL_DIR/dockmesh" ]; then
+  if PREV_VERSION="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1)"; then
+    IS_UPGRADE=1
+  fi
+fi
+
+# Does a systemd unit already exist? Determines whether the upgrade
+# message offers "systemctl restart" as the next step, and whether the
+# installer can auto-restart for the user.
+HAS_SYSTEMD_UNIT=0
+if command -v systemctl >/dev/null 2>&1 && \
+   systemctl list-unit-files dockmesh.service 2>/dev/null | grep -q '^dockmesh\.service'; then
+  HAS_SYSTEMD_UNIT=1
+fi
+
 # ------------------------------------------------------------------
 #  Detect OS + arch
 # ------------------------------------------------------------------
@@ -158,11 +179,55 @@ info "installing to $INSTALL_DIR/dockmesh..."
 $USE_SUDO install -m 0755 "$TMP/dockmesh" "$INSTALL_DIR/dockmesh"
 
 # ------------------------------------------------------------------
-#  Post-install banner
+#  Post-install banner — branches on fresh install vs upgrade.
 # ------------------------------------------------------------------
 INSTALLED_VERSION="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || echo "$VERSION")"
 
-cat >&2 <<POST
+if [ "$IS_UPGRADE" = "1" ]; then
+  # Upgrade path: binary was already present. Restart the running
+  # service automatically if systemd unit exists — that's what the user
+  # almost always wants next, and avoids the surprise of an old version
+  # still serving traffic after `curl | bash` "succeeded".
+  if [ "$HAS_SYSTEMD_UNIT" = "1" ]; then
+    info "restarting dockmesh.service..."
+    if $USE_SUDO systemctl restart dockmesh 2>/dev/null; then
+      ok "service restarted"
+    else
+      warn "restart failed — run: ${BOLD}$USE_SUDO systemctl restart dockmesh${RST}"
+    fi
+    cat >&2 <<UPGRADE_SYSTEMD
+
+${GREEN}${BOLD}Dockmesh upgraded.${RST}
+
+    ${DIM}binary:${RST}   $INSTALL_DIR/dockmesh
+    ${DIM}previous:${RST} $PREV_VERSION
+    ${DIM}new:${RST}      $INSTALLED_VERSION
+
+The service was restarted automatically. Your data, stacks and
+configuration are untouched.
+
+${DIM}Changelog: https://github.com/${REPO}/releases${RST}
+
+UPGRADE_SYSTEMD
+  else
+    cat >&2 <<UPGRADE_MANUAL
+
+${GREEN}${BOLD}Dockmesh upgraded.${RST}
+
+    ${DIM}binary:${RST}   $INSTALL_DIR/dockmesh
+    ${DIM}previous:${RST} $PREV_VERSION
+    ${DIM}new:${RST}      $INSTALLED_VERSION
+
+${BOLD}Restart your dockmesh process${RST} to load the new binary.
+If you use Docker Compose: ${CYAN}docker compose restart dockmesh${RST}
+
+${DIM}Changelog: https://github.com/${REPO}/releases${RST}
+
+UPGRADE_MANUAL
+  fi
+else
+  # Fresh install: walk the user through first-run setup.
+  cat >&2 <<FRESH
 
 ${GREEN}${BOLD}Dockmesh installed.${RST}
 
@@ -179,4 +244,5 @@ optionally installs a systemd unit so the server starts on boot.
 ${DIM}Docs: https://dockmesh.dev/docs/install${RST}
 ${DIM}Issues: https://github.com/${REPO}/issues${RST}
 
-POST
+FRESH
+fi
