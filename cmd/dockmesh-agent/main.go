@@ -1292,11 +1292,29 @@ func fileExists(p string) bool {
 	return err == nil
 }
 
+// writeMu serialises every conn.WriteMessage on the single agent→server
+// WebSocket. gorilla/websocket explicitly documents that Write methods
+// are NOT safe for concurrent use, and the agent has several goroutines
+// that write independently: the heartbeat timer, each in-flight request
+// handler (stats, logs, deploys, system-metrics), plus ping/pong. A
+// single shared mutex is the minimal fix — a per-connection write
+// channel + writer goroutine would be cleaner but is overkill here.
+// Without this, panics looked like:
+//
+//	panic: concurrent write to websocket connection
+//	gorilla/websocket@v1.5.3/conn.go:520
+//
+// which tripped the agent into a systemd restart loop under even
+// modest load (one stats stream + one heartbeat tick colliding).
+var writeMu sync.Mutex
+
 func writeFrame(conn *websocket.Conn, f agents.Frame) error {
 	b, err := json.Marshal(f)
 	if err != nil {
 		return err
 	}
+	writeMu.Lock()
+	defer writeMu.Unlock()
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	return conn.WriteMessage(websocket.TextMessage, b)
 }
