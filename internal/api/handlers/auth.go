@@ -2,13 +2,22 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
 )
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
 
 type loginRequest struct {
 	Username string `json:"username"`
@@ -52,12 +61,30 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
-	if errors.Is(err, auth.ErrAccountLocked) {
+	var lockErr *auth.LockoutError
+	if errors.As(err, &lockErr) {
 		if h.Audit != nil {
 			h.Audit.Write(r.Context(), "", audit.ActionLoginFailed, req.Username,
 				map[string]string{"ip": ip, "reason": "locked"})
 		}
-		writeError(w, http.StatusLocked, "account locked — contact an administrator to unlock")
+		// Tell the user the actual unlock time so they can just wait.
+		// The previous "contact an administrator" copy was misleading —
+		// locks auto-expire via time.Now() >= locked_until, no admin
+		// action needed. Retry-After is the standard header for 423.
+		wait := time.Until(lockErr.Until)
+		if wait < 0 {
+			wait = 0
+		}
+		secs := int(wait.Round(time.Second).Seconds())
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		var msg string
+		if secs < 60 {
+			msg = fmt.Sprintf("account temporarily locked — try again in %d seconds", secs)
+		} else {
+			mins := (secs + 59) / 60 // round up so "try in 1 minute" never becomes "0 minutes"
+			msg = fmt.Sprintf("account temporarily locked — try again in %d minute%s", mins, plural(mins))
+		}
+		writeError(w, http.StatusLocked, msg)
 		return
 	}
 	if err != nil {

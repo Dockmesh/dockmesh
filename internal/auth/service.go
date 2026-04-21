@@ -308,6 +308,21 @@ func (s *Service) Unlock(ctx context.Context, id string) error {
 // so the UI can show a distinct message from "bad password".
 var ErrAccountLocked = errors.New("account locked after too many failed attempts")
 
+// LockoutError carries the unlock timestamp alongside the sentinel so
+// the HTTP layer can tell the user how long to wait instead of telling
+// them to contact an admin. This matters most for homelab + single-admin
+// installs where there IS no second admin to unlock you — the lockout
+// is auto-expiring by design (see policy.LockoutDurationMins), the
+// previous message was just scaring people.
+type LockoutError struct {
+	Until time.Time
+}
+
+func (e *LockoutError) Error() string { return ErrAccountLocked.Error() }
+func (e *LockoutError) Is(target error) bool {
+	return target == ErrAccountLocked
+}
+
 // recordFailedLogin bumps the counter and — if the threshold is hit —
 // sets locked_until to (now + LockoutDurationMins). When the lockout
 // config is zero, it still increments the counter (harmless) but
@@ -350,7 +365,7 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 	// attempt still gets rejected — matches what every competent auth
 	// system does).
 	if lockedUntil.Valid && time.Now().Before(lockedUntil.Time) {
-		return nil, ErrAccountLocked
+		return nil, &LockoutError{Until: lockedUntil.Time}
 	}
 	if email.Valid {
 		u.Email = email.String
