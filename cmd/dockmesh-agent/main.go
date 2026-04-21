@@ -50,9 +50,21 @@ import (
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/gorilla/websocket"
+
+	"github.com/dockmesh/dockmesh/pkg/version"
 )
 
-const agentVersion = "0.1.0-dev"
+// agentVersion returns the build-stamped version so `make build`
+// flags -X pkg/version.Version=… actually surface in the UI + in
+// the upgrade decision. Previously this was a hardcoded const so
+// every install showed "0.1.0-dev" regardless of the binary hash.
+func agentVersion() string {
+	v := version.Version
+	if version.Commit != "" && version.Commit != "none" {
+		return v + "+" + version.Commit
+	}
+	return v
+}
 
 type agentConfig struct {
 	dataDir   string
@@ -65,7 +77,8 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "--version", "-v", "version":
-			fmt.Printf("dockmesh-agent %s %s/%s\n", agentVersion, runtime.GOOS, runtime.GOARCH)
+			fmt.Printf("dockmesh-agent %s %s/%s (commit %s, built %s)\n",
+				version.Version, runtime.GOOS, runtime.GOARCH, version.Commit, version.Date)
 			return
 		case "status":
 			runStatusCmd()
@@ -184,7 +197,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 	hostname, _ := os.Hostname()
 	dockerVersion := dockerDaemonVersion(ctx)
 	hello := agents.HelloPayload{
-		Version:       agentVersion,
+		Version:       agentVersion(),
 		OS:            runtime.GOOS,
 		Arch:          runtime.GOARCH,
 		Hostname:      hostname,
@@ -1157,7 +1170,7 @@ func enroll(cfg agentConfig, certPath, keyPath, caPath, urlPath string) error {
 		Hostname:      hostname,
 		OS:            runtime.GOOS,
 		Arch:          runtime.GOARCH,
-		Version:       agentVersion,
+		Version:       agentVersion(),
 		DockerVersion: dockerDaemonVersion(context.Background()),
 	}
 	buf, _ := json.Marshal(body)
