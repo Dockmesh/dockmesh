@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { api, isFanOut, type SystemMetrics } from '$lib/api';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
@@ -52,15 +53,14 @@
   const isRemote = $derived(hosts.id !== 'local' && hosts.id !== 'all');
 
   async function load() {
-    // Only flip the skeleton on the FIRST load (when we have no data
-    // yet). The 10-second auto-refresh would otherwise blank the
-    // CPU/Memory/Disk tiles for a few hundred ms every tick — values
-    // vanish, skeleton flashes, values return. The user sees it as a
-    // page blink. Keep the previous values visible while we refetch;
-    // atomic state swap happens only once the new data is in hand.
-    if (!sysMetrics && perHostMetrics.length === 0 && stackCards.length === 0) {
-      loading = true;
-    }
+    // Only flip the skeleton on the FIRST load. Read guarded by
+    // untrack() so a caller $effect doesn't subscribe to these state
+    // vars — writes inside load() would otherwise re-run the effect
+    // and cause a runaway fetch loop.
+    const isFirstLoad = untrack(
+      () => !sysMetrics && perHostMetrics.length === 0 && stackCards.length === 0
+    );
+    if (isFirstLoad) loading = true;
     error = '';
     try {
       // Pass hosts.id to the containers + system metrics calls so the
