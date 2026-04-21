@@ -10,10 +10,10 @@
   import type { OIDCProvider, OIDCProviderInput } from '$lib/api';
 
   type Tab = 'account' | 'users' | 'audit' | 'sso' | 'system' | 'roles' | 'api_tokens' | 'registries';
-  // Initial tab honours ?tab=<id> so the sidebar last-backup pill can
-  // deep-link straight into the System tab. Snapping back to the first
-  // visible tab still happens below for invalid/unauthorised IDs.
-  let tab = $state<Tab>((new URLSearchParams($page.url.search).get('tab') as Tab) || 'account');
+  // After Phase-2 extraction the only visible tab is 'system'. Kept the
+  // union + ?tab param parsing for URL back-compat so bookmarks like
+  // ?tab=account redirect cleanly via the snap-back $effect below.
+  let tab = $state<Tab>((new URLSearchParams($page.url.search).get('tab') as Tab) || 'system');
 
   // --- System tab (P.6.5 + P.12.4) ---
   let backupStatus = $state<BackupStatus | null>(null);
@@ -1069,24 +1069,20 @@
     else if (tab === 'registries') loadRegistries();
   });
 
-  // Tabs have been progressively promoted to top-level sidebar routes.
-  // What remains is truly configuration-scoped: Account (personal),
-  // System (instance-wide toggles), and API Tokens (admin service creds).
-  // Users + Roles stay here until the combined /users page is built;
-  // SSO/Authentication, Registries, and Audit Log have moved out.
+  // After Phase-2 extraction Settings hosts only truly instance-scoped
+  // configuration (System: base URL, agent URL, update-check, backup/
+  // restore, key rotation). Everything else lives at its own top-level
+  // route: /account (personal), /tokens (api tokens), /users (u+r),
+  // /authentication (sso), /registries, /audit.
   const tabs: Array<{ id: Tab; label: string; icon: any; show: boolean }> = $derived([
-    { id: 'account', label: 'Account', icon: User, show: true },
-    { id: 'users', label: 'Users', icon: Users, show: allowed('user.manage') },
-    { id: 'system', label: 'System', icon: HardDrive, show: allowed('user.manage') },
-    { id: 'roles', label: 'Roles', icon: Shield, show: allowed('user.manage') },
-    { id: 'api_tokens', label: 'API Tokens', icon: KeyRound, show: allowed('user.manage') }
+    { id: 'system', label: 'System', icon: HardDrive, show: allowed('user.manage') }
   ]);
 
   // If the user lands on a tab they're not allowed to see (e.g. deep link
   // or role change), snap back to the first visible tab.
   $effect(() => {
     const visible = tabs.filter((t) => t.show).map((t) => t.id);
-    if (!visible.includes(tab)) tab = visible[0] ?? 'account';
+    if (!visible.includes(tab)) tab = visible[0] ?? 'system';
   });
 </script>
 
@@ -1653,7 +1649,15 @@
 {/if}
 
 {#if tab === 'system' && allowed('user.manage')}
-  <section class="space-y-4 max-w-3xl">
+  <section class="space-y-6 max-w-3xl">
+    <!-- ── Section: General ─────────────────────────────────────────────
+         Instance-level info + runtime toggles (base URL, agent URL,
+         scanner, update-check). Nothing destructive here. -->
+    <div>
+      <h3 class="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--accent-fg)] mb-0.5">General</h3>
+      <p class="text-xs text-[var(--fg-muted)]">Instance info, URLs, and runtime toggles.</p>
+    </div>
+
     <!-- Instance info -->
     {#if systemInfo}
       <Card class="p-5">
@@ -1830,6 +1834,14 @@
         </div>
       </div>
     </Card>
+
+    <!-- ── Section: Data & secrets ──────────────────────────────────────
+         Everything that writes to disk or rotates keys. Grouped together
+         because these all need the same caution + admin awareness. -->
+    <div class="pt-4">
+      <h3 class="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--accent-fg)] mb-0.5">Data &amp; secrets</h3>
+      <p class="text-xs text-[var(--fg-muted)]">Backups, key rotation, restore. Destructive actions live here.</p>
+    </div>
 
     <!-- Automated backups -->
     <Card class="p-5">

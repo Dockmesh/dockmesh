@@ -449,7 +449,7 @@
               <div class="text-xs text-[var(--fg-muted)] truncate">{auth.user?.role}</div>
             </div>
             <a
-              href="/settings?tab=account"
+              href="/account"
               onclick={() => (userMenuOpen = false)}
               class="flex items-center gap-2 px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--surface-hover)]"
               role="menuitem"
@@ -458,7 +458,7 @@
               Profile &amp; security
             </a>
             <a
-              href="/settings?tab=api_tokens"
+              href="/tokens"
               onclick={() => (userMenuOpen = false)}
               class="flex items-center gap-2 px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--surface-hover)]"
               role="menuitem"
