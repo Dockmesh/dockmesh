@@ -1224,11 +1224,5 @@
 <circle fill="#09c0dd" cx="765.56" cy="476.58" r="6.15"/>
 
 </svg>
-<text x="230" y="95" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="68" font-weight="700" letter-spacing="2" fill="#e8edf0">dock</text>
-<text x="460" y="95" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="68" font-weight="700" letter-spacing="2" fill="#09c0dd">mesh</text>
-<text x="232" y="125" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="18" font-weight="400" letter-spacing="2" fill="#697882">Open-source container management</text>
-<rect x="232" y="145" width="50" height="22" rx="4" fill="#09c0dd" opacity="0.15"/>
-<text x="257" y="160" text-anchor="middle" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="12" font-weight="600" fill="#09c0dd">v0.1</text>
-<rect x="290" y="145" width="75" height="22" rx="4" fill="#213342" opacity="0.1"/>
-<text x="327" y="160" text-anchor="middle" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="12" font-weight="500" fill="#416276">AGPL-3.0</text>
+<text x="230" y="110" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="68" font-weight="700" letter-spacing="2" fill="#e8edf0">dock<tspan fill="#09c0dd">mesh</tspan></text>
 </svg>

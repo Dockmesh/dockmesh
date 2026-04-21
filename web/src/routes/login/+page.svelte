@@ -124,9 +124,13 @@
 
   <div class="relative w-full max-w-sm dm-fade-in">
     <div class="flex flex-col items-center mb-8">
-      <img src="/logo-mark.svg" alt="Dockmesh" class="w-14 h-14 mb-4 drop-shadow-xl" />
+      <img src="/logo-mark.svg" alt="dockmesh" class="w-14 h-14 mb-4 drop-shadow-xl" />
       <h1 class="text-2xl font-semibold tracking-tight">
-        {mfaToken ? 'Two-factor authentication' : 'Welcome to Dockmesh'}
+        {#if mfaToken}
+          Two-factor authentication
+        {:else}
+          Welcome to <span class="text-[var(--fg)]">dock<span class="text-[var(--color-brand-400)]">mesh</span></span>
+        {/if}
       </h1>
       <p class="text-sm text-[var(--fg-muted)] mt-1">
         {mfaToken ? 'Enter the code from your authenticator' : 'Sign in to manage your containers'}

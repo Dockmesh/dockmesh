@@ -193,7 +193,7 @@
       </button>
 
       <div class="h-16 flex items-center border-b border-[var(--border)] {sidebarCollapsed ? 'justify-center px-2' : 'px-4'}">
-        <a href="/" class="flex items-center gap-2.5 min-w-0" aria-label="Dockmesh home">
+        <a href="/" class="flex items-center gap-2.5 min-w-0" aria-label="dockmesh home">
           <!-- Real brand mark from /static/logo-mark.svg (same artwork
                the marketing site + favicon use). Previously the sidebar
                inlined a simplified polygon approximation that drifted
@@ -203,7 +203,9 @@
           {#if !sidebarCollapsed}
             <!-- Wordmark as HTML so the text inherits var(--fg) and
                  stays readable under both light and dark themes. -->
-            <span class="text-[1.15rem] font-semibold tracking-tight text-[var(--fg)] select-none">Dockmesh</span>
+            <!-- Lowercase wordmark with cyan "mesh" accent — matches the
+                 brand lockup on the marketing site + docs. -->
+            <span class="text-[1.15rem] font-semibold tracking-tight text-[var(--fg)] select-none">dock<span class="text-[var(--color-brand-400)]">mesh</span></span>
           {/if}
         </a>
       </div>

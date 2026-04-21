@@ -344,7 +344,7 @@
       <p class="text-sm text-[var(--fg-muted)] mt-0.5 flex items-center gap-1.5">
         {#if health?.docker}
           <CheckCircle2 class="w-3.5 h-3.5 text-[var(--color-success-400)]" />
-          <span>Docker {health.version} · Dockmesh {health.status}</span>
+          <span>Docker {health.version} · dockmesh {health.status}</span>
         {:else if health}
           <AlertTriangle class="w-3.5 h-3.5 text-[var(--color-warning-400)]" />
           <span class="text-[var(--color-warning-400)]">Docker daemon unreachable</span>
