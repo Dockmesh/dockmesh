@@ -12,6 +12,7 @@
 #    DOCKMESH_CHANNEL       stable | testing      (default: stable)
 #    DOCKMESH_INSTALL_DIR   bin directory         (default: /usr/local/bin)
 #    DOCKMESH_NO_SUDO       1 to skip sudo        (default: sudo if not root)
+#    DOCKMESH_FORCE         1 to reinstall even if already on latest version
 #    NO_COLOR               1 to disable ANSI colors
 #
 #  What this script does:
@@ -413,6 +414,20 @@ CHECKSUMS_URL="https://github.com/$REPO/releases/download/$DM_VERSION/checksums.
 info "artifact        $TARBALL"
 step_done
 
+# Already-on-latest early-exit. Skipped when DOCKMESH_FORCE=1 so we can
+# still test the full download + backup + restart + health-probe flow
+# against an already-current host without cutting a new release tag.
+if [ "$IS_UPGRADE" = "1" ] && [ "$PREV_VERSION" = "$DM_VERSION" ] && [ "${DOCKMESH_FORCE:-0}" != "1" ]; then
+  printf '\n' >&2
+  box "Already on latest  $DM_VERSION" \
+    "No upgrade needed — your binary is already at the newest" \
+    "published release. Nothing was changed." \
+    "" \
+    "Reinstall anyway:" \
+    "  curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_FORCE=1 bash"
+  exit 0
+fi
+
 # ------------------------------------------------------------------
 #  [3]  Download
 # ------------------------------------------------------------------
@@ -420,13 +435,31 @@ step 3 $TOTAL_STEPS "Downloading"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-# curl -# prints a hashmark progress bar that works inside `curl | bash`
-# pipelines (unlike --progress-bar which needs a TTY on stdout). The
-# redirection 2>&1 captures stderr-progress onto stderr of this script,
-# which is what the user actually sees.
-if ! curl -fL --retry 3 --retry-delay 2 -# "$URL" -o "$TMP/$TARBALL" 2>&1 >/dev/null ; then
+info "$TARBALL"
+
+# Silent download + post-summary (Homebrew / apt / cargo pattern). A
+# live progress bar isn't useful at sub-2-second timescales and curl's
+# hashmark bar doesn't match the rest of our output style. Instead we
+# show size + speed after the fact, which is what the user actually
+# needs to know ("did it work, how fast").
+DL_T0=$(get_time)
+if ! curl -fL --retry 3 --retry-delay 2 --silent --show-error "$URL" -o "$TMP/$TARBALL"; then
   die "download failed — verify the release exists: $URL"
 fi
+DL_T1=$(get_time)
+
+DL_BYTES=$(wc -c < "$TMP/$TARBALL" | tr -d ' ')
+DL_DUR=$(awk "BEGIN { printf \"%.1f\", $DL_T1 - $DL_T0 }")
+# Humanize bytes. numfmt is in coreutils; falls back to KB/MB math if
+# for some reason it's not available (e.g. busybox).
+if command -v numfmt >/dev/null 2>&1; then
+  DL_HUMAN=$(numfmt --to=iec-i --suffix=B --format='%.1f' "$DL_BYTES" 2>/dev/null || echo "${DL_BYTES}B")
+else
+  DL_HUMAN=$(awk "BEGIN { b=$DL_BYTES; if (b>1048576) printf \"%.1fMiB\", b/1048576; else if (b>1024) printf \"%.1fKiB\", b/1024; else printf \"%dB\", b }")
+fi
+DL_SPEED=$(awk "BEGIN { if ($DL_DUR>0) printf \"%.1f MB/s\", ($DL_BYTES / 1048576) / $DL_DUR; else print \"—\" }")
+
+ok "$DL_HUMAN in ${DL_DUR}s · $DL_SPEED"
 step_done
 
 # ------------------------------------------------------------------
