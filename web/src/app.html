@@ -2,7 +2,14 @@
 <html lang="en" class="h-full">
   <head>
     <meta charset="utf-8" />
-    <link rel="icon" href="%sveltekit.assets%/favicon.svg" />
+    <!-- Favicon stack: SVG primary, PNG fallbacks for tab/taskbar and
+         Apple's home-screen shortcut. Files land in web/static/ via
+         brand/sync.sh against the canonical brand pack in dockmesh.dev. -->
+    <link rel="icon" type="image/svg+xml" href="%sveltekit.assets%/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="%sveltekit.assets%/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="%sveltekit.assets%/favicon-16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="%sveltekit.assets%/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="%sveltekit.assets%/favicon-192.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <title>Dockmesh</title>
