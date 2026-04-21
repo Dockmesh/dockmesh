@@ -2,66 +2,237 @@
   <img src=".github/banner.svg" alt="Dockmesh" width="880" />
 </p>
 
-# Dockmesh
+<p align="center">
+  <b>The single-binary Docker fleet manager. 100% open source. No paywalls.</b>
+</p>
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+<p align="center">
+  <a href="https://github.com/dockmesh/dockmesh/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/dockmesh/dockmesh?style=flat-square&color=04d1eb"></a>
+  <a href="https://github.com/dockmesh/dockmesh/actions/workflows/release.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/dockmesh/dockmesh/release.yml?style=flat-square"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square"></a>
+  <a href="https://dockmesh.dev"><img alt="Website" src="https://img.shields.io/badge/website-dockmesh.dev-04d1eb?style=flat-square"></a>
+</p>
 
-**100% Open-Source Container Management. Single binary. No paywalls.**
+---
 
-Dockmesh is a lightweight container management platform for Docker hosts and
-fleets. It ships as a single Go binary with an embedded SvelteKit UI, talks
-directly to the Docker SDK, and treats the filesystem as the source of truth
-for stack configs.
+Dockmesh is a lightweight Docker fleet-management platform. One Go binary,
+one SvelteKit UI, outbound-only agents on every other host. Stacks live on
+disk as plain `compose.yaml` files — the filesystem is the source of truth,
+the DB just indexes it. RBAC, SSO, audit log, encrypted backups, CVE
+scanning, and multi-host orchestration ship free in the single binary —
+no "community edition", no feature gates, no per-node pricing.
 
-> Status: early skeleton. Phase 1 (MVP) in progress.
-
-## Quick Start
+## One-line install
 
 ```bash
-docker run -d --name dockmesh \
-  -p 8080:8080 \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v dockmesh-data:/app/data \
-  -v dockmesh-stacks:/app/stacks \
-  ghcr.io/dockmesh/dockmesh:latest
+curl -fsSL https://get.dockmesh.dev | bash
+sudo dockmesh init
 ```
 
-Then open <http://localhost:8080>.
+That pulls the latest release binary to `/usr/local/bin/dockmesh` and walks
+you through first-run setup: data directory, admin user, listen port,
+optional systemd unit. Two minutes, then browse to `http://<host>:8080`.
 
-## Features (Phase 1 MVP)
+Prefer Docker? See [Docker Compose](#docker-compose) below.
 
-- Single binary — Go backend serves embedded SvelteKit frontend
-- Stack management — `stacks/<name>/compose.yaml` is the source of truth
-- Container / image / volume dashboard
-- Argon2id + JWT auth with refresh token rotation
-- SQLite by default (WAL), Postgres optional
-- Dark / light mode, mobile-friendly
-- AGPL-3.0 — RBAC and SSO are free
+## Features
 
-### Roadmap
+Everything is included in the single binary. There is no paid tier.
 
-- Phase 2: Caddy reverse proxy + Grype vulnerability scanner
-- Phase 3: outbound-only remote agents over gRPC
+<table>
+<tr><td>
+
+**Container & Stack management**
+- Compose-first: stacks are `stacks/<name>/compose.yaml`
+- Deploy / stop / restart / scale / rolling update
+- Rollback history (snapshot compose + resolved images per deploy)
+- Stack dependencies (base-stacks deploy first, refuse delete on deps)
+- Env overrides + global env vars injected at deploy time
+- Git source: auto-pull + auto-deploy on push or webhook
+- Templates gallery (one-click deploys)
+
+</td><td>
+
+**Multi-host fleet**
+- Outbound-only mTLS agents (no inbound ports on remote hosts)
+- Per-host picker + `all` mode fan-out views
+- Deploy stacks to any host from the same UI
+- Stack migration across hosts (P.9 preflight + volume stream)
+- Host-tag RBAC scopes (per-team isolation)
+- Fleet-wide agent auto-upgrade on server version change
+
+</td></tr>
+<tr><td>
+
+**Security**
+- Custom RBAC roles with granular permissions
+- OIDC SSO — Azure AD, Google, Keycloak, Okta, Authentik, Dex
+- TOTP 2FA + single-use recovery codes
+- SHA-256 hash-chained audit log
+- age-encrypted stack `.env` files (zero plaintext on disk)
+- In-place age key rotation (no service restart)
+
+</td><td>
+
+**Observability**
+- Live CPU / memory / disk per host with smoothed metrics
+- Live container stats + log streaming with auto-reconnect
+- Container exec over WebSocket
+- Alert rules (CPU/memory thresholds, configurable durations)
+- Webhooks + notification channels (Slack, Discord, email)
+- Prometheus `/metrics` endpoint
+
+</td></tr>
+<tr><td>
+
+**Backups & DR**
+- Scheduled backups of volumes, stacks, or whole system
+- Pre/post hooks for application-consistent DB dumps
+  (PostgreSQL / MySQL / MariaDB / Redis / MongoDB)
+- Local, SMB (NAS), SFTP, WebDAV, or S3 targets
+- Encrypted with age — the same key the stack `.env` uses
+- One-click restore + verify-by-run (extract to /tmp, sanity-check,
+  discard — never touches the live install)
+
+</td><td>
+
+**Networking & Extras**
+- Embedded Caddy reverse proxy with automatic HTTPS
+- Per-host port-conflict detection at deploy time
+- Grype CVE scanner integration (image-level + fix-in column)
+- Private registry credentials (age-encrypted at rest)
+- `dmctl` CLI for CI/CD + scripted deploys
+- Single binary — runs on a Raspberry Pi or a 500-host fleet
+
+</td></tr>
+</table>
 
 ## Screenshots
 
-> _Coming soon._
+See [dockmesh.dev](https://dockmesh.dev) for the live marketing carousel with all
+hero shots.
+
+| | |
+| :-: | :-: |
+| ![Dashboard](https://dockmesh.dev/shots/01-dashboard-hero.png) | ![Multi-host fleet](https://dockmesh.dev/shots/06-agents-fleet.png) |
+| Dashboard with live fleet overview | Multi-host agents with mTLS |
+| ![CVE scan](https://dockmesh.dev/shots/05-cve-scan.png) | ![Backups](https://dockmesh.dev/shots/08-backups-runs.png) |
+| CVE scanning via Grype | Scheduled encrypted backups |
+
+## Architecture
+
+```
+  ┌───────────────────────────────────────────┐
+  │  Dockmesh server (single Go binary)       │
+  │    ├─ HTTP API + embedded SvelteKit UI    │
+  │    ├─ SQLite (default) or Postgres        │
+  │    ├─ /stacks/ filesystem = source of     │
+  │    │   truth for compose + env files      │
+  │    └─ Agent mTLS listener (:8443/connect) │
+  └──────┬─────────────────┬──────────────────┘
+         │ Docker SDK       │ WebSocket, outbound-initiated
+         ▼                  ▼
+  ┌──────────────┐   ┌──────────────────────┐
+  │  local       │   │  remote host         │
+  │  Docker      │   │  dockmesh-agent      │
+  │  daemon      │   │  ├─ Docker SDK       │
+  └──────────────┘   │  └─ mTLS client cert │
+                     └──────────────────────┘
+```
+
+- **Single binary**: Go 1.23+, SvelteKit build embedded via `go:embed`.
+- **Filesystem as source of truth**: `compose.yaml` on disk, DB caches deployment state.
+- **Outbound-only agents**: remote hosts open WebSocket to the server. No inbound port on the agent side — traverses NAT, VPN, and tight firewalls with nothing to configure.
+- **No Kubernetes**. Docker + Compose + a spine of management tooling. If you want K8s, use Rancher; if you want zero-config Docker, use Dockmesh.
+
+## Install options
+
+### Bare-metal / VM (recommended)
+
+```bash
+curl -fsSL https://get.dockmesh.dev | bash
+sudo dockmesh init
+sudo systemctl enable --now dockmesh
+```
+
+### Docker Compose
+
+```yaml
+services:
+  dockmesh:
+    image: ghcr.io/dockmesh/dockmesh:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "8443:8443"  # agent mTLS listener
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./data:/var/lib/dockmesh/data
+      - ./stacks:/var/lib/dockmesh/stacks
+    environment:
+      DOCKMESH_BASE_URL: https://dockmesh.example.com
+```
+
+### Install an agent on a remote host
+
+From the UI: `Agents → New agent`, copy the one-line enroll command to the
+remote host. The installer handles the systemd unit and first handshake.
+
+## Quick start
+
+After `dockmesh init`:
+
+1. **Log in** at `http://<host>:8080` with the generated admin password
+2. **Create a stack**: `Stacks → New` → paste a compose.yaml → `Deploy`
+3. **(Optional) Enroll a second host**: `Agents → New agent` → run the
+   install one-liner on the remote host
+4. **(Optional) Set up backups**: `Backups → New job` → pick a target (SMB / S3 / SFTP / local) → pick sources → save
+5. **(Optional) Turn on the reverse proxy**: `Proxy → Enable` → add a route → Caddy handles the Let's Encrypt dance
 
 ## Documentation
 
-- [Architecture overview](docs/architecture/overview.md)
-- [Getting started (dev)](docs/development/getting-started.md)
-- [Example config](configs/dockmesh.example.yaml)
+- [Installation](https://dockmesh.dev/docs/installation/)
+- [Quick start](https://dockmesh.dev/docs/quickstart/)
+- [Multi-host setup](https://dockmesh.dev/docs/features/multi-host/)
+- [Backups & DR](https://dockmesh.dev/docs/features/backups/)
+- [RBAC & SSO](https://dockmesh.dev/docs/security/)
+- [Disaster recovery playbook](https://dockmesh.dev/docs/operations/disaster-recovery/)
+
+## Community & support
+
+- **Issues & bug reports**: [github.com/dockmesh/dockmesh/issues](https://github.com/dockmesh/dockmesh/issues)
+- **Feature requests**: same — use the "enhancement" label
+- **Website**: [dockmesh.dev](https://dockmesh.dev)
 
 ## Contributing
 
-Issues and PRs welcome. Please:
+PRs welcome. Before opening one:
 
-1. Run `make lint` and `make test` before opening a PR.
-2. Keep the AGPL-3.0 license headers intact.
-3. Open an issue first for larger changes so we can align on scope.
+1. `make lint` — golangci-lint + svelte-check
+2. `make test` — Go + Playwright E2E
+3. Keep AGPL-3.0 license headers intact
+4. Open an issue first for larger changes so we can align on scope
+
+## Development
+
+```bash
+# Frontend + backend in watch mode
+make dev
+
+# Build single binary with embedded UI
+make build
+
+# Run E2E tests
+make test
+```
+
+Tech stack: Go 1.23+, SvelteKit 2 with Svelte 5 runes, Tailwind v4, SQLite
+(default) / Postgres, Caddy (embedded), Grype (embedded).
 
 ## License
 
-[AGPL-3.0](LICENSE) — if you modify Dockmesh and run it as a network service,
-you must share your modifications under the same license.
+[AGPL-3.0](LICENSE) — Dockmesh is free to run, modify, and redistribute.
+If you offer Dockmesh as a hosted network service (i.e. a commercial
+Dockmesh-as-a-service), you must share your modifications under the same
+license. Self-hosting for your own organisation? No obligations beyond the
+license notice.
