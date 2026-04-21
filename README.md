@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/banner.png" alt="Dockmesh" width="880" />
+  <img src=".github/banner.svg" alt="Dockmesh" width="880" />
 </p>
 
 # Dockmesh
