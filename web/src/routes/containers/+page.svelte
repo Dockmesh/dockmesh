@@ -122,6 +122,16 @@
     return [...seen].join(', ');
   }
   function uptime(c: Container): string {
+    // "Uptime" only makes sense for a currently-running container.
+    // Docker's `Created` is just the birth timestamp — for an exited
+    // container it means nothing useful (the prior code printed "8d 23h"
+    // for a container that had been off for a week, which was the
+    // reported bug). For non-running states, prefer the human-readable
+    // Status string Docker already provides ("Exited (0) 2 hours ago",
+    // "Created 5 minutes ago") and fall back to a dash.
+    if (c.State !== 'running') {
+      return c.Status || '—';
+    }
     if (!c.Created) return '—';
     const secs = Math.floor(Date.now() / 1000) - c.Created;
     if (secs < 60) return `${secs}s`;

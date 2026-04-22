@@ -3,10 +3,12 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 	dtypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/network"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -33,6 +35,7 @@ func (h *Handlers) ListNetworks(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return nil, err
 			}
+			list = enrichNetworkMembers(ctx, hh, list)
 			rows := make([]networkRow, len(list))
 			for i, n := range list {
 				rows[i] = networkRow{
@@ -59,7 +62,79 @@ func (h *Handlers) ListNetworks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	nets = enrichNetworkMembers(r.Context(), target, nets)
 	writeJSON(w, http.StatusOK, nets)
+}
+
+// enrichNetworkMembers populates each network's Containers map by
+// walking the container list (which Docker DOES populate with per-
+// container network memberships via NetworkSettings.Networks). The
+// NetworkList API itself only fills Containers when the caller is
+// NetworkInspect — so the straight ListNetworks response lies about
+// "0 containers attached" for every network. Fixing it means listing
+// containers once and reverse-indexing.
+//
+// Best-effort: if the container list fails, we return the unenriched
+// network list rather than 500 — the UI can still render everything
+// except the container counts.
+func enrichNetworkMembers(ctx context.Context, h host.Host, nets []dtypes.NetworkResource) []dtypes.NetworkResource {
+	if len(nets) == 0 {
+		return nets
+	}
+	containers, err := h.ListContainers(ctx, true) // include stopped — compose stacks that are "down" still hold network refs
+	if err != nil || len(containers) == 0 {
+		return nets
+	}
+	// Build networkID → map[containerID]EndpointResource. Docker's
+	// container list populates NetworkSettings.Networks keyed by
+	// network *name*, with NetworkID embedded — we key our index by
+	// NetworkID because that's what matches the NetworkList response.
+	idx := make(map[string]map[string]dtypes.EndpointResource)
+	for _, c := range containers {
+		if c.NetworkSettings == nil {
+			continue
+		}
+		name := ""
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		for _, endpoint := range c.NetworkSettings.Networks {
+			if endpoint == nil || endpoint.NetworkID == "" {
+				continue
+			}
+			inner, ok := idx[endpoint.NetworkID]
+			if !ok {
+				inner = make(map[string]dtypes.EndpointResource)
+				idx[endpoint.NetworkID] = inner
+			}
+			inner[c.ID] = endpointToResource(name, endpoint)
+		}
+	}
+	for i := range nets {
+		members, ok := idx[nets[i].ID]
+		if !ok {
+			continue
+		}
+		// Preserve any pre-existing Containers entries (shouldn't happen
+		// for a plain NetworkList response but defensive doesn't hurt).
+		if nets[i].Containers == nil {
+			nets[i].Containers = make(map[string]dtypes.EndpointResource, len(members))
+		}
+		for id, ep := range members {
+			nets[i].Containers[id] = ep
+		}
+	}
+	return nets
+}
+
+func endpointToResource(name string, ep *network.EndpointSettings) dtypes.EndpointResource {
+	return dtypes.EndpointResource{
+		Name:        name,
+		EndpointID:  ep.EndpointID,
+		MacAddress:  ep.MacAddress,
+		IPv4Address: ep.IPAddress,
+		IPv6Address: ep.GlobalIPv6Address,
+	}
 }
 
 func (h *Handlers) InspectNetwork(w http.ResponseWriter, r *http.Request) {
