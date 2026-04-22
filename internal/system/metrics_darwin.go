@@ -1,21 +1,29 @@
 //go:build darwin
 
-// Native macOS metrics. Uses `sysctl` + `vm_stat` via os/exec (no CGO,
-// no external deps) and syscall.Statfs for disk. Parity with the Linux
-// sampler: background goroutine takes a sample every 500ms and keeps
-// a 5-second rolling mean so dashboard tiles don't jitter on single
-// context-switch noise.
+// Native macOS metrics. Darwin doesn't expose FreeBSD-ish sysctl
+// counters like `kern.cp_time`, and the real source of truth for CPU
+// load is Mach's `host_statistics()` which requires either CGO or the
+// mach syscall glue — neither of which dockmesh wants to drag in.
 //
-// Why not /var/lib/docker for the disk tile? On macOS Docker Desktop
-// keeps its storage inside a VM image (`Docker.raw` under
-// ~/Library/Containers/com.docker.docker/Data) that isn't visible
-// from the host filesystem. What the operator actually cares about
-// on a Mac is "is my root volume full?" — so we report `/`.
+// Instead we shell out to Apple-maintained tools:
+//   - `top -l 2 -s 1 -n 0` → 2 snapshots 1s apart. The second
+//     snapshot's "CPU usage:" line gives us a valid 1-second-window
+//     delta (the first is the since-boot average, useless). The
+//     "PhysMem:" line gives us Apple's own Memory-Used calculation
+//     matching Activity Monitor, including its handling of compressed
+//     + reclaimable file-backed pages.
+//   - `syscall.Statfs` on `/` for disk — Darwin BSD ancestry means it
+//     works identically to Linux. We use `/` rather than
+//     `/var/lib/docker` because Docker Desktop keeps its storage
+//     inside a VM image that isn't visible from the host filesystem;
+//     the root volume is what actually runs out first on a Mac.
+//   - `sysctl -n kern.boottime` for uptime — this one DOES exist on
+//     Darwin (just not cp_time).
 package system
 
 import (
-	"bufio"
 	"context"
+	"fmt"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -36,45 +44,24 @@ func Collect() Metrics {
 	return collectOneShot()
 }
 
+// collectOneShot is used before the sampler's first successful tick
+// finishes. Identical cost-profile to a sampler tick (runs `top -l 2
+// -s 1`), so ~1s to the caller — but it's only hit in the first 10s
+// after startup before the sampler has populated its snapshot.
 func collectOneShot() Metrics {
-	m := Metrics{CPUCores: runtime.NumCPU()}
-	m.CPUPercent = readCPUPercentOneShot()
-	m.CPUUsed = float64(m.CPUCores) * m.CPUPercent / 100.0
-	m.MemTotal, m.MemUsed, m.MemPercent = readMem()
-	path := "/"
-	m.DiskPath = path
-	m.DiskTotal, m.DiskUsed, m.DiskPercent = readDisk(path)
+	m := Metrics{CPUCores: runtime.NumCPU(), DiskPath: "/"}
+	if cpu, memTotal, memUsed, ok := readTopSnapshot(); ok {
+		m.CPUPercent = cpu
+		m.CPUUsed = float64(m.CPUCores) * cpu / 100.0
+		m.MemTotal = memTotal
+		m.MemUsed = memUsed
+		if memTotal > 0 {
+			m.MemPercent = float64(memUsed) / float64(memTotal) * 100.0
+		}
+	}
+	m.DiskTotal, m.DiskUsed, m.DiskPercent = readDisk("/")
 	m.Uptime = readUptime()
 	return m
-}
-
-func readCPUPercentOneShot() float64 {
-	a, ok := readCPUTimes()
-	if !ok {
-		return 0
-	}
-	time.Sleep(100 * time.Millisecond)
-	b, ok := readCPUTimes()
-	if !ok {
-		return 0
-	}
-	return cpuPct(a, b)
-}
-
-func cpuPct(a, b cpuTimes) float64 {
-	totalDelta := float64(b.total - a.total)
-	idleDelta := float64(b.idle - a.idle)
-	if totalDelta <= 0 {
-		return 0
-	}
-	pct := (1.0 - idleDelta/totalDelta) * 100.0
-	if pct < 0 {
-		pct = 0
-	}
-	if pct > 100 {
-		pct = 100
-	}
-	return pct
 }
 
 var (
@@ -90,17 +77,22 @@ func StartSampler(ctx context.Context) {
 	})
 }
 
+// runSampler polls every 10 seconds. `top` blocks for ~1s per call
+// (due to the -s 1 interval between its two snapshots), so 10s means
+// ~10% of one core used by the sampler tool. Faster polling would be
+// visible as sustained background CPU; slower polling makes the
+// dashboard stale. The web frontend refreshes /system/metrics every
+// 10s anyway, so this cadence matches.
+//
+// Unlike the Linux sampler, there's no need for a rolling window:
+// `top`'s own 1-second sample window already smooths single-spike
+// noise. We cache the result and serve it directly.
 func runSampler(ctx context.Context) {
-	const (
-		tick       = 500 * time.Millisecond
-		windowSize = 10
-	)
-	samples := make([]float64, 0, windowSize)
+	const tick = 10 * time.Second
 
-	prev, ok := readCPUTimes()
-	if !ok {
-		return
-	}
+	// Prime immediately so the dashboard's first poll after startup
+	// doesn't hit collectOneShot's synchronous 1-second stall.
+	update(ctx)
 
 	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
@@ -109,147 +101,160 @@ func runSampler(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			cur, ok := readCPUTimes()
-			if !ok {
-				continue
-			}
-			pct := cpuPct(prev, cur)
-			prev = cur
-			samples = append(samples, pct)
-			if len(samples) > windowSize {
-				samples = samples[len(samples)-windowSize:]
-			}
-			var sum float64
-			for _, s := range samples {
-				sum += s
-			}
-			avg := sum / float64(len(samples))
-
-			m := Metrics{CPUCores: runtime.NumCPU()}
-			m.CPUPercent = avg
-			m.CPUUsed = float64(m.CPUCores) * avg / 100.0
-			m.MemTotal, m.MemUsed, m.MemPercent = readMem()
-			m.DiskPath = "/"
-			m.DiskTotal, m.DiskUsed, m.DiskPercent = readDisk("/")
-			m.Uptime = readUptime()
-
-			samplerMu.Lock()
-			samplerSnap = m
-			samplerReady = true
-			samplerMu.Unlock()
+			update(ctx)
 		}
 	}
 }
 
-// cpuTimes mirrors the Linux shape: total + idle ticks. `sysctl -n
-// kern.cp_time` returns `user nice sys intr idle` as space-separated
-// uint64, same semantics as /proc/stat's cpu line.
-type cpuTimes struct {
-	total uint64
-	idle  uint64
+func update(ctx context.Context) {
+	cpu, memTotal, memUsed, ok := readTopSnapshot()
+	if !ok {
+		return
+	}
+	m := Metrics{CPUCores: runtime.NumCPU(), DiskPath: "/"}
+	m.CPUPercent = cpu
+	m.CPUUsed = float64(m.CPUCores) * cpu / 100.0
+	m.MemTotal = memTotal
+	m.MemUsed = memUsed
+	if memTotal > 0 {
+		m.MemPercent = float64(memUsed) / float64(memTotal) * 100.0
+	}
+	m.DiskTotal, m.DiskUsed, m.DiskPercent = readDisk("/")
+	m.Uptime = readUptime()
+
+	samplerMu.Lock()
+	samplerSnap = m
+	samplerReady = true
+	samplerMu.Unlock()
+	_ = ctx
 }
 
-func readCPUTimes() (cpuTimes, bool) {
-	out, err := exec.Command("sysctl", "-n", "kern.cp_time").Output()
+// readTopSnapshot runs `top -l 2 -s 1 -n 0` and parses the last
+// CPU-usage + PhysMem lines. Returns cpu% (user+sys), mem_total,
+// mem_used. The second snapshot is the authoritative one — the first
+// is the since-boot average and would make the dashboard show a
+// meaningless long-term number.
+func readTopSnapshot() (cpu float64, memTotal, memUsed uint64, ok bool) {
+	out, err := exec.Command("top", "-l", "2", "-s", "1", "-n", "0").Output()
 	if err != nil {
-		return cpuTimes{}, false
+		return 0, 0, 0, false
 	}
-	parts := strings.Fields(string(out))
-	if len(parts) < 5 {
-		return cpuTimes{}, false
+	var lastCPU, lastMem string
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "CPU usage:") {
+			lastCPU = line
+		} else if strings.HasPrefix(line, "PhysMem:") {
+			lastMem = line
+		}
 	}
-	var ct cpuTimes
-	for i, p := range parts {
-		n, err := strconv.ParseUint(p, 10, 64)
+	if lastCPU == "" || lastMem == "" {
+		return 0, 0, 0, false
+	}
+
+	// "CPU usage: 3.45% user, 1.22% sys, 95.33% idle"
+	var user, sys, idle float64
+	if _, err := fmt.Sscanf(lastCPU, "CPU usage: %f%% user, %f%% sys, %f%% idle",
+		&user, &sys, &idle); err != nil {
+		// Some locales / versions may swap order or add whitespace;
+		// fall back to regex-ish token walk.
+		user, sys = parseCPULineTokens(lastCPU)
+	}
+	cpu = user + sys
+	if cpu < 0 {
+		cpu = 0
+	}
+	if cpu > 100 {
+		cpu = 100
+	}
+
+	// "PhysMem: 11G used (3010M wired, 1234M compressor), 4814M unused."
+	usedB, unusedB := parsePhysMemLine(lastMem)
+	if usedB == 0 && unusedB == 0 {
+		return cpu, 0, 0, true // CPU still valid even if mem parse fails
+	}
+	memTotal = usedB + unusedB
+	memUsed = usedB
+	return cpu, memTotal, memUsed, true
+}
+
+// parseCPULineTokens is a defensive fallback for the Sscanf path —
+// scan the line for "X.X% user" / "X.X% sys" token pairs without
+// requiring the exact known phrase order.
+func parseCPULineTokens(line string) (user, sys float64) {
+	fields := strings.Fields(line)
+	for i := 0; i < len(fields)-1; i++ {
+		next := strings.TrimSuffix(fields[i+1], ",")
+		pct := strings.TrimSuffix(fields[i], "%")
+		v, err := strconv.ParseFloat(pct, 64)
 		if err != nil {
 			continue
 		}
-		ct.total += n
-		if i == 4 { // index 4 == idle
-			ct.idle += n
+		switch next {
+		case "user":
+			user = v
+		case "sys":
+			sys = v
 		}
 	}
-	return ct, true
+	return
 }
 
-// readMem derives a "used memory" number that matches what Activity
-// Monitor shows. On macOS "free" is misleading because the kernel
-// aggressively caches file-backed pages as "inactive" — those are
-// reclaimable and shouldn't count as used.
-//
-// Formula used by Activity Monitor: used = wired + active + compressed
-// total = sysctl hw.memsize
-// free  = total - used
-//
-// We parse vm_stat's page counts and the detected page size from its
-// header line (usually 4096 or 16384 on Apple Silicon).
-func readMem() (total, used uint64, percent float64) {
-	out, err := exec.Command("sysctl", "-n", "hw.memsize").Output()
-	if err != nil {
-		return 0, 0, 0
-	}
-	total, err = strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64)
-	if err != nil || total == 0 {
-		return 0, 0, 0
-	}
-
-	vm, err := exec.Command("vm_stat").Output()
-	if err != nil {
-		return total, 0, 0
-	}
-	pageSize := uint64(4096)
-	var wired, active, compressed uint64
-	sc := bufio.NewScanner(strings.NewReader(string(vm)))
-	for sc.Scan() {
-		line := sc.Text()
-		// Header: "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
-		if strings.HasPrefix(line, "Mach Virtual Memory Statistics") {
-			if idx := strings.Index(line, "page size of "); idx >= 0 {
-				rest := line[idx+len("page size of "):]
-				if end := strings.Index(rest, " bytes"); end > 0 {
-					if n, e := strconv.ParseUint(rest[:end], 10, 64); e == nil {
-						pageSize = n
-					}
-				}
+// parsePhysMemLine extracts the two byte-counts immediately preceding
+// "used" and "unused" in top's "PhysMem:" line. Tolerates the parenthesised
+// breakdown ("(3010M wired, 1234M compressor)") by just looking for the
+// keyword positions.
+func parsePhysMemLine(line string) (used, unused uint64) {
+	fields := strings.Fields(line)
+	for i, f := range fields {
+		switch strings.TrimSuffix(f, ".") {
+		case "used":
+			if i > 0 {
+				used = parseHumanBytes(fields[i-1])
 			}
-			continue
-		}
-		name, val, ok := parseVMStatLine(line)
-		if !ok {
-			continue
-		}
-		switch name {
-		case "Pages wired down":
-			wired = val
-		case "Pages active":
-			active = val
-		case "Pages occupied by compressor":
-			compressed = val
+		case "unused":
+			if i > 0 {
+				unused = parseHumanBytes(fields[i-1])
+			}
 		}
 	}
-	used = (wired + active + compressed) * pageSize
-	if used > total {
-		used = total
-	}
-	percent = float64(used) / float64(total) * 100.0
-	return total, used, percent
+	return
 }
 
-func parseVMStatLine(line string) (name string, val uint64, ok bool) {
-	// Lines are "Pages wired down:                          123456."
-	// — colon separator, trailing period on the value.
-	idx := strings.Index(line, ":")
-	if idx <= 0 {
-		return "", 0, false
+// parseHumanBytes converts top's human-readable sizes like "11G",
+// "4814M", "512K" to raw bytes. Unit characters: B (bytes), K, M, G,
+// T. Accepts optional trailing period ("4814M.") which top sometimes
+// leaves when the token was line-terminal.
+func parseHumanBytes(s string) uint64 {
+	s = strings.TrimSuffix(s, ".")
+	if s == "" {
+		return 0
 	}
-	name = strings.TrimSpace(line[:idx])
-	v := strings.TrimSpace(line[idx+1:])
-	v = strings.TrimSuffix(v, ".")
-	n, err := strconv.ParseUint(v, 10, 64)
+	unit := s[len(s)-1]
+	var mul uint64
+	switch unit {
+	case 'K', 'k':
+		mul = 1024
+	case 'M', 'm':
+		mul = 1024 * 1024
+	case 'G', 'g':
+		mul = 1024 * 1024 * 1024
+	case 'T', 't':
+		mul = 1024 * 1024 * 1024 * 1024
+	case 'B', 'b':
+		mul = 1
+	default:
+		// No unit suffix — treat whole string as raw bytes.
+		if v, err := strconv.ParseUint(s, 10, 64); err == nil {
+			return v
+		}
+		return 0
+	}
+	num := s[:len(s)-1]
+	n, err := strconv.ParseFloat(num, 64)
 	if err != nil {
-		return "", 0, false
+		return 0
 	}
-	return name, n, true
+	return uint64(n * float64(mul))
 }
 
 // readDisk uses syscall.Statfs which is available on Darwin with the
@@ -274,8 +279,9 @@ func readDisk(path string) (total, used uint64, percent float64) {
 }
 
 // readUptime parses `sysctl -n kern.boottime` which on macOS returns
-// something like "{ sec = 1700000000, usec = 0 } Tue Nov 14 12:13:20 2023"
-// — we just need the sec value.
+// "{ sec = 1700000000, usec = 0 } Tue Nov 14 12:13:20 2023" — we just
+// need the sec value. This sysctl node DOES exist on Darwin (unlike
+// kern.cp_time).
 func readUptime() int64 {
 	out, err := exec.Command("sysctl", "-n", "kern.boottime").Output()
 	if err != nil {
