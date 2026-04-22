@@ -42,18 +42,45 @@ type Metrics struct {
 
 	// Host-raw fields, populated only when they differ from the active
 	// (Docker-limit-aware) view above. The dashboard renders both so
-	// operators can compare "8 of 8 GB Docker = 100% used" against
-	// "host has 64 GB sitting mostly idle — maybe raise the Docker
-	// allocation". Omitted from JSON when identical to the active
-	// values to keep the payload small on Linux where they always match.
-	HostCPUCores int    `json:"host_cpu_cores,omitempty"`
-	HostMemTotal uint64 `json:"host_mem_total,omitempty"`
+	// operators can compare "Docker is saturated" against "host has
+	// plenty of headroom — maybe raise the allocation". Omitted from
+	// JSON when identical to the active values to keep the payload
+	// small on Linux where they always match.
+	HostCPUPercent float64 `json:"host_cpu_percent,omitempty"`
+	HostCPUCores   int     `json:"host_cpu_cores,omitempty"`
+	HostCPUUsed    float64 `json:"host_cpu_used_cores,omitempty"`
+	HostMemPercent float64 `json:"host_mem_percent,omitempty"`
+	HostMemTotal   uint64  `json:"host_mem_total,omitempty"`
+	HostMemUsed    uint64  `json:"host_mem_used,omitempty"`
+}
+
+// DockerSnapshot is Docker's own view of the resources it's using
+// right now. Populated by the main-loop's DockerInfoFn via
+// `docker info` + per-container stats aggregation.
+//
+// Why we can't just use host metrics on macOS/Windows: Docker Desktop
+// runs in a VM that's invisible to the host. host `top` measures the
+// whole Mac (macOS + Chrome + Slack + Docker), which has no meaningful
+// relationship to what's happening inside the Docker VM. If the
+// operator capped Docker at 6 cores + 8 GB, they want to see "how
+// utilised is that allocation right now" — which means summing
+// container stats inside Docker.
+type DockerSnapshot struct {
+	NCPU     int
+	MemTotal uint64
+	// MemUsed / CPUPercent are 0 when the info fn couldn't aggregate
+	// container stats (daemon slow, timed out, returned no containers).
+	// In that case applyDockerLimits falls back to the host-measured
+	// values so the tile at least shows *something* sensible.
+	MemUsed    uint64
+	CPUPercent float64
 }
 
 // DockerInfoFn is called by platform-specific samplers to fetch
-// Docker's own resource-limit view. Returns (ncpu, memTotal, true)
-// when the daemon responds. Set once at startup via SetDockerInfoFn.
-type DockerInfoFn func(ctx context.Context) (ncpu int, memTotal uint64, ok bool)
+// Docker's own resource-limit view + its actual current usage.
+// Returns (snapshot, true) when the daemon responds. Set once at
+// startup via SetDockerInfoFn.
+type DockerInfoFn func(ctx context.Context) (DockerSnapshot, bool)
 
 var dockerInfoFn atomic.Pointer[DockerInfoFn]
 
@@ -89,27 +116,50 @@ func applyDockerLimits(ctx context.Context, m Metrics) Metrics {
 	if fn == nil {
 		return m
 	}
-	cpus, memTotal, ok := (*fn)(ctx)
-	if !ok || cpus <= 0 || memTotal == 0 {
+	snap, ok := (*fn)(ctx)
+	if !ok || snap.NCPU <= 0 || snap.MemTotal == 0 {
 		return m
 	}
-	// Skip the override if Docker's numbers match what we already have —
+	// Skip the override if Docker's totals match what we already have —
 	// avoids flagging "limited" on a plain Linux host where Docker's
 	// NCPU / MemTotal legitimately equal the host hardware. The
 	// dashboard stays simple for that 95% case.
-	if cpus == m.CPUCores && memTotal == m.MemTotal {
+	if snap.NCPU == m.CPUCores && snap.MemTotal == m.MemTotal {
 		return m
 	}
+	// Save the host-measured values so the UI can render "Docker 1.2/8
+	// GB used" on the primary line and "Host 30/64 GB used" below.
+	m.HostCPUPercent = m.CPUPercent
 	m.HostCPUCores = m.CPUCores
+	m.HostCPUUsed = m.CPUUsed
+	m.HostMemPercent = m.MemPercent
 	m.HostMemTotal = m.MemTotal
-	m.CPUCores = cpus
-	m.MemTotal = memTotal
-	m.CPUUsed = float64(cpus) * m.CPUPercent / 100.0
-	if m.MemUsed > memTotal {
-		m.MemUsed = memTotal
+	m.HostMemUsed = m.MemUsed
+
+	m.CPUCores = snap.NCPU
+	m.MemTotal = snap.MemTotal
+
+	// CPU + Memory need care: host-measured values (macOS `top` + `PhysMem`)
+	// reflect the WHOLE Mac (macOS + all apps + Docker VM as one process),
+	// which has no meaningful relationship to what's happening inside the
+	// Docker VM. Capping host-used to Docker-total produces the garbage
+	// "8 GB of 8 GB always" tile we shipped in v0.2.6.
+	//
+	// If the caller aggregated container stats for us, use those — that's
+	// the authoritative answer for "how much of my Docker allocation is
+	// actually in use". Else fall back to host values (close approximation
+	// for CPU when Docker is the dominant workload, poor approximation
+	// for memory).
+	if snap.CPUPercent > 0 {
+		m.CPUPercent = snap.CPUPercent
 	}
-	if memTotal > 0 {
-		m.MemPercent = float64(m.MemUsed) / float64(memTotal) * 100.0
+	m.CPUUsed = float64(m.CPUCores) * m.CPUPercent / 100.0
+
+	if snap.MemUsed > 0 {
+		m.MemUsed = snap.MemUsed
+	}
+	if m.MemTotal > 0 {
+		m.MemPercent = float64(m.MemUsed) / float64(m.MemTotal) * 100.0
 	}
 	m.DockerLimited = true
 	return m

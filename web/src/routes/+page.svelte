@@ -410,7 +410,7 @@
         </div>
         {#if sysMetrics.docker_limited && sysMetrics.host_cpu_cores}
           <div class="mt-0.5 text-[10px] text-[var(--fg-subtle)] tabular-nums">
-            Host: {sysMetrics.host_cpu_cores} cores
+            Host: {sysMetrics.host_cpu_used_cores?.toFixed(2) ?? '—'} / {sysMetrics.host_cpu_cores} cores ({sysMetrics.host_cpu_percent?.toFixed(0) ?? '—'}%)
           </div>
         {/if}
       {/if}
@@ -455,7 +455,7 @@
         </div>
         {#if sysMetrics.docker_limited && sysMetrics.host_mem_total}
           <div class="mt-0.5 text-[10px] text-[var(--fg-subtle)] tabular-nums">
-            Host: {fmtBytes(sysMetrics.host_mem_total)}
+            Host: {sysMetrics.host_mem_used ? fmtBytes(sysMetrics.host_mem_used) : '—'} / {fmtBytes(sysMetrics.host_mem_total)} ({sysMetrics.host_mem_percent?.toFixed(0) ?? '—'}%)
           </div>
         {/if}
       {/if}

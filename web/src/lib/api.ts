@@ -626,8 +626,12 @@ export interface SystemMetrics {
   // `host_mem_total` carry the raw hardware numbers so the dashboard
   // can show both ("8 GB of 64 GB host RAM allocated to Docker").
   docker_limited?: boolean;
+  host_cpu_percent?: number;
   host_cpu_cores?: number;
+  host_cpu_used_cores?: number;
+  host_mem_percent?: number;
   host_mem_total?: number;
+  host_mem_used?: number;
 }
 
 // FanOutResponse is the shape returned by list endpoints when called

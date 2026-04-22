@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -294,15 +295,36 @@ func main() {
 	// Linux hosts). When they diverge from raw host hardware, the
 	// dashboard shows both so operators can see their Docker allocation
 	// against their actual machine.
-	system.SetDockerInfoFn(func(ctx context.Context) (int, uint64, bool) {
+	//
+	// On top of the `info` call we also aggregate running-container
+	// stats when we detect a Docker-limited setup — the host's CPU%
+	// and memory usage numbers measure the whole Mac (macOS + every
+	// app), which has no meaningful relationship to what's actually
+	// happening inside the Docker VM. Per-container stats are the
+	// authoritative "how utilised is my Docker allocation" answer.
+	system.SetDockerInfoFn(func(ctx context.Context) (system.DockerSnapshot, bool) {
 		if !dockerCli.Connected() {
-			return 0, 0, false
+			return system.DockerSnapshot{}, false
 		}
 		info, err := dockerCli.Info(ctx)
 		if err != nil {
-			return 0, 0, false
+			return system.DockerSnapshot{}, false
 		}
-		return info.NCPU, uint64(info.MemTotal), true
+		snap := system.DockerSnapshot{
+			NCPU:     info.NCPU,
+			MemTotal: uint64(info.MemTotal),
+		}
+		// Only pay the container-stats-aggregation cost when Docker's
+		// view diverges from the host — on a plain Linux server the
+		// numbers match and we'd be doing work the sampler immediately
+		// discards.
+		hostCores := runtime.NumCPU()
+		if info.NCPU != hostCores || needsDockerLimitCheck() {
+			cpuPct, memUsed := aggregateDockerStats(ctx, dockerCli)
+			snap.CPUPercent = cpuPct
+			snap.MemUsed = memUsed
+		}
+		return snap, true
 	})
 
 	secretsSvc, err := secrets.New(cfg.SecretsKeyPath, cfg.SecretsEncryptEnv)
