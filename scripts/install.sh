@@ -185,6 +185,11 @@ REPO="dockmesh/dockmesh"
 DM_VERSION="${DOCKMESH_VERSION:-latest}"
 CHANNEL="${DOCKMESH_CHANNEL:-stable}"
 INSTALL_DIR="${DOCKMESH_INSTALL_DIR:-/usr/local/bin}"
+# Agent-enrollment assets live next to the install root, matching the
+# LSB-ish layout: bin → /usr/local/bin, assets → /usr/local/share.
+# Derived from INSTALL_DIR so `DOCKMESH_INSTALL_DIR=/opt/bin` places
+# assets at /opt/share/dockmesh. User can override via DOCKMESH_ASSET_DIR.
+ASSET_DIR="${DOCKMESH_ASSET_DIR:-$(dirname "$INSTALL_DIR")/share/dockmesh}"
 USE_SUDO="sudo"
 if [ "$(id -u)" = "0" ] || [ "${DOCKMESH_NO_SUDO:-0}" = "1" ]; then
   USE_SUDO=""
@@ -518,9 +523,8 @@ if [ "$IS_UPGRADE" = "1" ]; then
   NEW_VERSION_LINE="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || echo "$DM_VERSION")"
   ok "replaced        $INSTALL_DIR/dockmesh      ($DM_VERSION)"
 
-  # Refresh agent assets on upgrade too — they carry the embedded
+  # Refresh agent assets on upgrade too — they carry the bundled
   # install-agent.sh + host-matched agent binary for enrollment.
-  ASSET_DIR="/usr/local/share/dockmesh"
   $USE_SUDO mkdir -p "$ASSET_DIR/bin"
   [ -f "$TMP/install-agent.sh" ] && $USE_SUDO install -m 0755 "$TMP/install-agent.sh" "$ASSET_DIR/install-agent.sh"
   if [ -f "$TMP/dockmesh-agent" ]; then
@@ -642,17 +646,14 @@ ok "binary          $INSTALL_DIR/dockmesh"
 # Agent assets: the server serves install-agent.sh + the agent binaries
 # to hosts that want to enroll. Both lived at relative paths in early
 # releases (./scripts/install-agent.sh, ./bin/dockmesh-agent-*), which
-# 503'd under systemd (cwd=/). Install them to fixed absolute paths
-# and point the server at them via env vars in dockmesh.env (written
-# by `dockmesh init`).
-ASSET_DIR="/usr/local/share/dockmesh"
+# 503'd under systemd (cwd=/). Install them to $ASSET_DIR (derived
+# from $INSTALL_DIR up at the top) and point the server at them via
+# env vars in dockmesh.env (written by `dockmesh init`).
 $USE_SUDO mkdir -p "$ASSET_DIR/bin"
 if [ -f "$TMP/install-agent.sh" ]; then
   $USE_SUDO install -m 0755 "$TMP/install-agent.sh" "$ASSET_DIR/install-agent.sh"
   ok "agent installer $ASSET_DIR/install-agent.sh"
 fi
-# dockmesh-agent binary (host-matched); on multi-arch hosts the init
-# script will point to the right variant via DOCKMESH_BINARY_DIR.
 if [ -f "$TMP/dockmesh-agent" ]; then
   AGENT_NAME="dockmesh-agent-linux-${ARCH}"
   $USE_SUDO install -m 0755 "$TMP/dockmesh-agent" "$ASSET_DIR/bin/$AGENT_NAME"
