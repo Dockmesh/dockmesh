@@ -361,7 +361,7 @@ else
   die "$INSTALL_DIR is not writable and sudo is disabled — set DOCKMESH_INSTALL_DIR to a writable path"
 fi
 
-# Docker is a soft-warn. Dockmesh manages Docker — without it, 99% of
+# Docker is a soft-warn. dockmesh manages Docker — without it, 99% of
 # the app is useless, but we let the install proceed so people can set
 # up a fresh host in any order.
 if command -v docker >/dev/null 2>&1; then
@@ -372,8 +372,26 @@ if command -v docker >/dev/null 2>&1; then
     warn "$(printf '%-16s installed but daemon is not responding' "Docker")"
   fi
 else
-  warn "$(printf '%-16s %s' "Docker" "not detected — install before first deploy")"
-  say  "                    https://docs.docker.com/engine/install/"
+  warn "$(printf '%-16s %s' "Docker" "not detected")"
+  # Distro-specific install hint rather than the generic docs link —
+  # operator shouldn't have to translate "install docker" into the
+  # right command for their system.
+  case "$DISTRO_ID" in
+    ubuntu|debian|linuxmint|pop|raspbian)
+      say "                    install:  sudo apt install -y docker.io" ;;
+    fedora|rhel|centos|rocky|almalinux|ol)
+      say "                    install:  sudo dnf install -y docker-ce && sudo systemctl enable --now docker" ;;
+    alpine)
+      say "                    install:  sudo apk add docker && sudo rc-update add docker default && sudo service docker start" ;;
+    arch|manjaro|endeavouros)
+      say "                    install:  sudo pacman -S --noconfirm docker && sudo systemctl enable --now docker" ;;
+    opensuse*|sles|sled)
+      say "                    install:  sudo zypper install -y docker && sudo systemctl enable --now docker" ;;
+    macos)
+      say "                    install:  https://www.docker.com/products/docker-desktop/  (or: brew install --cask docker)" ;;
+    *)
+      say "                    install:  https://docs.docker.com/engine/install/" ;;
+  esac
 fi
 
 # Port availability for fresh installs. Upgrade case: the ports are

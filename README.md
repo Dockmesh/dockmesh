@@ -33,6 +33,8 @@ That pulls the latest release binary to `/usr/local/bin/dockmesh` and walks
 you through first-run setup: data directory, admin user, listen port,
 optional systemd unit. Two minutes, then browse to `http://<host>:8080`.
 
+**Requirements on the host:** Docker Engine (Linux) or Docker Desktop (macOS) with the daemon running, `curl` + `tar` + `sha256sum`, `sudo` access, and ports `8080` + `8443` free. The installer creates the `dockmesh` service user, systemd unit (or launchd plist on macOS), and all state dirs — see [the full requirements matrix](https://dockmesh.dev/docs/installation/#requirements) for distro-specific install hints.
+
 Prefer Docker? See [Docker Compose](#docker-compose) below.
 
 ## Platform support
