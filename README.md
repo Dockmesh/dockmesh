@@ -25,7 +25,7 @@ no "community edition", no feature gates, no per-node pricing.
 ## One-line install
 
 ```bash
-curl -fsSL https://get.dockmesh.dev | bash
+curl -fsSL https://get.dockmesh.dev | sudo bash
 sudo dockmesh init
 ```
 
@@ -143,7 +143,7 @@ hero shots.
 ### Bare-metal / VM (recommended)
 
 ```bash
-curl -fsSL https://get.dockmesh.dev | bash
+curl -fsSL https://get.dockmesh.dev | sudo bash
 sudo dockmesh init
 sudo systemctl enable --now dockmesh
 ```

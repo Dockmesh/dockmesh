@@ -3,7 +3,7 @@
 #  Dockmesh one-line installer.
 #
 #  Usage:
-#    curl -fsSL https://get.dockmesh.dev | bash
+#    curl -fsSL https://get.dockmesh.dev | sudo bash
 #    curl -fsSL https://get.dockmesh.dev | DOCKMESH_VERSION=v1.2.3 bash
 #    curl -fsSL https://get.dockmesh.dev | DOCKMESH_INSTALL_DIR=/opt/bin bash
 #
@@ -322,7 +322,7 @@ require_tool() {
     "  $(install_hint "$pkg")" \
     "" \
     "Then re-run:" \
-    "  curl -fsSL https://get.dockmesh.dev | bash"
+    "  curl -fsSL https://get.dockmesh.dev | sudo bash"
   exit 1
 }
 

@@ -24,7 +24,7 @@ import (
 )
 
 // runInitCmd is the first-run setup wizard invoked by the user after
-// `curl -fsSL https://get.dockmesh.dev | bash`. It walks through:
+// `curl -fsSL https://get.dockmesh.dev | sudo bash`. It walks through:
 //
 //  1. Data directory layout confirmation
 //  2. Listen port
