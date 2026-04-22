@@ -518,6 +518,17 @@ if [ "$IS_UPGRADE" = "1" ]; then
   NEW_VERSION_LINE="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || echo "$DM_VERSION")"
   ok "replaced        $INSTALL_DIR/dockmesh      ($DM_VERSION)"
 
+  # Refresh agent assets on upgrade too — they carry the embedded
+  # install-agent.sh + host-matched agent binary for enrollment.
+  ASSET_DIR="/usr/local/share/dockmesh"
+  $USE_SUDO mkdir -p "$ASSET_DIR/bin"
+  [ -f "$TMP/install-agent.sh" ] && $USE_SUDO install -m 0755 "$TMP/install-agent.sh" "$ASSET_DIR/install-agent.sh"
+  if [ -f "$TMP/dockmesh-agent" ]; then
+    AGENT_NAME="dockmesh-agent-linux-${ARCH}"
+    $USE_SUDO install -m 0755 "$TMP/dockmesh-agent" "$ASSET_DIR/bin/$AGENT_NAME"
+  fi
+  ok "agent assets    $ASSET_DIR/"
+
   # ----------------------------------------------------------------
   # macOS upgrade path: restart the launchd service. No user-migration
   # story here — launchd daemons run as root by default and creating
@@ -627,6 +638,26 @@ tar -xzf "$TMP/$TARBALL" -C "$TMP"
 [ -x "$TMP/dockmesh" ] || die "tarball missing 'dockmesh' binary"
 $USE_SUDO install -m 0755 "$TMP/dockmesh" "$INSTALL_DIR/dockmesh"
 ok "binary          $INSTALL_DIR/dockmesh"
+
+# Agent assets: the server serves install-agent.sh + the agent binaries
+# to hosts that want to enroll. Both lived at relative paths in early
+# releases (./scripts/install-agent.sh, ./bin/dockmesh-agent-*), which
+# 503'd under systemd (cwd=/). Install them to fixed absolute paths
+# and point the server at them via env vars in dockmesh.env (written
+# by `dockmesh init`).
+ASSET_DIR="/usr/local/share/dockmesh"
+$USE_SUDO mkdir -p "$ASSET_DIR/bin"
+if [ -f "$TMP/install-agent.sh" ]; then
+  $USE_SUDO install -m 0755 "$TMP/install-agent.sh" "$ASSET_DIR/install-agent.sh"
+  ok "agent installer $ASSET_DIR/install-agent.sh"
+fi
+# dockmesh-agent binary (host-matched); on multi-arch hosts the init
+# script will point to the right variant via DOCKMESH_BINARY_DIR.
+if [ -f "$TMP/dockmesh-agent" ]; then
+  AGENT_NAME="dockmesh-agent-linux-${ARCH}"
+  $USE_SUDO install -m 0755 "$TMP/dockmesh-agent" "$ASSET_DIR/bin/$AGENT_NAME"
+  ok "agent binary    $ASSET_DIR/bin/$AGENT_NAME"
+fi
 ok "mode            0755 (root:root)"
 step_done
 

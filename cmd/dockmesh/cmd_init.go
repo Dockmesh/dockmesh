@@ -641,6 +641,12 @@ func writeEnvFile(dataDir string, cfg *config.Config) error {
 		"DOCKMESH_SECRETS_PATH=%s",
 		"DOCKMESH_SECRETS_KEY_PATH=%s",
 		"DOCKMESH_AUDIT_GENESIS_PATH=%s",
+		// Agent-enrollment assets. install.sh drops these into
+		// /usr/local/share/dockmesh/ on Linux so the server can serve
+		// /install/agent.sh + the agent binary over HTTP without
+		// resolving relative paths (which fail under systemd cwd=/).
+		"DOCKMESH_INSTALL_SCRIPT=/usr/local/share/dockmesh/install-agent.sh",
+		"DOCKMESH_BINARY_DIR=/usr/local/share/dockmesh/bin",
 		"",
 	}, "\n"),
 		cfg.HTTPAddr, cfg.BaseURL, cfg.AgentPublicURL,
