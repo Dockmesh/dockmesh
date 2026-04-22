@@ -27,84 +27,84 @@ func (h *LocalHost) ID() string   { return "local" }
 func (h *LocalHost) Name() string { return "Local" }
 
 func (h *LocalHost) ListContainers(ctx context.Context, all bool) ([]dtypes.Container, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	return h.cli.ListContainers(ctx, all)
 }
 
 func (h *LocalHost) InspectContainer(ctx context.Context, id string) (dtypes.ContainerJSON, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return dtypes.ContainerJSON{}, ErrNoDocker
 	}
 	return h.cli.InspectContainer(ctx, id)
 }
 
 func (h *LocalHost) StartContainer(ctx context.Context, id string) error {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return ErrNoDocker
 	}
 	return h.cli.StartContainer(ctx, id)
 }
 
 func (h *LocalHost) StopContainer(ctx context.Context, id string) error {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return ErrNoDocker
 	}
 	return h.cli.StopContainer(ctx, id)
 }
 
 func (h *LocalHost) RestartContainer(ctx context.Context, id string) error {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return ErrNoDocker
 	}
 	return h.cli.RestartContainer(ctx, id)
 }
 
 func (h *LocalHost) RemoveContainer(ctx context.Context, id string, force bool) error {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return ErrNoDocker
 	}
 	return h.cli.RemoveContainer(ctx, id, force)
 }
 
 func (h *LocalHost) PauseContainer(ctx context.Context, id string) error {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return ErrNoDocker
 	}
 	return h.cli.PauseContainer(ctx, id)
 }
 
 func (h *LocalHost) UnpauseContainer(ctx context.Context, id string) error {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return ErrNoDocker
 	}
 	return h.cli.UnpauseContainer(ctx, id)
 }
 
 func (h *LocalHost) KillContainer(ctx context.Context, id, signal string) error {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return ErrNoDocker
 	}
 	return h.cli.KillContainer(ctx, id, signal)
 }
 
 func (h *LocalHost) ContainerLogs(ctx context.Context, id, tail string, follow bool) (io.ReadCloser, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	return h.cli.ContainerLogs(ctx, id, tail, follow)
 }
 
 func (h *LocalHost) ContainerStats(ctx context.Context, id string) (io.ReadCloser, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	return h.cli.ContainerStats(ctx, id)
 }
 
 func (h *LocalHost) StartExec(ctx context.Context, id string, cmd []string) (ExecSession, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	sess, err := h.cli.StartExec(ctx, id, cmd)
@@ -118,7 +118,7 @@ func (h *LocalHost) StartExec(ctx context.Context, id string, cmd []string) (Exe
 // shared compose executor against the local docker daemon. Same code
 // path as the agent's deploy handler — proves the seam works.
 func (h *LocalHost) DeployStack(ctx context.Context, name, composeYAML, envContent string) (*compose.DeployResult, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	dir, cleanup, err := writeStagingDir(name, composeYAML, envContent)
@@ -135,14 +135,14 @@ func (h *LocalHost) DeployStack(ctx context.Context, name, composeYAML, envConte
 }
 
 func (h *LocalHost) StopStack(ctx context.Context, name string) error {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return ErrNoDocker
 	}
 	return compose.NewService(h.cli, nil).Stop(ctx, name)
 }
 
 func (h *LocalHost) StackStatus(ctx context.Context, name string) ([]compose.StatusEntry, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	return compose.NewService(h.cli, nil).Status(ctx, name)
@@ -197,42 +197,42 @@ func (s *localExecSession) Close() error {
 }
 
 func (h *LocalHost) ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	return h.cli.ListImages(ctx, all)
 }
 
 func (h *LocalHost) RemoveImage(ctx context.Context, id string, force bool) ([]dtypes.ImageDeleteResponseItem, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	return h.cli.RemoveImage(ctx, id, force)
 }
 
 func (h *LocalHost) PruneImages(ctx context.Context) (dtypes.ImagesPruneReport, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return dtypes.ImagesPruneReport{}, ErrNoDocker
 	}
 	return h.cli.PruneImages(ctx)
 }
 
 func (h *LocalHost) ListNetworks(ctx context.Context) ([]dtypes.NetworkResource, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	return h.cli.ListNetworks(ctx)
 }
 
 func (h *LocalHost) InspectNetwork(ctx context.Context, id string) (dtypes.NetworkResource, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return dtypes.NetworkResource{}, ErrNoDocker
 	}
 	return h.cli.InspectNetwork(ctx, id)
 }
 
 func (h *LocalHost) InspectVolume(ctx context.Context, name string) (volume.Volume, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return volume.Volume{}, ErrNoDocker
 	}
 	return h.cli.InspectVolume(ctx, name)
@@ -247,7 +247,7 @@ func (h *LocalHost) InspectVolume(ctx context.Context, name string) (volume.Volu
 // back to spawning a short-lived alpine container with the volume
 // mounted, which sees everything as root inside its own namespace.
 func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath string) ([]VolumeEntry, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	vol, err := h.cli.InspectVolume(ctx, name)
@@ -270,7 +270,7 @@ func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath strin
 }
 
 func (h *LocalHost) VolumeReadFile(ctx context.Context, name, subpath string, maxBytes int64) (*VolumeFileResult, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	vol, err := h.cli.InspectVolume(ctx, name)
@@ -295,7 +295,7 @@ func (h *LocalHost) VolumeReadFile(ctx context.Context, name, subpath string, ma
 // VolumeTar spawns a busybox helper against the docker socket and
 // returns a tar.gz stream of the volume. FINDING-33 multi-host backup.
 func (h *LocalHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	return tarVolumeHelper(ctx, h.cli, name)
@@ -304,14 +304,14 @@ func (h *LocalHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser, 
 // ContainerExec runs cmd inside the container, collects stdout+stderr.
 // Used by backup pre-hooks.
 func (h *LocalHost) ContainerExec(ctx context.Context, containerID string, cmd []string) ([]byte, int, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, -1, ErrNoDocker
 	}
 	return execHelper(ctx, h.cli, containerID, cmd)
 }
 
 func (h *LocalHost) ListVolumes(ctx context.Context) ([]any, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	vols, err := h.cli.ListVolumes(ctx)
@@ -326,7 +326,7 @@ func (h *LocalHost) ListVolumes(ctx context.Context) ([]any, error) {
 }
 
 func (h *LocalHost) ScaleService(ctx context.Context, name, composeYAML, envContent, service string, replicas int) (*compose.ScaleResult, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	dir, cleanup, err := writeStagingDir(name, composeYAML, envContent)
@@ -342,7 +342,7 @@ func (h *LocalHost) ScaleService(ctx context.Context, name, composeYAML, envCont
 }
 
 func (h *LocalHost) CheckScale(ctx context.Context, name, composeYAML, envContent, service string) (*compose.ScaleCheck, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	dir, cleanup, err := writeStagingDir(name, composeYAML, envContent)
@@ -362,7 +362,7 @@ func (h *LocalHost) CheckScale(ctx context.Context, name, composeYAML, envConten
 // the agent protocol gains a matching frame type in a follow-up slice.
 // P.12.5b.
 func (h *LocalHost) RollingReplace(ctx context.Context, name, composeYAML, envContent, service string, opts compose.RollingOptions) (*compose.RollingResult, error) {
-	if h.cli == nil {
+	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	dir, cleanup, err := writeStagingDir(name, composeYAML, envContent)

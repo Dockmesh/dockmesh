@@ -34,7 +34,12 @@ func MarkShuttingDown() { shuttingDown.Store(true) }
 func IsShuttingDown() bool { return shuttingDown.Load() }
 
 func (h *Handlers) Health(w http.ResponseWriter, r *http.Request) {
-	dockerOK := h.Docker != nil
+	// `docker` reflects the daemon connection state, not merely whether
+	// the client object exists. With the auto-reconnect wrapper the
+	// client is always non-nil; the live connection status comes from
+	// the background probe and may flip true ↔ false over time. The
+	// dashboard banner and macOS-boot-race UX both key off this flag.
+	dockerOK := h.Docker != nil && h.Docker.Connected()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
 		"version": version.Version,

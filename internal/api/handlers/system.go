@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/host"
@@ -266,6 +267,33 @@ func (h *Handlers) SystemHealth(w http.ResponseWriter, r *http.Request) {
 			c.Status = "warn"
 		default:
 			c.Status = "ok"
+		}
+		checks = append(checks, c)
+	}
+
+	// ---- docker daemon connection.
+	// Every other feature in dockmesh fans out from Docker, so when the
+	// socket is down this is the check that should turn red. macOS boot
+	// race (launchd fires dockmesh before Docker Desktop opens the
+	// socket) and "daemon restart in the middle of the day" both surface
+	// here; both self-heal as soon as the socket is back.
+	if h.Docker != nil {
+		c := HealthCheck{Name: "docker", Label: "Docker daemon", LinkTo: "/"}
+		if h.Docker.Connected() {
+			c.Status = "ok"
+			c.Detail = "connected"
+		} else {
+			c.Status = "fail"
+			c.Detail = "not reachable — will reconnect automatically"
+			if msg := h.Docker.LastError(); msg != "" {
+				// Trim any SDK URL prefix — end-users don't need the
+				// "Get \"http://%2Fvar%2Frun%2Fdocker.sock/v1.41/_ping\":"
+				// part, just the cause.
+				if idx := strings.LastIndex(msg, ": "); idx != -1 && idx < len(msg)-2 {
+					msg = msg[idx+2:]
+				}
+				c.Detail = "not reachable: " + msg
+			}
 		}
 		checks = append(checks, c)
 	}

@@ -342,6 +342,31 @@
     </div>
   {/if}
 
+  {#if health && !health.docker}
+    <!--
+      Docker-unreachable banner. Prominent but non-alarming — this is an
+      auto-recoverable state that fixes itself as soon as the daemon
+      opens its socket again. Most common trigger on macOS: the boot
+      race where launchd fires dockmesh before Docker Desktop starts.
+    -->
+    <div
+      class="dm-card p-4 border-[color-mix(in_srgb,var(--color-warning-500)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-500)_7%,transparent)]"
+    >
+      <div class="flex items-start gap-3">
+        <AlertTriangle class="w-5 h-5 text-[var(--color-warning-400)] mt-0.5 flex-shrink-0" />
+        <div class="flex-1 min-w-0 text-sm">
+          <div class="font-medium text-[var(--fg)]">Docker daemon not responding</div>
+          <p class="text-[var(--fg-muted)] mt-0.5">
+            Container, stack, image and volume endpoints will return errors until Docker is available. Dockmesh checks for the socket every 10 seconds — as soon as Docker starts, this banner clears automatically. No restart needed.
+          </p>
+          <p class="text-xs text-[var(--fg-subtle)] mt-1.5">
+            On macOS this often happens right after a reboot when dockmesh starts before Docker Desktop. Usually resolves within 30-60 seconds.
+          </p>
+        </div>
+      </div>
+    </div>
+  {/if}
+
   <!-- ─────────── Row 1: System metrics ───────────
        Single-host mode: 4 cards (CPU / Memory / Disk / Containers).
        All-hosts mode: Containers card alone + a per-host table below.

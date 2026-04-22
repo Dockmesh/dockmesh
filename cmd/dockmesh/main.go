@@ -271,13 +271,22 @@ func main() {
 			"username", username, "password", password)
 	}
 
-	// Docker is optional at startup: lack of daemon must not kill the server.
-	var dockerCli *docker.Client
-	if cli, err := docker.New(ctx); err != nil {
-		slog.Warn("docker daemon unreachable — container endpoints will return 503", "err", err)
-	} else {
-		dockerCli = cli
-		defer dockerCli.Close()
+	// Docker may not be up yet when we boot (macOS launchd fires us
+	// before Docker Desktop has opened its socket; Linux systemd can
+	// hit the same race with Docker.service still starting). The client
+	// wrapper tolerates that: construction doesn't block on a ping, and
+	// a background monitor flips the `connected` flag back on once the
+	// socket appears. No dockmesh restart needed when Docker comes up
+	// later — container endpoints just start returning 200 again.
+	dockerCli, err := docker.New(ctx)
+	if err != nil {
+		slog.Error("docker client init failed (not a daemon problem — client config is broken)", "err", err)
+		os.Exit(1)
+	}
+	defer dockerCli.Close()
+	if !dockerCli.Connected() {
+		slog.Warn("docker daemon not reachable yet — container endpoints will return 503 until it comes up",
+			"err", dockerCli.LastError())
 	}
 
 	secretsSvc, err := secrets.New(cfg.SecretsKeyPath, cfg.SecretsEncryptEnv)
