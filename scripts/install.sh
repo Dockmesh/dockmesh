@@ -627,6 +627,15 @@ if [ "$IS_UPGRADE" = "1" ]; then
   NEW_VERSION_LINE="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || echo "$DM_VERSION")"
   ok "replaced        $INSTALL_DIR/dockmesh      ($DM_VERSION)"
 
+  # dmctl ships alongside the server binary since v0.2.0 (stack adopt,
+  # scripted deploys, CI). Keep it in sync on upgrades too — older
+  # installs predate dmctl entirely and an upgrade there is the first
+  # time the CLI lands on the host.
+  if [ -f "$TMP/dmctl" ]; then
+    $USE_SUDO install -m 0755 "$TMP/dmctl" "$INSTALL_DIR/dmctl"
+    ok "dmctl CLI       $INSTALL_DIR/dmctl"
+  fi
+
   # Refresh agent assets on upgrade too — they carry the bundled
   # install-agent.sh + host-matched agent binary for enrollment.
   $USE_SUDO mkdir -p "$ASSET_DIR/bin"
@@ -746,6 +755,14 @@ tar -xzf "$TMP/$TARBALL" -C "$TMP"
 [ -x "$TMP/dockmesh" ] || die "tarball missing 'dockmesh' binary"
 $USE_SUDO install -m 0755 "$TMP/dockmesh" "$INSTALL_DIR/dockmesh"
 ok "binary          $INSTALL_DIR/dockmesh"
+
+# dmctl — the operator CLI (stack adopt, scripted deploys, CI). Shipped
+# inside the release tarball; drop it into the same PATH directory as
+# the server binary so `dmctl` just works without extra setup.
+if [ -f "$TMP/dmctl" ]; then
+  $USE_SUDO install -m 0755 "$TMP/dmctl" "$INSTALL_DIR/dmctl"
+  ok "dmctl CLI       $INSTALL_DIR/dmctl"
+fi
 
 # Agent assets: the server serves install-agent.sh + the agent binaries
 # to hosts that want to enroll. Both lived at relative paths in early
