@@ -614,9 +614,14 @@ func writeEnvFile(dataDir string, cfg *config.Config) error {
 }
 
 // installSystemdUnitFile writes the unit under the data dir AND
-// /etc/systemd/system (the canonical location). Returns the target
-// path so the caller can include it in the "unit installed at X" line.
-// The enable+start+probe dance is done separately in enableAndStartService.
+// /etc/systemd/system (the canonical location). Also creates the
+// dedicated `dockmesh` system user if it doesn't already exist and
+// chowns the data directory to it — we ship a non-root default service
+// so an exploit in the HTTP/agent handlers doesn't get root on the
+// host. Docker-socket access is granted via the `docker` group instead.
+// Returns the target path so the caller can include it in the "unit
+// installed at X" line. enable+start+probe is done separately in
+// enableAndStartService.
 func installSystemdUnitFile(dataDir string) (string, error) {
 	if runtime.GOOS != "linux" {
 		return "", fmt.Errorf("systemd install supported on linux only")
@@ -625,6 +630,31 @@ func installSystemdUnitFile(dataDir string) (string, error) {
 	if err != nil {
 		bin = "/usr/local/bin/dockmesh"
 	}
+
+	// 1) Ensure the `dockmesh` system user exists. useradd --system
+	//    with no home + nologin shell is the standard pattern for
+	//    service daemons. Idempotent: ignore "already exists" errors.
+	if err := runSilent("useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "dockmesh"); err != nil {
+		// useradd returns 9 (EUSERSEXISTS) when user already exists —
+		// anything else is a real error, but we log+continue rather
+		// than fail the whole init (the unit below can still be
+		// installed; admin can fix the user manually).
+		if _, statErr := os.Stat("/etc/passwd"); statErr == nil {
+			initWarn("could not create 'dockmesh' user — continuing with existing system accounts (if the user exists it's fine)")
+		}
+	}
+
+	// 2) Add the service user to the `docker` group so it can open the
+	//    Docker socket without being root. Requires the `docker` group
+	//    to exist (it does on any host running docker).
+	_ = runSilent("usermod", "-aG", "docker", "dockmesh")
+
+	// 3) Chown the data directory so the service can read/write it.
+	//    Happens unconditionally: safe on re-runs, and crucial when
+	//    migrating an existing root-owned install.
+	_ = runSilent("chown", "-R", "dockmesh:dockmesh", dataDir)
+	_ = runSilent("chmod", "700", dataDir)
+
 	unit := fmt.Sprintf(`[Unit]
 Description=Dockmesh container management
 After=docker.service network-online.target
@@ -632,6 +662,8 @@ Wants=docker.service network-online.target
 
 [Service]
 Type=simple
+User=dockmesh
+Group=docker
 EnvironmentFile=%s/dockmesh.env
 ExecStart=%s serve
 Restart=on-failure
@@ -639,9 +671,22 @@ RestartSec=5s
 LimitNOFILE=65536
 StateDirectory=dockmesh
 
+# Hardening — the service never escalates out of its own context, has
+# no kernel-tunable write access, and cannot see other users' /home.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=%s /var/run/docker.sock
+RestrictNamespaces=true
+LockPersonality=true
+
 [Install]
 WantedBy=multi-user.target
-`, dataDir, bin)
+`, dataDir, bin, dataDir)
 
 	// Drop a reference copy under the data dir so the user can diff /
 	// edit it and re-install if needed.

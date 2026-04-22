@@ -500,7 +500,46 @@ if [ "$IS_UPGRADE" = "1" ]; then
   NEW_VERSION_LINE="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || echo "$DM_VERSION")"
   ok "replaced        $INSTALL_DIR/dockmesh      ($DM_VERSION)"
 
+  # ----------------------------------------------------------------
+  # Service-user migration: older installs (v0.1.3 and earlier) ran
+  # the service as root because the systemd unit had no User=
+  # directive. v0.1.4+ ships a dedicated `dockmesh` system user in
+  # the `docker` group — smaller blast radius if the HTTP/agent
+  # handlers ever get exploited. Idempotent: if already migrated,
+  # this is all no-ops.
+  # ----------------------------------------------------------------
   if [ "$HAS_SYSTEMD_UNIT" = "1" ]; then
+    CURRENT_USER="$(systemctl show -p User --value dockmesh 2>/dev/null)"
+    if [ -z "$CURRENT_USER" ] || [ "$CURRENT_USER" = "root" ]; then
+      info "migrating service to non-root 'dockmesh' user..."
+      # Create user + docker-group membership (idempotent).
+      $USE_SUDO useradd --system --no-create-home --shell /usr/sbin/nologin dockmesh 2>/dev/null || true
+      $USE_SUDO usermod -aG docker dockmesh 2>/dev/null || true
+      # Find the data dir from the unit's EnvironmentFile — every install
+      # writes it as /…/dockmesh.env containing DOCKMESH_DB_PATH etc.
+      ENV_FILE="$(systemctl show -p EnvironmentFiles --value dockmesh 2>/dev/null | awk '{print $1}' | sed 's/^-//' )"
+      if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ]; then
+        DATA_DIR="$(dirname "$ENV_FILE")"
+        $USE_SUDO chown -R dockmesh:dockmesh "$DATA_DIR" 2>/dev/null || true
+        $USE_SUDO chmod 700 "$DATA_DIR" 2>/dev/null || true
+        # Rewrite the unit in-place by re-running `dockmesh init` with
+        # --yes? Too invasive; instead, patch the existing unit so it
+        # sets User=dockmesh Group=docker. A first-principles sed
+        # would be fragile across variant unit contents, so we just
+        # inject the two lines after [Service] if they're not present.
+        UNIT_PATH="$(systemctl show -p FragmentPath --value dockmesh 2>/dev/null)"
+        if [ -n "$UNIT_PATH" ] && [ -f "$UNIT_PATH" ]; then
+          if ! grep -q '^User=' "$UNIT_PATH"; then
+            $USE_SUDO sed -i '/^\[Service\]/a User=dockmesh\nGroup=docker' "$UNIT_PATH"
+            $USE_SUDO systemctl daemon-reload
+            ok "unit patched    $UNIT_PATH (User=dockmesh Group=docker)"
+          fi
+        fi
+        ok "data dir owner  dockmesh:dockmesh"
+      else
+        warn "could not locate data dir — run 'dockmesh init' to finish migration manually"
+      fi
+    fi
     info "restarting dockmesh.service..."
     RESTART_T0=$(get_time)
     if $USE_SUDO systemctl restart dockmesh 2>/dev/null; then
