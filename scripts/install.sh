@@ -31,6 +31,16 @@
 # ============================================================================
 set -euo pipefail
 
+# Pin numeric formatting to POSIX "C" locale. Without this, `awk printf
+# "%.1f"` honours the user's LC_NUMERIC — so on a German/French/etc
+# system it prints "0,6" instead of "0.6". That captured value then
+# gets interpolated into the next awk expression as `if (0,6>0)`, which
+# awk parses as a comma-separated argument list and aborts with
+# "syntax error … context is BEGIN { if (0,". Affects every non-US
+# locale, not just macOS — just more visible there because bash 3.2
+# also forced the BSD-date fallback path.
+export LC_ALL=C
+
 START_TS=${EPOCHREALTIME:-$SECONDS}
 
 # ------------------------------------------------------------------
