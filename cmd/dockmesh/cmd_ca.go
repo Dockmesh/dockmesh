@@ -34,9 +34,10 @@ func runCACmd(args []string) {
 	}
 }
 
-// dataDirFromDB returns the directory holding the PKI material — same
-// convention main() uses (./data hard-coded, matching pki.New("./data")).
-// We resolve it from the DB path for operators who override it.
+// caPKIDir returns the directory that holds agents-ca.crt and the
+// matching PKI material — same convention main() uses (`filepath.Dir`
+// of DBPath so everything follows DOCKMESH_DB_PATH + data-dir
+// overrides).
 func caPKIDir(dbPath string) string {
 	return filepath.Dir(dbPath)
 }

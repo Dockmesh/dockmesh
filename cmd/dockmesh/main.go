@@ -381,7 +381,12 @@ func main() {
 			}
 		}
 	}
-	pkiMgr, err := pki.New("./data", pkiSANs)
+	// Resolve the PKI directory from DBPath so it follows
+	// DOCKMESH_DB_PATH / data-dir overrides. The previous hardcoded
+	// "./data" broke fresh installs under systemd because the
+	// service's cwd is "/" — it tried to open /data/agents-ca.crt
+	// and failed permission-denied.
+	pkiMgr, err := pki.New(filepath.Dir(cfg.DBPath), pkiSANs)
 	if err != nil {
 		slog.Error("agent pki init failed", "err", err)
 		os.Exit(1)
