@@ -618,6 +618,15 @@ func initDBAndAdmin(cfg *config.Config, username, password string) (bool, error)
 	return true, nil
 }
 
+// writeEnvFile emits EVERY absolute path the config loader looks for
+// via env var. Missing entries make the loader fall back to relative
+// defaults (./data/secrets.env etc.) which fail under systemd because
+// the service's working directory is `/`.
+//
+// Real-world bug: v0.1.3–v0.1.5 omitted DOCKMESH_SECRETS_PATH and
+// DOCKMESH_AUDIT_GENESIS_PATH, so a fresh install on systemd couldn't
+// find its own JWT-secret file and crash-looped. Fixed by writing
+// every path explicitly.
 func writeEnvFile(dataDir string, cfg *config.Config) error {
 	envPath := filepath.Join(dataDir, "dockmesh.env")
 	body := fmt.Sprintf(strings.Join([]string{
@@ -629,11 +638,14 @@ func writeEnvFile(dataDir string, cfg *config.Config) error {
 		"DOCKMESH_DB_PATH=%s",
 		"DOCKMESH_STACKS_ROOT=%s",
 		"DOCKMESH_DATA_DIR=%s",
+		"DOCKMESH_SECRETS_PATH=%s",
 		"DOCKMESH_SECRETS_KEY_PATH=%s",
+		"DOCKMESH_AUDIT_GENESIS_PATH=%s",
 		"",
 	}, "\n"),
 		cfg.HTTPAddr, cfg.BaseURL, cfg.AgentPublicURL,
-		cfg.DBPath, cfg.StacksRoot, filepath.Dir(cfg.SecretsPath), cfg.SecretsKeyPath,
+		cfg.DBPath, cfg.StacksRoot, filepath.Dir(cfg.SecretsPath),
+		cfg.SecretsPath, cfg.SecretsKeyPath, cfg.AuditGenesisPath,
 	)
 	return os.WriteFile(envPath, []byte(body), 0o600)
 }
