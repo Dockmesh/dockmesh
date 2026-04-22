@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/dockmesh/dockmesh/internal/stacks/adopt"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -195,6 +197,119 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(r, audit.ActionStackDelete, name, nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// DiscoverStacks lists compose projects running on the target host
+// that don't have a corresponding stack directory on the server —
+// candidates for adoption. See adopt.Service.Discover for the grouping
+// logic.
+func (h *Handlers) DiscoverStacks(w http.ResponseWriter, r *http.Request) {
+	svc := h.adoptService()
+	if svc == nil {
+		writeError(w, http.StatusServiceUnavailable, "stacks or hosts not configured")
+		return
+	}
+	hostID := r.URL.Query().Get("host")
+	if !h.requireHostAccess(w, r, hostID) {
+		return
+	}
+	list, err := svc.Discover(r.Context(), hostID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+// stackAdoptRequest mirrors the StackAdoptInput OpenAPI schema. Bundle
+// arrives as a base64 string in JSON and is decoded before we hand it
+// to the adopt service.
+type stackAdoptRequest struct {
+	Name             string   `json:"name"`
+	HostID           string   `json:"host_id"`
+	Compose          string   `json:"compose"`
+	Env              string   `json:"env,omitempty"`
+	Bundle           string   `json:"bundle,omitempty"` // base64-encoded tar.gz
+	AcceptedWarnings []string `json:"accepted_warnings,omitempty"`
+}
+
+// AdoptStack takes over management of a running compose project.
+func (h *Handlers) AdoptStack(w http.ResponseWriter, r *http.Request) {
+	svc := h.adoptService()
+	if svc == nil {
+		writeError(w, http.StatusServiceUnavailable, "stacks or hosts not configured")
+		return
+	}
+	var req stackAdoptRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.Name == "" || req.Compose == "" {
+		writeError(w, http.StatusBadRequest, "name and compose are required")
+		return
+	}
+	if !h.requireHostAccess(w, r, req.HostID) {
+		return
+	}
+	adoptReq := adopt.AdoptRequest{
+		Name:             req.Name,
+		HostID:           req.HostID,
+		Compose:          req.Compose,
+		Env:              req.Env,
+		AcceptedWarnings: req.AcceptedWarnings,
+	}
+	if req.Bundle != "" {
+		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(req.Bundle))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bundle must be valid base64: "+err.Error())
+			return
+		}
+		adoptReq.Bundle = data
+	}
+	result, err := svc.Adopt(r.Context(), adoptReq)
+	if err != nil {
+		writeAdoptError(w, err)
+		return
+	}
+	h.audit(r, audit.ActionStackAdopt, req.Name, map[string]string{
+		"host_id":    result.HostID,
+		"containers": fmt.Sprintf("%d", result.BoundContainers),
+	})
+	writeJSON(w, http.StatusCreated, result)
+}
+
+// adoptService wires an adopt.Service from the handler's existing
+// stacks + hosts deps. Stateless, so building it per-request is cheap
+// and avoids another field on the Handlers struct.
+func (h *Handlers) adoptService() *adopt.Service {
+	if h.Stacks == nil || h.Hosts == nil {
+		return nil
+	}
+	return &adopt.Service{
+		Hosts:  adopt.WrapRegistry(h.Hosts),
+		Stacks: h.Stacks,
+	}
+}
+
+// writeAdoptError maps adopt.Service errors to appropriate HTTP codes.
+// Unrecognised errors fall through to 500 (via writeStackError which
+// handles the common stack.Manager errors too).
+func writeAdoptError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, adopt.ErrAlreadyManaged):
+		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, adopt.ErrNoRunning),
+		errors.Is(err, adopt.ErrServicesMissing):
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+	case errors.Is(err, adopt.ErrBundleTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, err.Error())
+	case errors.Is(err, adopt.ErrBundleMalformed),
+		errors.Is(err, adopt.ErrBundleUnsafe):
+		writeError(w, http.StatusBadRequest, err.Error())
+	default:
+		writeStackError(w, err)
+	}
 }
 
 func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {

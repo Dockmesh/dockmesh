@@ -11,6 +11,7 @@ export type Perm =
   | 'container.exec'
   | 'stack.write'
   | 'stack.deploy'
+  | 'stack.adopt'
   | 'image.write'
   | 'image.scan'
   | 'network.write'
@@ -25,6 +26,7 @@ const rolePerms: Record<string, Set<Perm>> = {
     'container.exec',
     'stack.write',
     'stack.deploy',
+    'stack.adopt',
     'image.write',
     'image.scan',
     'network.write',

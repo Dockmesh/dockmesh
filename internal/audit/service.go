@@ -37,6 +37,7 @@ const (
 	ActionStackDelete    = "stack.delete"
 	ActionStackDeploy    = "stack.deploy"
 	ActionStackStop      = "stack.stop"
+	ActionStackAdopt     = "stack.adopt"
 	ActionContainerStart    = "container.start"
 	ActionContainerStop     = "container.stop"
 	ActionContainerKill     = "container.restart"

@@ -108,6 +108,10 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/hosts", h.ListHosts)
 
 				r.Get("/stacks", h.ListStacks)
+				// /stacks/discovered must be registered BEFORE /stacks/{name}
+				// so chi routes the literal path to the discovery handler
+				// instead of treating "discovered" as a stack name.
+				r.Get("/stacks/discovered", h.DiscoverStacks)
 				r.Get("/stacks/{name}", h.GetStack)
 				r.Get("/stacks/{name}/status", h.StackStatus)
 
@@ -146,6 +150,16 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Put("/stacks/{name}", h.UpdateStack)
 				r.Delete("/stacks/{name}", h.DeleteStack)
 				r.Post("/convert/run-to-compose", h.ConvertRunToCompose)
+			})
+
+			// -------------------------- STACK ADOPT --------------------------
+			// Separate permission because adopting a stack is a privileged
+			// "take ownership of something on disk" action that's closer to
+			// user.manage than stack.write. Admin-only by default, can be
+			// granted to trusted operators via custom roles later.
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermStackAdopt))
+				r.Post("/stacks/adopt", h.AdoptStack)
 
 				// Git source CRUD (P.11.11) — configuring a source
 				// writes compose.yaml into the stack FS, so it needs

@@ -266,6 +266,17 @@ func (m *Manager) List() []*Stack {
 	return out
 }
 
+// Has reports whether a stack with this name is currently tracked.
+// Used by the adopt flow to decide whether a running compose project
+// (keyed by its `com.docker.compose.project` label) is already under
+// management — if so, discovery skips it and adoption rejects it.
+func (m *Manager) Has(name string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, ok := m.stacks[name]
+	return ok
+}
+
 func (m *Manager) Get(name string) (*Detail, error) {
 	dir, err := m.safeDir(name)
 	if err != nil {

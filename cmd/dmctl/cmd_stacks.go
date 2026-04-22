@@ -9,13 +9,16 @@ import (
 )
 
 func newStacksCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "stacks", Short: "Stack operations"}
+	// Accept both "stacks" and the singular "stack" because docs and
+	// muscle memory both pull toward "dmctl stack adopt …".
+	cmd := &cobra.Command{Use: "stacks", Aliases: []string{"stack"}, Short: "Stack operations"}
 	cmd.AddCommand(stacksListCmd())
 	cmd.AddCommand(stacksGetCmd())
 	cmd.AddCommand(stacksDeployCmd())
 	cmd.AddCommand(stacksStopCmd())
 	cmd.AddCommand(stacksStatusCmd())
 	cmd.AddCommand(stacksLogsCmd())
+	cmd.AddCommand(stacksAdoptCmd())
 	return cmd
 }
 

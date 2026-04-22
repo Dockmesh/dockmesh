@@ -19,6 +19,7 @@ const (
 	// Stack lifecycle
 	PermStackWrite  Perm = "stack.write"  // create/update/delete compose files
 	PermStackDeploy Perm = "stack.deploy" // deploy/stop stacks
+	PermStackAdopt  Perm = "stack.adopt"  // take over a running compose project started outside dockmesh
 
 	// Image / network / volume management
 	PermImageWrite   Perm = "image.write"
@@ -59,6 +60,7 @@ var rolePerms = map[Role]map[Perm]bool{
 		PermContainerExec:    true,
 		PermStackWrite:       true,
 		PermStackDeploy:      true,
+		PermStackAdopt:       true,
 		PermImageWrite:       true,
 		PermImageScan:        true,
 		PermNetworkWrite:     true,

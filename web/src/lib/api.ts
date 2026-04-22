@@ -167,6 +167,43 @@ export interface StackListEntry {
   deployment?: StackDeployment;
 }
 
+export interface DiscoveredStackService {
+  name: string;
+  container_id: string;
+  container_name?: string;
+  state: string;
+  image?: string;
+}
+
+export interface DiscoveredStack {
+  project_name: string;
+  host_id: string;
+  host_name: string;
+  service_count: number;
+  services: DiscoveredStackService[];
+  first_seen?: string;
+}
+
+export interface StackAdoptInput {
+  name: string;
+  host_id: string;
+  compose: string;
+  env?: string;
+  // base64-encoded tar.gz of supporting files. The web UI only does
+  // metadata-only adoption (no bundle) — full bundle adoption requires
+  // the local filesystem which only dmctl has access to.
+  bundle?: string;
+  accepted_warnings?: string[];
+}
+
+export interface StackAdoptResult {
+  name: string;
+  host_id: string;
+  bound_containers: number;
+  warnings?: string[];
+  drift_services?: string[];
+}
+
 // Scaling (P.8)
 export interface ScaleCheck {
   service: string;
@@ -952,6 +989,20 @@ export const api = {
       request<void>(`/stacks/${encodeURIComponent(name)}/git`, { method: 'DELETE' }),
     syncGitSource: (name: string) =>
       request<StackGitSyncResult>(`/stacks/${encodeURIComponent(name)}/git/sync`, { method: 'POST' }),
+    // Adopt existing compose projects that are running outside dockmesh.
+    // Discovery surfaces projects by their com.docker.compose.project label
+    // that have no stack dir; adopt writes the compose + supporting files
+    // into dockmesh's stacks root and binds the running containers.
+    discovered: (host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<DiscoveredStack[]>(`/stacks/discovered${qs}`);
+    },
+    adopt: (input: StackAdoptInput) =>
+      request<StackAdoptResult>('/stacks/adopt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input)
+      }),
     deploy: (name: string, host = 'local', environment?: string) => {
       const params = new URLSearchParams();
       if (host && host !== 'local') params.set('host', host);

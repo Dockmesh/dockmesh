@@ -1,15 +1,16 @@
 <script lang="ts">
-  import { api, ApiError, isFanOut, type StackDeployment } from '$lib/api';
+  import { api, ApiError, isFanOut, type StackDeployment, type DiscoveredStack } from '$lib/api';
   import { goto } from '$app/navigation';
   import { Button, Modal, EmptyState, Input, Skeleton, Badge } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac';
   import { autoRefresh } from '$lib/autorefresh';
   import { hosts } from '$lib/stores/host.svelte';
-  import { Layers, Plus, FileCode2, Terminal, Search, Server, RefreshCw, Play, Square, ArrowUpDown, Clock, ArrowRightLeft } from 'lucide-svelte';
+  import { Layers, Plus, FileCode2, Terminal, Search, Server, RefreshCw, Play, Square, ArrowUpDown, Clock, ArrowRightLeft, Anchor } from 'lucide-svelte';
 
   const canWrite = $derived(allowed('stack.write'));
   const canDeploy = $derived(allowed('stack.deploy'));
+  const canAdopt = $derived(allowed('stack.adopt'));
   const isRemote = $derived(hosts.id !== 'local');
 
   // Sort
@@ -48,13 +49,25 @@
   let convertWarnings = $state<string[]>([]);
   let converting = $state(false);
 
+  // Adoption: compose projects running on the current host that don't
+  // have a stack dir on disk. Surfaced as a banner above the main grid
+  // so first-time migrators from plain `docker compose up` see them
+  // immediately, without an extra click.
+  let discoveredStacks = $state<DiscoveredStack[]>([]);
+  let showAdopt = $state(false);
+  let adoptTarget = $state<DiscoveredStack | null>(null);
+  let adoptCompose = $state('');
+  let adopting = $state(false);
+
   async function load() {
     loading = true;
     try {
-      const [stackList, containersRaw] = await Promise.all([
+      const [stackList, containersRaw, discovered] = await Promise.all([
         api.stacks.list(),
-        api.containers.list(true, hosts.id).catch(() => [])
+        api.containers.list(true, hosts.id).catch(() => []),
+        canAdopt ? api.stacks.discovered(hosts.id).catch(() => [] as DiscoveredStack[]) : Promise.resolve([] as DiscoveredStack[])
       ]);
+      discoveredStacks = discovered;
       // Normalize containers to a bare array: if the picker is on 'all'
       // we get a FanOutResponse back, otherwise a plain array.
       const containers: any[] = isFanOut(containersRaw) ? containersRaw.items : containersRaw;
@@ -125,6 +138,38 @@
       toast.error('Create failed', err instanceof ApiError ? err.message : undefined);
     } finally {
       creating = false;
+    }
+  }
+
+  function openAdopt(ds: DiscoveredStack) {
+    adoptTarget = ds;
+    // Pre-fill a skeleton so the textarea isn't a blank abyss. The
+    // user is expected to paste their actual compose.yaml — we can't
+    // reconstruct it from the running containers reliably.
+    adoptCompose = `# Paste the compose.yaml that describes this running project.\n# The service names below must match what's running.\n#\nservices:\n${ds.services.map((s) => `  ${s.name}:\n    image: ${s.image ?? ''}`).join('\n')}\n`;
+    showAdopt = true;
+  }
+
+  async function submitAdopt(e: Event) {
+    e.preventDefault();
+    if (!adoptTarget) return;
+    adopting = true;
+    try {
+      const res = await api.stacks.adopt({
+        name: adoptTarget.project_name,
+        host_id: adoptTarget.host_id,
+        compose: adoptCompose,
+        accepted_warnings: ['metadata-only-adoption']
+      });
+      toast.success('Adopted', `${res.name} (${res.bound_containers} container${res.bound_containers === 1 ? '' : 's'})`);
+      showAdopt = false;
+      adoptTarget = null;
+      adoptCompose = '';
+      await load();
+    } catch (err) {
+      toast.error('Adopt failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      adopting = false;
     }
   }
 
@@ -281,6 +326,38 @@
       {/if}
     </div>
   </div>
+
+  <!-- Discovered (unmanaged) section -->
+  {#if canAdopt && discoveredStacks.length > 0}
+    <div class="rounded-lg border border-[var(--color-brand-500)]/30 bg-[color-mix(in_srgb,var(--color-brand-500)_7%,transparent)] p-4 space-y-3">
+      <div class="flex items-start gap-3">
+        <Anchor class="w-4 h-4 text-[var(--color-brand-400)] mt-0.5 flex-shrink-0" />
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-medium">
+            {discoveredStacks.length} unmanaged compose project{discoveredStacks.length === 1 ? '' : 's'} detected on this host
+          </div>
+          <p class="text-xs text-[var(--fg-muted)] mt-0.5">
+            These are running via plain <code class="font-mono">docker compose up</code> — dockmesh can take over without restarting containers.
+            For stacks with build contexts or relative-path bind mounts, prefer <code class="font-mono">dmctl stack adopt &lt;path&gt;</code> from the host shell.
+          </p>
+        </div>
+      </div>
+      <div class="space-y-2">
+        {#each discoveredStacks as ds (ds.project_name)}
+          <div class="flex items-center justify-between gap-3 rounded-md bg-[var(--bg-card)] border border-[var(--border)] px-3 py-2">
+            <div class="min-w-0">
+              <div class="font-mono text-sm truncate">{ds.project_name}</div>
+              <div class="text-xs text-[var(--fg-muted)] truncate">
+                {ds.service_count} service{ds.service_count === 1 ? '' : 's'} on {ds.host_name}:
+                {ds.services.map((s) => s.name).join(', ')}
+              </div>
+            </div>
+            <Button variant="secondary" onclick={() => openAdopt(ds)}>Adopt</Button>
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/if}
 
   <!-- Filter bar: search + state pills -->
   {#if !loading && stackCards.length > 0}
@@ -537,6 +614,38 @@
       onclick={convertRun}
     >
       Convert
+    </Button>
+  {/snippet}
+</Modal>
+
+<Modal bind:open={showAdopt} title={adoptTarget ? `Adopt '${adoptTarget.project_name}'` : 'Adopt'} maxWidth="max-w-3xl">
+  {#if adoptTarget}
+    <form onsubmit={submitAdopt} class="space-y-4">
+      <div class="rounded-md border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2 text-xs text-[var(--fg-muted)]">
+        <div class="text-[var(--fg)] font-medium mb-1">This is a metadata-only adoption.</div>
+        Dockmesh will write the compose.yaml below into <code class="font-mono">stacks/{adoptTarget.project_name}/</code> and bind to
+        <strong>{adoptTarget.service_count}</strong> running container{adoptTarget.service_count === 1 ? '' : 's'}. No containers are
+        restarted. For stacks that reference local files (build contexts, <code class="font-mono">./config.yml</code> bind mounts, …)
+        use <code class="font-mono">dmctl stack adopt &lt;path&gt;</code> from the host shell — the CLI ships the full folder so restarts keep working.
+      </div>
+      <label class="block text-xs font-medium">compose.yaml
+        <textarea
+          class="dm-input font-mono text-xs mt-1 h-64 w-full"
+          required
+          bind:value={adoptCompose}
+        ></textarea>
+      </label>
+    </form>
+  {/if}
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (showAdopt = false)}>Cancel</Button>
+    <Button
+      variant="primary"
+      loading={adopting}
+      disabled={adopting || !adoptCompose.trim()}
+      onclick={submitAdopt}
+    >
+      Adopt
     </Button>
   {/snippet}
 </Modal>

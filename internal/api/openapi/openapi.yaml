@@ -1188,6 +1188,77 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /stacks/discovered:
+    get:
+      operationId: stacks.discovered
+      tags: [stacks]
+      summary: List compose projects running without a managed stack
+      description: |
+        Scans all running containers on the target host for the
+        `com.docker.compose.project` label and returns projects that are
+        not already tracked by dockmesh. These are candidates for
+        `POST /stacks/adopt`.
+      parameters:
+        - name: host
+          in: query
+          description: Target host ID. Defaults to the local host.
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Discovered unmanaged compose projects.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DiscoveredStack" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /stacks/adopt:
+    post:
+      operationId: stacks.adopt
+      tags: [stacks]
+      summary: Adopt a running compose project into dockmesh's management
+      description: |
+        Takes an existing running compose project (typically started via
+        plain `docker compose up`) and hands its management over to
+        dockmesh — writes compose.yaml + optional supporting files to
+        `<stacks_root>/<name>/`, binds the running containers via their
+        `com.docker.compose.project` label, and records the adoption in
+        the audit log. **Does not stop, recreate, or otherwise modify
+        the running containers.** The next explicit deploy is the only
+        operation that might trigger container recreation, and that is
+        gated by the client and shown in the `drift_services` field.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StackAdoptInput" }
+      responses:
+        "201":
+          description: Adopted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StackAdoptResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: A stack with this name is already managed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: |
+            Adoption rejected by server-side validator. Typically:
+            no running containers with this project label on the target
+            host, service names in the compose don't match the running
+            state, or the bundle tarball is malformed / too large.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /stacks/{name}:
     parameters:
       - $ref: "#/components/parameters/StackNamePath"
@@ -4984,6 +5055,106 @@ components:
         name: { type: string }
         compose_path: { type: string }
         deployment: { $ref: "#/components/schemas/StackDeployment" }
+
+    DiscoveredStack:
+      type: object
+      description: |
+        A running compose project (grouped by `com.docker.compose.project`
+        label) that has no matching stack directory under the server's
+        stacks root. Returned by `GET /stacks/discovered`.
+      required: [project_name, host_id, service_count]
+      properties:
+        project_name:
+          type: string
+          description: Value of the `com.docker.compose.project` label.
+          example: audiobookshelf
+        host_id: { type: string }
+        host_name: { type: string }
+        service_count:
+          type: integer
+          description: Number of distinct services (unique `com.docker.compose.service` values) in this project.
+        services:
+          type: array
+          items: { $ref: "#/components/schemas/DiscoveredStackService" }
+        first_seen:
+          type: string
+          format: date-time
+          description: Earliest container creation time in this project (best-effort).
+
+    DiscoveredStackService:
+      type: object
+      required: [name, container_id, state]
+      properties:
+        name:
+          type: string
+          description: Value of the `com.docker.compose.service` label.
+        container_id: { type: string }
+        container_name: { type: string }
+        state:
+          type: string
+          enum: [running, exited, created, paused, restarting, dead, removing]
+        image: { type: string }
+
+    StackAdoptInput:
+      type: object
+      required: [name, host_id, compose]
+      description: Payload for `POST /stacks/adopt`.
+      properties:
+        name:
+          type: string
+          description: |
+            Stack name under which to track this project. Must match the
+            `com.docker.compose.project` label on the running containers
+            — otherwise binding fails and no containers end up managed.
+          example: audiobookshelf
+        host_id:
+          type: string
+          description: Host on which the running project lives.
+        compose:
+          type: string
+          description: Full compose.yaml content.
+        env:
+          type: string
+          description: Optional plaintext .env content. Stored age-encrypted at rest.
+        bundle:
+          type: string
+          description: |
+            Optional base64-encoded tar.gz archive of supporting files
+            relative to the compose.yaml (e.g. build contexts, config
+            files referenced via `./relative/path` bind mounts). Extracted
+            into `<stacks_root>/<name>/` alongside compose.yaml. If omitted,
+            adoption proceeds in metadata-only mode and any relative
+            path references will break on the first restart.
+        accepted_warnings:
+          type: array
+          items: { type: string }
+          description: |
+            Warning codes the client has surfaced to the user and they
+            explicitly acknowledged (e.g. "build-context", "relative-paths",
+            "config-drift"). Recorded in the audit log so the adoption
+            decision is reviewable after the fact.
+
+    StackAdoptResult:
+      type: object
+      required: [name, host_id, bound_containers]
+      properties:
+        name: { type: string }
+        host_id: { type: string }
+        bound_containers:
+          type: integer
+          description: Number of running containers linked to this stack via `com.docker.compose.project` label.
+        warnings:
+          type: array
+          items: { type: string }
+          description: Warning codes the server surfaced during adoption (superset of what client sent).
+        drift_services:
+          type: array
+          items: { type: string }
+          description: |
+            Services where the compose-computed config-hash differs from
+            what's running on the host. A future explicit deploy will
+            recreate these containers; an empty list means the next
+            deploy is a no-op.
 
     DeployResult:
       type: object
