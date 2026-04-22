@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -220,14 +221,26 @@ func runInitCmd(args []string) {
 	}
 
 	// ====== Summary =======================================================
+	// Service-management commands differ by platform: systemctl on Linux,
+	// launchctl on macOS. Previously we hardcoded the Linux form in the
+	// summary box, which misled macOS users into typing `systemctl` and
+	// getting "command not found".
+	serviceCmd := "sudo systemctl status dockmesh"
+	logsCmd := "sudo journalctl -u dockmesh -f"
+	restartCmd := "sudo systemctl restart dockmesh"
+	if runtime.GOOS == "darwin" {
+		serviceCmd = "sudo launchctl print system/dev.dockmesh.service"
+		logsCmd = "tail -f /usr/local/var/log/dockmesh.log"
+		restartCmd = "sudo launchctl kickstart -k system/dev.dockmesh.service"
+	}
 	summaryLines := []string{
 		"",
 		"    Dashboard   " + accent(bURL),
 		"    Login       " + admin + "  /  " + passwordForSummary(password, generated),
 		"",
-		"    Service     sudo systemctl status dockmesh",
-		"    Logs        sudo journalctl -u dockmesh -f",
-		"    Restart     sudo systemctl restart dockmesh",
+		"    Service     " + serviceCmd,
+		"    Logs        " + logsCmd,
+		"    Restart     " + restartCmd,
 		"",
 		"  Next",
 		"    • Enroll a second host  →  Agents → New agent",
@@ -345,6 +358,51 @@ func runSilent(cmd string, args ...string) error {
 	c.Stdout = io.Discard
 	c.Stderr = io.Discard
 	return c.Run()
+}
+
+// runCaptured runs a command and returns the combined stdout+stderr as a
+// string alongside the error. Use this for launchctl / systemctl calls
+// where the exit code alone ("exit status 5") is useless without the
+// underlying diagnostic message the tool prints to stderr.
+func runCaptured(cmd string, args ...string) (string, error) {
+	c := exec.Command(cmd, args...)
+	var out bytes.Buffer
+	c.Stdout = &out
+	c.Stderr = &out
+	err := c.Run()
+	return out.String(), err
+}
+
+// diagnoseListenPort returns a human-readable explanation of what else
+// is holding the given listen address, if anything. macOS ships lsof by
+// default; on Linux we fall back to ss. Returns "" when the port is
+// free or we can't determine the holder.
+func diagnoseListenPort(listen string) string {
+	_, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		port = strings.TrimPrefix(listen, ":")
+	}
+	if port == "" {
+		return ""
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		out, _ := runCaptured("lsof", "-iTCP:"+port, "-sTCP:LISTEN", "-Pn")
+		if strings.TrimSpace(out) == "" {
+			return ""
+		}
+		return "port " + port + " is held by another process:\n" + strings.TrimRight(out, "\n") +
+			"\n   stop it (sudo kill <PID>), then re-run 'sudo dockmesh init' or:\n" +
+			"   sudo launchctl bootstrap system /Library/LaunchDaemons/dev.dockmesh.service.plist"
+	case "linux":
+		out, _ := runCaptured("ss", "-Htlnp", "sport = :"+port)
+		if strings.TrimSpace(out) == "" {
+			return ""
+		}
+		return "port " + port + " is held by another process:\n" + strings.TrimRight(out, "\n") +
+			"\n   stop it, then re-run 'sudo systemctl start dockmesh'"
+	}
+	return ""
 }
 
 // ---------------------------------------------------------------------------
@@ -855,8 +913,23 @@ func enableAndStartLaunchdService(listen string) (bool, string) {
 	// If it's already loaded, bootstrap errors — unload first to make
 	// this idempotent.
 	_ = runSilent("launchctl", "bootout", label)
-	if err := runSilent("launchctl", "bootstrap", "system", plistPath); err != nil {
+	if out, err := runCaptured("launchctl", "bootstrap", "system", plistPath); err != nil {
 		initFail("launchctl bootstrap failed: " + err.Error())
+		// "exit status 5" is launchd's catch-all — surface whatever it
+		// printed to stderr (often "Bootstrap failed: 5: Input/output
+		// error") so the user at least sees the machine's own message.
+		if msg := strings.TrimSpace(out); msg != "" {
+			initWarn("launchctl output: " + msg)
+		}
+		// Most common root cause: something else holds the listen port
+		// (a leftover `dockmesh serve` from a manual test, or a stale
+		// launchd entry). Surface the blocker with PID + process name.
+		if hint := diagnoseListenPort(listen); hint != "" {
+			initWarn(hint)
+		} else {
+			initWarn("check status with: sudo launchctl print " + label)
+			initWarn("logs: /usr/local/var/log/dockmesh.{log,err}")
+		}
 		return false, ""
 	}
 	// kickstart nudges the service to run immediately even if RunAtLoad
