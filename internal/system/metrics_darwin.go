@@ -39,7 +39,12 @@ func Collect() Metrics {
 	snap := samplerSnap
 	samplerMu.RUnlock()
 	if ready {
-		return snap
+		// Apply Docker limits on read rather than at sample time so a
+		// transient docker-socket hiccup during sampling doesn't
+		// permanently clear the HostCPUCores / HostMemTotal fields.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		return applyDockerLimits(ctx, snap)
 	}
 	return collectOneShot()
 }
@@ -61,7 +66,9 @@ func collectOneShot() Metrics {
 	}
 	m.DiskTotal, m.DiskUsed, m.DiskPercent = readDisk("/")
 	m.Uptime = readUptime()
-	return m
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return applyDockerLimits(ctx, m)
 }
 
 var (

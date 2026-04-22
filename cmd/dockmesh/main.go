@@ -289,6 +289,22 @@ func main() {
 			"err", dockerCli.LastError())
 	}
 
+	// Let the system-metrics sampler query Docker's configured limits
+	// (Docker Desktop VM caps on macOS, cgroup limits on constrained
+	// Linux hosts). When they diverge from raw host hardware, the
+	// dashboard shows both so operators can see their Docker allocation
+	// against their actual machine.
+	system.SetDockerInfoFn(func(ctx context.Context) (int, uint64, bool) {
+		if !dockerCli.Connected() {
+			return 0, 0, false
+		}
+		info, err := dockerCli.Info(ctx)
+		if err != nil {
+			return 0, 0, false
+		}
+		return info.NCPU, uint64(info.MemTotal), true
+	})
+
 	secretsSvc, err := secrets.New(cfg.SecretsKeyPath, cfg.SecretsEncryptEnv)
 	if err != nil {
 		slog.Error("secrets init failed", "err", err)

@@ -381,6 +381,11 @@
         <div class="flex items-center gap-1.5">
           <Cpu class="w-3.5 h-3.5" />
           <span>CPU</span>
+          {#if sysMetrics?.docker_limited}
+            <span class="normal-case text-[10px] px-1.5 py-0.5 rounded-full bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] text-[var(--color-brand-400)]" title="Docker Desktop resource limit — configured under Settings → Resources">
+              Docker cap
+            </span>
+          {/if}
         </div>
         {#if sysMetrics}
           <span class="normal-case text-[var(--fg-subtle)]">{sysMetrics.cpu_cores} cores</span>
@@ -403,6 +408,11 @@
         <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)] tabular-nums">
           <AnimatedNumber value={sysMetrics.cpu_used_cores} format={(n) => n.toFixed(2)} /> / {sysMetrics.cpu_cores.toFixed(2)} cores
         </div>
+        {#if sysMetrics.docker_limited && sysMetrics.host_cpu_cores}
+          <div class="mt-0.5 text-[10px] text-[var(--fg-subtle)] tabular-nums">
+            Host: {sysMetrics.host_cpu_cores} cores
+          </div>
+        {/if}
       {/if}
     </div>
 
@@ -412,6 +422,11 @@
         <div class="flex items-center gap-1.5">
           <MemoryStick class="w-3.5 h-3.5" />
           <span>Memory</span>
+          {#if sysMetrics?.docker_limited}
+            <span class="normal-case text-[10px] px-1.5 py-0.5 rounded-full bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] text-[var(--color-brand-400)]" title="Docker Desktop resource limit — configured under Settings → Resources">
+              Docker cap
+            </span>
+          {/if}
         </div>
         {#if sysMetrics && sysMetrics.mem_total > 0}
           <span class="normal-case text-[var(--fg-subtle)]">{fmtBytes(sysMetrics.mem_total)}</span>
@@ -438,6 +453,11 @@
         <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)] tabular-nums">
           <AnimatedNumber value={sysMetrics.mem_used} format={fmtBytes} /> / {fmtBytes(sysMetrics.mem_total)}
         </div>
+        {#if sysMetrics.docker_limited && sysMetrics.host_mem_total}
+          <div class="mt-0.5 text-[10px] text-[var(--fg-subtle)] tabular-nums">
+            Host: {fmtBytes(sysMetrics.host_mem_total)}
+          </div>
+        {/if}
       {/if}
     </div>
 

@@ -31,7 +31,13 @@ func Collect() Metrics {
 	snap := samplerSnap
 	samplerMu.RUnlock()
 	if ready {
-		return snap
+		// Apply Docker resource limits to the cached sample — on a plain
+		// Linux host Docker's NCPU == host NCPU so the override is a no-op,
+		// but on cgroup-constrained or container-in-container setups the
+		// daemon's view is the load-bearing one for the dashboard.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		return applyDockerLimits(ctx, snap)
 	}
 	return collectOneShot()
 }
@@ -53,7 +59,9 @@ func collectOneShot() Metrics {
 	m.DiskPath = path
 	m.DiskTotal, m.DiskUsed, m.DiskPercent = readDisk(path)
 	m.Uptime = readUptime()
-	return m
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return applyDockerLimits(ctx, m)
 }
 
 func readCPUPercentOneShot() float64 {

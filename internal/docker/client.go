@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 )
 
@@ -137,6 +138,17 @@ func (c *Client) Ping(ctx context.Context) error {
 		return fmt.Errorf("%s", c.LastError())
 	}
 	return nil
+}
+
+// Info returns the daemon's view of its resource limits + state. On
+// macOS + Windows, NCPU and MemTotal are the Docker Desktop VM's
+// configured limits (what the operator picked in Settings → Resources),
+// NOT the host hardware totals. On Linux they're cgroup-aware and
+// typically equal to the host totals unless dockmesh runs inside a
+// constrained container. dockmesh's dashboard uses these as the
+// authoritative "resources Docker can use" numbers.
+func (c *Client) Info(ctx context.Context) (dtypes.Info, error) {
+	return c.cli.Info(ctx)
 }
 
 func (c *Client) Close() error {

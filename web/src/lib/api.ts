@@ -618,6 +618,16 @@ export interface SystemMetrics {
   disk_used: number;
   disk_path: string;
   uptime_seconds: number;
+  // Present only when Docker's configured resource limits differ from
+  // raw host hardware — most commonly on macOS / Windows where Docker
+  // Desktop caps the VM at some fraction of the Mac's cores + RAM.
+  // When `docker_limited` is true, the primary `cpu_cores` / `mem_total`
+  // fields reflect Docker's allocation, and `host_cpu_cores` /
+  // `host_mem_total` carry the raw hardware numbers so the dashboard
+  // can show both ("8 GB of 64 GB host RAM allocated to Docker").
+  docker_limited?: boolean;
+  host_cpu_cores?: number;
+  host_mem_total?: number;
 }
 
 // FanOutResponse is the shape returned by list endpoints when called
