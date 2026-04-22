@@ -15,9 +15,10 @@ import (
 // Format is JSON (not YAML) because it's what stdlib gives us for free
 // and the field count never needs more than 4-5 keys.
 type Config struct {
-	Server   string `json:"server,omitempty"`
-	Token    string `json:"token,omitempty"`
-	Insecure bool   `json:"insecure,omitempty"`
+	Server       string `json:"server,omitempty"`
+	Token        string `json:"token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	Insecure     bool   `json:"insecure,omitempty"`
 }
 
 // configPath returns the OS-appropriate config file location. Uses

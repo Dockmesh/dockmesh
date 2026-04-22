@@ -258,6 +258,14 @@ func buildBundle(root, composePath string, withEnv bool, maxSize int64) ([]byte,
 	// Normalised for skip-check.
 	relCompose, _ := filepath.Rel(root, composePath)
 
+	// Directory names that we always skip. VCS metadata, language
+	// build caches, IDE / tooling scratch dirs — none of which belong
+	// in a compose context tarball and all of which can easily eat
+	// hundreds of MB. We deliberately don't skip "dist", "build", or
+	// "target" because those are routinely compose build: contexts
+	// (e.g. `build: ./build/prod`) — let the user trim those if they
+	// really want to. The rule: skip things that are always junk,
+	// keep anything that might be meaningful context.
 	ignoreDirs := map[string]bool{
 		".git":         true,
 		".hg":          true,
@@ -268,6 +276,12 @@ func buildBundle(root, composePath string, withEnv bool, maxSize int64) ([]byte,
 		"venv":         true,
 		".idea":        true,
 		".vscode":      true,
+		".claude":      true, // Claude Code workspace scratch
+		".next":        true, // Next.js build cache
+		".nuxt":        true, // Nuxt build cache
+		"coverage":     true, // jest / nyc / istanbul output
+		".terraform":   true,
+		".gradle":      true,
 	}
 
 	var fileList []string
