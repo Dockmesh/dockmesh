@@ -68,10 +68,16 @@ var webDist embed.FS
 // `#`-prefixed comments + blank lines), and strips the flag out of
 // os.Args so the rest of the process never sees it.
 //
-// This exists because launchd on macOS has no EnvironmentFile directive
-// (unlike systemd), so init's plist template passes `--env-file PATH`
-// to `dockmesh serve` explicitly. On Linux the flag is unused because
-// systemd already injected the env before exec().
+// If no --env-file was passed, we also try the default location where
+// `dockmesh init` writes its env file (/var/lib/dockmesh/dockmesh.env
+// on Linux, /usr/local/var/dockmesh/dockmesh.env on macOS). This lets
+// CLI commands like `sudo dockmesh admin list-users` find the DB + PKI
+// without the operator having to source the file or pass --env-file
+// every time.
+//
+// Originally built because launchd on macOS has no EnvironmentFile
+// directive (unlike systemd), so init's plist template passes
+// `--env-file PATH` to `dockmesh serve` explicitly.
 func loadEnvFileFromArgs() error {
 	var path string
 	var keep []string
@@ -95,9 +101,27 @@ func loadEnvFileFromArgs() error {
 		i++
 	}
 	if path == "" {
-		return nil
+		// Auto-detect a well-known env file location. Only load if the
+		// operator hasn't already set DOCKMESH_DB_PATH in their shell —
+		// an explicit env var always wins over the auto-loaded file.
+		if _, already := os.LookupEnv("DOCKMESH_DB_PATH"); already {
+			return nil
+		}
+		for _, candidate := range []string{
+			"/var/lib/dockmesh/dockmesh.env",      // Linux default
+			"/usr/local/var/dockmesh/dockmesh.env", // macOS default
+		} {
+			if _, err := os.Stat(candidate); err == nil {
+				path = candidate
+				break
+			}
+		}
+		if path == "" {
+			return nil
+		}
+	} else {
+		os.Args = keep
 	}
-	os.Args = keep
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
