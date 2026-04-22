@@ -215,6 +215,13 @@ make test
 Tech stack: Go 1.23+, SvelteKit 2 with Svelte 5 runes, Tailwind v4, SQLite
 (default) / Postgres, Caddy (embedded), Grype (embedded).
 
+### A note on AI
+
+Spec, architecture, and design decisions are mine. Implementation is
+done with Claude Code as a coding assistant — each change reviewed,
+tested, and dogfooded on my own homelab before it hits a release tag.
+Flagging this up-front rather than hiding it.
+
 ## License
 
 dockmesh is released under the **GNU Affero General Public License v3.0**
