@@ -96,6 +96,19 @@ http_get() {
 # -----------------------------------------------------------------------------
 # Pre-flight
 # -----------------------------------------------------------------------------
+# Agent enrollment is Linux-only today — systemd unit + useradd + getent
+# all assume GNU userland. macOS agents run via `dockmesh-agent` built
+# from source; the one-line enroll installer doesn't target them yet.
+case "$(uname -s)" in
+  Linux) ;;
+  Darwin)
+    die "This enroll installer is Linux-only today. To enroll a macOS host
+as an agent, build dockmesh-agent from source and start it manually
+with the enrollment token — see https://dockmesh.dev/docs/features/multi-host/"
+    ;;
+  *) die "unsupported OS: $(uname -s)" ;;
+esac
+
 require_root
 require_systemd
 

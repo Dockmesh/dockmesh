@@ -155,7 +155,16 @@ get_time() {
   if [ -n "${EPOCHREALTIME:-}" ]; then
     printf '%s' "$EPOCHREALTIME"
   else
-    date +%s.%N 2>/dev/null || date +%s
+    # BSD date (macOS, bash 3.2 default) doesn't support %N — it silently
+    # emits a literal "N", which then poisons every downstream awk math
+    # expression ("1745345678.N - …" = syntax error). Detect that and
+    # drop to whole-second precision rather than printing garbage.
+    local t
+    t=$(date +%s.%N 2>/dev/null || date +%s)
+    case "$t" in
+      *N|*.N) date +%s ;;
+      *) printf '%s' "$t" ;;
+    esac
   fi
 }
 
@@ -213,6 +222,8 @@ HAS_SYSTEMD_UNIT=0
 SYSTEMD_ACTIVE=0
 SYSTEMD_ENABLED=0
 SYSTEMD_PID=""
+HAS_LAUNCHD_UNIT=0
+LAUNCHD_ACTIVE=0
 if command -v systemctl >/dev/null 2>&1; then
   if systemctl list-unit-files dockmesh.service 2>/dev/null | grep -q '^dockmesh\.service'; then
     HAS_SYSTEMD_UNIT=1
@@ -220,6 +231,14 @@ if command -v systemctl >/dev/null 2>&1; then
     systemctl is-enabled --quiet dockmesh  && SYSTEMD_ENABLED=1
     SYSTEMD_PID="$(systemctl show -p MainPID --value dockmesh 2>/dev/null || true)"
     [ "$SYSTEMD_PID" = "0" ] && SYSTEMD_PID=""
+  fi
+fi
+# macOS equivalent: probe the LaunchDaemon plist + whether launchd sees
+# the service. Stays 0 on Linux because launchctl doesn't exist there.
+if [ "$(uname -s)" = "Darwin" ] && command -v launchctl >/dev/null 2>&1; then
+  if [ -f /Library/LaunchDaemons/dev.dockmesh.service.plist ]; then
+    HAS_LAUNCHD_UNIT=1
+    launchctl print system/dev.dockmesh.service >/dev/null 2>&1 && LAUNCHD_ACTIVE=1
   fi
 fi
 
@@ -252,6 +271,17 @@ case "$ARCH_RAW" in
   aarch64|arm64) ARCH="arm64"; ok "Architecture    arm64 ($ARCH_RAW)" ;;
   *) die "unsupported architecture: $ARCH_RAW" ;;
 esac
+
+# macOS PATH handling. Under `curl | sudo bash` we inherit sudo's
+# secure_path, which on macOS typically omits both Homebrew prefixes:
+#   /opt/homebrew/bin  (Apple Silicon default)
+#   /usr/local/bin     (Intel default, also INSTALL_DIR target)
+# Without these prepended, brew-installed deps (coreutils → sha256sum,
+# modern bash, etc.) are invisible to require_tool. Prepend both so
+# detection is consistent regardless of Mac CPU.
+if [ "$OS" = "darwin" ]; then
+  export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:$PATH"
+fi
 
 # Distro detection — drives the "to install X, run Y" hints for any
 # missing dependency. os-release is the de-facto cross-distro standard
@@ -333,7 +363,28 @@ require_tool() {
 
 require_tool curl
 require_tool tar
-require_tool sha256sum
+# sha256 tool — sha256sum on Linux coreutils, `shasum -a 256` on macOS /
+# BSD. Pick whichever is available and wrap it behind a shared helper so
+# the rest of the script stays portable.
+if command -v sha256sum >/dev/null 2>&1; then
+  ok "$(printf '%-16s %s' "sha256sum" "$(sha256sum --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1 || echo installed)")"
+  sha256_of() { sha256sum "$1" | awk '{print $1}'; }
+elif command -v shasum >/dev/null 2>&1; then
+  ok "$(printf '%-16s %s' "shasum" "$(shasum --version 2>/dev/null | head -1 || echo installed) (sha256)")"
+  sha256_of() { shasum -a 256 "$1" | awk '{print $1}'; }
+else
+  fail "$(printf '%-16s not found' "sha256sum/shasum")"
+  printf '\n' >&2
+  box "Missing sha256 tool" \
+    "Need either 'sha256sum' (Linux coreutils) or 'shasum' (macOS)." \
+    "" \
+    "Install on $DISTRO_NAME:" \
+    "  $(install_hint coreutils)" \
+    "" \
+    "Then re-run:" \
+    "  curl -fsSL https://get.dockmesh.dev | sudo bash"
+  exit 1
+fi
 
 # Service manager preflight — systemd on Linux, launchd on macOS.
 # Neither is a hard requirement; the binary runs fine without one,
@@ -371,6 +422,18 @@ if command -v docker >/dev/null 2>&1; then
   else
     warn "$(printf '%-16s installed but daemon is not responding' "Docker")"
   fi
+  # macOS: `docker info` can succeed via the user's context socket while
+  # the server (Docker Go SDK, unix:///var/run/docker.sock by default)
+  # has no socket to connect to. Docker Desktop ships that symlink OFF
+  # by default in recent releases — operator has to tick
+  # "Allow the default Docker socket to be used" in Settings → Advanced.
+  # Catch that here so the daemon-connect failure doesn't blindside them
+  # post-`dockmesh init`.
+  if [ "$OS" = "darwin" ] && [ ! -S /var/run/docker.sock ]; then
+    warn "$(printf '%-16s %s' "docker.sock" "/var/run/docker.sock missing — dockmesh can't connect to the daemon")"
+    say "                    Docker Desktop → Settings → Advanced →"
+    say "                    enable \"Allow the default Docker socket to be used\""
+  fi
 else
   warn "$(printf '%-16s %s' "Docker" "not detected")"
   # Distro-specific install hint rather than the generic docs link —
@@ -399,7 +462,16 @@ fi
 if [ "$IS_UPGRADE" = "0" ]; then
   port_free() {
     local p="$1"
-    if command -v ss >/dev/null 2>&1; then
+    # BSD netstat's `-t` flag isn't "TCP-only" — that's GNU-specific —
+    # so the Linux fallback never detected anything on macOS and every
+    # port showed as "free". Use lsof on darwin instead; it's preinstalled.
+    if [ "$OS" = "darwin" ]; then
+      if command -v lsof >/dev/null 2>&1; then
+        ! lsof -iTCP:"$p" -sTCP:LISTEN -Pn >/dev/null 2>&1
+      else
+        return 0
+      fi
+    elif command -v ss >/dev/null 2>&1; then
       ! ss -Htln "sport = :$p" 2>/dev/null | grep -q .
     elif command -v netstat >/dev/null 2>&1; then
       ! netstat -tln 2>/dev/null | awk '{print $4}' | grep -Eq ":$p$"
@@ -422,8 +494,12 @@ else
     [ "$SYSTEMD_ACTIVE" = "1" ] && local_state="$local_state, active"
     [ -n "$SYSTEMD_PID" ] && local_state="$local_state, PID $SYSTEMD_PID"
     ok "systemd unit        dockmesh.service ($local_state)"
+  elif [ "$HAS_LAUNCHD_UNIT" = "1" ]; then
+    local_state="installed"
+    [ "$LAUNCHD_ACTIVE" = "1" ] && local_state="$local_state, active"
+    ok "launchd service     dev.dockmesh.service ($local_state)"
   else
-    info "no systemd unit     manual restart required after upgrade"
+    info "no service unit     manual restart required after upgrade"
   fi
 fi
 step_done
@@ -449,7 +525,7 @@ if [ "$DM_VERSION" = "latest" ]; then
 fi
 ok "latest          $DM_VERSION"
 
-TARBALL="dockmesh_linux_${ARCH}.tar.gz"
+TARBALL="dockmesh_${OS}_${ARCH}.tar.gz"
 URL="https://github.com/$REPO/releases/download/$DM_VERSION/$TARBALL"
 CHECKSUMS_URL="https://github.com/$REPO/releases/download/$DM_VERSION/checksums.txt"
 info "artifact        $TARBALL"
@@ -507,7 +583,7 @@ step 4 $TOTAL_STEPS "Verifying"
 if curl -fsSL --retry 2 -o "$TMP/checksums.txt" "$CHECKSUMS_URL" 2>/dev/null; then
   EXPECTED="$(grep " ${TARBALL}$" "$TMP/checksums.txt" | awk '{print $1}' || true)"
   if [ -n "$EXPECTED" ]; then
-    ACTUAL="$(sha256sum "$TMP/$TARBALL" | awk '{print $1}')"
+    ACTUAL="$(sha256_of "$TMP/$TARBALL")"
     if [ "$EXPECTED" != "$ACTUAL" ]; then
       die "checksum mismatch — expected $EXPECTED got $ACTUAL"
     fi
@@ -546,7 +622,7 @@ if [ "$IS_UPGRADE" = "1" ]; then
   $USE_SUDO mkdir -p "$ASSET_DIR/bin"
   [ -f "$TMP/install-agent.sh" ] && $USE_SUDO install -m 0755 "$TMP/install-agent.sh" "$ASSET_DIR/install-agent.sh"
   if [ -f "$TMP/dockmesh-agent" ]; then
-    AGENT_NAME="dockmesh-agent-linux-${ARCH}"
+    AGENT_NAME="dockmesh-agent-${OS}-${ARCH}"
     $USE_SUDO install -m 0755 "$TMP/dockmesh-agent" "$ASSET_DIR/bin/$AGENT_NAME"
   fi
   ok "agent assets    $ASSET_DIR/"
@@ -673,7 +749,7 @@ if [ -f "$TMP/install-agent.sh" ]; then
   ok "agent installer $ASSET_DIR/install-agent.sh"
 fi
 if [ -f "$TMP/dockmesh-agent" ]; then
-  AGENT_NAME="dockmesh-agent-linux-${ARCH}"
+  AGENT_NAME="dockmesh-agent-${OS}-${ARCH}"
   $USE_SUDO install -m 0755 "$TMP/dockmesh-agent" "$ASSET_DIR/bin/$AGENT_NAME"
   ok "agent binary    $ASSET_DIR/bin/$AGENT_NAME"
 fi
