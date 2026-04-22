@@ -4,7 +4,7 @@
 
   <!-- Title -->
   <text x="32" y="44" font-size="18" font-weight="700" fill="#e8edf0">Platform support</text>
-  <text x="32" y="66" font-size="12" fill="#697882">v1: Linux-native server + agent · cross-platform CLI</text>
+  <text x="32" y="66" font-size="12" fill="#697882">Server + agent on Linux and macOS · cross-platform CLI · Windows on roadmap</text>
 
   <!-- Header row -->
   <g font-size="12" font-weight="600" fill="#94a3b8">
@@ -28,8 +28,9 @@
   </g>
 
   <g transform="translate(450, 138)">
-    <rect width="150" height="26" rx="6" fill="#64748b" fill-opacity="0.1" stroke="#475569" stroke-opacity="0.4"/>
-    <text x="75" y="17" text-anchor="middle" font-size="11" font-weight="500" fill="#94a3b8">roadmap</text>
+    <rect width="150" height="26" rx="6" fill="#09c0dd" fill-opacity="0.14" stroke="#09c0dd" stroke-opacity="0.45"/>
+    <path d="M 14 13 L 19 18 L 29 8" stroke="#09c0dd" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="40" y="17" font-size="12" font-weight="500" fill="#b8f0f9">amd64 · arm64</text>
   </g>
 
   <g transform="translate(640, 138)">
@@ -48,8 +49,9 @@
   </g>
 
   <g transform="translate(450, 182)">
-    <rect width="150" height="26" rx="6" fill="#64748b" fill-opacity="0.1" stroke="#475569" stroke-opacity="0.4"/>
-    <text x="75" y="17" text-anchor="middle" font-size="11" font-weight="500" fill="#94a3b8">roadmap</text>
+    <rect width="150" height="26" rx="6" fill="#09c0dd" fill-opacity="0.14" stroke="#09c0dd" stroke-opacity="0.45"/>
+    <path d="M 14 13 L 19 18 L 29 8" stroke="#09c0dd" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="40" y="17" font-size="12" font-weight="500" fill="#b8f0f9">amd64 · arm64</text>
   </g>
 
   <g transform="translate(640, 182)">

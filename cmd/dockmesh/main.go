@@ -63,9 +63,82 @@ import (
 //go:embed all:web_dist
 var webDist embed.FS
 
+// loadEnvFileFromArgs scans os.Args for --env-file=PATH or
+// --env-file PATH, loads that file as KEY=VALUE env vars (skipping
+// `#`-prefixed comments + blank lines), and strips the flag out of
+// os.Args so the rest of the process never sees it.
+//
+// This exists because launchd on macOS has no EnvironmentFile directive
+// (unlike systemd), so init's plist template passes `--env-file PATH`
+// to `dockmesh serve` explicitly. On Linux the flag is unused because
+// systemd already injected the env before exec().
+func loadEnvFileFromArgs() error {
+	var path string
+	var keep []string
+	i := 0
+	for i < len(os.Args) {
+		arg := os.Args[i]
+		if arg == "--env-file" {
+			if i+1 >= len(os.Args) {
+				return fmt.Errorf("--env-file: missing path argument")
+			}
+			path = os.Args[i+1]
+			i += 2
+			continue
+		}
+		if strings.HasPrefix(arg, "--env-file=") {
+			path = strings.TrimPrefix(arg, "--env-file=")
+			i++
+			continue
+		}
+		keep = append(keep, arg)
+		i++
+	}
+	if path == "" {
+		return nil
+	}
+	os.Args = keep
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		eq := strings.IndexByte(line, '=')
+		if eq <= 0 {
+			continue
+		}
+		k := strings.TrimSpace(line[:eq])
+		v := strings.TrimSpace(line[eq+1:])
+		// Strip matching surrounding quotes if present.
+		if len(v) >= 2 && (v[0] == '"' && v[len(v)-1] == '"' || v[0] == '\'' && v[len(v)-1] == '\'') {
+			v = v[1 : len(v)-1]
+		}
+		// Don't clobber vars the user already set in the environment
+		// directly — that precedence matches systemd's behaviour.
+		if _, already := os.LookupEnv(k); !already {
+			_ = os.Setenv(k, v)
+		}
+	}
+	return nil
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
+
+	// Load --env-file if passed anywhere in the args. systemd handles
+	// this natively via EnvironmentFile= in the unit, but launchd on
+	// macOS has no equivalent so we parse the file ourselves and call
+	// os.Setenv for each KEY=VALUE line. Removes the --env-file
+	// argument from os.Args so downstream flag parsing doesn't choke.
+	if err := loadEnvFileFromArgs(); err != nil {
+		fmt.Fprintln(os.Stderr, "env-file:", err)
+		os.Exit(1)
+	}
 
 	// Subcommand dispatch (§15.2, P.11.6 admin CLI suite).
 	if len(os.Args) > 1 {

@@ -41,7 +41,7 @@ Prefer Docker? See [Docker Compose](#docker-compose) below.
   <img src=".github/platforms.svg" alt="Platform support matrix" width="880"/>
 </p>
 
-For v1 the server + agent are Linux-native — systemd, `/var/lib/dockmesh`, unix sockets. The `dmctl` CLI is cross-platform so Mac and Windows users can already drive a Linux dockmesh server from their laptop. Native macOS + Windows server/agent support is on the near-term roadmap (driven by homelab demand for Mac-mini hosts).
+Server + agent run natively on both Linux (systemd, `/var/lib/dockmesh`) and macOS (launchd, `/usr/local/var/dockmesh`) as of v0.1.5. The install script detects the host OS and sets up the right service manager; one-line install works identically on either. The `dmctl` CLI is additionally built for Windows so Windows users can drive a dockmesh server from their workstation. Native Windows server/agent support is on the roadmap.
 
 ## Features
 

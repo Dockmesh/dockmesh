@@ -46,12 +46,20 @@ import (
 func runInitCmd(args []string) {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	yes := fs.Bool("yes", false, "non-interactive — accept defaults, auto-generate admin password")
-	dataDir := fs.String("data-dir", "/var/lib/dockmesh", "where to keep DB + stacks + keys")
-	installSystemd := fs.Bool("systemd", true, "install + enable + start a systemd unit")
+	dataDir := fs.String("data-dir", defaultDataDir(), "where to keep DB + stacks + keys")
+	installService := fs.Bool("service", true, "install + enable + start an OS service (systemd on Linux, launchd on macOS)")
+	// Deprecated alias — keep --systemd for back-compat with automation
+	// scripts, but the flag is effectively "install a service unit of
+	// whatever flavour the OS provides".
+	installSystemdDeprecated := fs.Bool("systemd", true, "deprecated alias for --service")
 	listen := fs.String("listen", ":8080", "HTTP listen address")
 	adminUser := fs.String("admin-user", "admin", "admin username")
 	baseURL := fs.String("base-url", "", "public base URL — empty = derive from hostname")
 	_ = fs.Parse(args)
+	// If the user passed --systemd=false, honor it via the new flag.
+	if !*installSystemdDeprecated {
+		*installService = false
+	}
 
 	interactive := !*yes
 	if interactive && !isStdinTTY() {
@@ -125,11 +133,14 @@ func runInitCmd(args []string) {
 	}
 	initOK("agent URL: " + agentURL)
 
-	// ---- Step 6: systemd -------------------------------------------------
-	section(6, 6, "systemd integration")
-	doSystemd := *installSystemd
+	// ---- Step 6: service --------------------------------------------------
+	// "Service" rather than "systemd" because we now also support launchd
+	// on macOS. On Windows (future) this step would register a Windows
+	// Service instead. Unsupported OS → the step just skips.
+	section(6, 6, serviceStepLabel())
+	doService := *installService
 	if interactive {
-		doSystemd = promptYesNo("Install systemd unit + start dockmesh now?", doSystemd)
+		doService = promptYesNo("Install "+serviceName()+" + start dockmesh now?", doService)
 	}
 
 	// ====== Apply =========================================================
@@ -186,14 +197,24 @@ func runInitCmd(args []string) {
 
 	serviceStarted := false
 	var healthURL string
-	if doSystemd {
-		if runtime.GOOS != "linux" {
-			initWarn("systemd install supported on linux only — skipping")
-		} else if unit, err := installSystemdUnitFile(dd); err != nil {
-			initWarn("systemd unit install failed: " + err.Error())
-		} else {
-			initOK("systemd unit installed     " + unit)
-			serviceStarted, healthURL = enableAndStartService(cfg.HTTPAddr)
+	if doService {
+		switch runtime.GOOS {
+		case "linux":
+			if unit, err := installSystemdUnitFile(dd); err != nil {
+				initWarn("systemd unit install failed: " + err.Error())
+			} else {
+				initOK("systemd unit installed     " + unit)
+				serviceStarted, healthURL = enableAndStartService(cfg.HTTPAddr)
+			}
+		case "darwin":
+			if plist, err := installLaunchdPlist(dd); err != nil {
+				initWarn("launchd plist install failed: " + err.Error())
+			} else {
+				initOK("launchd plist installed    " + plist)
+				serviceStarted, healthURL = enableAndStartLaunchdService(cfg.HTTPAddr)
+			}
+		default:
+			initWarn("service install not supported on " + runtime.GOOS + " — start manually with 'dockmesh serve'")
 		}
 	}
 
@@ -215,14 +236,18 @@ func runInitCmd(args []string) {
 	}
 
 	title := "✔  Dockmesh is ready"
-	if doSystemd && !serviceStarted {
+	if doService && !serviceStarted {
 		title = "!  Dockmesh configured — service not running"
+		startCmd := "sudo systemctl start dockmesh"
+		if runtime.GOOS == "darwin" {
+			startCmd = "sudo launchctl kickstart -k system/dev.dockmesh.service"
+		}
 		summaryLines = append(
-			[]string{"", "    Start it with:  sudo systemctl start dockmesh", ""},
+			[]string{"", "    Start it with:  " + startCmd, ""},
 			summaryLines[1:]...,
 		)
 	}
-	if !doSystemd {
+	if !doService {
 		summaryLines = []string{
 			"",
 			"    Dashboard   " + accent(bURL),
@@ -611,6 +636,178 @@ func writeEnvFile(dataDir string, cfg *config.Config) error {
 		cfg.DBPath, cfg.StacksRoot, filepath.Dir(cfg.SecretsPath), cfg.SecretsKeyPath,
 	)
 	return os.WriteFile(envPath, []byte(body), 0o600)
+}
+
+// defaultDataDir returns the per-OS location where dockmesh stores its
+// DB, stacks, secrets, and CA material. Matches LSB on Linux, Homebrew
+// conventions on macOS. Windows is a future slice.
+func defaultDataDir() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "/usr/local/var/dockmesh"
+	case "linux":
+		return "/var/lib/dockmesh"
+	default:
+		return "/var/lib/dockmesh"
+	}
+}
+
+// serviceName returns the per-OS term for the service manager we'll
+// register with — drives both the prompt copy and the summary output.
+func serviceName() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "launchd agent"
+	default:
+		return "systemd unit"
+	}
+}
+
+func serviceStepLabel() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "launchd integration"
+	default:
+		return "systemd integration"
+	}
+}
+
+// installLaunchdPlist is the macOS counterpart to installSystemdUnitFile.
+// Writes a LaunchDaemon plist so dockmesh starts at boot even when no
+// user is logged in (that's what a Mac-mini homelab host wants). The
+// Docker-socket permission story is different on macOS — Docker Desktop
+// owns the socket and grants access to members of the `docker` group
+// (which Desktop auto-creates + joins the primary user to), OR via the
+// `unix:///var/run/docker.sock` symlink Desktop maintains.
+func installLaunchdPlist(dataDir string) (string, error) {
+	bin, err := exec.LookPath("dockmesh")
+	if err != nil {
+		bin = "/usr/local/bin/dockmesh"
+	}
+	envFile := filepath.Join(dataDir, "dockmesh.env")
+
+	// LoadDaemons live under /Library/LaunchDaemons. Needs root to write.
+	// StandardOutPath + StandardErrorPath go to macOS' system log dir.
+	// EnvironmentVariables block is the only way to feed the env file —
+	// launchd has no native EnvironmentFile directive, so we parse it
+	// manually and inject the KV pairs. For now we just set DOCKMESH_
+	// vars to sentinel "__FROM_ENV_FILE__" and expect the serve command
+	// to source dockmesh.env itself via the --env-file flag.
+	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.dockmesh.service</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>%s</string>
+        <string>serve</string>
+        <string>--env-file</string>
+        <string>%s</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>%s</string>
+
+    <key>StandardOutPath</key>
+    <string>/usr/local/var/log/dockmesh.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/usr/local/var/log/dockmesh.err</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
+`, bin, envFile, dataDir)
+
+	// Make sure the log dir exists — launchd will fail to spawn the
+	// service otherwise on a fresh macOS install.
+	_ = os.MkdirAll("/usr/local/var/log", 0o755)
+
+	target := "/Library/LaunchDaemons/dev.dockmesh.service.plist"
+	if err := os.WriteFile(target, []byte(plist), 0o644); err != nil {
+		return "", fmt.Errorf("write %s: %w (run dockmesh init with sudo)", target, err)
+	}
+	// Reference copy under data dir for diff / rollback.
+	_ = os.WriteFile(filepath.Join(dataDir, "dev.dockmesh.service.plist"), []byte(plist), 0o644)
+
+	// Launchd daemons must be root-owned for the system-wide path.
+	_ = runSilent("chown", "root:wheel", target)
+	_ = runSilent("chmod", "644", target)
+
+	return target, nil
+}
+
+// enableAndStartLaunchdService is the macOS equivalent of
+// enableAndStartService. Uses `launchctl bootstrap` (modern) rather
+// than the deprecated `launchctl load`. Then probes /api/v1/health for
+// up to 10s to confirm the service is actually serving.
+func enableAndStartLaunchdService(listen string) (bool, string) {
+	label := "system/dev.dockmesh.service"
+	plistPath := "/Library/LaunchDaemons/dev.dockmesh.service.plist"
+
+	// Bootstrap into the system domain (boots at login + on reboot).
+	// If it's already loaded, bootstrap errors — unload first to make
+	// this idempotent.
+	_ = runSilent("launchctl", "bootout", label)
+	if err := runSilent("launchctl", "bootstrap", "system", plistPath); err != nil {
+		initFail("launchctl bootstrap failed: " + err.Error())
+		return false, ""
+	}
+	// kickstart nudges the service to run immediately even if RunAtLoad
+	// didn't fire (e.g. because the current launchd session had it
+	// previously masked).
+	_ = runSilent("launchctl", "kickstart", "-k", label)
+
+	// Health probe — same logic as systemd path.
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		host = "127.0.0.1"
+		port = strings.TrimPrefix(listen, ":")
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	healthURL := fmt.Sprintf("http://%s:%s/api/v1/health", host, port)
+
+	spinnerStart("probing " + healthURL)
+	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(10 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(healthURL)
+		if err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode == 200 {
+				spinnerStop()
+				initOK("service running via launchd")
+				initOK(fmt.Sprintf("health OK                  %d", resp.StatusCode))
+				return true, healthURL
+			}
+			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+		} else {
+			lastErr = err
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	spinnerStop()
+	initWarn(fmt.Sprintf("health probe timed out after 10s — last error: %v", lastErr))
+	initWarn("check status with: sudo launchctl print " + label)
+	initWarn("logs: /usr/local/var/log/dockmesh.{log,err}")
+	return false, healthURL
 }
 
 // installSystemdUnitFile writes the unit under the data dir AND

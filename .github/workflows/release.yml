@@ -6,13 +6,18 @@
 #     without re-tagging)
 #
 # Outputs (attached to the GitHub Release)
-#   dockmesh_linux_amd64.tar.gz   — server + agent + dmctl binaries
-#   dockmesh_linux_arm64.tar.gz   — same, ARM64
-#   checksums.txt                 — SHA-256 of every tarball (BSD-style
-#                                   so `shasum -a 256 -c` also works)
+#   dockmesh_linux_amd64.tar.gz    — server + agent + dmctl binaries
+#   dockmesh_linux_arm64.tar.gz    — same, ARM64
+#   dockmesh_darwin_amd64.tar.gz   — macOS Intel
+#   dockmesh_darwin_arm64.tar.gz   — macOS Apple Silicon (M1/M2/M3…)
+#   checksums.txt                  — SHA-256 of every tarball (BSD-style
+#                                    so `shasum -a 256 -c` also works)
 #
 # The install.sh served from get.dockmesh.dev expects the asset names
 # exactly as above — don't rename without updating the installer.
+#
+# Windows server binaries are NOT shipped yet — dmctl for Windows is
+# built by the Makefile but distributed via a separate channel.
 name: release
 
 on:
@@ -37,6 +42,10 @@ jobs:
           - goos: linux
             goarch: amd64
           - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
             goarch: arm64
     steps:
       - name: checkout

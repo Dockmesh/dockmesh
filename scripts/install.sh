@@ -232,8 +232,12 @@ step 1 $TOTAL_STEPS "System checks"
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "$OS" in
-  linux) ok "OS              linux" ;;
-  darwin) die "macOS binary not shipped yet — build from source: https://github.com/$REPO" ;;
+  linux)  ok "OS              linux" ;;
+  darwin) ok "OS              macOS ($(sw_vers -productVersion 2>/dev/null || echo unknown))"
+          # Data + install paths differ on macOS — Homebrew convention.
+          # systemctl doesn't exist; launchd handles the service story.
+          : "${DOCKMESH_INSTALL_DIR:=/usr/local/bin}"
+          ;;
   *) die "unsupported OS: $OS" ;;
 esac
 
@@ -245,10 +249,14 @@ case "$ARCH_RAW" in
 esac
 
 # Distro detection — drives the "to install X, run Y" hints for any
-# missing dependency. os-release is the de-facto cross-distro standard.
+# missing dependency. os-release is the de-facto cross-distro standard
+# on Linux; macOS uses sw_vers / Homebrew instead.
 DISTRO_ID="unknown"
-DISTRO_NAME="$ARCH_RAW Linux"
-if [ -r /etc/os-release ]; then
+DISTRO_NAME="$ARCH_RAW"
+if [ "$OS" = "darwin" ]; then
+  DISTRO_ID="macos"
+  DISTRO_NAME="macOS $(sw_vers -productVersion 2>/dev/null || echo)"
+elif [ -r /etc/os-release ]; then
   # shellcheck disable=SC1091
   . /etc/os-release
   DISTRO_ID="${ID:-unknown}"
@@ -260,6 +268,8 @@ ok "Distribution    $DISTRO_NAME"
 install_hint() {
   local tool="$1"
   case "$DISTRO_ID" in
+    macos)
+      printf 'brew install %s' "$tool" ;;
     ubuntu|debian|linuxmint|pop|raspbian)
       printf 'sudo apt update && sudo apt install -y %s' "$tool" ;;
     fedora|rhel|centos|rocky|almalinux|ol)
@@ -320,13 +330,21 @@ require_tool curl
 require_tool tar
 require_tool sha256sum
 
-# systemctl is strongly recommended (90% of hosts have it), but not a
-# hard fail — the binary runs fine without systemd, we just lose auto-
-# start and the auto-restart-on-upgrade behaviour.
-if command -v systemctl >/dev/null 2>&1; then
-  ok "$(printf '%-16s %s' "systemctl" "$(systemctl --version | head -1 | awk '{print $1, $2}')")"
+# Service manager preflight — systemd on Linux, launchd on macOS.
+# Neither is a hard requirement; the binary runs fine without one,
+# we just lose auto-start + auto-restart-on-upgrade in that case.
+if [ "$OS" = "darwin" ]; then
+  if command -v launchctl >/dev/null 2>&1; then
+    ok "$(printf '%-16s %s' "launchctl" "present")"
+  else
+    warn "$(printf '%-16s %s' "launchctl" "not found — auto-start on boot will need manual setup")"
+  fi
 else
-  warn "$(printf '%-16s %s' "systemctl" "not found — auto-start on boot will need manual setup")"
+  if command -v systemctl >/dev/null 2>&1; then
+    ok "$(printf '%-16s %s' "systemctl" "$(systemctl --version | head -1 | awk '{print $1, $2}')")"
+  else
+    warn "$(printf '%-16s %s' "systemctl" "not found — auto-start on boot will need manual setup")"
+  fi
 fi
 
 # $INSTALL_DIR writable? If the script is root we're fine; else need sudo.
@@ -501,12 +519,36 @@ if [ "$IS_UPGRADE" = "1" ]; then
   ok "replaced        $INSTALL_DIR/dockmesh      ($DM_VERSION)"
 
   # ----------------------------------------------------------------
-  # Service-user migration: older installs (v0.1.3 and earlier) ran
-  # the service as root because the systemd unit had no User=
-  # directive. v0.1.4+ ships a dedicated `dockmesh` system user in
-  # the `docker` group — smaller blast radius if the HTTP/agent
-  # handlers ever get exploited. Idempotent: if already migrated,
-  # this is all no-ops.
+  # macOS upgrade path: restart the launchd service. No user-migration
+  # story here — launchd daemons run as root by default and creating
+  # a non-root dockmesh user on macOS requires dscl + is outside the
+  # standard single-user-Mac homelab pattern.
+  # ----------------------------------------------------------------
+  if [ "$OS" = "darwin" ]; then
+    if launchctl print system/dev.dockmesh.service >/dev/null 2>&1; then
+      info "restarting dev.dockmesh.service (launchd)..."
+      $USE_SUDO launchctl kickstart -k system/dev.dockmesh.service 2>/dev/null && \
+        ok "service restarted" || \
+        warn "restart failed — run manually: sudo launchctl kickstart -k system/dev.dockmesh.service"
+    fi
+    step_done
+    box "Upgraded  ${PREV_VERSION:-prev} → $DM_VERSION" \
+      "Data, stacks, and configuration are untouched." \
+      "" \
+      "Release notes:" \
+      "  https://github.com/$REPO/releases/tag/$DM_VERSION" \
+      "" \
+      "Logs: /usr/local/var/log/dockmesh.{log,err}"
+    exit 0
+  fi
+
+  # ----------------------------------------------------------------
+  # Linux upgrade path with service-user migration.
+  # Older installs (v0.1.3 and earlier) ran the service as root
+  # because the systemd unit had no User= directive. v0.1.4+ ships
+  # a dedicated `dockmesh` system user in the `docker` group —
+  # smaller blast radius if the HTTP/agent handlers ever get
+  # exploited. Idempotent: if already migrated, all no-ops.
   # ----------------------------------------------------------------
   if [ "$HAS_SYSTEMD_UNIT" = "1" ]; then
     CURRENT_USER="$(systemctl show -p User --value dockmesh 2>/dev/null)"
