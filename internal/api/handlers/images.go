@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
@@ -167,7 +168,7 @@ func (h *Handlers) RemoveImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	id := chi.URLParam(r, "id")
+	id, _ := url.PathUnescape(chi.URLParam(r, "id"))
 	force := r.URL.Query().Get("force") == "true"
 	deleted, err := target.RemoveImage(r.Context(), id, force)
 	if err != nil {

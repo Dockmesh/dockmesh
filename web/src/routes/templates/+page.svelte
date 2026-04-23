@@ -405,7 +405,7 @@
     </div>
     <div>
       <div class="flex items-center justify-between mb-1.5">
-        <label class="block text-xs font-medium text-[var(--fg-muted)]">Parameters (optional — declared placeholders are auto-discovered)</label>
+        <span class="block text-xs font-medium text-[var(--fg-muted)]">Parameters (optional — declared placeholders are auto-discovered)</span>
         <Button variant="ghost" onclick={addParam} type="button">
           <Plus class="w-3.5 h-3.5" /> Add parameter
         </Button>

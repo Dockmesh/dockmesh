@@ -47,7 +47,7 @@
   }
 
   async function loadMe() {
-    try { me = await api.auth.me() as any; } catch { /* ignore */ }
+    try { me = await api.users.me() as any; } catch { /* ignore */ }
   }
 
   async function createUser(e: Event) {
@@ -141,6 +141,13 @@
   let showRole = $state(false);
   let editingRole = $state<CustomRole | null>(null);
   let roleForm = $state({ name: '', display: '', permissions: [] as string[] });
+  let viewingRole = $state<CustomRole | null>(null);
+  let showView = $state(false);
+
+  function openViewRole(r: CustomRole) {
+    viewingRole = r;
+    showView = true;
+  }
 
   async function loadRoles() {
     rolesLoading = true;
@@ -381,7 +388,16 @@
                       <td class="px-3 py-3">
                         {#if role.builtin}<Badge variant="default">built-in</Badge>{:else}<Badge variant="info">custom</Badge>{/if}
                       </td>
-                      <td class="px-3 py-3 text-right tabular-nums">{role.permissions.length}</td>
+                      <td class="px-3 py-3 text-right tabular-nums">
+                        <button
+                          type="button"
+                          class="text-[var(--accent)] hover:underline tabular-nums"
+                          title="View permissions"
+                          onclick={() => openViewRole(role)}
+                        >
+                          {role.permissions.length}
+                        </button>
+                      </td>
                       <td class="px-3 py-3">
                         <div class="flex gap-0.5 justify-end">
                           {#if !role.builtin}
@@ -565,5 +581,63 @@
     <Button variant="primary" type="submit" form="role-form" disabled={!roleForm.display || (!editingRole && !roleForm.name)}>
       {editingRole ? 'Update' : 'Create'}
     </Button>
+  {/snippet}
+</Modal>
+
+<!-- Read-only permission view for any role (built-in or custom). Opened by
+     clicking the permission count in the roles table. -->
+<Modal
+  bind:open={showView}
+  onclose={() => (viewingRole = null)}
+  title={viewingRole ? `Permissions: ${viewingRole.display}` : ''}
+  maxWidth="max-w-lg"
+>
+  {#if viewingRole}
+    <div class="space-y-3">
+      <div class="flex items-center gap-2 text-xs text-[var(--fg-muted)]">
+        <code class="font-mono">{viewingRole.name}</code>
+        {#if viewingRole.builtin}<Badge variant="default">built-in</Badge>{:else}<Badge variant="info">custom</Badge>{/if}
+        <span class="ml-auto tabular-nums">{viewingRole.permissions.length} permission{viewingRole.permissions.length === 1 ? '' : 's'}</span>
+      </div>
+      {#if viewingRole.permissions.length === 0}
+        <p class="text-sm text-[var(--fg-muted)] px-1 py-4">This role has no permissions assigned.</p>
+      {:else if allPerms.length > 0}
+        {@const assigned = new Set(viewingRole.permissions)}
+        {@const groups = Object.entries(
+          allPerms.filter(p => assigned.has(p.name)).reduce((acc, p) => {
+            const cat = p.name.includes('.') ? p.name.split('.')[0] : 'general';
+            if (!acc[cat]) acc[cat] = [];
+            acc[cat].push(p);
+            return acc;
+          }, {} as Record<string, typeof allPerms>)
+        ).sort(([a], [b]) => a.localeCompare(b))}
+        <div class="space-y-3 max-h-80 overflow-auto">
+          {#each groups as [group, perms]}
+            <div class="border border-[var(--border)] rounded-lg">
+              <div class="px-3 py-2 bg-[var(--surface)] text-xs font-medium uppercase tracking-wider text-[var(--fg-muted)]">
+                {group}
+              </div>
+              <div class="divide-y divide-[var(--border)]">
+                {#each perms as perm}
+                  <div class="flex items-center gap-2 px-3 py-1.5 text-xs">
+                    <code class="font-mono">{perm.name}</code>
+                    <span class="text-[var(--fg-muted)] ml-auto">{perm.description}</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <ul class="space-y-1 max-h-80 overflow-auto text-xs">
+          {#each viewingRole.permissions as p}
+            <li><code class="font-mono">{p}</code></li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+  {/if}
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => { showView = false; viewingRole = null; }}>Close</Button>
   {/snippet}
 </Modal>

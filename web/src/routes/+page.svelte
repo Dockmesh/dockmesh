@@ -100,7 +100,7 @@
       // their aggregate state; we merge that onto the stacks-from-disk
       // list so stacks without any running containers still render as
       // "stopped" cards.
-      const hostName = new Map<string, string>(hostList.map((h: any) => [h.id, h.name]));
+      const hostName = new Map<string, string>(hostList.map((h: any) => [h.id, h.name] as [string, string]));
       stackCards = stacksList.map((s: any) => {
         const rollup = summary.by_stack[s.name];
         if (!rollup) {
