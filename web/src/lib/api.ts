@@ -275,6 +275,29 @@ export interface StackDependencies {
   dependents: string[];
 }
 
+// Resources that a stack delete would touch (networks / volumes / images).
+// External volumes and images still used by other projects are already
+// filtered out of the plan.
+export interface StackCleanupPlan {
+  networks: string[];
+  volumes: string[];
+  images: string[];
+  skipped_external?: string[];
+  skipped_in_use?: string[];
+}
+
+export interface StackCleanupResult {
+  networks: string[];
+  volumes: string[];
+  images: string[];
+  errors?: string[];
+}
+
+export interface StackCleanupDeleteResult {
+  cleanup?: StackCleanupResult | null;
+  cleanup_error?: string;
+}
+
 // Environment overrides (P.12.8)
 export interface StackEnvironments {
   stack_name: string;
@@ -989,8 +1012,18 @@ export const api = {
       request<{ name: string }>('/stacks', { method: 'POST', body: JSON.stringify({ name, compose, env }) }),
     update: (name: string, compose: string, env?: string) =>
       request<{ name: string }>(`/stacks/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify({ compose, env }) }),
-    delete: (name: string) =>
-      request<void>(`/stacks/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+    delete: (name: string, opts?: { stop?: boolean; networks?: boolean; volumes?: boolean; images?: boolean; force?: boolean }) => {
+      const params = new URLSearchParams();
+      if (opts?.stop) params.set('stop', 'true');
+      if (opts?.networks) params.set('networks', 'true');
+      if (opts?.volumes) params.set('volumes', 'true');
+      if (opts?.images) params.set('images', 'true');
+      if (opts?.force) params.set('force', 'true');
+      const qs = params.toString() ? '?' + params.toString() : '';
+      return request<StackCleanupDeleteResult | null>(`/stacks/${encodeURIComponent(name)}${qs}`, { method: 'DELETE' });
+    },
+    cleanupPreview: (name: string) =>
+      request<StackCleanupPlan>(`/stacks/${encodeURIComponent(name)}/cleanup-preview`),
     // Git source (P.11.11)
     getGitSource: (name: string) =>
       request<StackGitSource>(`/stacks/${encodeURIComponent(name)}/git`),

@@ -162,14 +162,60 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
+	// Optional cleanup flags. Containers are stopped iff ?stop=true;
+	// networks / volumes / images are removed per their own flag and
+	// fall through the compose.Cleanup safety filters (external volumes
+	// skipped, shared images skipped). Cleanup runs on the deployment
+	// host, not necessarily the local docker — remote hosts currently
+	// return a clear "not implemented" that we surface as a partial
+	// warning but still delete the compose file.
+	qs := r.URL.Query()
+	wantStop := qs.Get("stop") == "true"
+	wantNetworks := qs.Get("networks") == "true"
+	wantVolumes := qs.Get("volumes") == "true"
+	wantImages := qs.Get("images") == "true"
+
 	// Look up which host this stack was deployed to BEFORE deleting,
-	// so we can tell the agent to remove its local copy.
+	// so we can tell the agent to remove its local copy (and run the
+	// cleanup on the right host).
 	var deployHostID string
 	if h.Deployments != nil {
 		if d, err := h.Deployments.Get(r.Context(), name); err == nil && d != nil {
 			deployHostID = d.HostID
 		}
 	}
+
+	var cleanupResult *compose.CleanupResult
+	var cleanupErr string
+	if wantStop || wantNetworks || wantVolumes || wantImages {
+		var target host.Host
+		if h.Hosts != nil {
+			target, _ = h.Hosts.Pick(deployHostID)
+		} else if h.Docker != nil {
+			target = host.NewLocal(h.Docker)
+		}
+		if target != nil {
+			if wantStop {
+				if err := target.StopStack(r.Context(), name); err != nil {
+					cleanupErr = "stop: " + err.Error()
+				}
+			}
+			if cleanupErr == "" && (wantNetworks || wantVolumes || wantImages) {
+				res, err := target.CleanupStack(r.Context(), name, compose.CleanupOpts{
+					Networks: wantNetworks,
+					Volumes:  wantVolumes,
+					Images:   wantImages,
+				})
+				if err != nil {
+					cleanupErr = "cleanup: " + err.Error()
+				} else {
+					cleanupResult = res
+				}
+			}
+		}
+	}
+
 	if err := h.Stacks.Delete(name); err != nil {
 		writeStackError(w, err)
 		return
@@ -195,8 +241,71 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 	if deployHostID != "" {
 		h.deleteStackFromAgent(r.Context(), deployHostID, name)
 	}
-	h.audit(r, audit.ActionStackDelete, name, nil)
+	meta := map[string]string{}
+	if wantStop {
+		meta["stop"] = "true"
+	}
+	if cleanupResult != nil {
+		if len(cleanupResult.Networks) > 0 {
+			meta["networks_removed"] = strings.Join(cleanupResult.Networks, ",")
+		}
+		if len(cleanupResult.Volumes) > 0 {
+			meta["volumes_removed"] = strings.Join(cleanupResult.Volumes, ",")
+		}
+		if len(cleanupResult.Images) > 0 {
+			meta["images_removed"] = strings.Join(cleanupResult.Images, ",")
+		}
+	}
+	if cleanupErr != "" {
+		meta["cleanup_error"] = cleanupErr
+	}
+	if len(meta) == 0 {
+		meta = nil
+	}
+	h.audit(r, audit.ActionStackDelete, name, meta)
+	// If cleanup happened, surface the result so the UI can show a
+	// richer toast ("removed 2 networks, 1 volume"). Otherwise keep the
+	// legacy 204 contract.
+	if cleanupResult != nil || cleanupErr != "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"cleanup":       cleanupResult,
+			"cleanup_error": cleanupErr,
+		})
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// CleanupPreview lists project-scoped networks / volumes / images that
+// would be removed if DeleteStack were called with the corresponding
+// cleanup flags. Read-only; does not mutate.
+func (h *Handlers) CleanupPreview(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	var deployHostID string
+	if h.Deployments != nil {
+		if d, err := h.Deployments.Get(r.Context(), name); err == nil && d != nil {
+			deployHostID = d.HostID
+		}
+	}
+	var target host.Host
+	if h.Hosts != nil {
+		target, _ = h.Hosts.Pick(deployHostID)
+	} else if h.Docker != nil {
+		target = host.NewLocal(h.Docker)
+	}
+	if target == nil {
+		writeError(w, http.StatusServiceUnavailable, "no host available")
+		return
+	}
+	plan, err := target.CleanupPreview(r.Context(), name)
+	if err != nil {
+		writeError(w, http.StatusNotImplemented, err.Error())
+		return
+	}
+	if plan == nil {
+		plan = &compose.CleanupPlan{}
+	}
+	writeJSON(w, http.StatusOK, plan)
 }
 
 // DiscoverStacks lists compose projects running on the target host

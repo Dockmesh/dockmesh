@@ -1296,16 +1296,89 @@ paths:
     delete:
       operationId: stacks.delete
       tags: [stacks]
-      summary: Remove a stack's files (does NOT stop running containers)
+      summary: Remove a stack's files, optionally cleaning up docker resources
       description: |
-        Call `/stacks/{name}/stop` first if the stack is deployed. Deleting
-        the files while containers run orphans them — intentional, so
-        operators can recover by `git pull` restoring the file tree.
+        Removes `compose.yaml` from disk. Without any cleanup flags,
+        containers / networks / volumes / images keep running (they can
+        be re-adopted later). With the cleanup flags the caller chooses
+        per-category what else to remove — volumes and images are opt-in
+        because they cause data loss or re-pull cost respectively.
+
+        Safety: external volumes are never removed; images still used by
+        containers outside this project are skipped.
+      parameters:
+        - in: query
+          name: force
+          required: false
+          schema: { type: boolean, default: false }
+          description: Delete anyway when other stacks depend on this one (purges their edges).
+        - in: query
+          name: stop
+          required: false
+          schema: { type: boolean, default: false }
+          description: Stop and remove the stack's containers before deleting the files.
+        - in: query
+          name: networks
+          required: false
+          schema: { type: boolean, default: false }
+          description: Remove project-scoped networks (`com.docker.compose.project=<name>`).
+        - in: query
+          name: volumes
+          required: false
+          schema: { type: boolean, default: false }
+          description: Remove project-scoped volumes. External volumes are skipped. Data loss is unrecoverable.
+        - in: query
+          name: images
+          required: false
+          schema: { type: boolean, default: false }
+          description: Remove images used by this project. Skips images still referenced by other projects.
       responses:
-        "204": { description: Deleted. }
+        "200":
+          description: Deleted with cleanup result (only when cleanup flags are set).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cleanup: { $ref: "#/components/schemas/StackCleanupResult" }
+                  cleanup_error: { type: string }
+        "204": { description: Deleted (files only, no cleanup requested). }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Stack has dependents; re-send with `?force=true` to override.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /stacks/{name}/cleanup-preview:
+    get:
+      operationId: stacks.cleanup_preview
+      tags: [stacks]
+      summary: List project-scoped docker resources that Delete would touch
+      description: |
+        Read-only enumeration of the networks / volumes / images that
+        `DELETE /stacks/{name}` would remove if called with the matching
+        cleanup flags. External volumes and shared images are already
+        filtered out of the plan. Used by the UI to render an informed
+        confirmation dialog before the user commits.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+      responses:
+        "200":
+          description: Plan.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StackCleanupPlan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501":
+          description: Cleanup is not supported for this stack's host yet (e.g. remote agents).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /stacks/{name}/deploy:
     post:
@@ -5174,6 +5247,48 @@ components:
           type: array
           items: { type: string }
         warnings:
+          type: array
+          items: { type: string }
+
+    StackCleanupPlan:
+      type: object
+      description: |
+        Enumerates resources that would be removed by the matching
+        DELETE cleanup flags. External volumes and shared images are
+        already filtered out.
+      properties:
+        networks:
+          type: array
+          items: { type: string }
+        volumes:
+          type: array
+          items: { type: string }
+        images:
+          type: array
+          items: { type: string }
+        skipped_external:
+          type: array
+          items: { type: string }
+          description: Human-readable entries for resources intentionally skipped (e.g. external volumes).
+        skipped_in_use:
+          type: array
+          items: { type: string }
+          description: Resources skipped because they are still referenced outside this project (e.g. shared images).
+
+    StackCleanupResult:
+      type: object
+      description: Actually-removed resources from a cleanup pass.
+      properties:
+        networks:
+          type: array
+          items: { type: string }
+        volumes:
+          type: array
+          items: { type: string }
+        images:
+          type: array
+          items: { type: string }
+        errors:
           type: array
           items: { type: string }
 

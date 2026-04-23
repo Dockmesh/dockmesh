@@ -98,6 +98,13 @@ type Host interface {
 	StopStack(ctx context.Context, name string) error
 	StackStatus(ctx context.Context, name string) ([]compose.StatusEntry, error)
 
+	// Cleanup removes project-scoped networks / volumes / images for a
+	// stack. Opt-in per-category; containers must already be stopped.
+	// CleanupPreview lists what Cleanup would remove so the UI can
+	// render a confirmation dialog without actually mutating anything.
+	CleanupStack(ctx context.Context, name string, opts compose.CleanupOpts) (*compose.CleanupResult, error)
+	CleanupPreview(ctx context.Context, name string) (*compose.CleanupPlan, error)
+
 	// Scale a single service within a stack to the desired replica
 	// count (P.8). compose+env content is shipped alongside so both
 	// local and remote can parse the project. Safety validation

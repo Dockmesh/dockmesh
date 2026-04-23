@@ -480,6 +480,18 @@ func (h *RemoteHost) RollingReplace(ctx context.Context, name, composeYAML, envC
 	return nil, fmt.Errorf("rolling updates on remote hosts are not yet implemented — the agent needs a matching frame type (follow-up slice). Run the stack on the dockmesh server host for now")
 }
 
+// CleanupStack / CleanupPreview are not yet wired through the agent
+// protocol. Return a clear error so the HTTP handler can 501 instead of
+// silently no-op'ing. The UI disables the matching checkboxes when the
+// stack is on a remote host.
+func (h *RemoteHost) CleanupStack(ctx context.Context, name string, opts compose.CleanupOpts) (*compose.CleanupResult, error) {
+	return nil, fmt.Errorf("resource cleanup on remote hosts is not yet implemented — the agent needs matching frame types (follow-up slice)")
+}
+
+func (h *RemoteHost) CleanupPreview(ctx context.Context, name string) (*compose.CleanupPlan, error) {
+	return nil, fmt.Errorf("resource cleanup on remote hosts is not yet implemented — the agent needs matching frame types (follow-up slice)")
+}
+
 // Errors
 var (
 	ErrAgentOffline = errors.New("agent offline")

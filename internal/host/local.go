@@ -148,6 +148,20 @@ func (h *LocalHost) StackStatus(ctx context.Context, name string) ([]compose.Sta
 	return compose.NewService(h.cli, nil).Status(ctx, name)
 }
 
+func (h *LocalHost) CleanupStack(ctx context.Context, name string, opts compose.CleanupOpts) (*compose.CleanupResult, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return nil, ErrNoDocker
+	}
+	return compose.NewService(h.cli, nil).Cleanup(ctx, name, opts)
+}
+
+func (h *LocalHost) CleanupPreview(ctx context.Context, name string) (*compose.CleanupPlan, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return nil, ErrNoDocker
+	}
+	return compose.NewService(h.cli, nil).CleanupPreview(ctx, name)
+}
+
 // writeStagingDir creates a tmp directory containing compose.yaml and an
 // optional .env file. Used both by LocalHost.DeployStack on the central
 // server (so we go through the same parse path as the agent) and by the

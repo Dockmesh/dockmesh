@@ -149,6 +149,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Post("/stacks", h.CreateStack)
 				r.Put("/stacks/{name}", h.UpdateStack)
 				r.Delete("/stacks/{name}", h.DeleteStack)
+				r.Get("/stacks/{name}/cleanup-preview", h.CleanupPreview)
 				r.Post("/convert/run-to-compose", h.ConvertRunToCompose)
 			})
 

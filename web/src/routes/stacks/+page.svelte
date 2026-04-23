@@ -3,10 +3,11 @@
   import { goto } from '$app/navigation';
   import { Button, Modal, EmptyState, Input, Skeleton, Badge } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { stackOps } from '$lib/stores/stackOps.svelte';
   import { allowed } from '$lib/rbac';
   import { autoRefresh } from '$lib/autorefresh';
   import { hosts } from '$lib/stores/host.svelte';
-  import { Layers, Plus, FileCode2, Terminal, Search, Server, RefreshCw, Play, Square, ArrowUpDown, Clock, ArrowRightLeft, Anchor } from 'lucide-svelte';
+  import { Layers, Plus, FileCode2, Terminal, Search, Server, RefreshCw, Play, Square, ArrowUpDown, Clock, ArrowRightLeft, Anchor, Loader2 } from 'lucide-svelte';
 
   const canWrite = $derived(allowed('stack.write'));
   const canDeploy = $derived(allowed('stack.deploy'));
@@ -240,12 +241,15 @@
       })
   );
 
-  // Quick deploy/stop from the card
+  // Quick deploy/stop from the card. Guard duplicates through the global
+  // stackOps lock so a deploy in flight (even one started on the detail
+  // page) keeps the card button busy here too.
   let actionBusy = $state<string | null>(null);
   async function quickDeploy(name: string) {
+    if (stackOps.isBusy(hosts.id, name)) return;
     actionBusy = name;
     try {
-      const res = await api.stacks.deploy(name, hosts.id);
+      const res = await stackOps.run(hosts.id, name, () => api.stacks.deploy(name, hosts.id));
       toast.success('Deployed', `${res.services.length} service(s)`);
       await load();
     } catch (err) {
@@ -255,9 +259,10 @@
     }
   }
   async function quickStop(name: string) {
+    if (stackOps.isBusy(hosts.id, name)) return;
     actionBusy = name;
     try {
-      await api.stacks.stop(name, hosts.id);
+      await stackOps.run(hosts.id, name, () => api.stacks.stop(name, hosts.id));
       toast.info('Stopped', name);
       await load();
     } catch (err) {
@@ -500,7 +505,15 @@
                     <ArrowRightLeft class="w-3.5 h-3.5" />
                   </a>
                 {/if}
-                {#if s.state === 'running' || s.state === 'partial' || s.state === 'unhealthy'}
+                {#if stackOps.isBusy(hosts.id, s.name)}
+                  <span
+                    class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-[var(--color-brand-500)]/40 bg-[color-mix(in_srgb,var(--color-brand-500)_10%,transparent)] text-[var(--color-brand-400)]"
+                    title="Operation in progress"
+                  >
+                    <Loader2 class="w-3 h-3 animate-spin" />
+                    working
+                  </span>
+                {:else if s.state === 'running' || s.state === 'partial' || s.state === 'unhealthy'}
                   <button
                     class="p-1 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)] disabled:opacity-50"
                     title="Stop {s.name}"

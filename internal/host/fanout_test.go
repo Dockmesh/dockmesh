@@ -104,6 +104,12 @@ func (f *fakeHost) StopStack(context.Context, string) error { panic("no") }
 func (f *fakeHost) StackStatus(context.Context, string) ([]compose.StatusEntry, error) {
 	panic("no")
 }
+func (f *fakeHost) CleanupStack(context.Context, string, compose.CleanupOpts) (*compose.CleanupResult, error) {
+	panic("no")
+}
+func (f *fakeHost) CleanupPreview(context.Context, string) (*compose.CleanupPlan, error) {
+	panic("no")
+}
 func (f *fakeHost) ScaleService(context.Context, string, string, string, string, int) (*compose.ScaleResult, error) {
 	panic("no")
 }

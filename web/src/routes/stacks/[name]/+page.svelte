@@ -1,10 +1,11 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { api, ApiError, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments } from '$lib/api';
+  import { api, ApiError, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments, type StackCleanupPlan } from '$lib/api';
   import { Button, Card, Badge, Skeleton, Modal } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
+  import { stackOps } from '$lib/stores/stackOps.svelte';
   import { allowed } from '$lib/rbac';
   import { hosts } from '$lib/stores/host.svelte';
   import { EventStream } from '$lib/events';
@@ -29,7 +30,12 @@
   let env = $state('');
   let services = $state<Array<{ service: string; container_id: string; state: string; status: string; image: string }>>([]);
   let loading = $state(true);
+  // busy = this page kicked off an op; globalBusy = any tab (incl. this
+  // one after a re-mount) knows an op is running for this stack on this
+  // host. Disable destructive buttons on either.
   let busy = $state(false);
+  const globalBusy = $derived(stackOps.isBusy(stackHost, name));
+  const anyBusy = $derived(busy || globalBusy);
 
   let externalChange = $state<{ file: string; type: string } | null>(null);
   let dirty = $state(false);
@@ -523,9 +529,10 @@
   }
 
   async function save() {
+    if (anyBusy) return;
     busy = true;
     try {
-      await api.stacks.update(name, compose, env || undefined);
+      await stackOps.run(stackHost, name, () => api.stacks.update(name, compose, env || undefined));
       dirty = false;
       toast.success('Saved');
     } catch (err) {
@@ -536,9 +543,10 @@
   }
 
   async function deploy() {
+    if (anyBusy) return;
     busy = true;
     try {
-      const res = await api.stacks.deploy(name, stackHost);
+      const res = await stackOps.run(stackHost, name, () => api.stacks.deploy(name, stackHost));
       toast.success('Deployed', `${res.services.length} service(s) on ${hosts.selected?.name ?? 'local'}`);
       await refreshStatus();
       // If the user has opened History at least once, freshen it so
@@ -552,9 +560,10 @@
   }
 
   async function stop() {
+    if (anyBusy) return;
     busy = true;
     try {
-      await api.stacks.stop(name, stackHost);
+      await stackOps.run(stackHost, name, () => api.stacks.stop(name, stackHost));
       services = [];
       toast.info('Stopped');
     } catch (err) {
@@ -564,22 +573,72 @@
     }
   }
 
-  async function del() {
-    if (!(await confirm.ask({
-      title: `Delete stack ${name}`,
-      message: 'This removes compose.yaml from the stacks directory on disk.',
-      body: 'Running containers continue to run. Docker volumes, networks, and images are NOT removed — stop the stack first if you want the cleanup to run.',
-      confirmLabel: 'Delete',
-      danger: true
-    }))) return;
-    busy = true;
+  // Delete flow. Four orthogonal decisions, each with a different
+  // safety profile:
+  //   - stop containers      ✅ default on  (safe, just docker stop+rm)
+  //   - remove networks      ✅ default on  (project-scoped, no data)
+  //   - remove volumes       ❌ default off (data loss, unrecoverable)
+  //   - remove images        ❌ default off (re-pull cost; can be slow)
+  // Preview endpoint is called on open so the user sees exactly what
+  // would be touched (external volumes + shared images already filtered
+  // out server-side). Remote hosts currently return 501 on the preview
+  // — we catch that and disable the network/volume/image checkboxes.
+  let showDelete = $state(false);
+  let delBusy = $state(false);
+  let delStop = $state(true);
+  let delNetworks = $state(true);
+  let delVolumes = $state(false);
+  let delImages = $state(false);
+  let delPlan = $state<StackCleanupPlan | null>(null);
+  let delPlanError = $state<string | null>(null);
+  let delPlanLoading = $state(false);
+  async function openDelete() {
+    if (anyBusy) return;
+    delStop = services.length > 0;
+    delNetworks = true;
+    delVolumes = false;
+    delImages = false;
+    delPlan = null;
+    delPlanError = null;
+    showDelete = true;
+    delPlanLoading = true;
     try {
-      await api.stacks.delete(name);
-      toast.success('Deleted', name);
+      delPlan = await api.stacks.cleanupPreview(name);
+    } catch (err) {
+      delPlanError = err instanceof ApiError ? err.message : String(err);
+    } finally {
+      delPlanLoading = false;
+    }
+  }
+  async function confirmDelete() {
+    if (delBusy) return;
+    delBusy = true;
+    try {
+      const res = await stackOps.run(stackHost, name, () =>
+        api.stacks.delete(name, {
+          stop: delStop,
+          networks: delNetworks,
+          volumes: delVolumes,
+          images: delImages
+        })
+      );
+      const parts: string[] = [];
+      if (delStop && services.length > 0) parts.push(`${services.length} container${services.length === 1 ? '' : 's'}`);
+      if (res?.cleanup) {
+        if (res.cleanup.networks?.length) parts.push(`${res.cleanup.networks.length} network${res.cleanup.networks.length === 1 ? '' : 's'}`);
+        if (res.cleanup.volumes?.length) parts.push(`${res.cleanup.volumes.length} volume${res.cleanup.volumes.length === 1 ? '' : 's'}`);
+        if (res.cleanup.images?.length) parts.push(`${res.cleanup.images.length} image${res.cleanup.images.length === 1 ? '' : 's'}`);
+      }
+      toast.success('Deleted', parts.length > 0 ? `Removed: ${parts.join(', ')}` : name);
+      if (res?.cleanup_error) {
+        toast.error('Cleanup partial', res.cleanup_error);
+      }
+      showDelete = false;
       goto('/stacks');
     } catch (err) {
       toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
-      busy = false;
+    } finally {
+      delBusy = false;
     }
   }
 
@@ -614,30 +673,36 @@
           {services.filter((s) => s.state === 'running').length}/{services.length} running
         </Badge>
       {/if}
+      {#if anyBusy}
+        <span class="inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded border border-[var(--color-brand-500)]/40 bg-[color-mix(in_srgb,var(--color-brand-500)_10%,transparent)] text-[var(--color-brand-400)]">
+          <Loader2 class="w-3 h-3 animate-spin" />
+          Deploying…
+        </span>
+      {/if}
     </div>
     <div class="flex gap-2 flex-wrap">
       {#if canDeploy}
-        <Button variant="primary" onclick={deploy} loading={busy} disabled={busy}>
+        <Button variant="primary" onclick={deploy} loading={anyBusy} disabled={anyBusy}>
           <Play class="w-4 h-4" />
           Deploy
         </Button>
         {#if hosts.available.length > 1}
-          <Button variant="secondary" onclick={openMigrate} disabled={busy}>
+          <Button variant="secondary" onclick={openMigrate} disabled={anyBusy}>
             <ArrowRightLeft class="w-4 h-4" />
             Migrate
           </Button>
         {/if}
-        <Button variant="secondary" onclick={stop} disabled={busy}>
+        <Button variant="secondary" onclick={stop} disabled={anyBusy}>
           <Square class="w-4 h-4" />
           Stop
         </Button>
       {/if}
       {#if canWrite}
-        <Button variant="secondary" onclick={save} disabled={busy || !dirty}>
+        <Button variant="secondary" onclick={save} disabled={anyBusy || !dirty}>
           <Save class="w-4 h-4" />
           Save
         </Button>
-        <Button variant="danger" onclick={del} disabled={busy}>
+        <Button variant="danger" onclick={openDelete} disabled={anyBusy}>
           <Trash2 class="w-4 h-4" />
           Delete
         </Button>
@@ -1425,6 +1490,113 @@
     <Button variant="primary" onclick={saveGitSource} disabled={gitBusy || !gitForm.repo_url}>
       <LinkIcon class="w-3.5 h-3.5" />
       {gitBusy ? 'Saving…' : gitSource ? 'Save' : 'Connect & sync'}
+    </Button>
+  {/snippet}
+</Modal>
+
+<!-- Delete stack. Lets the user cherry-pick which docker resources get
+     cleaned up alongside the compose.yaml. Volume + image removal are
+     opt-in only because they cause data loss / re-pull cost. -->
+<Modal bind:open={showDelete} title="Delete stack {name}" maxWidth="max-w-lg">
+  <div class="space-y-3 text-sm">
+    <p>This removes <span class="font-mono">compose.yaml</span> from disk. Pick what else should be cleaned up:</p>
+
+    {#if delPlanError}
+      <div class="p-2.5 rounded-md border border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-500)_8%,transparent)] text-xs">
+        <div class="font-medium text-[var(--color-warning-400)]">Resource cleanup unavailable for this host</div>
+        <div class="text-[var(--fg-muted)] mt-1">{delPlanError}</div>
+        <div class="text-[var(--fg-muted)] mt-1">Only the compose.yaml will be removed. You can stop / clean up manually with <span class="font-mono">docker</span> on the host.</div>
+      </div>
+    {/if}
+
+    <!-- Containers -->
+    <label class="flex items-start gap-2 p-2.5 rounded-md border border-[var(--border)] bg-[var(--surface)] cursor-pointer">
+      <input type="checkbox" bind:checked={delStop} class="accent-[var(--color-brand-500)] mt-0.5" />
+      <span class="flex-1">
+        <span class="font-medium">Stop and remove containers</span>
+        <span class="block text-xs text-[var(--fg-muted)] mt-0.5">
+          {#if services.length > 0}
+            {services.length} container{services.length === 1 ? '' : 's'} currently running. If unchecked, they keep running after the stack is deleted (and can be re-adopted later).
+          {:else}
+            No containers are currently running for this stack.
+          {/if}
+        </span>
+      </span>
+    </label>
+
+    <!-- Networks -->
+    <label class="flex items-start gap-2 p-2.5 rounded-md border border-[var(--border)] bg-[var(--surface)] cursor-pointer {delPlanError ? 'opacity-50 pointer-events-none' : ''}">
+      <input type="checkbox" bind:checked={delNetworks} disabled={!!delPlanError} class="accent-[var(--color-brand-500)] mt-0.5" />
+      <span class="flex-1">
+        <span class="font-medium">Remove project networks</span>
+        <span class="block text-xs text-[var(--fg-muted)] mt-0.5">
+          {#if delPlanLoading}
+            Loading…
+          {:else if delPlan && delPlan.networks.length > 0}
+            Removes {delPlan.networks.length} network{delPlan.networks.length === 1 ? '' : 's'}: <span class="font-mono">{delPlan.networks.join(', ')}</span>
+          {:else}
+            No project networks to remove.
+          {/if}
+        </span>
+      </span>
+    </label>
+
+    <!-- Volumes (opt-in, danger) -->
+    <label class="flex items-start gap-2 p-2.5 rounded-md border border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-danger-500)_5%,transparent)] cursor-pointer {delPlanError ? 'opacity-50 pointer-events-none' : ''}">
+      <input type="checkbox" bind:checked={delVolumes} disabled={!!delPlanError} class="accent-[var(--color-danger-500)] mt-0.5" />
+      <span class="flex-1">
+        <span class="font-medium flex items-center gap-1.5">
+          <AlertTriangle class="w-3.5 h-3.5 text-[var(--color-danger-400)]" />
+          Remove volumes
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--color-danger-500)_15%,transparent)] text-[var(--color-danger-400)] font-normal">unrecoverable</span>
+        </span>
+        <span class="block text-xs text-[var(--fg-muted)] mt-0.5">
+          Deletes data inside these volumes <span class="font-medium">permanently</span>. External volumes are never touched.
+          {#if delPlanLoading}
+            Loading…
+          {:else if delPlan && delPlan.volumes.length > 0}
+            <span class="block mt-1">Removes {delPlan.volumes.length} volume{delPlan.volumes.length === 1 ? '' : 's'}: <span class="font-mono">{delPlan.volumes.join(', ')}</span></span>
+          {:else if delPlan}
+            <span class="block mt-1">No project-scoped volumes to remove.</span>
+          {/if}
+        </span>
+      </span>
+    </label>
+    {#if delVolumes && delPlan && delPlan.volumes.length > 0}
+      <div class="px-2.5 py-2 rounded-md bg-[color-mix(in_srgb,var(--color-danger-500)_12%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_40%,transparent)] text-xs text-[var(--color-danger-400)] flex items-start gap-2">
+        <AlertTriangle class="w-4 h-4 shrink-0 mt-0.5" />
+        <span>
+          You are about to <span class="font-medium">permanently delete</span> the data in {delPlan.volumes.length} volume{delPlan.volumes.length === 1 ? '' : 's'}. This cannot be undone — no snapshot, no trash, no recovery. Take a backup first if the data matters.
+        </span>
+      </div>
+    {/if}
+
+    <!-- Images (opt-in, lighter warning) -->
+    <label class="flex items-start gap-2 p-2.5 rounded-md border border-[var(--border)] bg-[var(--surface)] cursor-pointer {delPlanError ? 'opacity-50 pointer-events-none' : ''}">
+      <input type="checkbox" bind:checked={delImages} disabled={!!delPlanError} class="accent-[var(--color-brand-500)] mt-0.5" />
+      <span class="flex-1">
+        <span class="font-medium">Remove images</span>
+        <span class="block text-xs text-[var(--fg-muted)] mt-0.5">
+          {#if delPlanLoading}
+            Loading…
+          {:else if delPlan && delPlan.images.length > 0}
+            Removes {delPlan.images.length} image{delPlan.images.length === 1 ? '' : 's'}: <span class="font-mono break-all">{delPlan.images.join(', ')}</span>
+          {:else if delPlan}
+            No images to remove (or all are shared with other projects).
+          {/if}
+          {#if delPlan && delPlan.skipped_in_use && delPlan.skipped_in_use.length > 0}
+            <span class="block mt-1">Skipped (still used elsewhere): {delPlan.skipped_in_use.length} image{delPlan.skipped_in_use.length === 1 ? '' : 's'}</span>
+          {/if}
+          <span class="block mt-1">Next deploy re-pulls them — can be slow on metered connections.</span>
+        </span>
+      </span>
+    </label>
+  </div>
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (showDelete = false)} disabled={delBusy}>Cancel</Button>
+    <Button variant="danger" onclick={confirmDelete} loading={delBusy} disabled={delBusy}>
+      <Trash2 class="w-4 h-4" />
+      Delete
     </Button>
   {/snippet}
 </Modal>
