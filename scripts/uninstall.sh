@@ -125,10 +125,16 @@ DATA_DIR_DEFAULT="/var/lib/dockmesh"
 # similar at install time.
 DATA_DIR="$DATA_DIR_DEFAULT"
 ASSET_DIR=""
+# The detection list covers the platform defaults plus /data (a common
+# operator override on VMs where /data is a separate, expandable
+# volume — install.sh / dockmesh init both accept --data-dir /data).
+# Without /data here, an operator who ran with that flag would see
+# "skipping for safety" and the install would survive uninstall.
 for candidate in \
   "/var/lib/dockmesh/dockmesh.env" \
   "/usr/local/var/dockmesh/dockmesh.env" \
-  "/opt/dockmesh/dockmesh.env"
+  "/opt/dockmesh/dockmesh.env" \
+  "/data/dockmesh.env"
 do
   if [ -f "$candidate" ]; then
     DATA_DIR="$(dirname "$candidate")"
