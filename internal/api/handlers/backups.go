@@ -110,6 +110,32 @@ func (h *Handlers) DeleteBackupJob(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// AcknowledgeBackupJobReview clears the needs_review flag on a backup
+// job. Mode is taken from the URL: "keep" preserves the job, "disable"
+// also flips enabled=0 so the scheduler stops firing it.
+func (h *Handlers) AcknowledgeBackupJobReview(w http.ResponseWriter, r *http.Request) {
+	if h.Backups == nil {
+		writeError(w, http.StatusServiceUnavailable, "backups not configured")
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	mode := chi.URLParam(r, "mode")
+	if mode != "keep" && mode != "disable" {
+		writeError(w, http.StatusBadRequest, "mode must be 'keep' or 'disable'")
+		return
+	}
+	if err := h.Backups.AcknowledgeReview(r.Context(), id, mode); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, audit.ActionStackUpdate, "backup:"+strconv.FormatInt(id, 10), map[string]string{"review": mode})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handlers) RunBackupJob(w http.ResponseWriter, r *http.Request) {
 	if h.Backups == nil {
 		writeError(w, http.StatusServiceUnavailable, "backups not configured")
@@ -171,4 +197,32 @@ func (h *Handlers) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(r, audit.ActionContainerRollback, "backup:restore:"+strconv.FormatInt(id, 10), map[string]string{"dest": req.DestVolume})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// RestoreStackBackup is the explicit stack-restore entry point. Takes
+// an optional target stack name (defaults to the source name in the
+// run) and writes the archive's stack/* files into /stacks/<name>/
+// plus untars any volumes/<vol>.tar.gz into matching docker volumes.
+// Returns a structured report so the UI can show what happened.
+func (h *Handlers) RestoreStackBackup(w http.ResponseWriter, r *http.Request) {
+	if h.Backups == nil {
+		writeError(w, http.StatusServiceUnavailable, "backups not configured")
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req struct {
+		TargetStack string `json:"target_stack,omitempty"`
+	}
+	_ = decodeJSON(r, &req) // body is optional — empty means "same name as source"
+	report, err := h.Backups.RestoreStack(r.Context(), id, req.TargetStack)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, audit.ActionContainerRollback, "backup:restore-stack:"+strconv.FormatInt(id, 10), map[string]string{"target": report.StackName})
+	writeJSON(w, http.StatusOK, report)
 }

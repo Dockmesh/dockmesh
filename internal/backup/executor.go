@@ -122,20 +122,14 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 	return e.store.getRun(ctx, runID)
 }
 
-// streamSources writes one tar stream per source into w. For multiple
-// sources we emit a top-level tar that contains per-source nested
-// archives — each inner stream is itself a gzipped tar from the helper.
-//
-// For a single source we just stream its tar directly so simple jobs
-// stay one well-known archive at the destination. hostTarget is the
-// resolved host (local docker or remote agent) for the job.
+// streamSources writes the tar stream for the (single) source into w.
+// validateJob enforces exactly one source per job at the API boundary,
+// so multi-source jobs never reach this point — they're rejected on
+// CreateJob/UpdateJob with a clear "one source per job" error. P.13.5.
 func (e *Executor) streamSources(ctx context.Context, sources []Source, hostTarget hostBackupTarget, w io.Writer) (int64, error) {
 	var total int64
-	if len(sources) == 0 {
-		return 0, fmt.Errorf("no sources configured")
-	}
-	if len(sources) > 1 {
-		return 0, fmt.Errorf("multiple sources per job not supported yet — create one job per source")
+	if len(sources) != 1 {
+		return 0, fmt.Errorf("expected exactly one source, got %d (validateJob should have rejected this)", len(sources))
 	}
 
 	src := sources[0]

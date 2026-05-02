@@ -7,7 +7,7 @@
   import { allowed } from '$lib/rbac';
   import { autoRefresh } from '$lib/autorefresh';
   import { hosts } from '$lib/stores/host.svelte';
-  import { Layers, Plus, FileCode2, Terminal, Search, Server, RefreshCw, Play, Square, ArrowUpDown, Clock, ArrowRightLeft, Anchor, Loader2 } from 'lucide-svelte';
+  import { Layers, Plus, FileCode2, Terminal, Search, Server, RefreshCw, Play, Square, ArrowUpDown, Clock, ArrowRightLeft, Anchor, Loader2, AlertTriangle } from 'lucide-svelte';
 
   const canWrite = $derived(allowed('stack.write'));
   const canDeploy = $derived(allowed('stack.deploy'));
@@ -29,6 +29,11 @@
     hosts: Array<{ id: string; name: string }>;
     // P.7: database-backed deployment association (host + status).
     deployment?: StackDeployment;
+    // P.13.1: needs_recovery means compose.yaml is missing/empty on disk
+    // but we still know about the stack (deployment row, or running
+    // containers labelled with the project). UI groups these in a
+    // "needs attention" banner so they aren't silently lost.
+    status?: 'ok' | 'needs_recovery';
   }
 
   let stackCards = $state<StackCard[]>([]);
@@ -116,7 +121,8 @@
             status: c.Status ?? ''
           })),
           hosts: [...seenHost.entries()].map(([id, name]) => ({ id, name })),
-          deployment: s.deployment
+          deployment: s.deployment,
+          status: s.status ?? 'ok'
         };
       });
     } catch (err) {
@@ -212,8 +218,20 @@
     unhealthy: stackCards.filter((s) => s.state === 'unhealthy' || s.state === 'partial').length
   });
 
+  // Stacks where compose.yaml is missing/empty but a deployment row
+  // (or running containers) still exist. Surfaced separately so the
+  // operator notices and decides what to do — recover, restore, or
+  // discard. Hidden in the regular grid so they don't render as
+  // "stopped" cards with a Play button.
+  const needsRecovery = $derived(stackCards.filter((s) => s.status === 'needs_recovery'));
+
   const visible = $derived(
     stackCards
+      // needs_recovery stacks have their own banner and detail-page
+      // recovery panel — keep them out of the regular grid so they
+      // don't render as misleading "stopped" cards with a Play button
+      // that would attempt to deploy nothing.
+      .filter((s) => s.status !== 'needs_recovery')
       .filter((s) => {
         if (filter === 'all') return true;
         if (filter === 'unhealthy') return s.state === 'unhealthy' || s.state === 'partial';
@@ -331,6 +349,47 @@
       {/if}
     </div>
   </div>
+
+  <!-- Needs-attention section: stacks where compose.yaml is missing
+       on disk but the deployment record (or running containers) are
+       still around. The operator picks per-stack whether to recover,
+       restore, or discard from the stack-detail page. -->
+  {#if needsRecovery.length > 0}
+    <div class="rounded-lg border border-[color-mix(in_srgb,var(--color-warning-500)_50%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-500)_8%,transparent)] p-4 space-y-3">
+      <div class="flex items-start gap-3">
+        <AlertTriangle class="w-4 h-4 text-[var(--color-warning-400)] mt-0.5 shrink-0" />
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-medium text-[var(--color-warning-400)]">
+            {needsRecovery.length} stack{needsRecovery.length === 1 ? '' : 's'} need{needsRecovery.length === 1 ? 's' : ''} attention
+          </div>
+          <p class="text-xs text-[var(--fg-muted)] mt-0.5">
+            The compose file is missing or empty on disk, but a deployment record (or running containers carrying the project label) still exist.
+            Open each stack to recover from the running containers, restore from a backup, or remove the dockmesh record.
+          </p>
+        </div>
+      </div>
+      <div class="space-y-2">
+        {#each needsRecovery as s (s.name)}
+          <a
+            href="/stacks/{encodeURIComponent(s.name)}"
+            class="flex items-center justify-between gap-3 rounded-md bg-[var(--bg-card)] border border-[var(--border)] px-3 py-2 hover:border-[var(--color-warning-500)] transition-colors"
+          >
+            <div class="min-w-0">
+              <div class="font-mono text-sm truncate">{s.name}</div>
+              <div class="text-xs text-[var(--fg-muted)] truncate">
+                {#if s.deployment}
+                  Last deployed {fmtRelTime(s.deployment.deployed_at)} on {s.deployment.host_name || s.deployment.host_id}
+                {:else}
+                  Containers found via project label
+                {/if}
+              </div>
+            </div>
+            <span class="text-xs text-[var(--color-warning-400)] font-medium shrink-0">Open recovery →</span>
+          </a>
+        {/each}
+      </div>
+    </div>
+  {/if}
 
   <!-- Discovered (unmanaged) section -->
   {#if canAdopt && discoveredStacks.length > 0}

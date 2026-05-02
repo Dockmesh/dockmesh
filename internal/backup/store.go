@@ -22,7 +22,9 @@ func (s *store) listJobs(ctx context.Context) ([]Job, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, COALESCE(host_id, ''), target_type, target_config, sources, schedule,
 		       retention_count, retention_days, encrypt, pre_hooks, post_hooks,
-		       enabled, last_run_at, next_run_at, created_at, updated_at
+		       enabled, COALESCE(needs_review, 0), COALESCE(review_reason, ''),
+		       COALESCE(review_acked, 0),
+		       last_run_at, next_run_at, created_at, updated_at
 		FROM backup_jobs ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -43,7 +45,9 @@ func (s *store) getJob(ctx context.Context, id int64) (*Job, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, COALESCE(host_id, ''), target_type, target_config, sources, schedule,
 		       retention_count, retention_days, encrypt, pre_hooks, post_hooks,
-		       enabled, last_run_at, next_run_at, created_at, updated_at
+		       enabled, COALESCE(needs_review, 0), COALESCE(review_reason, ''),
+		       COALESCE(review_acked, 0),
+		       last_run_at, next_run_at, created_at, updated_at
 		FROM backup_jobs WHERE id = ?`, id)
 	j, err := scanJob(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -204,17 +208,20 @@ type rowScanner interface {
 func scanJob(r rowScanner) (*Job, error) {
 	var j Job
 	var tcfg, srcs, pre, post string
-	var enabled, encrypt int
+	var enabled, encrypt, needsReview, reviewAcked int
 	var lastRun, nextRun sql.NullTime
 	if err := r.Scan(
 		&j.ID, &j.Name, &j.HostID, &j.TargetType, &tcfg, &srcs, &j.Schedule,
 		&j.RetentionCount, &j.RetentionDays, &encrypt, &pre, &post,
-		&enabled, &lastRun, &nextRun, &j.CreatedAt, &j.UpdatedAt,
+		&enabled, &needsReview, &j.ReviewReason, &reviewAcked,
+		&lastRun, &nextRun, &j.CreatedAt, &j.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
 	j.Enabled = enabled == 1
 	j.Encrypt = encrypt == 1
+	j.NeedsReview = needsReview == 1
+	j.ReviewAcked = reviewAcked == 1
 	_ = json.Unmarshal([]byte(tcfg), &j.TargetConfig)
 	_ = json.Unmarshal([]byte(srcs), &j.Sources)
 	_ = json.Unmarshal([]byte(pre), &j.PreHooks)
@@ -235,4 +242,24 @@ func boolInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// markJobNeedsReview flags a job for operator review with a reason.
+// Used by MarkAutoCreatedJobsForReview when a legacy default job is
+// found on an existing install. P.13.2.
+func (s *store) markJobNeedsReview(ctx context.Context, id int64, reason string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE backup_jobs SET needs_review = 1, review_reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		reason, id)
+	return err
+}
+
+// clearJobReview drops the review flag and sets review_acked so the
+// boot-time migration leaves this job alone forever. Called when the
+// operator picks Keep or Disable in the UI.
+func (s *store) clearJobReview(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE backup_jobs SET needs_review = 0, review_reason = '', review_acked = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		id)
+	return err
 }

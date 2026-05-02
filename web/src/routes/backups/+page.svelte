@@ -34,7 +34,10 @@
   let jS3SecretKey = $state('');
   let jS3Region = $state('');
   let jS3SSL = $state(true);
-  let jSources = $state<Array<{ type: string; name: string }>>([{ type: 'volume', name: '' }]);
+  // P.13.5: jobs accept exactly one source. Start empty so the chip
+  // picker drives the choice rather than the legacy "row of empty
+  // type+name fields" UX. Submit stays disabled until a chip is on.
+  let jSources = $state<Array<{ type: string; name: string }>>([]);
   let jSchedule = $state('0 3 * * *');
   let jRetentionCount = $state(7);
   let jRetentionDays = $state(0);
@@ -298,7 +301,7 @@
   function resetForm() {
     jName = ''; jTargetType = 'local'; jLocalPath = './data/backups';
     jS3Endpoint = ''; jS3Bucket = ''; jS3AccessKey = ''; jS3SecretKey = ''; jS3Region = ''; jS3SSL = true;
-    jSources = [{ type: 'volume', name: '' }]; jSchedule = '0 3 * * *';
+    jSources = []; jSchedule = '0 3 * * *';
     jRetentionCount = 7; jRetentionDays = 0; jEncrypt = false; jEnabled = true;
     jPreHooks = []; jPostHooks = []; editing = null;
   }
@@ -317,8 +320,11 @@
     } else {
       jLocalPath = cfg.path ?? './data/backups';
     }
-    jSources = j.sources.map(s => ({ type: s.type, name: s.name }));
-    if (jSources.length === 0) jSources = [{ type: 'volume', name: '' }];
+    // P.13.5: keep at most one source on edit. Older multi-source
+    // jobs that pre-date the validation are reduced to their first
+    // source on the way into the form so save round-trips don't
+    // strip data the operator can still see in the dialog.
+    jSources = j.sources.length > 0 ? [{ type: j.sources[0].type, name: j.sources[0].name }] : [];
     jPreHooks = (j.pre_hooks ?? []).map(h => ({ container: h.container, cmd: h.cmd.join(' ') }));
     jPostHooks = (j.post_hooks ?? []).map(h => ({ container: h.container, cmd: h.cmd.join(' ') }));
     showJob = true;
@@ -352,6 +358,16 @@
     } catch (err) { toast.error('Save failed', err instanceof ApiError ? err.message : (err as Error).message); }
   }
 
+  async function ackReview(j: BackupJob, mode: 'keep' | 'disable') {
+    try {
+      await api.backups.acknowledgeReview(j.id, mode);
+      toast.success(mode === 'keep' ? 'Marked as reviewed' : 'Disabled', j.name);
+      await loadJobs();
+    } catch (err) {
+      toast.error('Failed', err instanceof ApiError ? err.message : (err as Error).message);
+    }
+  }
+
   async function deleteJob(j: BackupJob) {
     if (!(await confirm.ask({ title: 'Delete backup job', message: `Delete backup job "${j.name}"?`, body: 'Existing backup runs are kept. The schedule is removed and no new runs will be triggered.', confirmLabel: 'Delete', danger: true }))) return;
     try { await api.backups.deleteJob(j.id); toast.success('Deleted'); await loadJobs(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
@@ -372,42 +388,65 @@
 
   function openRestore(r: BackupRun) {
     restoreRun = r; restoreConfirm = '';
-    const vol = r.sources.find(s => s.type === 'volume');
-    restoreVolume = vol ? `${vol.name}-restored` : '';
+    // Stack-typed runs default to "restore as same name". Volume runs
+    // default to "<source>-restored" — the legacy non-destructive
+    // pattern. The UI already shows the appropriate label per kind.
+    const stackSrc = r.sources.find(s => s.type === 'stack');
+    if (stackSrc) {
+      restoreVolume = stackSrc.name;
+    } else {
+      const vol = r.sources.find(s => s.type === 'volume');
+      restoreVolume = vol ? `${vol.name}-restored` : '';
+    }
     showRestore = true;
   }
   async function doRestore() {
     if (!restoreRun || restoreConfirm !== restoreVolume) return;
-    try { await api.backups.restore(restoreRun.id, restoreVolume.trim()); toast.success('Restored', restoreVolume); showRestore = false; } catch (err) { toast.error('Restore failed', err instanceof ApiError ? err.message : undefined); }
+    const isStack = restoreRun.sources.some(s => s.type === 'stack');
+    try {
+      if (isStack) {
+        const res = await api.backups.restoreStack(restoreRun.id, restoreVolume.trim());
+        toast.success('Stack restored', `${res.files_restored.length} file(s), ${res.volumes_restored.length} volume(s) into ${res.stack_name}`);
+      } else {
+        await api.backups.restore(restoreRun.id, restoreVolume.trim());
+        toast.success('Restored', restoreVolume);
+      }
+      showRestore = false;
+    } catch (err) {
+      toast.error('Restore failed', err instanceof ApiError ? err.message : undefined);
+    }
   }
 
   function addSource() { jSources = [...jSources, { type: 'volume', name: '' }]; }
   function removeSource(i: number) { jSources = jSources.filter((_, idx) => idx !== i); }
 
-  // Chip-picker helpers — keep jSources' {type, name} shape so the
-  // saveJob serialiser stays untouched. Just drive it from clicks.
+  // Chip-picker helpers. P.13.5: exactly one source per job. The
+  // server rejects multi-source payloads, so picking any chip
+  // replaces the current selection rather than appending. Re-clicking
+  // the active chip clears the selection (so submit stays disabled
+  // until the user picks something fresh).
   function toggleSystemSource() {
     const has = jSources.some(s => s.type === 'system');
     if (has) {
-      jSources = jSources.filter(s => s.type !== 'system');
+      jSources = [];
     } else {
-      jSources = [...jSources.filter(s => s.type !== 'system'), { type: 'system', name: 'dockmesh' }];
+      jSources = [{ type: 'system', name: 'dockmesh' }];
     }
   }
   function toggleStackSource(name: string) {
-    const idx = jSources.findIndex(s => s.type === 'stack' && s.name === name);
-    if (idx >= 0) {
-      jSources = jSources.filter((_, i) => i !== idx);
+    const has = jSources.some(s => s.type === 'stack' && s.name === name);
+    if (has) {
+      jSources = [];
     } else {
-      jSources = [...jSources, { type: 'stack', name }];
+      jSources = [{ type: 'stack', name }];
     }
   }
   function toggleVolumeSource(name: string) {
-    const idx = jSources.findIndex(s => s.type === 'volume' && s.name === name);
-    if (idx >= 0) {
-      jSources = jSources.filter((_, i) => i !== idx);
+    const has = jSources.some(s => s.type === 'volume' && s.name === name);
+    if (has) {
+      jSources = [];
     } else {
-      jSources = [...jSources, { type: 'volume', name }];
+      jSources = [{ type: 'volume', name }];
     }
   }
   function addPreHook() { jPreHooks = [...jPreHooks, { container: '', cmd: '' }]; }
@@ -455,8 +494,49 @@
     {#if loading && jobs.length === 0}
       <Card><Skeleton class="m-5" width="70%" height="3rem" /></Card>
     {:else if jobs.length === 0}
-      <Card><EmptyState icon={Archive} title="No backup jobs" description="Create a job to snapshot volumes or stacks on a schedule." /></Card>
+      <Card>
+        <EmptyState
+          icon={Archive}
+          title="No backups configured"
+          description="Dockmesh does not back up anything by default — you choose what to protect. Create a job to snapshot one or more stacks, volumes, or the dockmesh server itself, on a schedule, to a target of your choice."
+        />
+        <div class="px-5 pb-5 text-xs text-[var(--fg-muted)] max-w-prose">
+          A reasonable starting point: a daily backup of the <span class="font-mono">dockmesh-system</span> source (DB + stacks + CA) to an off-host target like SFTP or S3, plus per-stack volume backups for anything stateful you can't lose. The default-everything-to-local-disk job that older versions of dockmesh installed automatically is no longer there — local-only backups don't survive a host failure, and silently filling up the disk surprised people.
+        </div>
+      </Card>
     {:else}
+      {@const reviewJobs = jobs.filter(j => j.needs_review)}
+      {#if reviewJobs.length > 0}
+        <Card class="border-[color-mix(in_srgb,var(--color-warning-500)_45%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-500)_6%,transparent)]">
+          <div class="p-4 space-y-3">
+            <div class="flex items-start gap-2.5">
+              <span class="text-[var(--color-warning-400)] mt-0.5">⚠</span>
+              <div class="flex-1">
+                <div class="font-medium text-[var(--color-warning-400)]">
+                  {reviewJobs.length} auto-created backup job{reviewJobs.length === 1 ? '' : 's'} need{reviewJobs.length === 1 ? 's' : ''} your review
+                </div>
+                <div class="text-xs text-[var(--fg-muted)] mt-1">
+                  Earlier dockmesh versions silently created a daily local backup. The default behaviour changed in v0.3 — backups are now opt-in. Confirm whether you want to keep these or disable them. <span class="font-medium">Keep</span> leaves the job running as-is. <span class="font-medium">Disable</span> stops the schedule but keeps the job + its history so you can re-enable later.
+                </div>
+              </div>
+            </div>
+            <div class="space-y-2">
+              {#each reviewJobs as j (j.id)}
+                <div class="flex items-start justify-between gap-3 p-2.5 rounded-md bg-[var(--surface)] border border-[var(--border)]">
+                  <div class="min-w-0 text-sm">
+                    <div class="font-mono">{j.name}</div>
+                    <div class="text-xs text-[var(--fg-muted)] mt-0.5 max-w-prose">{j.review_reason}</div>
+                  </div>
+                  <div class="flex gap-2 shrink-0">
+                    <Button size="sm" variant="secondary" onclick={() => ackReview(j, 'keep')}>Keep</Button>
+                    <Button size="sm" variant="danger" onclick={() => ackReview(j, 'disable')}>Disable</Button>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          </div>
+        </Card>
+      {/if}
       <Card>
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
@@ -777,14 +857,17 @@
       </div>
     </fieldset>
 
-    <!-- Sources — chip-picker. Multi-select by clicking. The underlying
-         jSources array stays the same shape (type+name) so saveJob is
-         untouched; we just drive it from chip toggles instead of a
-         per-row type+name form. Far faster to configure a "backup
-         postgres-primary + redis-cache + whole server" job in one
-         glance. -->
+    <!-- Sources — chip-picker. P.13.5: exactly one source per job.
+         Picking any chip replaces the current selection rather than
+         adding to it. Operators who want to back up several stacks /
+         volumes / the whole system create one job per source — keeps
+         retention, schedule and restore semantics 1:1 with the job
+         entry the operator sees in the list. -->
     <fieldset class="space-y-3">
       <legend class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">What to back up</legend>
+      <p class="text-xs text-[var(--fg-muted)]">
+        Pick one — the whole dockmesh server, a single stack, or a single docker volume. For multiple things, create one job per source.
+      </p>
 
       <!-- Full-server toggle (one click covers DB + stacks dir + data/). -->
       <button
@@ -1073,7 +1156,7 @@
 
   {#snippet footer()}
     <Button variant="secondary" onclick={() => (showJob = false)}>Cancel</Button>
-    <Button variant="primary" type="submit" form="backup-form" disabled={!jName.trim() || jSources.every(s => !s.name.trim())}>
+    <Button variant="primary" type="submit" form="backup-form" disabled={!jName.trim() || jSources.length !== 1 || !jSources[0].name.trim()}>
       {editing ? 'Save' : 'Create'}
     </Button>
   {/snippet}

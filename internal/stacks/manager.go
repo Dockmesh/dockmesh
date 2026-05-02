@@ -49,6 +49,13 @@ type Detail struct {
 	Name    string `json:"name"`
 	Compose string `json:"compose"`
 	Env     string `json:"env,omitempty"`
+	// Status is "ok" when compose.yaml exists and is non-empty.
+	// "needs_recovery" means the stack record exists (filesystem entry
+	// or deployment row) but the compose file is empty / missing — the
+	// UI should offer the recovery flow instead of an empty editor.
+	// Empty/omitted on Detail means "ok" for back-compat with existing
+	// API consumers.
+	Status string `json:"status,omitempty"`
 }
 
 var (
@@ -293,7 +300,33 @@ func (m *Manager) Get(name string) (*Detail, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Detail{Name: name, Compose: string(compose), Env: envStr}, nil
+	d := &Detail{Name: name, Compose: string(compose), Env: envStr}
+	// Detect the empty/0-byte compose case the UI used to render as a
+	// blank editor. Empty whitespace counts as needs_recovery too —
+	// nobody intentionally writes a compose with only whitespace.
+	if strings.TrimSpace(d.Compose) == "" {
+		d.Status = "needs_recovery"
+	}
+	return d, nil
+}
+
+// GetOrPlaceholder returns a Detail for a stack name even when the
+// compose file is missing or unreadable, as long as there's external
+// evidence the stack exists (handler decides what counts — usually a
+// deployment row or running containers carrying the project label).
+// Used by the recovery flow to render the stack-detail page when
+// Get would otherwise 404.
+func (m *Manager) GetOrPlaceholder(name string) *Detail {
+	if err := ValidateName(name); err != nil {
+		return nil
+	}
+	d, err := m.Get(name)
+	if err == nil {
+		return d
+	}
+	// Compose file missing entirely. Return an empty placeholder so the
+	// UI can render the recovery panel rather than a 404.
+	return &Detail{Name: name, Status: "needs_recovery"}
 }
 
 // readEnv prefers the encrypted `.env.age` when it exists (and decrypts
@@ -390,12 +423,22 @@ func (m *Manager) Update(name, compose, env string) (*Detail, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(compose), 0o644); err != nil {
+	composePath := filepath.Join(dir, "compose.yaml")
+	if err := os.WriteFile(composePath, []byte(compose), 0o644); err != nil {
 		return nil, err
 	}
 	if err := m.writeEnv(dir, env); err != nil {
 		return nil, err
 	}
+	// Refresh the in-memory registry. If the entry was dropped by an
+	// fsnotify "removed" event before this Update (e.g. the recovery
+	// flow rewriting a vanished compose.yaml), List() would otherwise
+	// keep returning empty until the next process restart. Cheap to
+	// re-set on every Update — keeps cache and disk in lockstep.
+	m.mu.Lock()
+	m.stacks[name] = &Stack{Name: name, ComposePath: composePath}
+	m.mu.Unlock()
+	_ = m.watcher.Add(dir)
 	return &Detail{Name: name, Compose: compose, Env: env}, nil
 }
 

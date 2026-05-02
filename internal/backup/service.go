@@ -167,6 +167,20 @@ func (s *Service) ListRuns(ctx context.Context, limit int) ([]Run, error) {
 	return s.store.listRuns(ctx, limit)
 }
 
+// RunSourceType returns the source type ("system" | "stack" | "volume")
+// of the run's first source. Used by the verify handler to dispatch
+// to the right verifier without reading the archive twice.
+func (s *Service) RunSourceType(ctx context.Context, runID int64) (string, error) {
+	run, err := s.store.getRun(ctx, runID)
+	if err != nil {
+		return "", err
+	}
+	if len(run.Sources) == 0 {
+		return "", errors.New("run has no sources")
+	}
+	return run.Sources[0].Type, nil
+}
+
 // ReadRun opens the archive for a saved run and returns a reader.
 // Caller must Close() it. If the run was encrypted, the reader is
 // wrapped so the consumer sees plaintext. Used by the verify-by-run
@@ -253,9 +267,87 @@ func (s *Service) Restore(ctx context.Context, runID int64, destVolume string) e
 	}
 
 	if len(run.Sources) > 0 && run.Sources[0].Type == "stack" {
-		return errors.New("stack restore not implemented yet — extract the .tar.gz manually")
+		// destVolume is reused for stack restores: it carries the
+		// target stack name (the volumes inside the archive are
+		// named per their original project, so the caller picks
+		// "restore as stack X"). When empty, fall back to the
+		// source name from the run.
+		stackName := destVolume
+		if stackName == "" && len(run.Sources) > 0 {
+			stackName = run.Sources[0].Name
+		}
+		if stackName == "" {
+			return errors.New("stack restore: target stack name is required")
+		}
+		return s.restoreStack(ctx, stackName, reader)
 	}
 	return untarVolume(ctx, s.docker, destVolume, reader)
+}
+
+// StackRestoreReport tells the caller what actually happened on a stack
+// restore — files extracted, volumes restored, anything skipped — so
+// the UI can show a list rather than a flat success/fail.
+type StackRestoreReport struct {
+	StackName       string   `json:"stack_name"`
+	FilesRestored   []string `json:"files_restored"`
+	VolumesRestored []string `json:"volumes_restored"`
+	Warnings        []string `json:"warnings,omitempty"`
+}
+
+// RestoreStack is the explicit entry point for a stack-typed run. Same
+// shape as Restore but always returns the structured report. Used by
+// the new POST /backups/runs/{id}/restore-stack endpoint and by the
+// stack-detail recovery panel ("Restore from last backup" card).
+func (s *Service) RestoreStack(ctx context.Context, runID int64, targetStack string) (*StackRestoreReport, error) {
+	run, err := s.store.getRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if run.Status != "success" {
+		return nil, errors.New("can only restore from a successful run")
+	}
+	if len(run.Sources) == 0 || run.Sources[0].Type != "stack" {
+		return nil, errors.New("run is not a stack backup")
+	}
+	if targetStack == "" {
+		targetStack = run.Sources[0].Name
+	}
+	job, err := s.store.getJob(ctx, run.JobID)
+	if err != nil {
+		return nil, err
+	}
+	target, err := buildTarget(job.TargetType, job.TargetConfig)
+	if err != nil {
+		return nil, err
+	}
+	src, err := target.Read(ctx, run.TargetPath)
+	if err != nil {
+		return nil, err
+	}
+	defer src.Close()
+
+	var reader io.Reader = src
+	if run.Encrypted {
+		dec, err := wrapDecrypt(src, s.secrets)
+		if err != nil {
+			return nil, err
+		}
+		defer dec.Close()
+		reader = dec
+	}
+
+	report := &StackRestoreReport{StackName: targetStack}
+	if err := s.restoreStackInto(ctx, targetStack, reader, report); err != nil {
+		return report, err
+	}
+	return report, nil
+}
+
+// restoreStack is the legacy single-error wrapper kept around for the
+// old Restore() entry point. New code should call RestoreStack.
+func (s *Service) restoreStack(ctx context.Context, stackName string, reader io.Reader) error {
+	report := &StackRestoreReport{StackName: stackName}
+	return s.restoreStackInto(ctx, stackName, reader, report)
 }
 
 func buildTarget(typ string, cfg any) (targets.Target, error) {
@@ -283,6 +375,14 @@ func validateJob(in JobInput) error {
 	}
 	if len(in.Sources) == 0 {
 		return errors.New("at least one source required")
+	}
+	if len(in.Sources) > 1 {
+		// P.13.5: rather than letting jobs land in the DB with multiple
+		// sources and silently truncating to the first one at run time
+		// (the old behaviour, which produced incomplete backups under
+		// the radar), reject up front. Operators who need to back up
+		// several things create one job per source.
+		return errors.New("exactly one source per job — create one job per stack/volume/system you want to back up")
 	}
 	if in.Schedule != "" {
 		if _, err := cron.ParseStandard(in.Schedule); err != nil {

@@ -30,6 +30,10 @@
   let env = $state('');
   let services = $state<Array<{ service: string; container_id: string; state: string; status: string; image: string }>>([]);
   let loading = $state(true);
+  // status === 'needs_recovery' when compose.yaml is missing/empty but
+  // there's still a deployment row or running containers — UI renders
+  // the recovery panel instead of the regular editor in that case.
+  let stackStatus = $state<'ok' | 'needs_recovery'>('ok');
   // busy = this page kicked off an op; globalBusy = any tab (incl. this
   // one after a re-mount) knows an op is running for this stack on this
   // host. Disable destructive buttons on either.
@@ -491,6 +495,13 @@
       const detail = await api.stacks.get(name);
       compose = detail.compose;
       env = detail.env ?? '';
+      stackStatus = detail.status === 'needs_recovery' ? 'needs_recovery' : 'ok';
+      if (stackStatus === 'needs_recovery') {
+        latestBackupRun = undefined;
+        loadLatestBackupRun();
+      } else {
+        latestBackupRun = null;
+      }
       // Resolve deployment host for all-mode routing.
       try {
         const stackList = await api.stacks.list();
@@ -570,6 +581,89 @@
       toast.error('Stop failed', err instanceof ApiError ? err.message : undefined);
     } finally {
       busy = false;
+    }
+  }
+
+  // Recovery flow — only relevant when stackStatus === 'needs_recovery'.
+  let recoverBusy = $state(false);
+  let recoverWarnings = $state<string[]>([]);
+  // Latest successful stack-typed backup run for this stack, looked up
+  // when the recovery panel opens. null = none found, undefined = not
+  // yet checked (loading).
+  let latestBackupRun = $state<{ id: number; job_name: string; finished_at?: string; size_bytes: number } | null | undefined>(undefined);
+  let restoreBusy = $state(false);
+
+  async function loadLatestBackupRun() {
+    try {
+      const runs = await api.backups.listRuns(200);
+      // Find the newest successful stack-typed run for THIS stack.
+      const match = runs.find(r =>
+        r.status === 'success' &&
+        r.sources?.some(s => s.type === 'stack' && s.name === name)
+      );
+      latestBackupRun = match
+        ? { id: match.id, job_name: match.job_name, finished_at: match.finished_at, size_bytes: match.size_bytes }
+        : null;
+    } catch {
+      latestBackupRun = null;
+    }
+  }
+  async function recoverFromContainers() {
+    if (recoverBusy || anyBusy) return;
+    recoverBusy = true;
+    try {
+      const res = await api.stacks.recover(name);
+      compose = res.stack.compose;
+      env = res.stack.env ?? '';
+      stackStatus = 'ok';
+      recoverWarnings = res.warnings ?? [];
+      const cc = res.recovered_from?.container_count ?? 0;
+      toast.success('Compose reconstructed', `From ${cc} container${cc === 1 ? '' : 's'}. Review the YAML before redeploying.`);
+    } catch (err) {
+      toast.error('Recovery failed', err instanceof ApiError ? err.message : String(err));
+    } finally {
+      recoverBusy = false;
+    }
+  }
+  async function restoreFromBackup() {
+    if (restoreBusy || anyBusy || !latestBackupRun) return;
+    if (!(await confirm.ask({
+      title: `Restore ${name} from backup`,
+      message: `Restore the compose file and all named volumes from the backup taken on ${latestBackupRun.finished_at ?? 'unknown'}.`,
+      body: 'Existing volume data will be replaced with the snapshot. Bind mounts to host paths are not touched. Containers are not started — review and click Deploy after the restore.',
+      confirmLabel: 'Restore',
+      danger: true
+    }))) return;
+    restoreBusy = true;
+    try {
+      const res = await api.backups.restoreStack(latestBackupRun.id, name);
+      // Pull the freshly restored compose back into the editor.
+      const detail = await api.stacks.get(name);
+      compose = detail.compose;
+      env = detail.env ?? '';
+      stackStatus = detail.status === 'needs_recovery' ? 'needs_recovery' : 'ok';
+      recoverWarnings = res.warnings ?? [];
+      toast.success('Restored from backup', `${res.files_restored.length} file(s), ${res.volumes_restored.length} volume(s). Review and click Deploy.`);
+    } catch (err) {
+      toast.error('Restore failed', err instanceof ApiError ? err.message : String(err));
+    } finally {
+      restoreBusy = false;
+    }
+  }
+  async function discardGhost() {
+    if (!(await confirm.ask({
+      title: `Discard stack ${name}`,
+      message: 'Drops the dockmesh record for this stack.',
+      body: 'Running containers are NOT touched — they keep running until you stop them via docker / Containers page. The stack just disappears from this list.',
+      confirmLabel: 'Discard',
+      danger: true
+    }))) return;
+    try {
+      await api.stacks.discard(name);
+      toast.success('Discarded', name);
+      goto('/stacks');
+    } catch (err) {
+      toast.error('Discard failed', err instanceof ApiError ? err.message : String(err));
     }
   }
 
@@ -681,34 +775,112 @@
       {/if}
     </div>
     <div class="flex gap-2 flex-wrap">
-      {#if canDeploy}
-        <Button variant="primary" onclick={deploy} loading={anyBusy} disabled={anyBusy}>
-          <Play class="w-4 h-4" />
-          Deploy
-        </Button>
-        {#if hosts.available.length > 1}
-          <Button variant="secondary" onclick={openMigrate} disabled={anyBusy}>
-            <ArrowRightLeft class="w-4 h-4" />
-            Migrate
+      {#if stackStatus !== 'needs_recovery'}
+        {#if canDeploy}
+          <Button variant="primary" onclick={deploy} loading={anyBusy} disabled={anyBusy}>
+            <Play class="w-4 h-4" />
+            Deploy
+          </Button>
+          {#if hosts.available.length > 1}
+            <Button variant="secondary" onclick={openMigrate} disabled={anyBusy}>
+              <ArrowRightLeft class="w-4 h-4" />
+              Migrate
+            </Button>
+          {/if}
+          <Button variant="secondary" onclick={stop} disabled={anyBusy}>
+            <Square class="w-4 h-4" />
+            Stop
           </Button>
         {/if}
-        <Button variant="secondary" onclick={stop} disabled={anyBusy}>
-          <Square class="w-4 h-4" />
-          Stop
-        </Button>
-      {/if}
-      {#if canWrite}
-        <Button variant="secondary" onclick={save} disabled={anyBusy || !dirty}>
-          <Save class="w-4 h-4" />
-          Save
-        </Button>
-        <Button variant="danger" onclick={openDelete} disabled={anyBusy}>
-          <Trash2 class="w-4 h-4" />
-          Delete
-        </Button>
+        {#if canWrite}
+          <Button variant="secondary" onclick={save} disabled={anyBusy || !dirty}>
+            <Save class="w-4 h-4" />
+            Save
+          </Button>
+          <Button variant="danger" onclick={openDelete} disabled={anyBusy}>
+            <Trash2 class="w-4 h-4" />
+            Delete
+          </Button>
+        {/if}
       {/if}
     </div>
   </div>
+
+  {#if stackStatus === 'needs_recovery'}
+    <!-- Stack record exists but compose.yaml is missing or empty.
+         Don't render the regular editor — it would let the operator
+         "save" an empty file over the running deployment. Offer the
+         three explicit recovery paths instead. -->
+    <div class="dm-card p-5 border-[color-mix(in_srgb,var(--color-warning-500)_50%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-500)_6%,transparent)]">
+      <div class="flex items-start gap-3 mb-4">
+        <AlertTriangle class="w-5 h-5 text-[var(--color-warning-400)] shrink-0 mt-0.5" />
+        <div>
+          <div class="font-semibold text-[var(--color-warning-400)]">Compose file is missing or empty</div>
+          <div class="text-sm text-[var(--fg-muted)] mt-1">
+            This stack still has a deployment record (and possibly running containers), but
+            <span class="font-mono">/stacks/{name}/compose.yaml</span> is gone or empty on disk.
+            Pick one of the recovery options below — the regular editor is hidden until the
+            stack is recovered or discarded so we can't accidentally overwrite a running
+            workload with an empty config.
+          </div>
+        </div>
+      </div>
+      <div class="grid gap-3 md:grid-cols-3">
+        <div class="p-3 rounded-md border border-[var(--border)] bg-[var(--surface)] flex flex-col">
+          <div class="font-medium text-sm mb-1">Recover from running containers</div>
+          <div class="text-xs text-[var(--fg-muted)] flex-1 mb-3">
+            Inspect the live containers labelled <span class="font-mono">com.docker.compose.project={name}</span>
+            and write a best-effort <span class="font-mono">compose.yaml</span> back to disk. Review the
+            result before redeploying.
+          </div>
+          <Button variant="primary" onclick={recoverFromContainers} loading={recoverBusy} disabled={recoverBusy}>
+            <RotateCcw class="w-3.5 h-3.5" />
+            Recover
+          </Button>
+        </div>
+        <div class="p-3 rounded-md border border-[var(--border)] bg-[var(--surface)] flex flex-col">
+          <div class="font-medium text-sm mb-1">Restore from last backup</div>
+          <div class="text-xs text-[var(--fg-muted)] flex-1 mb-3">
+            {#if latestBackupRun === undefined}
+              Looking for a stack-typed backup of <span class="font-mono">{name}</span>…
+            {:else if latestBackupRun === null}
+              No successful backup of this stack found. Take a backup proactively (Backups → New job, source <span class="font-mono">stack:{name}</span>) so this option is available next time.
+            {:else}
+              Latest run: <span class="font-mono">{latestBackupRun.job_name}</span> on
+              {latestBackupRun.finished_at ? new Date(latestBackupRun.finished_at).toLocaleString() : 'unknown'} ({Math.round(latestBackupRun.size_bytes / 1024 / 1024)} MB).
+              Restores compose + named volumes; bind mounts are untouched. Existing volume data is replaced.
+            {/if}
+          </div>
+          <Button variant="secondary" onclick={restoreFromBackup} loading={restoreBusy} disabled={restoreBusy || !latestBackupRun}>
+            <History class="w-3.5 h-3.5" />
+            Restore
+          </Button>
+        </div>
+        <div class="p-3 rounded-md border border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-danger-500)_5%,transparent)] flex flex-col">
+          <div class="font-medium text-sm mb-1">Remove stack record</div>
+          <div class="text-xs text-[var(--fg-muted)] flex-1 mb-3">
+            Forget the stack in dockmesh. Running containers are <span class="font-medium">not touched</span> — clean them up via the Containers page or <span class="font-mono">docker</span> directly afterwards.
+          </div>
+          <Button variant="danger" onclick={discardGhost}>
+            <Trash2 class="w-3.5 h-3.5" />
+            Discard record
+          </Button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if recoverWarnings.length > 0}
+    <div class="dm-card p-4 border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)]">
+      <div class="font-medium text-[var(--color-warning-400)] mb-2 flex items-center gap-2">
+        <AlertTriangle class="w-4 h-4" />
+        Recovery warnings — review the compose before redeploying
+      </div>
+      <ul class="text-xs text-[var(--fg-muted)] space-y-1 list-disc pl-5">
+        {#each recoverWarnings as w}<li>{w}</li>{/each}
+      </ul>
+    </div>
+  {/if}
 
   {#if externalChange}
     <div class="dm-card p-4 border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] flex items-start gap-3">
@@ -815,7 +987,10 @@
     </Card>
   {/if}
 
-  <!-- Tabs (P.12.6 — added to host History; future home for Logs / Events / Migrations) -->
+  {#if stackStatus !== 'needs_recovery'}
+  <!-- Tabs (P.12.6 — added to host History; future home for Logs / Events / Migrations).
+       Hidden in recovery mode so the operator can't accidentally interact with editor /
+       deploy history while compose.yaml is missing. -->
   <div class="border-b border-[var(--border)]">
     <div class="flex gap-1" role="tablist" aria-label="Stack sections">
       <button
@@ -1094,6 +1269,7 @@
         </div>
       </Card>
     {/if}
+  {/if}
   {/if}
 </section>
 

@@ -23,10 +23,19 @@ type Job struct {
 	PreHooks       []Hook     `json:"pre_hooks"`
 	PostHooks      []Hook     `json:"post_hooks"`
 	Enabled        bool       `json:"enabled"`
-	LastRunAt      *time.Time `json:"last_run_at,omitempty"`
-	NextRunAt      *time.Time `json:"next_run_at,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	// NeedsReview is true when the job was auto-created by an older
+	// version of dockmesh and the operator has not yet confirmed they
+	// want to keep it. New installs never set this. P.13.2.
+	NeedsReview  bool   `json:"needs_review,omitempty"`
+	ReviewReason string `json:"review_reason,omitempty"`
+	// ReviewAcked stays true forever once the operator clears the
+	// review (Keep / Disable). Used by the boot-time migration to
+	// skip jobs that were already reviewed in a previous boot.
+	ReviewAcked bool `json:"-"`
+	LastRunAt    *time.Time `json:"last_run_at,omitempty"`
+	NextRunAt    *time.Time `json:"next_run_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 // JobInput is the create/update payload from the API.

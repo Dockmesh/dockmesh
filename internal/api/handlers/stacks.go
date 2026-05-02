@@ -17,9 +17,11 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/convert"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/stacks/adopt"
+	dtypes "github.com/docker/docker/api/types"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -57,9 +59,15 @@ type stackRequest struct {
 
 // stackListEntry extends the filesystem Stack with the optional
 // deployment state so the frontend can show a Host column.
+//
+// Status is "ok" for normal stacks and "needs_recovery" when the
+// compose file is missing or empty but a deployment row still exists —
+// the UI groups these in a "needs attention" section so they can't be
+// silently lost.
 type stackListEntry struct {
 	*stacks.Stack
 	Deployment *stacks.Deployment `json:"deployment,omitempty"`
+	Status     string             `json:"status,omitempty"`
 }
 
 func (h *Handlers) ListStacks(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +92,9 @@ func (h *Handlers) ListStacks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out := make([]stackListEntry, 0, len(list))
+	seen := make(map[string]bool, len(list))
 	for _, s := range list {
+		seen[s.Name] = true
 		entry := stackListEntry{Stack: s}
 		if d, ok := deps[s.Name]; ok {
 			if hostNames != nil {
@@ -92,19 +102,220 @@ func (h *Handlers) ListStacks(w http.ResponseWriter, r *http.Request) {
 			}
 			entry.Deployment = d
 		}
+		// Mark filesystem-present-but-empty / vanished compose files so
+		// the UI surfaces them under "needs attention" rather than
+		// rendering an empty editor or leaving them un-flagged. Either
+		// the file is empty (Get returns Detail with Status set) or the
+		// file is gone but the manager cache still holds a pointer
+		// (Get returns ErrNotFound while the entry sits in List).
+		if detail, err := h.Stacks.Get(s.Name); err == nil {
+			if detail.Status == "needs_recovery" {
+				entry.Status = "needs_recovery"
+			}
+		} else if errors.Is(err, stacks.ErrNotFound) {
+			entry.Status = "needs_recovery"
+		}
 		out = append(out, entry)
 	}
+	// Surface ghost deployments — a deployment row whose compose file
+	// is gone from disk. Without this, the user sees nothing in the
+	// stacks list while their containers keep running. P.13.1.
+	for name, d := range deps {
+		if seen[name] {
+			continue
+		}
+		if hostNames != nil {
+			d.HostName = hostNames[d.HostID]
+		}
+		out = append(out, stackListEntry{
+			Stack:      &stacks.Stack{Name: name},
+			Deployment: d,
+			Status:     "needs_recovery",
+		})
+	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// RecoverStack reconstructs a stack's compose.yaml from running
+// containers carrying its compose project label. Used when the on-disk
+// compose file is missing/empty but the containers are still running
+// (e.g. after a Docker Desktop reset wiped the stacks dir but kept the
+// data volume; or when an operator deleted the file by hand).
+//
+// Non-destructive: only writes compose.yaml. Containers are not touched.
+// The recovered file is returned in the response so the operator can
+// review the result before deciding to redeploy.
+func (h *Handlers) RecoverStack(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if err := stacks.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Resolve which host the project's containers live on. Prefer the
+	// deployment row; fall back to local docker.
+	var deployHostID string
+	if h.Deployments != nil {
+		if d, err := h.Deployments.Get(r.Context(), name); err == nil && d != nil {
+			deployHostID = d.HostID
+		}
+	}
+	var target host.Host
+	if h.Hosts != nil {
+		t, err := h.Hosts.Pick(deployHostID)
+		if err == nil {
+			target = t
+		}
+	}
+	if target == nil && h.Docker != nil {
+		target = host.NewLocal(h.Docker)
+	}
+	if target == nil {
+		writeError(w, http.StatusServiceUnavailable, "no host available to inspect containers")
+		return
+	}
+
+	cs, err := target.ListContainers(r.Context(), true)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list containers: "+err.Error())
+		return
+	}
+	var matching []string
+	for _, c := range cs {
+		if strings.EqualFold(c.Labels["com.docker.compose.project"], name) {
+			matching = append(matching, c.ID)
+		}
+	}
+	if len(matching) == 0 {
+		writeError(w, http.StatusNotFound, "no running containers carry the compose project label "+name)
+		return
+	}
+	insps := make([]dtypes.ContainerJSON, 0, len(matching))
+	for _, id := range matching {
+		insp, ierr := target.InspectContainer(r.Context(), id)
+		if ierr != nil {
+			slog.Warn("recover: inspect container", "stack", name, "container", id, "err", ierr)
+			continue
+		}
+		insps = append(insps, insp)
+	}
+	if len(insps) == 0 {
+		writeError(w, http.StatusInternalServerError, "could not inspect any of the project's containers")
+		return
+	}
+
+	res, err := convert.FromContainers(name, insps)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "reconstruct compose: "+err.Error())
+		return
+	}
+
+	// Write the reconstructed compose to disk. Three on-disk shapes can
+	// land here, all of which we want to recover into a clean state:
+	//   1. dir + empty compose.yaml  → Update
+	//   2. dir exists, file missing  → Update (also fine — Update only
+	//      requires the dir to exist)
+	//   3. dir + file both missing   → Create
+	// We try Update first; if it returns ErrNotFound (dir missing), fall
+	// back to Create. Anything else is a real error.
+	var detail *stacks.Detail
+	existingEnv := ""
+	if existing, gerr := h.Stacks.Get(name); gerr == nil {
+		existingEnv = existing.Env
+	}
+	detail, err = h.Stacks.Update(name, res.YAML, existingEnv)
+	if errors.Is(err, stacks.ErrNotFound) {
+		detail, err = h.Stacks.Create(name, res.YAML, "")
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "write compose: "+err.Error())
+		return
+	}
+	h.audit(r, audit.ActionStackUpdate, name, map[string]string{"recovered": "true", "containers": fmt.Sprintf("%d", len(insps))})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"stack":    detail,
+		"warnings": res.Warnings,
+		"recovered_from": map[string]any{
+			"host_id":          target.ID(),
+			"container_count":  len(insps),
+			"reconstructed_at": "now",
+		},
+	})
+}
+
+// DiscardStack removes a ghost stack record without touching any
+// running containers. Used when the operator wants to forget a stack
+// whose compose file is gone but doesn't want to stop / remove the
+// containers that came from it. Inverse of RecoverStack.
+func (h *Handlers) DiscardStack(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	// Drop the deployment row + dependency edges. Compose file and
+	// stacks-dir entry are already gone (this endpoint is only valid
+	// in the ghost case), so there's nothing else to clean up.
+	if h.Deployments != nil {
+		if err := h.Deployments.Delete(r.Context(), name); err != nil {
+			slog.Warn("discard stack: drop deployment row", "stack", name, "err", err)
+		}
+	}
+	if h.Dependencies != nil {
+		if err := h.Dependencies.DeleteAll(r.Context(), name); err != nil {
+			slog.Warn("discard stack: drop dependency edges", "stack", name, "err", err)
+		}
+	}
+	h.audit(r, audit.ActionStackDelete, name, map[string]string{"discarded": "true"})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handlers) GetStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	d, err := h.Stacks.Get(name)
-	if err != nil {
+	if err == nil {
+		writeJSON(w, http.StatusOK, d)
+		return
+	}
+	if !errors.Is(err, stacks.ErrNotFound) {
 		writeStackError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, d)
+	// Compose file missing on disk. Before 404'ing, check whether the
+	// stack still exists somewhere — a leftover deployment row from a
+	// previous deploy, or running containers that still carry the
+	// project label. Either way we return a placeholder Detail with
+	// status=needs_recovery so the UI can render the recovery panel
+	// instead of a dead-end 404. Stale records get marked too — the
+	// operator picks "Recover from running containers", "Restore from
+	// last backup", or "Remove stack record" from the recovery panel.
+	if h.stackHasGhostEvidence(r.Context(), name) {
+		writeJSON(w, http.StatusOK, h.Stacks.GetOrPlaceholder(name))
+		return
+	}
+	writeStackError(w, err)
+}
+
+// stackHasGhostEvidence returns true when the stack record is gone from
+// the filesystem but something else (deployment row or live containers
+// labelled with the project) suggests it used to be a real stack.
+func (h *Handlers) stackHasGhostEvidence(ctx context.Context, name string) bool {
+	if h.Deployments != nil {
+		if d, err := h.Deployments.Get(ctx, name); err == nil && d != nil {
+			return true
+		}
+	}
+	// Cheap fallback: ask the local docker daemon for any container
+	// with this project label. Skipped silently if Docker is offline —
+	// the caller still gets a clean 404 in that case.
+	if h.Docker != nil && h.Docker.Connected() {
+		hostLocal := host.NewLocal(h.Docker)
+		cs, err := hostLocal.ListContainers(ctx, true)
+		if err == nil {
+			for _, c := range cs {
+				if strings.EqualFold(c.Labels["com.docker.compose.project"], name) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func (h *Handlers) CreateStack(w http.ResponseWriter, r *http.Request) {

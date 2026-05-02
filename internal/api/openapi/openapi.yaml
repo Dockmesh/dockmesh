@@ -1352,6 +1352,76 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /stacks/{name}/recover:
+    post:
+      operationId: stacks.recover
+      tags: [stacks]
+      summary: Reconstruct compose.yaml from running containers
+      description: |
+        When a stack's compose.yaml is missing or empty on disk but
+        containers carrying the project label are still running (e.g.
+        after a Docker reset wiped the stacks dir but kept the data
+        volume), this endpoint inspects the live containers and writes
+        a best-effort compose.yaml back to disk.
+
+        Non-destructive: containers are not touched. The reconstructed
+        YAML is returned in the response with a list of warnings the
+        operator should review before redeploying. Anything Docker's
+        inspect data can't represent (comments, x-* extensions, build:,
+        secrets:, configs:) shows up as a warning rather than a silent
+        loss.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+      responses:
+        "200":
+          description: Compose reconstructed and written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stack: { $ref: "#/components/schemas/StackDetail" }
+                  warnings:
+                    type: array
+                    items: { type: string }
+                  recovered_from:
+                    type: object
+                    properties:
+                      host_id: { type: string }
+                      container_count: { type: integer }
+                      reconstructed_at: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: No running containers carry the project label.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: Could not reconstruct compose from inspect data.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /stacks/{name}/discard:
+    post:
+      operationId: stacks.discard
+      tags: [stacks]
+      summary: Drop a ghost stack record without touching containers
+      description: |
+        Removes the deployment row + dependency edges for a stack whose
+        compose file is gone from disk. Running containers are not
+        touched — use this when the operator decides the stack should
+        be forgotten by dockmesh but the workload should keep running
+        (or will be cleaned up via `docker` directly).
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+      responses:
+        "204": { description: Discarded. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /stacks/{name}/cleanup-preview:
     get:
       operationId: stacks.cleanup_preview
@@ -2701,6 +2771,32 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /backups/jobs/{id}/review/{mode}:
+    post:
+      operationId: backups.acknowledge_review
+      tags: [backups]
+      summary: Acknowledge a needs_review backup job
+      description: |
+        Clears the `needs_review` flag on a backup job that was
+        auto-created by an older dockmesh version. Mode `keep`
+        preserves the job's current enabled state; mode `disable`
+        also flips `enabled = false` so the scheduler stops firing
+        it. Idempotent: clearing an already-cleared flag is a no-op.
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+        - in: path
+          name: mode
+          required: true
+          schema:
+            type: string
+            enum: [keep, disable]
+      responses:
+        "204": { description: Acknowledged. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /backups/jobs/{id}/run:
     post:
       operationId: backups.run_job
@@ -2748,6 +2844,55 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/BackupRun" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /backups/runs/{id}/restore-stack:
+    post:
+      operationId: backups.restore_stack
+      tags: [backups]
+      summary: Restore a stack-typed backup run
+      description: |
+        Extracts a stack-typed backup archive into the stacks directory
+        (`/stacks/<target>/`) and untars every embedded
+        `volumes/<vol>.tar.gz` entry into a docker volume of the same
+        name. Returns a structured report listing what was restored.
+
+        Use `target_stack` to restore under a different name than the
+        original — useful for "restore as a copy". Defaults to the
+        archive's source stack name. Existing files at the destination
+        are overwritten; existing volumes have their contents replaced.
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_stack:
+                  type: string
+                  description: Optional override for the destination stack name.
+      responses:
+        "200":
+          description: Restore complete with per-file / per-volume report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stack_name: { type: string }
+                  files_restored: { type: array, items: { type: string } }
+                  volumes_restored: { type: array, items: { type: string } }
+                  warnings: { type: array, items: { type: string } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500":
+          description: Archive corrupt / decryption failed / disk write error.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /backups/runs/{id}/restore:
     post:
@@ -2815,11 +2960,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BackupVerifyResult" }
-        "501":
-          description: Verify-by-run-id not yet implemented for this backup type — use /restore/verify with the manually-downloaded tarball.
+        "422":
+          description: Verification failed — see `sanity.checks` for the failed check(s).
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+              schema: { $ref: "#/components/schemas/BackupVerifyResult" }
 
   /restore/verify:
     post:
@@ -5505,6 +5650,14 @@ components:
         target_config: { type: object }
         sources:
           type: array
+          minItems: 1
+          maxItems: 1
+          description: |
+            Exactly one source per job. The server rejects multi-source
+            payloads at create/update time. Operators back up several
+            things by creating one job per source — keeps run records,
+            schedules, retention, and restore semantics 1:1 with what
+            the operator sees in the UI. P.13.5.
           items: { $ref: "#/components/schemas/BackupSource" }
         schedule: { type: string }
         retention_count: { type: integer, minimum: 0 }

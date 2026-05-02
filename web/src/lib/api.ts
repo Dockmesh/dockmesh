@@ -165,6 +165,10 @@ export interface StackListEntry {
   name: string;
   compose_path: string;
   deployment?: StackDeployment;
+  // "needs_recovery" when compose.yaml is missing/empty but a
+  // deployment row or running containers still exist. UI groups these
+  // under "needs attention" and routes to the recovery panel.
+  status?: 'ok' | 'needs_recovery';
 }
 
 export interface DiscoveredStackService {
@@ -296,6 +300,20 @@ export interface StackCleanupResult {
 export interface StackCleanupDeleteResult {
   cleanup?: StackCleanupResult | null;
   cleanup_error?: string;
+}
+
+// Result of POST /stacks/{name}/recover — the reconstructed compose
+// has already been written to disk; the response contains the new
+// stack detail (compose, env) plus a list of human-readable warnings
+// the operator should review before redeploying.
+export interface StackRecoverResult {
+  stack: { name: string; compose: string; env?: string; status?: string };
+  warnings?: string[];
+  recovered_from?: {
+    host_id: string;
+    container_count: number;
+    reconstructed_at: string;
+  };
 }
 
 // Environment overrides (P.12.8)
@@ -779,6 +797,10 @@ export interface BackupJob {
   pre_hooks: BackupHook[];
   post_hooks: BackupHook[];
   enabled: boolean;
+  // P.13.2: true when this job was auto-created by an older dockmesh
+  // version and the operator hasn't yet confirmed Keep / Disable.
+  needs_review?: boolean;
+  review_reason?: string;
   last_run_at?: string;
   next_run_at?: string;
   created_at: string;
@@ -1007,7 +1029,7 @@ export const api = {
 
   stacks: {
     list: () => request<StackListEntry[]>('/stacks'),
-    get: (name: string) => request<{ name: string; compose: string; env: string }>(`/stacks/${encodeURIComponent(name)}`),
+    get: (name: string) => request<{ name: string; compose: string; env: string; status?: 'ok' | 'needs_recovery' }>(`/stacks/${encodeURIComponent(name)}`),
     create: (name: string, compose: string, env?: string) =>
       request<{ name: string }>('/stacks', { method: 'POST', body: JSON.stringify({ name, compose, env }) }),
     update: (name: string, compose: string, env?: string) =>
@@ -1024,6 +1046,15 @@ export const api = {
     },
     cleanupPreview: (name: string) =>
       request<StackCleanupPlan>(`/stacks/${encodeURIComponent(name)}/cleanup-preview`),
+    // Recovery — when compose.yaml is missing/empty but containers
+    // are still running with the project label. Reconstructs the
+    // compose from inspect data, returns warnings.
+    recover: (name: string) =>
+      request<StackRecoverResult>(`/stacks/${encodeURIComponent(name)}/recover`, { method: 'POST' }),
+    // Drop a ghost record without touching containers — for when the
+    // operator wants to forget the stack but keep workloads running.
+    discard: (name: string) =>
+      request<void>(`/stacks/${encodeURIComponent(name)}/discard`, { method: 'POST' }),
     // Git source (P.11.11)
     getGitSource: (name: string) =>
       request<StackGitSource>(`/stacks/${encodeURIComponent(name)}/git`),
@@ -1450,12 +1481,26 @@ export const api = {
       request<BackupJob>(`/backups/jobs/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
     deleteJob: (id: number) => request<void>(`/backups/jobs/${id}`, { method: 'DELETE' }),
     runJob: (id: number) => request<BackupRun>(`/backups/jobs/${id}/run`, { method: 'POST' }),
+    // P.13.2 — clear the needs_review flag on a legacy auto-created
+    // job. mode "keep" preserves enabled state; "disable" also flips
+    // enabled=0 so the scheduler stops firing it.
+    acknowledgeReview: (id: number, mode: 'keep' | 'disable') =>
+      request<void>(`/backups/jobs/${id}/review/${mode}`, { method: 'POST' }),
     listRuns: (limit = 100) => request<BackupRun[]>(`/backups/runs?limit=${limit}`),
     restore: (runId: number, destVolume: string) =>
       request<void>(`/backups/runs/${runId}/restore`, {
         method: 'POST',
         body: JSON.stringify({ dest_volume: destVolume })
       }),
+    // P.13.3: stack-typed restore. Extracts the archive's stack/<rel>
+    // files into /stacks/<target>/ and per-volume restores into
+    // matching docker volumes. target_stack is optional (defaults to
+    // the source stack name in the run).
+    restoreStack: (runId: number, targetStack?: string) =>
+      request<{ stack_name: string; files_restored: string[]; volumes_restored: string[]; warnings?: string[] }>(
+        `/backups/runs/${runId}/restore-stack`,
+        { method: 'POST', body: JSON.stringify({ target_stack: targetStack ?? '' }) }
+      ),
     // P.12.4 — verify an uploaded system-backup tarball. Never touches
     // the live install; extracts to a temp dir, runs sanity, deletes.
     verifyUpload: async (file: File): Promise<BackupVerifyResult> => {

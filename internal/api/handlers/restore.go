@@ -67,14 +67,20 @@ func (h *Handlers) VerifyUploadedBackup(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// VerifyBackupRun reads a saved backup run from its target, streams
-// it through the same extract-to-temp + sanity flow, and reports.
-// Admin-only. P.12.4 (rolled in from former P.12.20 scope).
+// VerifyBackupRun reads a saved backup run from its target and runs
+// the type-appropriate verifier. P.13.4: previously fell through to
+// the system-only sanity flow regardless of source type, which gave
+// confusing 422s for stack/volume runs ("db could not be opened" on
+// archives that have no DB by design). Now:
 //
-// This only applies to **system** backup runs — volume / stack runs
-// don't have the file-level structure we check. A future slice can
-// extend this to spin up ephemeral stacks on a test host for stack
-// runs (the original P.12.20 idea).
+//   - system runs: stream-extract to temp + run sanity (existing flow);
+//     the temp dir is deleted as soon as sanity is done.
+//   - stack runs:  walk the outer tar, validate every volumes/<v>.tar.gz
+//     decompresses cleanly, confirm stack/compose.yaml is present, hash
+//     the plaintext stream against run.SHA256.
+//   - volume runs: gunzip-walk the archive; sha256 match.
+//
+// Admin-only.
 func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 	if h.Backups == nil {
 		writeError(w, http.StatusServiceUnavailable, "backup service not configured")
@@ -86,18 +92,50 @@ func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reading the archive requires the backup service to expose the
-	// same download path restore uses internally. For MVP we route
-	// through the existing Restore RunID lookup — but we need a
-	// read-only accessor. Since backup.Service.Restore() writes to a
-	// destination volume, we can't reuse it directly. Instead we ask
-	// the service for the encrypted+raw stream via a new helper on
-	// the service; that's not yet implemented, so surface a clear
-	// error pointing at the upload-based verify for now.
-	//
-	// TODO: backup.Service.ReadRun(ctx, runID) → io.ReadCloser.
-	// Until then, operators use the upload endpoint after downloading
-	// the tarball manually from their backup target.
+	// Decide the type once so we can route system runs to the legacy
+	// extract+sanity flow and stack/volume runs to the new structural
+	// verify. The Service.VerifyRun helper handles the latter; system
+	// runs still need internal/restore for the deep DB checks.
+	runType, err := h.Backups.RunSourceType(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if runType == "system" {
+		h.verifySystemRun(w, r, id)
+		return
+	}
+	res, err := h.Backups.VerifyRun(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, "backup.verify_run", strconv.FormatInt(id, 10), map[string]any{
+		"type":   res.Type,
+		"bytes":  res.Counts.Bytes,
+		"passed": res.Passed,
+	})
+	status := http.StatusOK
+	if !res.Passed {
+		status = http.StatusUnprocessableEntity
+	}
+	writeJSON(w, status, map[string]any{
+		"run_id": id,
+		"type":   res.Type,
+		"counts": res.Counts,
+		"sanity": map[string]any{
+			"passed":  res.Passed,
+			"checks":  res.Checks,
+			"summary": res.Summary,
+		},
+	})
+}
+
+// verifySystemRun keeps the existing system-backup verify flow:
+// stream the run through ExtractToTemp + Sanity, return the result.
+// Pulled into its own helper so the type-dispatch in VerifyBackupRun
+// stays readable.
+func (h *Handlers) verifySystemRun(w http.ResponseWriter, r *http.Request, id int64) {
 	src, err := h.Backups.ReadRun(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
@@ -122,6 +160,7 @@ func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, "backup.verify_run", strconv.FormatInt(id, 10), map[string]any{
+		"type":   "system",
 		"files":  counts.Files,
 		"bytes":  counts.Bytes,
 		"passed": result.Passed,
@@ -132,6 +171,7 @@ func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, status, map[string]any{
 		"run_id": id,
+		"type":   "system",
 		"counts": counts,
 		"sanity": result,
 	})

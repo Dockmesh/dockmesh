@@ -150,6 +150,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Put("/stacks/{name}", h.UpdateStack)
 				r.Delete("/stacks/{name}", h.DeleteStack)
 				r.Get("/stacks/{name}/cleanup-preview", h.CleanupPreview)
+				// Recovery: rebuild compose.yaml from running containers
+				// when the on-disk file is missing/empty. Discard:
+				// drop the ghost record without touching containers.
+				r.Post("/stacks/{name}/recover", h.RecoverStack)
+				r.Post("/stacks/{name}/discard", h.DiscardStack)
 				r.Post("/convert/run-to-compose", h.ConvertRunToCompose)
 			})
 
@@ -460,6 +465,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Put("/backups/jobs/{id}", h.UpdateBackupJob)
 				r.Delete("/backups/jobs/{id}", h.DeleteBackupJob)
 				r.Post("/backups/jobs/{id}/run", h.RunBackupJob)
+				// P.13.2: clear the needs_review flag on a legacy
+				// auto-created job. mode = "keep" | "disable".
+				r.Post("/backups/jobs/{id}/review/{mode}", h.AcknowledgeBackupJobReview)
 				r.Get("/backups/targets", h.ListBackupTargets)
 				r.Post("/backups/targets", h.CreateBackupTarget)
 				r.Put("/backups/targets/{id}", h.UpdateBackupTarget)
@@ -469,6 +477,10 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Post("/backups/targets/discover-shares", h.DiscoverSMBShares)
 				r.Get("/backups/runs", h.ListBackupRuns)
 				r.Post("/backups/runs/{id}/restore", h.RestoreBackup)
+				// P.13.3: stack-typed runs need their own entry point so
+				// the restore actually writes stack/<rel> + each volume
+				// instead of returning the legacy "not implemented" stub.
+				r.Post("/backups/runs/{id}/restore-stack", h.RestoreStackBackup)
 				// Toggle the auto-created daily system backup job.
 				r.Put("/backups/system/enabled", h.SetBackupEnabled)
 				r.Get("/system/backup-key/export", h.ExportBackupKey)
