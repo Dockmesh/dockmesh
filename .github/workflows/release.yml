@@ -162,3 +162,26 @@ jobs:
           files: |
             release/*.tar.gz
             release/checksums.txt
+
+      # Drop Cloudflare's edge cache for the install / uninstall scripts
+      # so users running `curl get.dockmesh.dev | bash` immediately after
+      # a release pick up the new install.sh — without this the worker
+      # holds the previous copy for up to 5 minutes (TTL on the route),
+      # which already bit us once when an env-file change shipped in a
+      # tag but the cached install.sh still wrote the old layout.
+      - name: purge get.dockmesh.dev cache
+        if: success() && env.CF_API_TOKEN != '' && env.CF_ZONE_ID != ''
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_PURGE_TOKEN }}
+          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+        run: |
+          curl -fsS -X POST \
+            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"files":[
+              "https://get.dockmesh.dev/",
+              "https://get.dockmesh.dev/install.sh",
+              "https://get.dockmesh.dev/uninstall",
+              "https://get.dockmesh.dev/uninstall.sh"
+            ]}'
