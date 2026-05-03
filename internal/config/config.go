@@ -39,6 +39,12 @@ type Config struct {
 	OTelEndpoint string
 	OTelInsecure bool
 	JWTSecret    []byte
+	// SetupForce disables the auto-bootstrap admin and forces the
+	// server into setup-mode on every boot until the wizard runs.
+	// Set by the install script for the wizard install path; off by
+	// default so existing installs and `dockmesh init --yes` keep
+	// working unchanged. P.14.1.
+	SetupForce bool
 }
 
 func Load() (*Config, error) {
@@ -69,6 +75,7 @@ func Load() (*Config, error) {
 		LogLevel:       strings.ToLower(envOr("DOCKMESH_LOG_LEVEL", "info")),
 		OTelEndpoint:   envOr("DOCKMESH_OTEL_ENDPOINT", ""),
 		OTelInsecure:   envOr("DOCKMESH_OTEL_INSECURE", "false") == "true",
+		SetupForce:     envOr("DOCKMESH_SETUP_FORCE", "false") == "true",
 	}
 	secret, err := loadOrCreateJWTSecret(cfg.SecretsPath)
 	if err != nil {

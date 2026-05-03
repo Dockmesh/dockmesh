@@ -90,9 +90,36 @@
     }
   });
 
-  // Route guard.
+  // Setup-mode probe. When the server has no admin yet, every path
+  // outside /setup* should bounce to the wizard, not to /login (login
+  // can't succeed against an unconfigured server). Probed once on app
+  // boot via /api/v1/setup/status — public, cheap, doesn't need auth.
+  let setupProbed = $state(false);
+  let setupActive = $state(false);
+  $effect(() => {
+    if (setupProbed) return;
+    fetch('/api/v1/setup/status')
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d) => { setupActive = !!d.active; })
+      .catch(() => { /* assume not in setup mode if probe fails */ })
+      .finally(() => { setupProbed = true; });
+  });
+
+  // Route guard. P.14.3:
+  //   - /setup* always passes through (the wizard owns its own page).
+  //   - If setup-mode is active, anything else redirects to /setup so
+  //     the operator lands on the wizard whether they typed /, /login
+  //     or any deep link.
+  //   - Otherwise the legacy auth gate applies: unauthenticated visits
+  //     go to /login, authenticated visits at /login go to /.
   $effect(() => {
     const path = $page.url.pathname;
+    if (path === '/setup' || path.startsWith('/setup/')) return;
+    if (!setupProbed) return; // wait for the probe before redirecting
+    if (setupActive) {
+      goto('/setup');
+      return;
+    }
     if (!auth.isAuthenticated && path !== '/login') {
       goto('/login');
     } else if (auth.isAuthenticated && path === '/login') {
@@ -185,7 +212,15 @@
 <Toaster />
 <ConfirmDialog />
 
-{#if $page.url.pathname === '/login'}
+{#if $page.url.pathname === '/setup' || $page.url.pathname.startsWith('/setup/')}
+  <!-- Wizard owns the whole screen — no dashboard chrome around it. -->
+  {@render children()}
+{:else if !setupProbed || setupActive}
+  <!-- During the setup-status probe (and while we're redirecting to
+       /setup if it returns active), render nothing. Avoids a brief
+       flash of the login screen on a server that's about to redirect
+       the operator into the install wizard. -->
+{:else if $page.url.pathname === '/login'}
   {@render children()}
 {:else if auth.isAuthenticated}
   <div class="flex h-screen overflow-hidden">

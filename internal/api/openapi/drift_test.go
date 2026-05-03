@@ -77,7 +77,7 @@ func TestOpenAPIDriftAgainstRoutes(t *testing.T) {
 		// router constructor doesn't call into them.
 		Auth: (*auth.Service)(nil),
 	})
-	router := api.NewRouter(h, nil, emptyFS, false)
+	router := api.NewRouter(h, nil, emptyFS, false, nil)
 
 	// Collect every registered (method, pattern) under /api/v1.
 	type op struct{ Method, Path string }

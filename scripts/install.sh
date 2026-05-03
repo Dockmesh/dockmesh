@@ -224,7 +224,9 @@ if [ -x "$INSTALL_DIR/dockmesh" ]; then
   if PREV_VERSION_LINE="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1)"; then
     IS_UPGRADE=1
     # Extract bare version tag (first vX.Y.Z token) for the summary box.
-    PREV_VERSION="$(printf '%s' "$PREV_VERSION_LINE" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    # `|| true` keeps `set -o pipefail` happy when the version line
+    # doesn't match the v0.0.0 pattern (dev / RC / nightly builds).
+    PREV_VERSION="$(printf '%s' "$PREV_VERSION_LINE" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
   fi
 fi
 
@@ -515,6 +517,32 @@ fi
 step_done
 
 # ------------------------------------------------------------------
+#  Local-binary fast-path (P.14.6 testing).
+#  When DOCKMESH_SKIP_DOWNLOAD=1 + the binary is already at
+#  $INSTALL_DIR/dockmesh, skip GitHub download / verify / install
+#  steps and jump straight to the bootstrap section. Used by CI and
+#  by the local-test wrapper that scp's a freshly-built binary
+#  before invoking the script.
+# ------------------------------------------------------------------
+if [ "${DOCKMESH_SKIP_DOWNLOAD:-0}" = "1" ]; then
+  if [ ! -x "$INSTALL_DIR/dockmesh" ]; then
+    die "DOCKMESH_SKIP_DOWNLOAD=1 but $INSTALL_DIR/dockmesh is missing or not executable"
+  fi
+  info "skipping download — using pre-staged $INSTALL_DIR/dockmesh"
+  DM_VERSION="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 | grep -oE 'v?[0-9A-Za-z.-]+' | head -1 || echo local)"
+  # Force fresh-install behaviour even when an existing binary is on
+  # disk — we WANT to run the bootstrap section against this host,
+  # not the upgrade-restart-existing-systemd path that would normally
+  # fire for an upgrade.
+  IS_UPGRADE=0
+  TOTAL_STEPS=2  # rebrand: preflight + bootstrap from here on
+  goto_bootstrap=1
+  step_done
+fi
+
+if [ "${goto_bootstrap:-0}" != "1" ]; then
+
+# ------------------------------------------------------------------
 #  [2]  Resolve release
 # ------------------------------------------------------------------
 step 2 $TOTAL_STEPS "Resolving release"
@@ -783,21 +811,183 @@ fi
 ok "mode            0755 (root:root)"
 step_done
 
+fi  # end of "if not skipping download / upgrade-or-fresh install block"
+
 # ------------------------------------------------------------------
-#  [6]  Summary / next step
+#  [6]  Bootstrap for the install wizard (P.14.5)
+#
+#  Sets up the bare minimum so the dockmesh service starts and the
+#  operator can finish the install via the web wizard at /setup.
+#  Anything that needs operator input (admin user, public URL, data
+#  dir confirmation) is the wizard's job — not this script's.
+#
+#  Skipped when DOCKMESH_NO_BOOTSTRAP=1 — useful for CI / advanced
+#  operators who want to script `dockmesh init` themselves.
 # ------------------------------------------------------------------
-step 6 $TOTAL_STEPS "Ready"
+step 6 $TOTAL_STEPS "Bootstrapping for web setup"
+
+if [ "${DOCKMESH_NO_BOOTSTRAP:-0}" = "1" ]; then
+  info "skipped — DOCKMESH_NO_BOOTSTRAP=1"
+  info "run 'sudo dockmesh init' interactively when ready"
+  step_done
+else
+  # Default data root: /data if mounted as a separate volume, else
+  # /var/lib/dockmesh on Linux, /usr/local/var/dockmesh on macOS.
+  if [ -d /data ] && [ -w /data -o "$(id -u)" = "0" ]; then
+    DATA_DIR="${DOCKMESH_DATA_DIR:-/data}"
+  elif [ "$OS" = "darwin" ]; then
+    DATA_DIR="${DOCKMESH_DATA_DIR:-/usr/local/var/dockmesh}"
+  else
+    DATA_DIR="${DOCKMESH_DATA_DIR:-/var/lib/dockmesh}"
+  fi
+  info "data dir        $DATA_DIR"
+
+  # Service user. macOS skips — launchd daemons typically run as root
+  # and dscl-based user creation is outside the homelab pattern. On
+  # Linux: useradd is idempotent because we check first.
+  if [ "$OS" = "linux" ]; then
+    if id dockmesh >/dev/null 2>&1; then
+      ok "service user    dockmesh (already exists)"
+    else
+      $USE_SUDO useradd --system --no-create-home --shell /usr/sbin/nologin dockmesh
+      ok "service user    dockmesh (created)"
+    fi
+    # docker group membership — silent if docker isn't installed yet.
+    if getent group docker >/dev/null 2>&1; then
+      $USE_SUDO usermod -aG docker dockmesh
+      ok "added to        docker group"
+    fi
+  fi
+
+  # Data root + sub-dirs. Owned by dockmesh:docker on Linux so the
+  # service can write everywhere; on macOS root owns it.
+  $USE_SUDO mkdir -p "$DATA_DIR/data" "$DATA_DIR/stacks"
+  if [ "$OS" = "linux" ]; then
+    $USE_SUDO chown -R dockmesh:docker "$DATA_DIR"
+    $USE_SUDO chmod 750 "$DATA_DIR"
+  fi
+  ok "data layout     $DATA_DIR/{data,stacks}"
+
+  # Bootstrap env file. DOCKMESH_SETUP_FORCE=true keeps the wizard in
+  # control of admin creation (auto-bootstrap is suppressed). The
+  # wizard's commit handler scrubs that flag at the end so a future
+  # service restart behaves normally.
+  ENV_FILE="$DATA_DIR/dockmesh.env"
+  $USE_SUDO tee "$ENV_FILE" >/dev/null <<EOF
+# Written by install.sh — minimal bootstrap config so the install
+# wizard can take over. The wizard removes DOCKMESH_SETUP_FORCE on
+# successful commit; this file stays as the live config afterwards.
+DOCKMESH_HTTP_ADDR=:8080
+DOCKMESH_AGENT_LISTEN=:8443
+DOCKMESH_DB_PATH=$DATA_DIR/data/dockmesh.db
+DOCKMESH_STACKS_ROOT=$DATA_DIR/stacks
+DOCKMESH_SECRETS_PATH=$DATA_DIR/data/secrets.env
+DOCKMESH_SECRETS_KEY_PATH=$DATA_DIR/data/secrets.age-key
+DOCKMESH_AUDIT_GENESIS_PATH=$DATA_DIR/data/audit-genesis.sha256
+DOCKMESH_INSTALL_SCRIPT=$ASSET_DIR/install-agent.sh
+DOCKMESH_BINARY_DIR=$ASSET_DIR/bin
+DOCKMESH_SETUP_FORCE=true
+EOF
+  $USE_SUDO chmod 600 "$ENV_FILE"
+  if [ "$OS" = "linux" ]; then
+    $USE_SUDO chown dockmesh:docker "$ENV_FILE"
+  fi
+  ok "env file        $ENV_FILE"
+
+  # Service unit. Linux = systemd; macOS = launchd.
+  if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
+    UNIT_PATH="/etc/systemd/system/dockmesh.service"
+    $USE_SUDO tee "$UNIT_PATH" >/dev/null <<EOF
+[Unit]
+Description=Dockmesh container management
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dockmesh
+Group=docker
+EnvironmentFile=$ENV_FILE
+ExecStart=$INSTALL_DIR/dockmesh serve
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    $USE_SUDO systemctl daemon-reload
+    ok "systemd unit    $UNIT_PATH"
+    $USE_SUDO systemctl enable --now dockmesh
+    # Wait for it to come up before printing the wizard URL.
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      sleep 0.5
+      systemctl is-active --quiet dockmesh && break
+    done
+    if systemctl is-active --quiet dockmesh; then
+      ok "service         active"
+    else
+      fail "service failed to start — see: journalctl -u dockmesh --since '1 min ago'"
+    fi
+  elif [ "$OS" = "darwin" ] && command -v launchctl >/dev/null 2>&1; then
+    PLIST="/Library/LaunchDaemons/dev.dockmesh.service.plist"
+    $USE_SUDO tee "$PLIST" >/dev/null <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dev.dockmesh.service</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$INSTALL_DIR/dockmesh</string>
+    <string>serve</string>
+    <string>--env-file</string>
+    <string>$ENV_FILE</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/usr/local/var/log/dockmesh.log</string>
+  <key>StandardErrorPath</key><string>/usr/local/var/log/dockmesh.err</string>
+</dict>
+</plist>
+EOF
+    $USE_SUDO launchctl bootstrap system "$PLIST" 2>/dev/null || \
+      $USE_SUDO launchctl load -w "$PLIST"
+    ok "launchd unit    $PLIST"
+  else
+    warn "no service manager — start manually: $USE_SUDO $INSTALL_DIR/dockmesh serve --env-file $ENV_FILE"
+  fi
+  step_done
+fi
+
+# ------------------------------------------------------------------
+#  [done]  Wizard URL
+# ------------------------------------------------------------------
 INSTALLED="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || echo "$DM_VERSION")"
 ok "installed       $INSTALLED"
 TOTAL_ELAPSED=$(awk "BEGIN { printf \"%.1f\", $(get_time) - $START_TS }")
 printf '   %s%ss total%s\n' "$FG_MUTED" "$TOTAL_ELAPSED" "$RST" >&2
 
-box "Next step" \
-  "" \
-  "  $USE_SUDO dockmesh init" \
-  "" \
-  "Guided wizard — data dir, admin user, listen port, systemd unit." \
-  "Everything defaults to sane values. ~2 minutes."
+# Pick a sensible LAN IP for the wizard URL — first non-loopback IPv4
+# address. Falls back to <hostname> if no IP could be derived.
+WIZARD_HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
+[ -z "$WIZARD_HOST" ] && WIZARD_HOST="$(hostname 2>/dev/null || echo localhost)"
+WIZARD_URL="http://$WIZARD_HOST:8080/setup"
+
+if [ "${DOCKMESH_NO_BOOTSTRAP:-0}" = "1" ]; then
+  box "Next step" \
+    "" \
+    "  $USE_SUDO dockmesh init" \
+    "" \
+    "Guided CLI wizard — data dir, admin user, listen port, systemd unit." \
+    "Everything defaults to sane values. ~2 minutes."
+else
+  box "Open the install wizard" \
+    "" \
+    "  $WIZARD_URL" \
+    "" \
+    "Pick your data location, service user, and admin password." \
+    "Wizard window: 30 minutes — restart the service to extend it."
+fi
 
 printf '   %sDocs%s     https://dockmesh.dev/docs\n'   "$DIM" "$RST" >&2
 printf '   %sIssues%s   https://github.com/%s/issues\n\n' "$DIM" "$RST" "$REPO" >&2

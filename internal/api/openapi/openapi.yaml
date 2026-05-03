@@ -101,6 +101,266 @@ tags:
 
 paths:
   # -----------------------------------------------------------------------
+  # setup — install wizard (P.14). Public; runs before auth exists.
+  # -----------------------------------------------------------------------
+  /setup/preflight:
+    get:
+      operationId: setup.preflight
+      tags: [setup]
+      summary: Host + Docker preflight checks for the wizard's first page
+      security: []
+      responses:
+        "200":
+          description: Preflight snapshot with one row per check.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, description: "true when no check is fail" }
+                  checks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: { type: string }
+                        label: { type: string }
+                        value: { type: string }
+                        status: { type: string, enum: [ok, warn, fail] }
+                        message: { type: string }
+                        hint: { type: string }
+
+  /setup/server-info:
+    get:
+      operationId: setup.server_info
+      tags: [setup]
+      summary: Top-bar facts (version · os · ip · docker)
+      description: Polled by the wizard top-bar every ~10s while setup is open.
+      security: []
+      responses:
+        "200":
+          description: Server info snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: { type: string }
+                  os: { type: string }
+                  ip: { type: string }
+                  docker_version: { type: string }
+                  uptime_secs: { type: integer }
+
+  /setup/validate-data-dir:
+    post:
+      operationId: setup.validate_data_dir
+      tags: [setup]
+      summary: Live-validate Step 2's data-directory input
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path: { type: string }
+      responses:
+        "200":
+          description: Check result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path: { type: string }
+                  exists: { type: boolean }
+                  is_dir: { type: boolean }
+                  writable: { type: boolean }
+                  will_create: { type: boolean }
+                  total_bytes: { type: integer, format: int64 }
+                  free_bytes: { type: integer, format: int64 }
+                  parent_exists: { type: boolean }
+                  parent_writable: { type: boolean }
+                  status: { type: string, enum: [ok, warn, fail] }
+                  message: { type: string }
+
+  /setup/validate-user:
+    post:
+      operationId: setup.validate_user
+      tags: [setup]
+      summary: Validate Step 3's service-user choice
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode, username]
+              properties:
+                mode: { type: string, enum: [existing, create] }
+                username: { type: string }
+      responses:
+        "200":
+          description: Check result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  username: { type: string }
+                  exists: { type: boolean }
+                  uid: { type: string }
+                  gid: { type: string }
+                  home_dir: { type: string }
+                  in_docker_group: { type: boolean }
+                  status: { type: string, enum: [ok, warn, fail] }
+                  message: { type: string }
+
+  /setup/test-url:
+    post:
+      operationId: setup.test_url
+      tags: [setup]
+      summary: Reachability probe for Step 5's public URL
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, format: uri }
+                expect_health: { type: boolean }
+      responses:
+        "200":
+          description: Probe result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string }
+                  reachable: { type: boolean }
+                  latency_ms: { type: integer }
+                  status: { type: string, enum: [ok, warn, fail] }
+                  message: { type: string }
+
+  /setup/commit:
+    post:
+      operationId: setup.commit
+      tags: [setup]
+      summary: Run the install with the wizard-collected config
+      description: |
+        Returns 202 Accepted with a `run_id`. The actual install runs
+        in the background; subscribe to `/setup/stream/{run_id}` (SSE)
+        to read each step's status as it happens. Idempotent — a
+        re-submit emits "already exists" warnings instead of failing.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data_dir, service_user, admin, public_url]
+              properties:
+                data_dir: { type: string }
+                service_user:
+                  type: object
+                  required: [mode, username]
+                  properties:
+                    mode: { type: string, enum: [existing, create] }
+                    username: { type: string }
+                    add_to_docker_group: { type: boolean }
+                admin:
+                  type: object
+                  required: [username, password]
+                  properties:
+                    username: { type: string }
+                    email: { type: string }
+                    password: { type: string }
+                public_url: { type: string, format: uri }
+      responses:
+        "202":
+          description: Run accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run_id: { type: string }
+                  stream_url: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "410":
+          description: Setup window expired or setup already complete.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /setup/stream/{run_id}:
+    get:
+      operationId: setup.stream
+      tags: [setup]
+      summary: Server-Sent Events stream of install steps
+      description: |
+        SSE stream — `event: line` frames carry one `Event` JSON per
+        install step (timestamp, step id, message, status). When the
+        runner finishes, an `event: end` frame closes the stream. The
+        wizard's Step 7 terminal animation reads from this directly.
+      security: []
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: SSE stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "404":
+          description: Run not found or already evicted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /setup/status:
+    get:
+      operationId: setup.status
+      tags: [setup]
+      summary: Whether the server is in first-run setup mode
+      description: |
+        Returns `active: true` when the server has no admin user and
+        the install wizard is the only thing that should be reachable.
+        The wizard frontend polls this on every page load to decide
+        whether to redirect to the dashboard once setup is complete.
+
+        `expired: true` means the 30-minute setup window passed without
+        the wizard being completed — the operator restarts the service
+        to get a fresh window. Refusing to seed admins past the window
+        is a Portainer-style drive-by protection.
+      security: []
+      responses:
+        "200":
+          description: Status snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [active, started_at, expires_at, expired, window_secs]
+                properties:
+                  active: { type: boolean }
+                  started_at: { type: string, format: date-time }
+                  expires_at: { type: string, format: date-time }
+                  expired: { type: boolean }
+                  window_secs: { type: integer }
+
+  # -----------------------------------------------------------------------
   # auth — session flow, MFA, OIDC redirects
   # -----------------------------------------------------------------------
   /auth/login:

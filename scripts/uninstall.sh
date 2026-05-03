@@ -322,19 +322,41 @@ if [ "$DO_DATA" = "1" ]; then
     [ -d "$DATA_DIR/stacks" ] && LOOKS_LIKE_DOCKMESH=1
     [ -f "$DATA_DIR/dockmesh.env" ] && LOOKS_LIKE_DOCKMESH=1
     if [ "$LOOKS_LIKE_DOCKMESH" = "1" ]; then
-      run rm -rf "$DATA_DIR"
-      ok "removed $DATA_DIR (DB, stacks, keys, env)"
+      # When the data dir is a dedicated mount (e.g. /data on a separate
+      # volume), `rm -rf $DATA_DIR` would fail with "Device or resource
+      # busy" because the mountpoint itself can't be removed. Wipe the
+      # contents in that case and leave the empty mountpoint behind.
+      # Otherwise (regular subdir), nuke the whole tree.
+      if command -v mountpoint >/dev/null 2>&1 && mountpoint -q "$DATA_DIR"; then
+        run sh -c "rm -rf \"$DATA_DIR\"/* \"$DATA_DIR\"/.[!.]* \"$DATA_DIR\"/..?* 2>/dev/null || true"
+        ok "wiped contents of $DATA_DIR (mountpoint preserved)"
+      else
+        run rm -rf "$DATA_DIR"
+        ok "removed $DATA_DIR (DB, stacks, keys, env)"
+      fi
     else
       warn "$DATA_DIR exists but doesn't look like a dockmesh data dir — skipping for safety"
     fi
   fi
 fi
 
-# Remove service user.
+# Remove service user. Two fixes for prior bugs:
+#   1. systemctl stop sends SIGTERM and waits up to ~10s for the
+#      process to exit. Doing userdel right after sometimes raced —
+#      userdel refuses while any process owns the UID. We pkill -u
+#      dockmesh first to clear any straggler before deleting.
+#   2. The previous version emitted `ok "removed user"` unconditionally,
+#      even when userdel had failed and warn already fired — claiming
+#      success when none happened. Now: only emit ok when userdel
+#      actually returns 0.
 if [ "$DO_USER" = "1" ] && [ "$OS" = "linux" ]; then
   if id dockmesh >/dev/null 2>&1; then
-    run userdel dockmesh 2>/dev/null || warn "userdel dockmesh failed (processes still owned by it?)"
-    ok "removed 'dockmesh' system user"
+    pkill -KILL -u dockmesh 2>/dev/null || true
+    if run userdel dockmesh 2>/dev/null; then
+      ok "removed 'dockmesh' system user"
+    else
+      warn "userdel dockmesh failed — try manually: sudo pkill -KILL -u dockmesh && sudo userdel dockmesh"
+    fi
   fi
 fi
 

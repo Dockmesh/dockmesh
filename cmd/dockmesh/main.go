@@ -52,6 +52,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/selfupdate"
+	"github.com/dockmesh/dockmesh/internal/setup"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/dockmesh/dockmesh/internal/telemetry"
@@ -264,12 +265,38 @@ func main() {
 	defer cancel()
 
 	authSvc := auth.NewService(database, cfg.JWTSecret)
-	if username, password, created, err := authSvc.Bootstrap(ctx); err != nil {
-		slog.Error("bootstrap failed", "err", err)
+	// P.14.1: when DOCKMESH_SETUP_FORCE=true the install-wizard path is
+	// driving — let it own admin creation and skip the auto-bootstrap.
+	// Default behaviour (no flag) keeps the legacy auto-admin so
+	// `dockmesh init --yes` and existing installs are unchanged.
+	if !cfg.SetupForce {
+		if username, password, created, err := authSvc.Bootstrap(ctx); err != nil {
+			slog.Error("bootstrap failed", "err", err)
+			os.Exit(1)
+		} else if created {
+			slog.Warn("bootstrap admin created — store this password, it will not be shown again",
+				"username", username, "password", password)
+		}
+	}
+
+	// P.14.1: setup-mode state. Active when no admin user exists in the
+	// DB, or when the force-flag pins it on. Used by the gating
+	// middleware to redirect a freshly-installed server's URL to /setup
+	// instead of the login screen.
+	setupState, err := setup.NewFromDB(ctx, database)
+	if err != nil {
+		slog.Error("setup state init failed", "err", err)
 		os.Exit(1)
-	} else if created {
-		slog.Warn("bootstrap admin created — store this password, it will not be shown again",
-			"username", username, "password", password)
+	}
+	if cfg.SetupForce {
+		// Pin active even if an admin exists (used during dev for the
+		// wizard, never normal-operation). Status output makes this
+		// visible.
+		setupState = setup.NewForced()
+	}
+	if setupState.Active() {
+		slog.Warn("server starting in setup-mode — finish the install wizard at /setup",
+			"window_min", int(setup.SetupWindow.Minutes()))
 	}
 
 	// Docker may not be up yet when we boot (macOS launchd fires us
@@ -601,6 +628,127 @@ func main() {
 	drainSvc := migration.NewDrainService(migrationSvc, database)
 
 	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
+
+	// P.14.2: install-wizard commit function. Built here because it
+	// needs auth.Service + settings.Store + the configured paths.
+	// Idempotent — re-running the wizard against an already-set-up
+	// install does not corrupt state, it just emits "already exists"
+	// warnings for the user-create and admin-create steps.
+	setupCommit := func(commitCtx context.Context, in setup.CommitInput, emit func(step, msg, status string)) error {
+		// Step 1 — service user. Skips entirely when we're not root,
+		// because both useradd and usermod need root and the wizard
+		// usually runs as the dockmesh user (non-root). The install
+		// script that ships in P.14.5 creates the user BEFORE starting
+		// the service, so first-install operators never hit this path.
+		// During re-runs we also skip the docker-group add when the
+		// user is already in the group, instead of running usermod
+		// only to log a no-op or a permission failure.
+		isRoot := os.Geteuid() == 0
+		if in.ServiceUser.Mode == "create" {
+			if !isRoot {
+				emit("user.create", "skipping — wizard process is not root, install script handles user creation", "warn")
+			} else {
+				emit("user.create", "creating system user '"+in.ServiceUser.Username+"'", "info")
+				if err := setup.CreateSystemUser(in.ServiceUser.Username, in.ServiceUser.AddDocker); err != nil {
+					emit("user.create", err.Error(), "fail")
+					return err
+				}
+				emit("user.create", "system user created", "ok")
+			}
+		} else if in.ServiceUser.AddDocker {
+			// Existing-user path: only run usermod if the user isn't
+			// already a docker-group member, and only when root.
+			check := setup.CheckSystemUser(in.ServiceUser.Username)
+			switch {
+			case check.InDockerGroup:
+				emit("user.docker_group", in.ServiceUser.Username+" is already in docker group", "ok")
+			case !isRoot:
+				emit("user.docker_group", "skipping — wizard process is not root, add "+in.ServiceUser.Username+" to docker group manually if needed", "warn")
+			default:
+				emit("user.docker_group", "adding "+in.ServiceUser.Username+" to docker group", "info")
+				if err := setup.AddToDockerGroup(in.ServiceUser.Username); err != nil {
+					emit("user.docker_group", err.Error(), "warn")
+				} else {
+					emit("user.docker_group", "added to docker group", "ok")
+				}
+			}
+		}
+
+		// Step 2 — data directory. We only ensure existence + ownership;
+		// relocation between dirs is a P.14 follow-up (the install
+		// script will set the bootstrap dir to the operator's choice
+		// upfront).
+		emit("data_dir", "ensuring "+in.DataDir, "info")
+		if err := os.MkdirAll(in.DataDir, 0o750); err != nil {
+			emit("data_dir", err.Error(), "fail")
+			return err
+		}
+		emit("data_dir", "ready", "ok")
+
+		// Step 3 — admin user
+		emit("admin", "creating admin user '"+in.Admin.Username+"'", "info")
+		commitCtx2, cancel := context.WithTimeout(commitCtx, 10*time.Second)
+		defer cancel()
+		if _, err := authSvc.CreateUser(commitCtx2, in.Admin.Username, in.Admin.Email, in.Admin.Password, "admin"); err != nil {
+			if errors.Is(err, auth.ErrUsernameTaken) {
+				emit("admin", "admin '"+in.Admin.Username+"' already exists — password unchanged (use 'sudo dockmesh admin reset-password' to change it)", "warn")
+			} else {
+				emit("admin", err.Error(), "fail")
+				return err
+			}
+		} else {
+			emit("admin", "admin user created", "ok")
+		}
+
+		// Step 4 — public URL persisted in the settings store
+		if settingsStore != nil {
+			emit("settings", "saving public URL "+in.PublicURL, "info")
+			if err := settingsStore.Set(commitCtx2, settings.KeyBaseURL, in.PublicURL); err != nil {
+				emit("settings", err.Error(), "warn")
+			} else {
+				emit("settings", "saved", "ok")
+			}
+		}
+
+		// Step 4.5 — scrub DOCKMESH_SETUP_FORCE from the env file. The
+		// install script writes that flag so the wizard runs on first
+		// boot. Once the wizard's commit succeeds (admin user now
+		// exists in the DB), the next service restart should NOT
+		// re-enter setup mode — drop the flag so a regular boot lands
+		// the operator on the login screen.
+		envPath := filepath.Join(filepath.Dir(cfg.DBPath), "..", "dockmesh.env")
+		if cleaned, derr := scrubEnvFlag(envPath, "DOCKMESH_SETUP_FORCE"); derr == nil && cleaned {
+			emit("setup_flag", "removed DOCKMESH_SETUP_FORCE from "+envPath+" — next boot will not re-enter setup mode", "ok")
+		} else if derr != nil {
+			emit("setup_flag", "could not scrub setup flag: "+derr.Error()+" (manual edit may be needed)", "warn")
+		}
+
+		// Step 5 — health probe
+		emit("health", "probing /api/v1/health", "info")
+		probeURL := "http://127.0.0.1" + cfg.HTTPAddr
+		if strings.HasPrefix(cfg.HTTPAddr, ":") {
+			probeURL = "http://127.0.0.1" + cfg.HTTPAddr
+		}
+		probeCtx, probeCancel := context.WithTimeout(commitCtx, 3*time.Second)
+		defer probeCancel()
+		req, _ := http.NewRequestWithContext(probeCtx, "GET", probeURL+"/api/v1/health", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			emit("health", "probe failed: "+err.Error(), "warn")
+		} else {
+			_ = resp.Body.Close()
+			if resp.StatusCode == 200 {
+				emit("health", "ok (HTTP 200)", "ok")
+			} else {
+				emit("health", fmt.Sprintf("HTTP %d", resp.StatusCode), "warn")
+			}
+		}
+		return nil
+	}
+
+	// Wizard top-bar shows the same version `dockmesh --version` does.
+	handlers.SetSetupVersionString(version.Version)
+
 	h := handlers.New(handlers.Deps{
 		DB:           database,
 		Auth:         authSvc,
@@ -640,9 +788,11 @@ func main() {
 		AgentUpgrade:   agentUpgrade,
 		Prom:           promMetrics,
 		SelfUpdate:     selfUpdateChk,
+		SetupState:     setupState,
+		SetupCommit_:   setupCommit,
 		JWTSecret:    cfg.JWTSecret,
 	})
-	router := api.NewRouter(h, authSvc, webFS, cfg.MetricsAuth)
+	router := api.NewRouter(h, authSvc, webFS, cfg.MetricsAuth, setupState)
 
 	// Backfill stack deployments (P.7): scan local containers to detect
 	// which stacks are already deployed. Remote-agent containers are
@@ -792,6 +942,34 @@ func buildLogger(format, level string) *slog.Logger {
 		return slog.New(slog.NewTextHandler(os.Stdout, opts))
 	}
 	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+}
+
+// scrubEnvFlag removes any line in the env file matching `KEY=...` or
+// `export KEY=...`. Returns whether the file was modified. Used by the
+// wizard commit handler to drop DOCKMESH_SETUP_FORCE so the next boot
+// behaves as a normal post-setup install. Idempotent — calling twice
+// when the flag is already gone returns (false, nil).
+func scrubEnvFlag(path, key string) (bool, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	lines := strings.Split(string(b), "\n")
+	out := make([]string, 0, len(lines))
+	changed := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		stripped := strings.TrimPrefix(trimmed, "export ")
+		if strings.HasPrefix(stripped, key+"=") {
+			changed = true
+			continue
+		}
+		out = append(out, line)
+	}
+	if !changed {
+		return false, nil
+	}
+	return true, os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o600)
 }
 
 func deriveAgentURL(baseURL, listen string) string {

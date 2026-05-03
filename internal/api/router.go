@@ -11,12 +11,13 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/setup"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 )
 
-func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metricsAuth bool) http.Handler {
+func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metricsAuth bool, setupState *setup.State) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
@@ -29,6 +30,10 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		AllowCredentials: true,
 	}))
+	// P.14.1: gate non-setup paths while setup mode is active. Returns
+	// 503 with a body pointing UI clients at /setup, lets the wizard
+	// itself + its API + static assets through.
+	r.Use(middleware.SetupGate(setupState))
 
 	// Kubernetes-style health probes (P.12.2). Mounted at the router
 	// root, unauthenticated, so k8s / docker-compose healthchecks /
@@ -55,6 +60,18 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/health", h.Health)
+
+		// P.14.1+P.14.2: install-wizard endpoints. All public — the
+		// wizard runs before any auth exists. The gate middleware lets
+		// /setup/* through automatically.
+		r.Get("/setup/status", h.SetupStatus)
+		r.Get("/setup/preflight", h.SetupPreflight)
+		r.Get("/setup/server-info", h.SetupServerInfo)
+		r.Post("/setup/validate-data-dir", h.SetupValidateDataDir)
+		r.Post("/setup/validate-user", h.SetupValidateUser)
+		r.Post("/setup/test-url", h.SetupTestURL)
+		r.Post("/setup/commit", h.SetupCommit)
+		r.Get("/setup/stream/{run_id}", h.SetupStream)
 
 		// OpenAPI 3.1 spec + Swagger UI (P.11.10). Public — the spec
 		// lists only endpoint shapes, not secrets; clients need it to

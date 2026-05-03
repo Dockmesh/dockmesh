@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/alerts"
@@ -31,6 +32,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/selfupdate"
+	"github.com/dockmesh/dockmesh/internal/setup"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/templates"
 	"github.com/dockmesh/dockmesh/internal/updater"
@@ -75,6 +77,9 @@ type Handlers struct {
 	AgentUpgrade   *agents.UpgradeController
 	Prom           *metrics.PromMetrics
 	SelfUpdate     *selfupdate.Checker
+	SetupState     *setup.State    // first-run wizard state; nil = setup never active
+	SetupCommit_   setup.CommitFunc // wizard's commit-runner — wired by main; nil = wizard cannot commit
+	setupRuns      sync.Map        // runID → *setup.Runner; populated when SetupCommit fires
 	JWTSecret      []byte // raw secret used to sign the short-lived OIDC state cookie
 }
 
@@ -117,6 +122,8 @@ type Deps struct {
 	AgentUpgrade   *agents.UpgradeController
 	Prom           *metrics.PromMetrics
 	SelfUpdate     *selfupdate.Checker
+	SetupState     *setup.State
+	SetupCommit_   setup.CommitFunc
 	JWTSecret      []byte
 }
 
@@ -160,6 +167,8 @@ func New(d Deps) *Handlers {
 		AgentUpgrade:   d.AgentUpgrade,
 		Prom:           d.Prom,
 		SelfUpdate:     d.SelfUpdate,
+		SetupState:     d.SetupState,
+		SetupCommit_:   d.SetupCommit_,
 		JWTSecret:   d.JWTSecret,
 	}
 }
