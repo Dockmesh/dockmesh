@@ -482,7 +482,25 @@
   onDestroy(() => { if (eyebrowTimer) clearInterval(eyebrowTimer); });
 
   // Restore step from URL on mount + kick off live data fetches.
-  onMount(() => {
+  onMount(async () => {
+    // Defense-in-depth — if setup is already complete (server restart,
+    // bookmark hit, etc.) bounce back to the dashboard instead of
+    // letting the operator re-fill a wizard whose commit will 410.
+    // The middleware already returns a 303 for /setup post-install, but
+    // a SvelteKit client-router navigation may have skipped it.
+    try {
+      const r = await fetch('/api/v1/setup/status', { headers: { Accept: 'application/json' } });
+      if (r.ok) {
+        const s = await r.json();
+        if (!s.active) {
+          window.location.replace('/');
+          return;
+        }
+      }
+    } catch {
+      // network blip — fall through and let the wizard render; the
+      // commit endpoint will reject if state actually changed.
+    }
     const param = new URLSearchParams(window.location.search).get('step');
     const n = parseInt(param || '1', 10);
     if (Number.isFinite(n) && n >= 1 && n <= 7) {

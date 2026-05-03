@@ -64,27 +64,59 @@ func allowedDuringSetup(path string) bool {
 	return false
 }
 
+// isWizardOnlyPath identifies routes that ONLY make sense while setup
+// is active. Once setup is complete we want to lock these so the
+// operator can't accidentally re-run the wizard on a configured
+// server (which would fail anyway, but the UI shouldn't even render).
+// /api/v1/setup/status is intentionally excluded — the SvelteKit root
+// layout probes it on every page load to decide whether to redirect.
+func isWizardOnlyPath(path string) bool {
+	if path == "/setup" || strings.HasPrefix(path, "/setup/") {
+		return true
+	}
+	if path == "/api/v1/setup/status" {
+		return false
+	}
+	if strings.HasPrefix(path, "/api/v1/setup/") || path == "/api/v1/setup" {
+		return true
+	}
+	return false
+}
+
 // SetupGate refuses requests to non-setup paths while setup mode is
-// active. UI clients see a 503 with a body that tells them where to
-// go; non-UI clients (CLI, agents trying to enroll prematurely) get a
-// clear "server in setup mode" error rather than a generic 401.
+// active, AND refuses requests to wizard-only paths once setup is
+// complete. UI clients see a 503 (during) or a 410/redirect (after);
+// non-UI clients get a clear error rather than a generic 401.
 func SetupGate(state *setup.State) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if state == nil || !state.Active() {
-				next.ServeHTTP(w, r)
+			active := state != nil && state.Active()
+			if active {
+				if allowedDuringSetup(r.URL.Path) {
+					next.ServeHTTP(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error":     "server is in setup mode — finish the install wizard first",
+					"setup_url": "/setup",
+				})
 				return
 			}
-			if allowedDuringSetup(r.URL.Path) {
-				next.ServeHTTP(w, r)
+			if isWizardOnlyPath(r.URL.Path) {
+				if strings.HasPrefix(r.URL.Path, "/setup") {
+					http.Redirect(w, r, "/", http.StatusSeeOther)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusGone)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error": "setup mode is no longer active",
+				})
 				return
 			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error":     "server is in setup mode — finish the install wizard first",
-				"setup_url": "/setup",
-			})
+			next.ServeHTTP(w, r)
 		})
 	}
 }
