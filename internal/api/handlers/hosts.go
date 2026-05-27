@@ -31,7 +31,7 @@ func (h *Handlers) ListHosts(w http.ResponseWriter, r *http.Request) {
 			list[i].Tags = h.HostTags.Tags(list[i].ID)
 		}
 	}
-	// Apply scope filter. Empty scope → no-op.
+	// Apply user-level scope_tags filter (legacy, P.11.3). Empty → no-op.
 	if scope := middleware.ScopeTags(r.Context()); len(scope) > 0 {
 		filtered := make([]host.Info, 0, len(list))
 		for _, info := range list {
@@ -41,5 +41,7 @@ func (h *Handlers) ListHosts(w http.ResponseWriter, r *http.Request) {
 		}
 		list = filtered
 	}
+	// Apply role-level scope filter (v2.1).
+	list = h.filterHostsByRoleScope(r, list)
 	writeJSON(w, http.StatusOK, list)
 }

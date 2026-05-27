@@ -36,8 +36,12 @@ type Template struct {
 	Author      string     `json:"author,omitempty"`
 	Version     string     `json:"version,omitempty"`
 	Builtin     bool       `json:"builtin"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	// Catalog metadata used by the new template-browse UI.
+	Category     string    `json:"category,omitempty"`
+	Featured     bool      `json:"featured"`
+	DeploysCount int       `json:"deploys_count"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // Input is the create/update payload (user-defined templates only).
@@ -51,6 +55,8 @@ type Input struct {
 	Parameters  []ParamDef `json:"parameters,omitempty"`
 	Author      string     `json:"author,omitempty"`
 	Version     string     `json:"version,omitempty"`
+	Category    string     `json:"category,omitempty"`
+	Featured    bool       `json:"featured,omitempty"`
 }
 
 // builtinFS embeds the YAML files under builtin/.
@@ -144,6 +150,7 @@ func (s *Service) List(ctx context.Context) ([]Template, error) {
 		SELECT id, slug, name, COALESCE(description, ''), COALESCE(icon_url, ''),
 		       compose, COALESCE(env_tmpl, ''), parameters,
 		       COALESCE(author, ''), COALESCE(version, ''), builtin,
+		       COALESCE(category, ''), featured, deploys_count,
 		       created_at, updated_at
 		  FROM stack_templates
 		 ORDER BY builtin DESC, name`)
@@ -167,6 +174,7 @@ func (s *Service) Get(ctx context.Context, id int64) (*Template, error) {
 		SELECT id, slug, name, COALESCE(description, ''), COALESCE(icon_url, ''),
 		       compose, COALESCE(env_tmpl, ''), parameters,
 		       COALESCE(author, ''), COALESCE(version, ''), builtin,
+		       COALESCE(category, ''), featured, deploys_count,
 		       created_at, updated_at
 		  FROM stack_templates WHERE id = ?`, id)
 	t, err := scanTemplate(row)
@@ -185,13 +193,19 @@ func (s *Service) Create(ctx context.Context, in Input) (*Template, error) {
 		return nil, err
 	}
 	paramsJSON, _ := json.Marshal(params)
+	featuredInt := 0
+	if in.Featured {
+		featuredInt = 1
+	}
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO stack_templates
-		  (slug, name, description, icon_url, compose, env_tmpl, parameters, author, version, builtin)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		  (slug, name, description, icon_url, compose, env_tmpl, parameters, author, version,
+		   builtin, category, featured)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
 		in.Slug, in.Name, nullable(in.Description), nullable(in.IconURL),
 		in.Compose, nullable(in.EnvTemplate), string(paramsJSON),
-		nullable(in.Author), nullable(in.Version))
+		nullable(in.Author), nullable(in.Version),
+		in.Category, featuredInt)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return nil, ErrDuplicateSlug
@@ -218,16 +232,22 @@ func (s *Service) Update(ctx context.Context, id int64, in Input) (*Template, er
 		return nil, err
 	}
 	paramsJSON, _ := json.Marshal(params)
+	featuredInt := 0
+	if in.Featured {
+		featuredInt = 1
+	}
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE stack_templates SET
 		  slug = ?, name = ?, description = ?, icon_url = ?,
 		  compose = ?, env_tmpl = ?, parameters = ?,
 		  author = ?, version = ?,
+		  category = ?, featured = ?,
 		  updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND builtin = 0`,
 		in.Slug, in.Name, nullable(in.Description), nullable(in.IconURL),
 		in.Compose, nullable(in.EnvTemplate), string(paramsJSON),
-		nullable(in.Author), nullable(in.Version), id)
+		nullable(in.Author), nullable(in.Version),
+		in.Category, featuredInt, id)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return nil, ErrDuplicateSlug
@@ -235,6 +255,13 @@ func (s *Service) Update(ctx context.Context, id int64, in Input) (*Template, er
 		return nil, err
 	}
 	return s.Get(ctx, id)
+}
+
+// IncrementDeployCount bumps deploys_count by 1 after a successful
+// template deploy. Best-effort — failure here doesn't fail the deploy.
+func (s *Service) IncrementDeployCount(ctx context.Context, id int64) {
+	_, _ = s.db.ExecContext(ctx,
+		`UPDATE stack_templates SET deploys_count = deploys_count + 1 WHERE id = ?`, id)
 }
 
 func (s *Service) Delete(ctx context.Context, id int64) error {
@@ -311,14 +338,16 @@ type rowScanner interface {
 func scanTemplate(r rowScanner) (*Template, error) {
 	var t Template
 	var paramsJSON string
-	var builtin int
+	var builtin, featured int
 	if err := r.Scan(&t.ID, &t.Slug, &t.Name, &t.Description, &t.IconURL,
 		&t.Compose, &t.EnvTemplate, &paramsJSON,
 		&t.Author, &t.Version, &builtin,
+		&t.Category, &featured, &t.DeploysCount,
 		&t.CreatedAt, &t.UpdatedAt); err != nil {
 		return nil, err
 	}
 	t.Builtin = builtin == 1
+	t.Featured = featured == 1
 	if paramsJSON != "" {
 		_ = json.Unmarshal([]byte(paramsJSON), &t.Parameters)
 	}

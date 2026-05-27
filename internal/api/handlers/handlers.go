@@ -13,6 +13,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/hosttags"
+	"github.com/dockmesh/dockmesh/internal/ldapauth"
 	"github.com/dockmesh/dockmesh/internal/migration"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/settings"
@@ -20,13 +21,17 @@ import (
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/deploy"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
 	"github.com/dockmesh/dockmesh/internal/metrics"
+	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/notify"
+	"github.com/dockmesh/dockmesh/internal/oauth2auth"
 	"github.com/dockmesh/dockmesh/internal/oidc"
 	"github.com/dockmesh/dockmesh/internal/proxy"
+	"github.com/dockmesh/dockmesh/internal/saml"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/registries"
 	"github.com/dockmesh/dockmesh/internal/scanner"
@@ -46,6 +51,8 @@ type Handlers struct {
 	Stacks       *stacks.Manager
 	Deployments  *stacks.DeploymentStore
 	DeployHistory *stacks.HistoryStore
+	DeployTracker *deploy.Tracker
+	Notifications *notifications.Service
 	Dependencies  *stacks.DependencyStore
 	Compose      *compose.Service
 	LoginLimiter *ratelimit.Limiter
@@ -54,6 +61,9 @@ type Handlers struct {
 	Proxy        *proxy.Service
 	Updater      *updater.Service
 	OIDC         *oidc.Service
+	SAML         *saml.Service
+	LDAP         *ldapauth.Service
+	OAuth2       *oauth2auth.Service
 	Metrics      *metrics.Collector
 	Notify       *notify.Service
 	Alerts       *alerts.Service
@@ -80,7 +90,11 @@ type Handlers struct {
 	SetupState     *setup.State    // first-run wizard state; nil = setup never active
 	SetupCommit_   setup.CommitFunc // wizard's commit-runner — wired by main; nil = wizard cannot commit
 	setupRuns      sync.Map        // runID → *setup.Runner; populated when SetupCommit fires
-	JWTSecret      []byte // raw secret used to sign the short-lived OIDC state cookie
+	JWTSecret      []byte // raw secret used to sign the short-lived OIDC + SAML state cookies
+	// RBACv2Enforce gates per-host + per-stack scope checks on typed-
+	// resource handlers. Wired from cfg.RBACv2Enforce. Default false
+	// during the v0.3.0 cutover; flipped to true in slice R-5.
+	RBACv2Enforce bool
 }
 
 type Deps struct {
@@ -91,6 +105,8 @@ type Deps struct {
 	Stacks       *stacks.Manager
 	Deployments  *stacks.DeploymentStore
 	DeployHistory *stacks.HistoryStore
+	DeployTracker *deploy.Tracker
+	Notifications *notifications.Service
 	Dependencies  *stacks.DependencyStore
 	Compose      *compose.Service
 	LoginLimiter *ratelimit.Limiter
@@ -99,6 +115,9 @@ type Deps struct {
 	Proxy        *proxy.Service
 	Updater      *updater.Service
 	OIDC         *oidc.Service
+	SAML         *saml.Service
+	LDAP         *ldapauth.Service
+	OAuth2       *oauth2auth.Service
 	Metrics      *metrics.Collector
 	Notify       *notify.Service
 	Alerts       *alerts.Service
@@ -125,6 +144,7 @@ type Deps struct {
 	SetupState     *setup.State
 	SetupCommit_   setup.CommitFunc
 	JWTSecret      []byte
+	RBACv2Enforce  bool
 }
 
 func New(d Deps) *Handlers {
@@ -136,6 +156,8 @@ func New(d Deps) *Handlers {
 		Stacks:      d.Stacks,
 		Deployments: d.Deployments,
 		DeployHistory: d.DeployHistory,
+		DeployTracker: d.DeployTracker,
+		Notifications: d.Notifications,
 		Dependencies: d.Dependencies,
 		Compose:     d.Compose,
 		LoginLimiter: d.LoginLimiter,
@@ -144,6 +166,9 @@ func New(d Deps) *Handlers {
 		Proxy:       d.Proxy,
 		Updater:     d.Updater,
 		OIDC:        d.OIDC,
+		SAML:        d.SAML,
+		LDAP:        d.LDAP,
+		OAuth2:      d.OAuth2,
 		Metrics:     d.Metrics,
 		Notify:      d.Notify,
 		Alerts:      d.Alerts,
@@ -169,7 +194,8 @@ func New(d Deps) *Handlers {
 		SelfUpdate:     d.SelfUpdate,
 		SetupState:     d.SetupState,
 		SetupCommit_:   d.SetupCommit_,
-		JWTSecret:   d.JWTSecret,
+		JWTSecret:      d.JWTSecret,
+		RBACv2Enforce:  d.RBACv2Enforce,
 	}
 }
 

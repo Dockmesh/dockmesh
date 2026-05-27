@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/go-chi/chi/v5"
 )
@@ -17,8 +19,33 @@ import (
 // to follow a .row indirection.
 type containerRow struct {
 	dtypes.Container
-	HostID   string `json:"host_id"`
-	HostName string `json:"host_name"`
+	HostID       string `json:"host_id"`
+	HostName     string `json:"host_name"`
+	HealthStatus string `json:"health_status,omitempty"` // healthy / unhealthy / starting / "" (none)
+}
+
+// parseHealthFromStatus extracts the healthcheck verdict from Docker's
+// Status string. Docker formats it as e.g. "Up 5 minutes (healthy)",
+// "Up 5 minutes (unhealthy)", "Up 5 minutes (health: starting)" — or
+// leaves the parens out entirely when the container has no healthcheck.
+// Returning a structured enum lets the UI stop string-parsing.
+func parseHealthFromStatus(status string) string {
+	open := strings.IndexByte(status, '(')
+	close := strings.IndexByte(status, ')')
+	if open < 0 || close < 0 || close <= open {
+		return ""
+	}
+	inner := strings.ToLower(strings.TrimSpace(status[open+1 : close]))
+	switch {
+	case strings.HasPrefix(inner, "health: starting"), inner == "starting":
+		return "starting"
+	case inner == "healthy":
+		return "healthy"
+	case inner == "unhealthy":
+		return "unhealthy"
+	default:
+		return ""
+	}
 }
 
 func (h *Handlers) ListContainers(w http.ResponseWriter, r *http.Request) {
@@ -43,13 +70,16 @@ func (h *Handlers) ListContainers(w http.ResponseWriter, r *http.Request) {
 				rows := make([]containerRow, len(list))
 				for i, c := range list {
 					rows[i] = containerRow{
-						Container: c,
-						HostID:    hh.ID(),
-						HostName:  hh.Name(),
+						Container:    c,
+						HostID:       hh.ID(),
+						HostName:     hh.Name(),
+						HealthStatus: parseHealthFromStatus(c.Status),
 					}
 				}
 				return rows, nil
 			})
+			// Flatten + filter, then re-pack into the FanOutResult shape.
+			res.Items = h.filterContainerRowsByRoleScope(r, res.Items)
 			writeJSON(w, http.StatusOK, res)
 			return
 		}
@@ -69,7 +99,20 @@ func (h *Handlers) ListContainers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	list = h.filterContainersByRoleScope(r, target.ID(), list)
+	// Enrich each row with the parsed health status so the frontend
+	// doesn't need its own regex on the Docker Status string. The
+	// embedded dtypes.Container marshals flat, so adding a sibling
+	// JSON field is non-breaking for existing single-host callers.
+	enriched := make([]struct {
+		dtypes.Container
+		HealthStatus string `json:"health_status,omitempty"`
+	}, len(list))
+	for i, c := range list {
+		enriched[i].Container = c
+		enriched[i].HealthStatus = parseHealthFromStatus(c.Status)
+	}
+	writeJSON(w, http.StatusOK, enriched)
 }
 
 func (h *Handlers) InspectContainer(w http.ResponseWriter, r *http.Request) {
@@ -129,6 +172,11 @@ func (h *Handlers) KillContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
+	scopeReq := h.containerScopeReq(r.Context(), target.ID(), id)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermContainersUpdate, scopeReq, "container "+id)
+		return
+	}
 	var body struct {
 		Signal string `json:"signal"`
 	}
@@ -160,6 +208,11 @@ func (h *Handlers) RemoveContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
+	scopeReq := h.containerScopeReq(r.Context(), target.ID(), id)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermContainersDelete, scopeReq, "container "+id)
+		return
+	}
 	force := r.URL.Query().Get("force") == "true"
 	if err := target.RemoveContainer(r.Context(), id, force); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -181,6 +234,11 @@ func (h *Handlers) containerAction(w http.ResponseWriter, r *http.Request, op st
 		return
 	}
 	id := chi.URLParam(r, "id")
+	scopeReq := h.containerScopeReq(r.Context(), target.ID(), id)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermContainersUpdate, scopeReq, "container "+id)
+		return
+	}
 	switch op {
 	case "start":
 		err = target.StartContainer(r.Context(), id)

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/updater"
 	"github.com/go-chi/chi/v5"
 )
@@ -21,6 +22,11 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
+	scopeReq := h.containerScopeReq(r.Context(), "local", id)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermContainersUpdate, scopeReq, "container "+id)
+		return
+	}
 	res, err := h.Updater.Update(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -40,6 +46,12 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) RollbackContainer(w http.ResponseWriter, r *http.Request) {
 	if h.Updater == nil {
 		writeError(w, http.StatusServiceUnavailable, "updater not configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	scopeReq := h.containerScopeReq(r.Context(), "local", id)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermContainersUpdate, scopeReq, "container "+id)
 		return
 	}
 	var req rollbackRequest

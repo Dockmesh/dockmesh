@@ -1364,17 +1364,32 @@ paths:
         - $ref: "#/components/parameters/ContainerIDPath"
       responses:
         "200":
-          description: Update availability.
+          description: Update availability — registry/release metadata for the container's image.
           content:
             application/json:
               schema:
                 type: object
+                required: [image]
                 properties:
-                  update_available: { type: boolean }
-                  current_image: { type: string }
-                  latest_image: { type: string }
+                  image: { type: string }
                   current_digest: { type: string }
-                  latest_digest: { type: string }
+                  current_created: { type: string, format: date-time }
+                  local_size: { type: integer, format: int64 }
+                  remote_last_updated: { type: string, format: date-time }
+                  remote_size: { type: integer, format: int64 }
+                  docker_hub_url: { type: string, format: uri }
+                  github_url: { type: string, format: uri }
+                  latest_release:
+                    type: object
+                    properties:
+                      tag: { type: string }
+                      name: { type: string }
+                      url: { type: string, format: uri }
+                      body: { type: string }
+                      published: { type: string, format: date-time }
+                  warnings:
+                    type: array
+                    items: { type: string }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
@@ -2312,6 +2327,41 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /stacks/from-git:
+    post:
+      operationId: stacks.create_from_git
+      tags: [stacks]
+      summary: Create a new stack from a git repository in one shot
+      description: |
+        Configures the git source and runs the initial sync, which
+        creates the stack directory on disk from the repo contents.
+        Returns the saved git source plus the sync result + drift report.
+        On a failed initial sync the row is still saved (HTTP 422) so the
+        caller can fix credentials and retry without re-entering everything.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, git]
+              properties:
+                name: { type: string, description: "Stack name (kebab-case)." }
+                git:  { $ref: "#/components/schemas/StackGitSourceInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "422":
+          description: Row saved but initial sync failed (e.g. bad credentials).
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /stacks/{name}/git:
     parameters:
       - $ref: "#/components/parameters/StackNamePath"
@@ -2539,6 +2589,36 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
 
   /images/{id}:
+    get:
+      operationId: images.inspect
+      tags: [images]
+      summary: Inspect an image
+      description: |
+        Returns the full Docker `ImageInspect` payload (RepoTags, RepoDigests,
+        Config, RootFS layers, Architecture, Os, Created, Size, Labels, …).
+        Remote agents currently respond 501 — image inspect is not yet
+        carried over the agent protocol.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Image id (sha256:…) or repo:tag.
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Docker ImageInspect.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501":
+          description: Inspect not yet supported on this host (remote agent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
     delete:
       operationId: images.remove
       tags: [images]
@@ -4209,10 +4289,34 @@ paths:
                 type: array
                 items:
                   type: object
-                  required: [name]
+                  required: [name, display_name, description, category, verb, danger_level]
                   properties:
-                    name: { type: string, example: container.control }
-                    description: { type: string }
+                    name:
+                      type: string
+                      description: Backend identifier in `category.verb` dot-notation.
+                      example: containers.exec
+                    display_name:
+                      type: string
+                      description: Short human-readable label shown on the matrix cell tooltip and in Edit Role rows.
+                      example: Shell into container
+                    description:
+                      type: string
+                      description: One-line plain-language explanation. Renders as the `?` info-button tooltip.
+                    category:
+                      type: string
+                      description: Resource group the permissions matrix renders this row under.
+                      example: Containers
+                    verb:
+                      type: string
+                      description: Matrix column header within the category — e.g., view / deploy / update / delete or per-resource sensitive verb.
+                      example: exec
+                    danger_level:
+                      type: string
+                      enum: [low, medium, high]
+                      description: Drives UI tinting on dangerous grants.
+                    sensitive:
+                      type: boolean
+                      description: When true the permission belongs in the matrix's "Sensitive operations" sub-section rather than the standard verb columns.
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /roles/{name}:
@@ -5414,6 +5518,772 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  # -----------------------------------------------------------------------
+  # SSO additions (Tier C) — SAML, LDAP, OAuth2 alongside existing OIDC.
+  # Plus auth-policy + avatar + alerts/global-env enhancements from Tier A/B.
+  # -----------------------------------------------------------------------
+
+  /auth/signin:
+    get:
+      operationId: auth.signin_config_get
+      tags: [auth]
+      summary: Read the sign-in policy (allow_local_password, TTLs, MFA gating)
+      responses:
+        "200":
+          description: Current sign-in policy.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    put:
+      operationId: auth.signin_config_update
+      tags: [auth]
+      summary: Update the sign-in policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: Updated policy.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  /sessions/revoke-all:
+    post:
+      operationId: sessions.revoke_all
+      tags: [auth]
+      summary: Revoke every active session of the caller
+      responses:
+        "204": { description: Revoked. }
+
+  /users/{id}/avatar:
+    get:
+      operationId: users.avatar_get
+      tags: [users]
+      summary: Serve a user's avatar bytes
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Avatar bytes.
+          content:
+            image/*:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: users.avatar_upload
+      tags: [users]
+      summary: Upload (or replace) the user's avatar — png/jpeg/webp, ≤1 MiB
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "204": { description: Stored. }
+    delete:
+      operationId: users.avatar_delete
+      tags: [users]
+      summary: Remove the user's avatar
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Removed. }
+
+  /global-env/{id}/refs:
+    get:
+      operationId: global_env.refs
+      tags: [global-env]
+      summary: List stacks referencing the given global-env key (compose ${VAR} scan)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Stack names that reference this global env entry.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+
+  /stacks/{name}/deploy/progress:
+    get:
+      operationId: stacks.deploy_progress
+      tags: [stacks]
+      summary: Live phase + service + elapsed for an in-flight deploy
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Progress snapshot, or null when no deploy is tracked.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { type: "null" }
+                  - { type: object, additionalProperties: true }
+
+  /notifications:
+    get:
+      operationId: notifications.list
+      tags: [settings]
+      summary: List the caller's notifications (own + broadcast), newest first
+      parameters:
+        - in: query
+          name: unread
+          schema: { type: boolean }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 100 }
+      responses:
+        "200":
+          description: Notifications.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object, additionalProperties: true }
+
+  /notifications/unread-count:
+    get:
+      operationId: notifications.unread_count
+      tags: [settings]
+      summary: Bell-icon badge count — unread notifications for the caller
+      responses:
+        "200":
+          description: Count.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unread: { type: integer }
+
+  /notifications/{id}/read:
+    post:
+      operationId: notifications.mark_read
+      tags: [settings]
+      summary: Mark a single notification as read
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Marked. }
+        "403": { description: Not your notification. }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /notifications/read-all:
+    post:
+      operationId: notifications.mark_all_read
+      tags: [settings]
+      summary: Clear the unread badge for the caller (own + broadcast)
+      responses:
+        "204": { description: Cleared. }
+
+  /notifications/{id}:
+    delete:
+      operationId: notifications.delete
+      tags: [settings]
+      summary: Hard-delete a notification from the caller's feed
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Deleted. }
+        "403": { description: Not your notification. }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /alerts/rules/{id}/stats:
+    get:
+      operationId: alerts.rule_stats
+      tags: [alerts]
+      summary: Per-rule firing stats (last 24h, last fire, etc.)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Stats snapshot.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  /hosts/{id}/stats/containers:
+    get:
+      operationId: hosts.batch_container_stats
+      tags: [containers]
+      summary: Latest CPU + memory sample per container (used by list view)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Array of latest samples.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object, additionalProperties: true }
+
+  /oidc/providers/{id}/test:
+    post:
+      operationId: oidc.provider_test
+      tags: [oidc]
+      summary: Re-run discovery against a stored provider, persist result
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Result + endpoints (when ok).
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  # ---------------------- backups: single-run + archive ------------------
+  /backups/runs/{id}:
+    get:
+      operationId: backups.run_get
+      tags: [backups]
+      summary: Get a single run
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Run row.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /backups/runs/{id}/archive:
+    get:
+      operationId: backups.run_archive
+      tags: [backups]
+      summary: Download the archive for a successful run (tar.gz stream, transparent decryption)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Archive bytes.
+          content:
+            application/gzip:
+              schema: { type: string, format: binary }
+        "409":
+          description: Run not in success state.
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ---------------------- SAML -------------------------------------------
+  /auth/saml/providers:
+    get:
+      operationId: saml.providers_public
+      tags: [auth]
+      summary: Public list of enabled SAML providers (for login-page buttons)
+      security: []
+      responses:
+        "200":
+          description: Providers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    slug: { type: string }
+                    display_name: { type: string }
+
+  /auth/saml/{slug}/login:
+    get:
+      operationId: saml.login_start
+      tags: [auth]
+      summary: Begin SAML AuthnRequest — redirects to IdP
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: { type: string }
+      responses:
+        "302": { description: Redirect to IdP. }
+
+  /auth/saml/{slug}/acs:
+    post:
+      operationId: saml.acs
+      tags: [auth]
+      summary: Assertion-consumer endpoint — receives the signed SAMLResponse
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: { type: string }
+      responses:
+        "302": { description: Redirect to SPA with session tokens in fragment. }
+
+  /auth/saml/{slug}/metadata:
+    get:
+      operationId: saml.sp_metadata
+      tags: [auth]
+      summary: SP metadata XML (admin pastes URL into the IdP)
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: SP metadata.
+          content:
+            application/samlmetadata+xml:
+              schema: { type: string }
+
+  /saml/providers:
+    get:
+      operationId: saml.providers_list
+      tags: [oidc]
+      summary: Admin — list SAML providers
+      responses:
+        "200":
+          description: Providers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object, additionalProperties: true }
+    post:
+      operationId: saml.provider_create
+      tags: [oidc]
+      summary: Admin — create SAML provider (paste IdP metadata XML)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  /saml/providers/{id}:
+    get:
+      operationId: saml.provider_get
+      tags: [oidc]
+      summary: Admin — get one SAML provider
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Provider.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    put:
+      operationId: saml.provider_update
+      tags: [oidc]
+      summary: Admin — update SAML provider
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    delete:
+      operationId: saml.provider_delete
+      tags: [oidc]
+      summary: Admin — delete SAML provider
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Deleted. }
+
+  /saml/providers/{id}/test:
+    post:
+      operationId: saml.provider_test
+      tags: [oidc]
+      summary: Re-parse stored IdP metadata + persist result
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Test result.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  # ---------------------- LDAP -------------------------------------------
+  /auth/ldap/providers:
+    get:
+      operationId: ldap.providers_public
+      tags: [auth]
+      summary: Public list of enabled LDAP providers
+      security: []
+      responses:
+        "200":
+          description: Providers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    slug: { type: string }
+                    display_name: { type: string }
+
+  /auth/ldap/{slug}/login:
+    post:
+      operationId: ldap.login
+      tags: [auth]
+      summary: Authenticate against an LDAP provider (bind-and-search)
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Session pair.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          description: Bad credentials.
+
+  /ldap/providers:
+    get:
+      operationId: ldap.providers_list
+      tags: [oidc]
+      summary: Admin — list LDAP providers
+      responses:
+        "200":
+          description: Providers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object, additionalProperties: true }
+    post:
+      operationId: ldap.provider_create
+      tags: [oidc]
+      summary: Admin — create LDAP provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  /ldap/providers/{id}:
+    get:
+      operationId: ldap.provider_get
+      tags: [oidc]
+      summary: Admin — get one LDAP provider
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Provider.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    put:
+      operationId: ldap.provider_update
+      tags: [oidc]
+      summary: Admin — update LDAP provider
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    delete:
+      operationId: ldap.provider_delete
+      tags: [oidc]
+      summary: Admin — delete LDAP provider
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Deleted. }
+
+  /ldap/providers/{id}/test:
+    post:
+      operationId: ldap.provider_test
+      tags: [oidc]
+      summary: Open connection + service bind to verify config
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Test result.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  # ---------------------- OAuth2 (non-OIDC) ------------------------------
+  /auth/oauth2/providers:
+    get:
+      operationId: oauth2.providers_public
+      tags: [auth]
+      summary: Public list of enabled OAuth2 providers
+      security: []
+      responses:
+        "200":
+          description: Providers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    slug: { type: string }
+                    display_name: { type: string }
+
+  /auth/oauth2/{slug}/login:
+    get:
+      operationId: oauth2.login_start
+      tags: [auth]
+      summary: Redirect to provider's authorize endpoint
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: { type: string }
+      responses:
+        "302": { description: Redirect to provider. }
+
+  /auth/oauth2/{slug}/callback:
+    get:
+      operationId: oauth2.callback
+      tags: [auth]
+      summary: Exchange code for token + fetch userinfo + mint session
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: { type: string }
+      responses:
+        "302": { description: Redirect to SPA. }
+
+  /oauth2/providers:
+    get:
+      operationId: oauth2.providers_list
+      tags: [oidc]
+      summary: Admin — list OAuth2 providers
+      responses:
+        "200":
+          description: Providers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object, additionalProperties: true }
+    post:
+      operationId: oauth2.provider_create
+      tags: [oidc]
+      summary: Admin — create OAuth2 provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  /oauth2/providers/{id}:
+    get:
+      operationId: oauth2.provider_get
+      tags: [oidc]
+      summary: Admin — get one OAuth2 provider
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Provider.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    put:
+      operationId: oauth2.provider_update
+      tags: [oidc]
+      summary: Admin — update OAuth2 provider
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    delete:
+      operationId: oauth2.provider_delete
+      tags: [oidc]
+      summary: Admin — delete OAuth2 provider
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Deleted. }
+
+  /oauth2/providers/{id}/test:
+    post:
+      operationId: oauth2.provider_test
+      tags: [oidc]
+      summary: Connectivity check against the userinfo URL
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Test result.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  # ---------------------- proxy: metrics + ACME events -------------------
+  /proxy/metrics:
+    get:
+      operationId: proxy.metrics
+      tags: [proxy]
+      summary: Per-host request rate, status-code distribution, p95 latency
+      responses:
+        "200":
+          description: Snapshot.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  /proxy/acme-events:
+    get:
+      operationId: proxy.acme_events
+      tags: [proxy]
+      summary: Recent ACME issuance / renewal events parsed from Caddy logs
+      responses:
+        "200":
+          description: Events newest last.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object, additionalProperties: true }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -5834,13 +6704,32 @@ components:
       required: [name, display, permissions]
       properties:
         name: { type: string, example: operator }
-        display: { type: string, example: "Operator — manages running containers" }
+        display: { type: string, example: "Operator" }
+        description:
+          type: string
+          description: One-line human blurb shown under the role name in the Roles UI.
+          example: "Deploy and operate stacks. No editing of compose files, no user management."
         builtin:
           type: boolean
-          description: Built-in roles (admin, operator, viewer) cannot be renamed or deleted.
+          description: "Built-in roles cannot be renamed or deleted (the five v2 roles: viewer, operator, deployer, host-admin, admin)."
         permissions:
           type: array
           items: { type: string }
+        scopes:
+          type: array
+          description: Per-role scope rows. Empty = unscoped (acts on everything its permissions allow). Each row narrows scope to a specific host, stack, or all hosts carrying a tag. Effective scope is the UNION of all rows for the role.
+          items: { $ref: "#/components/schemas/RoleScope" }
+
+    RoleScope:
+      type: object
+      required: [scope_type, scope_value]
+      properties:
+        scope_type:
+          type: string
+          enum: [host, stack, host_tag]
+        scope_value:
+          type: string
+          description: Host id, stack name, or host-tag string depending on scope_type.
 
     RoleInput:
       type: object
@@ -5848,9 +6737,15 @@ components:
       properties:
         name: { type: string, example: deploy-bot }
         display: { type: string }
+        description:
+          type: string
+          description: Optional one-line human blurb. Shown under the role name in the Roles UI.
         permissions:
           type: array
           items: { type: string }
+        scopes:
+          type: array
+          items: { $ref: "#/components/schemas/RoleScope" }
 
     BackupSource:
       type: object

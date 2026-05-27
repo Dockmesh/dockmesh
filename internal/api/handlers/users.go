@@ -8,8 +8,48 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
+
+// enrichUserWithRBAC fills the User.Permissions + User.Scopes fields
+// from the rbac.Store (or the in-code fallback for built-in roles).
+// Idempotent — safe to call before writing /me or /login responses.
+func enrichUserWithRBAC(roles *rbac.Store, u *auth.User) {
+	if u == nil {
+		return
+	}
+	scopes := &auth.MeScopes{Stacks: []string{}, Hosts: []string{}, HostTags: []string{}}
+	if roles != nil {
+		if r, ok := roles.Get(u.Role); ok {
+			perms := make([]string, 0, len(r.Permissions))
+			for _, p := range r.Permissions {
+				perms = append(perms, string(p))
+			}
+			for _, sc := range r.Scopes {
+				switch sc.ScopeType {
+				case "stack":
+					scopes.Stacks = append(scopes.Stacks, sc.ScopeValue)
+				case "host":
+					scopes.Hosts = append(scopes.Hosts, sc.ScopeValue)
+				case "host_tag":
+					scopes.HostTags = append(scopes.HostTags, sc.ScopeValue)
+				}
+			}
+			u.Permissions = perms
+			u.Scopes = scopes
+			return
+		}
+	}
+	// Fallback: role not in store cache (fresh install, pre-migration).
+	// Mirror the in-code map for built-ins.
+	perms := []string{}
+	for _, p := range rbac.RolePerms(u.Role) {
+		perms = append(perms, string(p))
+	}
+	u.Permissions = perms
+	u.Scopes = scopes
+}
 
 type createUserRequest struct {
 	Username string `json:"username"`
@@ -19,9 +59,10 @@ type createUserRequest struct {
 }
 
 type updateUserRequest struct {
-	Email     string   `json:"email,omitempty"`
-	Role      string   `json:"role"`
-	ScopeTags []string `json:"scope_tags"` // empty = all hosts
+	Email       string   `json:"email,omitempty"`
+	Role        string   `json:"role"`
+	DisplayName string   `json:"display_name,omitempty"`
+	ScopeTags   []string `json:"scope_tags"` // empty = all hosts
 }
 
 type changePasswordRequest struct {
@@ -105,7 +146,7 @@ func (h *Handlers) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid role")
 		return
 	}
-	u, err := h.Auth.UpdateUser(r.Context(), id, req.Email, req.Role)
+	u, err := h.Auth.UpdateUser(r.Context(), id, req.Email, req.Role, req.DisplayName)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -196,15 +237,23 @@ func (h *Handlers) ChangeUserPassword(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 	uid := middleware.UserID(r.Context())
 	if uid == "" {
-		// API token path — no user session. Return a token-shaped
-		// identity so callers can confirm they're authenticated and
-		// which role the token carries.
+		// API token path — no user session. Synthesise a User-shape
+		// with the token's role so the frontend's permission gates
+		// work the same whether the caller is a session or a token.
+		tokRole := middleware.Role(r.Context())
+		fake := &auth.User{
+			Username: "api-token",
+			Role:     tokRole,
+		}
+		enrichUserWithRBAC(h.Roles, fake)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"kind":         "api_token",
-			"username":     "api-token",
-			"role":         middleware.Role(r.Context()),
+			"username":     fake.Username,
+			"role":         fake.Role,
 			"api_token_id": middleware.APITokenID(r.Context()),
 			"mfa_enabled":  false,
+			"permissions":  fake.Permissions,
+			"scopes":       fake.Scopes,
 		})
 		return
 	}
@@ -213,5 +262,6 @@ func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
 	}
+	enrichUserWithRBAC(h.Roles, u)
 	writeJSON(w, http.StatusOK, u)
 }

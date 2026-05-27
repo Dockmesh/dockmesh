@@ -59,6 +59,7 @@ type Source struct {
 	LastSyncSHA     string     `json:"last_sync_sha,omitempty"`
 	LastSyncAt      *time.Time `json:"last_sync_at,omitempty"`
 	LastSyncError   string     `json:"last_sync_error,omitempty"`
+	LastEnvDrift    *EnvDrift  `json:"last_env_drift,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
 }
@@ -84,12 +85,13 @@ type Input struct {
 // SyncResult records what a sync did — used by handlers and by the
 // polling goroutine's auto-deploy decision.
 type SyncResult struct {
-	OldSHA       string `json:"old_sha,omitempty"`
-	NewSHA       string `json:"new_sha"`
-	Changed      bool   `json:"changed"`
-	Deployed     bool   `json:"deployed,omitempty"`
-	DeployResult any    `json:"deploy_result,omitempty"`
-	DurationMS   int64  `json:"duration_ms"`
+	OldSHA       string    `json:"old_sha,omitempty"`
+	NewSHA       string    `json:"new_sha"`
+	Changed      bool      `json:"changed"`
+	Deployed     bool      `json:"deployed,omitempty"`
+	DeployResult any       `json:"deploy_result,omitempty"`
+	EnvDrift     *EnvDrift `json:"env_drift,omitempty"`
+	DurationMS   int64     `json:"duration_ms"`
 }
 
 // DeployFunc is the callback the service invokes when auto_deploy is on
@@ -149,6 +151,7 @@ func (s *Service) Get(ctx context.Context, stackName string) (*Source, error) {
 		       COALESCE(last_sync_sha, ''),
 		       last_sync_at,
 		       COALESCE(last_sync_error, ''),
+		       COALESCE(last_env_drift, ''),
 		       created_at, updated_at
 		  FROM stack_git_sources WHERE stack_name = ?`, stackName)
 	src, err := scanSource(row)
@@ -338,17 +341,28 @@ func (s *Service) Sync(ctx context.Context, stackName string) (*SyncResult, erro
 	// Always copy on first sync (when LastSyncSHA is empty) so the
 	// stack's FS gets populated, even if the repo already matches.
 	if res.Changed || src.LastSyncSHA == "" {
-		if err := s.copyIntoStack(cloneDir, src.PathInRepo, stackName); err != nil {
+		drift, err := s.copyIntoStack(cloneDir, src.PathInRepo, stackName)
+		if err != nil {
 			s.recordSyncError(ctx, stackName, err)
 			return nil, err
 		}
+		if len(drift.NewFromRepo)+len(drift.NewFromCompose)+len(drift.UserOnly) > 0 {
+			res.EnvDrift = &drift
+		}
 	}
 
+	var driftJSON sql.NullString
+	if res.EnvDrift != nil {
+		if b, err := json.Marshal(res.EnvDrift); err == nil {
+			driftJSON = sql.NullString{String: string(b), Valid: true}
+		}
+	}
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE stack_git_sources
 		   SET last_sync_sha = ?, last_sync_at = CURRENT_TIMESTAMP,
-		       last_sync_error = NULL, updated_at = CURRENT_TIMESTAMP
-		 WHERE stack_name = ?`, newSHA, stackName)
+		       last_sync_error = NULL, last_env_drift = ?,
+		       updated_at = CURRENT_TIMESTAMP
+		 WHERE stack_name = ?`, newSHA, driftJSON, stackName)
 	if err != nil {
 		return nil, fmt.Errorf("record sync success: %w", err)
 	}
@@ -446,7 +460,15 @@ func (s *Service) cloneOrPull(ctx context.Context, src *Source, dir string, auth
 // references (Dockerfiles, config files, etc.) resolve correctly.
 // Files prefixed with . are skipped except .env / .env.age (the
 // canonical secrets). Fixes FINDING-8.
-func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string) error {
+//
+// .env policy: on first sync (no existing stack) seed from the repo's
+// .env. On every subsequent sync, run mergeEnvFiles so the operator's
+// filled-in values survive but new repo keys + new compose ${VAR}
+// references show up at the end of the file (with comments). The
+// caller persists the returned EnvDrift in stack_git_sources so the
+// UI can render a "drift detected" banner.
+func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string) (EnvDrift, error) {
+	var drift EnvDrift
 	src := filepath.Join(cloneDir, pathInRepo)
 	composePath := src
 	isDir := false
@@ -462,33 +484,48 @@ func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string) error {
 	}
 	compose, err := os.ReadFile(composePath)
 	if err != nil {
-		return ErrComposeMissing
+		return drift, ErrComposeMissing
 	}
-	envContent := ""
+	envFromRepo := ""
 	envPath := filepath.Join(filepath.Dir(composePath), ".env")
 	if b, err := os.ReadFile(envPath); err == nil {
-		envContent = string(b)
+		envFromRepo = string(b)
 	}
-	// Create/update the stack with compose + .env first; the Manager
-	// wires up the stack directory we'll then copy siblings into.
 	if _, err := s.stacks.Get(stackName); err != nil {
-		if _, err := s.stacks.Create(stackName, string(compose), envContent); err != nil {
-			return fmt.Errorf("create stack from git: %w", err)
+		// First sync — seed both compose + .env straight from the repo.
+		// The merger still runs to surface compose `${VAR}` that the
+		// repo's .env doesn't cover (catches drift in fresh repos too).
+		seeded, d := mergeEnvFiles(envFromRepo, envFromRepo, string(compose))
+		drift = d
+		if _, err := s.stacks.Create(stackName, string(compose), seeded); err != nil {
+			return drift, fmt.Errorf("create stack from git: %w", err)
 		}
 	} else {
-		if _, err := s.stacks.Update(stackName, string(compose), envContent); err != nil {
-			return fmt.Errorf("update stack from git: %w", err)
+		// Read the stack's CURRENT env through the stacks.Manager so
+		// the merger sees the decrypted content. Reading .env directly
+		// from disk misses the case where secrets-encryption is on
+		// and the file is .env.age — in that case the merger would
+		// see an empty stack-env and incorrectly mark every key from
+		// the repo as "new from repo" drift on every sync.
+		stackEnv := ""
+		if detail, derr := s.stacks.Get(stackName); derr == nil {
+			stackEnv = detail.Env
+		}
+		merged, d := mergeEnvFiles(stackEnv, envFromRepo, string(compose))
+		drift = d
+		if _, err := s.stacks.Update(stackName, string(compose), merged); err != nil {
+			return drift, fmt.Errorf("update stack from git: %w", err)
 		}
 	}
 	// Mirror sibling files when path_in_repo was a directory.
 	if !isDir {
-		return nil
+		return drift, nil
 	}
 	dstDir, err := s.stacks.Dir(stackName)
 	if err != nil {
-		return nil // non-fatal — compose + env are already in place
+		return drift, nil // non-fatal — compose + env are already in place
 	}
-	return copyTreeSiblings(filepath.Dir(composePath), dstDir)
+	return drift, copyTreeSiblings(filepath.Dir(composePath), dstDir)
 }
 
 // copyTreeSiblings mirrors all non-dotfile entries under src into dst,
@@ -674,13 +711,13 @@ type rowScanner interface {
 
 func scanSource(r rowScanner) (*Source, error) {
 	var src Source
-	var username, lastSHA, lastErr string
+	var username, lastSHA, lastErr, lastDriftJSON string
 	var hasPassword, hasSSHKey, hasWebhook, autoDeploy int
 	var lastAt sql.NullTime
 	if err := r.Scan(&src.StackName, &src.RepoURL, &src.Branch, &src.PathInRepo, &src.AuthKind,
 		&username, &hasPassword, &hasSSHKey,
 		&autoDeploy, &src.PollIntervalSec,
-		&hasWebhook, &lastSHA, &lastAt, &lastErr,
+		&hasWebhook, &lastSHA, &lastAt, &lastErr, &lastDriftJSON,
 		&src.CreatedAt, &src.UpdatedAt); err != nil {
 		return nil, err
 	}
@@ -694,6 +731,14 @@ func scanSource(r rowScanner) (*Source, error) {
 	if lastAt.Valid {
 		t := lastAt.Time
 		src.LastSyncAt = &t
+	}
+	if lastDriftJSON != "" {
+		var d EnvDrift
+		if err := json.Unmarshal([]byte(lastDriftJSON), &d); err == nil {
+			if len(d.NewFromRepo)+len(d.NewFromCompose)+len(d.UserOnly) > 0 {
+				src.LastEnvDrift = &d
+			}
+		}
 	}
 	return &src, nil
 }

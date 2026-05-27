@@ -37,13 +37,36 @@ var (
 	ErrHistoryNotFound   = errors.New("history entry not found")
 )
 
+// authResolver mirrors compose.authResolver — kept as an interface
+// here so registries.Service can be wired in without an import cycle.
+type authResolver interface {
+	ResolveAuthForImage(ctx context.Context, image string, hostTags []string) (string, error)
+}
+
 type Service struct {
 	docker *docker.Client
 	db     *sql.DB
+	auth   authResolver
 }
 
 func NewService(dockerCli *docker.Client, db *sql.DB) *Service {
 	return &Service{docker: dockerCli, db: db}
+}
+
+// SetAuthResolver wires in registry-credential resolution so the
+// single-container "Update" button can pull from authenticated
+// registries (GHCR, ECR, private Hub repos, etc.) Nil = anonymous pulls.
+func (s *Service) SetAuthResolver(r authResolver) { s.auth = r }
+
+func (s *Service) resolveImageAuth(ctx context.Context, image string) string {
+	if s.auth == nil {
+		return ""
+	}
+	auth, err := s.auth.ResolveAuthForImage(ctx, image, nil)
+	if err != nil {
+		return ""
+	}
+	return auth
 }
 
 type Result struct {
@@ -84,8 +107,11 @@ func (s *Service) Update(ctx context.Context, containerID string) (*Result, erro
 	containerName := strings.TrimPrefix(info.Name, "/")
 	oldImageID := info.Image
 
-	// Pull latest.
-	rc, err := cli.ImagePull(ctx, ref, dtypes.ImagePullOptions{})
+	// Pull latest, with registry auth when we have a matching credential
+	// in /registries. Without it, private repos return 401 and the
+	// "update image" button surfaces a generic registry error.
+	authBlob := s.resolveImageAuth(ctx, ref)
+	rc, err := cli.ImagePull(ctx, ref, dtypes.ImagePullOptions{RegistryAuth: authBlob})
 	if err != nil {
 		return nil, fmt.Errorf("pull %s: %w", ref, err)
 	}

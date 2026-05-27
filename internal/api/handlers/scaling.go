@@ -8,6 +8,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/scaling"
 	"github.com/go-chi/chi/v5"
 )
@@ -34,6 +35,11 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	scopeReq := h.stackScopeReq(r.Context(), target.ID(), name)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
+		return
+	}
 	service := chi.URLParam(r, "service")
 
 	var req scaleRequest
@@ -138,6 +144,11 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	name := chi.URLParam(r, "name")
+	scopeReq := h.stackScopeReq(r.Context(), target.ID(), name)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
+		return
+	}
 	service := chi.URLParam(r, "service")
 
 	var req rollingUpdateRequest

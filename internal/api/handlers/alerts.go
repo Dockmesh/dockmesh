@@ -199,6 +199,34 @@ func (h *Handlers) DeleteAlertRule(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// GetAlertRuleStats returns the fires-in-window summary used by the
+// alerts UI to show "fired N× / 7d" counters on each rule card.
+//
+//	GET /api/v1/alerts/rules/{id}/stats?days=7
+func (h *Handlers) GetAlertRuleStats(w http.ResponseWriter, r *http.Request) {
+	if h.Alerts == nil {
+		writeError(w, http.StatusServiceUnavailable, "alerts not configured")
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	days := 7
+	if v := r.URL.Query().Get("days"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			days = n
+		}
+	}
+	stats, err := h.Alerts.RuleStatsByID(r.Context(), id, days)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
 func (h *Handlers) ListAlertHistory(w http.ResponseWriter, r *http.Request) {
 	if h.Alerts == nil {
 		writeJSON(w, http.StatusOK, []alerts.HistoryEntry{})

@@ -22,6 +22,12 @@ func NewRegistry(dockerCli *docker.Client, agentSvc *agents.Service) *Registry {
 	}
 }
 
+// Local returns the shared LocalHost so callers (e.g. main.go's
+// git-source auto-deploy) can reuse the same instance that
+// handlers.pickHost hands out, which keeps the auth resolver and any
+// other wiring consistent across deploy paths.
+func (r *Registry) Local() *LocalHost { return r.local }
+
 // Pick resolves a host id to its Host implementation. Empty id or "local"
 // returns the local docker. Anything else is looked up against the
 // agents service.

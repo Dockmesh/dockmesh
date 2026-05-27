@@ -18,6 +18,7 @@ type UpdatePreview struct {
 	Image             string         `json:"image"`
 	CurrentDigest     string         `json:"current_digest,omitempty"`
 	CurrentCreated    *time.Time     `json:"current_created,omitempty"`
+	LocalSize         int64          `json:"local_size,omitempty"`
 	RemoteLastUpdated *time.Time     `json:"remote_last_updated,omitempty"`
 	RemoteSize        int64          `json:"remote_size,omitempty"`
 	DockerHubURL      string         `json:"docker_hub_url,omitempty"`
@@ -60,6 +61,7 @@ func (s *Service) Preview(ctx context.Context, containerID string) (*UpdatePrevi
 		if t, perr := time.Parse(time.RFC3339Nano, img.Created); perr == nil {
 			preview.CurrentCreated = &t
 		}
+		preview.LocalSize = img.Size
 	}
 
 	// Only Docker Hub is understood — other registries fall through.

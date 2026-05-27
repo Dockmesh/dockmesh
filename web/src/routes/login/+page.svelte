@@ -2,12 +2,13 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { api, ApiError } from '$lib/api';
-  import { Button, Input } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
-  import { Lock, ShieldCheck } from 'lucide-svelte';
+  import { Eyebrow, Field } from '$lib/components/editorial';
+  import { ArrowRight, Sun, Moon, ShieldCheck } from 'lucide-svelte';
 
   let username = $state('admin');
   let password = $state('');
+  let remember = $state(true);
   let error = $state('');
   let loading = $state(false);
 
@@ -18,10 +19,28 @@
   // SSO providers
   let providers = $state<Array<{ slug: string; display_name: string }>>([]);
 
+  // Theme — the unauth login page renders without the dashboard chrome,
+  // so it owns its own toggle. data-theme is the source of truth that
+  // app.css reads; we mirror it into localStorage so the post-login
+  // dashboard inherits the choice.
+  let theme = $state<'light' | 'dark'>('dark');
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = localStorage.getItem('dockmesh.theme');
+    if (stored === 'light' || stored === 'dark') theme = stored;
+  });
+  $effect(() => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('dockmesh.theme', theme);
+  });
+
   async function loadProviders() {
     try {
       providers = await api.oidc.listPublic();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   async function handleSSOHash() {
@@ -33,10 +52,7 @@
     const refresh = params.get('sso_refresh');
     if (!access || !refresh) return;
 
-    // Clear hash so reloads don't re-trigger.
     history.replaceState(null, '', window.location.pathname + window.location.search);
-
-    // Set tokens so we can fetch /me.
     auth.setSession({ id: '', username: '', role: '' } as any, access, refresh);
     try {
       const me = await api.users.me();
@@ -81,7 +97,10 @@
         goto('/');
       }
     } catch (err) {
-      error = err instanceof ApiError && err.status === 401 ? 'Invalid username or password' : 'Login failed';
+      error =
+        err instanceof ApiError && err.status === 401
+          ? 'Invalid username or password'
+          : 'Login failed';
     } finally {
       loading = false;
     }
@@ -97,7 +116,10 @@
       auth.setSession(res.user, res.access_token, res.refresh_token);
       goto('/');
     } catch (err) {
-      error = err instanceof ApiError && err.status === 401 ? 'Invalid code' : 'Verification failed';
+      error =
+        err instanceof ApiError && err.status === 401
+          ? 'Invalid code'
+          : 'Verification failed';
     } finally {
       loading = false;
     }
@@ -110,122 +132,325 @@
   }
 
   function ssoLogin(slug: string) {
-    // Full redirect — backend sets the state cookie + redirects to provider.
     window.location.href = `/api/v1/auth/oidc/${slug}/login`;
   }
+
+  let canSubmit = $derived(!loading && username.length > 0 && password.length > 0);
+  let canVerify = $derived(!loading && mfaCode.trim().length >= 6);
 </script>
 
-<div class="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
-  <div class="absolute inset-0 bg-[var(--bg)]"></div>
-  <div class="absolute inset-0 opacity-30"
-       style="background: radial-gradient(ellipse 80% 50% at 50% -20%, var(--color-brand-500), transparent);"></div>
-  <div class="absolute inset-0 opacity-20"
-       style="background: radial-gradient(ellipse 60% 40% at 80% 100%, var(--color-brand-700), transparent);"></div>
+<div class="login-shell">
+  <div class="login-watermark" aria-hidden="true">D</div>
 
-  <div class="relative w-full max-w-sm dm-fade-in">
-    <div class="flex flex-col items-center mb-8">
-      <img src="/logo-mark.svg" alt="dockmesh" class="w-14 h-14 mb-4 drop-shadow-xl" />
-      <h1 class="text-2xl font-semibold tracking-tight">
-        {#if mfaToken}
-          Two-factor authentication
-        {:else}
-          Welcome to <span class="text-[var(--fg)]">dock<span class="text-[var(--color-brand-400)]">mesh</span></span>
-        {/if}
+  <div class="login-chrome login-chrome-tl">
+    <span class="login-mark"><img src="/logo-mark.svg" alt="" width="22" height="22" /></span>
+    <span>Dockmesh</span>
+  </div>
+  <button
+    type="button"
+    class="theme-toggle login-chrome login-chrome-tr"
+    onclick={() => (theme = theme === 'dark' ? 'light' : 'dark')}
+    aria-label="Toggle theme"
+    title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
+  >
+    {#if theme === 'dark'}
+      <Sun size={13} strokeWidth={1.5} />
+    {:else}
+      <Moon size={13} strokeWidth={1.5} />
+    {/if}
+  </button>
+
+  {#if !mfaToken}
+    <form class="login-form" onsubmit={submit}>
+      <Eyebrow active>Sign in</Eyebrow>
+      <h1 class="ed-title login-title">
+        Welcome <em>back</em>, operator.
       </h1>
-      <p class="text-sm text-[var(--fg-muted)] mt-1">
-        {mfaToken ? 'Enter the code from your authenticator' : 'Sign in to manage your containers'}
+      <p class="ed-subtitle login-subtitle">
+        Sign in to manage <em class="ed-accent">your fleet</em> and its connected
+        agents.
       </p>
-    </div>
 
-    {#if !mfaToken}
-      <form onsubmit={submit} class="dm-card p-6 space-y-4 shadow-2xl">
-        <Input
-          label="Username"
-          placeholder="admin"
-          bind:value={username}
-          disabled={loading}
-          autocomplete="username"
-        />
-        <Input
-          label="Password"
-          type="password"
-          placeholder="••••••••"
-          bind:value={password}
-          disabled={loading}
-          autocomplete="current-password"
-        />
+      <div class="login-fields">
+        <Field label="Username">
+          <input
+            class="ed-input ed-input-mono"
+            bind:value={username}
+            disabled={loading}
+            autocomplete="username"
+            autocapitalize="off"
+            spellcheck="false"
+          />
+        </Field>
+
+        <Field label="Password">
+          {#snippet right()}
+            <a class="login-aside" href="#forgot" onclick={(e) => e.preventDefault()}>Forgot?</a>
+          {/snippet}
+          <input
+            class="ed-input ed-input-mono"
+            type="password"
+            bind:value={password}
+            disabled={loading}
+            autocomplete="current-password"
+          />
+        </Field>
+
+        <label class="login-remember">
+          <span class="login-check" class:checked={remember} aria-hidden="true">
+            {#if remember}
+              <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m5 12 5 5L20 7" />
+              </svg>
+            {/if}
+          </span>
+          <input
+            type="checkbox"
+            bind:checked={remember}
+            class="visually-hidden"
+          />
+          Remember this device
+        </label>
 
         {#if error}
-          <div class="flex items-start gap-2 text-xs text-[var(--color-danger-400)] bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_25%,transparent)] rounded-lg px-3 py-2">
-            <Lock class="w-3.5 h-3.5 shrink-0 mt-0.5" />
-            <span>{error}</span>
-          </div>
+          <p class="login-error" role="alert">{error}</p>
         {/if}
 
-        <Button type="submit" variant="primary" class="w-full" {loading} disabled={loading || !username || !password}>
+        <button
+          type="submit"
+          class="dm-btn dm-btn-primary login-submit"
+          disabled={!canSubmit}
+        >
           {loading ? 'Signing in…' : 'Sign in'}
-        </Button>
+          <ArrowRight size={14} strokeWidth={1.5} />
+        </button>
 
         {#if providers.length > 0}
-          <div class="relative my-3">
-            <div class="absolute inset-0 flex items-center">
-              <div class="w-full border-t border-[var(--border)]"></div>
-            </div>
-            <div class="relative flex justify-center">
-              <span class="bg-[var(--surface)] px-2 text-xs text-[var(--fg-subtle)] uppercase tracking-wider">or</span>
-            </div>
+          <div class="login-divider">
+            <span class="login-divider-line"></span>
+            <span class="login-divider-label">or</span>
+            <span class="login-divider-line"></span>
           </div>
-          <div class="space-y-2">
-            {#each providers as p}
+
+          <div class="login-sso">
+            {#each providers as p (p.slug)}
               <button
                 type="button"
-                class="dm-btn dm-btn-secondary w-full"
+                class="dm-btn dm-btn-secondary"
                 onclick={() => ssoLogin(p.slug)}
               >
-                Sign in with {p.display_name}
+                Continue with {p.display_name}
               </button>
             {/each}
           </div>
         {/if}
-      </form>
-    {:else}
-      <form onsubmit={submitMFA} class="dm-card p-6 space-y-4 shadow-2xl">
-        <div class="flex items-center gap-2 text-sm text-[var(--fg-muted)]">
-          <ShieldCheck class="w-4 h-4 text-[var(--color-brand-400)]" />
-          Enter the 6-digit code or a recovery code
-        </div>
+      </div>
 
-        <Input
-          label="Code"
-          placeholder="000000"
-          bind:value={mfaCode}
-          disabled={loading}
-          autocomplete="one-time-code"
-          inputmode="text"
-        />
+      <p class="login-footer">
+        Dockmesh · self-hosted · {new Date().getFullYear()} · AGPL-3.0
+      </p>
+    </form>
+  {:else}
+    <form class="login-form" onsubmit={submitMFA}>
+      <Eyebrow active>Two-factor</Eyebrow>
+      <h1 class="ed-title login-title">
+        Enter the <em>code</em>.
+      </h1>
+      <p class="ed-subtitle login-subtitle">
+        Six digits from your authenticator app, or one of the recovery codes you saved.
+      </p>
+
+      <div class="login-fields">
+        <Field label="Code">
+          {#snippet right()}
+            <span class="login-aside" style="display: inline-flex; align-items: center; gap: 4px;">
+              <ShieldCheck size={11} strokeWidth={1.5} /> 6-digit
+            </span>
+          {/snippet}
+          <input
+            class="ed-input ed-input-mono"
+            bind:value={mfaCode}
+            disabled={loading}
+            autocomplete="one-time-code"
+            inputmode="text"
+            maxlength="64"
+          />
+        </Field>
 
         {#if error}
-          <div class="flex items-start gap-2 text-xs text-[var(--color-danger-400)] bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_25%,transparent)] rounded-lg px-3 py-2">
-            <Lock class="w-3.5 h-3.5 shrink-0 mt-0.5" />
-            <span>{error}</span>
-          </div>
+          <p class="login-error" role="alert">{error}</p>
         {/if}
 
-        <Button type="submit" variant="primary" class="w-full" {loading} disabled={loading || mfaCode.length < 6}>
+        <button
+          type="submit"
+          class="dm-btn dm-btn-primary login-submit"
+          disabled={!canVerify}
+        >
           {loading ? 'Verifying…' : 'Verify'}
-        </Button>
+          <ArrowRight size={14} strokeWidth={1.5} />
+        </button>
+
         <button
           type="button"
-          class="text-xs text-[var(--fg-muted)] hover:text-[var(--fg)] w-full"
+          class="dm-btn dm-btn-ghost login-cancel"
           onclick={cancelMFA}
         >
           Cancel and go back
         </button>
-      </form>
-    {/if}
+      </div>
 
-    <p class="text-center text-xs text-[var(--fg-subtle)] mt-6">
-      Filesystem is source of truth · 100% open source · AGPL-3.0
-    </p>
-  </div>
+      <p class="login-footer">
+        Dockmesh · self-hosted · {new Date().getFullYear()} · AGPL-3.0
+      </p>
+    </form>
+  {/if}
 </div>
+
+<style>
+  .login-form {
+    position: relative;
+    z-index: 2;
+    width: 380px;
+    max-width: calc(100vw - 64px);
+  }
+
+  .login-chrome {
+    position: absolute;
+    z-index: 4;
+    top: 28px;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    color: var(--fg);
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .login-chrome-tl { left: 32px; }
+  .login-chrome-tr { right: 32px; }
+  .login-mark {
+    color: var(--color-brand-400);
+    display: inline-flex;
+  }
+
+  .login-title {
+    font-size: 44px;
+    margin-top: 14px;
+    line-height: 1.1;
+    max-width: 20ch;
+  }
+  .login-subtitle {
+    font-size: 14.5px;
+    margin-top: 14px;
+  }
+
+  .login-fields {
+    margin-top: 36px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+
+  .login-aside {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-subtle);
+    text-decoration: none;
+    letter-spacing: 0.04em;
+  }
+  .login-aside:hover { color: var(--fg-muted); }
+
+  .login-remember {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--fg-muted);
+    user-select: none;
+  }
+  .login-check {
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: transparent;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+  }
+  .login-check.checked {
+    background: var(--color-brand-500);
+    border-color: var(--color-brand-500);
+    color: #02181f;
+  }
+  :global(:root[data-theme='light']) .login-check.checked { color: #fff; }
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .login-error {
+    margin: 0;
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--color-danger-500) 40%, var(--border));
+    background: color-mix(in srgb, var(--color-danger-500) 8%, transparent);
+    border-radius: 5px;
+    color: var(--color-danger-400);
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+
+  .login-submit {
+    margin-top: 6px;
+    padding: 0.65rem 1rem;
+  }
+
+  .login-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 6px;
+    color: var(--fg-subtle);
+    font-size: 11.5px;
+    font-family: var(--font-mono);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .login-divider-line {
+    height: 1px;
+    background: var(--border);
+    flex: 1;
+  }
+  .login-divider-label { line-height: 1; }
+
+  .login-sso {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .login-cancel {
+    margin-top: 4px;
+    align-self: flex-start;
+    padding-left: 0;
+    color: var(--fg-subtle);
+  }
+  .login-cancel:hover { color: var(--fg); }
+
+  .login-footer {
+    margin-top: 36px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+</style>

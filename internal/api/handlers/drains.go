@@ -5,6 +5,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -34,6 +35,11 @@ func (h *Handlers) ExecuteDrain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hostID := chi.URLParam(r, "id")
+	scopeReq := h.hostScopeReq(r.Context(), hostID)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+hostID)
+		return
+	}
 	userID := middleware.UserID(r.Context())
 	d, err := h.Drains.Execute(r.Context(), hostID, userID)
 	if err != nil {

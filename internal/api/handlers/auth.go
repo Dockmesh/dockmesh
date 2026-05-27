@@ -98,6 +98,9 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	if h.Audit != nil && res.User != nil {
 		h.Audit.Write(r.Context(), res.User.ID, audit.ActionLogin, req.Username, map[string]string{"ip": ip})
 	}
+	// Enrich the response with v2.1 permissions + scopes so the frontend
+	// doesn't have to round-trip /me after login to gate UI.
+	enrichUserWithRBAC(h.Roles, res.User)
 	writeJSON(w, http.StatusOK, res)
 }
 

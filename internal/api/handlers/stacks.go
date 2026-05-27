@@ -17,8 +17,10 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/convert"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/stacks/adopt"
 	dtypes "github.com/docker/docker/api/types"
@@ -133,6 +135,7 @@ func (h *Handlers) ListStacks(w http.ResponseWriter, r *http.Request) {
 			Status:     "needs_recovery",
 		})
 	}
+	out = h.filterStackListByScope(r, out)
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -149,6 +152,11 @@ func (h *Handlers) RecoverStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if err := stacks.ValidateName(name); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	scopeReq := h.stackScopeReq(r.Context(), "", name)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
 		return
 	}
 
@@ -249,6 +257,11 @@ func (h *Handlers) RecoverStack(w http.ResponseWriter, r *http.Request) {
 // containers that came from it. Inverse of RecoverStack.
 func (h *Handlers) DiscardStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	scopeReq := h.stackScopeReq(r.Context(), "", name)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermStacksDelete, scopeReq, "stack "+name)
+		return
+	}
 	// Drop the deployment row + dependency edges. Compose file and
 	// stacks-dir entry are already gone (this endpoint is only valid
 	// in the ghost case), so there's nothing else to clean up.
@@ -337,8 +350,76 @@ func (h *Handlers) CreateStack(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, d)
 }
 
+// fromGitRequest is the payload for POST /stacks/from-git. Mirrors
+// gitsource.Input plus the stack name; the same struct is reused on
+// update via the existing Configure path, so this is just the
+// constructor shortcut.
+type fromGitRequest struct {
+	Name string          `json:"name"`
+	Git  gitsource.Input `json:"git"`
+}
+
+// CreateStackFromGit is the one-shot "new stack imported from a git
+// repository" endpoint. It configures the git source, runs the initial
+// sync (which creates the stack on disk from the repo contents), and
+// returns the resulting stack detail + sync report.
+//
+// Same RBAC gate as CreateStack — wired under stacks.create.
+func (h *Handlers) CreateStackFromGit(w http.ResponseWriter, r *http.Request) {
+	if h.GitSource == nil {
+		writeError(w, http.StatusServiceUnavailable, "git source service not configured")
+		return
+	}
+	var req fromGitRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		writeError(w, http.StatusBadRequest, "name required")
+		return
+	}
+	// Persist the git config first. Configure does its own validation
+	// and stores the row before sync runs so a credential error doesn't
+	// leave the user with nothing to retry against.
+	src, err := h.GitSource.Configure(r.Context(), req.Name, req.Git)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	syncRes, syncErr := h.GitSource.Sync(r.Context(), req.Name)
+	h.audit(r, audit.ActionStackCreate, req.Name, map[string]any{"git": req.Git.RepoURL, "from_git": true})
+
+	res := map[string]any{
+		"source":  src,
+		"sync_ok": syncErr == nil,
+	}
+	if syncErr != nil {
+		// Config row is saved; surface the failure loudly so the UI
+		// shows a fix-credentials banner. Same 422 contract as
+		// ConfigureGitSource — the row exists, sync didn't take.
+		// Mirror the message into `error` so the shared frontend
+		// request() helper picks it up for the toast instead of
+		// falling back to a generic "422 Unprocessable Entity".
+		res["sync_error"] = syncErr.Error()
+		res["error"] = "Initial sync failed: " + syncErr.Error()
+		writeJSON(w, http.StatusUnprocessableEntity, res)
+		return
+	}
+	res["sync"] = syncRes
+	if d, gerr := h.Stacks.Get(req.Name); gerr == nil {
+		res["stack"] = d
+	}
+	writeJSON(w, http.StatusCreated, res)
+}
+
 func (h *Handlers) UpdateStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	scopeReq := h.stackScopeReq(r.Context(), "", name)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermStacksUpdate, scopeReq, "stack "+name)
+		return
+	}
 	var req stackRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
@@ -359,6 +440,11 @@ func (h *Handlers) UpdateStack(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	scopeReq := h.stackScopeReq(r.Context(), "", name)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermStacksDelete, scopeReq, "stack "+name)
+		return
+	}
 	// Dependents check: if another stack declared this one as a dep,
 	// refuse with 409 unless ?force=true. Prevents silently orphaning
 	// a dep chain. P.12.7.
@@ -572,6 +658,11 @@ func (h *Handlers) AdoptStack(w http.ResponseWriter, r *http.Request) {
 	if !h.requireHostAccess(w, r, req.HostID) {
 		return
 	}
+	scopeReq := h.stackScopeReq(r.Context(), req.HostID, req.Name)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermStacksAdopt, scopeReq, "stack "+req.Name)
+		return
+	}
 	adoptReq := adopt.AdoptRequest{
 		Name:             req.Name,
 		HostID:           req.HostID,
@@ -642,6 +733,11 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	scopeReq := h.stackScopeReq(r.Context(), target.ID(), name)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
+		return
+	}
 
 	// Dependency resolution (P.12.7). For any declared prerequisite
 	// stack whose containers aren't already running, deploy it first
@@ -870,6 +966,11 @@ func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	scopeReq := h.stackScopeReq(r.Context(), target.ID(), name)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
+		return
+	}
 	// Dependents check (same policy as DeleteStack). Stopping a base
 	// stack that living dependents need is a foot-gun; 409 unless forced.
 	if h.Dependencies != nil && r.URL.Query().Get("force") != "true" {

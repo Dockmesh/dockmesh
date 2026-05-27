@@ -58,6 +58,7 @@ type HistoryEntry struct {
 	ID            int64     `json:"id"`
 	RuleID        int64     `json:"rule_id"`
 	RuleName      string    `json:"rule_name"`
+	Severity      string    `json:"severity,omitempty"` // enriched from alert_rules
 	ContainerName string    `json:"container_name"`
 	Status        string    `json:"status"`
 	Message       string    `json:"message"`
@@ -280,10 +281,16 @@ func (s *Service) History(ctx context.Context, limit int) ([]HistoryEntry, error
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
+	// JOIN alert_rules so the UI can render severity-tinted history rows
+	// without a second query. LEFT JOIN to keep history entries whose
+	// rule has been deleted (rule_id may dangle).
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, rule_id, rule_name, container_name, status, message,
-		       COALESCE(value, 0), COALESCE(threshold, 0), occurred_at
-		FROM alert_history ORDER BY id DESC LIMIT ?`, limit)
+		SELECT h.id, h.rule_id, h.rule_name, COALESCE(r.severity, ''),
+		       h.container_name, h.status, h.message,
+		       COALESCE(h.value, 0), COALESCE(h.threshold, 0), h.occurred_at
+		  FROM alert_history h
+		  LEFT JOIN alert_rules r ON r.id = h.rule_id
+		 ORDER BY h.id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -291,13 +298,48 @@ func (s *Service) History(ctx context.Context, limit int) ([]HistoryEntry, error
 	out := []HistoryEntry{}
 	for rows.Next() {
 		var e HistoryEntry
-		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.ContainerName, &e.Status,
-			&e.Message, &e.Value, &e.Threshold, &e.OccurredAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Severity,
+			&e.ContainerName, &e.Status, &e.Message, &e.Value, &e.Threshold,
+			&e.OccurredAt); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// RuleStats summarises recent activity for a single rule over a window
+// of days. fires_count is the number of "firing" history rows in that
+// window. last_fired is the most recent occurred_at, nil if quiet.
+type RuleStats struct {
+	RuleID     int64      `json:"rule_id"`
+	WindowDays int        `json:"window_days"`
+	FiresCount int        `json:"fires_count"`
+	LastFired  *time.Time `json:"last_fired,omitempty"`
+}
+
+// RuleStatsByID returns activity stats over the last `days` for the
+// given rule. days <= 0 falls back to 7.
+func (s *Service) RuleStatsByID(ctx context.Context, ruleID int64, days int) (*RuleStats, error) {
+	if days <= 0 {
+		days = 7
+	}
+	cutoff := time.Now().AddDate(0, 0, -days)
+	out := &RuleStats{RuleID: ruleID, WindowDays: days}
+	row := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), MAX(occurred_at)
+		  FROM alert_history
+		 WHERE rule_id = ? AND status = 'firing' AND occurred_at >= ?`,
+		ruleID, cutoff)
+	var lastFired sql.NullTime
+	if err := row.Scan(&out.FiresCount, &lastFired); err != nil {
+		return nil, err
+	}
+	if lastFired.Valid {
+		t := lastFired.Time
+		out.LastFired = &t
+	}
+	return out, nil
 }
 
 // -----------------------------------------------------------------------------

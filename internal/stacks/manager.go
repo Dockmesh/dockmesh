@@ -9,10 +9,18 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/fsnotify/fsnotify"
 )
+
+// selfWriteWindow bounds how long after a Manager-initiated write we
+// still classify the resulting fsnotify event as "ours". Filesystem
+// notifications usually arrive within milliseconds; 2s is generous
+// enough for slow disks while small enough that a real external edit
+// arriving moments later is still seen.
+const selfWriteWindow = 2 * time.Second
 
 // Manager is the filesystem-backed stack registry.
 // Layout: <root>/<name>/compose.yaml (+ optional .env / .env.age, .dockmesh.meta.json).
@@ -30,6 +38,14 @@ type Manager struct {
 
 	subsMu sync.Mutex
 	subs   []chan Event
+
+	// selfWrites tracks paths the manager itself just wrote so the
+	// fsnotify "modified" event that follows can be suppressed instead
+	// of fanned out as an "external edit" to subscribers. Fixes the
+	// false-positive banner that fired every time git-sync rewrote
+	// compose.yaml.
+	selfWritesMu sync.Mutex
+	selfWrites   map[string]time.Time
 }
 
 // Event is emitted when a stack file changes on disk from outside Dockmesh
@@ -105,11 +121,12 @@ func NewManager(root string, secretsSvc *secrets.Service) (*Manager, error) {
 		return nil, fmt.Errorf("fsnotify: %w", err)
 	}
 	m := &Manager{
-		root:    root,
-		rootAbs: rootAbs,
-		watcher: w,
-		secrets: secretsSvc,
-		stacks:  make(map[string]*Stack),
+		root:       root,
+		rootAbs:    rootAbs,
+		watcher:    w,
+		secrets:    secretsSvc,
+		stacks:     make(map[string]*Stack),
+		selfWrites: make(map[string]time.Time),
 	}
 	if err := m.scan(); err != nil {
 		return nil, err
@@ -143,6 +160,53 @@ func (m *Manager) Subscribe() (<-chan Event, func()) {
 			}
 		}
 	}
+}
+
+// markSelfWrite remembers that the manager itself is about to write
+// (or delete) path. The watcher consults isSelfWrite when an fsnotify
+// event arrives and drops events that fall inside the recorded window
+// so subscribers don't see "external edit" banners for our own writes.
+func (m *Manager) markSelfWrite(path string) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return
+	}
+	m.selfWritesMu.Lock()
+	m.selfWrites[abs] = time.Now()
+	m.selfWritesMu.Unlock()
+}
+
+// isSelfWrite returns true when absPath was marked within the
+// suppression window. Expired entries are evicted lazily so the map
+// stays bounded over a long-running process.
+func (m *Manager) isSelfWrite(absPath string) bool {
+	m.selfWritesMu.Lock()
+	defer m.selfWritesMu.Unlock()
+	t, ok := m.selfWrites[absPath]
+	if !ok {
+		return false
+	}
+	if time.Since(t) > selfWriteWindow {
+		delete(m.selfWrites, absPath)
+		return false
+	}
+	return true
+}
+
+// writeFileSelf is the manager's wrapper around os.WriteFile that also
+// records the path as a self-write so the resulting fsnotify event is
+// suppressed.
+func (m *Manager) writeFileSelf(path string, data []byte, perm os.FileMode) error {
+	m.markSelfWrite(path)
+	return os.WriteFile(path, data, perm)
+}
+
+// removeSelf is the manager's wrapper around os.Remove that records
+// the path as a self-write so the resulting fsnotify remove event is
+// suppressed.
+func (m *Manager) removeSelf(path string) error {
+	m.markSelfWrite(path)
+	return os.Remove(path)
 }
 
 func (m *Manager) publish(ev Event) {
@@ -235,6 +299,12 @@ func (m *Manager) handleFSEvent(ev fsnotify.Event) {
 		return
 	}
 	if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 && ev.Op&fsnotify.Remove == 0 {
+		return
+	}
+	// Suppress events for paths the manager just wrote itself — without
+	// this, every Create/Update/git-sync produces a spurious "modified
+	// outside Dockmesh" banner in the UI.
+	if m.isSelfWrite(abs) {
 		return
 	}
 	typ := "modified"
@@ -365,8 +435,8 @@ func (m *Manager) writeEnv(dir, env string) error {
 	agePath := filepath.Join(dir, ".env.age")
 
 	if env == "" {
-		_ = os.Remove(plainPath)
-		_ = os.Remove(agePath)
+		_ = m.removeSelf(plainPath)
+		_ = m.removeSelf(agePath)
 		return nil
 	}
 	if m.secrets != nil && m.secrets.Enabled() {
@@ -374,16 +444,16 @@ func (m *Manager) writeEnv(dir, env string) error {
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(agePath, ct, 0o600); err != nil {
+		if err := m.writeFileSelf(agePath, ct, 0o600); err != nil {
 			return err
 		}
-		_ = os.Remove(plainPath)
+		_ = m.removeSelf(plainPath)
 		return nil
 	}
-	if err := os.WriteFile(plainPath, []byte(env), 0o600); err != nil {
+	if err := m.writeFileSelf(plainPath, []byte(env), 0o600); err != nil {
 		return err
 	}
-	_ = os.Remove(agePath)
+	_ = m.removeSelf(agePath)
 	return nil
 }
 
@@ -399,7 +469,7 @@ func (m *Manager) Create(name, compose, env string) (*Detail, error) {
 		return nil, err
 	}
 	composePath := filepath.Join(dir, "compose.yaml")
-	if err := os.WriteFile(composePath, []byte(compose), 0o644); err != nil {
+	if err := m.writeFileSelf(composePath, []byte(compose), 0o644); err != nil {
 		return nil, err
 	}
 	if err := m.writeEnv(dir, env); err != nil {
@@ -424,7 +494,7 @@ func (m *Manager) Update(name, compose, env string) (*Detail, error) {
 		return nil, err
 	}
 	composePath := filepath.Join(dir, "compose.yaml")
-	if err := os.WriteFile(composePath, []byte(compose), 0o644); err != nil {
+	if err := m.writeFileSelf(composePath, []byte(compose), 0o644); err != nil {
 		return nil, err
 	}
 	if err := m.writeEnv(dir, env); err != nil {

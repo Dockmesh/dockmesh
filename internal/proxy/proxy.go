@@ -24,6 +24,12 @@ type Route struct {
 	TLSMode   string    `json:"tls_mode"` // auto | internal | none
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// Cert metadata — populated by Service.EnrichWithCertInfo() for
+	// routes whose TLS is managed by Caddy. Empty for tls_mode=none.
+	CertIssuer    string     `json:"cert_issuer,omitempty"`
+	CertValidFrom *time.Time `json:"cert_valid_from,omitempty"`
+	CertValidTo   *time.Time `json:"cert_valid_to,omitempty"`
+	CertDaysLeft  *int       `json:"cert_days_left,omitempty"`
 }
 
 // Status reports whether the proxy container is running and whether the
@@ -47,7 +53,9 @@ type Service struct {
 	docker  *docker.Client
 	enabled bool
 
-	mu sync.Mutex
+	mu      sync.Mutex
+	metrics *metricsState
+	acme    *acmeBuffer
 }
 
 func NewService(db *sql.DB, dockerCli *docker.Client, enabled bool) *Service {

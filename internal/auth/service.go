@@ -26,10 +26,34 @@ var (
 type User struct {
 	ID         string   `json:"id"`
 	Username   string   `json:"username"`
+	DisplayName string  `json:"display_name,omitempty"`
 	Email      string   `json:"email,omitempty"`
 	Role       string   `json:"role"`
 	ScopeTags  []string `json:"scope_tags,omitempty"` // P.11.3: empty = all hosts
 	MFAEnabled bool     `json:"mfa_enabled"`
+	// Profile timestamps surfaced in the Account page.
+	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
+	PasswordChangedAt *time.Time `json:"password_changed_at,omitempty"`
+	// HasAvatar indicates whether the user has uploaded an avatar.
+	// The actual bytes are served from a separate endpoint
+	// (GET /users/{id}/avatar) so we don't bloat every list response.
+	HasAvatar bool `json:"has_avatar,omitempty"`
+	// Effective v2.1 permissions + role scopes. Populated by the
+	// /login and /me handlers via rbac.Store lookup; left empty when
+	// the User flows through DB-only paths (e.g. ListUsers). Frontend
+	// reads these to drive UI gating without replicating the role-perm
+	// map locally.
+	Permissions []string  `json:"permissions,omitempty"`
+	Scopes      *MeScopes `json:"scopes,omitempty"`
+}
+
+// MeScopes is the per-scope-type breakdown returned with the User.
+// Each list is the set of allowed values for that scope type; empty
+// list = unscoped (full access to that resource type).
+type MeScopes struct {
+	Stacks   []string `json:"stacks"`
+	Hosts    []string `json:"hosts"`
+	HostTags []string `json:"host_tags"`
 }
 
 type LoginResult struct {
@@ -173,25 +197,80 @@ func parseScopeTags(raw sql.NullString) []string {
 
 func (s *Service) GetUser(ctx context.Context, id string) (*User, error) {
 	var u User
-	var email, scope sql.NullString
+	var email, scope, displayName, avatarMime sql.NullString
 	var totpVerified int
+	var lastLoginAt, pwChangedAt sql.NullTime
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, username, email, role, scope_tags, totp_verified FROM users WHERE id = ?`, id).
-		Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &totpVerified)
+		`SELECT id, username, email, role, scope_tags, totp_verified,
+		        display_name, last_login_at, password_changed_at, avatar_mime
+		   FROM users WHERE id = ?`, id).
+		Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &totpVerified,
+			&displayName, &lastLoginAt, &pwChangedAt, &avatarMime)
 	if err != nil {
 		return nil, err
 	}
 	if email.Valid {
 		u.Email = email.String
 	}
+	if displayName.Valid {
+		u.DisplayName = displayName.String
+	}
+	if lastLoginAt.Valid {
+		t := lastLoginAt.Time
+		u.LastLoginAt = &t
+	}
+	if pwChangedAt.Valid {
+		t := pwChangedAt.Time
+		u.PasswordChangedAt = &t
+	}
 	u.ScopeTags = parseScopeTags(scope)
 	u.MFAEnabled = totpVerified == 1
+	u.HasAvatar = avatarMime.Valid && avatarMime.String != ""
 	return &u, nil
+}
+
+// SetAvatar stores the avatar bytes + mime type for a user, replacing
+// any existing avatar. ClearAvatar with mime == "" wipes the column
+// (used when the user removes their avatar).
+func (s *Service) SetAvatar(ctx context.Context, id string, mime string, data []byte) error {
+	if mime == "" {
+		_, err := s.db.ExecContext(ctx,
+			`UPDATE users SET avatar_blob = NULL, avatar_mime = NULL,
+			                  updated_at = CURRENT_TIMESTAMP
+			   WHERE id = ?`, id)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET avatar_blob = ?, avatar_mime = ?,
+		                  updated_at = CURRENT_TIMESTAMP
+		   WHERE id = ?`,
+		data, mime, id)
+	return err
+}
+
+// GetAvatar returns the avatar bytes + mime type for a user.
+// Returns (nil, "", nil) when no avatar is set — callers serve a
+// placeholder or 404 depending on context.
+func (s *Service) GetAvatar(ctx context.Context, id string) ([]byte, string, error) {
+	var blob []byte
+	var mime sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT avatar_blob, avatar_mime FROM users WHERE id = ?`, id).
+		Scan(&blob, &mime)
+	if err != nil {
+		return nil, "", err
+	}
+	if !mime.Valid || mime.String == "" {
+		return nil, "", nil
+	}
+	return blob, mime.String, nil
 }
 
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, username, email, role, scope_tags, totp_verified FROM users ORDER BY username`)
+		`SELECT id, username, email, role, scope_tags, totp_verified,
+		        display_name, last_login_at, password_changed_at, avatar_mime
+		   FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -199,32 +278,48 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	out := []User{}
 	for rows.Next() {
 		var u User
-		var email, scope sql.NullString
+		var email, scope, displayName, avatarMime sql.NullString
 		var totp int
-		if err := rows.Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &totp); err != nil {
+		var lastLoginAt, pwChangedAt sql.NullTime
+		if err := rows.Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &totp,
+			&displayName, &lastLoginAt, &pwChangedAt, &avatarMime); err != nil {
 			return nil, err
 		}
 		if email.Valid {
 			u.Email = email.String
 		}
+		if displayName.Valid {
+			u.DisplayName = displayName.String
+		}
+		if lastLoginAt.Valid {
+			t := lastLoginAt.Time
+			u.LastLoginAt = &t
+		}
+		if pwChangedAt.Valid {
+			t := pwChangedAt.Time
+			u.PasswordChangedAt = &t
+		}
 		u.ScopeTags = parseScopeTags(scope)
 		u.MFAEnabled = totp == 1
+		u.HasAvatar = avatarMime.Valid && avatarMime.String != ""
 		out = append(out, u)
 	}
 	return out, rows.Err()
 }
 
-// UpdateUser edits email + role. Scope changes go through
-// UpdateUserScope so callers don't need to pass scope on every role
-// change.
-func (s *Service) UpdateUser(ctx context.Context, id, email, role string) (*User, error) {
+// UpdateUser edits email, role, and (optionally) display name. Scope
+// changes go through UpdateUserScope so callers don't need to pass
+// scope on every role change.
+func (s *Service) UpdateUser(ctx context.Context, id, email, role, displayName string) (*User, error) {
 	var emailNullable any
 	if email != "" {
 		emailNullable = email
 	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE users SET email = ?, role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		emailNullable, role, id)
+		`UPDATE users SET email = ?, role = ?, display_name = ?,
+		                  updated_at = CURRENT_TIMESTAMP
+		   WHERE id = ?`,
+		emailNullable, role, displayName, id)
 	if err != nil {
 		return nil, err
 	}
@@ -343,17 +438,17 @@ func (s *Service) recordFailedLogin(ctx context.Context, userID string, newCount
 
 func (s *Service) Login(ctx context.Context, username, password, userAgent, ip string) (*LoginResult, error) {
 	var u User
-	var email, scope sql.NullString
+	var email, scope, displayName sql.NullString
 	var hash string
 	var totpVerified int
 	var failedAttempts int
-	var lockedUntil sql.NullTime
+	var lockedUntil, pwChangedAt sql.NullTime
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, username, email, role, scope_tags, password, totp_verified,
-		        failed_login_attempts, locked_until
+		        failed_login_attempts, locked_until, display_name, password_changed_at
 		   FROM users WHERE username = ?`, username).
 		Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &hash, &totpVerified,
-			&failedAttempts, &lockedUntil)
+			&failedAttempts, &lockedUntil, &displayName, &pwChangedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrInvalidCredentials
 	}
@@ -369,6 +464,13 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 	}
 	if email.Valid {
 		u.Email = email.String
+	}
+	if displayName.Valid {
+		u.DisplayName = displayName.String
+	}
+	if pwChangedAt.Valid {
+		t := pwChangedAt.Time
+		u.PasswordChangedAt = &t
 	}
 	u.ScopeTags = parseScopeTags(scope)
 	ok, err := VerifyPassword(password, hash)
@@ -423,6 +525,14 @@ func (s *Service) startSession(ctx context.Context, u User, userAgent, ip string
 		`INSERT INTO sessions (family_id, user_id, current_seq, user_agent, ip, expires_at) VALUES (?, ?, 0, ?, ?, ?)`,
 		familyID, u.ID, nullable(userAgent), nullable(ip), expiresAt); err != nil {
 		return nil, err
+	}
+	// Stamp last_login_at on the user row so the Account header can
+	// surface it without the brittle sessions-lookup workaround. Best-
+	// effort: a failure here doesn't fail the login.
+	now := time.Now().UTC()
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE users SET last_login_at = ? WHERE id = ?`, now, u.ID); err == nil {
+		u.LastLoginAt = &now
 	}
 	return s.mintPair(u, familyID, 0, expiresAt)
 }
@@ -536,6 +646,11 @@ func (s *Service) mintPair(u User, familyID string, seq int, expiresAt time.Time
 	if err != nil {
 		return nil, err
 	}
+	// Bump the session's last_seen_at so the "active 12m ago" column
+	// in the Account / Sessions panel stays meaningful. We do this on
+	// the refresh path (every ~15 min) rather than on every API call
+	// to keep the write rate sane. Best-effort.
+	_, _ = s.db.Exec(`UPDATE sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE family_id = ?`, familyID)
 	return &LoginResult{AccessToken: access, RefreshToken: refresh, User: &u}, nil
 }
 

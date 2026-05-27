@@ -5,6 +5,7 @@ import (
 	"net/url"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -20,6 +21,11 @@ func (h *Handlers) ScanImage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.Scanner.Ready(); err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	scopeReq := h.hostScopeReq(r.Context(), "local")
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermImagesScan, scopeReq, "host local")
 		return
 	}
 

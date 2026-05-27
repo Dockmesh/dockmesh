@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/go-chi/chi/v5"
@@ -49,6 +51,34 @@ func (h *Handlers) ProxyDisable(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// GetProxyMetrics scrapes Caddy's Prometheus /metrics endpoint and
+// returns a per-host snapshot for the proxy dashboard. Returns an
+// empty snapshot rather than 503 when Caddy doesn't expose metrics —
+// the UI still renders the route list and just hides the charts.
+func (h *Handlers) GetProxyMetrics(w http.ResponseWriter, r *http.Request) {
+	if h.Proxy == nil {
+		writeError(w, http.StatusServiceUnavailable, "proxy not configured")
+		return
+	}
+	snap, err := h.Proxy.Metrics(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, snap)
+}
+
+// ListACMEEvents returns the recent ACME issuance / renewal events the
+// log tailer has captured. Empty array when the proxy is disabled or
+// no events have happened yet.
+func (h *Handlers) ListACMEEvents(w http.ResponseWriter, r *http.Request) {
+	if h.Proxy == nil {
+		writeJSON(w, http.StatusOK, []proxy.ACMEEvent{})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.Proxy.ACMEEvents())
+}
+
 func (h *Handlers) ListProxyRoutes(w http.ResponseWriter, r *http.Request) {
 	if h.Proxy == nil {
 		writeError(w, http.StatusServiceUnavailable, "proxy not configured")
@@ -59,6 +89,14 @@ func (h *Handlers) ListProxyRoutes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Probe each route's TLS to surface cert metadata (issuer +
+	// validity window) so the UI can render expiry warnings. Bounded
+	// to 6 seconds total — Caddy's local rate-limiting tolerates ~12
+	// concurrent probes; we don't want a slow lookup to stall the
+	// list response.
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+	defer cancel()
+	routes = h.Proxy.EnrichWithCertInfo(ctx, routes)
 	writeJSON(w, http.StatusOK, routes)
 }
 

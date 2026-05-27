@@ -1,177 +1,96 @@
 <script lang="ts">
-  import { api, ApiError, type BackupStatus, type CustomRole, type PermissionInfo, type Registry, type RegistryInput } from '$lib/api';
+  import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { auth } from '$lib/stores/auth.svelte';
-  import { allowed } from '$lib/rbac';
-  import { Card, Button, Input, Modal, Badge, Skeleton, EmptyState } from '$lib/components/ui';
+  import { onMount } from 'svelte';
+  import { api, ApiError } from '$lib/api';
+  import { allowed } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
-  import { User, Users, Activity, Plus, Trash2, UserCog, ShieldCheck, ShieldOff, Copy, KeyRound, Link2, Globe, ExternalLink, HardDrive, ShieldAlert, AlertCircle, Shield, X, Package, CheckCircle2, XCircle, Archive } from 'lucide-svelte';
-  import type { OIDCProvider, OIDCProviderInput } from '$lib/api';
+  import { EditorialPage, Eyebrow, Field } from '$lib/components/editorial';
+  import { Skeleton } from '$lib/components/ui';
+  import {
+    KeyRound, ShieldCheck, AlertCircle, Copy, RefreshCw, Download,
+  } from 'lucide-svelte';
 
-  type Tab = 'account' | 'users' | 'audit' | 'sso' | 'system' | 'roles' | 'api_tokens' | 'registries';
-  // After Phase-2 extraction the only visible tab is 'system'. Kept the
-  // union + ?tab param parsing for URL back-compat so bookmarks like
-  // ?tab=account redirect cleanly via the snap-back $effect below.
-  let tab = $state<Tab>((new URLSearchParams($page.url.search).get('tab') as Tab) || 'system');
+  onMount(() => {
+    if (!allowed('system.update')) { goto('/'); return; }
+    const search = new URLSearchParams($page.url.search);
+    const tab = search.get('tab');
+    const redirectMap: Record<string, string> = {
+      account:    '/account',
+      users:      '/users',
+      audit:      '/audit',
+      sso:        '/authentication',
+      roles:      '/users',
+      api_tokens: '/tokens',
+      registries: '/registries',
+      data:       '/backups',
+    };
+    if (tab && tab in redirectMap) {
+      goto(redirectMap[tab], { replaceState: true });
+      return;
+    }
+    const subParam = search.get('sub');
+    if (subParam === 'data') {
+      goto('/backups', { replaceState: true });
+      return;
+    }
+    loadAll();
+  });
 
-  // System sub-tab: General = instance config, Data & secrets = destructive
-  // operations. Read initial value from ?sub= so the sidebar can deep-link
-  // if we ever surface "take me to Data & secrets" from an alert.
-  type SystemSub = 'general' | 'data';
-  let systemSub = $state<SystemSub>(
-    (new URLSearchParams($page.url.search).get('sub') as SystemSub) === 'data' ? 'data' : 'general'
-  );
-  function setSystemSub(s: SystemSub) {
-    systemSub = s;
-    if (typeof window !== 'undefined') {
-      const u = new URL(window.location.href);
-      u.searchParams.set('sub', s);
-      history.replaceState(null, '', u);
-    }
-  }
-
-  // --- System tab (P.6.5 + P.12.4) ---
-  let backupStatus = $state<BackupStatus | null>(null);
-  let verifyBackupBusy = $state(false);
-  let verifyBackupResult = $state<import('$lib/api').BackupVerifyResult | null>(null);
-  async function onVerifyFile(e: Event) {
-    const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
-    verifyBackupBusy = true;
-    verifyBackupResult = null;
-    try {
-      verifyBackupResult = await api.backups.verifyUpload(file);
-      if (verifyBackupResult.sanity.passed) {
-        toast.success('Backup verified', 'all sanity checks passed');
-      } else {
-        toast.error('Verify failed', verifyBackupResult.sanity.summary);
-      }
-    } catch (err) {
-      toast.error('Upload failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      verifyBackupBusy = false;
-      input.value = '';
-    }
-  }
-  let backupLoading = $state(false);
-  let backupBusy = $state(false);
-  async function loadBackup() {
-    backupLoading = true;
-    try {
-      backupStatus = await api.system.backupStatus();
-    } catch (err) {
-      toast.error('Failed to load backup status', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      backupLoading = false;
-    }
-  }
-  async function toggleBackup(enabled: boolean) {
-    backupBusy = true;
-    try {
-      backupStatus = await api.system.setBackupEnabled(enabled);
-      toast.success(enabled ? 'Automated backups enabled' : 'Automated backups disabled');
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      backupBusy = false;
-    }
-  }
-  function fmtAge(secs?: number): string {
-    if (secs == null) return '—';
-    if (secs < 60) return 'just now';
-    if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-    if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
-    return `${Math.floor(secs / 86400)}d ago`;
-  }
-  function fmtBytes(n?: number): string {
-    if (!n) return '—';
-    const u = ['B', 'KB', 'MB', 'GB'];
-    let v = n;
-    let i = 0;
-    while (v >= 1024 && i < u.length - 1) {
-      v /= 1024;
-      i++;
-    }
-    return `${v.toFixed(1)} ${u[i]}`;
-  }
-
-  // --- System tab: instance info + settings ---
   let systemInfo = $state<{ version: string; commit: string; build_date: string; go_version: string; os: string; arch: string; uptime_seconds: number } | null>(null);
   let sysSettings = $state<Map<string, string>>(new Map());
   let settingsBusy = $state(false);
+
   let updateStatus = $state<import('$lib/api').UpdateStatus | null>(null);
   let updateCheckBusy = $state(false);
 
+  let secretsRotateBusy = $state(false);
+  let secretsRotateResult = $state<{ reencrypted: number; old_recipient: string; new_recipient: string } | null>(null);
+
+  const upgradeOneLiner = 'curl -fsSL https://get.dockmesh.dev | sudo bash && sudo systemctl restart dockmesh';
+
+  async function loadAll() {
+    await Promise.all([loadSystemInfo(), loadUpdateStatus()]);
+  }
+
+  async function loadSystemInfo() {
+    try {
+      const [info, settingsArr] = await Promise.all([
+        api.system.info(),
+        api.system.settings().catch(() => [] as Array<{ key: string; value: string }>),
+      ]);
+      systemInfo = info;
+      sysSettings = new Map(settingsArr.map((e) => [e.key, e.value]));
+    } catch (err) {
+      toast.error('Failed to load system info', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
   async function loadUpdateStatus() {
-    try { updateStatus = await api.system.updateStatus(); } catch { /* ignore */ }
+    try { updateStatus = await api.system.updateStatus(); }
+    catch { /* updater may be disabled; quietly */ }
   }
 
   async function recheckUpdate() {
     updateCheckBusy = true;
     try {
       updateStatus = await api.system.checkUpdateNow();
-      toast.success('Update check completed');
+      toast.success('Check complete', updateStatus?.update_available ? `Update available: ${updateStatus.latest_version}` : 'Up to date');
     } catch (err) {
-      toast.error('Check failed', err instanceof ApiError ? err.message : String(err));
+      toast.error('Check failed', err instanceof ApiError ? err.message : undefined);
     } finally {
       updateCheckBusy = false;
     }
   }
 
-  function fmtRelative(iso: string | undefined): string {
-    if (!iso) return 'never';
-    const ms = Date.now() - new Date(iso).getTime();
-    if (ms < 60_000) return 'just now';
-    if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
-    if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
-    return `${Math.floor(ms / 86_400_000)}d ago`;
-  }
-
-  async function copyUpgradeCmd(cmd: string) {
-    // navigator.clipboard is unavailable on plain-HTTP non-localhost
-    // origins (most self-hosted Dockmesh installs). Fall back to the
-    // legacy execCommand('copy') via a hidden textarea so the Copy
-    // button works without forcing HTTPS as a hard requirement.
-    if (typeof navigator !== 'undefined' && navigator.clipboard && window.isSecureContext) {
-      try {
-        await navigator.clipboard.writeText(cmd);
-        toast.success('Copied to clipboard');
-        return;
-      } catch {
-        /* fall through to legacy path */
-      }
-    }
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = cmd;
-      ta.setAttribute('readonly', '');
-      ta.style.position = 'fixed';
-      ta.style.top = '-1000px';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      const ok = document.execCommand('copy');
-      document.body.removeChild(ta);
-      if (ok) toast.success('Copied to clipboard');
-      else toast.error('Copy failed', 'Select the command manually and Ctrl+C');
-    } catch {
-      toast.error('Copy failed', 'Select the command manually and Ctrl+C');
-    }
-  }
-
-  const upgradeOneLiner = 'curl -fsSL https://get.dockmesh.dev | sudo bash && sudo systemctl restart dockmesh';
-  let secretsRotateBusy = $state(false);
-  let secretsRotateResult = $state<{ reencrypted: number; old_recipient: string; new_recipient: string } | null>(null);
-
   async function rotateEncryptionKey() {
     const ok = await confirm.ask({
       title: 'Rotate encryption key?',
       message: 'Generates a new age key and re-encrypts every stack .env.age.',
-      body: 'External backups encrypted with the old key must be re-encrypted or re-created separately — dockmesh does not track them yet.',
+      body: 'External backups encrypted with the old key must be re-encrypted or re-created separately — Dockmesh does not track them yet.',
       confirmLabel: 'Rotate',
-      danger: true
+      danger: true,
     });
     if (!ok) return;
     secretsRotateBusy = true;
@@ -186,20 +105,12 @@
     }
   }
 
-  async function loadSystemInfo() {
-    try { systemInfo = await api.system.info(); } catch { /* ignore */ }
-    try {
-      const list = await api.system.settings();
-      const m = new Map<string, string>();
-      for (const e of list) m.set(e.key, e.value);
-      sysSettings = m;
-    } catch { /* ignore */ }
+  function getSetting(key: string): string {
+    return sysSettings.get(key) ?? '';
   }
-  function getSetting(key: string): string { return sysSettings.get(key) ?? ''; }
   function setSetting(key: string, value: string) {
-    const next = new Map(sysSettings);
-    next.set(key, value);
-    sysSettings = next;
+    sysSettings.set(key, value);
+    sysSettings = new Map(sysSettings);
   }
   async function saveSettings() {
     settingsBusy = true;
@@ -213,6 +124,18 @@
       settingsBusy = false;
     }
   }
+
+  async function copyUpgradeCmd(cmd: string) {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(cmd);
+        toast.success('Command copied');
+      }
+    } catch {
+      toast.error('Copy failed', 'Select the command manually and Ctrl+C');
+    }
+  }
+
   function fmtUptime(secs?: number): string {
     if (!secs) return '—';
     const d = Math.floor(secs / 86400);
@@ -222,2556 +145,624 @@
     if (h > 0) return `${h}h ${m}m`;
     return `${m}m`;
   }
-
-  // --- Roles tab (RBAC v2) ---
-  let roles = $state<CustomRole[]>([]);
-  let allPerms = $state<PermissionInfo[]>([]);
-  let rolesLoading = $state(false);
-  let showRole = $state(false);
-  let editingRole = $state<CustomRole | null>(null);
-  let roleForm = $state({ name: '', display: '', permissions: [] as string[] });
-
-  // --- API Tokens tab (P.11.1) ---
-  let apiTokens = $state<import('$lib/api').ApiToken[]>([]);
-  let apiTokensLoading = $state(false);
-  let showNewToken = $state(false);
-  let newTokenForm = $state({ name: '', role: 'operator', expires_in_days: 90 });
-  // After creation, the plaintext lives here for one-time display. Null
-  // when no token is pending reveal. Clearing this loses the plaintext
-  // forever — same semantics as the DB.
-  let freshTokenPlaintext = $state<string | null>(null);
-  let freshTokenName = $state<string>('');
-  let tokenCopied = $state(false);
-
-  async function loadApiTokens() {
-    apiTokensLoading = true;
-    try {
-      apiTokens = await api.apiTokens.list();
-    } catch (err) {
-      toast.error('Failed to load API tokens', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      apiTokensLoading = false;
-    }
+  function fmtRelative(iso: string | undefined): string {
+    if (!iso) return 'never';
+    const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (secs < 60) return 'just now';
+    if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+    if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+    return `${Math.floor(secs / 86400)}d ago`;
   }
-
-  async function createApiToken(e: Event) {
-    e.preventDefault();
-    if (!newTokenForm.name.trim() || !newTokenForm.role) return;
-    try {
-      const res = await api.apiTokens.create({
-        name: newTokenForm.name.trim(),
-        role: newTokenForm.role,
-        expires_in_days: newTokenForm.expires_in_days
-      });
-      freshTokenPlaintext = res.token;
-      freshTokenName = res.name;
-      showNewToken = false;
-      newTokenForm = { name: '', role: 'operator', expires_in_days: 90 };
-      await loadApiTokens();
-    } catch (err) {
-      toast.error('Failed to create token', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  async function revokeApiToken(id: number, name: string) {
-    if (!(await confirm.ask({ title: 'Revoke API token', message: `Revoke token "${name}"?`, body: 'Cannot be undone. Any scripts, CI jobs, or dmctl sessions using this token lose access on next request.', confirmLabel: 'Revoke', danger: true }))) return;
-    try {
-      await api.apiTokens.revoke(id);
-      toast.success('Token revoked');
-      await loadApiTokens();
-    } catch (err) {
-      toast.error('Failed to revoke', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  async function copyToken() {
-    if (!freshTokenPlaintext) return;
-    try {
-      await navigator.clipboard.writeText(freshTokenPlaintext);
-      tokenCopied = true;
-      setTimeout(() => (tokenCopied = false), 2000);
-    } catch {
-      toast.error('Copy failed', 'Select and copy the token manually');
-    }
-  }
-
-  // --- Registries tab (P.11.7) ---
-  let registries = $state<Registry[]>([]);
-  let registriesLoading = $state(false);
-  let showRegistry = $state(false);
-  let editingRegistry = $state<Registry | null>(null);
-  let registryForm = $state<RegistryInput>({ name: '', url: '', username: '', password: '', scope_tags: [] });
-  let registryScopeInput = $state('');
-  let registryBusy = $state(false);
-  let testingRegistryId = $state<number | null>(null);
-
-  async function loadRegistries() {
-    registriesLoading = true;
-    try {
-      registries = await api.registries.list();
-    } catch (err) {
-      toast.error('Failed to load registries', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      registriesLoading = false;
-    }
-  }
-
-  function openNewRegistry() {
-    editingRegistry = null;
-    registryForm = { name: '', url: '', username: '', password: '', scope_tags: [] };
-    registryScopeInput = '';
-    showRegistry = true;
-  }
-
-  function openEditRegistry(r: Registry) {
-    editingRegistry = r;
-    registryForm = {
-      name: r.name,
-      url: r.url,
-      username: r.username ?? '',
-      password: '',
-      scope_tags: r.scope_tags ? [...r.scope_tags] : []
-    };
-    registryScopeInput = '';
-    showRegistry = true;
-  }
-
-  function addRegistryScope() {
-    const t = registryScopeInput.trim().toLowerCase();
-    if (!t) return;
-    registryForm.scope_tags = Array.from(new Set([...(registryForm.scope_tags ?? []), t]));
-    registryScopeInput = '';
-  }
-
-  function removeRegistryScope(t: string) {
-    registryForm.scope_tags = (registryForm.scope_tags ?? []).filter((x) => x !== t);
-  }
-
-  async function saveRegistry(e: Event) {
-    e.preventDefault();
-    if (!registryForm.name.trim() || !registryForm.url.trim()) return;
-    registryBusy = true;
-    try {
-      const payload: RegistryInput = {
-        name: registryForm.name.trim(),
-        url: registryForm.url.trim(),
-        username: registryForm.username?.trim() || undefined,
-        password: registryForm.password || undefined,
-        scope_tags: registryForm.scope_tags?.length ? registryForm.scope_tags : undefined
-      };
-      if (editingRegistry) {
-        await api.registries.update(editingRegistry.id, payload);
-        toast.success('Registry updated', registryForm.name);
-      } else {
-        await api.registries.create(payload);
-        toast.success('Registry added', registryForm.name);
-      }
-      showRegistry = false;
-      await loadRegistries();
-    } catch (err) {
-      toast.error('Failed to save registry', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      registryBusy = false;
-    }
-  }
-
-  async function deleteRegistry(r: Registry) {
-    if (!(await confirm.ask({ title: 'Delete registry', message: `Delete registry "${r.name}"?`, body: 'Existing pulls fall back to anonymous access. Private images will fail to pull until the registry is re-added.', confirmLabel: 'Delete', danger: true }))) return;
-    try {
-      await api.registries.delete(r.id);
-      toast.success('Registry deleted', r.name);
-      await loadRegistries();
-    } catch (err) {
-      toast.error('Failed to delete', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  async function testRegistry(r: Registry) {
-    testingRegistryId = r.id;
-    try {
-      const res = await api.registries.test(r.id);
-      if (res.ok) {
-        toast.success('Login successful', r.name);
-      } else {
-        toast.error('Login failed', res.error || 'unknown error');
-      }
-      await loadRegistries();
-    } catch (err) {
-      toast.error('Test failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      testingRegistryId = null;
-    }
-  }
-
-  function fmtAgo(ts?: string): string {
-    if (!ts) return 'never';
-    const diff = (Date.now() - new Date(ts).getTime()) / 1000;
-    if (diff < 60) return 'just now';
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return `${Math.floor(diff / 86400)}d ago`;
-  }
-
-  async function loadRoles() {
-    rolesLoading = true;
-    try {
-      [roles, allPerms] = await Promise.all([api.roles.list(), api.roles.permissions()]);
-    } catch (err) {
-      toast.error('Failed to load roles', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      rolesLoading = false;
-    }
-  }
-
-  function openNewRole() {
-    editingRole = null;
-    roleForm = { name: '', display: '', permissions: [] };
-    showRole = true;
-  }
-
-  function openEditRole(r: CustomRole) {
-    editingRole = r;
-    roleForm = { name: r.name, display: r.display, permissions: [...r.permissions] };
-    showRole = true;
-  }
-
-  async function saveRole(e: Event) {
-    e.preventDefault();
-    try {
-      if (editingRole) {
-        await api.roles.update(editingRole.name, { display: roleForm.display, permissions: roleForm.permissions });
-      } else {
-        await api.roles.create(roleForm);
-      }
-      showRole = false;
-      toast.success(editingRole ? 'Role updated' : 'Role created');
-      await loadRoles();
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  async function deleteRole(name: string) {
-    if (!(await confirm.ask({ title: 'Delete role', message: `Delete role "${name}"?`, body: 'Users currently assigned to this role lose its permissions immediately on next request.', confirmLabel: 'Delete', danger: true }))) return;
-    try {
-      await api.roles.delete(name);
-      toast.success('Role deleted');
-      await loadRoles();
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  function togglePerm(perm: string) {
-    if (roleForm.permissions.includes(perm)) {
-      roleForm.permissions = roleForm.permissions.filter(p => p !== perm);
-    } else {
-      roleForm.permissions = [...roleForm.permissions, perm];
-    }
-  }
-
-  // SSO state
-  let oidcProviders = $state<OIDCProvider[]>([]);
-  let oidcLoading = $state(false);
-  let showOIDC = $state(false);
-  let editingOIDC = $state<OIDCProvider | null>(null);
-  let oForm = $state<OIDCProviderInput>({
-    slug: '',
-    display_name: '',
-    issuer_url: '',
-    client_id: '',
-    client_secret: '',
-    scopes: 'openid,profile,email',
-    group_claim: 'groups',
-    admin_group: '',
-    operator_group: '',
-    default_role: 'viewer',
-    enabled: true
-  });
-  let oidcTestState = $state<'idle' | 'testing' | 'ok' | 'fail'>('idle');
-  let oidcTestMessage = $state<string>('');
-
-  async function testOIDCDiscovery() {
-    const url = oForm.issuer_url.trim();
-    if (!url) {
-      oidcTestState = 'fail';
-      oidcTestMessage = 'Enter an issuer URL first';
-      return;
-    }
-    oidcTestState = 'testing';
-    oidcTestMessage = '';
-    try {
-      const res = await api.oidc.testDiscovery(url);
-      if (res.ok) {
-        oidcTestState = 'ok';
-        oidcTestMessage = `Discovery OK — issuer: ${res.issuer}`;
-      } else {
-        oidcTestState = 'fail';
-        oidcTestMessage = res.error || 'Discovery failed';
-      }
-    } catch (err) {
-      oidcTestState = 'fail';
-      oidcTestMessage = err instanceof ApiError ? err.message : String(err);
-    }
-  }
-
-  $effect(() => {
-    // Reset test state whenever the issuer URL changes so a stale OK
-    // badge doesn't mislead after the admin edits the URL.
-    oForm.issuer_url;
-    oidcTestState = 'idle';
-    oidcTestMessage = '';
-  });
-
-  async function loadOIDC() {
-    oidcLoading = true;
-    try {
-      oidcProviders = await api.oidc.listAdmin();
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      oidcLoading = false;
-    }
-  }
-
-  function resetOIDCForm() {
-    oForm = {
-      slug: '',
-      display_name: '',
-      issuer_url: '',
-      client_id: '',
-      client_secret: '',
-      scopes: 'openid,profile,email',
-      group_claim: 'groups',
-      admin_group: '',
-      operator_group: '',
-      default_role: 'viewer',
-      enabled: true
-    };
-    editingOIDC = null;
-  }
-
-  function openNewOIDC() {
-    resetOIDCForm();
-    showOIDC = true;
-  }
-
-  function openEditOIDC(p: OIDCProvider) {
-    editingOIDC = p;
-    oForm = {
-      slug: p.slug,
-      display_name: p.display_name,
-      issuer_url: p.issuer_url,
-      client_id: p.client_id,
-      client_secret: '',
-      scopes: p.scopes,
-      group_claim: p.group_claim ?? '',
-      admin_group: p.admin_group ?? '',
-      operator_group: p.operator_group ?? '',
-      default_role: p.default_role,
-      enabled: p.enabled
-    };
-    showOIDC = true;
-  }
-
-  async function saveOIDC(e: Event) {
-    e.preventDefault();
-    try {
-      if (editingOIDC) {
-        await api.oidc.update(editingOIDC.id, oForm);
-        toast.success('Provider updated', oForm.slug);
-      } else {
-        await api.oidc.create(oForm);
-        toast.success('Provider created', oForm.slug);
-      }
-      showOIDC = false;
-      resetOIDCForm();
-      await loadOIDC();
-    } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  async function deleteOIDC(p: OIDCProvider) {
-    if (!(await confirm.ask({ title: 'Delete SSO provider', message: `Delete provider "${p.display_name}"?`, body: 'Users who signed in via this provider must fall back to password login until it\u2019s re-added.', confirmLabel: 'Delete', danger: true }))) return;
-    try {
-      await api.oidc.delete(p.id);
-      toast.success('Deleted', p.slug);
-      await loadOIDC();
-    } catch (err) {
-      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  // Account
-  let me = $state<any>(null);
-  let currentPassword = $state('');
-  let newPassword = $state('');
-
-  // MFA enrollment state
-  let mfaOpen = $state(false);
-  let mfaStep = $state<'qr' | 'recovery'>('qr');
-  let mfaEnroll = $state<{ secret: string; url: string; qr_data_url: string } | null>(null);
-  let mfaCode = $state('');
-  let mfaRecovery = $state<string[]>([]);
-  let mfaBusy = $state(false);
-
-  async function loadMe() {
-    try {
-      me = await api.users.me();
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    }
-    await loadSessions();
-  }
-
-  // P.12.1 — self sessions
-  let sessions = $state<import('$lib/api').Session[]>([]);
-  let sessionsBusy = $state(false);
-
-  async function loadSessions() {
-    try {
-      sessions = await api.auth.sessions();
-    } catch { /* ignore */ }
-  }
-
-  async function revokeSession(familyID: string, isCurrent: boolean) {
-    if (isCurrent) {
-      if (!(await confirm.ask({ title: 'Revoke current session', message: 'Revoking the current session will log you out on the next refresh.', body: 'Continue?', confirmLabel: 'Revoke', danger: true }))) return;
-    } else {
-      if (!(await confirm.ask({ title: 'Revoke session', message: 'Revoke this session?', body: 'Any client using it (browser, CLI, script) will be logged out on next request.', confirmLabel: 'Revoke', danger: true }))) return;
-    }
-    sessionsBusy = true;
-    try {
-      await api.auth.revokeSession(familyID);
-      toast.success('Session revoked');
-      await loadSessions();
-    } catch (err) {
-      toast.error('Failed to revoke', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      sessionsBusy = false;
-    }
-  }
-
-  // Parse a browser/CLI UA string into a short human-readable label so
-  // the session panel is actually scannable ("Chrome 147 on Windows"
-  // rather than a 120-char truncated UA). Falls back to the raw UA for
-  // unknown agents; the full UA is still available on hover via title=.
-  function fmtSessionAgent(ua?: string): string {
-    if (!ua) return 'unknown';
-    const cli = ua.match(/^([a-zA-Z0-9_.-]+)\/([0-9.]+)/);
-    if (cli && !ua.includes('Mozilla')) {
-      // curl/7.88.1, dmctl/1.0.0, etc.
-      return `${cli[1]} ${cli[2]}`;
-    }
-    let os = 'unknown OS';
-    if (/Windows NT 10\.0/i.test(ua)) os = 'Windows';
-    else if (/Windows NT 11/i.test(ua)) os = 'Windows 11';
-    else if (/Mac OS X/i.test(ua)) os = 'macOS';
-    else if (/Linux/i.test(ua)) os = 'Linux';
-    else if (/Android/i.test(ua)) os = 'Android';
-    else if (/iPhone|iPad|iOS/i.test(ua)) os = 'iOS';
-    let browser = 'unknown browser';
-    const chrome = ua.match(/Chrome\/(\d+)/);
-    const firefox = ua.match(/Firefox\/(\d+)/);
-    const safari = ua.match(/Version\/(\d+).*Safari/);
-    const edge = ua.match(/Edg\/(\d+)/);
-    if (edge) browser = `Edge ${edge[1]}`;
-    else if (chrome) browser = `Chrome ${chrome[1]}`;
-    else if (firefox) browser = `Firefox ${firefox[1]}`;
-    else if (safari) browser = `Safari ${safari[1]}`;
-    if (browser === 'unknown browser' && os === 'unknown OS') {
-      return ua.length > 60 ? ua.slice(0, 57) + '…' : ua;
-    }
-    return `${browser} on ${os}`;
-  }
-
-  async function changeOwnPassword(e: Event) {
-    e.preventDefault();
-    if (currentPassword.length === 0) {
-      toast.error('Current password required');
-      return;
-    }
-    if (newPassword.length < 8) {
-      toast.error('Password too short', 'min 8 characters');
-      return;
-    }
-    try {
-      await api.users.changePassword(me.id, newPassword, currentPassword);
-      toast.success('Password updated');
-      currentPassword = '';
-      newPassword = '';
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  async function startMFAEnroll() {
-    mfaBusy = true;
-    mfaStep = 'qr';
-    mfaCode = '';
-    mfaRecovery = [];
-    try {
-      mfaEnroll = await api.mfa.enrollStart();
-      mfaOpen = true;
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      mfaBusy = false;
-    }
-  }
-
-  async function verifyMFAEnroll(e: Event) {
-    e.preventDefault();
-    mfaBusy = true;
-    try {
-      const r = await api.mfa.enrollVerify(mfaCode.trim());
-      mfaRecovery = r.recovery_codes;
-      mfaStep = 'recovery';
-      await loadMe();
-    } catch (err) {
-      toast.error('Verification failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      mfaBusy = false;
-    }
-  }
-
-  async function disableMFA() {
-    if (!(await confirm.ask({ title: 'Disable 2FA', message: 'Disable two-factor authentication?', body: 'Your account is only protected by the password again. You can re-enable 2FA any time.', confirmLabel: 'Disable', danger: true }))) return;
-    try {
-      await api.mfa.disable();
-      toast.success('2FA disabled');
-      await loadMe();
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  async function resetUserMFA(userId: string, username: string) {
-    if (!(await confirm.ask({ title: 'Reset 2FA', message: `Reset 2FA for "${username}"?`, body: 'The user will need to re-enroll from the Account tab on next login.', confirmLabel: 'Reset', danger: true }))) return;
-    try {
-      await api.mfa.reset(userId);
-      toast.success('2FA reset', username);
-      await loadUsers();
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  function copyText(s: string) {
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(s);
-      toast.info('Copied');
-    }
-  }
-
-  function closeMFA() {
-    mfaOpen = false;
-    mfaEnroll = null;
-    mfaCode = '';
-    mfaRecovery = [];
-    mfaStep = 'qr';
-  }
-
-  // Users
-  let users = $state<Array<{ id: string; username: string; email?: string; role: string; scope_tags?: string[] }>>([]);
-  let usersLoading = $state(false);
-  let showCreate = $state(false);
-  let cUsername = $state('');
-  let cPassword = $state('');
-  let cRole = $state('viewer');
-  let cEmail = $state('');
-
-  // P.11.3 scope editor state
-  let showScopeFor = $state<string | null>(null);
-  let scopeDraft = $state<string[]>([]);
-  let scopeInput = $state('');
-  let scopeSuggestions = $state<string[]>([]);
-  let scopeBusy = $state(false);
-  let scopeUserRole = $state('');
-  let scopeUserEmail = $state('');
-
-  async function openScope(user: { id: string; email?: string; role: string; scope_tags?: string[] }) {
-    showScopeFor = user.id;
-    scopeDraft = [...(user.scope_tags ?? [])];
-    scopeInput = '';
-    scopeUserRole = user.role;
-    scopeUserEmail = user.email ?? '';
-    try {
-      scopeSuggestions = await api.hosts.allTags();
-    } catch {
-      scopeSuggestions = [];
-    }
-  }
-
-  function addScopeDraft(tag: string) {
-    const t = tag.trim().toLowerCase();
-    if (!t || scopeDraft.includes(t)) {
-      scopeInput = '';
-      return;
-    }
-    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(t)) {
-      toast.error('Invalid tag', 'Use lowercase letters, digits, hyphens. 1-32 chars.');
-      return;
-    }
-    scopeDraft = [...scopeDraft, t];
-    scopeInput = '';
-  }
-
-  function removeScopeDraft(t: string) {
-    scopeDraft = scopeDraft.filter((x) => x !== t);
-  }
-
-  async function saveScope() {
-    if (!showScopeFor) return;
-    scopeBusy = true;
-    try {
-      await api.users.update(showScopeFor, scopeUserEmail, scopeUserRole, scopeDraft);
-      toast.success(scopeDraft.length === 0 ? 'Scope cleared (all hosts)' : 'Scope updated');
-      showScopeFor = null;
-      await loadUsers();
-    } catch (err) {
-      toast.error('Failed to save scope', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      scopeBusy = false;
-    }
-  }
-
-  async function loadUsers() {
-    usersLoading = true;
-    try {
-      users = await api.users.list();
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      usersLoading = false;
-    }
-  }
-
-  async function createUser(e: Event) {
-    e.preventDefault();
-    try {
-      await api.users.create(cUsername, cPassword, cRole, cEmail || undefined);
-      toast.success('User created', cUsername);
-      cUsername = '';
-      cPassword = '';
-      cEmail = '';
-      cRole = 'viewer';
-      showCreate = false;
-      await loadUsers();
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  async function deleteUser(id: string, username: string) {
-    if (!(await confirm.ask({ title: 'Delete user', message: `Delete user "${username}"?`, body: 'All their API tokens are revoked. Active sessions log out on their next refresh.', confirmLabel: 'Delete', danger: true }))) return;
-    try {
-      await api.users.delete(id);
-      toast.success('Deleted', username);
-      await loadUsers();
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  async function changeRole(id: string, email: string | undefined, role: string, scopeTags: string[] | undefined) {
-    try {
-      // Preserve existing scope when changing the role from the list
-      // dropdown. Scope edits go through the dedicated scope modal.
-      await api.users.update(id, email ?? '', role, scopeTags ?? []);
-      toast.success('Role updated', role);
-      await loadUsers();
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  // Audit
-  let auditEntries = $state<Array<any>>([]);
-  let auditLoading = $state(false);
-  let auditLimit = $state(100);
-  let auditActionFilter = $state('');
-  let auditSearch = $state('');
-  let verifyResult = $state<null | {
-    verified: number;
-    broken: number;
-    first_break?: number;
-    break_reason?: string;
-    genesis: string;
-    warnings?: string[];
-  }>(null);
-  let verifying = $state(false);
-
-  async function runVerify() {
-    verifying = true;
-    try {
-      verifyResult = await api.audit.verify();
-      if (verifyResult.broken === 0) {
-        toast.success('Chain intact', `${verifyResult.verified} entries verified`);
-      } else {
-        toast.error('Chain broken', verifyResult.break_reason ?? 'see report');
-      }
-    } catch (err) {
-      toast.error('Verify failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      verifying = false;
-    }
-  }
-
-  async function loadAudit() {
-    auditLoading = true;
-    try {
-      auditEntries = await api.audit.list(auditLimit, auditActionFilter);
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      auditLoading = false;
-    }
-  }
-
-  // Unique action types for the filter dropdown
-  const auditActions = $derived([...new Set(auditEntries.map(e => e.action.split('.')[0]))].sort());
-
-  // Client-side text search over loaded entries
-  const filteredAudit = $derived(
-    auditEntries.filter(e => {
-      if (!auditSearch.trim()) return true;
-      const q = auditSearch.toLowerCase();
-      return (e.username ?? e.user_id ?? '').toLowerCase().includes(q)
-        || e.action.toLowerCase().includes(q)
-        || (e.target ?? '').toLowerCase().includes(q);
-    })
-  );
-
-  function actionVariant(action: string): 'success' | 'warning' | 'danger' | 'info' | 'default' {
-    if (action.includes('delete') || action.includes('remove') || action.includes('failed')) return 'danger';
-    if (action.includes('create') || action.includes('deploy')) return 'success';
-    if (action.includes('update') || action.includes('start') || action.includes('restart')) return 'info';
-    return 'default';
-  }
-
-  function fmtTs(ts: string): string {
-    return ts.slice(0, 19).replace('T', ' ');
-  }
-
-  // P.11.14 webhook state
-  let webhookCfg = $state<import('$lib/api').AuditWebhookConfig | null>(null);
-  let webhookURL = $state('');
-  let webhookSecret = $state('');
-  let webhookClearSecret = $state(false);
-  let webhookFilter = $state('');
-  let webhookBusy = $state(false);
-
-  async function loadWebhook() {
-    if (!allowed('user.manage')) return;
-    try {
-      webhookCfg = await api.audit.getWebhook();
-      webhookURL = webhookCfg.url ?? '';
-      webhookFilter = (webhookCfg.filter_actions ?? []).join(', ');
-      webhookSecret = '';
-      webhookClearSecret = false;
-    } catch { /* ignore */ }
-  }
-
-  async function saveWebhook() {
-    webhookBusy = true;
-    try {
-      const filter = webhookFilter
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
-      webhookCfg = await api.audit.setWebhook({
-        url: webhookURL,
-        secret: webhookSecret || undefined,
-        clear_secret: webhookClearSecret || undefined,
-        filter_actions: filter.length > 0 ? filter : undefined
-      });
-      webhookSecret = '';
-      webhookClearSecret = false;
-      toast.success('Webhook config saved');
-    } catch (err) {
-      toast.error('Failed to save', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      webhookBusy = false;
-    }
-  }
-
-  async function testWebhook() {
-    webhookBusy = true;
-    try {
-      await api.audit.testWebhook();
-      toast.success('Test event delivered');
-    } catch (err) {
-      toast.error('Test failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      webhookBusy = false;
-    }
-  }
-
-  // P.11.13 retention state
-  let retentionCfg = $state<import('$lib/api').AuditRetentionConfig | null>(null);
-  let retentionPreview = $state<import('$lib/api').AuditRetentionPreview | null>(null);
-  let retentionMode = $state<'forever' | 'days' | 'archive_local' | 'archive_target'>('forever');
-  let retentionDays = $state(90);
-  let retentionLocalDir = $state('');
-  let retentionTargetID = $state(0);
-  let retentionTargets = $state<Array<{ id: number; name: string; type: string }>>([]);
-  let retentionBusy = $state(false);
-  let retentionLastResult = $state<import('$lib/api').AuditRetentionResult | null>(null);
-
-  async function loadRetention() {
-    if (!allowed('user.manage')) return;
-    try {
-      const res = await api.audit.getRetention();
-      retentionCfg = res.config;
-      retentionPreview = res.preview;
-      retentionMode = res.config.mode;
-      retentionDays = res.config.days || 90;
-      retentionLocalDir = res.config.local_dir || '';
-      retentionTargetID = res.config.target_id || 0;
-    } catch {
-      /* ignore — setting unavailable is OK */
-    }
-    try {
-      // Reuse backup targets list for the archive_target picker.
-      const list = await api.backups.listTargets();
-      retentionTargets = list.map((t) => ({ id: t.id, name: t.name, type: t.type }));
-    } catch { /* ignore */ }
-  }
-
-  async function saveRetention() {
-    retentionBusy = true;
-    try {
-      const res = await api.audit.setRetention({
-        mode: retentionMode,
-        days: retentionMode === 'forever' ? undefined : retentionDays,
-        local_dir: retentionMode === 'archive_local' ? retentionLocalDir || undefined : undefined,
-        target_id: retentionMode === 'archive_target' ? retentionTargetID || undefined : undefined
-      });
-      retentionCfg = res.config;
-      retentionPreview = res.preview;
-      toast.success('Retention policy saved');
-    } catch (err) {
-      toast.error('Failed to save', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      retentionBusy = false;
-    }
-  }
-
-  async function runRetentionNow() {
-    if (retentionMode === 'forever') return;
-    if (!(await confirm.ask({ title: 'Run retention now', message: `Run the retention policy now?`, body: `This will prune ${retentionPreview?.would_prune ?? 'some'} audit rows. Pruned rows cannot be recovered; the chain-bridge entry stays intact.`, confirmLabel: 'Prune', danger: true }))) return;
-    retentionBusy = true;
-    try {
-      retentionLastResult = await api.audit.runRetention();
-      toast.success(`Pruned ${retentionLastResult.pruned} rows`);
-      await loadRetention();
-    } catch (err) {
-      toast.error('Run failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      retentionBusy = false;
-    }
-  }
-
-  $effect(() => {
-    if (tab === 'account') loadMe();
-    else if (tab === 'users') { loadUsers(); loadRoles(); }
-    else if (tab === 'audit') { loadAudit(); loadRetention(); loadWebhook(); }
-    else if (tab === 'sso') { loadOIDC(); loadRoles(); }
-    else if (tab === 'system') { loadBackup(); loadSystemInfo(); loadUpdateStatus(); }
-    else if (tab === 'roles') loadRoles();
-    else if (tab === 'api_tokens') { loadApiTokens(); loadRoles(); }
-    else if (tab === 'registries') loadRegistries();
-  });
-
-  // After Phase-2 extraction Settings hosts only truly instance-scoped
-  // configuration (System: base URL, agent URL, update-check, backup/
-  // restore, key rotation). Everything else lives at its own top-level
-  // route: /account (personal), /tokens (api tokens), /users (u+r),
-  // /authentication (sso), /registries, /audit.
-  const tabs: Array<{ id: Tab; label: string; icon: any; show: boolean }> = $derived([
-    { id: 'system', label: 'System', icon: HardDrive, show: allowed('user.manage') }
-  ]);
-
-  // If the user lands on a tab they're not allowed to see (e.g. deep link
-  // or role change), snap back to the first visible tab.
-  $effect(() => {
-    const visible = tabs.filter((t) => t.show).map((t) => t.id);
-    if (!visible.includes(tab)) tab = visible[0] ?? 'system';
-  });
 </script>
 
-<section class="space-y-6">
-  <div>
-    <h2 class="text-2xl font-semibold tracking-tight">Settings</h2>
-    <p class="text-sm text-[var(--fg-muted)] mt-0.5">Instance-level configuration and data management.</p>
-  </div>
-
-  <!-- Sub-tabs: General vs. Data & secrets. System owns both instance-
-       config knobs (URLs, scanner, update-check) and destructive data
-       ops (backup/restore/key-rotation/wipe) — splitting them keeps the
-       former scannable while making the latter feel deliberate. -->
-  <div class="flex gap-1 border-b border-[var(--border)]">
-    <button
-      type="button"
-      class="px-3 py-2 text-sm font-medium border-b-2 transition-colors {systemSub === 'general' ? 'border-[var(--accent)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}"
-      onclick={() => setSystemSub('general')}
-    >
-      <HardDrive class="w-3.5 h-3.5 inline -mt-0.5" />
-      General
-    </button>
-    <button
-      type="button"
-      class="px-3 py-2 text-sm font-medium border-b-2 transition-colors {systemSub === 'data' ? 'border-[var(--accent)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}"
-      onclick={() => setSystemSub('data')}
-    >
-      <Archive class="w-3.5 h-3.5 inline -mt-0.5" />
-      Data &amp; secrets
-    </button>
-  </div>
-
-  {#if tab === 'account'}
-    {#if me}
-      <div class="max-w-2xl space-y-6">
-        <!-- Profile -->
-        <Card class="p-5">
-          <div class="flex items-center gap-4 mb-5">
-            <div class="w-14 h-14 rounded-full bg-gradient-to-br from-brand-400 to-brand-700 flex items-center justify-center text-white font-bold text-xl shrink-0">
-              {me.username[0]?.toUpperCase()}
-            </div>
-            <div class="flex-1 min-w-0">
-              <div class="text-lg font-semibold">{me.username}</div>
-              <div class="flex items-center gap-2 mt-0.5">
-                <Badge variant="info">{me.role}</Badge>
-                {#if me.mfa_enabled}<Badge variant="success" dot>2FA</Badge>{/if}
-              </div>
-            </div>
-          </div>
-          {#if me.email || me.created_at}
-            <div class="grid grid-cols-2 gap-4 text-xs">
-              {#if me.email}
-                <div>
-                  <div class="text-[var(--fg-muted)] uppercase tracking-wider font-medium mb-0.5">Email</div>
-                  <div class="font-mono text-sm">{me.email}</div>
-                </div>
-              {/if}
-              {#if me.created_at}
-                <div>
-                  <div class="text-[var(--fg-muted)] uppercase tracking-wider font-medium mb-0.5">Member since</div>
-                  <div class="font-mono text-sm">{new Date(me.created_at).toLocaleDateString()}</div>
-                </div>
-              {/if}
-            </div>
-          {/if}
-        </Card>
-
-        <!-- Security -->
-        <Card class="p-5">
-          <h3 class="font-semibold text-sm uppercase tracking-wider text-[var(--fg-muted)] mb-4">Security</h3>
-          <div class="space-y-5">
-            <!-- Password -->
-            <div class="flex items-start justify-between gap-4">
-              <div>
-                <div class="text-sm font-medium">Password</div>
-                <p class="text-xs text-[var(--fg-muted)] mt-0.5">Set a new password (minimum 8 characters).</p>
-              </div>
-              <form onsubmit={changeOwnPassword} class="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={me?.username ?? ''}
-                  autocomplete="username"
-                  readonly
-                  tabindex="-1"
-                  aria-hidden="true"
-                  style="position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;"
-                />
-                <input
-                  type="password"
-                  placeholder="Current password"
-                  bind:value={currentPassword}
-                  autocomplete="current-password"
-                  class="dm-input text-sm !py-1.5 !w-48"
-                />
-                <input
-                  type="password"
-                  placeholder="New password"
-                  bind:value={newPassword}
-                  autocomplete="new-password"
-                  class="dm-input text-sm !py-1.5 !w-48"
-                />
-                <Button variant="primary" size="sm" type="submit" disabled={newPassword.length < 8 || currentPassword.length === 0}>Update</Button>
-              </form>
-            </div>
-            <div class="border-t border-[var(--border)]"></div>
-            <!-- 2FA -->
-            <div class="flex items-start justify-between gap-4">
-              <div>
-                <div class="text-sm font-medium flex items-center gap-2">
-                  Two-factor authentication
-                  {#if me.mfa_enabled}<Badge variant="success" dot>active</Badge>{/if}
-                </div>
-                <p class="text-xs text-[var(--fg-muted)] mt-0.5 max-w-sm">
-                  TOTP-based second factor. Works with Google Authenticator, Authy, 1Password, Bitwarden.
-                </p>
-              </div>
-              {#if me.mfa_enabled}
-                <Button variant="danger" size="sm" onclick={disableMFA}>
-                  <ShieldOff class="w-3.5 h-3.5" /> Disable
-                </Button>
-              {:else}
-                <Button variant="primary" size="sm" loading={mfaBusy} onclick={startMFAEnroll}>
-                  <ShieldCheck class="w-3.5 h-3.5" /> Enable
-                </Button>
-              {/if}
-            </div>
-          </div>
-        </Card>
-
-        <!-- P.12.1 Session management -->
-        <Card class="p-5 space-y-3">
-          <div>
-            <h3 class="text-sm font-semibold">Active sessions</h3>
-            <p class="text-xs text-[var(--fg-muted)] mt-0.5">
-              Each row is a logged-in browser or CLI. Revoking a session logs that client out on its next refresh.
-            </p>
-          </div>
-          {#if sessions.length === 0}
-            <p class="text-xs text-[var(--fg-muted)]">No active sessions.</p>
+<EditorialPage>
+  <section class="set">
+    <header class="set-header">
+      <div class="set-header-text">
+        <h1 class="ed-title set-title">Settings</h1>
+        <p class="ed-subtitle set-subtitle">
+          {#if systemInfo}
+            Dockmesh {systemInfo.version} · {systemInfo.os}/{systemInfo.arch} · uptime {fmtUptime(systemInfo.uptime_seconds)}
           {:else}
-            <ul class="text-sm divide-y divide-[var(--border)]">
-              {#each sessions as s (s.family_id)}
-                <li class="py-2 flex items-start gap-3">
-                  <div class="flex-1 min-w-0">
-                    <div class="font-mono text-xs truncate" title={s.user_agent}>
-                      {fmtSessionAgent(s.user_agent)}
-                      {#if s.is_current}
-                        <Badge variant="info">current</Badge>
-                      {/if}
-                      {#if s.revoked_at}
-                        <Badge variant="default">revoked</Badge>
-                      {/if}
-                    </div>
-                    <div class="text-[10px] text-[var(--fg-muted)] mt-0.5">
-                      {s.ip || 'unknown ip'} · created {new Date(s.created_at).toLocaleString()}
-                      {#if !s.revoked_at}
-                        · expires {new Date(s.expires_at).toLocaleString()}
-                      {/if}
-                    </div>
-                  </div>
-                  {#if !s.revoked_at}
-                    <button
-                      class="p-1.5 rounded text-[var(--color-danger-400)] hover:bg-[var(--bg-hover)]"
-                      onclick={() => revokeSession(s.family_id, s.is_current)}
-                      disabled={sessionsBusy}
-                      title="Revoke this session"
-                      aria-label="Revoke session"
-                    >
-                      <Trash2 class="w-3.5 h-3.5" />
-                    </button>
-                  {/if}
-                </li>
-              {/each}
-            </ul>
+            Loading instance info…
           {/if}
-        </Card>
+        </p>
       </div>
-    {:else}
-      <Skeleton width="100%" height="12rem" />
-    {/if}
-  {:else if tab === 'users'}
-    <div class="flex items-center justify-between gap-3 flex-wrap">
-      <span class="text-sm text-[var(--fg-muted)]">{users.length} user{users.length === 1 ? '' : 's'}</span>
-      <Button variant="primary" onclick={() => (showCreate = true)}>
-        <Plus class="w-4 h-4" /> New user
-      </Button>
-    </div>
+    </header>
 
-    {#if usersLoading && users.length === 0}
-      <Card><Skeleton class="m-5" width="80%" height="6rem" /></Card>
-    {:else if users.length === 0}
-      <Card><EmptyState icon={Users} title="No users" description="Create the first user account." /></Card>
-    {:else}
-      <Card>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="border-b border-[var(--border)] text-[var(--fg-muted)] text-xs uppercase tracking-wider">
-                <th class="text-left px-5 py-3">User</th>
-                <th class="text-left px-3 py-3">Email</th>
-                <th class="text-left px-3 py-3">Role</th>
-                <th class="text-left px-3 py-3">Scope</th>
-                <th class="text-center px-3 py-3">2FA</th>
-                <th class="text-right px-3 py-3 w-28">Actions</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-[var(--border)]">
-              {#each users as u}
-                <tr class="hover:bg-[var(--surface-hover)]">
-                  <td class="px-5 py-3">
-                    <div class="flex items-center gap-2.5">
-                      <div class="w-8 h-8 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white text-xs font-semibold shrink-0">
-                        {u.username[0]?.toUpperCase()}
-                      </div>
-                      <span class="font-medium text-sm">{u.username}</span>
-                    </div>
-                  </td>
-                  <td class="px-3 py-3 text-xs text-[var(--fg-muted)]">{u.email ?? '—'}</td>
-                  <td class="px-3 py-3">
-                    <select
-                      class="dm-input !py-1 !px-2 !w-auto text-xs font-mono"
-                      value={u.role}
-                      onchange={(e) => changeRole(u.id, u.email, (e.target as HTMLSelectElement).value, u.scope_tags)}
-                      disabled={u.id === me?.id}
-                    >
-                      {#each roles as r}
-                        <option value={r.name}>{r.display || r.name}</option>
-                      {/each}
-                    </select>
-                  </td>
-                  <td class="px-3 py-3">
-                    <button
-                      class="flex items-center gap-1 hover:underline text-left"
-                      onclick={() => openScope(u)}
-                      aria-label="Edit scope for {u.username}"
-                    >
-                      {#if !u.scope_tags || u.scope_tags.length === 0}
-                        <span class="text-xs text-[var(--fg-muted)] italic">all hosts</span>
-                      {:else}
-                        <div class="flex flex-wrap gap-1">
-                          {#each u.scope_tags.slice(0, 3) as t}
-                            <span class="inline-flex items-center h-5 px-1.5 rounded text-[10px] font-mono bg-[var(--surface-hover)] text-[var(--fg-muted)] border border-[var(--border)]">
-                              {t}
-                            </span>
-                          {/each}
-                          {#if u.scope_tags.length > 3}
-                            <span class="text-[10px] text-[var(--fg-muted)]">+{u.scope_tags.length - 3}</span>
-                          {/if}
-                        </div>
-                      {/if}
-                    </button>
-                  </td>
-                  <td class="px-3 py-3 text-center">
-                    {#if (u as any).mfa_enabled}
-                      <ShieldCheck class="w-4 h-4 text-[var(--color-success-400)] inline" />
-                    {:else}
-                      <span class="text-xs text-[var(--fg-subtle)]">—</span>
-                    {/if}
-                  </td>
-                  <td class="px-3 py-3">
-                    <div class="flex gap-0.5 justify-end">
-                      {#if (u as any).mfa_enabled}
-                        <button class="p-1.5 rounded-md text-[var(--color-warning-400)] hover:bg-[var(--surface-hover)]" title="Reset 2FA" onclick={() => resetUserMFA(u.id, u.username)}>
-                          <KeyRound class="w-3.5 h-3.5" />
-                        </button>
-                      {/if}
-                      <button
-                        class="p-1.5 rounded-md text-[var(--color-danger-400)] hover:bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)]"
-                        title="Delete user"
-                        onclick={() => deleteUser(u.id, u.username)}
-                        disabled={u.id === me?.id}
-                      >
-                        <Trash2 class="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    {/if}
-  {:else if tab === 'audit'}
-    <!-- P.11.13 Retention panel — always above the list so admins see policy status first -->
-    {#if allowed('user.manage')}
-      <Card class="p-4 space-y-3">
-        <div class="flex items-start justify-between gap-3 flex-wrap">
-          <div>
-            <h3 class="text-sm font-semibold">Retention</h3>
-            <p class="text-xs text-[var(--fg-muted)]">
-              Older audit entries can be kept forever, pruned after N days, or archived before pruning.
-            </p>
-          </div>
-          {#if retentionCfg?.mode !== 'forever' && retentionPreview}
-            <div class="text-xs text-[var(--fg-muted)] text-right">
-              {retentionPreview.total_rows} total rows
-              {#if retentionPreview.would_prune > 0}
-                · <span class="text-[var(--color-warning-400)]">{retentionPreview.would_prune} would prune</span>
-              {:else}
-                · nothing due
-              {/if}
+    <section class="set-section">
+      <Eyebrow>01 · Instance</Eyebrow>
+
+      {#if systemInfo}
+        <div class="dm-card set-info-card">
+          <div class="set-info-grid">
+            <div class="set-info-item">
+              <span class="set-info-label">Version</span>
+              <span class="set-info-value">{systemInfo.version}</span>
             </div>
-          {/if}
-        </div>
-        <div class="grid sm:grid-cols-[160px_1fr] gap-3 items-start">
-          <label class="text-xs text-[var(--fg-muted)]" for="ret-mode">Mode</label>
-          <select id="ret-mode" class="dm-input max-w-xs" bind:value={retentionMode}>
-            <option value="forever">Forever (default)</option>
-            <option value="days">Keep last N days</option>
-            <option value="archive_local">Archive locally, then prune</option>
-            <option value="archive_target">Archive to backup target, then prune</option>
-          </select>
-          {#if retentionMode !== 'forever'}
-            <label class="text-xs text-[var(--fg-muted)]" for="ret-days">Retention (days)</label>
-            <input id="ret-days" type="number" min="1" class="dm-input max-w-xs" bind:value={retentionDays} />
-          {/if}
-          {#if retentionMode === 'archive_local'}
-            <label class="text-xs text-[var(--fg-muted)]" for="ret-local-dir">Local directory</label>
-            <input id="ret-local-dir" class="dm-input max-w-xs" placeholder="./data/audit-archive" bind:value={retentionLocalDir} />
-          {/if}
-          {#if retentionMode === 'archive_target'}
-            <label class="text-xs text-[var(--fg-muted)]" for="ret-target">Backup target</label>
-            <select id="ret-target" class="dm-input max-w-xs" bind:value={retentionTargetID}>
-              <option value={0}>— pick one —</option>
-              {#each retentionTargets as t}
-                <option value={t.id}>{t.name} ({t.type})</option>
-              {/each}
-            </select>
-          {/if}
-        </div>
-        <div class="flex items-center gap-2 flex-wrap">
-          <Button variant="primary" onclick={saveRetention} disabled={retentionBusy}>
-            {retentionBusy ? 'Saving…' : 'Save'}
-          </Button>
-          <Button variant="secondary" onclick={runRetentionNow} disabled={retentionBusy || retentionMode === 'forever'}>
-            Run now
-          </Button>
-          {#if retentionLastResult}
-            <span class="text-xs text-[var(--fg-muted)]">
-              Last run: pruned {retentionLastResult.pruned}
-              {#if retentionLastResult.archived} · archived to <code>{retentionLastResult.archive_path}</code>{/if}
-            </span>
-          {/if}
-        </div>
-      </Card>
-
-      <!-- P.11.14 Webhook panel — each audit entry fires off an HTTP POST -->
-      <Card class="p-4 space-y-3">
-        <div>
-          <h3 class="text-sm font-semibold">Webhook</h3>
-          <p class="text-xs text-[var(--fg-muted)]">
-            Stream every audit entry to an external URL. Payload is JSON; body is signed with HMAC-SHA256 on <code>X-Audit-Signature</code> when a secret is set.
-          </p>
-        </div>
-        <div class="grid sm:grid-cols-[160px_1fr] gap-3 items-start">
-          <label class="text-xs text-[var(--fg-muted)]" for="wh-url">Receiver URL</label>
-          <input id="wh-url" class="dm-input" placeholder="https://siem.example.com/hook" bind:value={webhookURL} />
-          <label class="text-xs text-[var(--fg-muted)]" for="wh-secret">
-            HMAC secret
-            {#if webhookCfg?.has_secret && !webhookClearSecret}<span class="font-normal normal-case block">— stored; leave blank to keep</span>{/if}
-          </label>
-          <div class="space-y-1">
-            <input id="wh-secret" type="password" class="dm-input" placeholder={webhookCfg?.has_secret ? '••••••••' : 'Optional shared secret'} bind:value={webhookSecret} />
-            {#if webhookCfg?.has_secret}
-              <label class="flex items-center gap-1 text-xs text-[var(--fg-muted)]">
-                <input type="checkbox" bind:checked={webhookClearSecret} /> Remove stored secret
-              </label>
-            {/if}
-          </div>
-          <label class="text-xs text-[var(--fg-muted)]" for="wh-filter">Filter actions</label>
-          <input id="wh-filter" class="dm-input" placeholder="stack.*, user.manage (empty = all)" bind:value={webhookFilter} />
-        </div>
-        <div class="flex items-center gap-2 flex-wrap">
-          <Button variant="primary" onclick={saveWebhook} disabled={webhookBusy}>
-            {webhookBusy ? 'Saving…' : 'Save'}
-          </Button>
-          <Button variant="secondary" onclick={testWebhook} disabled={webhookBusy || !(webhookCfg?.url)}>
-            Send test event
-          </Button>
-        </div>
-      </Card>
-    {/if}
-
-    <div class="flex items-center gap-3 flex-wrap">
-      <div class="relative flex-1 min-w-[180px] max-w-xs">
-        <input type="search" placeholder="Search user, action, target…" bind:value={auditSearch} class="dm-input pl-3 pr-3 py-1.5 text-xs w-full" />
-      </div>
-      <select class="dm-input !py-1 !px-2 !w-auto text-xs" bind:value={auditActionFilter} onchange={loadAudit}>
-        <option value="">All actions</option>
-        <option value="auth">auth</option>
-        <option value="stack">stack</option>
-        <option value="container">container</option>
-        <option value="image">image</option>
-        <option value="user">user</option>
-        <option value="oidc">oidc</option>
-        <option value="network">network</option>
-        <option value="volume">volume</option>
-      </select>
-      <select class="dm-input !py-1 !px-2 !w-auto text-xs" bind:value={auditLimit} onchange={loadAudit}>
-        <option value={50}>50</option>
-        <option value={100}>100</option>
-        <option value={500}>500</option>
-      </select>
-      <Button size="sm" variant="secondary" onclick={loadAudit}>Refresh</Button>
-      <Button size="sm" variant="secondary" loading={verifying} onclick={runVerify}>
-        <Link2 class="w-3.5 h-3.5" />
-        Verify chain
-      </Button>
-      <button
-        class="dm-btn dm-btn-secondary dm-btn-sm"
-        onclick={() => {
-          const csv = ['Timestamp,Action,Target,User,Details']
-            .concat(filteredAudit.map(e => `"${e.ts}","${e.action}","${e.target ?? ''}","${e.username ?? e.user_id ?? ''}","${(e.details ?? '').replace(/"/g, '""')}"`))
-            .join('\n');
-          const blob = new Blob([csv], { type: 'text/csv' });
-          const a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = `dockmesh-audit-${new Date().toISOString().slice(0, 10)}.csv`;
-          a.click();
-        }}
-      >Export CSV</button>
-      <span class="text-xs text-[var(--fg-subtle)] ml-auto">{filteredAudit.length} / {auditEntries.length}</span>
-    </div>
-
-    {#if verifyResult}
-      <div class="dm-card p-4 {verifyResult.broken === 0 ? 'border-[color-mix(in_srgb,var(--color-success-500)_40%,transparent)]' : 'border-[color-mix(in_srgb,var(--color-danger-500)_40%,transparent)]'}">
-        <div class="flex items-center gap-2 text-sm font-medium">
-          {#if verifyResult.broken === 0}
-            <ShieldCheck class="w-4 h-4 text-[var(--color-success-400)]" />
-            <span class="text-[var(--color-success-400)]">Chain intact</span>
-          {:else}
-            <ShieldOff class="w-4 h-4 text-[var(--color-danger-400)]" />
-            <span class="text-[var(--color-danger-400)]">Chain broken</span>
-          {/if}
-        </div>
-        <div class="text-xs text-[var(--fg-muted)] mt-2 space-y-1 font-mono">
-          <div>verified: <span class="text-[var(--fg)]">{verifyResult.verified}</span></div>
-          <div>broken: <span class="text-[var(--fg)]">{verifyResult.broken}</span></div>
-          {#if verifyResult.first_break}
-            <div>first break: row <span class="text-[var(--color-danger-400)]">{verifyResult.first_break}</span></div>
-            <div>reason: <span class="text-[var(--color-danger-400)]">{verifyResult.break_reason}</span></div>
-          {/if}
-          <div class="pt-1">genesis: <span class="text-[var(--fg-subtle)] break-all">{verifyResult.genesis}</span></div>
-          {#if verifyResult.warnings && verifyResult.warnings.length > 0}
-            <div class="pt-1 text-[var(--color-warning-400)]">
-              {verifyResult.warnings.length} legacy entries without chain
+            <div class="set-info-item">
+              <span class="set-info-label">Commit</span>
+              <span class="set-info-value">{systemInfo.commit.slice(0, 7)}</span>
             </div>
-          {/if}
-        </div>
-      </div>
-    {/if}
-
-    {#if auditLoading && auditEntries.length === 0}
-      <Card>
-        <div class="divide-y divide-[var(--border)]">
-          {#each Array(6) as _}
-            <div class="px-5 py-3 flex gap-3">
-              <Skeleton width="10rem" height="0.85rem" />
-              <Skeleton width="8rem" height="0.85rem" />
+            <div class="set-info-item">
+              <span class="set-info-label">Built</span>
+              <span class="set-info-value">{systemInfo.build_date.slice(0, 10)}</span>
             </div>
-          {/each}
-        </div>
-      </Card>
-    {:else if auditEntries.length === 0}
-      <Card>
-        <EmptyState icon={Activity} title="No audit entries yet" description="Actions like login, deploy and delete will appear here." />
-      </Card>
-    {:else}
-      <Card>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead class="text-left text-xs text-[var(--fg-muted)] uppercase tracking-wider bg-[var(--bg-elevated)]">
-              <tr>
-                <th class="px-5 py-3 font-medium">Timestamp</th>
-                <th class="px-5 py-3 font-medium">Action</th>
-                <th class="px-5 py-3 font-medium">Target</th>
-                <th class="px-5 py-3 font-medium">User</th>
-                <th class="px-5 py-3 font-medium">Details</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-[var(--border)]">
-              {#each filteredAudit as e}
-                <tr class="hover:bg-[var(--surface-hover)]">
-                  <td class="px-5 py-3 font-mono text-xs whitespace-nowrap text-[var(--fg-muted)]">{fmtTs(e.ts)}</td>
-                  <td class="px-5 py-3">
-                    <Badge variant={actionVariant(e.action)}>{e.action}</Badge>
-                  </td>
-                  <td class="px-5 py-3 font-mono text-xs truncate max-w-[200px]">{e.target ?? '—'}</td>
-                  <td class="px-5 py-3 text-xs">{e.username || e.user_id?.slice(0, 8) || '—'}</td>
-                  <td class="px-5 py-3 font-mono text-xs text-[var(--fg-subtle)] truncate max-w-[300px]">{e.details ?? ''}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    {/if}
-  {/if}
-</section>
-
-{#if tab === 'sso' && allowed('user.manage')}
-  <section class="space-y-4">
-    <div class="flex justify-between items-center">
-      <span class="text-sm text-[var(--fg-muted)]">{oidcProviders.length} provider{oidcProviders.length === 1 ? '' : 's'}</span>
-      <Button variant="primary" onclick={openNewOIDC}>
-        <Plus class="w-4 h-4" /> Add provider
-      </Button>
-    </div>
-
-    {#if oidcLoading && oidcProviders.length === 0}
-      <Card><Skeleton class="m-5" width="70%" height="1rem" /></Card>
-    {:else if oidcProviders.length === 0}
-      <Card>
-        <EmptyState
-          icon={Globe}
-          title="No SSO providers"
-          description="Add an OIDC provider (Azure AD, Google, Keycloak, Dex, Auth0, …) to let users sign in via their organisation account."
-        />
-      </Card>
-    {:else}
-      <Card>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="border-b border-[var(--border)] text-[var(--fg-muted)] text-xs uppercase tracking-wider">
-                <th class="text-center px-3 py-3 w-10">Status</th>
-                <th class="text-left px-3 py-3">Name</th>
-                <th class="text-left px-3 py-3">Slug</th>
-                <th class="text-left px-3 py-3">Issuer URL</th>
-                <th class="text-left px-3 py-3">Default Role</th>
-                <th class="text-right px-3 py-3 w-24">Actions</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-[var(--border)]">
-              {#each oidcProviders as p}
-                <tr class="hover:bg-[var(--surface-hover)]">
-                  <td class="px-3 py-3 text-center">
-                    <span class="w-2 h-2 rounded-full inline-block {p.enabled ? 'bg-[var(--color-success-500)]' : 'bg-[var(--fg-subtle)]'}"></span>
-                  </td>
-                  <td class="px-3 py-3 font-medium">{p.display_name}</td>
-                  <td class="px-3 py-3 font-mono text-xs text-[var(--fg-muted)]">{p.slug}</td>
-                  <td class="px-3 py-3 font-mono text-xs text-[var(--fg-muted)] truncate max-w-[250px]" title={p.issuer_url}>{p.issuer_url}</td>
-                  <td class="px-3 py-3"><Badge variant="default">{p.default_role}</Badge></td>
-                  <td class="px-3 py-3">
-                    <div class="flex gap-0.5 justify-end">
-                      <button class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]" title="Edit" onclick={() => openEditOIDC(p)}>
-                        <UserCog class="w-3.5 h-3.5" />
-                      </button>
-                      <button class="p-1.5 rounded-md text-[var(--color-danger-400)] hover:bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)]" title="Delete" onclick={() => deleteOIDC(p)}>
-                        <Trash2 class="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    {/if}
-
-    <Card class="p-4">
-      <div class="text-xs text-[var(--fg-muted)] space-y-1">
-        <div class="font-medium text-[var(--fg)]">Callback URL</div>
-        <code class="font-mono text-[var(--color-brand-400)]">{`${typeof window !== 'undefined' ? window.location.origin : ''}/api/v1/auth/oidc/{slug}/callback`}</code>
-        <div>Configure this in your provider's app/client redirect URIs. Replace <code class="font-mono">{'{slug}'}</code> with the provider's slug.</div>
-      </div>
-    </Card>
-  </section>
-{/if}
-
-{#if tab === 'system' && allowed('user.manage')}
-  <section class="space-y-6 max-w-3xl">
-    {#if systemSub === 'general'}
-    <!-- Instance info -->
-    {#if systemInfo}
-      <Card class="p-5">
-        <h3 class="font-semibold text-sm uppercase tracking-wider text-[var(--fg-muted)] mb-3">Instance</h3>
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-          <div>
-            <div class="text-[var(--fg-muted)] mb-0.5">Version</div>
-            <div class="font-mono font-medium">{systemInfo.version}</div>
-          </div>
-          <div>
-            <div class="text-[var(--fg-muted)] mb-0.5">Commit</div>
-            <div class="font-mono">{systemInfo.commit.slice(0, 7)}</div>
-          </div>
-          <div>
-            <div class="text-[var(--fg-muted)] mb-0.5">Built</div>
-            <div class="font-mono">{systemInfo.build_date.slice(0, 10)}</div>
-          </div>
-          <div>
-            <div class="text-[var(--fg-muted)] mb-0.5">Uptime</div>
-            <div class="font-mono">{fmtUptime(systemInfo.uptime_seconds)}</div>
-          </div>
-          <div>
-            <div class="text-[var(--fg-muted)] mb-0.5">Go</div>
-            <div class="font-mono">{systemInfo.go_version}</div>
-          </div>
-          <div>
-            <div class="text-[var(--fg-muted)] mb-0.5">Platform</div>
-            <div class="font-mono">{systemInfo.os}/{systemInfo.arch}</div>
-          </div>
-        </div>
-      </Card>
-    {/if}
-
-    <!-- Update check -->
-    <Card class="p-5">
-      <div class="flex items-start justify-between mb-3 gap-3">
-        <div>
-          <h3 class="font-semibold text-sm uppercase tracking-wider text-[var(--fg-muted)]">Updates</h3>
-          <p class="text-xs text-[var(--fg-muted)] mt-1">Dockmesh checks GitHub for new releases and shows a banner when one is available.</p>
-        </div>
-        <button type="button" class="dm-btn dm-btn-secondary text-xs"
-          disabled={updateCheckBusy} onclick={recheckUpdate}>
-          {updateCheckBusy ? 'Checking…' : 'Check now'}
-        </button>
-      </div>
-
-      {#if updateStatus}
-        <div class="grid grid-cols-2 gap-3 text-xs mb-4">
-          <div>
-            <div class="text-[var(--fg-muted)] mb-0.5">Current</div>
-            <div class="font-mono font-medium">{updateStatus.current_version}</div>
-          </div>
-          <div>
-            <div class="text-[var(--fg-muted)] mb-0.5">Latest</div>
-            <div class="font-mono {updateStatus.update_available ? 'text-cyan-400 font-semibold' : ''}">
-              {updateStatus.latest_version || '—'}
+            <div class="set-info-item">
+              <span class="set-info-label">Uptime</span>
+              <span class="set-info-value">{fmtUptime(systemInfo.uptime_seconds)}</span>
             </div>
-          </div>
-          <div>
-            <div class="text-[var(--fg-muted)] mb-0.5">Last checked</div>
-            <div>{fmtRelative(updateStatus.checked_at)}</div>
-          </div>
-          <div>
-            <div class="text-[var(--fg-muted)] mb-0.5">Status</div>
-            <div>
-              {#if updateStatus.error}
-                <span class="text-red-400">error</span>
-              {:else if updateStatus.is_dev_build && updateStatus.latest_version}
-                <span class="text-amber-400 font-medium">dev build</span>
-              {:else if updateStatus.update_available}
-                <span class="text-cyan-400 font-medium">update available</span>
-              {:else if !updateStatus.enabled}
-                <span class="text-[var(--fg-muted)]">disabled</span>
-              {:else}
-                <span class="text-green-400">up to date</span>
-              {/if}
+            <div class="set-info-item">
+              <span class="set-info-label">Go</span>
+              <span class="set-info-value">{systemInfo.go_version}</span>
+            </div>
+            <div class="set-info-item">
+              <span class="set-info-label">Platform</span>
+              <span class="set-info-value">{systemInfo.os}/{systemInfo.arch}</span>
             </div>
           </div>
         </div>
+      {:else}
+        <Skeleton width="100%" height="6rem" />
+      {/if}
+    </section>
 
-        {#if updateStatus.error}
-          <div class="text-xs text-red-400 mb-3 font-mono bg-red-500/10 border border-red-500/20 rounded-md px-2.5 py-1.5">
-            {updateStatus.error}
+    <section class="set-section">
+      <Eyebrow>02 · Updates</Eyebrow>
+
+      <div class="dm-card set-update-card">
+        <div class="set-update-head">
+          <div class="set-info-grid set-info-grid-2">
+            <div class="set-info-item">
+              <span class="set-info-label">Current</span>
+              <span class="set-info-value">{updateStatus?.current_version ?? '—'}</span>
+            </div>
+            <div class="set-info-item">
+              <span class="set-info-label">Latest</span>
+              <span class="set-info-value" class:set-update-newer={updateStatus?.update_available}>
+                {updateStatus?.latest_version ?? '—'}
+              </span>
+            </div>
+            <div class="set-info-item">
+              <span class="set-info-label">Last checked</span>
+              <span class="set-info-value">{fmtRelative(updateStatus?.checked_at)}</span>
+            </div>
+            <div class="set-info-item">
+              <span class="set-info-label">Status</span>
+              <span class="set-info-value">
+                {#if updateStatus?.error}
+                  <span class="set-status-err">error</span>
+                {:else if updateStatus?.is_dev_build && updateStatus.latest_version}
+                  <span class="set-status-warn">dev build</span>
+                {:else if updateStatus?.update_available}
+                  <span class="set-status-update">update available</span>
+                {:else if updateStatus && !updateStatus.enabled}
+                  <span class="set-status-muted">disabled</span>
+                {:else if updateStatus}
+                  <span class="set-status-ok">up to date</span>
+                {:else}
+                  <span class="set-status-muted">—</span>
+                {/if}
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="dm-btn dm-btn-secondary dm-btn-sm"
+            onclick={recheckUpdate}
+            disabled={updateCheckBusy}
+          >
+            <RefreshCw size={12} strokeWidth={1.5} class={updateCheckBusy ? 'set-spin' : ''} />
+            {updateCheckBusy ? 'Checking…' : 'Check now'}
+          </button>
+        </div>
+
+        {#if updateStatus?.error}
+          <div class="set-error-banner" role="alert">
+            <AlertCircle size={12} strokeWidth={1.6} />
+            <span>{updateStatus.error}</span>
           </div>
         {/if}
 
-        {#if updateStatus.update_available}
-          <div class="border border-cyan-500/30 bg-cyan-500/5 rounded-lg p-3.5 mb-4">
-            <div class="flex items-start justify-between gap-3 mb-2.5">
+        {#if updateStatus?.update_available}
+          <div class="set-upgrade-banner">
+            <div class="set-upgrade-head">
               <div>
-                <div class="text-sm font-semibold text-[var(--fg)]">
-                  {updateStatus.is_dev_build ? `Release ${updateStatus.latest_version} available` : `Upgrade to ${updateStatus.latest_version}`}
+                <div class="set-upgrade-title">
+                  {updateStatus.is_dev_build
+                    ? `Release ${updateStatus.latest_version} available`
+                    : `Upgrade to ${updateStatus.latest_version}`}
                 </div>
                 {#if updateStatus.release_url}
-                  <a href={updateStatus.release_url} target="_blank" rel="noopener"
-                     class="text-xs text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
+                  <a
+                    href={updateStatus.release_url}
+                    target="_blank"
+                    rel="noopener"
+                    class="set-upgrade-notes-link"
+                  >
                     View release notes →
                   </a>
                 {/if}
               </div>
             </div>
-
-            <div class="text-xs text-[var(--fg-muted)] mb-1.5">Run on this host:</div>
-            <div class="flex items-stretch gap-2">
-              <code class="flex-1 px-2.5 py-2 bg-[var(--bg)] border border-[var(--border)] rounded-md text-xs font-mono text-[var(--fg)] overflow-x-auto whitespace-nowrap">
-                {upgradeOneLiner}
-              </code>
-              <button type="button" class="dm-btn dm-btn-secondary text-xs shrink-0"
-                onclick={() => copyUpgradeCmd(upgradeOneLiner)}>
-                Copy
+            <div class="set-upgrade-cmd-label">Run on this host:</div>
+            <div class="set-upgrade-cmd-row">
+              <code class="set-upgrade-cmd">{upgradeOneLiner}</code>
+              <button
+                type="button"
+                class="dm-btn dm-btn-secondary dm-btn-xs"
+                onclick={() => copyUpgradeCmd(upgradeOneLiner)}
+              >
+                <Copy size={11} strokeWidth={1.5} /> copy
               </button>
             </div>
-            <p class="text-[11px] text-[var(--fg-muted)] mt-2">
-              Keeps your data and stacks. Installer swaps the binary and the service restart does the rest — typical downtime &lt; 3s.
+            <p class="set-upgrade-blurb">
+              Keeps your data and stacks. The installer swaps the binary and the service restart
+              does the rest — typical downtime &lt; 3s.
             </p>
           </div>
         {/if}
-      {/if}
 
-      <div class="space-y-4 pt-3 border-t border-[var(--border)]">
-        <div class="flex items-center justify-between">
-          <div>
-            <div class="text-sm font-medium">Automatic update checks</div>
-            <p class="text-xs text-[var(--fg-muted)]">Turn off for air-gapped installs.</p>
-          </div>
-          <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" class="sr-only peer"
+        <div class="set-update-controls">
+          <label class="set-toggle">
+            <input
+              type="checkbox"
               checked={getSetting('update_check_enabled') === 'true'}
-              onchange={(e) => setSetting('update_check_enabled', (e.target as HTMLInputElement).checked ? 'true' : 'false')} />
-            <div class="w-11 h-6 bg-[var(--surface)] border border-[var(--border)] rounded-full peer-checked:bg-[var(--color-brand-500)] peer-checked:border-[var(--color-brand-500)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-transform peer-checked:after:translate-x-5"></div>
+              onchange={(e) => setSetting('update_check_enabled', (e.target as HTMLInputElement).checked ? 'true' : 'false')}
+            />
+            <span class="set-toggle-track"><span class="set-toggle-knob"></span></span>
+            <div class="set-toggle-text">
+              <span class="set-toggle-label">Automatic update checks</span>
+              <span class="set-toggle-hint">Turn off for air-gapped installs.</span>
+            </div>
           </label>
-        </div>
-        <div>
-          <label for="update-interval" class="text-sm font-medium">Check interval (minutes)</label>
-          <p class="text-xs text-[var(--fg-muted)] mb-1.5">How often to poll GitHub. Min 15, max 10080 (1 week). Default 120 (2h).</p>
-          <input id="update-interval" type="number" min="15" max="10080" class="dm-input text-sm w-32"
-            value={getSetting('update_check_interval_minutes') || '120'}
-            onchange={(e) => setSetting('update_check_interval_minutes', (e.target as HTMLInputElement).value)} />
+
+          <Field label="Check interval (minutes)" hint="Min 15, max 10080 (1 week). Default 120 (2h).">
+            <input
+              type="number"
+              class="dm-input set-input set-input-narrow"
+              min="15"
+              max="10080"
+              value={getSetting('update_check_interval_minutes') || '120'}
+              onchange={(e) => setSetting('update_check_interval_minutes', (e.target as HTMLInputElement).value)}
+            />
+          </Field>
         </div>
       </div>
-    </Card>
+    </section>
 
-    <!-- Runtime settings -->
-    <Card class="p-5">
-      <h3 class="font-semibold text-sm uppercase tracking-wider text-[var(--fg-muted)] mb-4">Configuration</h3>
-      <div class="space-y-4">
-        <div class="flex items-center justify-between">
-          <div>
-            <div class="text-sm font-medium">Vulnerability Scanner (Grype)</div>
-            <p class="text-xs text-[var(--fg-muted)]">Enable CVE scanning for Docker images.</p>
-          </div>
-          <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" class="sr-only peer"
-              checked={getSetting('scanner_enabled') === 'true'}
-              onchange={(e) => setSetting('scanner_enabled', (e.target as HTMLInputElement).checked ? 'true' : 'false')} />
-            <div class="w-11 h-6 bg-[var(--surface)] border border-[var(--border)] rounded-full peer-checked:bg-[var(--color-brand-500)] peer-checked:border-[var(--color-brand-500)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-transform peer-checked:after:translate-x-5"></div>
-          </label>
-        </div>
-        <div class="border-t border-[var(--border)]"></div>
-        <div>
-          <label for="base-url" class="text-sm font-medium">Base URL</label>
-          <p class="text-xs text-[var(--fg-muted)] mb-1.5">Used for OIDC callbacks and agent enrollment links.</p>
-          <input id="base-url" type="text" class="dm-input text-sm" placeholder="https://dockmesh.example.com"
-            value={getSetting('base_url')} onchange={(e) => setSetting('base_url', (e.target as HTMLInputElement).value)} />
-        </div>
-        <div>
-          <label for="agent-url" class="text-sm font-medium">Agent Public URL</label>
-          <p class="text-xs text-[var(--fg-muted)] mb-1.5">The wss:// URL agents use to connect. Leave empty to auto-derive from base URL.</p>
-          <input id="agent-url" type="text" class="dm-input text-sm" placeholder="wss://dockmesh.example.com:8443/connect"
-            value={getSetting('agent_public_url')} onchange={(e) => setSetting('agent_public_url', (e.target as HTMLInputElement).value)} />
-        </div>
-        <div class="flex justify-end">
-          <Button variant="primary" size="sm" loading={settingsBusy} onclick={saveSettings}>Save settings</Button>
-        </div>
-      </div>
-    </Card>
+    <section class="set-section">
+      <Eyebrow>03 · Configuration</Eyebrow>
 
-    {:else}
-    <!-- Automated backups -->
-    <Card class="p-5">
-      <div class="flex items-start justify-between gap-4">
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2">
-            <HardDrive class="w-4 h-4 text-[var(--color-brand-400)]" />
-            <h3 class="font-semibold">Automated backups</h3>
-          </div>
-          <p class="text-sm text-[var(--fg-muted)] mt-1">
-            Daily snapshot of the Dockmesh database, <code class="font-mono text-xs">/stacks</code>
-            directory, and server data dir. Runs at 03:00 server-local time, keeps the last 14
-            days. Single point of failure mitigation — restoring this archive is enough to bring
-            a destroyed Dockmesh server back up.
-          </p>
-        </div>
-        <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
+      <div class="dm-card set-config-card">
+        <label class="set-toggle">
           <input
             type="checkbox"
-            class="sr-only peer"
-            checked={!!backupStatus?.enabled}
-            disabled={backupBusy || backupLoading}
-            onchange={(e) => toggleBackup((e.target as HTMLInputElement).checked)}
+            checked={getSetting('scanner_enabled') === 'true'}
+            onchange={(e) => setSetting('scanner_enabled', (e.target as HTMLInputElement).checked ? 'true' : 'false')}
           />
-          <div class="w-11 h-6 bg-[var(--surface)] border border-[var(--border)] rounded-full peer-checked:bg-[var(--color-brand-500)] peer-checked:border-[var(--color-brand-500)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-transform peer-checked:after:translate-x-5"></div>
+          <span class="set-toggle-track"><span class="set-toggle-knob"></span></span>
+          <div class="set-toggle-text">
+            <span class="set-toggle-label">Vulnerability scanner (Grype)</span>
+            <span class="set-toggle-hint">Enable CVE scanning for Docker images.</span>
+          </div>
         </label>
-      </div>
 
-      {#if backupLoading && !backupStatus}
-        <Skeleton class="mt-4" width="100%" height="3rem" />
-      {:else if backupStatus}
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
-          <div>
-            <div class="text-[var(--fg-muted)] mb-0.5">State</div>
-            <div class="font-medium">
-              {#if backupStatus.state === 'ok'}
-                <Badge variant="success" dot>healthy</Badge>
-              {:else if backupStatus.state === 'stale'}
-                <Badge variant="warning" dot>stale</Badge>
-              {:else if backupStatus.state === 'failed'}
-                <Badge variant="danger" dot>failed</Badge>
-              {:else if backupStatus.state === 'disabled'}
-                <Badge variant="default" dot>disabled</Badge>
-              {:else}
-                <Badge variant="default" dot>never run</Badge>
-              {/if}
-            </div>
-          </div>
-          <div>
-            <div class="text-[var(--fg-muted)] mb-0.5">Last run</div>
-            <div class="font-medium">{fmtAge(backupStatus.age_seconds)}</div>
-          </div>
-          <div>
-            <div class="text-[var(--fg-muted)] mb-0.5">Last size</div>
-            <div class="font-medium">{fmtBytes(backupStatus.last_size_bytes)}</div>
-          </div>
-          <div>
-            <div class="text-[var(--fg-muted)] mb-0.5">Storage</div>
-            <div class="font-medium font-mono">./data/backups</div>
-          </div>
-        </div>
+        <div class="set-divider"></div>
 
-        {#if backupStatus.state === 'failed' && backupStatus.last_error}
-          <div class="mt-3 p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] text-xs text-[var(--color-danger-400)] flex items-start gap-2">
-            <ShieldAlert class="w-4 h-4 shrink-0 mt-0.5" />
-            <div class="font-mono break-all">{backupStatus.last_error}</div>
-          </div>
-        {/if}
+        <Field label="Base URL" hint="Used for OIDC callbacks and agent enrollment links.">
+          <input
+            type="text"
+            class="dm-input set-input"
+            placeholder="https://dockmesh.example.com"
+            value={getSetting('base_url')}
+            onchange={(e) => setSetting('base_url', (e.target as HTMLInputElement).value)}
+          />
+        </Field>
 
-        {#if backupStatus.state === 'stale'}
-          <div class="mt-3 p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-warning-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-warning-500)_30%,transparent)] text-xs text-[var(--color-warning-400)] flex items-start gap-2">
-            <AlertCircle class="w-4 h-4 shrink-0 mt-0.5" />
-            <div>No successful run in the last 36 hours. Check the backup job logs under
-              <a class="underline" href="/backups">Backups → Runs</a>.</div>
-          </div>
-        {/if}
+        <Field label="Agent public URL" hint="The wss:// URL agents use to connect. Leave empty to auto-derive from Base URL.">
+          <input
+            type="text"
+            class="dm-input set-input"
+            placeholder="wss://dockmesh.example.com:8443/connect"
+            value={getSetting('agent_public_url')}
+            onchange={(e) => setSetting('agent_public_url', (e.target as HTMLInputElement).value)}
+          />
+        </Field>
 
-        {#if backupStatus.state === 'never' && backupStatus.enabled}
-          <div class="mt-3 text-xs text-[var(--fg-muted)]">
-            The first run will happen at the next scheduled time (03:00). You can trigger an
-            immediate run from <a class="underline" href="/backups">Backups</a>.
-          </div>
-        {/if}
-      {/if}
-    </Card>
-
-    <Card class="p-4 space-y-3">
-      <div>
-        <div class="font-medium text-sm flex items-center gap-1.5">
-          <ShieldCheck class="w-3.5 h-3.5" /> Verify a backup
-        </div>
-        <p class="text-xs text-[var(--fg-muted)] mt-0.5">
-          Upload a <code class="font-mono">dockmesh-system</code> tarball. Server extracts to a
-          temp dir, runs the same sanity checks as <code class="font-mono">dockmesh restore</code>,
-          then discards. Never touches this live install — answers
-          <em>"is my backup actually restorable?"</em> before you need it.
-        </p>
-      </div>
-      <div class="flex items-center gap-2 flex-wrap">
-        <input
-          id="verify-file"
-          type="file"
-          accept=".tar.gz,.tgz,application/gzip,application/x-gzip"
-          class="text-xs"
-          onchange={(e) => onVerifyFile(e)}
-          disabled={verifyBackupBusy}
-        />
-        {#if verifyBackupBusy}
-          <span class="text-xs text-[var(--fg-muted)]">Verifying…</span>
-        {/if}
-      </div>
-      {#if verifyBackupResult}
-        <div class="text-xs border-t border-[var(--border)] pt-3 space-y-1">
-          <div class="flex items-center gap-2">
-            {#if verifyBackupResult.sanity.passed}
-              <Badge variant="success">passed</Badge>
-            {:else}
-              <Badge variant="danger">failed</Badge>
-            {/if}
-            {#if verifyBackupResult.filename}<span class="font-mono text-[var(--fg-muted)]">{verifyBackupResult.filename}</span>{/if}
-            {#if verifyBackupResult.counts}
-              <span class="text-[var(--fg-muted)]">· {verifyBackupResult.counts.files} files, {verifyBackupResult.counts.bytes} bytes</span>
-            {/if}
-          </div>
-          <ul class="space-y-0.5 mt-2">
-            {#each verifyBackupResult.sanity.checks as c}
-              <li class="flex items-start gap-2">
-                <span class="font-mono text-[10px] mt-0.5 {c.status === 'ok' ? 'text-[var(--color-success-400)]' : c.status === 'warn' ? 'text-[var(--color-warning-400)]' : 'text-[var(--color-danger-400)]'}">[{c.status}]</span>
-                <span><span class="font-mono">{c.name}</span>{#if c.message}<span class="text-[var(--fg-muted)]"> — {c.message}</span>{/if}</span>
-              </li>
-            {/each}
-          </ul>
-        </div>
-      {/if}
-    </Card>
-
-    <Card class="p-4">
-      <div class="text-xs text-[var(--fg-muted)] space-y-1.5">
-        <div class="font-medium text-[var(--fg)] flex items-center gap-1.5">
-          <ShieldCheck class="w-3.5 h-3.5" /> Recovery from backup
-        </div>
-        <ol class="list-decimal list-inside space-y-0.5">
-          <li>On a fresh host, install the Dockmesh binary and stop the service
-            (<code class="font-mono">systemctl stop dockmesh</code>).</li>
-          <li>Copy the latest <code class="font-mono">dockmesh-system-*.tar.gz</code> to the host.</li>
-          <li>Run <code class="font-mono">dockmesh restore --from &lt;path&gt;</code> — it
-            extracts DB + <code class="font-mono">/stacks</code> + <code class="font-mono">/data</code>
-            and prints a sanity report.</li>
-          <li>Point DNS at the new host. Start dockmesh; agents reconnect in ~60s
-            using the CA cert that came back with the restore.</li>
-        </ol>
-        <p class="pt-1">Full playbook: <a class="underline" href="https://dockmesh.dev/docs/operations/disaster-recovery/">Disaster Recovery</a>.</p>
-      </div>
-    </Card>
-
-    <Card class="p-5 space-y-3">
-      <div>
-        <div class="font-semibold flex items-center gap-2">
-          <KeyRound class="w-4 h-4 text-[var(--color-brand-400)]" /> Encryption key
-        </div>
-        <p class="text-xs text-[var(--fg-muted)] mt-1">
-          age key used to encrypt every stack's <code class="font-mono">.env.age</code>
-          and the system-backup tarball. Export once and keep it offline for DR —
-          without it, encrypted backups can't be restored. Rotation generates a
-          new key, re-encrypts all current <code class="font-mono">.env.age</code> files, and
-          swaps the key live without a server restart.
-        </p>
-      </div>
-      <div class="flex items-center gap-2 flex-wrap">
-        <a class="dm-btn dm-btn-secondary text-xs"
-          href="/api/v1/system/backup-key/export"
-          download="dockmesh-backup-key.txt">
-          Export key
-        </a>
-        <Button variant="secondary" size="sm" loading={secretsRotateBusy} onclick={rotateEncryptionKey}>
-          Rotate encryption key
-        </Button>
-      </div>
-      {#if secretsRotateResult}
-        <div class="text-xs border-t border-[var(--border)] pt-3 space-y-1">
-          <div class="font-medium text-green-600 dark:text-green-400">
-            Rotation complete — {secretsRotateResult.reencrypted} stack .env.age re-encrypted.
-          </div>
-          <div class="font-mono text-[var(--fg-muted)] break-all">
-            old: {secretsRotateResult.old_recipient}
-          </div>
-          <div class="font-mono break-all">new: {secretsRotateResult.new_recipient}</div>
-        </div>
-      {/if}
-    </Card>
-    {/if}
-  </section>
-{/if}
-
-{#if tab === 'roles' && allowed('user.manage')}
-  <section class="space-y-4">
-    <div class="flex justify-between items-center">
-      <span class="text-sm text-[var(--fg-muted)]">{roles.length} role{roles.length === 1 ? '' : 's'}</span>
-      <Button variant="primary" onclick={openNewRole}>
-        <Plus class="w-4 h-4" /> New role
-      </Button>
-    </div>
-
-    {#if rolesLoading}
-      <Card><Skeleton class="m-5" width="80%" height="6rem" /></Card>
-    {:else}
-      <Card>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="border-b border-[var(--border)] text-[var(--fg-muted)] text-xs uppercase tracking-wider">
-                <th class="text-left px-5 py-3">Role</th>
-                <th class="text-left px-3 py-3">Identifier</th>
-                <th class="text-left px-3 py-3">Type</th>
-                <th class="text-right px-3 py-3">Permissions</th>
-                <th class="text-right px-3 py-3 w-24">Actions</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-[var(--border)]">
-              {#each roles as role}
-                <tr class="hover:bg-[var(--surface-hover)]">
-                  <td class="px-5 py-3 font-medium">{role.display}</td>
-                  <td class="px-3 py-3 font-mono text-xs text-[var(--fg-muted)]">{role.name}</td>
-                  <td class="px-3 py-3">
-                    {#if role.builtin}<Badge variant="default">built-in</Badge>{:else}<Badge variant="info">custom</Badge>{/if}
-                  </td>
-                  <td class="px-3 py-3 text-right tabular-nums">{role.permissions.length}</td>
-                  <td class="px-3 py-3">
-                    <div class="flex gap-0.5 justify-end">
-                      {#if !role.builtin}
-                        <button class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]" title="Edit" onclick={() => openEditRole(role)}>
-                          <UserCog class="w-3.5 h-3.5" />
-                        </button>
-                        <button class="p-1.5 rounded-md text-[var(--color-danger-400)] hover:bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)]" title="Delete" onclick={() => deleteRole(role.name)}>
-                          <Trash2 class="w-3.5 h-3.5" />
-                        </button>
-                      {/if}
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    {/if}
-  </section>
-{/if}
-
-{#if tab === 'api_tokens' && allowed('user.manage')}
-  <section class="space-y-4">
-    <div class="flex items-start justify-between gap-4">
-      <div>
-        <h3 class="text-base font-semibold">API tokens</h3>
-        <p class="text-sm text-[var(--fg-muted)] mt-0.5">
-          Long-lived bearer tokens for CI/CD, scripts, and external integrations.
-          Unlike user sessions, these don't expire by default and can be revoked here.
-        </p>
-      </div>
-      <Button variant="primary" onclick={() => (showNewToken = true)}>
-        <Plus class="w-3.5 h-3.5" />
-        New token
-      </Button>
-    </div>
-
-    <Card>
-      {#if apiTokensLoading}
-        <Skeleton class="h-24" />
-      {:else if apiTokens.length === 0}
-        <EmptyState
-          icon={KeyRound}
-          title="No API tokens yet"
-          description="Create a token to authenticate CI pipelines or scripts against the Dockmesh API."
-        />
-      {:else}
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead class="text-xs uppercase tracking-wider text-[var(--fg-muted)] border-b border-[var(--border)]">
-              <tr>
-                <th class="text-left py-2 px-3 font-medium">Name</th>
-                <th class="text-left py-2 px-3 font-medium">Prefix</th>
-                <th class="text-left py-2 px-3 font-medium">Role</th>
-                <th class="text-left py-2 px-3 font-medium">Last used</th>
-                <th class="text-left py-2 px-3 font-medium">Expires</th>
-                <th class="text-left py-2 px-3 font-medium">Status</th>
-                <th class="w-10"></th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-[var(--border)]">
-              {#each apiTokens as t (t.id)}
-                <tr class:opacity-50={!!t.revoked_at}>
-                  <td class="py-2 px-3 font-medium">{t.name}</td>
-                  <td class="py-2 px-3 font-mono text-xs text-[var(--fg-muted)]">{t.prefix}…</td>
-                  <td class="py-2 px-3"><Badge variant="default">{t.role}</Badge></td>
-                  <td class="py-2 px-3 text-[var(--fg-muted)]">
-                    {fmtAgo(t.last_used_at)}
-                    {#if t.last_used_ip}
-                      <span class="text-xs ml-1">({t.last_used_ip})</span>
-                    {/if}
-                  </td>
-                  <td class="py-2 px-3 text-[var(--fg-muted)]">
-                    {t.expires_at ? new Date(t.expires_at).toISOString().slice(0, 10) : 'never'}
-                  </td>
-                  <td class="py-2 px-3">
-                    {#if t.revoked_at}
-                      <Badge variant="danger">Revoked</Badge>
-                    {:else if t.expires_at && new Date(t.expires_at) < new Date()}
-                      <Badge variant="warning">Expired</Badge>
-                    {:else}
-                      <Badge variant="success">Active</Badge>
-                    {/if}
-                  </td>
-                  <td class="py-2 px-3">
-                    {#if !t.revoked_at}
-                      <button
-                        class="p-1.5 hover:bg-[var(--bg-hover)] rounded text-[var(--fg-muted)] hover:text-[var(--danger)]"
-                        onclick={() => revokeApiToken(t.id, t.name)}
-                        title="Revoke"
-                        aria-label="Revoke"
-                      >
-                        <Trash2 class="w-3.5 h-3.5" />
-                      </button>
-                    {/if}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
-    </Card>
-
-    <div class="text-xs text-[var(--fg-muted)] bg-[var(--bg-muted)] rounded-md p-3 border border-[var(--border)]">
-      <p class="font-medium text-[var(--fg)] mb-1">Using a token</p>
-      <p>
-        Send it as <code class="text-[11px] font-mono bg-[var(--bg)] px-1 rounded">Authorization: Bearer dmt_...</code>
-        on any API request. Tokens assume the role they were created with — scope
-        narrowly to limit blast radius if leaked.
-      </p>
-    </div>
-  </section>
-{/if}
-
-{#if tab === 'registries' && allowed('user.manage')}
-  <section class="space-y-4">
-    <div class="flex items-start justify-between gap-4">
-      <div>
-        <h3 class="text-base font-semibold">Container registries</h3>
-        <p class="text-sm text-[var(--fg-muted)] mt-0.5">
-          Save credentials for private registries once. Dockmesh will apply them
-          automatically when pulling images from the matching host.
-        </p>
-      </div>
-      <Button variant="primary" onclick={openNewRegistry}>
-        <Plus class="w-3.5 h-3.5" />
-        Add registry
-      </Button>
-    </div>
-
-    <Card>
-      {#if registriesLoading}
-        <Skeleton class="h-24" />
-      {:else if registries.length === 0}
-        <EmptyState
-          icon={Package}
-          title="No registries configured"
-          description="Add credentials for ghcr.io, registry.gitlab.com, Harbor, or any other private registry. Dockmesh auto-applies them based on the image reference."
-        />
-      {:else}
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead class="text-xs uppercase tracking-wider text-[var(--fg-muted)] border-b border-[var(--border)]">
-              <tr>
-                <th class="text-left py-2 px-3 font-medium">Name</th>
-                <th class="text-left py-2 px-3 font-medium">URL</th>
-                <th class="text-left py-2 px-3 font-medium">Username</th>
-                <th class="text-left py-2 px-3 font-medium">Scope</th>
-                <th class="text-left py-2 px-3 font-medium">Last tested</th>
-                <th class="w-28"></th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-[var(--border)]">
-              {#each registries as r (r.id)}
-                <tr>
-                  <td class="py-2 px-3 font-medium">{r.name}</td>
-                  <td class="py-2 px-3 font-mono text-xs">{r.url}</td>
-                  <td class="py-2 px-3 text-[var(--fg-muted)]">{r.username || '—'}</td>
-                  <td class="py-2 px-3">
-                    {#if r.scope_tags && r.scope_tags.length > 0}
-                      <div class="flex flex-wrap gap-1">
-                        {#each r.scope_tags as t}
-                          <span class="text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)]">{t}</span>
-                        {/each}
-                      </div>
-                    {:else}
-                      <span class="text-xs text-[var(--fg-muted)]">all hosts</span>
-                    {/if}
-                  </td>
-                  <td class="py-2 px-3 text-[var(--fg-muted)]">
-                    {#if r.last_tested_at}
-                      <span class="inline-flex items-center gap-1">
-                        {#if r.last_test_ok}
-                          <CheckCircle2 class="w-3.5 h-3.5 text-[var(--color-success-500)]" />
-                        {:else}
-                          <XCircle class="w-3.5 h-3.5 text-[var(--color-danger-500)]" />
-                        {/if}
-                        {fmtAgo(r.last_tested_at)}
-                      </span>
-                    {:else}
-                      <span class="text-xs">never</span>
-                    {/if}
-                  </td>
-                  <td class="py-2 px-3">
-                    <div class="flex items-center gap-1 justify-end">
-                      <button
-                        class="px-2 py-1 text-xs rounded hover:bg-[var(--bg-hover)] text-[var(--fg-muted)] hover:text-[var(--fg)] disabled:opacity-50"
-                        disabled={!r.has_password || testingRegistryId === r.id}
-                        onclick={() => testRegistry(r)}
-                        title={r.has_password ? 'Test login' : 'No password stored — edit first'}
-                      >
-                        {testingRegistryId === r.id ? '…' : 'Test'}
-                      </button>
-                      <button
-                        class="p-1.5 rounded hover:bg-[var(--bg-hover)] text-[var(--fg-muted)] hover:text-[var(--fg)]"
-                        onclick={() => openEditRegistry(r)}
-                        title="Edit"
-                        aria-label="Edit"
-                      >
-                        <UserCog class="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        class="p-1.5 rounded hover:bg-[var(--bg-hover)] text-[var(--fg-muted)] hover:text-[var(--danger)]"
-                        onclick={() => deleteRegistry(r)}
-                        title="Delete"
-                        aria-label="Delete"
-                      >
-                        <Trash2 class="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
-    </Card>
-
-    <div class="text-xs text-[var(--fg-muted)] bg-[var(--bg-muted)] rounded-md p-3 border border-[var(--border)]">
-      <p class="font-medium text-[var(--fg)] mb-1">How it works</p>
-      <p>
-        When you pull an image like <code class="text-[11px] font-mono bg-[var(--bg)] px-1 rounded">ghcr.io/org/app:tag</code>,
-        Dockmesh looks up the matching registry (<code class="text-[11px] font-mono bg-[var(--bg)] px-1 rounded">ghcr.io</code>)
-        and applies the stored credentials automatically. Currently applies to the central server's local pulls —
-        remote-agent pulls with credentials are tracked as a follow-up (P.12.28).
-      </p>
-    </div>
-  </section>
-{/if}
-
-<!-- Registry create / edit modal -->
-<Modal bind:open={showRegistry} title={editingRegistry ? 'Edit registry' : 'Add registry'} maxWidth="max-w-md">
-  <form onsubmit={saveRegistry} id="registry-form" class="space-y-4">
-    <Input
-      label="Name"
-      placeholder="GitHub Container Registry"
-      hint="A label shown in the registry list. Free form."
-      bind:value={registryForm.name}
-    />
-    <Input
-      label="URL"
-      placeholder="ghcr.io"
-      hint="Host only — scheme and trailing slashes are ignored."
-      bind:value={registryForm.url}
-    />
-    <Input
-      label="Username"
-      placeholder="deploy-bot"
-      bind:value={registryForm.username as any}
-    />
-    <div>
-      <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">
-        Password / Token
-        {#if editingRegistry?.has_password}
-          <span class="font-normal normal-case">— stored; leave blank to keep existing</span>
-        {/if}
-      </span>
-      <input
-        type="password"
-        class="dm-input"
-        placeholder={editingRegistry?.has_password ? '••••••••' : 'Personal access token or password'}
-        bind:value={registryForm.password as any}
-      />
-      <p class="text-xs text-[var(--fg-muted)] mt-1">
-        Stored encrypted at rest (age). Never returned via the API once saved.
-      </p>
-    </div>
-    <div>
-      <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Scope (host tags)</span>
-      <div class="flex gap-2">
-        <input
-          type="text"
-          class="dm-input flex-1"
-          placeholder="e.g. prod"
-          bind:value={registryScopeInput}
-          onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addRegistryScope(); } }}
-        />
-        <Button variant="secondary" onclick={addRegistryScope}>Add</Button>
-      </div>
-      {#if registryForm.scope_tags && registryForm.scope_tags.length > 0}
-        <div class="flex flex-wrap gap-1 mt-2">
-          {#each registryForm.scope_tags as t}
-            <span class="text-[11px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)] inline-flex items-center gap-1">
-              {t}
-              <button type="button" onclick={() => removeRegistryScope(t)} aria-label="Remove"><X class="w-3 h-3" /></button>
-            </span>
-          {/each}
-        </div>
-      {/if}
-      <p class="text-xs text-[var(--fg-muted)] mt-1">
-        Leave empty to apply to all hosts. When set, only applies to pulls on hosts tagged with any of these.
-      </p>
-    </div>
-  </form>
-  {#snippet footer()}
-    <Button variant="ghost" onclick={() => (showRegistry = false)}>Cancel</Button>
-    <Button variant="primary" onclick={saveRegistry} disabled={registryBusy}>
-      {registryBusy ? 'Saving…' : editingRegistry ? 'Save' : 'Add registry'}
-    </Button>
-  {/snippet}
-</Modal>
-
-<!-- New API token modal -->
-<Modal bind:open={showNewToken} title="Create API token" maxWidth="max-w-md">
-  <form onsubmit={createApiToken} id="new-token-form" class="space-y-4">
-    <Input
-      label="Name"
-      placeholder="github-actions-deploy"
-      hint="A label to identify the token. Cannot be changed later."
-      bind:value={newTokenForm.name}
-    />
-    <div>
-      <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Role</span>
-      <select class="dm-input" bind:value={newTokenForm.role}>
-        {#each roles as r}
-          <option value={r.name}>{r.name} — {r.display}</option>
-        {/each}
-        {#if roles.length === 0}
-          <option value="viewer">viewer</option>
-          <option value="operator">operator</option>
-          <option value="admin">admin</option>
-        {/if}
-      </select>
-      <p class="text-xs text-[var(--fg-muted)] mt-1">
-        The token will have the same permissions as this role. Prefer narrow roles for CI.
-      </p>
-    </div>
-    <div>
-      <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Expiration</span>
-      <select class="dm-input" bind:value={newTokenForm.expires_in_days}>
-        <option value={30}>30 days</option>
-        <option value={90}>90 days (recommended)</option>
-        <option value={180}>180 days</option>
-        <option value={365}>1 year</option>
-        <option value={0}>Never expire</option>
-      </select>
-      <p class="text-xs text-[var(--fg-muted)] mt-1">
-        Rotation is a good habit. Never-expire tokens should be the exception.
-      </p>
-    </div>
-  </form>
-
-  {#snippet footer()}
-    <Button variant="secondary" onclick={() => (showNewToken = false)}>Cancel</Button>
-    <Button variant="primary" type="submit" form="new-token-form" disabled={!newTokenForm.name.trim()}>
-      Create token
-    </Button>
-  {/snippet}
-</Modal>
-
-<!-- Fresh token reveal modal (one-time) -->
-<Modal
-  open={freshTokenPlaintext !== null}
-  onclose={() => (freshTokenPlaintext = null)}
-  title="Token created"
-  maxWidth="max-w-lg"
->
-  <div class="space-y-4">
-    <div class="flex items-start gap-2 p-3 rounded-md bg-[var(--warning-bg)] border border-[var(--warning-border)]">
-      <AlertCircle class="w-4 h-4 text-[var(--warning)] flex-shrink-0 mt-0.5" />
-      <div class="text-sm">
-        <p class="font-medium text-[var(--fg)]">Save this token now — you won't see it again.</p>
-        <p class="text-[var(--fg-muted)] mt-0.5">
-          Dockmesh only stores a hash. If you lose the plaintext, revoke this token and create a new one.
-        </p>
-      </div>
-    </div>
-
-    <div>
-      <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">
-        Token for <span class="text-[var(--fg)]">{freshTokenName}</span>
-      </span>
-      <div class="flex gap-2">
-        <code class="flex-1 font-mono text-xs bg-[var(--bg-muted)] border border-[var(--border)] rounded px-3 py-2.5 break-all select-all">
-          {freshTokenPlaintext}
-        </code>
-        <Button variant="secondary" onclick={copyToken}>
-          <Copy class="w-3.5 h-3.5" />
-          {tokenCopied ? 'Copied' : 'Copy'}
-        </Button>
-      </div>
-    </div>
-
-    <div class="text-xs text-[var(--fg-muted)]">
-      <p class="font-medium text-[var(--fg)] mb-1">Example usage</p>
-      <pre class="font-mono text-[11px] bg-[var(--bg-muted)] border border-[var(--border)] rounded p-2 overflow-x-auto"><code>curl -H "Authorization: Bearer {freshTokenPlaintext}" \
-  https://dockmesh.example.com/api/v1/stacks</code></pre>
-    </div>
-  </div>
-
-  {#snippet footer()}
-    <Button variant="primary" onclick={() => (freshTokenPlaintext = null)}>
-      I've saved it
-    </Button>
-  {/snippet}
-</Modal>
-
-<!-- User scope modal (P.11.3) -->
-<Modal
-  open={showScopeFor !== null}
-  onclose={() => (showScopeFor = null)}
-  title="Edit user scope"
-  maxWidth="max-w-md"
->
-  <div class="space-y-4">
-    <p class="text-sm text-[var(--fg-muted)]">
-      Limit this user's role to hosts with matching tags. Leave empty to grant
-      access across all hosts — the default for new users. Tags use
-      <span class="font-medium text-[var(--fg)]">OR semantics</span>: a user with
-      scope <code class="font-mono text-xs">[prod, staging]</code> sees any host
-      tagged prod <em>or</em> staging.
-    </p>
-
-    <div>
-      <span class="block text-xs font-medium text-[var(--fg-muted)] mb-2">Allowed host tags</span>
-      {#if scopeDraft.length === 0}
-        <div class="px-3 py-2 rounded border border-dashed border-[var(--border)] text-sm text-[var(--fg-muted)] italic">
-          No scope — user has access to all hosts.
-        </div>
-      {:else}
-        <div class="flex flex-wrap gap-1.5">
-          {#each scopeDraft as t}
-            <span class="inline-flex items-center gap-1 h-6 px-2 rounded text-xs font-mono bg-[var(--surface-hover)] border border-[var(--border)]">
-              {t}
-              <button
-                class="ml-0.5 text-[var(--fg-muted)] hover:text-[var(--danger)]"
-                onclick={() => removeScopeDraft(t)}
-                aria-label="Remove {t}"
-                type="button"
-              >
-                <X class="w-3 h-3" />
-              </button>
-            </span>
-          {/each}
-        </div>
-      {/if}
-    </div>
-
-    <div>
-      <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Add tag</span>
-      <div class="flex gap-2">
-        <input
-          class="dm-input flex-1"
-          placeholder="prod, team-backend..."
-          bind:value={scopeInput}
-          list="scope-suggestions"
-          onkeydown={(e) => {
-            if (e.key === 'Enter') { e.preventDefault(); addScopeDraft(scopeInput); }
-          }}
-        />
-        <datalist id="scope-suggestions">
-          {#each scopeSuggestions.filter((s) => !scopeDraft.includes(s)) as s}
-            <option value={s}></option>
-          {/each}
-        </datalist>
-        <Button variant="secondary" onclick={() => addScopeDraft(scopeInput)}>Add</Button>
-      </div>
-      {#if scopeSuggestions.length > 0}
-        <p class="text-xs text-[var(--fg-muted)] mt-1">Tags from your fleet autocomplete.</p>
-      {/if}
-    </div>
-  </div>
-
-  {#snippet footer()}
-    <Button variant="secondary" onclick={() => (showScopeFor = null)}>Cancel</Button>
-    <Button variant="primary" loading={scopeBusy} onclick={saveScope}>Save scope</Button>
-  {/snippet}
-</Modal>
-
-<!-- Role modal with grouped permissions -->
-<Modal bind:open={showRole} title={editingRole ? `Edit role: ${editingRole.display}` : 'Create role'} maxWidth="max-w-lg">
-  <form onsubmit={saveRole} id="role-form" class="space-y-4">
-    {#if !editingRole}
-      <Input label="Name" placeholder="devops" hint="Lowercase, used as identifier" bind:value={roleForm.name} />
-    {/if}
-    <Input label="Display name" placeholder="DevOps Engineer" bind:value={roleForm.display} />
-    <div>
-      <div class="text-xs font-medium text-[var(--fg-muted)] mb-2">Permissions</div>
-      {#if allPerms.length > 0}
-      {@const groups = Object.entries(
-        allPerms.reduce((acc, p) => {
-          const cat = p.name.includes('.') ? p.name.split('.')[0] : 'general';
-          if (!acc[cat]) acc[cat] = [];
-          acc[cat].push(p);
-          return acc;
-        }, {} as Record<string, typeof allPerms>)
-      ).sort(([a], [b]) => a.localeCompare(b))}
-      <div class="space-y-3 max-h-72 overflow-auto">
-        {#each groups as [group, perms]}
-          <div class="border border-[var(--border)] rounded-lg">
-            <div class="px-3 py-2 bg-[var(--surface)] text-xs font-medium uppercase tracking-wider text-[var(--fg-muted)] flex items-center justify-between">
-              <span>{group}</span>
-              <label class="flex items-center gap-1 cursor-pointer text-[10px] font-normal normal-case">
-                <input
-                  type="checkbox"
-                  checked={perms.every(p => roleForm.permissions.includes(p.name))}
-                  onchange={() => {
-                    const allIn = perms.every(p => roleForm.permissions.includes(p.name));
-                    if (allIn) {
-                      roleForm.permissions = roleForm.permissions.filter(p => !perms.some(pp => pp.name === p));
-                    } else {
-                      const toAdd = perms.map(p => p.name).filter(n => !roleForm.permissions.includes(n));
-                      roleForm.permissions = [...roleForm.permissions, ...toAdd];
-                    }
-                  }}
-                  class="accent-[var(--color-brand-500)]"
-                />
-                all
-              </label>
-            </div>
-            <div class="divide-y divide-[var(--border)]">
-              {#each perms as perm}
-                <label class="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-[var(--surface-hover)] text-xs">
-                  <input
-                    type="checkbox"
-                    checked={roleForm.permissions.includes(perm.name)}
-                    onchange={() => togglePerm(perm.name)}
-                    class="accent-[var(--color-brand-500)]"
-                  />
-                  <code class="font-mono">{perm.name}</code>
-                  <span class="text-[var(--fg-muted)] ml-auto">{perm.description}</span>
-                </label>
-              {/each}
-            </div>
-          </div>
-        {/each}
-      </div>
-      {/if}
-    </div>
-  </form>
-  {#snippet footer()}
-    <Button variant="secondary" onclick={() => (showRole = false)}>Cancel</Button>
-    <Button variant="primary" type="submit" form="role-form" disabled={!roleForm.display || (!editingRole && !roleForm.name)}>
-      {editingRole ? 'Update' : 'Create'}
-    </Button>
-  {/snippet}
-</Modal>
-
-<Modal bind:open={showOIDC} title={editingOIDC ? 'Edit OIDC provider' : 'Add OIDC provider'} maxWidth="max-w-xl" onclose={resetOIDCForm}>
-  <form onsubmit={saveOIDC} class="space-y-5" id="oidc-form">
-    <!-- Callback URL hint at top (users need this while configuring) -->
-    <div class="text-xs p-2.5 rounded-lg bg-[var(--surface)] border border-[var(--border)]">
-      <span class="text-[var(--fg-muted)]">Callback URL:</span>
-      <code class="font-mono text-[var(--color-brand-400)] ml-1 break-all">{`${typeof window !== 'undefined' ? window.location.origin : ''}/api/v1/auth/oidc/${oForm.slug || '{slug}'}/callback`}</code>
-    </div>
-
-    <!-- Provider basics -->
-    <fieldset class="space-y-3">
-      <legend class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-1">Provider</legend>
-      <div class="grid grid-cols-2 gap-3">
-        <Input label="Slug" hint="used in URLs, e.g. azure-ad" bind:value={oForm.slug} disabled={editingOIDC !== null} />
-        <Input label="Display name" bind:value={oForm.display_name} />
-      </div>
-      <label class="flex items-center gap-2 text-sm cursor-pointer">
-        <input type="checkbox" bind:checked={oForm.enabled} class="accent-[var(--color-brand-500)]" />
-        Enabled
-      </label>
-    </fieldset>
-
-    <!-- OIDC configuration -->
-    <fieldset class="space-y-3">
-      <legend class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-1">OIDC Configuration</legend>
-      <div>
-        <div class="flex items-end gap-2">
-          <div class="flex-1">
-            <Input label="Issuer URL" placeholder="https://login.microsoftonline.com/your-tenant/v2.0" bind:value={oForm.issuer_url} hint="OIDC discovery root (.well-known/openid-configuration)" />
-          </div>
-          <button type="button" class="dm-btn dm-btn-secondary shrink-0 mb-[22px]"
-            disabled={oidcTestState === 'testing' || !oForm.issuer_url.trim()}
-            onclick={testOIDCDiscovery}>
-            {oidcTestState === 'testing' ? 'Testing…' : 'Test connection'}
+        <div class="set-config-actions">
+          <button
+            type="button"
+            class="dm-btn dm-btn-primary dm-btn-sm"
+            onclick={saveSettings}
+            disabled={settingsBusy}
+          >
+            {settingsBusy ? 'Saving…' : 'Save settings'}
           </button>
         </div>
-        {#if oidcTestState === 'ok'}
-          <p class="mt-1 text-xs text-green-600 dark:text-green-400">{oidcTestMessage}</p>
-        {:else if oidcTestState === 'fail'}
-          <p class="mt-1 text-xs text-red-600 dark:text-red-400">{oidcTestMessage}</p>
+      </div>
+    </section>
+
+    <section class="set-section">
+      <Eyebrow>04 · Encryption key</Eyebrow>
+
+      <div class="dm-card set-key-card">
+        <div class="set-key-row">
+          <span class="set-key-icon">
+            <KeyRound size={18} strokeWidth={1.5} />
+          </span>
+          <div class="set-key-actions">
+            <a
+              class="dm-btn dm-btn-secondary dm-btn-sm"
+              href="/api/v1/system/backup-key/export"
+              download="dockmesh-backup-key.txt"
+            >
+              <Download size={12} strokeWidth={1.5} /> Export key
+            </a>
+            <button
+              type="button"
+              class="dm-btn dm-btn-secondary dm-btn-sm"
+              onclick={rotateEncryptionKey}
+              disabled={secretsRotateBusy}
+            >
+              <RefreshCw size={12} strokeWidth={1.5} class={secretsRotateBusy ? 'set-spin' : ''} />
+              {secretsRotateBusy ? 'Rotating…' : 'Rotate key'}
+            </button>
+          </div>
+        </div>
+
+        <p class="set-key-dr-hint">
+          DR scenario: if Dockmesh itself is destroyed, import this key on the new host
+          before running <code class="set-inline-code">dockmesh restore</code> —
+          <a href="https://dockmesh.dev/docs/operations/disaster-recovery/" target="_blank" rel="noopener">
+            recovery playbook →
+          </a>
+        </p>
+
+        {#if secretsRotateResult}
+          <div class="set-key-result">
+            <div class="set-key-result-title">
+              <ShieldCheck size={12} strokeWidth={1.6} />
+              Rotation complete — {secretsRotateResult.reencrypted}
+              <code class="set-inline-code">.env.age</code> re-encrypted.
+            </div>
+            <div class="set-key-recipient">
+              <span class="set-key-recipient-label">old:</span>
+              <code class="set-inline-code set-key-recipient-value">{secretsRotateResult.old_recipient}</code>
+            </div>
+            <div class="set-key-recipient">
+              <span class="set-key-recipient-label">new:</span>
+              <code class="set-inline-code set-key-recipient-value">{secretsRotateResult.new_recipient}</code>
+            </div>
+          </div>
         {/if}
       </div>
-      <div class="grid grid-cols-2 gap-3">
-        <Input label="Client ID" bind:value={oForm.client_id} />
-        <Input label="Client secret" type="password" bind:value={oForm.client_secret}
-          hint={editingOIDC ? 'leave blank to keep existing' : undefined} />
-      </div>
-      <Input label="Scopes" bind:value={oForm.scopes} hint="comma-separated (default: openid,profile,email)" />
-    </fieldset>
+    </section>
+  </section>
+</EditorialPage>
 
-    <!-- Group mapping -->
-    <fieldset class="space-y-3">
-      <legend class="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-1">Group Mapping</legend>
-      <div class="grid grid-cols-3 gap-3">
-        <Input label="Group claim" placeholder="groups" bind:value={oForm.group_claim} />
-        <Input label="Admin group" bind:value={oForm.admin_group} />
-        <Input label="Operator group" bind:value={oForm.operator_group} />
-      </div>
-      <div>
-        <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Default role (when no group matches)</span>
-        <select class="dm-input text-sm" bind:value={oForm.default_role}>
-          {#each roles as r}
-            <option value={r.name}>{r.display || r.name}</option>
-          {/each}
-        </select>
-      </div>
-    </fieldset>
-  </form>
+<style>
+  .set {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    max-width: 880px;
+  }
 
-  {#snippet footer()}
-    <Button variant="secondary" onclick={() => { showOIDC = false; resetOIDCForm(); }}>Cancel</Button>
-    <Button variant="primary" type="submit" form="oidc-form">
-      {editingOIDC ? 'Save' : 'Create'}
-    </Button>
-  {/snippet}
-</Modal>
+  .set-header { display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; }
+  .set-header-text { min-width: 0; max-width: 70ch; }
+  .set-title {
+    font-size: 28px;
+    line-height: 1.1;
+    margin-top: 12px;
+  }
+  .set-subtitle {
+    margin-top: 8px;
+    max-width: 70ch;
+  }
+  .set-inline-code {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    background: var(--bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid var(--border-subtle);
+    color: var(--fg);
+  }
 
-<Modal bind:open={mfaOpen} title={mfaStep === 'qr' ? 'Enable two-factor authentication' : 'Save your recovery codes'} maxWidth="max-w-md" onclose={closeMFA}>
-  {#if mfaStep === 'qr' && mfaEnroll}
-    <div class="space-y-4">
-      <p class="text-sm text-[var(--fg-muted)]">
-        Scan this QR code with your authenticator app, then enter the 6-digit code it shows.
-      </p>
-      <div class="flex justify-center p-4 bg-white rounded-lg">
-        <img src={mfaEnroll.qr_data_url} alt="TOTP QR code" class="w-52 h-52" />
-      </div>
-      <div>
-        <div class="text-xs text-[var(--fg-muted)] mb-1">Or enter manually</div>
-        <div class="flex gap-2">
-          <code class="flex-1 dm-input font-mono text-xs select-all">{mfaEnroll.secret}</code>
-          <Button size="sm" variant="secondary" onclick={() => copyText(mfaEnroll!.secret)}>
-            <Copy class="w-3.5 h-3.5" />
-          </Button>
-        </div>
-      </div>
-      <form onsubmit={verifyMFAEnroll}>
-        <Input
-          label="6-digit code"
-          bind:value={mfaCode}
-          placeholder="000000"
-          autocomplete="one-time-code"
-          inputmode="numeric"
-        />
-        <div class="mt-4 flex justify-end gap-2">
-          <Button variant="secondary" onclick={closeMFA} type="button">Cancel</Button>
-          <Button variant="primary" type="submit" loading={mfaBusy} disabled={mfaCode.length < 6}>
-            Verify and enable
-          </Button>
-        </div>
-      </form>
-    </div>
-  {:else if mfaStep === 'recovery'}
-    <div class="space-y-4">
-      <div class="flex items-start gap-2 text-xs text-[var(--color-warning-400)] bg-[color-mix(in_srgb,var(--color-warning-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-warning-500)_25%,transparent)] rounded-lg px-3 py-2">
-        <ShieldCheck class="w-3.5 h-3.5 shrink-0 mt-0.5" />
-        <span>
-          <strong>Save these recovery codes now.</strong> Each can be used once instead of a TOTP code if
-          you lose access to your authenticator. They won't be shown again.
-        </span>
-      </div>
-      <div class="grid grid-cols-2 gap-2 font-mono text-sm">
-        {#each mfaRecovery as code}
-          <code class="dm-card p-2 text-center select-all">{code}</code>
-        {/each}
-      </div>
-      <div class="flex justify-end gap-2">
-        <Button variant="secondary" onclick={() => copyText(mfaRecovery.join('\n'))}>
-          <Copy class="w-3.5 h-3.5" /> Copy all
-        </Button>
-        <Button variant="primary" onclick={closeMFA}>I've saved them</Button>
-      </div>
-    </div>
-  {/if}
-</Modal>
+  .set-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
 
-<Modal bind:open={showCreate} title="Create user" maxWidth="max-w-md">
-  <form onsubmit={createUser} class="space-y-4" id="create-user-form">
-    <Input label="Username" bind:value={cUsername} />
-    <Input label="Email (optional)" type="email" bind:value={cEmail} />
-    <Input label="Password" type="password" bind:value={cPassword} hint="minimum 8 characters" autocomplete="new-password" />
-    <div>
-      <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Role</span>
-      <select class="dm-input" bind:value={cRole}>
-        <option value="viewer">viewer — read-only</option>
-        <option value="operator">operator — start/stop/deploy</option>
-        <option value="admin">admin — full access</option>
-      </select>
-    </div>
-  </form>
+  .set-info-card {
+    padding: 18px;
+  }
+  .set-info-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px 18px;
+  }
+  .set-info-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .set-info-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .set-info-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+  }
+  .set-info-value {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
-  {#snippet footer()}
-    <Button variant="secondary" onclick={() => (showCreate = false)}>Cancel</Button>
-    <Button variant="primary" type="submit" form="create-user-form" disabled={!cUsername || cPassword.length < 8}>
-      Create user
-    </Button>
-  {/snippet}
-</Modal>
+  .set-update-card {
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .set-update-head {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 14px;
+    align-items: start;
+  }
+  .set-update-newer {
+    color: var(--accent-fg);
+    font-weight: 500;
+  }
+  .set-status-ok { color: var(--color-success-400); }
+  .set-status-warn { color: var(--color-warning-400); }
+  .set-status-update { color: var(--accent-fg); font-weight: 500; }
+  .set-status-err { color: var(--color-danger-400); }
+  .set-status-muted { color: var(--fg-subtle); }
+
+  .set-upgrade-banner {
+    padding: 12px 14px;
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+    background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+    border-radius: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .set-upgrade-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--fg);
+  }
+  .set-upgrade-notes-link {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent-fg);
+    text-decoration: none;
+  }
+  .set-upgrade-notes-link:hover { text-decoration: underline; }
+  .set-upgrade-cmd-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .set-upgrade-cmd-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+  }
+  .set-upgrade-cmd {
+    flex: 1;
+    padding: 7px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg);
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .set-upgrade-blurb {
+    font-size: 11.5px;
+    color: var(--fg-muted);
+    margin: 0;
+  }
+
+  .set-update-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .set-error-banner {
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--color-danger-500) 35%, var(--border));
+    background: color-mix(in srgb, var(--color-danger-500) 6%, var(--surface));
+    border-radius: 4px;
+    color: var(--color-danger-400);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    line-height: 1.5;
+  }
+
+  .set-config-card {
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .set-config-card :global(.dm-input) {
+    font-size: 12.5px;
+    padding: 6px 10px;
+    line-height: 1.4;
+  }
+  .set-config-card :global(.ed-field) { gap: 6px; }
+  .set-input {
+    font-family: var(--font-mono);
+  }
+  .set-input-narrow {
+    max-width: 140px;
+  }
+  .set-divider {
+    height: 1px;
+    background: var(--border-subtle);
+  }
+  .set-config-actions {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 6px;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .set-toggle {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+  }
+  .set-toggle input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .set-toggle-track {
+    width: 36px;
+    height: 20px;
+    background: var(--border-strong);
+    border-radius: 999px;
+    position: relative;
+    flex-shrink: 0;
+    transition: background 150ms;
+  }
+  .set-toggle-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    background: white;
+    border-radius: 999px;
+    transition: left 150ms;
+  }
+  .set-toggle input:checked + .set-toggle-track {
+    background: var(--color-brand-500);
+  }
+  .set-toggle input:checked + .set-toggle-track .set-toggle-knob {
+    left: 18px;
+  }
+  .set-toggle-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .set-toggle-label {
+    font-size: 13px;
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .set-toggle-hint {
+    font-size: 11.5px;
+    color: var(--fg-subtle);
+  }
+
+  .set-key-card {
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .set-key-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .set-key-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 6px;
+    border: 1px solid var(--border-subtle);
+    background: var(--bg);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent-fg);
+    flex-shrink: 0;
+  }
+  .set-key-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .set-key-dr-hint {
+    margin: 0;
+    font-size: 11.5px;
+    color: var(--fg-muted);
+    line-height: 1.5;
+  }
+  .set-key-dr-hint a {
+    color: var(--accent-fg);
+    text-decoration: none;
+  }
+  .set-key-dr-hint a:hover { text-decoration: underline; }
+
+  .set-key-result {
+    padding-top: 12px;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+  }
+  .set-key-result-title {
+    color: var(--color-success-400);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .set-key-recipient {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .set-key-recipient-label {
+    color: var(--fg-subtle);
+    width: 32px;
+  }
+  .set-key-recipient-value {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .set-spin { animation: set-spin 0.9s linear infinite; }
+  @keyframes set-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+
+  @media (max-width: 720px) {
+    .set-info-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .set-update-head { grid-template-columns: 1fr; }
+  }
+</style>

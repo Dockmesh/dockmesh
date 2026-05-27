@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -170,6 +171,76 @@ func (h *Handlers) ListBackupRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, runs)
+}
+
+// GetBackupRun returns a single run row. The run-detail drawer in the
+// UI polls this while a manual run is in flight; the list endpoint
+// would force the frontend to filter client-side and miss status
+// transitions for runs that aged out of the limit window.
+func (h *Handlers) GetBackupRun(w http.ResponseWriter, r *http.Request) {
+	if h.Backups == nil {
+		writeError(w, http.StatusServiceUnavailable, "backups not configured")
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	run, err := h.Backups.GetRun(r.Context(), id)
+	if errors.Is(err, backup.ErrRunNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, run)
+}
+
+// DownloadBackupArchive streams the run's archive bytes to the
+// caller. The Service handles transparent decryption for runs that
+// were stored encrypted (via age) — admins downloading an archive
+// always get plaintext tar.gz, never the on-target ciphertext.
+func (h *Handlers) DownloadBackupArchive(w http.ResponseWriter, r *http.Request) {
+	if h.Backups == nil {
+		writeError(w, http.StatusServiceUnavailable, "backups not configured")
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	run, err := h.Backups.GetRun(r.Context(), id)
+	if errors.Is(err, backup.ErrRunNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if run.Status != "success" {
+		writeError(w, http.StatusConflict, "can only download from a successful run")
+		return
+	}
+	src, err := h.Backups.ReadRun(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer src.Close()
+	filename := "backup-run-" + strconv.FormatInt(id, 10) + ".tar.gz"
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	if _, err := io.Copy(w, src); err != nil {
+		// At this point headers are flushed — no way to surface a
+		// JSON error to the client.
+		return
+	}
+	h.audit(r, audit.ActionStackUpdate, "backup:download:"+strconv.FormatInt(id, 10), nil)
 }
 
 type restoreRequest struct {

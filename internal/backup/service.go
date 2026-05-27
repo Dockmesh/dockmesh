@@ -167,6 +167,13 @@ func (s *Service) ListRuns(ctx context.Context, limit int) ([]Run, error) {
 	return s.store.listRuns(ctx, limit)
 }
 
+// GetRun returns a single run by id. Used by the run-detail drawer and
+// the archive-download endpoint; the latter needs to assert the run
+// succeeded (and exists) before streaming bytes.
+func (s *Service) GetRun(ctx context.Context, id int64) (*Run, error) {
+	return s.store.getRun(ctx, id)
+}
+
 // RunSourceType returns the source type ("system" | "stack" | "volume")
 // of the run's first source. Used by the verify handler to dispatch
 // to the right verifier without reading the archive twice.

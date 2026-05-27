@@ -57,6 +57,7 @@ export interface UpdatePreview {
   image: string;
   current_digest?: string;
   current_created?: string;
+  local_size?: number;
   remote_last_updated?: string;
   remote_size?: number;
   docker_hub_url?: string;
@@ -169,6 +170,11 @@ export interface StackListEntry {
   // deployment row or running containers still exist. UI groups these
   // under "needs attention" and routes to the recovery panel.
   status?: 'ok' | 'needs_recovery';
+  // Optional summary fields the host-detail editorial UI references.
+  // Backend currently does not populate them; the UI falls back to
+  // "—" / "running". Tracked in project_hosts_open_punch_list.md.
+  containers?: number;
+  has_volumes?: boolean;
 }
 
 export interface DiscoveredStackService {
@@ -256,6 +262,8 @@ export interface DeployHistoryService {
 
 export interface DeployHistoryEntry {
   id: number;
+  /** Per-stack version counter (1, 2, 3, …) — what the UI should show. */
+  version: number;
   stack_name: string;
   host_id: string;
   compose_yaml?: string; // only populated on the single-entry GET
@@ -264,6 +272,11 @@ export interface DeployHistoryEntry {
   deployed_by?: string;
   deployed_by_name?: string;
   deployed_at: string;
+  // P.12.6 extensions — nullable on legacy rows from before migration 051.
+  success?: boolean | null;
+  duration_ms?: number | null;
+  git_commit_sha?: string;
+  error_message?: string;
 }
 
 export interface RollbackResult {
@@ -386,13 +399,25 @@ export interface Drain {
 export interface CustomRole {
   name: string;
   display: string;
+  description?: string;
   builtin: boolean;
   permissions: string[];
+  scopes?: RoleScope[];
+}
+
+export interface RoleScope {
+  scope_type: 'host' | 'stack' | 'host_tag';
+  scope_value: string;
 }
 
 export interface PermissionInfo {
   name: string;
+  display_name: string;
   description: string;
+  category: string;
+  verb: string;
+  danger_level: 'low' | 'medium' | 'high';
+  sensitive?: boolean;
 }
 
 export interface ApiToken {
@@ -586,6 +611,12 @@ export interface TemplateDeployResponse {
 }
 
 // P.11.11 — git-backed stacks.
+export interface EnvDrift {
+  new_from_repo?: string[];
+  new_from_compose?: string[];
+  user_only?: string[];
+}
+
 export interface StackGitSource {
   stack_name: string;
   repo_url: string;
@@ -601,6 +632,7 @@ export interface StackGitSource {
   last_sync_sha?: string;
   last_sync_at?: string;
   last_sync_error?: string;
+  last_env_drift?: EnvDrift;
   created_at: string;
   updated_at: string;
 }
@@ -627,7 +659,16 @@ export interface StackGitSyncResult {
   changed: boolean;
   deployed?: boolean;
   deploy_result?: unknown;
+  env_drift?: EnvDrift;
   duration_ms: number;
+}
+
+export interface StackFromGitResult {
+  source: StackGitSource;
+  sync_ok: boolean;
+  sync?: StackGitSyncResult;
+  sync_error?: string;
+  stack?: unknown;
 }
 
 // P.11.8 — volume content browsing.
@@ -710,6 +751,7 @@ export interface Agent {
   docker_version?: string;
   cert_fingerprint?: string;
   last_seen_at?: string;
+  online_since?: string;
   created_at: string;
   updated_at: string;
 }
@@ -926,6 +968,165 @@ export interface OIDCProviderInput {
   enabled: boolean;
 }
 
+// Notification Center (bell icon). Per-user feed; broadcast rows have
+// user_id empty. Kind is a stable string the UI maps to icon+filter;
+// severity drives badge color.
+export type NotificationKind =
+  | 'deploy.ok' | 'deploy.fail'
+  | 'alert.fire'
+  | 'backup.ok' | 'backup.fail'
+  | 'image.update' | 'agent.offline' | 'system.upgrade';
+
+export type NotificationSeverity = 'info' | 'success' | 'warning' | 'error';
+
+export interface NotificationItem {
+  id: number;
+  user_id?: string;
+  kind: NotificationKind | string;
+  severity: NotificationSeverity;
+  title: string;
+  body?: string;
+  link?: string;
+  read_at?: string;
+  created_at: string;
+}
+
+// SAML / LDAP / OAuth2 — Tier C SSO. Field names match
+// internal/saml/ldapauth/oauth2auth packages exactly so we don't have
+// a translation layer in api.ts. The {group, role} shape is shared
+// with the in-page GroupMapping type in routes/authentication/_types.ts.
+
+export interface GroupMapping {
+  group: string;
+  role: string;
+}
+
+export interface SAMLProvider {
+  id: number;
+  slug: string;
+  display_name: string;
+  entity_id: string;
+  sso_url: string;
+  slo_url?: string;
+  idp_metadata_xml?: string;
+  idp_cert_pem?: string;
+  nameid_format: string;
+  username_attribute: string;
+  email_attribute: string;
+  groups_attribute: string;
+  default_role: string;
+  group_mappings: GroupMapping[];
+  enabled: boolean;
+  is_default: boolean;
+  last_tested_at?: string;
+  last_test_ok?: boolean;
+  last_test_error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SAMLProviderInput {
+  slug: string;
+  display_name: string;
+  idp_metadata_xml: string;
+  nameid_format: string;
+  username_attribute: string;
+  email_attribute: string;
+  groups_attribute: string;
+  default_role: string;
+  group_mappings?: GroupMapping[];
+  enabled: boolean;
+  is_default?: boolean;
+}
+
+export interface LDAPProvider {
+  id: number;
+  slug: string;
+  display_name: string;
+  host: string;
+  port: number;
+  tls: 'ldaps' | 'starttls' | 'none';
+  skip_verify: boolean;
+  bind_dn?: string;
+  user_search_base: string;
+  user_search_filter: string;
+  username_attribute: string;
+  email_attribute: string;
+  group_search_base?: string;
+  group_membership_attribute: string;
+  default_role: string;
+  group_mappings: GroupMapping[];
+  enabled: boolean;
+  is_default: boolean;
+  last_tested_at?: string;
+  last_test_ok?: boolean;
+  last_test_error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LDAPProviderInput {
+  slug: string;
+  display_name: string;
+  host: string;
+  port: number;
+  tls: 'ldaps' | 'starttls' | 'none';
+  skip_verify: boolean;
+  bind_dn: string;
+  bind_password: string;
+  user_search_base: string;
+  user_search_filter: string;
+  username_attribute: string;
+  email_attribute: string;
+  group_search_base: string;
+  group_membership_attribute: string;
+  default_role: string;
+  group_mappings?: GroupMapping[];
+  enabled: boolean;
+  is_default?: boolean;
+}
+
+export interface OAuth2Provider {
+  id: number;
+  slug: string;
+  display_name: string;
+  authorization_url: string;
+  token_url: string;
+  userinfo_url: string;
+  client_id: string;
+  scopes: string;
+  username_field: string;
+  email_field: string;
+  groups_field: string;
+  default_role: string;
+  group_mappings: GroupMapping[];
+  enabled: boolean;
+  is_default: boolean;
+  last_tested_at?: string;
+  last_test_ok?: boolean;
+  last_test_error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OAuth2ProviderInput {
+  slug: string;
+  display_name: string;
+  authorization_url: string;
+  token_url: string;
+  userinfo_url: string;
+  client_id: string;
+  client_secret: string;
+  scopes: string;
+  username_field: string;
+  email_field: string;
+  groups_field: string;
+  default_role: string;
+  group_mappings?: GroupMapping[];
+  enabled: boolean;
+  is_default?: boolean;
+}
+
 export interface UpdateHistoryEntry {
   id: number;
   container_name: string;
@@ -1032,6 +1233,11 @@ export const api = {
     get: (name: string) => request<{ name: string; compose: string; env: string; status?: 'ok' | 'needs_recovery' }>(`/stacks/${encodeURIComponent(name)}`),
     create: (name: string, compose: string, env?: string) =>
       request<{ name: string }>('/stacks', { method: 'POST', body: JSON.stringify({ name, compose, env }) }),
+    createFromGit: (name: string, git: StackGitSourceInput) =>
+      request<StackFromGitResult>('/stacks/from-git', {
+        method: 'POST',
+        body: JSON.stringify({ name, git })
+      }),
     update: (name: string, compose: string, env?: string) =>
       request<{ name: string }>(`/stacks/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify({ compose, env }) }),
     delete: (name: string, opts?: { stop?: boolean; networks?: boolean; volumes?: boolean; images?: boolean; force?: boolean }) => {
@@ -1139,6 +1345,11 @@ export const api = {
       }),
     deleteScalingRules: (name: string) =>
       request<void>(`/stacks/${encodeURIComponent(name)}/scaling-rules`, { method: 'DELETE' }),
+    // Live deploy progress — polled by the stack-detail UI while a
+    // deploy is in flight. Returns null when no deploy is tracked.
+    deployProgress: (name: string) =>
+      request<unknown | null>(`/stacks/${encodeURIComponent(name)}/deploy/progress`),
+
     // Deploy history + rollback (P.12.6)
     listDeployments: (name: string, limit = 50) =>
       request<DeployHistoryEntry[]>(`/stacks/${encodeURIComponent(name)}/deployments?limit=${limit}`),
@@ -1209,12 +1420,12 @@ export const api = {
     list: () => request<CustomRole[]>('/roles'),
     get: (name: string) => request<CustomRole>(`/roles/${encodeURIComponent(name)}`),
     permissions: () => request<PermissionInfo[]>('/roles/permissions'),
-    create: (role: { name: string; display: string; permissions: string[] }) =>
+    create: (role: { name: string; display: string; description?: string; permissions: string[]; scopes?: RoleScope[] }) =>
       request<CustomRole>('/roles', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(role)
       }),
-    update: (name: string, role: { display: string; permissions: string[] }) =>
+    update: (name: string, role: { display: string; description?: string; permissions: string[]; scopes?: RoleScope[] }) =>
       request<CustomRole>(`/roles/${encodeURIComponent(name)}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(role)
@@ -1401,6 +1612,10 @@ export const api = {
       return request<any[] | FanOutResponse<any>>(`/images${qs ? '?' + qs : ''}`);
     },
     pull: (image: string) => request<any>('/images/pull', { method: 'POST', body: JSON.stringify({ image }) }),
+    inspect: (id: string, host = 'local') => {
+      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+      return request<any>(`/images/${encodeURIComponent(id)}${qs}`);
+    },
     remove: (id: string, force = false) =>
       request<any>(`/images/${encodeURIComponent(id)}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
     prune: () => request<{ ImagesDeleted: any[]; SpaceReclaimed: number }>('/images/prune', { method: 'POST' }),
@@ -1487,6 +1702,38 @@ export const api = {
     acknowledgeReview: (id: number, mode: 'keep' | 'disable') =>
       request<void>(`/backups/jobs/${id}/review/${mode}`, { method: 'POST' }),
     listRuns: (limit = 100) => request<BackupRun[]>(`/backups/runs?limit=${limit}`),
+    getRun: (runId: number) => request<BackupRun>(`/backups/runs/${runId}`),
+    // downloadArchive streams the tar.gz for a successful run. The
+    // backend transparently decrypts age-encrypted archives so the
+    // user always gets plaintext bytes. We auth via bearer token then
+    // hand the user a Blob URL — same pattern as audit-log export.
+    downloadArchive: async (runId: number): Promise<void> => {
+      const headers: Record<string, string> = {};
+      if (auth.accessToken) headers['Authorization'] = `Bearer ${auth.accessToken}`;
+      let res = await fetch(`${BASE}/backups/runs/${runId}/archive`, { headers });
+      if (res.status === 401 && auth.refreshToken) {
+        const ok = await auth.refresh();
+        if (ok && auth.accessToken) {
+          headers['Authorization'] = `Bearer ${auth.accessToken}`;
+          res = await fetch(`${BASE}/backups/runs/${runId}/archive`, { headers });
+        }
+      }
+      if (!res.ok) {
+        let msg = `${res.status} ${res.statusText}`;
+        try { const body = await res.json(); if (body.error) msg = body.error; } catch { /* ignore */ }
+        throw new ApiError(msg, res.status);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `backup-run-${runId}.tar.gz`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // Revoke after a tick so Safari has a chance to start the download.
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    },
     restore: (runId: number, destVolume: string) =>
       request<void>(`/backups/runs/${runId}/restore`, {
         method: 'POST',
@@ -1653,6 +1900,24 @@ export const api = {
     history: (limit = 100) => request<AlertHistoryEntry[]>(`/alerts/history?limit=${limit}`)
   },
 
+  notifications: {
+    list: (opts: { unread?: boolean; limit?: number } = {}) => {
+      const qs = new URLSearchParams();
+      if (opts.unread) qs.set('unread', 'true');
+      if (opts.limit) qs.set('limit', String(opts.limit));
+      const tail = qs.toString() ? '?' + qs.toString() : '';
+      return request<NotificationItem[]>(`/notifications${tail}`);
+    },
+    unreadCount: () =>
+      request<{ unread: number }>('/notifications/unread-count'),
+    markRead: (id: number) =>
+      request<void>(`/notifications/${id}/read`, { method: 'POST' }),
+    markAllRead: () =>
+      request<void>('/notifications/read-all', { method: 'POST' }),
+    delete: (id: number) =>
+      request<void>(`/notifications/${id}`, { method: 'DELETE' })
+  },
+
   oidc: {
     listPublic: () =>
       request<Array<{ slug: string; display_name: string }>>('/auth/oidc/providers'),
@@ -1664,6 +1929,8 @@ export const api = {
       request<OIDCProvider>(`/oidc/providers/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
     delete: (id: number) =>
       request<void>(`/oidc/providers/${id}`, { method: 'DELETE' }),
+    test: (id: number) =>
+      request<{ ok: boolean; error?: string }>(`/oidc/providers/${id}/test`, { method: 'POST' }),
     testDiscovery: (issuerURL: string) =>
       request<{
         ok: boolean;
@@ -1676,6 +1943,48 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ issuer_url: issuerURL })
       })
+  },
+
+  saml: {
+    listAdmin: () => request<SAMLProvider[]>('/saml/providers'),
+    get: (id: number) => request<SAMLProvider>(`/saml/providers/${id}`),
+    create: (input: SAMLProviderInput) =>
+      request<SAMLProvider>('/saml/providers', { method: 'POST', body: JSON.stringify(input) }),
+    update: (id: number, input: SAMLProviderInput) =>
+      request<SAMLProvider>(`/saml/providers/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+    delete: (id: number) => request<void>(`/saml/providers/${id}`, { method: 'DELETE' }),
+    test: (id: number) =>
+      request<{ ok: boolean; error?: string; entity_id?: string; sso_url?: string }>(
+        `/saml/providers/${id}/test`,
+        { method: 'POST' }
+      )
+  },
+
+  ldap: {
+    listAdmin: () => request<LDAPProvider[]>('/ldap/providers'),
+    get: (id: number) => request<LDAPProvider>(`/ldap/providers/${id}`),
+    create: (input: LDAPProviderInput) =>
+      request<LDAPProvider>('/ldap/providers', { method: 'POST', body: JSON.stringify(input) }),
+    update: (id: number, input: LDAPProviderInput) =>
+      request<LDAPProvider>(`/ldap/providers/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+    delete: (id: number) => request<void>(`/ldap/providers/${id}`, { method: 'DELETE' }),
+    test: (id: number) =>
+      request<{ ok: boolean; error?: string }>(`/ldap/providers/${id}/test`, { method: 'POST' })
+  },
+
+  oauth2: {
+    listAdmin: () => request<OAuth2Provider[]>('/oauth2/providers'),
+    get: (id: number) => request<OAuth2Provider>(`/oauth2/providers/${id}`),
+    create: (input: OAuth2ProviderInput) =>
+      request<OAuth2Provider>('/oauth2/providers', { method: 'POST', body: JSON.stringify(input) }),
+    update: (id: number, input: OAuth2ProviderInput) =>
+      request<OAuth2Provider>(`/oauth2/providers/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(input)
+      }),
+    delete: (id: number) => request<void>(`/oauth2/providers/${id}`, { method: 'DELETE' }),
+    test: (id: number) =>
+      request<{ ok: boolean; error?: string }>(`/oauth2/providers/${id}/test`, { method: 'POST' })
   },
 
   secrets: {
@@ -1721,7 +2030,34 @@ export const api = {
       request<any>('/proxy/routes', { method: 'POST', body: JSON.stringify({ host, upstream, tls_mode }) }),
     updateRoute: (id: number, upstream: string, tls_mode: string) =>
       request<void>(`/proxy/routes/${id}`, { method: 'PUT', body: JSON.stringify({ upstream, tls_mode }) }),
-    deleteRoute: (id: number) => request<void>(`/proxy/routes/${id}`, { method: 'DELETE' })
+    deleteRoute: (id: number) => request<void>(`/proxy/routes/${id}`, { method: 'DELETE' }),
+    // Per-host rate + p95 + status-code distribution scraped from
+    // Caddy's prometheus endpoint. Returns zeros when Caddy hasn't
+    // been configured to expose /metrics — UI hides the charts then.
+    metrics: () =>
+      request<{
+        scraped_at: string;
+        total_requests: number;
+        requests_per_second: number;
+        status_buckets: Record<string, number>;
+        p95_latency_ms: number;
+        per_host: Array<{
+          host: string;
+          requests: number;
+          requests_per_second: number;
+          status_buckets: Record<string, number>;
+          p95_latency_ms: number;
+        }>;
+      }>('/proxy/metrics'),
+    acmeEvents: () =>
+      request<Array<{
+        ts: string;
+        kind: 'obtain' | 'renew' | 'failure';
+        host?: string;
+        issuer?: string;
+        message: string;
+        successful: boolean;
+      }>>('/proxy/acme-events')
   },
 
   ws: {

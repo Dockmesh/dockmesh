@@ -60,6 +60,7 @@ type Host interface {
 
 	// Resource lists + mutations
 	ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error)
+	InspectImage(ctx context.Context, id string) (dtypes.ImageInspect, error)
 	RemoveImage(ctx context.Context, id string, force bool) ([]dtypes.ImageDeleteResponseItem, error)
 	PruneImages(ctx context.Context) (dtypes.ImagesPruneReport, error)
 	ListNetworks(ctx context.Context) ([]dtypes.NetworkResource, error)

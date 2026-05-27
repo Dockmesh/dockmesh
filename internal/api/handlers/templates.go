@@ -204,6 +204,9 @@ func (h *Handlers) DeployTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Bump deploys_count so the "popular" sort + badge stay accurate.
+	h.Templates.IncrementDeployCount(r.Context(), id)
+
 	// Echo back the resolved values with secret params redacted so the
 	// caller has a record without leaking auto-generated passwords.
 	secretNames := make(map[string]bool, len(tpl.Parameters))

@@ -37,35 +37,49 @@ var (
 
 // Provider is the public view of an OIDC provider config. Secrets are
 // never returned to the API.
+// GroupMapping is one row in oidc_provider_group_mappings — maps a
+// group value emitted by the IdP to a Dockmesh role at SSO login time.
+type GroupMapping struct {
+	GroupValue string `json:"group_value"`
+	RoleName   string `json:"role_name"`
+}
+
 type Provider struct {
-	ID            int64     `json:"id"`
-	Slug          string    `json:"slug"`
-	DisplayName   string    `json:"display_name"`
-	IssuerURL     string    `json:"issuer_url"`
-	ClientID      string    `json:"client_id"`
-	Scopes        string    `json:"scopes"`
-	GroupClaim    string    `json:"group_claim,omitempty"`
-	AdminGroup    string    `json:"admin_group,omitempty"`
-	OperatorGroup string    `json:"operator_group,omitempty"`
-	DefaultRole   string    `json:"default_role"`
-	Enabled       bool      `json:"enabled"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID            int64          `json:"id"`
+	Slug          string         `json:"slug"`
+	DisplayName   string         `json:"display_name"`
+	IssuerURL     string         `json:"issuer_url"`
+	ClientID      string         `json:"client_id"`
+	Scopes        string         `json:"scopes"`
+	GroupClaim    string         `json:"group_claim,omitempty"`
+	AdminGroup    string         `json:"admin_group,omitempty"`    // deprecated — use GroupMappings
+	OperatorGroup string         `json:"operator_group,omitempty"` // deprecated — use GroupMappings
+	GroupMappings []GroupMapping `json:"group_mappings"`
+	DefaultRole   string         `json:"default_role"`
+	Enabled       bool           `json:"enabled"`
+	IsDefault     bool           `json:"is_default"`
+	LastTestedAt  *time.Time     `json:"last_tested_at,omitempty"`
+	LastTestOK    *bool          `json:"last_test_ok,omitempty"`
+	LastTestError string         `json:"last_test_error,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
 // ProviderInput is what a caller sends on create/update.
 type ProviderInput struct {
-	Slug          string `json:"slug"`
-	DisplayName   string `json:"display_name"`
-	IssuerURL     string `json:"issuer_url"`
-	ClientID      string `json:"client_id"`
-	ClientSecret  string `json:"client_secret"`
-	Scopes        string `json:"scopes"`
-	GroupClaim    string `json:"group_claim"`
-	AdminGroup    string `json:"admin_group"`
-	OperatorGroup string `json:"operator_group"`
-	DefaultRole   string `json:"default_role"`
-	Enabled       bool   `json:"enabled"`
+	Slug          string         `json:"slug"`
+	DisplayName   string         `json:"display_name"`
+	IssuerURL     string         `json:"issuer_url"`
+	ClientID      string         `json:"client_id"`
+	ClientSecret  string         `json:"client_secret"`
+	Scopes        string         `json:"scopes"`
+	GroupClaim    string         `json:"group_claim"`
+	AdminGroup    string         `json:"admin_group"`
+	OperatorGroup string         `json:"operator_group"`
+	GroupMappings []GroupMapping `json:"group_mappings,omitempty"`
+	DefaultRole   string         `json:"default_role"`
+	Enabled       bool           `json:"enabled"`
+	IsDefault     bool           `json:"is_default,omitempty"`
 }
 
 // Service holds the DB + secrets service and caches discovered provider
@@ -105,7 +119,8 @@ func (s *Service) ListProviders(ctx context.Context) ([]Provider, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, slug, display_name, issuer_url, client_id, scopes,
 		       group_claim, admin_group, operator_group, default_role,
-		       enabled, created_at, updated_at
+		       enabled, is_default, last_tested_at, last_test_ok, last_test_error,
+		       created_at, updated_at
 		FROM oidc_providers ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -119,7 +134,17 @@ func (s *Service) ListProviders(ctx context.Context) ([]Provider, error) {
 		}
 		out = append(out, *p)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Enrich each provider with its group-mapping rows. Cheap enough at
+	// the scale OIDC providers run at (single-digit per install).
+	for i := range out {
+		if err := s.loadGroupMappings(ctx, &out[i]); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // ListEnabledPublic returns only the fields the login page needs (no
@@ -173,6 +198,11 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 		return nil, fmt.Errorf("insert provider: %w", err)
 	}
 	id, _ := res.LastInsertId()
+	if len(in.GroupMappings) > 0 {
+		if err := s.SetGroupMappings(ctx, id, in.GroupMappings); err != nil {
+			return nil, err
+		}
+	}
 	return s.getProvider(ctx, id)
 }
 
@@ -206,6 +236,13 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 			nullable(in.GroupClaim), nullable(in.AdminGroup), nullable(in.OperatorGroup),
 			in.DefaultRole, boolInt(in.Enabled), id)
 		if err != nil {
+			return nil, err
+		}
+	}
+	// Replace the group mappings if the request supplied any. Sending
+	// an empty list clears mappings.
+	if in.GroupMappings != nil {
+		if err := s.SetGroupMappings(ctx, id, in.GroupMappings); err != nil {
 			return nil, err
 		}
 	}
@@ -269,17 +306,29 @@ func (s *Service) ReloadAll() {
 	s.mu.Unlock()
 }
 
+// GetProvider is the public wrapper around getProvider.
+func (s *Service) GetProvider(ctx context.Context, id int64) (*Provider, error) {
+	return s.getProvider(ctx, id)
+}
+
 func (s *Service) getProvider(ctx context.Context, id int64) (*Provider, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, slug, display_name, issuer_url, client_id, scopes,
 		       group_claim, admin_group, operator_group, default_role,
-		       enabled, created_at, updated_at
+		       enabled, is_default, last_tested_at, last_test_ok, last_test_error,
+		       created_at, updated_at
 		FROM oidc_providers WHERE id = ?`, id)
 	p, err := scanProvider(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrProviderNotFound
 	}
-	return p, err
+	if err != nil {
+		return nil, err
+	}
+	if err := s.loadGroupMappings(ctx, p); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 func (s *Service) getProviderBySlug(ctx context.Context, slug string) (int64, string, string, string, string, error) {
@@ -613,12 +662,15 @@ type scanner interface {
 
 func scanProvider(r scanner) (*Provider, error) {
 	var p Provider
-	var groupClaim, adminGroup, operatorGroup sql.NullString
-	var enabled int
+	var groupClaim, adminGroup, operatorGroup, lastTestErr sql.NullString
+	var enabled, isDefault int
+	var lastTestedAt sql.NullTime
+	var lastTestOK sql.NullInt64
 	if err := r.Scan(
 		&p.ID, &p.Slug, &p.DisplayName, &p.IssuerURL, &p.ClientID, &p.Scopes,
 		&groupClaim, &adminGroup, &operatorGroup, &p.DefaultRole,
-		&enabled, &p.CreatedAt, &p.UpdatedAt,
+		&enabled, &isDefault, &lastTestedAt, &lastTestOK, &lastTestErr,
+		&p.CreatedAt, &p.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -632,7 +684,81 @@ func scanProvider(r scanner) (*Provider, error) {
 		p.OperatorGroup = operatorGroup.String
 	}
 	p.Enabled = enabled == 1
+	p.IsDefault = isDefault == 1
+	if lastTestedAt.Valid {
+		t := lastTestedAt.Time
+		p.LastTestedAt = &t
+	}
+	if lastTestOK.Valid {
+		ok := lastTestOK.Int64 == 1
+		p.LastTestOK = &ok
+	}
+	if lastTestErr.Valid {
+		p.LastTestError = lastTestErr.String
+	}
+	p.GroupMappings = []GroupMapping{}
 	return &p, nil
+}
+
+// loadGroupMappings reads the per-provider mapping rows into the
+// provider struct. Called after scanProvider for paths that need
+// the full set (mostly Admin UI surfaces).
+func (s *Service) loadGroupMappings(ctx context.Context, p *Provider) error {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT group_value, role_name FROM oidc_provider_group_mappings
+		  WHERE provider_id = ? ORDER BY group_value`, p.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	p.GroupMappings = []GroupMapping{}
+	for rows.Next() {
+		var m GroupMapping
+		if err := rows.Scan(&m.GroupValue, &m.RoleName); err != nil {
+			return err
+		}
+		p.GroupMappings = append(p.GroupMappings, m)
+	}
+	return rows.Err()
+}
+
+// SetGroupMappings replaces the full mapping list for a provider.
+// Used by UpdateProvider when the request body carries GroupMappings.
+func (s *Service) SetGroupMappings(ctx context.Context, providerID int64, mappings []GroupMapping) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM oidc_provider_group_mappings WHERE provider_id = ?`, providerID); err != nil {
+		return err
+	}
+	for _, m := range mappings {
+		if m.GroupValue == "" || m.RoleName == "" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR REPLACE INTO oidc_provider_group_mappings (provider_id, group_value, role_name)
+			 VALUES (?, ?, ?)`, providerID, m.GroupValue, m.RoleName); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// RecordProviderTest persists the result of a discovery-probe test
+// for the given provider. Called from POST /oidc/providers/{id}/test.
+func (s *Service) RecordProviderTest(ctx context.Context, providerID int64, ok bool, errMsg string) error {
+	okInt := 0
+	if ok {
+		okInt = 1
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE oidc_providers SET last_tested_at = CURRENT_TIMESTAMP,
+		                           last_test_ok = ?, last_test_error = ?
+		   WHERE id = ?`, okInt, nullable(errMsg), providerID)
+	return err
 }
 
 // Avoid unused-import complaint if json is only referenced indirectly later.

@@ -84,5 +84,11 @@ func (s *Store) Get(ctx context.Context, imageRef string) (*Report, error) {
 	if err := json.Unmarshal([]byte(findings), &rep.Vulnerabilities); err != nil {
 		return nil, err
 	}
+	// Coerce to empty slice so JSON encoding gives `[]` not `null`. The
+	// frontend treats nil-vs-empty distinctly (`null.length` crashes the
+	// resources page); a no-vuln scan result must serialize as `[]`.
+	if rep.Vulnerabilities == nil {
+		rep.Vulnerabilities = []Vulnerability{}
+	}
 	return &rep, nil
 }

@@ -51,7 +51,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 	if metricsAuth {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.NewAuth(authSvc))
-			r.Use(middleware.RequirePerm(rbac.PermMetricsRead))
+			r.Use(middleware.RequirePerm(rbac.PermMetricsView))
 			r.Get("/metrics", h.PromMetrics)
 		})
 	} else {
@@ -90,6 +90,26 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 		r.Get("/auth/oidc/{slug}/login", h.OIDCLogin)
 		r.Get("/auth/oidc/{slug}/callback", h.OIDCCallback)
 
+		// SAML flow is also public. ACS endpoint receives a signed
+		// POST from the IdP; we validate against the cert we extracted
+		// from idp metadata. Metadata endpoint is public so IdP
+		// admins can fetch the SP descriptor without auth.
+		r.Get("/auth/saml/providers", h.ListSAMLProvidersPublic)
+		r.Get("/auth/saml/{slug}/login", h.SAMLLogin)
+		r.Post("/auth/saml/{slug}/acs", h.SAMLACS)
+		r.Get("/auth/saml/{slug}/metadata", h.SAMLMetadata)
+
+		// LDAP login takes the user's password directly — no
+		// redirect round-trip. The endpoint mints a session pair
+		// just like /auth/login does for local accounts.
+		r.Get("/auth/ldap/providers", h.ListLDAPProvidersPublic)
+		r.Post("/auth/ldap/{slug}/login", h.LDAPLogin)
+
+		// Generic OAuth2 (non-OIDC) — GitHub / Bitbucket / etc.
+		r.Get("/auth/oauth2/providers", h.ListOAuth2ProvidersPublic)
+		r.Get("/auth/oauth2/{slug}/login", h.OAuth2Login)
+		r.Get("/auth/oauth2/{slug}/callback", h.OAuth2Callback)
+
 		// Agent enrollment — token is the auth, no JWT required.
 		r.Post("/agents/enroll", h.EnrollAgent)
 
@@ -105,25 +125,43 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			// Self-service routes (any authenticated user)
 			r.Get("/me", h.Me)
 			r.Put("/users/{id}/password", h.ChangeUserPassword) // self or admin (enforced inside)
+			r.Get("/users/{id}/avatar", h.GetAvatar)              // any authed user
+			r.Post("/users/{id}/avatar", h.UploadAvatar)          // self or admin (enforced inside)
+			r.Delete("/users/{id}/avatar", h.DeleteAvatar)        // self or admin (enforced inside)
 			r.Post("/ws/ticket", h.WSTicket)
 
 			// P.12.1 — session management (self). Any authenticated
 			// user can see + revoke their own sessions.
 			r.Get("/sessions", h.ListMySessions)
 			r.Delete("/sessions/{family_id}", h.RevokeMySession)
+			r.Post("/sessions/revoke-all", h.RevokeAllMySessions)
 
 			// Self MFA enrollment / disable
 			r.Post("/mfa/enroll/start", h.MFAEnrollStart)
 			r.Post("/mfa/enroll/verify", h.MFAEnrollVerify)
 			r.Delete("/mfa", h.MFADisable)
 
-			// -------------------------- READ ROUTES --------------------------
-			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermRead))
+			// Notification center (bell icon). Per-user feed —
+			// the service filters own + broadcast rows internally.
+			r.Get("/notifications", h.ListNotifications)
+			r.Get("/notifications/unread-count", h.NotificationsUnreadCount)
+			r.Post("/notifications/{id}/read", h.MarkNotificationRead)
+			r.Post("/notifications/read-all", h.MarkAllNotificationsRead)
+			r.Delete("/notifications/{id}", h.DeleteNotification)
 
+			// -------------------------- READ ROUTES --------------------------
+			// Per-resource *.view permissions (RBAC v2). Each group gates
+			// its own listing + inspect endpoints. Built-in viewer role
+			// has every *.view granted; other roles inherit them.
+
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermHostsView))
 				// Host registry — local + every connected agent.
 				r.Get("/hosts", h.ListHosts)
+			})
 
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermStacksView))
 				r.Get("/stacks", h.ListStacks)
 				// /stacks/discovered must be registered BEFORE /stacks/{name}
 				// so chi routes the literal path to the discovery handler
@@ -131,26 +169,42 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/stacks/discovered", h.DiscoverStacks)
 				r.Get("/stacks/{name}", h.GetStack)
 				r.Get("/stacks/{name}/status", h.StackStatus)
+				r.Get("/stacks/{name}/deploy/progress", h.GetDeployProgress)
+			})
 
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermContainersView))
 				r.Get("/containers", h.ListContainers)
 				r.Get("/containers/summary", h.ContainerSummaryEndpoint)
 				r.Get("/containers/{id}", h.InspectContainer)
+				// Historical metrics are read-only data, not a control action.
+				r.Get("/containers/{id}/metrics", h.GetMetrics)
+				r.Get("/hosts/{id}/stats/containers", h.BatchContainerStats)
+			})
 
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermImagesView))
 				r.Get("/images", h.ListImages)
+				r.Get("/images/{id}", h.InspectImage)
+			})
 
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermNetworksView))
 				r.Get("/networks", h.ListNetworks)
 				r.Get("/networks/topology", h.GetTopology)
 				r.Get("/networks/{id}", h.InspectNetwork)
+			})
 
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermVolumesView))
 				r.Get("/volumes", h.ListVolumes)
 				r.Get("/volumes/{name}", h.InspectVolume)
+			})
 
-				// Historical metrics are read-only data, not a control action.
-				r.Get("/containers/{id}/metrics", h.GetMetrics)
-
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermSystemView))
 				// Host-level CPU / RAM / disk snapshot for the dashboard.
 				r.Get("/system/metrics", h.SystemMetrics)
-
 				// Default-system-backup status for the sidebar pill.
 				// Read-only — any authenticated viewer can see whether
 				// the server is self-protected.
@@ -160,45 +214,64 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/system/update-status", h.GetUpdateStatus)
 			})
 
-			// -------------------------- STACK WRITE --------------------------
+			// -------------------------- STACK CREATE / UPDATE / DELETE -------
+			// Split per RBAC v2.1: POST → stacks.create, PUT → stacks.update,
+			// DELETE / discard / cleanup-preview → stacks.delete. The
+			// recover endpoint rebuilds an existing stack's compose, so
+			// it's stacks.update. convert/run-to-compose is a helper for
+			// authoring new stacks → stacks.create.
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermStackWrite))
+				r.Use(middleware.RequirePerm(rbac.PermStacksCreate))
 				r.Post("/stacks", h.CreateStack)
+				r.Post("/stacks/from-git", h.CreateStackFromGit)
+				r.Post("/convert/run-to-compose", h.ConvertRunToCompose)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermStacksUpdate))
 				r.Put("/stacks/{name}", h.UpdateStack)
+				r.Post("/stacks/{name}/recover", h.RecoverStack)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermStacksDelete))
 				r.Delete("/stacks/{name}", h.DeleteStack)
 				r.Get("/stacks/{name}/cleanup-preview", h.CleanupPreview)
-				// Recovery: rebuild compose.yaml from running containers
-				// when the on-disk file is missing/empty. Discard:
-				// drop the ghost record without touching containers.
-				r.Post("/stacks/{name}/recover", h.RecoverStack)
 				r.Post("/stacks/{name}/discard", h.DiscardStack)
-				r.Post("/convert/run-to-compose", h.ConvertRunToCompose)
 			})
 
 			// -------------------------- STACK ADOPT --------------------------
-			// Separate permission because adopting a stack is a privileged
-			// "take ownership of something on disk" action that's closer to
-			// user.manage than stack.write. Admin-only by default, can be
-			// granted to trusted operators via custom roles later.
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermStackAdopt))
+				r.Use(middleware.RequirePerm(rbac.PermStacksAdopt))
 				r.Post("/stacks/adopt", h.AdoptStack)
+			})
 
-				// Git source CRUD (P.11.11) — configuring a source
-				// writes compose.yaml into the stack FS, so it needs
-				// stack.write. Authenticated sync lives here too.
+			// Git source CRUD (P.11.11). Configuring a source writes
+			// compose.yaml into the stack FS, so it rides on stacks.update.
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermStacksUpdate))
 				r.Get("/stacks/{name}/git", h.GetGitSource)
 				r.Post("/stacks/{name}/git", h.ConfigureGitSource)
 				r.Delete("/stacks/{name}/git", h.DeleteGitSource)
 				r.Post("/stacks/{name}/git/sync", h.SyncGitSource)
+			})
 
-				// Stack templates (P.11.12). Listing is open to
-				// any authed user (templates are content), but CRUD
-				// + deploy write stack files and run compose up, so
-				// they ride on stack.write.
+			// Stack templates (P.11.12) — split create/update/delete +
+			// deploy. Listing remains open below.
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermTemplatesCreate))
 				r.Post("/templates", h.CreateTemplate)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermTemplatesUpdate))
 				r.Put("/templates/{id}", h.UpdateTemplate)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermTemplatesDelete))
 				r.Delete("/templates/{id}", h.DeleteTemplate)
+			})
+			r.Group(func(r chi.Router) {
+				// Deploying a template runs compose-up against a stack
+				// — same risk class as stacks.deploy.
+				r.Use(middleware.RequirePerm(rbac.PermStacksDeploy))
 				r.Post("/templates/{id}/deploy", h.DeployTemplate)
 			})
 
@@ -210,7 +283,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 
 			// -------------------------- STACK DEPLOY -------------------------
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermStackDeploy))
+				r.Use(middleware.RequirePerm(rbac.PermStacksDeploy))
 				r.Post("/stacks/{name}/deploy", h.DeployStack)
 				r.Post("/stacks/{name}/stop", h.StopStack)
 				// Service scaling (P.8)
@@ -233,7 +306,12 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/stacks/{name}/scaling-rules", h.GetScalingRules)
 				r.Put("/stacks/{name}/scaling-rules", h.SetScalingRules)
 				r.Delete("/stacks/{name}/scaling-rules", h.DeleteScalingRules)
-				// Migration (P.9)
+			})
+
+			// Migration (P.9) — separate sensitive perm because it
+			// moves data between hosts.
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermStacksMigrate))
 				r.Post("/stacks/{name}/migrate", h.InitiateMigration)
 				r.Post("/stacks/{name}/migrate/preflight", h.PreflightMigration)
 				r.Get("/stacks/{name}/migrate/{id}", h.GetMigration)
@@ -247,70 +325,94 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/migrations/active", h.ListActiveMigrations)
 			})
 
-			// System settings (admin-only)
+			// System settings
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Use(middleware.RequirePerm(rbac.PermSystemUpdate))
 				r.Get("/settings", h.ListSettings)
 				r.Put("/settings", h.UpdateSettings)
 			})
 
-			// Global environment variables (admin-only)
+			// Global environment variables
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Use(middleware.RequirePerm(rbac.PermSystemUpdate))
 				r.Get("/global-env", h.ListGlobalEnv)
 				r.Post("/global-env", h.CreateGlobalEnv)
 				r.Put("/global-env/{id}", h.UpdateGlobalEnv)
 				r.Delete("/global-env/{id}", h.DeleteGlobalEnv)
 				r.Get("/global-env/groups", h.ListGlobalEnvGroups)
+				r.Get("/global-env/{id}/refs", h.GetGlobalEnvRefs)
 			})
 
-			// Roles RBAC v2 (admin-only)
+			// Roles RBAC v2 — split read / create / update / delete.
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Use(middleware.RequirePerm(rbac.PermRolesView))
 				r.Get("/roles", h.ListRoles)
 				r.Get("/roles/permissions", h.AllPermissions)
 				r.Get("/roles/{name}", h.GetRole)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermRolesCreate))
 				r.Post("/roles", h.CreateRole)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermRolesUpdate))
 				r.Put("/roles/{name}", h.UpdateRole)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermRolesDelete))
 				r.Delete("/roles/{name}", h.DeleteRole)
 			})
 
-			// API tokens for CI/CD (admin-only — listing and creating
-			// tokens is the same sensitivity as managing users).
+			// API tokens — split into own (.view / .create / .delete) vs
+			// cross-user (manage_others). Handlers themselves enforce the
+			// own-vs-other rule + privilege-escalation guard on create
+			// (caller may only mint tokens with a role ⊆ their perms).
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermUserManage))
-				r.Get("/settings/api-tokens", h.ListAPITokens)
-				r.Post("/settings/api-tokens", h.CreateAPIToken)
-				r.Delete("/settings/api-tokens/{id}", h.RevokeAPIToken)
+				r.With(middleware.RequirePerm(rbac.PermTokensView)).
+					Get("/settings/api-tokens", h.ListAPITokens)
+				r.With(middleware.RequirePerm(rbac.PermTokensCreate)).
+					Post("/settings/api-tokens", h.CreateAPIToken)
+				r.With(middleware.RequirePerm(rbac.PermTokensDelete)).
+					Delete("/settings/api-tokens/{id}", h.RevokeAPIToken)
 			})
 
-			// Registry credentials (P.11.7, admin-only — stored passwords
-			// are production-critical secrets).
+			// Registry credentials (P.11.7) — split create / update /
+			// delete. List is registries.view (any role with .view).
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Use(middleware.RequirePerm(rbac.PermRegistriesView))
 				r.Get("/settings/registries", h.ListRegistries)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermRegistriesCreate))
 				r.Post("/settings/registries", h.CreateRegistry)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermRegistriesUpdate))
 				r.Put("/settings/registries/{id}", h.UpdateRegistry)
-				r.Delete("/settings/registries/{id}", h.DeleteRegistry)
 				r.Post("/settings/registries/{id}/test", h.TestRegistry)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermRegistriesDelete))
+				r.Delete("/settings/registries/{id}", h.DeleteRegistry)
 			})
 
 			// Host tags (P.11.2). Read for any authenticated user so
-			// list pages can show tag chips; mutations are admin-only.
+			// list pages can show tag chips; mutations gated to
+			// hosts.tag.
 			r.Group(func(r chi.Router) {
 				r.Get("/hosts/tags/all", h.ListAllTags)
 				r.Get("/hosts/{id}/tags", h.ListHostTags)
 			})
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Use(middleware.RequirePerm(rbac.PermHostsTag))
 				r.Put("/hosts/{id}/tags", h.SetHostTags)
 				r.Post("/hosts/{id}/tags", h.AddHostTag)
 				r.Delete("/hosts/{id}/tags/{tag}", h.RemoveHostTag)
 			})
 
-			// Drain host (P.10, admin-only)
+			// Drain host (P.10) — host-level admin operation.
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Use(middleware.RequirePerm(rbac.PermHostsUpdate))
 				r.Post("/hosts/{id}/drain/plan", h.PlanDrain)
 				r.Post("/hosts/{id}/drain/execute", h.ExecuteDrain)
 				r.Get("/hosts/{id}/drain/{drain_id}", h.GetDrain)
@@ -321,7 +423,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 
 			// -------------------------- CONTAINER CONTROL --------------------
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermContainerControl))
+				r.Use(middleware.RequirePerm(rbac.PermContainersUpdate))
 				r.Post("/containers/{id}/start", h.StartContainer)
 				r.Post("/containers/{id}/stop", h.StopContainer)
 				r.Post("/containers/{id}/restart", h.RestartContainer)
@@ -335,186 +437,297 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/containers/{id}/update-history", h.UpdateHistory)
 			})
 
-			// -------------------------- IMAGE WRITE --------------------------
+			// -------------------------- IMAGES -------------------------------
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermImageWrite))
+				r.Use(middleware.RequirePerm(rbac.PermImagesCreate))
 				r.Post("/images/pull", h.PullImage)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermImagesDelete))
 				r.Delete("/images/{id}", h.RemoveImage)
 				r.Post("/images/prune", h.PruneImages)
 			})
-
-			// -------------------------- IMAGE SCAN ---------------------------
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermImageScan))
+				r.Use(middleware.RequirePerm(rbac.PermImagesScan))
 				r.Post("/images/{id}/scan", h.ScanImage)
 				r.Get("/images/{id}/scan", h.GetScan)
 			})
 
-			// -------------------------- NETWORK WRITE ------------------------
+			// -------------------------- NETWORKS -----------------------------
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermNetworkWrite))
+				r.Use(middleware.RequirePerm(rbac.PermNetworksCreate))
 				r.Post("/networks", h.CreateNetwork)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermNetworksDelete))
 				r.Delete("/networks/{id}", h.RemoveNetwork)
 				r.Post("/networks/prune", h.PruneNetworks)
 			})
 
-			// -------------------------- VOLUME WRITE -------------------------
+			// -------------------------- VOLUMES ------------------------------
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermVolumeWrite))
+				r.Use(middleware.RequirePerm(rbac.PermVolumesCreate))
 				r.Post("/volumes", h.CreateVolume)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermVolumesDelete))
 				r.Delete("/volumes/{name}", h.RemoveVolume)
 				r.Post("/volumes/prune", h.PruneVolumes)
 			})
 
-			// Volume content browsing (P.11.8). Admin-only — read access
-			// to volume data is as sensitive as reading the files on the
-			// host itself, so we gate behind user.manage and every call
-			// is audited by the handler.
+			// Volume content browsing (P.11.8). volumes.browse is the
+			// dedicated sensitive perm — read access to volume data is
+			// PII-class. Every call is also audited by the handler.
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Use(middleware.RequirePerm(rbac.PermVolumesBrowse))
 				r.Get("/volumes/{name}/browse", h.BrowseVolume)
 				r.Get("/volumes/{name}/browse/file", h.ReadVolumeFile)
 			})
 
 			// -------------------------- DISASTER RECOVERY --------------------
-			// Backup verification (P.12.4). Admin-only — processing an
-			// uploaded tarball touches disk + runs DB migrations in a
-			// temp context, so a narrower permission wouldn't buy much.
+			// Backup verification (P.12.4) — destructive precursor to
+			// a real restore, so backups.restore is the right gate.
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Use(middleware.RequirePerm(rbac.PermBackupsRestore))
 				r.Post("/restore/verify", h.VerifyUploadedBackup)
 				r.Post("/backups/runs/{id}/verify", h.VerifyBackupRun)
 			})
 
-			// -------------------------- USER MANAGE --------------------------
+			// -------------------------- USERS --------------------------------
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Use(middleware.RequirePerm(rbac.PermUsersView))
 				r.Get("/users", h.ListUsers)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUsersCreate))
 				r.Post("/users", h.CreateUser)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUsersUpdate))
 				r.Put("/users/{id}", h.UpdateUser)
+				// P.12.1 — admin-only account unlock.
+				r.Post("/users/{id}/unlock", h.UnlockUser)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermUsersDelete))
 				r.Delete("/users/{id}", h.DeleteUser)
 				r.Delete("/users/{id}/mfa", h.MFAReset)
+			})
 
-				// P.12.1 — admin-only account unlock + password
-				// policy CRUD. Policy endpoints are GET too because
-				// only admins should see the numbers (they indicate
-				// deployment hardening level).
-				r.Post("/users/{id}/unlock", h.UnlockUser)
+			// Password policy is global system config (not per-user) —
+			// gate behind system.update.
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermSystemUpdate))
 				r.Get("/auth/policy", h.GetPasswordPolicy)
 				r.Put("/auth/policy", h.UpdatePasswordPolicy)
+				r.Get("/auth/signin", h.GetSignInConfig)
+				r.Put("/auth/signin", h.UpdateSignInConfig)
 			})
 
 			// -------------------------- AUDIT READ ---------------------------
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermAuditRead))
+				r.Use(middleware.RequirePerm(rbac.PermAuditView))
 				r.Get("/audit", h.ListAudit)
 				r.Get("/audit/verify", h.VerifyAudit)
 				r.Get("/audit/retention", h.GetAuditRetention)
 			})
 
-			// Audit retention config + manual-run (P.11.13). Writing
-			// retention config or triggering an on-demand prune are
-			// admin-only — they can destroy audit history.
+			// Audit retention config + manual-run (P.11.13) + webhook
+			// (P.11.14). audit.write is the dedicated gate so a
+			// read-only auditor can't tamper with the compliance trail
+			// (closes the loophole called out in the catalog audit memo).
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Use(middleware.RequirePerm(rbac.PermAuditWrite))
 				r.Put("/audit/retention", h.UpdateAuditRetention)
 				r.Post("/audit/retention/run", h.RunAuditRetention)
-
-				// Audit webhook (P.11.14) — GET is audit.read-gated
-				// above; PUT / test write to settings + fire a
-				// synthetic event, so admin-only.
 				r.Get("/audit/webhook", h.GetAuditWebhook)
 				r.Put("/audit/webhook", h.UpdateAuditWebhook)
 				r.Post("/audit/webhook/test", h.TestAuditWebhook)
 			})
 
 			// -------------------------- OIDC ADMIN ---------------------------
+			// Identity-provider configuration is system-level admin —
+			// gated by system.update until we add a dedicated auth.config
+			// permission in the post-v0.3 SSO slice.
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Use(middleware.RequirePerm(rbac.PermSystemUpdate))
 				r.Get("/oidc/providers", h.ListOIDCProviders)
 				r.Post("/oidc/providers", h.CreateOIDCProvider)
 				r.Put("/oidc/providers/{id}", h.UpdateOIDCProvider)
 				r.Delete("/oidc/providers/{id}", h.DeleteOIDCProvider)
 				r.Post("/oidc/providers/reload", h.ReloadOIDCProviders)
 			r.Post("/oidc/providers/test-discovery", h.TestOIDCDiscovery)
+			r.Post("/oidc/providers/{id}/test", h.TestOIDCProvider)
 			})
 
-			// -------------------------- ALERTS (admin) -----------------------
+			// -------------------------- SAML ADMIN ---------------------------
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermUserManage))
-				r.Get("/notifications/channels", h.ListNotificationChannels)
-				r.Post("/notifications/channels", h.CreateNotificationChannel)
-				r.Put("/notifications/channels/{id}", h.UpdateNotificationChannel)
-				r.Delete("/notifications/channels/{id}", h.DeleteNotificationChannel)
-				r.Post("/notifications/channels/{id}/test", h.TestNotificationChannel)
+				r.Use(middleware.RequirePerm(rbac.PermSystemUpdate))
+				r.Get("/saml/providers", h.ListSAMLProviders)
+				r.Get("/saml/providers/{id}", h.GetSAMLProvider)
+				r.Post("/saml/providers", h.CreateSAMLProvider)
+				r.Put("/saml/providers/{id}", h.UpdateSAMLProvider)
+				r.Delete("/saml/providers/{id}", h.DeleteSAMLProvider)
+				r.Post("/saml/providers/{id}/test", h.TestSAMLProvider)
+			})
 
+			// -------------------------- LDAP ADMIN ---------------------------
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermSystemUpdate))
+				r.Get("/ldap/providers", h.ListLDAPProviders)
+				r.Get("/ldap/providers/{id}", h.GetLDAPProvider)
+				r.Post("/ldap/providers", h.CreateLDAPProvider)
+				r.Put("/ldap/providers/{id}", h.UpdateLDAPProvider)
+				r.Delete("/ldap/providers/{id}", h.DeleteLDAPProvider)
+				r.Post("/ldap/providers/{id}/test", h.TestLDAPProvider)
+			})
+
+			// -------------------------- OAUTH2 ADMIN -------------------------
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermSystemUpdate))
+				r.Get("/oauth2/providers", h.ListOAuth2Providers)
+				r.Get("/oauth2/providers/{id}", h.GetOAuth2Provider)
+				r.Post("/oauth2/providers", h.CreateOAuth2Provider)
+				r.Put("/oauth2/providers/{id}", h.UpdateOAuth2Provider)
+				r.Delete("/oauth2/providers/{id}", h.DeleteOAuth2Provider)
+				r.Post("/oauth2/providers/{id}/test", h.TestOAuth2Provider)
+			})
+
+			// -------------------------- ALERTS -------------------------------
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermAlertsView))
+				r.Get("/notifications/channels", h.ListNotificationChannels)
 				r.Get("/alerts/rules", h.ListAlertRules)
-				r.Post("/alerts/rules", h.CreateAlertRule)
-				r.Put("/alerts/rules/{id}", h.UpdateAlertRule)
-				r.Delete("/alerts/rules/{id}", h.DeleteAlertRule)
+				r.Get("/alerts/rules/{id}/stats", h.GetAlertRuleStats)
 				r.Get("/alerts/history", h.ListAlertHistory)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermAlertsCreate))
+				r.Post("/notifications/channels", h.CreateNotificationChannel)
+				r.Post("/alerts/rules", h.CreateAlertRule)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermAlertsUpdate))
+				r.Put("/notifications/channels/{id}", h.UpdateNotificationChannel)
+				r.Post("/notifications/channels/{id}/test", h.TestNotificationChannel)
+				r.Put("/alerts/rules/{id}", h.UpdateAlertRule)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermAlertsDelete))
+				r.Delete("/notifications/channels/{id}", h.DeleteNotificationChannel)
+				r.Delete("/alerts/rules/{id}", h.DeleteAlertRule)
 			})
 
 			// -------------------------- AGENTS (admin) -----------------------
+			// "Agents" is the technical name for the binary that runs on
+			// remote hosts; the user-facing concept is "host". hosts.update
+			// gates lifecycle (drain/upgrade/rotate); hosts.delete gates
+			// revoke; ListAgents is admin-shaped for now (acts like a
+			// hosts admin view), so all routes ride on hosts.update.
+			// "Agents" is the technical name for the binary that runs on
+			// remote hosts; the user-facing concept is "host". POST /agents
+			// = enroll a new host (hosts.create); upgrade/rotate/drain
+			// touch existing hosts (hosts.update); DELETE = revoke
+			// (hosts.delete); GETs = hosts.view.
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Use(middleware.RequirePerm(rbac.PermHostsView))
 				r.Get("/agents", h.ListAgents)
-				r.Post("/agents", h.CreateAgent)
 				r.Get("/agents/{id}", h.GetAgent)
-				r.Delete("/agents/{id}", h.DeleteAgent)
+				r.Get("/agents/upgrade-policy", h.GetAgentUpgradePolicy)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermHostsCreate))
+				r.Post("/agents", h.CreateAgent)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermHostsUpdate))
 				r.Post("/agents/{id}/upgrade", h.UpgradeAgent)
 				r.Post("/agents/{id}/rotate-token", h.RotateAgentEnrollToken)
-
-				// Fleet-wide upgrade policy (P.11.16). GET is safe
-				// for audit.read but keeping it under user.manage
-				// is simpler and the info is admin-oriented.
-				r.Get("/agents/upgrade-policy", h.GetAgentUpgradePolicy)
 				r.Put("/agents/upgrade-policy", h.UpdateAgentUpgradePolicy)
 				r.Post("/agents/upgrade-policy/run", h.RunAgentUpgradeEvaluation)
 			})
-
-			// -------------------------- BACKUPS (admin) -----------------------
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Use(middleware.RequirePerm(rbac.PermHostsDelete))
+				r.Delete("/agents/{id}", h.DeleteAgent)
+			})
+
+			// -------------------------- BACKUPS ------------------------------
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermBackupsView))
 				r.Get("/backups/jobs", h.ListBackupJobs)
-				r.Post("/backups/jobs", h.CreateBackupJob)
 				r.Get("/backups/jobs/{id}", h.GetBackupJob)
-				r.Put("/backups/jobs/{id}", h.UpdateBackupJob)
-				r.Delete("/backups/jobs/{id}", h.DeleteBackupJob)
-				r.Post("/backups/jobs/{id}/run", h.RunBackupJob)
-				// P.13.2: clear the needs_review flag on a legacy
-				// auto-created job. mode = "keep" | "disable".
-				r.Post("/backups/jobs/{id}/review/{mode}", h.AcknowledgeBackupJobReview)
 				r.Get("/backups/targets", h.ListBackupTargets)
+				r.Get("/backups/runs", h.ListBackupRuns)
+				r.Get("/backups/runs/{id}", h.GetBackupRun)
+				// Archive download is gated by backups.view: anyone
+				// who can list runs can also pull the bytes for one
+				// they own. Restore-grade access stays under
+				// backups.restore.
+				r.Get("/backups/runs/{id}/archive", h.DownloadBackupArchive)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermBackupsCreate))
+				r.Post("/backups/jobs", h.CreateBackupJob)
 				r.Post("/backups/targets", h.CreateBackupTarget)
-				r.Put("/backups/targets/{id}", h.UpdateBackupTarget)
-				r.Delete("/backups/targets/{id}", h.DeleteBackupTarget)
-				r.Post("/backups/targets/{id}/test", h.TestBackupTarget)
 				r.Post("/backups/targets/test-config", h.TestBackupTargetConfig)
 				r.Post("/backups/targets/discover-shares", h.DiscoverSMBShares)
-				r.Get("/backups/runs", h.ListBackupRuns)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermBackupsUpdate))
+				r.Put("/backups/jobs/{id}", h.UpdateBackupJob)
+				r.Post("/backups/jobs/{id}/run", h.RunBackupJob)
+				r.Post("/backups/jobs/{id}/review/{mode}", h.AcknowledgeBackupJobReview)
+				r.Put("/backups/targets/{id}", h.UpdateBackupTarget)
+				r.Post("/backups/targets/{id}/test", h.TestBackupTarget)
+				r.Put("/backups/system/enabled", h.SetBackupEnabled)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermBackupsDelete))
+				r.Delete("/backups/jobs/{id}", h.DeleteBackupJob)
+				r.Delete("/backups/targets/{id}", h.DeleteBackupTarget)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermBackupsRestore))
 				r.Post("/backups/runs/{id}/restore", h.RestoreBackup)
 				// P.13.3: stack-typed runs need their own entry point so
 				// the restore actually writes stack/<rel> + each volume
 				// instead of returning the legacy "not implemented" stub.
 				r.Post("/backups/runs/{id}/restore-stack", h.RestoreStackBackup)
-				// Toggle the auto-created daily system backup job.
-				r.Put("/backups/system/enabled", h.SetBackupEnabled)
+				// Backup-key export is sensitive material that lets you
+				// decrypt every backup blob — gate behind backups.restore.
 				r.Get("/system/backup-key/export", h.ExportBackupKey)
+			})
+			r.Group(func(r chi.Router) {
+				// Server-binary self-update + secrets-key rotation are the
+				// most destructive operations in the platform.
+				r.Use(middleware.RequirePerm(rbac.PermSystemUpgrade))
 				r.Post("/system/secrets/rotate", h.RotateSecretsKey)
 				r.Post("/system/update-check", h.CheckUpdateNow)
 			})
 
-			// -------------------------- PROXY (admin) ------------------------
+			// -------------------------- PROXY -------------------------------
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermUserManage))
+				r.Use(middleware.RequirePerm(rbac.PermProxyView))
 				r.Get("/proxy/status", h.ProxyStatus)
-				r.Post("/proxy/enable", h.ProxyEnable)
-				r.Post("/proxy/disable", h.ProxyDisable)
 				r.Get("/proxy/routes", h.ListProxyRoutes)
+				r.Get("/proxy/metrics", h.GetProxyMetrics)
+				r.Get("/proxy/acme-events", h.ListACMEEvents)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermProxyCreate))
 				r.Post("/proxy/routes", h.CreateProxyRoute)
+				// Enable/disable the proxy itself is closer to "create
+				// the proxy stack" than route-level edit.
+				r.Post("/proxy/enable", h.ProxyEnable)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermProxyUpdate))
 				r.Put("/proxy/routes/{id}", h.UpdateProxyRoute)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermProxyDelete))
 				r.Delete("/proxy/routes/{id}", h.DeleteProxyRoute)
+				r.Post("/proxy/disable", h.ProxyDisable)
 			})
 		})
 

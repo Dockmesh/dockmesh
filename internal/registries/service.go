@@ -248,6 +248,16 @@ func (s *Service) RecordTest(ctx context.Context, id int64, ok bool, errMsg stri
 // Auth resolution (used by the image-pull handler)
 // -----------------------------------------------------------------------------
 
+// ResolveAuthForImage matches the authResolver interface compose +
+// updater use to inject auth into ImagePull. Drops the *Registry from
+// the return tuple so the caller doesn't have to import this package
+// just for that type. Empty string = no matching credential = fall
+// back to anonymous pull.
+func (s *Service) ResolveAuthForImage(ctx context.Context, image string, hostTags []string) (string, error) {
+	blob, _, err := s.ResolveAuth(ctx, image, hostTags)
+	return blob, err
+}
+
 // ResolveAuth looks up credentials for an image reference that will be
 // pulled against hostTags. Returns the base64-encoded X-Registry-Auth
 // blob ready to hand to Docker's ImagePullOptions.RegistryAuth, and the

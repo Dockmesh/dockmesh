@@ -7,6 +7,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/network"
 	"github.com/go-chi/chi/v5"
@@ -156,6 +157,11 @@ func (h *Handlers) CreateNetwork(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
+	scopeReq := h.hostScopeReq(r.Context(), "local")
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermNetworksCreate, scopeReq, "host local")
+		return
+	}
 	var req networkRequest
 	if err := decodeJSON(r, &req); err != nil || req.Name == "" {
 		writeError(w, http.StatusBadRequest, "name required")
@@ -175,6 +181,11 @@ func (h *Handlers) RemoveNetwork(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
+	scopeReq := h.hostScopeReq(r.Context(), "local")
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermNetworksDelete, scopeReq, "host local")
+		return
+	}
 	id := chi.URLParam(r, "id")
 	if err := h.Docker.RemoveNetwork(r.Context(), id); err != nil {
 		writeError(w, imageErrorStatus(err), err.Error())
@@ -187,6 +198,11 @@ func (h *Handlers) RemoveNetwork(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) PruneNetworks(w http.ResponseWriter, r *http.Request) {
 	if h.Docker == nil {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+		return
+	}
+	scopeReq := h.hostScopeReq(r.Context(), "local")
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermNetworksDelete, scopeReq, "host local")
 		return
 	}
 	report, err := h.Docker.PruneNetworks(r.Context())

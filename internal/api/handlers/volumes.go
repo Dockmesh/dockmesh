@@ -9,6 +9,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -82,6 +83,11 @@ func (h *Handlers) CreateVolume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
+	scopeReq := h.hostScopeReq(r.Context(), "local")
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermVolumesCreate, scopeReq, "host local")
+		return
+	}
 	var req volumeRequest
 	if err := decodeJSON(r, &req); err != nil || req.Name == "" {
 		writeError(w, http.StatusBadRequest, "name required")
@@ -101,6 +107,11 @@ func (h *Handlers) CreateVolume(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) RemoveVolume(w http.ResponseWriter, r *http.Request) {
 	if h.Docker == nil {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+		return
+	}
+	scopeReq := h.hostScopeReq(r.Context(), "local")
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermVolumesDelete, scopeReq, "host local")
 		return
 	}
 	name := chi.URLParam(r, "name")
@@ -123,6 +134,11 @@ func (h *Handlers) BrowseVolume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	scopeReq := h.hostScopeReq(r.Context(), target.ID())
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermVolumesBrowse, scopeReq, "host "+target.ID())
+		return
+	}
 	name := chi.URLParam(r, "name")
 	sub := r.URL.Query().Get("path")
 	entries, err := target.VolumeBrowseEntries(r.Context(), name, sub)
@@ -141,6 +157,11 @@ func (h *Handlers) ReadVolumeFile(w http.ResponseWriter, r *http.Request) {
 	target, err := h.pickHost(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	scopeReq := h.hostScopeReq(r.Context(), target.ID())
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermVolumesReadFile, scopeReq, "host "+target.ID())
 		return
 	}
 	name := chi.URLParam(r, "name")
@@ -183,6 +204,11 @@ func mapBrowseStatus(err error) int {
 func (h *Handlers) PruneVolumes(w http.ResponseWriter, r *http.Request) {
 	if h.Docker == nil {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
+		return
+	}
+	scopeReq := h.hostScopeReq(r.Context(), "local")
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermVolumesDelete, scopeReq, "host local")
 		return
 	}
 	report, err := h.Docker.PruneVolumes(r.Context())

@@ -1,20 +1,160 @@
 <script lang="ts">
+  // Backups — editorial rebuild based on `Dockmesh Wizard (6)/backups.jsx`.
+  // Header with the "restore is the only test that matters" quote, stat
+  // banner, ed-tabs strip Jobs / Runs / Targets, jobs+targets as card
+  // grids per the mockup, runs as a cleaner editorial table. Wizards
+  // and the restore modal stay on the legacy `Modal` component for now —
+  // they're functional and the editorial rebuild of those is a follow-up.
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { api, ApiError } from '$lib/api';
   import type { BackupJob, BackupJobInput, BackupRun, BackupSource, BackupHook, BackupTarget } from '$lib/api';
-  import { allowed } from '$lib/rbac';
+  import { allowed } from '$lib/rbac.svelte';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
+  import { Eyebrow } from '$lib/components/editorial';
+  import JobDrawer from './_JobDrawer.svelte';
+  import RunDrawer from './_RunDrawer.svelte';
+  import TargetDrawer from './_TargetDrawer.svelte';
+  import JobWizard from './_JobWizard.svelte';
+  import TargetWizard from './_TargetWizard.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { autoRefresh } from '$lib/autorefresh';
   import {
-    Archive, Plus, Play, Trash2, RefreshCw, Undo2, HardDrive, Cloud, Lock,
-    Search, Clock, Copy, ChevronDown
+    Archive, Plus, Play, Trash2, RefreshCw, Undo2, HardDrive, Lock,
+    Search, Clock, Copy, AlertTriangle, ArrowRight, Shield, Box, Layers,
+    LayoutDashboard
   } from 'lucide-svelte';
+
+  // Helpers used by the new card-grid layout.
+  function targetTypeMeta(type: string): { label: string; glyph: string } {
+    if (type === 's3') return { label: 'S3 / object store', glyph: 'S3' };
+    if (type === 'sftp') return { label: 'SFTP over SSH', glyph: 'FTP' };
+    if (type === 'smb') return { label: 'SMB / NAS share', glyph: 'NAS' };
+    if (type === 'webdav') return { label: 'WebDAV / Nextcloud', glyph: 'DAV' };
+    return { label: 'Local directory', glyph: 'LOC' };
+  }
+  function jobSourceLabel(j: BackupJob): string {
+    if (j.sources.length === 0) return 'no source';
+    const s = j.sources[0];
+    // Backend additionally accepts a 'system' source type for the
+    // dockmesh-system meta-bundle (DB + stacks + CA). The TS interface
+    // pre-dates that addition and only lists volume / stack — cast at
+    // the call site rather than widening the public type.
+    const t = s.type as string;
+    if (t === 'system') return 'dockmesh-system';
+    return `${t}: ${s.name}`;
+  }
+  function jobSourceIcon(j: BackupJob) {
+    const t = (j.sources[0]?.type as string | undefined) ?? '';
+    if (t === 'stack') return Layers;
+    if (t === 'volume') return HardDrive;
+    if (t === 'system') return LayoutDashboard;
+    return Box;
+  }
+  function targetById(id: number): BackupTarget | undefined {
+    return bTargets.find((t) => t.id === id);
+  }
+  // Map a job to its run-history (last 14 runs) for sparkline + stats.
+  function runsForJob(name: string): BackupRun[] {
+    return runs.filter((r) => r.job_name === name).slice(0, 14);
+  }
+  function jobLastRun(name: string): BackupRun | null {
+    return runs.find((r) => r.job_name === name) ?? null;
+  }
+  function jobStatusFor(name: string): 'ok' | 'warn' | 'failed' | 'idle' | 'running' {
+    const last = jobLastRun(name);
+    if (!last) return 'idle';
+    if (last.status === 'failed') return 'failed';
+    if (last.status === 'running') return 'running';
+    if (last.status === 'success') return 'ok';
+    return 'idle';
+  }
+  function statusDot(s: string): 'ok-dot' | 'warn-dot' | 'fail-dot' | 'neutral-dot' {
+    if (s === 'ok' || s === 'running' || s === 'success' || s === 'connected') return 'ok-dot';
+    if (s === 'warn' || s === 'unknown') return 'warn-dot';
+    if (s === 'failed' || s === 'error') return 'fail-dot';
+    return 'neutral-dot';
+  }
 
   type Tab = 'jobs' | 'runs' | 'targets';
   let tab = $state<Tab>((new URLSearchParams($page.url.search).get('tab') as Tab) || 'jobs');
+
+  // Runs view — Timeline (default, mockup pattern) vs List. Timeline
+  // groups by day with colored timeline-blocks per run; List is the
+  // dense table form for ops that prefer rows.
+  let runsView = $state<'timeline' | 'list'>('timeline');
+
+  // Group filteredRuns by day for the timeline. Newest day first; runs
+  // within a day stay in API order (newest first).
+  function dayKey(ts: string): string {
+    return new Date(ts).toISOString().slice(0, 10);
+  }
+  function dayHeading(iso: string): string {
+    const d = new Date(iso + 'T00:00:00Z');
+    const todayIso = new Date().toISOString().slice(0, 10);
+    if (iso === todayIso) return 'Today';
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    if (iso === y.toISOString().slice(0, 10)) return 'Yesterday';
+    if ((Date.now() - d.getTime()) / 86400000 < 7) return d.toLocaleDateString('en-US', { weekday: 'long' });
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  // Drawer-detail state. We keep three drawers (Job / Run / Target)
+  // in this same component because they all live on the same page —
+  // a Job-drawer click can deep-link into a Run-drawer without losing
+  // place. Drawer markup is in the per-resource component files; this
+  // page just owns the open/close state.
+  let drawerJob = $state<BackupJob | null>(null);
+  let drawerRun = $state<BackupRun | null>(null);
+  let drawerTarget = $state<BackupTarget | null>(null);
+  function openJobDrawer(j: BackupJob) {
+    drawerJob = j;
+    drawerRun = null;
+    drawerTarget = null;
+  }
+  function openRunDrawer(r: BackupRun) {
+    drawerRun = r;
+    drawerJob = null;
+    drawerTarget = null;
+  }
+  function openTargetDrawer(t: BackupTarget) {
+    drawerTarget = t;
+    drawerJob = null;
+    drawerRun = null;
+  }
+  function closeDrawers() {
+    drawerJob = null;
+    drawerRun = null;
+    drawerTarget = null;
+  }
+  // Crossover: clicking a Run row inside the JobDrawer hops to the
+  // Run-drawer without an in-between close. We swap state directly.
+  function jumpJobToRun(r: BackupRun) {
+    drawerJob = null;
+    drawerRun = r;
+  }
+  // Restore from RunDrawer routes through the existing restore-modal
+  // flow so the confirm-text validation stays in one place. Each mode
+  // opens the same restore modal with a pre-set context (the modal
+  // text adapts in a follow-up).
+  function restoreRunFromDrawer(r: BackupRun, mode: 'in-place' | 'alongside' | 'download') {
+    if (mode === 'download') {
+      downloadRunArchive(r);
+      return;
+    }
+    closeDrawers();
+    openRestore(r);
+  }
+
+  async function downloadRunArchive(r: BackupRun) {
+    try {
+      await api.backups.downloadArchive(r.id);
+      toast.success('Download started', `backup-run-${r.id}.tar.gz`);
+    } catch (err) {
+      toast.error('Download failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
 
   let jobs = $state<BackupJob[]>([]);
   let runs = $state<BackupRun[]>([]);
@@ -102,14 +242,12 @@
   }
 
   function openNewTarget() {
-    editingTarget = null; tName = ''; tType = 'local'; tConfig = {}; showTarget = true;
+    wizardTargetEdit = null;
+    wizardTargetOpen = true;
   }
   function openEditTarget(t: BackupTarget) {
-    editingTarget = t; tName = t.name; tType = t.type as any;
-    const cfg = typeof t.config === 'object' ? t.config : {};
-    tConfig = {};
-    for (const [k, v] of Object.entries(cfg)) tConfig[k] = String(v ?? '');
-    showTarget = true;
+    wizardTargetEdit = t;
+    wizardTargetOpen = true;
   }
   async function saveTarget(e: Event) {
     e.preventDefault(); tSaving = true;
@@ -232,7 +370,7 @@
   }
 
   $effect(() => {
-    if (!allowed('user.manage')) { goto('/'); return; }
+    if (!allowed('backups.update')) { goto('/'); return; }
     if (tab === 'jobs') { loadJobs(); loadTargets(); }
     else if (tab === 'runs') { loadRuns(); loadJobs(); }
     else if (tab === 'targets') loadTargets();
@@ -259,7 +397,19 @@
   const recentFailed = $derived(recentRuns.filter(r => r.status === 'failed').length);
   const nextRun = $derived(jobs.filter(j => j.enabled && j.next_run_at).sort((a, b) => (a.next_run_at ?? '').localeCompare(b.next_run_at ?? ''))[0]?.next_run_at);
 
-  // Runs filtering
+  // Stable orderings so the 5s autoRefresh doesn't shuffle the cards
+  // / table rows out from under the operator. Same pattern as
+  // /resources, /containers, /hosts. Backend may return arrays in
+  // arbitrary order on each fetch.
+  const sortedJobs = $derived(
+    jobs.slice().sort((a, b) => a.name.localeCompare(b.name))
+  );
+  const sortedTargets = $derived(
+    bTargets.slice().sort((a, b) => a.name.localeCompare(b.name))
+  );
+
+  // Runs filtering — backend already returns newest-first, so we keep
+  // that order (don't sort by name). The filter is stable in itself.
   const filteredRuns = $derived(
     runs.filter(r => {
       if (runJobFilter && r.job_name !== runJobFilter) return false;
@@ -282,6 +432,67 @@
     if (d < 3600) return `${Math.floor(d / 60)}m ago`;
     if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
     return new Date(ts).toLocaleString();
+  }
+  // Forward-time formatter for upcoming events (next backup run).
+  // Mockup pattern shows "in 5h 22m" / "in 2d 4h" — never em-dash if
+  // we have a timestamp, never raw ISO. When the backend hasn't filled
+  // next_run_at, we fall back to the cron-human label only.
+  function fmtUntil(ts?: string): string {
+    if (!ts) return '—';
+    const t = Date.parse(ts);
+    if (!t || isNaN(t)) return '—';
+    const secs = Math.floor((t - Date.now()) / 1000);
+    if (secs < 0) return 'overdue';
+    if (secs < 60) return 'in <1m';
+    if (secs < 3600) return `in ${Math.floor(secs / 60)}m`;
+    if (secs < 86400) {
+      const h = Math.floor(secs / 3600);
+      const m = Math.floor((secs % 3600) / 60);
+      return m > 0 ? `in ${h}h ${m}m` : `in ${h}h`;
+    }
+    const d = Math.floor(secs / 86400);
+    const h = Math.floor((secs % 86400) / 3600);
+    return h > 0 ? `in ${d}d ${h}h` : `in ${d}d`;
+  }
+  // Map a hook command back to its preset label so the card-foot can
+  // show "postgresql, redis" instead of "2 hooks". Mirrors the preset
+  // table from JobWizard.
+  function hookLabel(h: { container: string; cmd: string[] }): string {
+    const cmd = h.cmd.join(' ').toLowerCase();
+    if (cmd.includes('pg_dump')) return 'postgresql';
+    if (cmd.includes('mysqldump')) return 'mysql';
+    if (cmd.includes('mariadb-dump')) return 'mariadb';
+    if (cmd.includes('redis-cli')) return 'redis';
+    if (cmd.includes('mongodump')) return 'mongodb';
+    return h.container || 'custom';
+  }
+  // Source meta — second line under the source label. For system this
+  // is the static "DB · stacks · data" hint. For stack/volume we use
+  // the source name as the meta because the backend doesn't expose
+  // per-source container/size counts yet.
+  function jobSourceMeta(j: BackupJob): string {
+    if (j.sources.length === 0) return '—';
+    const s = j.sources[0];
+    const t = s.type as string;
+    if (t === 'system') return 'DB · stacks/ · data/';
+    return s.name;
+  }
+  // Mini-sparkline points for the job card. We use the last 7 SUCCESS
+  // run sizes — failures become a 0 dip so the line drops visibly.
+  function jobSpark(jobName: string): number[] {
+    return runs
+      .filter((r) => r.job_name === jobName)
+      .slice(0, 7)
+      .reverse()
+      .map((r) => (r.status === 'failed' ? 0 : r.size_bytes));
+  }
+  function sparkPoints(values: number[], width = 80, height = 22): string {
+    if (values.length < 2) return '';
+    const max = Math.max(...values, 1);
+    const min = Math.min(...values, 0);
+    const range = Math.max(max - min, 1);
+    const stepX = width / (values.length - 1);
+    return values.map((v, i) => `${i * stepX},${(height - ((v - min) / range) * height).toFixed(1)}`).join(' ');
   }
   function fmtDuration(start: string, end?: string): string {
     if (!end) return 'running…';
@@ -306,9 +517,65 @@
     jPreHooks = []; jPostHooks = []; editing = null;
   }
 
-  function openNew() { resetForm(); jSelectedTarget = 'inline'; cronMode = 'preset'; cronFreq = 'daily'; cronHour = 3; cronMinute = 0; loadAvailableResources(); showJob = true; }
+  // The legacy single-modal job form stays in place (still functional)
+  // but the new editorial wizard supersedes it as the primary flow.
+  // openNew + openEdit + saveJob remain so the wizard's onsave can
+  // delegate API calls back through the existing handlers.
+  function openNew() { resetForm(); jSelectedTarget = 'inline'; cronMode = 'preset'; cronFreq = 'daily'; cronHour = 3; cronMinute = 0; loadAvailableResources(); wizardJobOpen = true; }
 
+  // ─── Wizard state. Replaces the legacy `showJob` / `showTarget`
+  // modals. `wizardJobEdit` / `wizardTargetEdit` carry the row being
+  // edited (or null for new), so the wizard hydrates its initial state
+  // from a single prop.
+  let wizardJobOpen = $state(false);
+  let wizardJobEdit = $state<BackupJob | null>(null);
+  let wizardTargetOpen = $state(false);
+  let wizardTargetEdit = $state<BackupTarget | null>(null);
+
+  async function wizardSaveJob(payload: BackupJobInput, isEdit: boolean, originalId?: number) {
+    try {
+      if (isEdit && originalId) {
+        await api.backups.updateJob(originalId, payload);
+        toast.success('Updated', payload.name);
+      } else {
+        await api.backups.createJob(payload);
+        toast.success('Created', payload.name);
+      }
+      wizardJobOpen = false;
+      wizardJobEdit = null;
+      await loadJobs();
+    } catch (err) {
+      toast.error('Save failed', err instanceof ApiError ? err.message : (err as Error).message);
+    }
+  }
+  async function wizardSaveTarget(payload: { name: string; type: string; config: Record<string, any> }, isEdit: boolean, originalId?: number) {
+    try {
+      if (isEdit && originalId) {
+        await api.backups.updateTarget(originalId, payload);
+        toast.success('Updated', payload.name);
+      } else {
+        await api.backups.createTarget(payload);
+        toast.success('Created', payload.name);
+      }
+      wizardTargetOpen = false;
+      wizardTargetEdit = null;
+      await loadTargets();
+    } catch (err) {
+      toast.error('Save failed', err instanceof ApiError ? err.message : (err as Error).message);
+    }
+  }
+
+  // Route through the wizard for both new + edit. The legacy modal
+  // form below is preserved but no longer reachable from the UI —
+  // we'll delete it once the wizard is verified in production.
   function openEdit(j: BackupJob) {
+    wizardJobEdit = j;
+    wizardJobOpen = true;
+  }
+
+  // Legacy openEdit body kept for the form-state plumbing; called
+  // nowhere now but keeps the form-state declarations valid.
+  function _legacyOpenEdit(j: BackupJob) {
     editing = j; jSelectedTarget = 'inline'; cronMode = 'custom'; loadAvailableResources();
     jName = j.name; jTargetType = j.target_type as 'local' | 's3'; jEnabled = j.enabled; jEncrypt = j.encrypt;
     jSchedule = j.schedule; jRetentionCount = j.retention_count; jRetentionDays = j.retention_days;
@@ -453,300 +720,491 @@
   function addPostHook() { jPostHooks = [...jPostHooks, { container: '', cmd: '' }]; }
 </script>
 
-<section class="space-y-4">
-  <!-- Header + summary -->
-  <div class="flex items-center justify-between flex-wrap gap-3">
-    <div>
-      <h2 class="text-2xl font-semibold tracking-tight">Backups</h2>
-      <p class="text-sm text-[var(--fg-muted)] mt-0.5">
-        {activeJobs} active job{activeJobs === 1 ? '' : 's'}
-        {#if recentRuns.length > 0}
-          · 24h: <span class="text-[var(--color-success-400)]">{recentSuccess} ok</span>{#if recentFailed > 0}, <span class="text-[var(--color-danger-400)]">{recentFailed} failed</span>{/if}
+<section class="bk-page">
+  <!-- ─── Header ─── -->
+  <header class="bk-header">
+    <div class="bk-header-text">
+      <h1 class="ed-title bk-title">Backups</h1>
+      <p class="bk-subtitle">
+        {activeJobs} job{activeJobs === 1 ? '' : 's'} · {bTargets.length} target{bTargets.length === 1 ? '' : 's'}{#if recentFailed > 0}
+          · <span class="bk-subtitle-fail">{recentFailed} failed in last 24h</span>
+        {:else if recentRuns.length > 0}
+          · {recentSuccess} recent run{recentSuccess === 1 ? '' : 's'} healthy
         {/if}
-        {#if nextRun} · next: {fmtTime(nextRun)}{/if}
       </p>
     </div>
-    <div class="flex gap-2">
-      <Button variant="secondary" size="sm" onclick={() => tab === 'jobs' ? loadJobs() : loadRuns()}>
-        <RefreshCw class="w-3.5 h-3.5 {loading ? 'animate-spin' : ''}" /> Refresh
-      </Button>
-      {#if tab === 'jobs'}
-        <Button variant="primary" size="sm" onclick={openNew}><Plus class="w-3.5 h-3.5" /> New job</Button>
-      {/if}
-    </div>
-  </div>
+  </header>
 
-  <!-- Tabs -->
-  <div class="border-b border-[var(--border)] flex gap-1">
-    <button class="px-4 py-2.5 text-sm border-b-2 transition-colors flex items-center gap-2 {tab === 'jobs' ? 'border-[var(--color-brand-500)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}" onclick={() => (tab = 'jobs')}>
-      <Archive class="w-3.5 h-3.5" /> Jobs
+  <!-- ─── Tabs ─── -->
+  <div class="ed-tabs bk-tabs">
+    <button type="button" class="ed-tab" class:active={tab === 'jobs'} onclick={() => (tab = 'jobs')}>
+      <Archive size={13} strokeWidth={1.5} /> Jobs <span class="count">{jobs.length}</span>
     </button>
-    <button class="px-4 py-2.5 text-sm border-b-2 transition-colors flex items-center gap-2 {tab === 'runs' ? 'border-[var(--color-brand-500)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}" onclick={() => (tab = 'runs')}>
-      <Clock class="w-3.5 h-3.5" /> Runs
+    <button type="button" class="ed-tab" class:active={tab === 'runs'} onclick={() => (tab = 'runs')}>
+      <Clock size={13} strokeWidth={1.5} /> Runs <span class="count">{runs.length}</span>
     </button>
-    <button class="px-4 py-2.5 text-sm border-b-2 transition-colors flex items-center gap-2 {tab === 'targets' ? 'border-[var(--color-brand-500)] text-[var(--fg)]' : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}" onclick={() => (tab = 'targets')}>
-      <HardDrive class="w-3.5 h-3.5" /> Targets
+    <button type="button" class="ed-tab" class:active={tab === 'targets'} onclick={() => (tab = 'targets')}>
+      <HardDrive size={13} strokeWidth={1.5} /> Targets <span class="count">{bTargets.length}</span>
     </button>
   </div>
 
   <!-- ===== JOBS TAB ===== -->
   {#if tab === 'jobs'}
+    <!-- Per-tab head: Eyebrow + subtitle on the left, actions on the
+         right (mockup pattern from JobsTab). Replaces the global
+         page-header actions so each tab owns its own context. -->
+    <div class="bk-tab-head">
+      <div class="bk-tab-head-text">
+        <Eyebrow>{jobs.length} jobs · {jobs.filter((j) => j.enabled).length} enabled</Eyebrow>
+        <p class="bk-tab-subtitle">
+          One job per source. Each job runs on a schedule, dumps to a target, and rotates by retention rules.
+        </p>
+      </div>
+      <div class="ed-actions">
+        <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => runs.filter((r) => r.status === 'running').length === 0 ? jobs.filter((j) => j.enabled).forEach((j) => api.backups.runJob(j.id)) : null}>
+          <RefreshCw size={12} strokeWidth={1.5} /> Run all due
+        </button>
+        <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={openNew}>
+          <Plus size={13} strokeWidth={1.5} /> New backup job
+        </button>
+      </div>
+    </div>
+
     {#if loading && jobs.length === 0}
-      <Card><Skeleton class="m-5" width="70%" height="3rem" /></Card>
+      <div class="dm-card bk-card-pad"><Skeleton width="70%" height="6rem" /></div>
     {:else if jobs.length === 0}
-      <Card>
-        <EmptyState
-          icon={Archive}
-          title="No backups configured"
-          description="Dockmesh does not back up anything by default — you choose what to protect. Create a job to snapshot one or more stacks, volumes, or the dockmesh server itself, on a schedule, to a target of your choice."
-        />
-        <div class="px-5 pb-5 text-xs text-[var(--fg-muted)] max-w-prose">
-          A reasonable starting point: a daily backup of the <span class="font-mono">dockmesh-system</span> source (DB + stacks + CA) to an off-host target like SFTP or S3, plus per-stack volume backups for anything stateful you can't lose. The default-everything-to-local-disk job that older versions of dockmesh installed automatically is no longer there — local-only backups don't survive a host failure, and silently filling up the disk surprised people.
-        </div>
-      </Card>
+      <div class="dm-card bk-card-pad bk-empty">
+        <Eyebrow>No backups configured</Eyebrow>
+        <h3 class="bk-empty-title">Dockmesh doesn't back up anything by default</h3>
+        <p class="bk-empty-body">
+          Pick what to protect. Create a job to snapshot stacks, volumes, or the dockmesh server itself
+          on a schedule, to a target of your choice. The default-everything-to-local-disk job older
+          versions installed automatically is gone — local-only backups don't survive a host failure.
+        </p>
+        <p class="bk-empty-hint font-mono">
+          starting point: daily <span class="ed-accent">dockmesh-system</span> backup to an off-host target (SFTP / S3) + per-stack volume backups for anything stateful.
+        </p>
+        <button type="button" class="dm-btn dm-btn-primary dm-btn-sm bk-empty-cta" onclick={openNew}>
+          <Plus size={13} strokeWidth={1.5} /> New backup job
+        </button>
+      </div>
     {:else}
-      {@const reviewJobs = jobs.filter(j => j.needs_review)}
+      {@const reviewJobs = jobs.filter((j) => j.needs_review)}
       {#if reviewJobs.length > 0}
-        <Card class="border-[color-mix(in_srgb,var(--color-warning-500)_45%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-500)_6%,transparent)]">
-          <div class="p-4 space-y-3">
-            <div class="flex items-start gap-2.5">
-              <span class="text-[var(--color-warning-400)] mt-0.5">⚠</span>
-              <div class="flex-1">
-                <div class="font-medium text-[var(--color-warning-400)]">
-                  {reviewJobs.length} auto-created backup job{reviewJobs.length === 1 ? '' : 's'} need{reviewJobs.length === 1 ? 's' : ''} your review
-                </div>
-                <div class="text-xs text-[var(--fg-muted)] mt-1">
-                  Earlier dockmesh versions silently created a daily local backup. The default behaviour changed in v0.3 — backups are now opt-in. Confirm whether you want to keep these or disable them. <span class="font-medium">Keep</span> leaves the job running as-is. <span class="font-medium">Disable</span> stops the schedule but keeps the job + its history so you can re-enable later.
-                </div>
-              </div>
+        <div class="bk-review-banner">
+          <AlertTriangle size={16} strokeWidth={1.5} class="bk-review-icon" />
+          <div class="bk-review-text">
+            <div class="bk-review-title">
+              {reviewJobs.length} auto-created backup job{reviewJobs.length === 1 ? '' : 's'} need{reviewJobs.length === 1 ? 's' : ''} your review
             </div>
-            <div class="space-y-2">
-              {#each reviewJobs as j (j.id)}
-                <div class="flex items-start justify-between gap-3 p-2.5 rounded-md bg-[var(--surface)] border border-[var(--border)]">
-                  <div class="min-w-0 text-sm">
-                    <div class="font-mono">{j.name}</div>
-                    <div class="text-xs text-[var(--fg-muted)] mt-0.5 max-w-prose">{j.review_reason}</div>
-                  </div>
-                  <div class="flex gap-2 shrink-0">
-                    <Button size="sm" variant="secondary" onclick={() => ackReview(j, 'keep')}>Keep</Button>
-                    <Button size="sm" variant="danger" onclick={() => ackReview(j, 'disable')}>Disable</Button>
-                  </div>
-                </div>
-              {/each}
+            <div class="bk-review-body">
+              Earlier dockmesh versions silently created a daily local backup. The default changed in v0.3 — backups are now opt-in.
+              <strong>Keep</strong> leaves the job running. <strong>Disable</strong> stops the schedule but keeps the history.
             </div>
           </div>
-        </Card>
-      {/if}
-      <Card>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="border-b border-[var(--border)] text-[var(--fg-muted)] text-xs uppercase tracking-wider">
-                <th class="text-center px-3 py-3 w-14">Enabled</th>
-                <th class="text-left px-3 py-3">Name</th>
-                <th class="text-left px-3 py-3">Target</th>
-                <th class="text-left px-3 py-3">Sources</th>
-                <th class="text-left px-3 py-3">Schedule</th>
-                <th class="text-left px-3 py-3">Last Run</th>
-                <th class="text-left px-3 py-3">Next Run</th>
-                <th class="text-right px-3 py-3 w-28">Actions</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-[var(--border)]">
-              {#each jobs as j (j.id)}
-                <tr class="hover:bg-[var(--surface-hover)]">
-                  <td class="px-3 py-2.5 text-center">
-                    <label class="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" class="sr-only peer" checked={j.enabled} onchange={() => toggleJob(j)} />
-                      <div class="w-8 h-4.5 bg-[var(--surface)] border border-[var(--border)] rounded-full peer-checked:bg-[var(--color-brand-500)] peer-checked:border-[var(--color-brand-500)] after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-3.5 after:w-3.5 after:transition-transform peer-checked:after:translate-x-3.5"></div>
-                    </label>
-                  </td>
-                  <td class="px-3 py-2.5">
-                    <button class="text-left" onclick={() => openEdit(j)}>
-                      <div class="font-medium text-sm flex items-center gap-1.5">
-                        {j.name}
-                        {#if j.encrypt}<Lock class="w-3 h-3 text-[var(--color-brand-400)]" />{/if}
-                      </div>
-                    </button>
-                  </td>
-                  <td class="px-3 py-2.5">
-                    <Badge variant={j.target_type === 's3' ? 'info' : 'default'}>
-                      {j.target_type === 's3' ? 'S3' : 'Local'}
-                    </Badge>
-                  </td>
-                  <td class="px-3 py-2.5 text-xs text-[var(--fg-muted)]" title={j.sources.map(s => `${s.type}:${s.name}`).join(', ')}>
-                    {j.sources.length} source{j.sources.length === 1 ? '' : 's'}
-                  </td>
-                  <td class="px-3 py-2.5 text-xs">
-                    <div class="font-mono text-[var(--fg-muted)]">{cronHuman(j.schedule)}</div>
-                  </td>
-                  <td class="px-3 py-2.5 text-xs text-[var(--fg-muted)]">{fmtTime(j.last_run_at)}</td>
-                  <td class="px-3 py-2.5 text-xs text-[var(--fg-muted)]">{fmtTime(j.next_run_at)}</td>
-                  <td class="px-3 py-2.5">
-                    <div class="flex gap-0.5 justify-end">
-                      <button class="p-1.5 rounded-md text-[var(--color-success-400)] hover:bg-[var(--surface-hover)]" title="Run now" onclick={() => runJob(j)}>
-                        <Play class="w-3.5 h-3.5" />
-                      </button>
-                      <button class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]" title="Duplicate" onclick={() => duplicateJob(j)}>
-                        <Copy class="w-3.5 h-3.5" />
-                      </button>
-                      <button class="p-1.5 rounded-md text-[var(--color-danger-400)] hover:bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)]" title="Delete" onclick={() => deleteJob(j)}>
-                        <Trash2 class="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
         </div>
-      </Card>
+        <div class="bk-review-list">
+          {#each reviewJobs as j (j.id)}
+            <div class="bk-review-row">
+              <div class="bk-review-row-text">
+                <div class="font-mono bk-review-row-name">{j.name}</div>
+                <div class="bk-review-row-reason">{j.review_reason}</div>
+              </div>
+              <div class="ed-actions">
+                <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={() => ackReview(j, 'keep')}>Keep</button>
+                <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm bk-danger" onclick={() => ackReview(j, 'disable')}>Disable</button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      <div class="bk-job-grid">
+        {#each sortedJobs as j (j.id)}
+          {@const SrcIcon = jobSourceIcon(j)}
+          {@const target = targetById(j.target_type === 'inline' ? -1 : -1)}
+          {@const tgtMeta = targetTypeMeta(j.target_type)}
+          {@const last = jobLastRun(j.name)}
+          {@const status = jobStatusFor(j.name)}
+          {@const jrRuns = runsForJob(j.name)}
+          {@const failed7 = jrRuns.filter((r) => r.status === 'failed').length}
+          {@const spark = jobSpark(j.name)}
+          {@const hookLabels = [...(j.pre_hooks ?? []), ...(j.post_hooks ?? [])].map(hookLabel)}
+          {@const sparkColor = status === 'failed' ? 'var(--color-danger-400)' : status === 'warn' ? 'var(--color-warning-400)' : 'var(--color-success-400)'}
+          <article class="bk-job-card" class:bk-job-card-disabled={!j.enabled}>
+            <header class="bk-job-card-head">
+              <button type="button" class="bk-job-card-head-text bk-job-card-head-link" onclick={() => openJobDrawer(j)}>
+                <span class={statusDot(status)}></span>
+                <h3 class="bk-job-card-title font-mono" title={j.name}>{j.name}</h3>
+              </button>
+              <div class="bk-job-card-actions">
+                {#if !j.enabled}<span class="dm-pill dm-pill-neutral bk-mini-pill">disabled</span>{/if}
+                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs bk-icon-btn" onclick={(e) => { e.stopPropagation(); runJob(j); }} title="Run now" disabled={!j.enabled}>
+                  <Play size={11} strokeWidth={1.5} />
+                </button>
+                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs bk-icon-btn" onclick={() => openJobDrawer(j)} title="Open detail">
+                  <ArrowRight size={12} strokeWidth={1.5} />
+                </button>
+              </div>
+            </header>
+
+            <!-- Source line — icon + headline label, then mono meta on
+                 the indented next line (mockup matches with paddingLeft
+                 to align under the icon). -->
+            <div class="bk-job-card-src">
+              <SrcIcon size={12} strokeWidth={1.5} />
+              <span class="bk-job-card-src-label">{jobSourceLabel(j)}</span>
+            </div>
+            <div class="font-mono bk-job-card-src-meta">{jobSourceMeta(j)}</div>
+
+            <!-- Target row — has its own surface bg + border-subtle so
+                 it visually nests inside the card (mockup pattern). -->
+            <div class="bk-job-card-target">
+              <div class="bk-job-card-target-text">
+                <span class="bk-target-glyph">{tgtMeta.glyph}</span>
+                <div class="bk-job-card-target-info">
+                  <span class="bk-job-card-target-name">{j.target_type === 'inline' ? 'inline target' : tgtMeta.label}</span>
+                  <span class="font-mono bk-job-card-target-meta">{j.target_type}</span>
+                </div>
+              </div>
+              {#if j.encrypt}
+                <span class="dm-pill bk-mini-pill bk-pill-encrypt"><Lock size={9} strokeWidth={1.5} /> age</span>
+              {/if}
+            </div>
+
+            <!-- Stats row — 3 columns: Last (left) / Sparkline (center)
+                 / Next (right). Sparkline is a tiny 80×22 SVG of the
+                 last 7 success-sizes (failures become 0 dips). -->
+            <div class="bk-job-card-stats">
+              <div class="bk-job-stat">
+                <span class="bk-job-stat-label">Last</span>
+                <span class="bk-job-stat-value" class:fail={status === 'failed'} class:warn={status === 'warn'} class:ok={status === 'ok'}>
+                  {#if status === 'failed'}failed
+                  {:else if status === 'running'}running
+                  {:else if last}{fmtBytes(last.size_bytes)}
+                  {:else}—{/if}
+                </span>
+                <span class="font-mono bk-job-stat-meta">
+                  {jrRuns.length} run{jrRuns.length === 1 ? '' : 's'}{failed7 > 0 ? ` · ${failed7} failed` : ''}
+                </span>
+              </div>
+              <div class="bk-job-spark">
+                {#if spark.length >= 2}
+                  <svg width="80" height="22" viewBox="0 0 80 22" aria-hidden="true">
+                    <polyline points={sparkPoints(spark)} fill="none" stroke={sparkColor} stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round" />
+                  </svg>
+                {/if}
+              </div>
+              <div class="bk-job-stat bk-job-stat-right">
+                <span class="bk-job-stat-label">Next</span>
+                <span class="bk-job-stat-value">{j.next_run_at ? fmtUntil(j.next_run_at) : 'soon'}</span>
+                <span class="font-mono bk-job-stat-meta">{cronHuman(j.schedule)}</span>
+              </div>
+            </div>
+
+            <footer class="bk-job-card-foot">
+              <span class="font-mono bk-job-card-foot-meta">
+                retention: keep {j.retention_count}{j.retention_days > 0 ? ` · ${j.retention_days}d` : ''}
+              </span>
+              {#if hookLabels.length > 0}
+                <span class="font-mono bk-job-card-foot-meta">
+                  · {hookLabels.length} hook{hookLabels.length === 1 ? '' : 's'}: {hookLabels.join(', ')}
+                </span>
+              {/if}
+              <span class="bk-job-card-foot-spacer"></span>
+              <label class="bk-job-card-toggle font-mono">
+                <input type="checkbox" checked={j.enabled} onchange={() => toggleJob(j)} />
+                enabled
+              </label>
+            </footer>
+
+            {#if last?.error}
+              <div class="bk-job-card-error">
+                <AlertTriangle size={11} strokeWidth={1.5} /> {last.error}
+              </div>
+            {/if}
+          </article>
+        {/each}
+      </div>
     {/if}
 
   <!-- ===== RUNS TAB ===== -->
   {:else if tab === 'runs'}
-    <!-- Filters -->
-    <div class="flex flex-wrap items-center gap-3">
-      <select class="dm-input !py-1 !px-2 !w-auto text-xs" bind:value={runJobFilter}>
+    <!-- Header row: Eyebrow + subtitle on the left, Timeline/List
+         segmented toggle on the right (mockup pattern from RunsTab). -->
+    <div class="bk-runs-head">
+      <div class="bk-runs-head-text">
+        <Eyebrow>{filteredRuns.length} runs · last 7 days</Eyebrow>
+        <p class="bk-runs-subtitle">
+          Every backup run is recorded, even the failed ones. Click any block to inspect logs and restore.
+        </p>
+      </div>
+      <div class="ed-actions">
+        <div class="bk-seg-radio">
+          <button type="button" class="bk-seg-radio-item" class:active={runsView === 'timeline'} onclick={() => (runsView = 'timeline')}>Timeline</button>
+          <button type="button" class="bk-seg-radio-item" class:active={runsView === 'list'} onclick={() => (runsView = 'list')}>List</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Filter row (job + status + count). Stays under the header so
+         filters apply to both views identically. -->
+    <div class="bk-runs-toolbar">
+      <select class="bk-runs-select" bind:value={runJobFilter}>
         <option value="">All jobs</option>
-        {#each jobs as j}<option value={j.name}>{j.name}</option>{/each}
+        {#each jobs as j (j.id)}<option value={j.name}>{j.name}</option>{/each}
       </select>
-      <div class="flex gap-1 text-xs">
-        {#each [['all', 'All'], ['success', 'Success'], ['failed', 'Failed'], ['running', 'Running']] as [key, label]}
-          <button
-            class="px-2.5 py-1 rounded-full border transition-colors {runStatusFilter === key
-              ? 'bg-[var(--surface)] border-[var(--border-strong)] text-[var(--fg)]'
-              : 'border-[var(--border)] text-[var(--fg-muted)] hover:bg-[var(--surface-hover)]'}"
-            onclick={() => (runStatusFilter = key as typeof runStatusFilter)}
-          >{label}</button>
+      <div class="bk-runs-pills">
+        {#each [['all', 'All'], ['success', 'Success'], ['failed', 'Failed'], ['running', 'Running']] as [key, label] (key)}
+          <button type="button" class="bk-runs-pill" class:active={runStatusFilter === key} onclick={() => (runStatusFilter = key as typeof runStatusFilter)}>
+            {label}
+          </button>
         {/each}
       </div>
-      <span class="text-xs text-[var(--fg-subtle)] ml-auto">{filteredRuns.length} run{filteredRuns.length === 1 ? '' : 's'}</span>
+      <span class="bk-runs-count font-mono">{filteredRuns.length} run{filteredRuns.length === 1 ? '' : 's'}</span>
     </div>
 
     {#if loading && runs.length === 0}
-      <Card><Skeleton class="m-5" width="70%" height="3rem" /></Card>
+      <div class="dm-card bk-card-pad"><Skeleton width="70%" height="6rem" /></div>
     {:else if runs.length === 0}
-      <Card><EmptyState icon={Clock} title="No runs yet" description="Trigger a backup job or wait for its schedule." /></Card>
+      <div class="dm-card bk-card-pad bk-empty">
+        <Eyebrow>No runs yet</Eyebrow>
+        <p class="bk-empty-body">Trigger a backup job or wait for its schedule. Every run is recorded — even the failed ones — so you can audit later.</p>
+      </div>
     {:else if filteredRuns.length === 0}
-      <Card class="p-8 text-center text-sm text-[var(--fg-muted)]">No runs match this filter.</Card>
-    {:else}
-      <Card>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="border-b border-[var(--border)] text-[var(--fg-muted)] text-xs uppercase tracking-wider">
-                <th class="text-left px-5 py-3">Job</th>
-                <th class="text-left px-3 py-3">Status</th>
-                <th class="text-left px-3 py-3">Started</th>
-                <th class="text-left px-3 py-3">Duration</th>
-                <th class="text-left px-3 py-3">Size</th>
-                <th class="text-right px-3 py-3 w-20">Actions</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-[var(--border)]">
-              {#each filteredRuns as r (r.id)}
-                <tr class="hover:bg-[var(--surface-hover)]">
-                  <td class="px-5 py-2.5 font-medium">{r.job_name}</td>
-                  <td class="px-3 py-2.5">
-                    <Badge variant={statusVariant(r.status)} dot>{r.status}</Badge>
-                    {#if r.encrypted}<Lock class="w-3 h-3 inline ml-1 text-[var(--color-brand-400)]" />{/if}
-                  </td>
-                  <td class="px-3 py-2.5 text-xs text-[var(--fg-muted)]">{fmtTime(r.started_at)}</td>
-                  <td class="px-3 py-2.5 text-xs font-mono tabular-nums">{fmtDuration(r.started_at, r.finished_at)}</td>
-                  <td class="px-3 py-2.5 text-xs font-mono tabular-nums">{fmtBytes(r.size_bytes)}</td>
-                  <td class="px-3 py-2.5 text-right">
-                    {#if r.status === 'success'}
-                      <button class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]" title="Restore" onclick={() => openRestore(r)}>
-                        <Undo2 class="w-3.5 h-3.5" />
-                      </button>
-                    {/if}
-                  </td>
-                </tr>
-                {#if r.error}
-                  <tr><td colspan="6" class="px-5 pb-3 text-xs text-[var(--color-danger-400)] font-mono break-all">{r.error}</td></tr>
-                {/if}
+      <div class="dm-card bk-card-pad bk-empty">
+        <p class="bk-empty-body">No runs match this filter.</p>
+      </div>
+    {:else if runsView === 'timeline'}
+      <!-- Timeline view (default). Group runs by day, render each as
+           a colored block with status-driven left-border. -->
+      {@const groups = (() => {
+        const map = new Map<string, typeof filteredRuns>();
+        for (const r of filteredRuns) {
+          const k = dayKey(r.started_at);
+          if (!map.has(k)) map.set(k, []);
+          map.get(k)!.push(r);
+        }
+        return [...map.entries()];
+      })()}
+      <div class="bk-timeline">
+        {#each groups as [day, items] (day)}
+          {@const okCount = items.filter((r) => r.status === 'success').length}
+          {@const failCount = items.filter((r) => r.status === 'failed').length}
+          <div class="bk-timeline-day">
+            <div class="bk-timeline-day-head">
+              <span class="bk-timeline-day-label">{dayHeading(day)}</span>
+              <span class="bk-timeline-day-meta font-mono">
+                {items.length} run{items.length === 1 ? '' : 's'} · {okCount} ok{failCount > 0 ? ` · ${failCount} failed` : ''}
+              </span>
+              <span class="bk-timeline-day-rule"></span>
+            </div>
+            <div class="bk-timeline-row">
+              {#each items as r (r.id)}
+                {@const tone = r.status === 'success' ? 'ok' : r.status === 'failed' ? 'failed' : r.status === 'running' ? 'running' : 'warn'}
+                <button type="button" class="bk-timeline-block bk-timeline-block-{tone}" onclick={() => openRunDrawer(r)}>
+                  <span class="font-mono bk-timeline-time">{new Date(r.started_at).toTimeString().slice(0, 5)}</span>
+                  <span class="bk-timeline-job font-mono">{r.job_name}</span>
+                  <span class="font-mono bk-timeline-meta">
+                    {r.status === 'failed' ? 'failed' : `${fmtBytes(r.size_bytes)} · ${fmtDuration(r.started_at, r.finished_at)}`}
+                  </span>
+                  <span class="font-mono bk-timeline-target">→ {r.target_path?.split('/').pop() || 'target'}</span>
+                  {#if r.error}<span class="font-mono bk-timeline-error">{r.error}</span>{/if}
+                </button>
               {/each}
-            </tbody>
-          </table>
+            </div>
+          </div>
+        {/each}
+      </div>
+    {:else}
+      <div class="bk-runs-table">
+        <div class="bk-runs-row bk-runs-row-head">
+          <span>job</span>
+          <span>status</span>
+          <span>started</span>
+          <span class="right">duration</span>
+          <span class="right">size</span>
+          <span></span>
         </div>
-      </Card>
+        {#each filteredRuns as r (r.id)}
+          <button type="button" class="bk-runs-row bk-runs-row-link" class:bk-runs-row-failed={r.status === 'failed'} onclick={() => openRunDrawer(r)}>
+            <div class="bk-runs-name">
+              <span class="font-mono">{r.job_name}</span>
+              {#if r.encrypted}<Lock size={10} strokeWidth={1.5} class="bk-runs-lock" />{/if}
+            </div>
+            <span>
+              {#if r.status === 'success'}
+                <span class="dm-pill dm-pill-success bk-mini-pill"><span class="dm-pill-dot"></span> success</span>
+              {:else if r.status === 'failed'}
+                <span class="dm-pill dm-pill-danger bk-mini-pill"><span class="dm-pill-dot"></span> failed</span>
+              {:else if r.status === 'running'}
+                <span class="dm-pill bk-mini-pill"><span class="dm-pill-dot"></span> running</span>
+              {:else}
+                <span class="dm-pill dm-pill-neutral bk-mini-pill">{r.status}</span>
+              {/if}
+            </span>
+            <span class="font-mono bk-runs-cell">{fmtTime(r.started_at)}</span>
+            <span class="font-mono bk-runs-cell right">{fmtDuration(r.started_at, r.finished_at)}</span>
+            <span class="font-mono bk-runs-cell right">{fmtBytes(r.size_bytes)}</span>
+            <span class="bk-runs-actions">
+              {#if r.status === 'success'}
+                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" title="Restore" onclick={(e) => { e.stopPropagation(); openRestore(r); }}>
+                  <Undo2 size={11} strokeWidth={1.5} />
+                </button>
+              {/if}
+            </span>
+          </button>
+          {#if r.error}
+            <div class="bk-runs-error font-mono">
+              <AlertTriangle size={11} strokeWidth={1.5} /> {r.error}
+            </div>
+          {/if}
+        {/each}
+      </div>
     {/if}
 
   <!-- ===== TARGETS TAB ===== -->
   {:else if tab === 'targets'}
-    <div class="flex justify-between items-center">
-      <span class="text-sm text-[var(--fg-muted)]">{bTargets.length} target{bTargets.length === 1 ? '' : 's'}</span>
-      <Button variant="primary" size="sm" onclick={openNewTarget}><Plus class="w-3.5 h-3.5" /> New target</Button>
+    {@const totalUsed = bTargets.reduce((s, t) => s + (t.used_bytes ?? 0), 0)}
+    <div class="bk-tab-head">
+      <div class="bk-tab-head-text">
+        <Eyebrow>{bTargets.length} targets · {fmtBytes(totalUsed)} used</Eyebrow>
+        <p class="bk-tab-subtitle">
+          Where backups are written. Multiple jobs can share a target. Free-space is checked before each run.
+        </p>
+      </div>
+      <div class="ed-actions">
+        <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={openNewTarget}>
+          <Plus size={13} strokeWidth={1.5} /> New target
+        </button>
+      </div>
     </div>
 
     {#if targetsLoading && bTargets.length === 0}
-      <Card><Skeleton class="m-5" width="70%" height="3rem" /></Card>
+      <div class="dm-card bk-card-pad"><Skeleton width="70%" height="6rem" /></div>
     {:else if bTargets.length === 0}
-      <Card><EmptyState icon={HardDrive} title="No backup targets" description="Configure a storage destination (local, NAS, SFTP, S3, WebDAV) to use in backup jobs." /></Card>
+      <div class="dm-card bk-card-pad bk-empty">
+        <Eyebrow>No targets</Eyebrow>
+        <h3 class="bk-empty-title">Where should backups go?</h3>
+        <p class="bk-empty-body">
+          Configure a storage destination — local directory, NAS / SMB share, SFTP, S3-compatible object store,
+          or WebDAV (Nextcloud). Multiple jobs can share a target.
+        </p>
+        <button type="button" class="dm-btn dm-btn-primary dm-btn-sm bk-empty-cta" onclick={openNewTarget}>
+          <Plus size={13} strokeWidth={1.5} /> New target
+        </button>
+      </div>
     {:else}
-      <Card>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="border-b border-[var(--border)] text-[var(--fg-muted)] text-xs uppercase tracking-wider">
-                <th class="text-left px-5 py-3">Name</th>
-                <th class="text-left px-3 py-3">Type</th>
-                <th class="text-left px-3 py-3">Status</th>
-                <th class="text-left px-3 py-3">Storage</th>
-                <th class="text-left px-3 py-3">Last Checked</th>
-                <th class="text-right px-3 py-3 w-28">Actions</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-[var(--border)]">
-              {#each bTargets as t (t.id)}
-                <tr class="hover:bg-[var(--surface-hover)]">
-                  <td class="px-5 py-2.5">
-                    <button class="text-left" onclick={() => openEditTarget(t)}>
-                      <div class="font-medium text-sm">{t.name}</div>
-                    </button>
-                  </td>
-                  <td class="px-3 py-2.5">
-                    <Badge variant={t.type === 's3' ? 'info' : t.type === 'sftp' ? 'success' : t.type === 'smb' ? 'warning' : t.type === 'webdav' ? 'info' : 'default'}>
-                      {t.type.toUpperCase()}
-                    </Badge>
-                  </td>
-                  <td class="px-3 py-2.5">
-                    {#if t.status === 'connected'}
-                      <Badge variant="success" dot>connected</Badge>
-                    {:else if t.status === 'error'}
-                      <Badge variant="danger" dot>error</Badge>
-                    {:else}
-                      <Badge variant="default">unknown</Badge>
-                    {/if}
-                  </td>
-                  <td class="px-3 py-2.5 text-xs font-mono tabular-nums">
-                    {#if t.total_bytes > 0}
-                      {fmtBytes(t.total_bytes - t.used_bytes)} free / {fmtBytes(t.total_bytes)}
-                    {:else}
-                      <span class="text-[var(--fg-subtle)]">—</span>
-                    {/if}
-                  </td>
-                  <td class="px-3 py-2.5 text-xs text-[var(--fg-muted)]">{fmtTime(t.last_checked_at)}</td>
-                  <td class="px-3 py-2.5">
-                    <div class="flex gap-0.5 justify-end">
-                      <button class="p-1.5 rounded-md text-[var(--color-brand-400)] hover:bg-[var(--surface-hover)]" title="Test connection" onclick={() => testTarget(t)}>
-                        <RefreshCw class="w-3.5 h-3.5" />
-                      </button>
-                      <button class="p-1.5 rounded-md text-[var(--color-danger-400)] hover:bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)]" title="Delete" onclick={() => deleteTarget(t)}>
-                        <Trash2 class="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      <div class="bk-target-grid">
+        {#each sortedTargets as t (t.id)}
+          {@const meta = targetTypeMeta(t.type)}
+          {@const usedPct = t.total_bytes > 0 ? (t.used_bytes / t.total_bytes) * 100 : 0}
+          {@const jobsOnTarget = jobs.length > 0 ? [] : []}
+          <article class="bk-target-card" class:bk-target-card-warn={usedPct > 80}>
+            <header class="bk-target-card-head">
+              <span class="bk-target-glyph bk-target-glyph-lg">{meta.glyph}</span>
+              <button type="button" class="bk-target-card-head-text bk-target-card-head-link" onclick={() => openTargetDrawer(t)}>
+                <h3 class="bk-target-card-name font-mono" title={t.name}>{t.name}</h3>
+                <span class="font-mono bk-target-card-type">{meta.label}</span>
+              </button>
+              {#if t.status === 'connected'}
+                <span class="dm-pill dm-pill-success bk-mini-pill"><span class="dm-pill-dot"></span> connected</span>
+              {:else if t.status === 'error'}
+                <span class="dm-pill dm-pill-danger bk-mini-pill"><span class="dm-pill-dot"></span> error</span>
+              {:else}
+                <span class="dm-pill dm-pill-neutral bk-mini-pill">unknown</span>
+              {/if}
+            </header>
+
+            <!-- Storage bar -->
+            <div class="bk-target-storage">
+              <div class="bk-target-storage-head">
+                <span class="bk-target-storage-label">Used</span>
+                {#if t.total_bytes > 0}
+                  <span class="font-mono bk-target-storage-num">
+                    {fmtBytes(t.used_bytes)} <span class="bk-target-storage-num-total">/ {fmtBytes(t.total_bytes)}</span>
+                  </span>
+                {:else}
+                  <span class="font-mono bk-target-storage-num bk-target-storage-num-total">—</span>
+                {/if}
+              </div>
+              <div class="bk-target-storage-bar">
+                <span class="bk-target-storage-bar-fill" style="width: {usedPct}%"></span>
+              </div>
+              <span class="font-mono bk-target-storage-meta">
+                {#if t.total_bytes > 0}{usedPct.toFixed(1)}% · {fmtBytes(t.free_bytes)} free{:else}storage size unknown — test connection to discover{/if}
+              </span>
+            </div>
+
+            <footer class="bk-target-card-foot">
+              <span class="font-mono bk-target-card-foot-meta">
+                tested {fmtTime(t.last_checked_at)}
+              </span>
+              <span class="bk-target-card-foot-spacer"></span>
+              <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => openTargetDrawer(t)} title="Open detail">
+                Detail
+              </button>
+              <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => testTarget(t)} title="Test connection">
+                <RefreshCw size={11} strokeWidth={1.5} /> Test
+              </button>
+            </footer>
+          </article>
+        {/each}
+      </div>
     {/if}
   {/if}
 </section>
+
+<!-- ─── Drawers ─── -->
+{#if drawerJob}
+  <JobDrawer
+    job={drawerJob}
+    runs={runs}
+    onclose={closeDrawers}
+    onedit={(j) => { closeDrawers(); openEdit(j); }}
+    ondelete={async (j) => { closeDrawers(); await deleteJob(j); }}
+    onrun={async (j) => { await runJob(j); }}
+    ontoggle={async (j) => { await toggleJob(j); }}
+    onopenrun={jumpJobToRun}
+  />
+{/if}
+
+{#if drawerRun}
+  <RunDrawer
+    run={drawerRun}
+    job={jobs.find((j) => j.name === drawerRun.job_name)}
+    target={undefined}
+    onclose={closeDrawers}
+    onrestore={restoreRunFromDrawer}
+  />
+{/if}
+
+{#if drawerTarget}
+  <TargetDrawer
+    target={drawerTarget}
+    jobs={jobs}
+    onclose={closeDrawers}
+    onedit={(t) => { closeDrawers(); openEditTarget(t); }}
+    ondelete={async (t) => { closeDrawers(); await deleteTarget(t); }}
+    ontest={async (t) => { await testTarget(t); }}
+  />
+{/if}
+
+<!-- ─── Wizards ─── -->
+<JobWizard
+  open={wizardJobOpen}
+  editing={wizardJobEdit}
+  targets={bTargets}
+  onclose={() => { wizardJobOpen = false; wizardJobEdit = null; }}
+  onsave={wizardSaveJob}
+/>
+
+<TargetWizard
+  open={wizardTargetOpen}
+  editing={wizardTargetEdit}
+  onclose={() => { wizardTargetOpen = false; wizardTargetEdit = null; }}
+  onsave={wizardSaveTarget}
+/>
 
 <!-- Target modal -->
 <Modal bind:open={showTarget} title={editingTarget ? `Edit: ${editingTarget.name}` : 'New backup target'} maxWidth="max-w-lg">
@@ -1183,3 +1641,656 @@
     </Button>
   {/snippet}
 </Modal>
+
+<style>
+  .bk-page { display: block; }
+
+  /* ─── Header ─── */
+  .bk-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-bottom: 22px;
+  }
+  .bk-header-text { min-width: 0; max-width: 70ch; }
+  .bk-title { font-size: 26px; max-width: 32ch; }
+  .bk-subtitle {
+    margin-top: 8px;
+    font-size: 13.5px;
+    color: var(--fg-muted);
+    line-height: 1.55;
+  }
+  .bk-subtitle-fail { color: var(--color-danger-400); }
+
+  .bk-tabs { margin-bottom: 24px; }
+
+  /* Per-tab head (mockup pattern). Eyebrow + subtitle on the left,
+     actions on the right. Sits inside each tab body — replaces the
+     legacy "everything in the page header" approach so each tab can
+     set its own context (Jobs / Runs / Targets each get their own
+     copy of "X jobs · Y enabled" stats + tab-specific buttons). */
+  .bk-tab-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .bk-tab-head-text { min-width: 0; max-width: 70ch; }
+  .bk-tab-subtitle {
+    margin-top: 6px;
+    font-size: 13.5px;
+    color: var(--fg-muted);
+    line-height: 1.55;
+  }
+
+  /* Empty / fallback states */
+  .bk-card-pad { padding: 22px 24px; }
+  .bk-empty { text-align: center; padding: 36px 28px; }
+  .bk-empty-title {
+    margin-top: 10px;
+    font-size: 18px;
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .bk-empty-body {
+    margin: 8px auto 0;
+    max-width: 56ch;
+    font-size: 13.5px;
+    color: var(--fg-muted);
+    line-height: 1.55;
+  }
+  .bk-empty-hint {
+    margin: 12px auto 0;
+    max-width: 60ch;
+    font-size: 11px;
+    color: var(--fg-subtle);
+    line-height: 1.6;
+  }
+  .bk-empty-cta { margin-top: 18px; }
+  .bk-danger { color: var(--color-danger-400); }
+
+  /* Review banner */
+  .bk-review-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    border: 1px solid color-mix(in srgb, var(--color-warning-500) 35%, var(--border));
+    background: color-mix(in srgb, var(--color-warning-500) 7%, transparent);
+    border-radius: 5px;
+  }
+  :global(.bk-review-icon) { color: var(--color-warning-400); flex-shrink: 0; margin-top: 2px; }
+  .bk-review-text { flex: 1; min-width: 0; }
+  .bk-review-title { font-size: 13px; color: var(--color-warning-400); font-weight: 500; }
+  .bk-review-body { margin-top: 4px; font-size: 12px; color: var(--fg-muted); line-height: 1.55; }
+  .bk-review-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 22px; }
+  .bk-review-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--surface);
+  }
+  .bk-review-row-text { min-width: 0; flex: 1; }
+  .bk-review-row-name { font-size: 12.5px; color: var(--fg); }
+  .bk-review-row-reason { margin-top: 4px; font-size: 11.5px; color: var(--fg-muted); line-height: 1.5; }
+
+  /* Job card grid */
+  .bk-job-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 14px;
+  }
+  .bk-job-card {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    padding: 14px 16px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: border-color 120ms;
+  }
+  .bk-job-card:hover { border-color: var(--border-strong); }
+  .bk-job-card-disabled { opacity: 0.65; }
+  .bk-job-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .bk-job-card-head-text {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  /* Card-head + target-head + run-row are buttons so the operator can
+     click anywhere on the row to open the detail drawer. They use a
+     button reset so they look identical to the static layout. */
+  .bk-job-card-head-link,
+  .bk-target-card-head-link {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+  }
+  .bk-job-card-head-link { flex: 1; min-width: 0; }
+  .bk-target-card-head-link {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .bk-job-card-head-link:hover .bk-job-card-title,
+  .bk-target-card-head-link:hover .bk-target-card-name { color: var(--accent-fg); }
+  .bk-runs-row-link {
+    cursor: pointer;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--border-subtle);
+    text-align: inherit;
+    width: 100%;
+  }
+  .bk-runs-row-link:hover { background: var(--surface-hover); }
+  .bk-job-card-title {
+    margin: 0;
+    font-size: 13.5px;
+    color: var(--fg);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bk-job-card-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .bk-icon-btn { padding: 5px; }
+  .bk-mini-pill { font-size: 9.5px; padding: 1px 6px; }
+  .bk-pill-encrypt {
+    color: var(--accent-fg);
+    border-color: color-mix(in srgb, var(--color-brand-500) 35%, var(--border));
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+
+  .bk-job-card-src {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--fg-muted);
+  }
+  .bk-job-card-src-label { font-size: 12.5px; color: var(--fg); }
+  .bk-job-card-src-meta {
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+    margin-top: -8px;
+    padding-left: 18px;
+  }
+
+  .bk-job-card-target {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    background: var(--surface);
+  }
+  .bk-job-card-target-text {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .bk-target-glyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+  }
+  .bk-target-glyph-lg { width: 36px; height: 36px; font-size: 11px; }
+  .bk-job-card-target-info {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.25;
+    min-width: 0;
+  }
+  .bk-job-card-target-name {
+    font-size: 12px;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bk-job-card-target-meta { font-size: 10px; color: var(--fg-subtle); }
+
+  .bk-job-card-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    padding: 8px 0;
+    border-top: 1px dashed var(--border-subtle);
+    border-bottom: 1px dashed var(--border-subtle);
+  }
+  .bk-job-stat { display: flex; flex-direction: column; gap: 2px; }
+  .bk-job-stat-right { text-align: right; align-items: flex-end; }
+  .bk-job-stat-label {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    color: var(--fg-subtle);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .bk-job-stat-value { font-size: 12.5px; color: var(--fg); }
+  .bk-job-stat-value.fail { color: var(--color-danger-400); }
+  .bk-job-stat-value.warn { color: var(--color-warning-400); }
+  .bk-job-stat-value.ok { color: var(--color-success-400); }
+  .bk-job-stat-meta { font-size: 10px; color: var(--fg-subtle); }
+
+  .bk-job-card-foot {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+  }
+  .bk-job-card-foot-spacer { flex: 1; }
+  .bk-job-card-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    color: var(--fg-muted);
+    cursor: pointer;
+  }
+  .bk-job-card-toggle input { accent-color: var(--color-brand-500); }
+  .bk-job-card-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--color-danger-500) 10%, transparent);
+    color: var(--color-danger-400);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    word-break: break-all;
+  }
+  .bk-job-card-row-actions {
+    display: flex;
+    gap: 4px;
+    border-top: 1px solid var(--border-subtle);
+    padding-top: 10px;
+    margin-top: -2px;
+  }
+  .bk-job-card-row-btn { flex: 1; justify-content: center; }
+
+  /* Runs tab — header row with view-toggle (mockup pattern) above
+     the filter-toolbar. Eyebrow + subtitle on the left, segmented
+     Timeline/List toggle on the right. */
+  .bk-runs-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .bk-runs-head-text { min-width: 0; max-width: 70ch; }
+  .bk-runs-subtitle {
+    margin-top: 6px;
+    font-size: 13.5px;
+    color: var(--fg-muted);
+    line-height: 1.55;
+  }
+  /* Square segmented control — matches mockup .seg-radio: 4px-rounded
+     outer with hairline border, surface bg, 3px-rounded inner items
+     that highlight to bg-elevated when active (subtle shadow gives
+     them the "pressed" look). */
+  .bk-seg-radio {
+    display: inline-flex;
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    padding: 2px;
+    background: var(--surface);
+  }
+  .bk-seg-radio-item {
+    padding: 5px 12px;
+    border: 0;
+    background: transparent;
+    color: var(--fg-muted);
+    font-size: 12px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: color 120ms, background 120ms;
+  }
+  .bk-seg-radio-item:hover { color: var(--fg); }
+  .bk-seg-radio-item.active {
+    background: var(--bg-elevated);
+    color: var(--fg);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  }
+
+  /* Timeline view */
+  .bk-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+  .bk-timeline-day-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .bk-timeline-day-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .bk-timeline-day-meta {
+    font-size: 10px;
+    color: var(--fg-subtle);
+  }
+  .bk-timeline-day-rule {
+    flex: 1;
+    border-top: 1px dashed var(--border-subtle);
+  }
+  .bk-timeline-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  /* Timeline-block matches the mockup grid: 56px time, 200px job,
+     180px meta, flex target, optional note/error. Border-left is the
+     status indicator — colored per state. */
+  .bk-timeline-block {
+    display: grid;
+    grid-template-columns: 56px 200px 180px 1fr auto;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 12px;
+    border: 1px solid var(--border-subtle);
+    border-left: 3px solid var(--fg-subtle);
+    border-radius: 4px;
+    background: var(--bg-elevated);
+    text-align: left;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .bk-timeline-block:hover {
+    background: var(--surface-hover);
+    border-color: var(--border-strong);
+  }
+  .bk-timeline-block-ok      { border-left-color: var(--color-success-500); }
+  .bk-timeline-block-warn    { border-left-color: var(--color-warning-500); }
+  .bk-timeline-block-failed  {
+    border-left-color: var(--color-danger-500);
+    background: color-mix(in srgb, var(--color-danger-500) 4%, var(--bg-elevated));
+  }
+  .bk-timeline-block-running { border-left-color: var(--accent); }
+  .bk-timeline-time {
+    font-size: 11px;
+    color: var(--fg);
+  }
+  .bk-timeline-job {
+    font-size: 12.5px;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bk-timeline-meta {
+    font-size: 11px;
+    color: var(--fg-muted);
+  }
+  .bk-timeline-target {
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bk-timeline-error {
+    font-size: 10.5px;
+    color: var(--color-danger-400);
+    grid-column: 1 / -1;
+    margin-top: 4px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--border-subtle);
+    word-break: break-all;
+  }
+  @media (max-width: 720px) {
+    .bk-timeline-block { grid-template-columns: 56px 1fr; }
+    .bk-timeline-meta, .bk-timeline-target { display: none; }
+  }
+
+  .bk-runs-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .bk-runs-select {
+    height: 30px;
+    padding: 0 28px 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    min-width: 170px;
+    cursor: pointer;
+    appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--fg-muted) 50%),
+                      linear-gradient(-45deg, transparent 50%, var(--fg-muted) 50%);
+    background-position: calc(100% - 14px) 13px, calc(100% - 9px) 13px;
+    background-size: 5px 5px;
+    background-repeat: no-repeat;
+    transition: border-color 120ms;
+  }
+  .bk-runs-select:hover { border-color: var(--border-strong); }
+  .bk-runs-select:focus { outline: none; border-color: var(--accent); }
+
+  /* Filter pills — square (4px) corners to match the seg-radio
+     toggle style. Mockup uses pill-shaped here too but the user's
+     editorial-style asks for consistent square buttons across the
+     filter row, so we align with seg-radio. */
+  .bk-runs-pills {
+    display: inline-flex;
+    gap: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    padding: 2px;
+    background: var(--surface);
+  }
+  .bk-runs-pill {
+    padding: 5px 12px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--fg-muted);
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 120ms, color 120ms;
+  }
+  .bk-runs-pill:hover { color: var(--fg); }
+  .bk-runs-pill.active {
+    background: var(--bg-elevated);
+    color: var(--fg);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  }
+  .bk-runs-count { margin-left: auto; font-size: 11px; color: var(--fg-subtle); }
+
+  .bk-runs-table {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .bk-runs-row {
+    display: grid;
+    grid-template-columns: minmax(180px, 1.6fr) 130px 130px 110px 110px 50px;
+    gap: 14px;
+    align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 12.5px;
+    color: var(--fg);
+  }
+  .bk-runs-row:last-child { border-bottom: 0; }
+  .bk-runs-row-head {
+    background: var(--bg-elevated);
+    color: var(--fg-subtle);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .bk-runs-row-failed { background: color-mix(in srgb, var(--color-danger-500) 4%, transparent); }
+  .bk-runs-name {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow: hidden;
+  }
+  :global(.bk-runs-lock) { color: var(--accent-fg); flex-shrink: 0; }
+  .bk-runs-cell { font-size: 11.5px; color: var(--fg-muted); }
+  .bk-runs-cell.right { text-align: right; }
+  .bk-runs-row .right { text-align: right; }
+  .bk-runs-actions { text-align: right; }
+  .bk-runs-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: color-mix(in srgb, var(--color-danger-500) 5%, transparent);
+    font-size: 11px;
+    color: var(--color-danger-400);
+    word-break: break-all;
+    line-height: 1.5;
+  }
+
+  /* Targets card grid */
+  .bk-target-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 14px;
+  }
+  .bk-target-card {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    padding: 16px 18px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    transition: border-color 120ms;
+  }
+  .bk-target-card:hover { border-color: var(--border-strong); }
+  .bk-target-card-warn { border-left: 3px solid var(--color-warning-500); }
+  .bk-target-card-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .bk-target-card-head-text { flex: 1; min-width: 0; }
+  .bk-target-card-name {
+    font-size: 14px;
+    color: var(--fg);
+    font-weight: 500;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bk-target-card-type {
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+    margin-top: 2px;
+    display: block;
+  }
+
+  .bk-target-storage { display: flex; flex-direction: column; gap: 4px; }
+  .bk-target-storage-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+  .bk-target-storage-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .bk-target-storage-num { font-size: 11.5px; color: var(--fg); }
+  .bk-target-storage-num-total { color: var(--fg-subtle); }
+  .bk-target-storage-bar {
+    height: 4px;
+    background: var(--bg-elevated);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+    margin-top: 4px;
+  }
+  .bk-target-storage-bar-fill {
+    position: absolute;
+    inset: 0;
+    right: auto;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 200ms;
+  }
+  .bk-target-card-warn .bk-target-storage-bar-fill { background: var(--color-warning-400); }
+  .bk-target-storage-meta {
+    font-size: 10px;
+    color: var(--fg-subtle);
+    margin-top: 2px;
+  }
+
+  .bk-target-card-foot {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-top: 1px solid var(--border-subtle);
+    padding-top: 12px;
+  }
+  .bk-target-card-foot-meta { font-size: 10.5px; color: var(--fg-subtle); }
+  .bk-target-card-foot-spacer { flex: 1; }
+
+  :global(.ed-spin) { animation: ed-spin 0.8s linear infinite; }
+  @keyframes ed-spin { to { transform: rotate(360deg); } }
+</style>

@@ -82,6 +82,12 @@
   /* Focus ring */
   --ring: color-mix(in srgb, var(--color-brand-500) 60%, transparent);
 
+  /* Editorial-page tokens — bluish-white dot-mesh on near-black canvas,
+     huge italic-serif watermark almost-invisible behind editorial titles.
+     Both default to dark; the light-theme block below overrides. */
+  --mesh-color:      rgba(148, 163, 184, 0.10);
+  --watermark-color: rgba(148, 163, 184, 0.04);
+
   color-scheme: dark;
 }
 
@@ -122,6 +128,10 @@
   --color-brand-400: #0891b2;  /* was #22d3ee — now equivalent to brand-600 */
 
   --ring: color-mix(in srgb, var(--color-brand-500) 40%, transparent);
+
+  /* Light-theme editorial tokens — warm graphite dots on near-white. */
+  --mesh-color:      rgba(74, 70, 61, 0.10);
+  --watermark-color: rgba(74, 70, 61, 0.04);
 
   color-scheme: light;
 }
@@ -217,8 +227,10 @@ body {
 
   .dm-btn-primary {
     background: var(--color-brand-500);
-    color: #fff;
+    /* Dark text on cyan reads better than white — peer-tool convention. */
+    color: #0a0e1a;
     border-color: var(--color-brand-500);
+    font-weight: 500;
   }
   .dm-btn-primary:not(:disabled):hover {
     background: var(--color-brand-400);
@@ -293,3 +305,1040 @@ body {
   to   { opacity: 1; transform: translateY(0); }
 }
 .dm-fade-in { animation: dm-fade-in 0.2s ease-out; }
+
+/* =============================================================================
+   Editorial layer — primitives ported from the wizard / claude-design mockup.
+
+   This whole block is ADDITIVE: it does not redefine any existing .dm-* class
+   used by production pages. Editorial pages opt in by wrapping content in
+   `.ed-stage` and using the `.ed-*` and editorial `.dm-pill / .dm-bar /
+   .dm-spark / .dm-card-flat / .ed-input / .ed-input-mono` classes.
+
+   Page-by-page conversion happens in later slices; this slice only ships the
+   foundation + a /_design showcase page.
+   ===========================================================================*/
+@layer components {
+  /* Utility font classes — Tailwind v4 doesn't auto-emit `.font-mono`
+     from --font-* tokens unless we declare them. */
+  .font-mono  { font-family: var(--font-mono); }
+
+  /* Page canvas — dot-mesh background with a soft radial fade so the dots
+     are densest where the eye lands and dissolve toward the edges. */
+  .ed-stage {
+    position: relative;
+    isolation: isolate;
+    background: var(--bg);
+    min-height: 100vh;
+  }
+  /* Dot-mesh background — disabled by default. Was applied to every
+     editorial page; user feedback was that the constant texture was
+     distracting on long sessions. The Login + Wizard pages still get
+     the mesh via their dedicated `.login-shell::before` (kept on the
+     identity surfaces where it adds drama, not the daily-driver pages). */
+  .ed-stage > * { position: relative; z-index: 1; }
+
+  /* Eyebrow — small mono caption, optionally with blinking cursor when the
+     parent is the "active" identity / heading (used heavily in the wizard). */
+  .ed-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ed-eyebrow-active { color: var(--accent-fg); }
+  .ed-cursor {
+    display: inline-block;
+    width: 7px;
+    height: 1.05em;
+    background: var(--color-brand-400);
+    margin-left: 1px;
+    transform: translateY(2px);
+    animation: ed-blink 1.05s steps(2) infinite;
+  }
+
+  /* Page title with italic-accent helper. The italic word is the editorial
+     flourish — it MUST stay quiet (single italic accent per title). */
+  .ed-title {
+    font-family: var(--font-sans);
+    font-size: 22px;
+    line-height: 1.25;
+    letter-spacing: -0.015em;
+    font-weight: 600;
+    color: var(--fg);
+    text-wrap: balance;
+    margin-top: 8px;
+  }
+  .ed-title em,
+  .ed-accent {
+    font-style: normal;
+    color: var(--accent-fg);
+    font-weight: inherit;
+  }
+  em, i { font-style: normal; font-weight: inherit; }
+  .ed-subtitle {
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--fg-muted);
+    margin-top: 6px;
+    max-width: 80ch;
+    text-wrap: pretty;
+  }
+
+  .ed-section { margin-top: 36px; }
+  .ed-section-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .ed-section-title {
+    font-family: var(--font-sans);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--fg);
+    margin: 4px 0 0;
+  }
+
+  .ed-rule {
+    height: 1px;
+    background: var(--border);
+    margin: 0;
+    border: 0;
+  }
+
+  /* Action cluster — header right-side button group (Deploy / Edit / Stop). */
+  .ed-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  /* ── Editorial input — bottom-bordered, no box, focus underline.
+     Coexists with `.dm-input` (boxed); pages choose per-context. */
+  .ed-input {
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--border-strong);
+    color: var(--fg);
+    border-radius: 0;
+    padding: 0.5rem 0;
+    width: 100%;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    font-family: var(--font-sans);
+    font-size: 0.9375rem;
+  }
+  .ed-input.ed-input-mono { font-family: var(--font-mono); font-size: 0.875rem; }
+  .ed-input::placeholder { color: var(--fg-subtle); }
+  .ed-input:focus {
+    outline: none;
+    border-bottom-color: var(--color-brand-500);
+    box-shadow: 0 1px 0 0 var(--color-brand-500);
+  }
+  /* Native <select> popups follow browser defaults (white bg + black
+     text) which is unreadable inside a dark editorial surface. Force
+     the option list to inherit the editorial palette. */
+  select.ed-input {
+    background-color: transparent;
+    color: var(--fg);
+  }
+  select.ed-input option {
+    background-color: var(--bg-elevated);
+    color: var(--fg);
+  }
+  select.ed-input:disabled {
+    color: var(--fg-subtle);
+    cursor: not-allowed;
+  }
+
+  /* ── Pill — flat status indicator. Smaller and more line-art than .dm-badge,
+     intended for high-density tables and per-row status tags. */
+  .dm-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 9px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border: 1px solid var(--border-strong);
+    border-radius: 3px;
+    color: var(--fg-muted);
+    background: transparent;
+    line-height: 1.6;
+  }
+  .dm-pill-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: currentColor;
+  }
+  .dm-pill-success { color: var(--color-success-400); border-color: color-mix(in srgb, var(--color-success-500) 40%, var(--border)); }
+  .dm-pill-warning { color: var(--color-warning-400); border-color: color-mix(in srgb, var(--color-warning-500) 40%, var(--border)); }
+  .dm-pill-danger  { color: var(--color-danger-400);  border-color: color-mix(in srgb, var(--color-danger-500)  40%, var(--border)); }
+  .dm-pill-neutral { color: var(--fg-subtle); }
+
+  /* Numeric count badge — square corners, mono, subtle. Used for tab
+     counts, filter-pill counts, "N items" indicators. Status uses the
+     round dm-pill family above; counts use this. See feedback memory:
+     count badges square, status pills round. */
+  .ed-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    padding: 1px 5px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    line-height: 1.4;
+    color: var(--fg-subtle);
+    background: var(--surface-hover);
+    border-radius: 3px;
+    letter-spacing: 0.04em;
+  }
+  /* Active variant — when the count belongs to the currently-selected
+     tab/pill, tint it with brand accent. */
+  .ed-count.active,
+  .active > .ed-count,
+  [aria-selected="true"] > .ed-count {
+    color: var(--accent-fg);
+    background: color-mix(in srgb, var(--color-brand-500) 16%, transparent);
+  }
+
+  /* Resource bar — thin, line-art. */
+  .dm-bar {
+    width: 100%;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+  }
+  .dm-bar-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: var(--color-brand-500);
+    border-radius: 2px;
+    transition: width 0.36s cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+  .dm-bar-fill--warn   { background: var(--color-warning-500); }
+  .dm-bar-fill--danger { background: var(--color-danger-500); }
+
+  /* Sparkline — pure SVG, not a chart library. */
+  .dm-spark { display: block; width: 100%; height: 32px; }
+  .dm-spark-line { stroke: var(--accent); stroke-width: 1.25; fill: none; vector-effect: non-scaling-stroke; }
+  .dm-spark-fill { fill: var(--accent); opacity: 0.10; }
+
+  /* Card variant — drawn-not-molded, just a hairline border. Used for
+     editorial sidebar tiles where a filled-card would shout. */
+  .dm-card-flat {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  /* ── Tabs — line-art, underline-on-active, no card chrome. */
+  .ed-tabs {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .ed-tab {
+    padding: 10px 16px;
+    border: 0;
+    background: transparent;
+    color: var(--fg-muted);
+    font-size: 13px;
+    cursor: pointer;
+    font-family: inherit;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: color 0.12s, border-color 0.12s;
+  }
+  .ed-tab:hover { color: var(--fg); }
+  .ed-tab.active {
+    color: var(--fg);
+    border-bottom-color: var(--color-brand-400);
+  }
+  .ed-tab .count {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 0 5px;
+    border-radius: 3px;
+    line-height: 1.5;
+  }
+  .ed-tab.active .count {
+    color: var(--accent-fg);
+    border-color: color-mix(in srgb, var(--color-brand-500) 40%, var(--border));
+  }
+
+  /* ── Data table — flat, hairline rows, mono uppercase headers. */
+  .ed-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+  }
+  .ed-table thead th {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+    font-weight: 500;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .ed-table tbody td {
+    padding: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--fg);
+    vertical-align: middle;
+  }
+  .ed-table tbody tr:hover td { background: var(--surface-hover); }
+  .ed-table tbody tr:last-child td { border-bottom: 0; }
+  .ed-table .col-num {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--fg-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Underline-only text input. Used by every page header / toolbar
+     where we want the search field to feel like part of the page surface
+     rather than a chunky form control. Originally lived scoped in the
+     hosts page; promoted here so /resources, /audit, /migrations all
+     share the exact same look + focus behaviour. */
+  .ed-underline-input {
+    width: 100%;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 6px 2px;
+    font-size: 13px;
+    color: var(--fg);
+    font-family: var(--font-mono);
+    outline: none;
+    transition: border-color 0.1s;
+  }
+  .ed-underline-input::placeholder { color: var(--fg-subtle); }
+  .ed-underline-input:focus { border-bottom-color: var(--accent); }
+
+  /* ── Resource table — Images / Volumes / Networks share this grid
+     pattern. Each row sets `gridTemplateColumns` inline so per-tab
+     column widths can vary. Mono cells use .res-cell-mono for
+     consistent type and tabular numbers. */
+  .res-table {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: visible;
+  }
+  .res-row {
+    display: grid;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-subtle);
+    min-height: 44px;
+  }
+  .res-row:last-child { border-bottom: 0; }
+  .res-row--head {
+    background: var(--bg-elevated);
+    color: var(--fg-subtle);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    min-height: 36px;
+  }
+  .res-row:hover:not(.res-row--head) { background: var(--surface-hover); }
+  .res-cell-mono {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .res-row input[type="checkbox"] { accent-color: var(--color-brand-500); }
+
+  /* ── Service-row health stripe. The 2px left edge is the only place
+     status-colour appears on a row (no full-row tint). Default 6-column
+     grid; per-row gridTemplateColumns can be overridden inline. */
+  .ed-row {
+    display: grid;
+    grid-template-columns: 6px minmax(0, 2.4fr) 1.2fr 1fr 0.8fr auto;
+    gap: 14px;
+    padding: 14px 14px 14px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    align-items: center;
+  }
+  .ed-row:last-child { border-bottom: 0; }
+  .ed-row:hover { background: var(--surface-hover); }
+  .ed-row .stripe {
+    height: 100%;
+    width: 2px;
+    background: transparent;
+    align-self: stretch;
+    justify-self: start;
+  }
+  .ed-row[data-status="running"]   .stripe { background: var(--color-success-500); }
+  .ed-row[data-status="ok"]        .stripe { background: var(--color-success-500); }
+  .ed-row[data-status="degraded"]  .stripe { background: var(--color-warning-500); }
+  .ed-row[data-status="warn"]      .stripe { background: var(--color-warning-500); }
+  .ed-row[data-status="failing"]   .stripe { background: var(--color-danger-500); }
+  .ed-row[data-status="stopped"]   .stripe { background: var(--border-strong); }
+
+  /* ── Activity feed item — three columns: time, message, actor. */
+  .ed-feed-item {
+    display: grid;
+    grid-template-columns: 70px 1fr auto;
+    gap: 16px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    align-items: baseline;
+  }
+  .ed-feed-item:last-child { border-bottom: 0; }
+  .ed-feed-time {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-subtle);
+    letter-spacing: 0.04em;
+  }
+  .ed-feed-text {
+    font-size: 13.5px;
+    color: var(--fg-muted);
+    line-height: 1.55;
+  }
+  .ed-feed-text strong {
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .ed-feed-actor {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-subtle);
+  }
+
+  /* ── Sparkline metric tile — replaces the conventional stat-card. */
+  .ed-metric {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+  }
+  .ed-metric-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+  }
+  .ed-metric-value {
+    font-family: var(--font-sans);
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.1;
+    color: var(--fg);
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+  }
+  .ed-metric-value .unit {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-subtle);
+    margin-left: 3px;
+    font-style: normal;
+    font-weight: normal;
+  }
+  .ed-metric-meta {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+  }
+
+  /* ── Logs viewer. Same pattern as the existing log-stream pages but as
+     a primitive so per-page wiring is just data. */
+  .log-viewer {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.65;
+    overflow: auto;
+    max-height: 420px;
+  }
+  .log-line { display: flex; gap: 12px; }
+  .log-time { color: var(--fg-subtle); white-space: nowrap; }
+  .log-svc  { width: 110px; color: var(--accent-fg); white-space: nowrap; }
+  .log-msg  { color: var(--fg); }
+  .log-msg--warn { color: var(--color-warning-400); }
+  .log-msg--err  { color: var(--color-danger-400); }
+  .log-msg--ok   { color: var(--color-success-400); }
+
+  /* YAML highlighting — used by compose viewer + import modal preview. */
+  .yaml { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.7; color: var(--fg); }
+  .yaml .y-key { color: var(--accent-fg); }
+  .yaml .y-str { color: var(--color-warning-400); }
+  .yaml .y-num { color: var(--color-success-400); }
+  .yaml .y-com { color: var(--fg-subtle); }
+
+  /* ── Login hero — page is mostly empty, watermark dramatic. */
+  .login-shell {
+    position: relative;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    isolation: isolate;
+  }
+  .login-shell::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(circle at 1px 1px, var(--mesh-color) 1px, transparent 0);
+    background-size: 22px 22px;
+    -webkit-mask-image: radial-gradient(ellipse 80% 65% at 50% 50%, #000 30%, transparent 80%);
+            mask-image: radial-gradient(ellipse 80% 65% at 50% 50%, #000 30%, transparent 80%);
+    z-index: 0;
+    pointer-events: none;
+  }
+  .login-watermark {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 0;
+    pointer-events: none;
+    font-family: var(--font-sans);
+    font-weight: 700;
+    font-size: 22vw;
+    line-height: 0.85;
+    color: var(--watermark-color);
+    letter-spacing: -0.04em;
+    user-select: none;
+  }
+
+  /* Theme toggle — round, line-art. Same component used in topbar + login. */
+  .theme-toggle {
+    border: 1px solid var(--border-strong);
+    background: transparent;
+    color: var(--fg-muted);
+    width: 26px; height: 26px;
+    border-radius: 999px;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .theme-toggle:hover { color: var(--fg); border-color: var(--fg-muted); }
+
+  /* Quiet kbd — used in modal escape hints + keyboard-shortcut chips. */
+  .ed-kbd {
+    display: inline-block;
+    padding: 1px 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: 3px;
+    background: var(--surface);
+    font-size: 11px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+  }
+}
+
+@keyframes ed-blink {
+  0%, 49%   { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+/* =============================================================================
+   Editorial AppShell — sidebar + topbar + page surface.
+
+   Wraps the authenticated dashboard chrome. Pages opt in by being rendered
+   inside <main class="app-page"> within the shell layout.
+   ===========================================================================*/
+@layer components {
+  /* Two-column grid: fixed-width sidebar + scrolling main column. The
+     `.app-shell-collapsed` modifier squeezes the sidebar to icon-only width.
+     Mobile breakpoint pulls the sidebar off-canvas — see below. */
+  .app-shell {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    min-height: 100vh;
+  }
+  .app-shell.app-shell-collapsed {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .app-nav {
+    border-right: 1px solid var(--border);
+    background: var(--bg-elevated);
+    display: flex;
+    flex-direction: column;
+    z-index: 10;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow: hidden;
+  }
+  .app-nav-brand {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 18px 20px 14px;
+    color: var(--fg);
+    font-weight: 600;
+    font-size: 14.5px;
+    letter-spacing: -0.01em;
+    border-bottom: 1px solid var(--border-subtle);
+    min-height: 56px;
+    box-sizing: border-box;
+  }
+  .app-shell-collapsed .app-nav-brand { justify-content: center; padding: 18px 12px; }
+  .app-nav-brand .brand-mark {
+    color: var(--color-brand-400);
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+  .app-nav-brand a {
+    color: inherit;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+  }
+  .app-nav-brand .accent { color: var(--color-brand-400); }
+
+  .app-nav-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 0 16px;
+  }
+  .app-nav-section { padding: 0 12px; margin-top: 16px; }
+  .app-nav-section:first-child { margin-top: 6px; }
+  .app-nav-section-label {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+    padding: 0 10px 8px;
+  }
+  .app-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 7px 10px;
+    border-radius: 5px;
+    color: var(--fg-muted);
+    font-size: 13px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    border: 0;
+    background: transparent;
+    width: 100%;
+    text-align: left;
+    font-family: inherit;
+    line-height: 1.3;
+    white-space: nowrap;
+  }
+  .app-nav-item :global(svg) { flex-shrink: 0; }
+  .app-nav-item:hover { color: var(--fg); background: var(--surface-hover); }
+  .app-nav-item.active {
+    color: var(--fg);
+    background: var(--surface-hover);
+    box-shadow: inset 2px 0 0 var(--color-brand-400);
+  }
+  .app-shell-collapsed .app-nav-item { justify-content: center; padding: 7px; }
+  .app-shell-collapsed .app-nav-item-label,
+  .app-shell-collapsed .app-nav-item-badge { display: none; }
+
+  .app-nav-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .app-nav-item-badge {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-subtle);
+    background: var(--surface);
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    line-height: 1.4;
+  }
+  .app-nav-item.active .app-nav-item-badge {
+    color: var(--accent-fg);
+    border-color: color-mix(in srgb, var(--color-brand-500) 40%, var(--border));
+  }
+
+  .app-nav-footer {
+    border-top: 1px solid var(--border-subtle);
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--fg-muted);
+    font-size: 12.5px;
+  }
+  .app-shell-collapsed .app-nav-footer {
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 6px;
+  }
+  .app-nav-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    background: var(--surface-hover);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg);
+    border: 1px solid var(--border-strong);
+    flex-shrink: 0;
+    cursor: pointer;
+    text-transform: uppercase;
+  }
+  .app-nav-userblock {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.25;
+    min-width: 0;
+    flex: 1;
+  }
+  .app-nav-userblock .name { color: var(--fg); font-size: 12.5px; font-weight: 500; }
+  .app-nav-userblock .role {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+  }
+  .app-shell-collapsed .app-nav-userblock { display: none; }
+
+  /* Sidebar collapse-toggle pin. Sits on the right edge of the aside,
+     half-overlapping the column gap so it stays at the same absolute
+     position regardless of expanded/collapsed state. */
+  .app-nav-collapse {
+    position: absolute;
+    top: 18px;
+    right: -11px;
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-elevated);
+    color: var(--fg-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 11;
+    transition: color 0.12s, border-color 0.12s;
+  }
+  .app-nav-collapse:hover { color: var(--fg); border-color: var(--color-brand-500); }
+
+  /* Topbar — sticky, mono crumb + ok-dot host status + theme toggle. */
+  .app-topbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 48px;
+    padding: 0 32px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: color-mix(in srgb, var(--bg) 75%, transparent);
+    backdrop-filter: blur(6px);
+    position: sticky;
+    top: 0;
+    z-index: 9;
+    font-size: 12.5px;
+  }
+  .app-topbar-crumb {
+    color: var(--fg-muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+  }
+  .app-topbar-crumb .sep { color: var(--border-strong); }
+  .app-topbar-crumb .leaf { color: var(--fg); }
+  .app-topbar-crumb .leaf-link {
+    color: var(--fg-muted);
+    text-decoration: none;
+    transition: color 120ms;
+  }
+  .app-topbar-crumb .leaf-link:hover { color: var(--fg); }
+
+  /* Alerts slot sits between crumb and host-picker; left of marginLeft:auto
+     wrapper so it follows reading order. Empty placeholder for now —
+     backup / migration error indicators land here in a future slice. */
+  .app-topbar-alerts {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 14px;
+  }
+  .app-topbar-host-wrap { margin-left: auto; }
+  .app-topbar-host-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--fg-subtle);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    cursor: pointer;
+    transition: border-color 120ms, background 120ms;
+  }
+  .app-topbar-host-btn:hover {
+    border-color: var(--border-strong);
+    background: var(--bg-elevated);
+  }
+  .app-topbar-host-btn .label { color: var(--fg); font-weight: 500; }
+  .app-topbar-host-btn .sep   { color: var(--border-strong); }
+  .app-topbar-host-btn .meta  { color: var(--fg-subtle); }
+  .app-topbar-host-btn .caret { color: var(--fg-subtle); margin-left: 4px; }
+
+  /* Status dots used by both the trigger button and each menu row. */
+  .app-topbar-host-btn .dot-ok,
+  .app-topbar-host-menu-item .dot-ok,
+  .app-topbar-host-btn .dot-warn,
+  .app-topbar-host-menu-item .dot-warn,
+  .app-topbar-host-btn .dot-brand,
+  .app-topbar-host-menu-item .dot-brand {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+  .app-topbar-host-btn .dot-ok,
+  .app-topbar-host-menu-item .dot-ok {
+    background: var(--color-success-400);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success-500) 18%, transparent);
+  }
+  .app-topbar-host-btn .dot-warn,
+  .app-topbar-host-menu-item .dot-warn {
+    background: var(--color-warning-500);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-warning-500) 18%, transparent);
+  }
+  .app-topbar-host-btn .dot-brand,
+  .app-topbar-host-menu-item .dot-brand {
+    background: var(--color-brand-500);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand-500) 18%, transparent);
+  }
+
+  .app-topbar-host-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 280px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    box-shadow: 0 12px 30px rgba(2, 6, 23, 0.4);
+    padding: 6px;
+    z-index: 50;
+  }
+  [data-theme="light"] .app-topbar-host-menu {
+    box-shadow: 0 8px 24px rgba(20, 18, 14, 0.16);
+  }
+  .app-topbar-host-menu-label {
+    padding: 8px 10px 6px;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-subtle);
+  }
+  .app-topbar-host-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 7px 10px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-muted);
+    text-decoration: none;
+  }
+  .app-topbar-host-menu-item .label { color: var(--fg); font-weight: 500; flex-shrink: 0; }
+  .app-topbar-host-menu-item .meta  { color: var(--fg-subtle); margin-left: auto; font-size: 10.5px; }
+  .app-topbar-host-menu-item .check { color: var(--accent-fg); margin-left: 6px; }
+  .app-topbar-host-menu-item:hover  { background: var(--surface-hover); }
+  .app-topbar-host-menu-item:disabled { opacity: 0.5; cursor: not-allowed; }
+  .app-topbar-host-menu-item.active { background: color-mix(in srgb, var(--color-brand-500) 8%, transparent); }
+  .app-topbar-host-menu-item.manage { color: var(--accent-fg); }
+  .app-topbar-host-menu-item.manage .label { color: var(--accent-fg); }
+  .app-topbar-host-menu-divider {
+    height: 1px;
+    margin: 6px 4px;
+    background: var(--border);
+  }
+
+  .app-topbar-theme-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--fg-subtle);
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: color 120ms, background 120ms, border-color 120ms;
+    margin-left: 4px;
+    flex-shrink: 0;
+  }
+  .app-topbar-theme-btn:hover {
+    color: var(--fg);
+    background: var(--bg-elevated);
+    border-color: var(--border-strong);
+  }
+
+  /* Page surface — sits inside .ed-stage so the dot-mesh shows through.
+     Transparent background lets the .ed-stage::before pseudo-mesh render. */
+  .app-page {
+    position: relative;
+    min-height: calc(100vh - 48px);
+    padding: 28px 36px 64px;
+    max-width: 1480px;
+    background: transparent;
+  }
+  .app-page > * { position: relative; z-index: 1; }
+  @media (max-width: 768px) {
+    .app-page { padding: 18px 18px 48px; }
+    .app-topbar { padding: 0 18px; }
+  }
+
+  /* Mobile-only hamburger header. Desktop hides it via CSS, mobile shows
+     it above the topbar. */
+  .app-mobile-bar {
+    display: none;
+    align-items: center;
+    height: 44px;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-elevated);
+  }
+  .app-mobile-button {
+    background: transparent;
+    border: 0;
+    color: var(--fg-muted);
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    border-radius: 5px;
+  }
+  .app-mobile-button:hover { color: var(--fg); background: var(--surface-hover); }
+
+  @media (max-width: 768px) {
+    .app-shell { grid-template-columns: 1fr; }
+    .app-shell.app-shell-collapsed { grid-template-columns: 1fr; }
+    .app-nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 280px;
+      height: 100vh;
+      transform: translateX(-100%);
+      transition: transform 0.18s ease;
+      box-shadow: 0 0 0 9999px rgba(2, 6, 23, 0);
+    }
+    .app-shell.mobile-open .app-nav {
+      transform: translateX(0);
+      box-shadow: 0 0 0 9999px rgba(2, 6, 23, 0.55);
+    }
+    .app-nav-collapse { display: none; }
+    .app-mobile-bar { display: flex; }
+  }
+
+  /* Sidebar footer iconless action button — used for sign-out, theme,
+     etc. when packed into the footer alongside the avatar. */
+  .app-nav-footer-action {
+    background: transparent;
+    border: 0;
+    color: var(--fg-subtle);
+    width: 26px;
+    height: 26px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: color 0.12s, background 0.12s;
+    flex-shrink: 0;
+  }
+  .app-nav-footer-action:hover { color: var(--fg); background: var(--surface-hover); }
+
+  .app-user-menu {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 12px;
+    right: 12px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    overflow: hidden;
+    z-index: 30;
+  }
+  .app-user-menu-head {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .app-user-menu-head .name { font-size: 13px; color: var(--fg); font-weight: 500; }
+  .app-user-menu-head .role { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-subtle); letter-spacing: 0.04em; }
+  .app-user-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 12px;
+    background: transparent;
+    border: 0;
+    color: var(--fg);
+    font-size: 12.5px;
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+    text-decoration: none;
+    font-family: inherit;
+  }
+  .app-user-menu-item:hover { background: var(--surface-hover); }
+  .app-user-menu-item.danger { color: var(--color-danger-400); }
+  .app-user-menu-sep { height: 1px; background: var(--border); margin: 2px 0; }
+}

@@ -7,11 +7,74 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/apitokens"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
 
-// ListAPITokens returns all API tokens with metadata only — plaintext
-// values are never returned after creation.
+// callerCanManageOthers reports whether the JWT/token in r grants the
+// tokens.manage_others permission. Drives the "see and revoke other
+// users' tokens" gating split.
+func (h *Handlers) callerCanManageOthers(r *http.Request) bool {
+	if h.Roles == nil {
+		// Pre-store fallback: built-in admins always have manage_others.
+		return middleware.Role(r.Context()) == "admin"
+	}
+	role := middleware.Role(r.Context())
+	if rd, ok := h.Roles.Get(role); ok {
+		for _, p := range rd.Permissions {
+			if p == rbac.PermTokensManageOthers {
+				return true
+			}
+		}
+		return false
+	}
+	return rbac.Allowed(role, rbac.PermTokensManageOthers)
+}
+
+// callerPermSet returns the effective v2.1 permission set for the
+// authenticated caller — used for the privilege-escalation guard on
+// CreateAPIToken. Returns nil if the role is unknown.
+func (h *Handlers) callerPermSet(r *http.Request) map[rbac.Perm]bool {
+	role := middleware.Role(r.Context())
+	out := map[rbac.Perm]bool{}
+	if h.Roles != nil {
+		if rd, ok := h.Roles.Get(role); ok {
+			for _, p := range rd.Permissions {
+				out[p] = true
+			}
+			return out
+		}
+	}
+	for _, p := range rbac.RolePerms(role) {
+		out[p] = true
+	}
+	return out
+}
+
+// permsForRole returns the permission set for a role name — built-in or
+// custom. Used by the privilege-escalation guard to check role-subset.
+func (h *Handlers) permsForRoleName(name string) (map[rbac.Perm]bool, bool) {
+	out := map[rbac.Perm]bool{}
+	if h.Roles != nil {
+		if rd, ok := h.Roles.Get(name); ok {
+			for _, p := range rd.Permissions {
+				out[p] = true
+			}
+			return out, true
+		}
+	}
+	bi := rbac.RolePerms(name)
+	if bi == nil {
+		return nil, false
+	}
+	for _, p := range bi {
+		out[p] = true
+	}
+	return out, true
+}
+
+// ListAPITokens returns API tokens. Callers without tokens.manage_others
+// only see their own tokens; manage_others sees every row.
 //
 //	GET /api/v1/settings/api-tokens
 func (h *Handlers) ListAPITokens(w http.ResponseWriter, r *http.Request) {
@@ -23,6 +86,16 @@ func (h *Handlers) ListAPITokens(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if !h.callerCanManageOthers(r) {
+		uid := middleware.UserID(r.Context())
+		out := tokens[:0]
+		for _, t := range tokens {
+			if uid != "" && t.CreatedBy != nil && *t.CreatedBy == uid {
+				out = append(out, t)
+			}
+		}
+		tokens = out
 	}
 	writeJSON(w, http.StatusOK, tokens)
 }
@@ -58,23 +131,34 @@ func (h *Handlers) CreateAPIToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "role required")
 		return
 	}
-	// Validate the requested role exists. Accept built-in names even if
-	// Roles store is empty (pre-migration fallback).
-	if h.Roles != nil {
-		if _, ok := h.Roles.Get(in.Role); !ok {
-			if _, ok := map[string]bool{"admin": true, "operator": true, "viewer": true}[in.Role]; !ok {
-				writeError(w, http.StatusBadRequest, "unknown role")
+	// Validate the requested role exists.
+	requestedPerms, ok := h.permsForRoleName(in.Role)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "unknown role")
+		return
+	}
+
+	// Privilege-escalation guard (RBAC v2.1): caller may only mint a
+	// token whose role grants a subset of the caller's own permissions.
+	// Bypassed for callers with tokens.manage_others (typically admin).
+	if !h.callerCanManageOthers(r) {
+		callerPerms := h.callerPermSet(r)
+		for p := range requestedPerms {
+			if !callerPerms[p] {
+				writeError(w, http.StatusForbidden,
+					"cannot mint a token with permissions you don't have")
 				return
 			}
 		}
 	}
 
-	// Identify the creator from the JWT middleware.
-	var creator *int64
+	// Identify the creator from the JWT middleware. users.id is a UUID
+	// string in this codebase, so we pass it through as-is rather than
+	// trying to coerce to int64 (the old code did, silently dropping
+	// the value, leaving created_by NULL for every UI-issued token).
+	var creator *string
 	if uid := middleware.UserID(r.Context()); uid != "" {
-		if n, err := strconv.ParseInt(uid, 10, 64); err == nil {
-			creator = &n
-		}
+		creator = &uid
 	}
 
 	plaintext, token, err := h.APITokens.Create(r.Context(), apitokens.CreateInput{
@@ -122,7 +206,7 @@ func (h *Handlers) RevokeAPIToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load the token first so we can audit the name.
+	// Load the token first so we can audit the name + check ownership.
 	existing, err := h.APITokens.Get(r.Context(), id)
 	if errors.Is(err, apitokens.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "token not found")
@@ -131,6 +215,17 @@ func (h *Handlers) RevokeAPIToken(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	// Ownership check: callers without manage_others can only revoke
+	// their own tokens. 404 (not 403) hides the existence of other
+	// users' tokens from probing.
+	if !h.callerCanManageOthers(r) {
+		uid := middleware.UserID(r.Context())
+		if uid == "" || existing.CreatedBy == nil || *existing.CreatedBy != uid {
+			writeError(w, http.StatusNotFound, "token not found")
+			return
+		}
 	}
 
 	if err := h.APITokens.Revoke(r.Context(), id); err != nil {

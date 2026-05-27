@@ -9,6 +9,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/go-chi/chi/v5"
 )
@@ -103,6 +104,11 @@ func (h *Handlers) PullImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
+	scopeReq := h.hostScopeReq(r.Context(), "local")
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermImagesCreate, scopeReq, "host local")
+		return
+	}
 	var req pullRequest
 	if err := decodeJSON(r, &req); err != nil || req.Image == "" {
 		writeError(w, http.StatusBadRequest, "image required")
@@ -162,10 +168,44 @@ func (h *Handlers) PullImage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// InspectImage returns the full Docker ImageInspect for the chosen
+// host (?host=…, defaults local). RemoteHost currently returns a
+// "not implemented" sentinel until the agent protocol carries the
+// inspect frame — we map that to 501 so the UI can render a helpful
+// banner instead of a generic error.
+func (h *Handlers) InspectImage(w http.ResponseWriter, r *http.Request) {
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	scopeReq := h.hostScopeReq(r.Context(), target.ID())
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermImagesView, scopeReq, "host "+target.ID())
+		return
+	}
+	id, _ := url.PathUnescape(chi.URLParam(r, "id"))
+	info, err := target.InspectImage(r.Context(), id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not yet implemented") {
+			writeError(w, http.StatusNotImplemented, err.Error())
+			return
+		}
+		writeError(w, imageErrorStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, info)
+}
+
 func (h *Handlers) RemoveImage(w http.ResponseWriter, r *http.Request) {
 	target, err := h.pickHost(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	scopeReq := h.hostScopeReq(r.Context(), target.ID())
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermImagesDelete, scopeReq, "host "+target.ID())
 		return
 	}
 	id, _ := url.PathUnescape(chi.URLParam(r, "id"))
@@ -183,6 +223,11 @@ func (h *Handlers) PruneImages(w http.ResponseWriter, r *http.Request) {
 	target, err := h.pickHost(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	scopeReq := h.hostScopeReq(r.Context(), target.ID())
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermImagesDelete, scopeReq, "host "+target.ID())
 		return
 	}
 	report, err := target.PruneImages(r.Context())

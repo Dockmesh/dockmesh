@@ -1,9 +1,17 @@
 const STORAGE_KEY = 'dockmesh_auth';
 
+interface MeScopes {
+  stacks: string[];
+  hosts: string[];
+  host_tags: string[];
+}
+
 interface User {
   id: string;
   username: string;
   role: string;
+  permissions?: string[];
+  scopes?: MeScopes;
 }
 
 interface AuthState {

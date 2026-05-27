@@ -27,6 +27,11 @@ import (
 var rpcTracer = otel.Tracer("dockmesh.agent")
 
 // Agent is the public-facing record returned to the UI.
+//
+// OnlineSince tracks the last status-transition into "online". Reset to
+// nil when the agent goes offline/pending/revoked. Lets the UI render a
+// real "up Xh" value rather than reusing the misleading enrollment-age
+// for it.
 type Agent struct {
 	ID              string     `json:"id"`
 	Name            string     `json:"name"`
@@ -38,6 +43,7 @@ type Agent struct {
 	DockerVersion   string     `json:"docker_version,omitempty"`
 	CertFingerprint string     `json:"cert_fingerprint,omitempty"`
 	LastSeenAt      *time.Time `json:"last_seen_at,omitempty"`
+	OnlineSince     *time.Time `json:"online_since,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
 }
@@ -268,7 +274,7 @@ func (s *Service) RotateEnrollToken(ctx context.Context, id string) (*CreateResu
 func (s *Service) List(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, status, version, os, arch, hostname, docker_version,
-		       cert_fingerprint, last_seen_at, created_at, updated_at
+		       cert_fingerprint, last_seen_at, online_since, created_at, updated_at
 		  FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -289,7 +295,7 @@ func (s *Service) List(ctx context.Context) ([]Agent, error) {
 func (s *Service) Get(ctx context.Context, id string) (*Agent, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, status, version, os, arch, hostname, docker_version,
-		       cert_fingerprint, last_seen_at, created_at, updated_at
+		       cert_fingerprint, last_seen_at, online_since, created_at, updated_at
 		  FROM agents WHERE id = ?`, id)
 	a, err := scanAgent(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -389,7 +395,7 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 func (s *Service) LookupByFingerprint(ctx context.Context, fingerprint string) (*Agent, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, status, version, os, arch, hostname, docker_version,
-		       cert_fingerprint, last_seen_at, created_at, updated_at
+		       cert_fingerprint, last_seen_at, online_since, created_at, updated_at
 		  FROM agents WHERE cert_fingerprint = ?`, fingerprint)
 	a, err := scanAgent(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -411,6 +417,9 @@ func (s *Service) markOnline(ctx context.Context, ag *ConnectedAgent, hello Hell
 	s.connected[ag.ID] = ag
 	s.mu.Unlock()
 
+	// Set online_since on the transition; preserve a previous value if
+	// the agent reconnected within a short window (briefly flapped) by
+	// only setting it when currently NULL.
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE agents
 		   SET status = 'online',
@@ -420,6 +429,7 @@ func (s *Service) markOnline(ctx context.Context, ag *ConnectedAgent, hello Hell
 		       version = ?,
 		       docker_version = ?,
 		       last_seen_at = CURRENT_TIMESTAMP,
+		       online_since = COALESCE(online_since, CURRENT_TIMESTAMP),
 		       updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ?`,
 		hello.Hostname, hello.OS, hello.Arch, hello.Version, hello.DockerVersion, ag.ID)
@@ -432,7 +442,9 @@ func (s *Service) markOffline(ag *ConnectedAgent) {
 		delete(s.connected, ag.ID)
 	}
 	s.mu.Unlock()
-	_, _ = s.db.Exec(`UPDATE agents SET status = 'offline', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, ag.ID)
+	// Clear online_since on offline so the next online transition starts
+	// the uptime clock fresh. Compliance + UX both want this behaviour.
+	_, _ = s.db.Exec(`UPDATE agents SET status = 'offline', online_since = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, ag.ID)
 }
 
 func (s *Service) touchHeartbeat(ctx context.Context, id string) {
@@ -490,9 +502,9 @@ type rowScanner interface {
 func scanAgent(r rowScanner) (*Agent, error) {
 	var a Agent
 	var version, osName, arch, hostname, dockerVersion, fingerprint sql.NullString
-	var lastSeen sql.NullTime
+	var lastSeen, onlineSince sql.NullTime
 	if err := r.Scan(&a.ID, &a.Name, &a.Status, &version, &osName, &arch, &hostname,
-		&dockerVersion, &fingerprint, &lastSeen, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		&dockerVersion, &fingerprint, &lastSeen, &onlineSince, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if version.Valid {
@@ -516,6 +528,10 @@ func scanAgent(r rowScanner) (*Agent, error) {
 	if lastSeen.Valid {
 		t := lastSeen.Time
 		a.LastSeenAt = &t
+	}
+	if onlineSince.Valid {
+		t := onlineSince.Time
+		a.OnlineSince = &t
 	}
 	return &a, nil
 }

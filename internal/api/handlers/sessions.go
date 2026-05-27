@@ -13,13 +13,14 @@ import (
 // login sessions. No secrets — just enough for them to recognise
 // "is this my phone? is this a browser I forgot to log out of?".
 type Session struct {
-	FamilyID  string     `json:"family_id"`
-	UserAgent string     `json:"user_agent,omitempty"`
-	IP        string     `json:"ip,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	ExpiresAt time.Time  `json:"expires_at"`
-	RevokedAt *time.Time `json:"revoked_at,omitempty"`
-	IsCurrent bool       `json:"is_current"`
+	FamilyID   string     `json:"family_id"`
+	UserAgent  string     `json:"user_agent,omitempty"`
+	IP         string     `json:"ip,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	IsCurrent  bool       `json:"is_current"`
 }
 
 // ListMySessions returns the caller's sessions. By default only active
@@ -38,7 +39,7 @@ func (h *Handlers) ListMySessions(w http.ResponseWriter, r *http.Request) {
 	}
 	includeRevoked := r.URL.Query().Get("include_revoked") == "1"
 	query := `
-		SELECT family_id, user_agent, ip, created_at, expires_at, revoked_at
+		SELECT family_id, user_agent, ip, created_at, last_seen_at, expires_at, revoked_at
 		  FROM sessions
 		 WHERE user_id = ?
 		   AND revoked_at IS NULL
@@ -47,7 +48,7 @@ func (h *Handlers) ListMySessions(w http.ResponseWriter, r *http.Request) {
 		 LIMIT 200`
 	if includeRevoked {
 		query = `
-		SELECT family_id, user_agent, ip, created_at, expires_at, revoked_at
+		SELECT family_id, user_agent, ip, created_at, last_seen_at, expires_at, revoked_at
 		  FROM sessions
 		 WHERE user_id = ?
 		 ORDER BY created_at DESC
@@ -63,8 +64,8 @@ func (h *Handlers) ListMySessions(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var s Session
 		var ua, ip sql.NullString
-		var revoked sql.NullTime
-		if err := rows.Scan(&s.FamilyID, &ua, &ip, &s.CreatedAt, &s.ExpiresAt, &revoked); err != nil {
+		var revoked, lastSeen sql.NullTime
+		if err := rows.Scan(&s.FamilyID, &ua, &ip, &s.CreatedAt, &lastSeen, &s.ExpiresAt, &revoked); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -74,6 +75,10 @@ func (h *Handlers) ListMySessions(w http.ResponseWriter, r *http.Request) {
 		if ip.Valid {
 			s.IP = ip.String
 		}
+		if lastSeen.Valid {
+			t := lastSeen.Time
+			s.LastSeenAt = &t
+		}
 		if revoked.Valid {
 			t := revoked.Time
 			s.RevokedAt = &t
@@ -81,6 +86,32 @@ func (h *Handlers) ListMySessions(w http.ResponseWriter, r *http.Request) {
 		out = append(out, s)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// RevokeAllMySessions invalidates every active session belonging to
+// the caller — including the one used to make this request. Frontend
+// uses it for "sign out everywhere". 204 on success; the next API call
+// from the now-revoked session will refresh-fail and force a login.
+//
+//	POST /api/v1/sessions/revoke-all
+func (h *Handlers) RevokeAllMySessions(w http.ResponseWriter, r *http.Request) {
+	uid := middleware.UserID(r.Context())
+	if uid == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	res, err := h.DB.ExecContext(r.Context(), `
+		UPDATE sessions
+		   SET revoked_at = CURRENT_TIMESTAMP
+		 WHERE user_id = ? AND revoked_at IS NULL`,
+		uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	n, _ := res.RowsAffected()
+	h.audit(r, "auth.session_revoke_all", uid, map[string]any{"count": n})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // RevokeMySession marks one of the caller's sessions as revoked. The

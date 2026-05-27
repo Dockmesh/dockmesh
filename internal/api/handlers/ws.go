@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 var upgrader = websocket.Upgrader{
@@ -66,6 +67,11 @@ func (h *Handlers) WSLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	containerID := chi.URLParam(r, "id")
+	scopeReq := h.containerScopeReq(r.Context(), target.ID(), containerID)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermContainersLogs, scopeReq, "container "+containerID)
+		return
+	}
 	tail := r.URL.Query().Get("tail")
 	if tail == "" {
 		tail = "100"

@@ -1,86 +1,82 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { api, isFanOut, type SystemMetrics, type ContainerSummary } from '$lib/api';
-  import { allowed } from '$lib/rbac';
+  import { api, isFanOut, type SystemMetrics, type ContainerSummary, type HostInfo } from '$lib/api';
+  import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
   import { autoRefresh } from '$lib/autorefresh';
-  import { Skeleton, Badge, AnimatedNumber } from '$lib/components/ui';
+  import { Skeleton } from '$lib/components/ui';
   import {
-    Box,
-    Cpu,
-    MemoryStick,
-    HardDrive,
-    Activity,
+    EdMetric,
+    EdRow,
+    Eyebrow,
+    StatusPill,
+  } from '$lib/components/editorial';
+  import {
     RefreshCw,
     Server,
-    CheckCircle2,
+    HardDrive,
+    Layers,
     AlertTriangle,
-    Rocket,
-    Download,
-    Archive,
-    ShieldCheck,
-    Layers
+    ArrowRight,
   } from 'lucide-svelte';
 
-  // Per-host metrics row used in all-mode. Matches the backend
-  // systemMetricsRow shape (flattened Metrics + host metadata).
   type PerHostMetrics = SystemMetrics & { host_id: string; host_name: string };
 
   type StackCard = {
     name: string;
     state: 'running' | 'stopped' | 'unhealthy' | 'partial';
     services: Array<{ name: string; state: string }>;
-    // Hosts where this stack's containers currently live. In all-mode
-    // this can be multiple — today we still deploy a stack to one host
-    // at a time but the per-host-label grouping detects anything that
-    // drifted to run on multiple hosts.
     hosts: Array<{ id: string; name: string }>;
   };
 
   let health = $state<{ status: string; version: string; docker: boolean } | null>(null);
-  // Single-host mode: one Metrics object. All-mode: array of per-host rows.
   let sysMetrics = $state<SystemMetrics | null>(null);
   let perHostMetrics = $state<PerHostMetrics[]>([]);
   let containerStats = $state({ total: 0, running: 0, stopped: 0, unhealthy: 0 });
   let stackCards = $state<StackCard[]>([]);
   let recentAudit = $state<any[]>([]);
+  let hostList = $state<HostInfo[]>([]);
   let agentCount = $state({ online: 0, total: 0 });
   let loading = $state(true);
   let error = $state('');
   let stackFilter = $state<'all' | 'running' | 'stopped' | 'unhealthy'>('all');
 
+  // Tiny in-memory series for the metric sparklines.
+  const HISTORY_LIMIT = 16;
+  let cpuHistory = $state<number[]>([]);
+  let memHistory = $state<number[]>([]);
+  let diskHistory = $state<number[]>([]);
+
   const isAll = $derived(hosts.isAll);
   const isRemote = $derived(hosts.id !== 'local' && hosts.id !== 'all');
 
   async function load() {
-    // Only flip the skeleton on the FIRST load. Read guarded by
-    // untrack() so a caller $effect doesn't subscribe to these state
-    // vars — writes inside load() would otherwise re-run the effect
-    // and cause a runaway fetch loop.
     const isFirstLoad = untrack(
       () => !sysMetrics && perHostMetrics.length === 0 && stackCards.length === 0
     );
     if (isFirstLoad) loading = true;
     error = '';
     try {
-      // Dashboard fetches the COMPACT container summary (~1 KB) instead
-      // of the full container list (~15 KB). The summary already gives
-      // us per-state counts + per-stack rollup, which is everything this
-      // page needs. A 10-second auto-refresh loop that used to push 90
-      // KB/min now pushes ~6 KB/min and server-side CPU drops from 26 ms
-      // to <5 ms per call.
-      const [h, sysRaw, summary, stacksList, audit, hostList] = await Promise.all([
+      const [h, sysRaw, summary, stacksList, audit, hostListRaw] = await Promise.all([
         api.health(),
         api.system.metrics(hosts.id).catch(() => null),
-        api.containers.summary(hosts.id).catch((): ContainerSummary => ({ total: 0, running: 0, stopped: 0, unhealthy: 0, by_stack: {} })),
+        api.containers
+          .summary(hosts.id)
+          .catch(
+            (): ContainerSummary => ({
+              total: 0,
+              running: 0,
+              stopped: 0,
+              unhealthy: 0,
+              by_stack: {},
+            })
+          ),
         api.stacks.list().catch(() => []),
-        allowed('audit.read') ? api.audit.list(8).catch(() => []) : Promise.resolve([]),
-        api.hosts.list().catch(() => [])
+        allowed('audit.view') ? api.audit.list(10).catch(() => []) : Promise.resolve([]),
+        api.hosts.list().catch(() => []),
       ]);
       health = h;
 
-      // System metrics: in all-mode extract per-host rows for the
-      // mini-table; in single-host mode keep the one snapshot as-is.
       if (sysRaw && isFanOut(sysRaw)) {
         perHostMetrics = sysRaw.items as PerHostMetrics[];
         sysMetrics = null;
@@ -89,18 +85,24 @@
         sysMetrics = sysRaw as SystemMetrics | null;
       }
 
-      // Container counts come pre-aggregated from /containers/summary.
+      if (sysMetrics) {
+        cpuHistory = [...cpuHistory, sysMetrics.cpu_percent].slice(-HISTORY_LIMIT);
+        if (sysMetrics.mem_total > 0) {
+          memHistory = [...memHistory, sysMetrics.mem_percent].slice(-HISTORY_LIMIT);
+        }
+        if (sysMetrics.disk_total > 0) {
+          diskHistory = [...diskHistory, sysMetrics.disk_percent].slice(-HISTORY_LIMIT);
+        }
+      }
+
       containerStats.total = summary.total;
       containerStats.running = summary.running;
       containerStats.stopped = summary.stopped;
       containerStats.unhealthy = summary.unhealthy;
 
-      // Build stack cards from the summary's per-stack rollup. The
-      // summary tells us which compose projects have containers and
-      // their aggregate state; we merge that onto the stacks-from-disk
-      // list so stacks without any running containers still render as
-      // "stopped" cards.
-      const hostName = new Map<string, string>(hostList.map((h: any) => [h.id, h.name] as [string, string]));
+      const hostName = new Map<string, string>(
+        hostListRaw.map((h: any) => [h.id, h.name] as [string, string])
+      );
       stackCards = stacksList.map((s: any) => {
         const rollup = summary.by_stack[s.name];
         if (!rollup) {
@@ -115,13 +117,17 @@
           name: s.name,
           state,
           services: rollup.services.map((name) => ({ name, state: 'running' })),
-          hosts: rollup.hosts.map((id) => ({ id, name: hostName.get(id) ?? (id === 'local' ? 'Local' : id) }))
+          hosts: rollup.hosts.map((id) => ({
+            id,
+            name: hostName.get(id) ?? (id === 'local' ? 'Local' : id),
+          })),
         };
       });
 
       recentAudit = audit;
-      agentCount.total = hostList.length;
-      agentCount.online = hostList.filter((x: any) => x.status === 'online').length;
+      hostList = hostListRaw;
+      agentCount.total = hostListRaw.length;
+      agentCount.online = hostListRaw.filter((x: any) => x.status === 'online').length;
     } catch (err: any) {
       error = err.message ?? 'Failed to load';
     } finally {
@@ -129,12 +135,14 @@
     }
   }
 
-  // Re-load when the host picker changes.
   let prevHost = hosts.id;
   $effect(() => {
     const cur = hosts.id;
     if (cur !== prevHost) {
       prevHost = cur;
+      cpuHistory = [];
+      memHistory = [];
+      diskHistory = [];
       load();
     }
   });
@@ -143,89 +151,7 @@
     load();
   });
 
-  // Auto-refresh every 10s so the dashboard reflects container state
-  // changes, backup completions, new audit entries without requiring
-  // the user to hit Refresh. The returned cleanup stops the interval
-  // on unmount.
   $effect(() => autoRefresh(load, 10_000));
-
-  function actionColor(action: string): 'success' | 'warning' | 'danger' | 'info' | 'default' {
-    if (action.includes('delete') || action.includes('remove') || action.includes('failed'))
-      return 'danger';
-    if (action.includes('create') || action.includes('deploy') || action.includes('start'))
-      return 'success';
-    if (action.includes('update') || action.includes('refresh')) return 'info';
-    return 'default';
-  }
-
-  // Map a raw audit event to a human-readable sentence. Keeping the
-  // mapping frontend-side lets us i18n later without a backend schema
-  // change. Every case falls through to a generic "action — target"
-  // format so unknown actions still render.
-  function formatActivity(e: any): string {
-    const tgt = e.target ?? '';
-    const short = tgt.length > 12 && /^[0-9a-f]/.test(tgt) ? tgt.slice(0, 12) : tgt;
-    switch (e.action) {
-      case 'auth.login':
-        return 'signed in';
-      case 'auth.logout':
-        return 'signed out';
-      case 'auth.login_failed':
-        return `failed sign-in attempt${tgt ? ' for ' + tgt : ''}`;
-      case 'auth.sso_login':
-        return 'signed in via SSO';
-      case 'stack.create':
-        return `created stack ${tgt}`;
-      case 'stack.update':
-        return `updated stack ${tgt}`;
-      case 'stack.delete':
-        return `deleted stack ${tgt}`;
-      case 'stack.deploy':
-        return `deployed stack ${tgt}`;
-      case 'stack.stop':
-        return `stopped stack ${tgt}`;
-      case 'container.start':
-        return `started container ${short}`;
-      case 'container.stop':
-        return `stopped container ${short}`;
-      case 'container.restart':
-        return `restarted container ${short}`;
-      case 'container.remove':
-        return `removed container ${short}`;
-      case 'container.update':
-        return `updated container ${short}`;
-      case 'container.rollback':
-        return `rolled back container ${short}`;
-      case 'image.pull':
-        return `pulled image ${tgt}`;
-      case 'image.remove':
-        return `removed image ${short}`;
-      case 'image.prune':
-        return `pruned unused images`;
-      case 'image.scan':
-        return `scanned image ${tgt}`;
-      case 'network.create':
-        return `created network ${tgt}`;
-      case 'network.remove':
-        return `removed network ${tgt}`;
-      case 'volume.create':
-        return `created volume ${tgt}`;
-      case 'volume.remove':
-        return `removed volume ${tgt}`;
-      case 'volume.prune':
-        return `pruned unused volumes`;
-      case 'user.create':
-        return `created user ${tgt}`;
-      case 'user.delete':
-        return `deleted user ${tgt}`;
-      case 'user.update':
-        return `updated user ${tgt}`;
-      case 'user.password':
-        return `changed password for ${tgt}`;
-      default:
-        return e.action + (tgt ? ` — ${short}` : '');
-    }
-  }
 
   function fmtTime(ts: string): string {
     const t = new Date(ts);
@@ -244,36 +170,191 @@
     return `${(n / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
   }
 
-  // Pick a bar color based on percentage — green < 60%, yellow < 85%,
-  // red above that. Keeps the dashboard a quick visual read.
   function barColor(pct: number): string {
     if (pct < 60) return 'var(--color-success-500)';
     if (pct < 85) return 'var(--color-warning-500)';
     return 'var(--color-danger-500)';
   }
 
-  function textColor(pct: number): string {
-    if (pct < 60) return 'var(--color-success-400)';
-    if (pct < 85) return 'var(--color-warning-400)';
-    return 'var(--color-danger-400)';
+  function sparkColor(pct: number): string {
+    if (pct < 60) return 'var(--accent)';
+    if (pct < 85) return 'var(--color-warning-500)';
+    return 'var(--color-danger-500)';
   }
 
-  // Dashboard's stack grid is a preview, NOT the canonical list — at
-  // 100+ stacks the 3-column card view becomes a wall of noise and
-  // pushes Recent Activity / Quick Actions off-screen.
-  //
-  // Sort is deliberately stable alphabetical, NOT by state. The auto-
-  // refresh ticks every few seconds, and sorting by `running/stopped`
-  // made cards flip positions each tick while containers settled —
-  // jumpy, distracting, and useless for the user. Filter buttons on
-  // top already surface how many stacks are in each state.
-  const STACK_PREVIEW_LIMIT = 12;
+  function rowStatus(s: StackCard['state']): 'running' | 'degraded' | 'failing' | 'stopped' {
+    if (s === 'running') return 'running';
+    if (s === 'unhealthy') return 'failing';
+    if (s === 'partial') return 'degraded';
+    return 'stopped';
+  }
+
+  function pillStatus(
+    s: StackCard['state']
+  ): 'running' | 'degraded' | 'failing' | 'stopped' {
+    return rowStatus(s);
+  }
+
+  function hostStatusPill(s: HostInfo['status']): 'ok' | 'pending' | 'failing' | 'stopped' {
+    if (s === 'online') return 'ok';
+    if (s === 'pending') return 'pending';
+    if (s === 'offline') return 'failing';
+    return 'stopped';
+  }
+
+  function formatActivity(e: any): string {
+    const tgt = e.target ?? '';
+    const short = tgt.length > 12 && /^[0-9a-f]/.test(tgt) ? tgt.slice(0, 12) : tgt;
+    switch (e.action) {
+      case 'auth.login': return 'signed in';
+      case 'auth.logout': return 'signed out';
+      case 'auth.login_failed': return `failed sign-in${tgt ? ' for ' + tgt : ''}`;
+      case 'auth.sso_login': return 'signed in via SSO';
+      case 'stack.create': return `created stack ${tgt}`;
+      case 'stack.update': return `updated stack ${tgt}`;
+      case 'stack.delete': return `deleted stack ${tgt}`;
+      case 'stack.deploy': return `deployed stack ${tgt}`;
+      case 'stack.stop': return `stopped stack ${tgt}`;
+      case 'container.start': return `started container ${short}`;
+      case 'container.stop': return `stopped container ${short}`;
+      case 'container.restart': return `restarted container ${short}`;
+      case 'container.remove': return `removed container ${short}`;
+      case 'container.update': return `updated container ${short}`;
+      case 'container.rollback': return `rolled back container ${short}`;
+      case 'image.pull': return `pulled image ${tgt}`;
+      case 'image.remove': return `removed image ${short}`;
+      case 'image.prune': return 'pruned unused images';
+      case 'image.scan': return `scanned image ${tgt}`;
+      case 'network.create': return `created network ${tgt}`;
+      case 'network.remove': return `removed network ${tgt}`;
+      case 'volume.create': return `created volume ${tgt}`;
+      case 'volume.remove': return `removed volume ${tgt}`;
+      case 'volume.prune': return 'pruned unused volumes';
+      case 'user.create': return `created user ${tgt}`;
+      case 'user.delete': return `deleted user ${tgt}`;
+      case 'user.update': return `updated user ${tgt}`;
+      case 'user.password': return `changed password for ${tgt}`;
+      default: return e.action + (tgt ? ` — ${short}` : '');
+    }
+  }
+
+  function activityKind(action: string): 'ok' | 'warn' | 'err' {
+    if (action.includes('delete') || action.includes('remove') || action.includes('failed')) {
+      return 'err';
+    }
+    if (action.includes('stop') || action.includes('rollback')) return 'warn';
+    return 'ok';
+  }
+
+  // Per-host rows for the Hosts section. In single-host mode this is one
+  // row built from the local host + sysMetrics. In all-mode we merge the
+  // hostList (for tags/kind/status) with perHostMetrics (for resource %).
+  type HostRowData = {
+    id: string;
+    name: string;
+    kind: HostInfo['kind'];
+    status: HostInfo['status'];
+    tags: string[];
+    cpuPct: number;
+    cpuLabel: string;
+    memPct: number | null;
+    memLabel: string;
+    diskPct: number | null;
+    diskLabel: string;
+  };
+
+  const hostRows = $derived.by<HostRowData[]>(() => {
+    if (perHostMetrics.length > 0) {
+      // All-hosts mode: one row per metrics fan-out item.
+      return perHostMetrics.map((m): HostRowData => {
+        const meta = hostList.find((h) => h.id === m.host_id);
+        return {
+          id: m.host_id,
+          name: m.host_name,
+          kind: meta?.kind ?? 'agent',
+          status: meta?.status ?? 'online',
+          tags: meta?.tags ?? [],
+          cpuPct: m.cpu_percent,
+          cpuLabel: `${m.cpu_used_cores.toFixed(2)} / ${m.cpu_cores.toFixed(2)} cores`,
+          memPct: m.mem_total > 0 ? m.mem_percent : null,
+          memLabel: m.mem_total > 0
+            ? `${fmtBytes(m.mem_used)} / ${fmtBytes(m.mem_total)}`
+            : 'unavailable',
+          diskPct: m.disk_total > 0 ? m.disk_percent : null,
+          diskLabel: m.disk_total > 0
+            ? `${fmtBytes(m.disk_used)} / ${fmtBytes(m.disk_total)}`
+            : 'unavailable',
+        };
+      });
+    }
+    // Single-host mode: only render the host the dashboard is currently
+    // pointed at, with sysMetrics filling in the bars.
+    if (!sysMetrics) return [];
+    const selected = hostList.find((h) => h.id === hosts.id) ?? hostList[0];
+    const id = selected?.id ?? 'local';
+    const name = selected?.name ?? 'Local';
+    return [
+      {
+        id,
+        name,
+        kind: selected?.kind ?? 'local',
+        status: selected?.status ?? 'online',
+        tags: selected?.tags ?? [],
+        cpuPct: sysMetrics.cpu_percent,
+        cpuLabel: `${sysMetrics.cpu_used_cores.toFixed(2)} / ${sysMetrics.cpu_cores.toFixed(2)} cores`,
+        memPct: sysMetrics.mem_total > 0 ? sysMetrics.mem_percent : null,
+        memLabel: sysMetrics.mem_total > 0
+          ? `${fmtBytes(sysMetrics.mem_used)} / ${fmtBytes(sysMetrics.mem_total)}`
+          : 'unavailable',
+        diskPct: sysMetrics.disk_total > 0 ? sysMetrics.disk_percent : null,
+        diskLabel: sysMetrics.disk_total > 0
+          ? `${fmtBytes(sysMetrics.disk_used)} / ${fmtBytes(sysMetrics.disk_total)}`
+          : 'unavailable',
+      },
+    ];
+  });
+
+  const statusLine = $derived.by(() => {
+    if (health && !health.docker) {
+      return 'Docker is unreachable — dashboard is read-only until it returns.';
+    }
+    const issues = stackCards.filter(
+      (s) => s.state === 'unhealthy' || s.state === 'partial'
+    ).length;
+    const stopped = stackCards.filter((s) => s.state === 'stopped').length;
+    if (issues > 0) return `${issues} stack${issues === 1 ? ' needs' : 's need'} attention`;
+    if (stopped > 0 && stackCards.length > 0) return `All running · ${stopped} idle`;
+    if (stackCards.length === 0) return 'No stacks yet — deploy your first compose file to begin';
+    return 'Everything running';
+  });
+
+  const subtitle = $derived.by(() => {
+    const parts: string[] = [];
+    if (containerStats.running) {
+      parts.push(`${containerStats.running} of ${containerStats.total} containers running`);
+    } else if (containerStats.total) {
+      parts.push(`${containerStats.total} containers stopped`);
+    }
+    if (agentCount.total > 1) {
+      parts.push(`${agentCount.online} of ${agentCount.total} hosts online`);
+    } else if (health?.docker) {
+      parts.push('Docker connected');
+    }
+    if (health?.version) {
+      parts.push(`dockmesh ${health.version}`);
+    }
+    return parts.join(' · ');
+  });
+
+  const STACK_PREVIEW_LIMIT = 8;
   const sortedStacks = $derived(
     [...stackCards].sort((a, b) => a.name.localeCompare(b.name))
   );
   const filteredStacks = $derived(
-    (stackFilter === 'all' ? sortedStacks : sortedStacks.filter((s) => s.state === stackFilter))
-      .slice(0, STACK_PREVIEW_LIMIT)
+    (stackFilter === 'all'
+      ? sortedStacks
+      : sortedStacks.filter((s) => s.state === stackFilter)
+    ).slice(0, STACK_PREVIEW_LIMIT)
   );
   const hiddenStackCount = $derived(
     Math.max(
@@ -287,539 +368,282 @@
     all: stackCards.length,
     running: stackCards.filter((s) => s.state === 'running').length,
     stopped: stackCards.filter((s) => s.state === 'stopped').length,
-    unhealthy: stackCards.filter((s) => s.state === 'unhealthy' || s.state === 'partial').length
+    unhealthy: stackCards.filter((s) => s.state === 'unhealthy' || s.state === 'partial')
+      .length,
   });
 
-  const canDeploy = $derived(allowed('stack.deploy'));
-  const canImage = $derived(allowed('image.write'));
-  const canBackup = $derived(allowed('user.manage'));
-  const canScan = $derived(allowed('image.scan'));
+  const canSeeAudit = $derived(allowed('audit.view'));
 </script>
 
-<section class="space-y-6">
-  <!-- Header row -->
-  <div class="flex items-start justify-between flex-wrap gap-3">
-    <div>
-      <div class="flex items-center gap-2">
-        <h1 class="text-[22px] font-semibold tracking-tight">Dashboard</h1>
-        {#if isRemote}
-          <span
-            class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-[var(--color-brand-500)]/30 bg-[color-mix(in_srgb,var(--color-brand-500)_10%,transparent)] text-[var(--color-brand-400)]"
-          >
-            <Server class="w-3 h-3" />
-            {hosts.selected?.name}
-          </span>
-        {/if}
-      </div>
-      <p class="text-sm text-[var(--fg-muted)] mt-0.5 flex items-center gap-1.5">
-        {#if health?.docker}
-          <CheckCircle2 class="w-3.5 h-3.5 text-[var(--color-success-400)]" />
-          <span>Docker {health.version} · dockmesh {health.status}</span>
-        {:else if health}
-          <AlertTriangle class="w-3.5 h-3.5 text-[var(--color-warning-400)]" />
-          <span class="text-[var(--color-warning-400)]">Docker daemon unreachable</span>
-        {:else}
-          <span>Loading system status…</span>
-        {/if}
+<section class="dashboard-frame">
+  <!-- ────────────────────────────────────────────── Header -->
+  <header class="dash-header">
+    <div class="dash-header-text">
+      <h1 class="ed-title dash-title">Overview</h1>
+      <p class="ed-subtitle dash-subtitle">
+        {statusLine}{#if subtitle} · {subtitle}{/if}{#if isRemote} · viewing {hosts.selected?.name}{/if}
       </p>
     </div>
-    <button
-      onclick={load}
-      class="dm-btn dm-btn-secondary dm-btn-sm"
-      disabled={loading}
-      aria-label="Refresh"
-    >
-      <RefreshCw class="w-3.5 h-3.5 {loading ? 'animate-spin' : ''}" />
-      Refresh
-    </button>
-  </div>
+    <div class="ed-actions">
+      <button
+        type="button"
+        class="dm-btn dm-btn-ghost dm-btn-sm"
+        onclick={load}
+        disabled={loading}
+        aria-label="Refresh"
+        title="Refresh"
+      >
+        <RefreshCw size={13} strokeWidth={1.5} class={loading ? 'animate-spin' : ''} />
+        Re-poll
+      </button>
+    </div>
+  </header>
 
   {#if error}
-    <div
-      class="dm-card p-4 border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] text-[var(--color-danger-400)] text-sm"
-    >
-      {error}
-    </div>
+    <p class="dash-error" role="alert">{error}</p>
   {/if}
 
   {#if health && !health.docker}
-    <!--
-      Docker-unreachable banner. Prominent but non-alarming — this is an
-      auto-recoverable state that fixes itself as soon as the daemon
-      opens its socket again. Most common trigger on macOS: the boot
-      race where launchd fires dockmesh before Docker Desktop starts.
-    -->
-    <div
-      class="dm-card p-4 border-[color-mix(in_srgb,var(--color-warning-500)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-500)_7%,transparent)]"
-    >
-      <div class="flex items-start gap-3">
-        <AlertTriangle class="w-5 h-5 text-[var(--color-warning-400)] mt-0.5 flex-shrink-0" />
-        <div class="flex-1 min-w-0 text-sm">
-          <div class="font-medium text-[var(--fg)]">Docker daemon not responding</div>
-          <p class="text-[var(--fg-muted)] mt-0.5">
-            Container, stack, image and volume endpoints will return errors until Docker is available. Dockmesh checks for the socket every 10 seconds — as soon as Docker starts, this banner clears automatically. No restart needed.
-          </p>
-          <p class="text-xs text-[var(--fg-subtle)] mt-1.5">
-            On macOS this often happens right after a reboot when dockmesh starts before Docker Desktop. Usually resolves within 30-60 seconds.
-          </p>
-        </div>
-      </div>
-    </div>
-  {/if}
-
-  <!-- ─────────── Row 1: System metrics ───────────
-       Single-host mode: 4 cards (CPU / Memory / Disk / Containers).
-       All-hosts mode: Containers card alone + a per-host table below.
-       The CPU/Memory/Disk cards don't make sense in all-mode because
-       there isn't one host whose numbers would go in them — instead we
-       show a compact table with one row per host. -->
-  {#if !isAll}
-  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-    <!-- CPU -->
-    <div class="dm-card p-4">
-      <div class="flex items-center justify-between text-[11px] text-[var(--fg-muted)] uppercase tracking-wider font-medium">
-        <div class="flex items-center gap-1.5">
-          <Cpu class="w-3.5 h-3.5" />
-          <span>CPU</span>
-          {#if sysMetrics?.docker_limited}
-            <span class="normal-case text-[10px] px-1.5 py-0.5 rounded-full bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] text-[var(--color-brand-400)]" title="Docker Desktop resource limit — configured under Settings → Resources">
-              Docker cap
-            </span>
-          {/if}
-        </div>
-        {#if sysMetrics}
-          <span class="normal-case text-[var(--fg-subtle)]">{sysMetrics.cpu_cores} cores</span>
-        {/if}
-      </div>
-      {#if loading || !sysMetrics}
-        <Skeleton class="mt-2" width="4rem" height="1.5rem" />
-        <Skeleton class="mt-2" width="100%" height="0.25rem" />
-      {:else}
-        <div class="mt-1.5 text-xl font-semibold font-mono tabular-nums leading-tight" style:color={textColor(sysMetrics.cpu_percent)}>
-          <AnimatedNumber value={sysMetrics.cpu_percent} format={(n) => n.toFixed(0) + '%'} />
-        </div>
-        <div class="mt-2 h-1 rounded-full overflow-hidden bg-[var(--surface-hover)]">
-          <div
-            class="h-full rounded-full transition-all duration-500"
-            style:width="{sysMetrics.cpu_percent}%"
-            style:background={barColor(sysMetrics.cpu_percent)}
-          ></div>
-        </div>
-        <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)] tabular-nums">
-          <AnimatedNumber value={sysMetrics.cpu_used_cores} format={(n) => n.toFixed(2)} /> / {sysMetrics.cpu_cores.toFixed(2)} cores
-        </div>
-        {#if sysMetrics.docker_limited && sysMetrics.host_cpu_cores}
-          <div class="mt-0.5 text-[10px] text-[var(--fg-subtle)] tabular-nums">
-            Host: {sysMetrics.host_cpu_used_cores?.toFixed(2) ?? '—'} / {sysMetrics.host_cpu_cores} cores ({sysMetrics.host_cpu_percent?.toFixed(0) ?? '—'}%)
-          </div>
-        {/if}
-      {/if}
-    </div>
-
-    <!-- Memory -->
-    <div class="dm-card p-4">
-      <div class="flex items-center justify-between text-[11px] text-[var(--fg-muted)] uppercase tracking-wider font-medium">
-        <div class="flex items-center gap-1.5">
-          <MemoryStick class="w-3.5 h-3.5" />
-          <span>Memory</span>
-          {#if sysMetrics?.docker_limited}
-            <span class="normal-case text-[10px] px-1.5 py-0.5 rounded-full bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] text-[var(--color-brand-400)]" title="Docker Desktop resource limit — configured under Settings → Resources">
-              Docker cap
-            </span>
-          {/if}
-        </div>
-        {#if sysMetrics && sysMetrics.mem_total > 0}
-          <span class="normal-case text-[var(--fg-subtle)]">{fmtBytes(sysMetrics.mem_total)}</span>
-        {/if}
-      </div>
-      {#if loading || !sysMetrics}
-        <Skeleton class="mt-2" width="4rem" height="1.5rem" />
-        <Skeleton class="mt-2" width="100%" height="0.25rem" />
-      {:else if sysMetrics.mem_total === 0}
-        <div class="mt-1.5 text-xl font-semibold text-[var(--fg-subtle)] leading-tight">—</div>
-        <div class="mt-2 h-1 rounded-full bg-[var(--surface-hover)]"></div>
-        <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)]">unavailable on this host</div>
-      {:else}
-        <div class="mt-1.5 text-xl font-semibold font-mono tabular-nums leading-tight" style:color={textColor(sysMetrics.mem_percent)}>
-          <AnimatedNumber value={sysMetrics.mem_percent} format={(n) => n.toFixed(0) + '%'} />
-        </div>
-        <div class="mt-2 h-1 rounded-full overflow-hidden bg-[var(--surface-hover)]">
-          <div
-            class="h-full rounded-full transition-all duration-500"
-            style:width="{sysMetrics.mem_percent}%"
-            style:background={barColor(sysMetrics.mem_percent)}
-          ></div>
-        </div>
-        <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)] tabular-nums">
-          <AnimatedNumber value={sysMetrics.mem_used} format={fmtBytes} /> / {fmtBytes(sysMetrics.mem_total)}
-        </div>
-        {#if sysMetrics.docker_limited && sysMetrics.host_mem_total}
-          <div class="mt-0.5 text-[10px] text-[var(--fg-subtle)] tabular-nums">
-            Host: {sysMetrics.host_mem_used ? fmtBytes(sysMetrics.host_mem_used) : '—'} / {fmtBytes(sysMetrics.host_mem_total)} ({sysMetrics.host_mem_percent?.toFixed(0) ?? '—'}%)
-          </div>
-        {/if}
-      {/if}
-    </div>
-
-    <!-- Disk -->
-    <div class="dm-card p-4">
-      <div class="flex items-center justify-between text-[11px] text-[var(--fg-muted)] uppercase tracking-wider font-medium">
-        <div class="flex items-center gap-1.5">
-          <HardDrive class="w-3.5 h-3.5" />
-          <span>Disk</span>
-        </div>
-        {#if sysMetrics && sysMetrics.disk_path}
-          <span class="normal-case text-[var(--fg-subtle)] font-mono truncate ml-2" title={sysMetrics.disk_path}>
-            {sysMetrics.disk_path}
-          </span>
-        {/if}
-      </div>
-      {#if loading || !sysMetrics}
-        <Skeleton class="mt-2" width="4rem" height="1.5rem" />
-        <Skeleton class="mt-2" width="100%" height="0.25rem" />
-      {:else if sysMetrics.disk_total === 0}
-        <div class="mt-1.5 text-xl font-semibold text-[var(--fg-subtle)] leading-tight">—</div>
-        <div class="mt-2 h-1 rounded-full bg-[var(--surface-hover)]"></div>
-        <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)]">unavailable on this host</div>
-      {:else}
-        <div class="mt-1.5 text-xl font-semibold font-mono tabular-nums leading-tight" style:color={textColor(sysMetrics.disk_percent)}>
-          <AnimatedNumber value={sysMetrics.disk_percent} format={(n) => n.toFixed(0) + '%'} />
-        </div>
-        <div class="mt-2 h-1 rounded-full overflow-hidden bg-[var(--surface-hover)]">
-          <div
-            class="h-full rounded-full transition-all duration-500"
-            style:width="{sysMetrics.disk_percent}%"
-            style:background={barColor(sysMetrics.disk_percent)}
-          ></div>
-        </div>
-        <div class="mt-1.5 text-[11px] text-[var(--fg-subtle)] tabular-nums">
-          <AnimatedNumber value={sysMetrics.disk_used} format={fmtBytes} /> / {fmtBytes(sysMetrics.disk_total)}
-        </div>
-      {/if}
-    </div>
-
-    <!-- Containers -->
-    <div class="dm-card p-4">
-      <div class="flex items-center justify-between text-[11px] text-[var(--fg-muted)] uppercase tracking-wider font-medium">
-        <div class="flex items-center gap-1.5">
-          <Box class="w-3.5 h-3.5" />
-          <span>Containers</span>
-        </div>
-        {#if agentCount.total > 0}
-          <span class="normal-case text-[var(--fg-subtle)]">
-            {agentCount.online}/{agentCount.total} host{agentCount.total === 1 ? '' : 's'}
-          </span>
-        {/if}
-      </div>
-      {#if loading}
-        <Skeleton class="mt-2" width="4rem" height="1.5rem" />
-        <Skeleton class="mt-3" width="100%" height="0.75rem" />
-      {:else}
-        <div class="mt-1.5 text-xl font-semibold leading-tight">
-          <span class="font-mono tabular-nums">
-            <AnimatedNumber value={containerStats.running} format={(n) => Math.round(n).toString()} />
-          </span><span class="text-sm font-normal text-[var(--fg-subtle)]"> / <AnimatedNumber value={containerStats.total} format={(n) => Math.round(n).toString()} /></span>
-        </div>
-        <div class="mt-2.5 flex items-center gap-3 text-[11px]">
-          <span class="flex items-center gap-1 text-[var(--fg-muted)]">
-            <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-success-500)]"></span>
-            <AnimatedNumber value={containerStats.running} format={(n) => Math.round(n).toString()} /> running
-          </span>
-          {#if containerStats.stopped > 0}
-            <span class="flex items-center gap-1 text-[var(--fg-muted)]">
-              <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-danger-500)]"></span>
-              <AnimatedNumber value={containerStats.stopped} format={(n) => Math.round(n).toString()} /> stopped
-            </span>
-          {/if}
-          {#if containerStats.unhealthy > 0}
-            <span class="flex items-center gap-1 text-[var(--fg-muted)]">
-              <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-warning-500)]"></span>
-              <AnimatedNumber value={containerStats.unhealthy} format={(n) => Math.round(n).toString()} /> unhealthy
-            </span>
-          {/if}
-        </div>
-      {/if}
-    </div>
-  </div>
-  {:else}
-  <!-- All-hosts mode row 1: aggregated totals + per-host health table -->
-  <div class="grid grid-cols-1 lg:grid-cols-4 gap-3">
-    <!-- Aggregated Containers card — same shape as single-mode, but
-         the totals now span every host the fan-out contacted. -->
-    <div class="dm-card p-4">
-      <div class="flex items-center justify-between text-[11px] text-[var(--fg-muted)] uppercase tracking-wider font-medium">
-        <div class="flex items-center gap-1.5">
-          <Box class="w-3.5 h-3.5" />
-          <span>Containers</span>
-        </div>
-        {#if agentCount.total > 0}
-          <span class="normal-case text-[var(--fg-subtle)]">
-            {agentCount.online}/{agentCount.total} host{agentCount.total === 1 ? '' : 's'}
-          </span>
-        {/if}
-      </div>
-      {#if loading}
-        <Skeleton class="mt-2" width="4rem" height="1.5rem" />
-        <Skeleton class="mt-3" width="100%" height="0.75rem" />
-      {:else}
-        <div class="mt-1.5 text-xl font-semibold leading-tight">
-          <span class="font-mono tabular-nums">{containerStats.running}</span><span class="text-sm font-normal text-[var(--fg-subtle)]"> / {containerStats.total}</span>
-        </div>
-        <div class="mt-2.5 flex items-center gap-3 text-[11px] flex-wrap">
-          <span class="flex items-center gap-1 text-[var(--fg-muted)]">
-            <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-success-500)]"></span>
-            {containerStats.running} running
-          </span>
-          {#if containerStats.stopped > 0}
-            <span class="flex items-center gap-1 text-[var(--fg-muted)]">
-              <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-danger-500)]"></span>
-              {containerStats.stopped} stopped
-            </span>
-          {/if}
-          {#if containerStats.unhealthy > 0}
-            <span class="flex items-center gap-1 text-[var(--fg-muted)]">
-              <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-warning-500)]"></span>
-              {containerStats.unhealthy} unhealthy
-            </span>
-          {/if}
-        </div>
-      {/if}
-    </div>
-
-    <!-- Per-host mini-table. Spans the remaining 3 columns on lg so
-         it sits next to the Containers card. Each row is one host with
-         CPU / RAM / Disk progress bars — a compact way to see which
-         host is under pressure without drilling into a detail view. -->
-    <div class="dm-card lg:col-span-3 overflow-hidden">
-      <div class="px-4 py-3 border-b border-[var(--border)] flex items-center gap-2">
-        <Layers class="w-3.5 h-3.5 text-[var(--fg-muted)]" />
-        <h3 class="font-semibold text-xs uppercase tracking-wider text-[var(--fg-muted)]">Per-host system health</h3>
-        <div class="flex-1"></div>
-        <span class="text-[11px] text-[var(--fg-subtle)] tabular-nums">
-          {perHostMetrics.length} host{perHostMetrics.length === 1 ? '' : 's'}
-        </span>
-      </div>
-      {#if loading && perHostMetrics.length === 0}
-        <div class="p-4 space-y-2">
-          {#each Array(2) as _}
-            <Skeleton width="100%" height="1.25rem" />
-          {/each}
-        </div>
-      {:else if perHostMetrics.length === 0}
-        <div class="p-6 text-center text-xs text-[var(--fg-muted)]">No host metrics available.</div>
-      {:else}
-        <div class="overflow-x-auto">
-          <table class="w-full text-[12px]">
-            <thead>
-              <tr class="text-left text-[10px] uppercase tracking-wider text-[var(--fg-subtle)] border-b border-[var(--border)]">
-                <th class="px-4 py-2 font-medium">Host</th>
-                <th class="px-3 py-2 font-medium w-[22%]">CPU</th>
-                <th class="px-3 py-2 font-medium w-[22%]">Memory</th>
-                <th class="px-3 py-2 font-medium w-[22%]">Disk</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-[var(--border)]">
-              {#each perHostMetrics as m}
-                <tr class="hover:bg-[var(--surface-hover)] transition-colors">
-                  <td class="px-4 py-2.5">
-                    <div class="flex items-center gap-2">
-                      <Server class="w-3 h-3 text-[var(--color-brand-400)]" />
-                      <span class="font-mono text-[11px] text-[var(--fg)]">{m.host_name}</span>
-                    </div>
-                  </td>
-                  <td class="px-3 py-2.5">
-                    <div class="flex items-center gap-2">
-                      <div class="flex-1 h-1 rounded-full bg-[var(--surface-hover)] overflow-hidden">
-                        <div class="h-full rounded-full transition-all" style:width="{m.cpu_percent}%" style:background={barColor(m.cpu_percent)}></div>
-                      </div>
-                      <span class="font-mono text-[11px] tabular-nums shrink-0 w-8 text-right" style:color={textColor(m.cpu_percent)}>{m.cpu_percent.toFixed(0)}%</span>
-                    </div>
-                  </td>
-                  <td class="px-3 py-2.5">
-                    {#if m.mem_total > 0}
-                      <div class="flex items-center gap-2">
-                        <div class="flex-1 h-1 rounded-full bg-[var(--surface-hover)] overflow-hidden">
-                          <div class="h-full rounded-full transition-all" style:width="{m.mem_percent}%" style:background={barColor(m.mem_percent)}></div>
-                        </div>
-                        <span class="font-mono text-[11px] tabular-nums shrink-0 w-8 text-right" style:color={textColor(m.mem_percent)}>{m.mem_percent.toFixed(0)}%</span>
-                      </div>
-                    {:else}
-                      <span class="text-[var(--fg-subtle)]">—</span>
-                    {/if}
-                  </td>
-                  <td class="px-3 py-2.5">
-                    {#if m.disk_total > 0}
-                      <div class="flex items-center gap-2">
-                        <div class="flex-1 h-1 rounded-full bg-[var(--surface-hover)] overflow-hidden">
-                          <div class="h-full rounded-full transition-all" style:width="{m.disk_percent}%" style:background={barColor(m.disk_percent)}></div>
-                        </div>
-                        <span class="font-mono text-[11px] tabular-nums shrink-0 w-8 text-right" style:color={textColor(m.disk_percent)}>{m.disk_percent.toFixed(0)}%</span>
-                      </div>
-                    {:else}
-                      <span class="text-[var(--fg-subtle)]">—</span>
-                    {/if}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
-    </div>
-  </div>
-  {/if}
-
-  <!-- ─────────── Row 2: Stacks section ─────────── -->
-  <div>
-    <div class="flex items-end justify-between flex-wrap gap-2 mb-3">
+    <div class="dash-warn">
+      <AlertTriangle size={14} strokeWidth={1.5} class="dash-warn-icon" />
       <div>
-        <h3 class="text-sm font-semibold tracking-tight">Stacks</h3>
-        <p class="text-xs text-[var(--fg-muted)] mt-0.5">
-          {stackCards.length} stack{stackCards.length === 1 ? '' : 's'}
-          {#if agentCount.total > 1}
-            across {agentCount.total} hosts
-          {/if}
+        <div class="dash-warn-title">Docker daemon not responding.</div>
+        <p class="dash-warn-body">
+          Container, stack, image and volume endpoints will return errors until Docker is available.
+          Dockmesh re-checks the socket every 10 seconds — the banner clears automatically as soon
+          as Docker comes back. No restart needed.
         </p>
       </div>
-      <div class="flex gap-1 text-xs">
-        {#snippet pill(key: 'all' | 'running' | 'stopped' | 'unhealthy', label: string, n: number)}
+    </div>
+  {/if}
+
+  <!-- ────────────────────────────────────────────── 5-up metrics -->
+  <section class="dash-metrics">
+    {#if loading && !sysMetrics && perHostMetrics.length === 0}
+      {#each Array(5) as _}
+        <div class="ed-metric">
+          <Skeleton width="6rem" height="0.6rem" />
+          <Skeleton width="4rem" height="1.4rem" />
+          <Skeleton width="100%" height="2rem" />
+        </div>
+      {/each}
+    {:else if isAll}
+      <EdMetric
+        label="Containers · fleet"
+        value={`${containerStats.running} / ${containerStats.total}`}
+        meta={`${containerStats.stopped} stopped${containerStats.unhealthy > 0 ? ` · ${containerStats.unhealthy} unhealthy` : ''}`}
+      />
+      <EdMetric
+        label="Hosts · online"
+        value={`${agentCount.online} / ${agentCount.total}`}
+        meta={agentCount.total - agentCount.online > 0
+          ? `${agentCount.total - agentCount.online} offline`
+          : 'all reachable'}
+      />
+      <EdMetric
+        label="Stacks · running"
+        value={`${stackCounts.running} / ${stackCounts.all}`}
+        meta={stackCounts.unhealthy > 0
+          ? `${stackCounts.unhealthy} need attention`
+          : 'all healthy'}
+        sparkColor={stackCounts.unhealthy > 0 ? 'var(--color-warning-500)' : 'var(--accent)'}
+      />
+      <EdMetric
+        label="Fleet · CPU avg"
+        value={perHostMetrics.length > 0
+          ? (perHostMetrics.reduce((a, m) => a + m.cpu_percent, 0) / perHostMetrics.length).toFixed(0)
+          : '—'}
+        unit={perHostMetrics.length > 0 ? '%' : undefined}
+        meta={`across ${perHostMetrics.length} host${perHostMetrics.length === 1 ? '' : 's'}`}
+      />
+      <EdMetric
+        label="Activity · last 10"
+        value={recentAudit.length}
+        meta={recentAudit.length > 0 ? `latest ${fmtTime(recentAudit[0].ts)}` : 'nothing yet'}
+      />
+    {:else if sysMetrics}
+      <EdMetric
+        label={sysMetrics.docker_limited ? 'CPU · docker cap' : 'CPU'}
+        value={sysMetrics.cpu_percent.toFixed(0)}
+        unit="%"
+        meta={`${sysMetrics.cpu_used_cores.toFixed(2)} / ${sysMetrics.cpu_cores.toFixed(2)} cores`}
+        spark={cpuHistory.length > 1 ? cpuHistory : undefined}
+        sparkColor={sparkColor(sysMetrics.cpu_percent)}
+      />
+      <EdMetric
+        label={sysMetrics.docker_limited ? 'Memory · docker cap' : 'Memory'}
+        value={sysMetrics.mem_total > 0 ? sysMetrics.mem_percent.toFixed(0) : '—'}
+        unit={sysMetrics.mem_total > 0 ? '%' : undefined}
+        meta={sysMetrics.mem_total > 0
+          ? `${fmtBytes(sysMetrics.mem_used)} / ${fmtBytes(sysMetrics.mem_total)}`
+          : 'unavailable on this host'}
+        spark={sysMetrics.mem_total > 0 && memHistory.length > 1 ? memHistory : undefined}
+        sparkColor={sparkColor(sysMetrics.mem_percent)}
+      />
+      <EdMetric
+        label="Disk"
+        value={sysMetrics.disk_total > 0 ? sysMetrics.disk_percent.toFixed(0) : '—'}
+        unit={sysMetrics.disk_total > 0 ? '%' : undefined}
+        meta={sysMetrics.disk_total > 0
+          ? `${fmtBytes(sysMetrics.disk_used)} / ${fmtBytes(sysMetrics.disk_total)}`
+          : 'unavailable on this host'}
+        spark={sysMetrics.disk_total > 0 && diskHistory.length > 1 ? diskHistory : undefined}
+        sparkColor={sparkColor(sysMetrics.disk_percent)}
+      />
+      <EdMetric
+        label="Containers"
+        value={`${containerStats.running} / ${containerStats.total}`}
+        meta={`${containerStats.stopped} stopped${containerStats.unhealthy > 0 ? ` · ${containerStats.unhealthy} unhealthy` : ''}`}
+        sparkColor={containerStats.unhealthy > 0
+          ? 'var(--color-warning-500)'
+          : 'var(--accent)'}
+      />
+      <EdMetric
+        label="Stacks"
+        value={`${stackCounts.running} / ${stackCounts.all}`}
+        meta={stackCounts.unhealthy > 0
+          ? `${stackCounts.unhealthy} need attention`
+          : stackCounts.stopped > 0
+            ? `${stackCounts.stopped} stopped`
+            : 'all healthy'}
+        sparkColor={stackCounts.unhealthy > 0 ? 'var(--color-warning-500)' : 'var(--accent)'}
+      />
+    {/if}
+  </section>
+
+  <!-- ────────────────────────────────────────────── Top row: Stacks | Activity
+       Stacks list takes the wider column; Activity feed stretches to the
+       same height as Stacks (matched via grid-row) so the right rail
+       doesn't run past the section beneath. -->
+  <section class="dash-top">
+    <!-- Stacks block (left, primary) -->
+    <div class="dash-block">
+      <div class="dash-block-head">
+        <Eyebrow>Stacks · {stackCards.length}</Eyebrow>
+        <div class="ed-tabs dash-stack-tabs">
           <button
-            class="px-2.5 py-1 rounded-full border transition-colors {stackFilter === key
-              ? 'bg-[color-mix(in_srgb,var(--color-brand-500)_12%,transparent)] border-[color-mix(in_srgb,var(--color-brand-500)_40%,transparent)] text-[var(--color-brand-300)]'
-              : 'border-[var(--border)] text-[var(--fg-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]'}"
-            onclick={() => (stackFilter = key)}
-          >
-            {label} <span class="tabular-nums">{n}</span>
-          </button>
-        {/snippet}
-        {@render pill('all', 'All', stackCounts.all)}
-        {@render pill('running', 'Running', stackCounts.running)}
-        {@render pill('stopped', 'Stopped', stackCounts.stopped)}
-        {@render pill('unhealthy', 'Issues', stackCounts.unhealthy)}
+            class="ed-tab"
+            class:active={stackFilter === 'all'}
+            onclick={() => (stackFilter = 'all')}
+          >All <span class="count">{stackCounts.all}</span></button>
+          <button
+            class="ed-tab"
+            class:active={stackFilter === 'running'}
+            onclick={() => (stackFilter = 'running')}
+          >Running <span class="count">{stackCounts.running}</span></button>
+          <button
+            class="ed-tab"
+            class:active={stackFilter === 'unhealthy'}
+            onclick={() => (stackFilter = 'unhealthy')}
+          >Issues <span class="count">{stackCounts.unhealthy}</span></button>
+          <button
+            class="ed-tab"
+            class:active={stackFilter === 'stopped'}
+            onclick={() => (stackFilter = 'stopped')}
+          >Stopped <span class="count">{stackCounts.stopped}</span></button>
+        </div>
       </div>
+
+      {#if loading && stackCards.length === 0}
+        <div class="dm-card dash-skeleton-stack">
+          {#each Array(4) as _}
+            <Skeleton width="100%" height="2.5rem" />
+          {/each}
+        </div>
+      {:else if filteredStacks.length === 0}
+        <div class="dm-card dash-stack-empty">
+          {#if stackCards.length === 0}
+            <div class="dash-empty-title">No stacks yet.</div>
+            <p class="dash-empty-body">
+              Deploy a <em class="ed-accent">compose</em> file to get started — Dockmesh
+              manages the containers, network, and volumes from the file on disk.
+            </p>
+            <a href="/stacks" class="dm-btn dm-btn-primary dm-btn-sm">
+              Create stack
+              <ArrowRight size={13} strokeWidth={1.5} />
+            </a>
+          {:else}
+            <p class="dash-empty-body">No stacks match this filter.</p>
+          {/if}
+        </div>
+      {:else}
+        <div class="dm-card dash-stack-list">
+          {#each filteredStacks as s (s.name)}
+            <EdRow
+              status={rowStatus(s.state)}
+              href={`/stacks/${s.name}`}
+              columns="6px minmax(0, 1.6fr) 1.4fr 0.8fr auto"
+            >
+              <span class="dash-stack-name">
+                <span class="dash-stack-id">{s.name}</span>
+                <span class="dash-stack-meta">
+                  {s.services.length} service{s.services.length === 1 ? '' : 's'}
+                </span>
+              </span>
+              <span class="dash-stack-services">
+                {#if s.services.length > 0}
+                  {#each s.services.slice(0, 4) as svc (svc.name)}
+                    <span class="dash-stack-service">{svc.name}</span>
+                  {/each}
+                  {#if s.services.length > 4}
+                    <span class="dash-stack-service-more">+{s.services.length - 4}</span>
+                  {/if}
+                {:else}
+                  <span class="dash-stack-service-empty">no containers</span>
+                {/if}
+              </span>
+              <StatusPill status={pillStatus(s.state)} />
+              <span class="dash-stack-arrow" aria-hidden="true">
+                <ArrowRight size={13} strokeWidth={1.5} />
+              </span>
+            </EdRow>
+          {/each}
+        </div>
+
+        {#if hiddenStackCount > 0}
+          <div class="dash-overflow">
+            <a href="/stacks">
+              +{hiddenStackCount} more — view all on the Stacks page →
+            </a>
+          </div>
+        {/if}
+      {/if}
     </div>
 
-    {#if loading && stackCards.length === 0}
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {#each Array(3) as _}
-          <div class="dm-card p-4 space-y-2">
-            <Skeleton width="60%" height="1rem" />
-            <Skeleton width="40%" height="0.85rem" />
-            <Skeleton width="100%" height="1.25rem" />
-          </div>
-        {/each}
-      </div>
-    {:else if filteredStacks.length === 0}
-      <div class="dm-card p-8 text-center text-sm text-[var(--fg-muted)]">
-        {#if stackCards.length === 0}
-          No stacks yet. <a href="/stacks" class="text-[var(--color-brand-400)] hover:underline">Create one →</a>
-        {:else}
-          No stacks match this filter.
-        {/if}
-      </div>
-    {:else}
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {#each filteredStacks as s (s.name)}
-          <a
-            href="/stacks/{s.name}"
-            class="dm-card p-4 hover:border-[var(--border-strong)] transition-colors group"
-          >
-            <div class="flex items-start justify-between gap-2 mb-2.5">
-              <div class="font-medium text-sm truncate">{s.name}</div>
-              {#if s.state === 'running'}
-                <Badge variant="success" dot>running</Badge>
-              {:else if s.state === 'unhealthy'}
-                <Badge variant="warning" dot>unhealthy</Badge>
-              {:else if s.state === 'partial'}
-                <Badge variant="warning" dot>partial</Badge>
-              {:else}
-                <Badge variant="default" dot>stopped</Badge>
-              {/if}
-            </div>
-            {#if s.services.length > 0}
-              <div class="flex flex-wrap gap-1 mb-2">
-                {#each s.services.slice(0, 5) as svc}
-                  <span
-                    class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[var(--surface-hover)] text-[var(--fg-muted)]"
-                  >
-                    {svc.name}
-                  </span>
-                {/each}
-                {#if s.services.length > 5}
-                  <span class="font-mono text-[10px] px-1.5 py-0.5 text-[var(--fg-subtle)]">
-                    +{s.services.length - 5}
-                  </span>
-                {/if}
-              </div>
-            {/if}
-            <div class="flex items-center justify-between text-[11px] text-[var(--fg-subtle)]">
-              <span>{s.services.length} service{s.services.length === 1 ? '' : 's'}</span>
-              {#if isAll && s.hosts.length > 0}
-                <!-- Host pills: where this stack's containers actually
-                     run. Visible only in all-mode so single-host views
-                     don't duplicate the header host name on every card. -->
-                <div class="flex items-center gap-1 flex-wrap justify-end">
-                  {#each s.hosts as h}
-                    <span class="inline-flex items-center gap-0.5 font-mono text-[10px] px-1 py-0.5 rounded border border-[var(--border)] text-[var(--fg-muted)]">
-                      <Server class="w-2.5 h-2.5" />
-                      {h.name}
-                    </span>
-                  {/each}
-                </div>
-              {/if}
-            </div>
-          </a>
-        {/each}
-      </div>
-      {#if hiddenStackCount > 0}
-        <!-- Overflow pointer: "+N more" link to the real list page.
-             Avoids the 3-column card wall that the dashboard becomes
-             once an install crosses ~30 stacks. -->
-        <div class="mt-3 text-center text-xs text-[var(--fg-muted)]">
-          <a href="/stacks" class="hover:text-[var(--color-brand-400)] hover:underline">
-            +{hiddenStackCount} more — view all on the Stacks page →
+    <!-- Activity feed (right rail). Capped at the height of the Stacks
+         block via a max-height + scroll fallback so it never runs past
+         the section beneath (Hosts gets its own full-width strip). -->
+    {#if canSeeAudit}
+      <div class="dash-block dash-side">
+        <div class="dash-block-head">
+          <Eyebrow>Activity · last {recentAudit.length || 10}</Eyebrow>
+          <a href="/audit" class="dash-block-more">
+            Full log
+            <ArrowRight size={11} strokeWidth={1.5} />
           </a>
         </div>
-      {/if}
-    {/if}
-  </div>
-
-  <!-- ─────────── Row 3: Activity + Quick actions ─────────── -->
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-    {#if allowed('audit.read')}
-      <div class="dm-card lg:col-span-2 flex flex-col">
-        <div class="px-4 py-3 border-b border-[var(--border)] flex items-center gap-2">
-          <Activity class="w-4 h-4 text-[var(--fg-muted)]" />
-          <h3 class="font-semibold text-sm">Recent activity</h3>
-          <div class="flex-1"></div>
-          <a
-            href="/settings"
-            class="text-xs text-[var(--fg-muted)] hover:text-[var(--fg)] transition-colors"
-          >
-            View all →
-          </a>
-        </div>
-        <div class="divide-y divide-[var(--border)] flex-1">
+        <div class="dm-card dash-feed-card">
           {#if loading && recentAudit.length === 0}
-            {#each Array(6) as _}
-              <div class="px-4 py-2.5 flex items-center gap-3">
-                <Skeleton width="5rem" height="1rem" />
-                <Skeleton width="8rem" height="0.85rem" />
-                <div class="flex-1"></div>
-                <Skeleton width="3rem" height="0.75rem" />
-              </div>
-            {/each}
+            <div class="dash-feed-empty"><Skeleton width="100%" height="2rem" /></div>
           {:else if recentAudit.length === 0}
-            <div class="px-4 py-10 text-center text-sm text-[var(--fg-muted)]">No activity yet</div>
+            <div class="dash-feed-empty">No activity yet.</div>
           {:else}
             {#each recentAudit as e}
-              <div class="px-4 py-2.5 flex items-center gap-3 text-sm hover:bg-[var(--surface-hover)] transition-colors">
-                <Badge variant={actionColor(e.action)} dot>
+              <div class="ed-feed-item">
+                <span class="ed-feed-time">{fmtTime(e.ts)}</span>
+                <span class="ed-feed-text">
+                  <span
+                    class="dash-feed-dot"
+                    data-kind={activityKind(e.action)}
+                    aria-hidden="true"
+                  ></span>
+                  {#if e.actor_name}
+                    <strong>{e.actor_name}</strong>
+                  {/if}
+                  {formatActivity(e)}
+                </span>
+                <span class="ed-feed-actor">
                   {e.action.split('.')[0]}
-                </Badge>
-                <span class="text-[var(--fg-muted)] truncate flex-1">{formatActivity(e)}</span>
-                <span class="text-[11px] text-[var(--fg-subtle)] shrink-0 tabular-nums">
-                  {fmtTime(e.ts)}
                 </span>
               </div>
             {/each}
@@ -827,41 +651,461 @@
         </div>
       </div>
     {/if}
+  </section>
 
-    <div class="dm-card flex flex-col {allowed('audit.read') ? '' : 'lg:col-span-3'}">
-      <div class="px-4 py-3 border-b border-[var(--border)]">
-        <h3 class="font-semibold text-sm">Quick actions</h3>
-      </div>
-      <div class="p-2 grid grid-cols-1 {allowed('audit.read') ? '' : 'sm:grid-cols-2 lg:grid-cols-4'} gap-1">
-        {#snippet quickAction(href: string, Icon: any, title: string, sub: string)}
-          <a
-            {href}
-            class="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[var(--surface-hover)] transition-colors group"
-          >
-            <div
-              class="w-8 h-8 rounded-lg border border-[var(--border)] bg-[color-mix(in_srgb,var(--color-brand-500)_8%,transparent)] text-[var(--color-brand-400)] flex items-center justify-center shrink-0 group-hover:bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] group-hover:border-[var(--color-brand-500)]/30 transition-colors"
-            >
-              <Icon class="w-4 h-4" />
-            </div>
-            <div class="min-w-0">
-              <div class="text-sm font-medium">{title}</div>
-              <div class="text-[11px] text-[var(--fg-subtle)]">{sub}</div>
-            </div>
-          </a>
-        {/snippet}
-        {#if canDeploy}
-          {@render quickAction('/stacks', Rocket, 'Deploy stack', 'From compose file')}
-        {/if}
-        {#if canImage}
-          {@render quickAction('/images', Download, 'Pull image', 'From registry')}
-        {/if}
-        {#if canBackup}
-          {@render quickAction('/backups', Archive, 'Create backup', 'Volumes + stacks')}
-        {/if}
-        {#if canScan}
-          {@render quickAction('/images', ShieldCheck, 'Scan image', 'CVE check via Grype')}
-        {/if}
-      </div>
+  <!-- ────────────────────────────────────────────── Hosts (full-width)
+       Transparent surface with hairline-only row dividers — matches the
+       mockup HostRow component. The section gets the whole content
+       column so per-host bars have generous space. -->
+  <section class="dash-block">
+    <div class="dash-block-head">
+      <Eyebrow>
+        Hosts · {hostRows.length} {agentCount.total > 1 ? 'connected' : ''}
+      </Eyebrow>
+      {#if agentCount.total > 1}
+        <a href="/hosts" class="dash-block-more">
+          Manage hosts
+          <ArrowRight size={11} strokeWidth={1.5} />
+        </a>
+      {/if}
     </div>
-  </div>
+
+    {#if loading && hostRows.length === 0}
+      <div class="dash-host-list dash-host-empty">
+        <Skeleton width="100%" height="3rem" />
+      </div>
+    {:else if hostRows.length === 0}
+      <div class="dash-host-list dash-host-empty">
+        No hosts reporting metrics.
+      </div>
+    {:else}
+      <div class="dash-host-list">
+        {#each hostRows as h (h.id)}
+          <div class="dash-host-row">
+            <div class="dash-host-id">
+              {#if h.kind === 'local'}
+                <HardDrive size={14} strokeWidth={1.5} class="dash-host-id-ico" />
+              {:else if h.kind === 'agent'}
+                <Server size={14} strokeWidth={1.5} class="dash-host-id-ico" />
+              {:else}
+                <Layers size={14} strokeWidth={1.5} class="dash-host-id-ico" />
+              {/if}
+              <div class="dash-host-id-block">
+                <span class="dash-host-name">{h.name}</span>
+                <span class="dash-host-meta">
+                  {h.kind}
+                  {#if h.tags.length > 0}
+                    <span class="dash-host-sep">·</span>
+                    {#each h.tags.slice(0, 4) as t (t)}
+                      <span class="dash-host-tag">{t}</span>
+                    {/each}
+                    {#if h.tags.length > 4}
+                      <span class="dash-host-tag-more">+{h.tags.length - 4}</span>
+                    {/if}
+                  {/if}
+                </span>
+              </div>
+            </div>
+
+            <div class="dash-host-bar">
+              <div class="dash-host-bar-head">
+                <span class="dash-host-bar-label">CPU</span>
+                <span class="dash-host-bar-value">{h.cpuPct.toFixed(0)}%</span>
+              </div>
+              <span class="dm-bar">
+                <span
+                  class="dm-bar-fill"
+                  style:width="{h.cpuPct}%"
+                  style:background={barColor(h.cpuPct)}
+                ></span>
+              </span>
+              <span class="dash-host-bar-meta">{h.cpuLabel}</span>
+            </div>
+
+            <div class="dash-host-bar">
+              <div class="dash-host-bar-head">
+                <span class="dash-host-bar-label">Mem</span>
+                <span class="dash-host-bar-value">
+                  {h.memPct === null ? '—' : `${h.memPct.toFixed(0)}%`}
+                </span>
+              </div>
+              <span class="dm-bar">
+                {#if h.memPct !== null}
+                  <span
+                    class="dm-bar-fill"
+                    style:width="{h.memPct}%"
+                    style:background={barColor(h.memPct)}
+                  ></span>
+                {/if}
+              </span>
+              <span class="dash-host-bar-meta">{h.memLabel}</span>
+            </div>
+
+            <div class="dash-host-bar">
+              <div class="dash-host-bar-head">
+                <span class="dash-host-bar-label">Disk</span>
+                <span class="dash-host-bar-value">
+                  {h.diskPct === null ? '—' : `${h.diskPct.toFixed(0)}%`}
+                </span>
+              </div>
+              <span class="dm-bar">
+                {#if h.diskPct !== null}
+                  <span
+                    class="dm-bar-fill"
+                    style:width="{h.diskPct}%"
+                    style:background={barColor(h.diskPct)}
+                  ></span>
+                {/if}
+              </span>
+              <span class="dash-host-bar-meta">{h.diskLabel}</span>
+            </div>
+
+            <StatusPill status={hostStatusPill(h.status)} />
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </section>
 </section>
+
+<style>
+  .dashboard-frame {
+    display: flex;
+    flex-direction: column;
+    gap: 36px;
+    max-width: 1480px;
+    padding-bottom: 48px;
+  }
+
+  /* ─────── Header ────── */
+  .dash-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .dash-header-text { min-width: 0; max-width: 80ch; flex: 1 1 60ch; }
+  .dash-title {
+    font-size: 40px;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    max-width: 38ch;
+    text-wrap: balance;
+    margin-top: 14px;
+  }
+  @media (max-width: 900px) {
+    .dash-title { font-size: 32px; }
+  }
+  .dash-subtitle { margin-top: 14px; font-size: 14.5px; }
+
+  /* ─────── Banners ────── */
+  .dash-error {
+    margin: 0;
+    padding: 10px 14px;
+    border: 1px solid color-mix(in srgb, var(--color-danger-500) 40%, var(--border));
+    background: color-mix(in srgb, var(--color-danger-500) 8%, transparent);
+    border-radius: 5px;
+    color: var(--color-danger-400);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .dash-warn {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 14px;
+    padding: 14px 16px;
+    border: 1px solid color-mix(in srgb, var(--color-warning-500) 40%, var(--border));
+    background: color-mix(in srgb, var(--color-warning-500) 6%, transparent);
+    border-radius: 6px;
+  }
+  :global(.dash-warn-icon) { color: var(--color-warning-400); margin-top: 4px; flex-shrink: 0; }
+  .dash-warn-title { font-size: 13.5px; color: var(--fg); font-weight: 500; }
+  .dash-warn-body { margin: 6px 0 0; font-size: 12.5px; color: var(--fg-muted); line-height: 1.6; }
+
+  /* ─────── Metrics row ────── */
+  .dash-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+  }
+
+  /* ─────── Top row: Stacks | Activity ──────
+     Two-column grid with subgrid-aligned rows. The parent defines a
+     head-row + content-row, and each .dash-block uses
+     `grid-template-rows: subgrid` to inherit those rowlines. That pins
+     both heads to the same baseline AND both cards to the same top
+     edge — so a taller Stacks head (tabs) doesn't push its card below
+     the Activity card on the right.
+     Falls back gracefully on older browsers without subgrid: the cards
+     simply line up by content height (the previous behaviour). */
+  .dash-top {
+    display: grid;
+    grid-template-columns: minmax(0, 1.65fr) minmax(280px, 1fr);
+    grid-template-rows: auto 1fr;
+    align-items: stretch;
+    column-gap: 32px;
+    row-gap: 12px;
+  }
+  .dash-top > .dash-block {
+    display: grid;
+    grid-template-rows: subgrid;
+    grid-row: 1 / span 2;
+    /* Reset inner flex gap — the parent's row-gap now provides the
+       12px spacing between head and card. */
+    gap: 0;
+  }
+  @media (max-width: 1100px) {
+    .dash-top {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto;
+      row-gap: 28px;
+    }
+    .dash-top > .dash-block {
+      display: flex;
+      flex-direction: column;
+      grid-row: auto;
+      gap: 12px;
+    }
+  }
+  /* Right rail: clip + scroll inside so feed never overruns the Stacks
+     column on the left. */
+  .dash-side {
+    min-width: 0;
+    min-height: 0;
+  }
+  .dash-side .dash-feed-card {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .dash-block {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+  }
+  .dash-block-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .dash-block-more {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent-fg);
+    letter-spacing: 0.04em;
+    text-decoration: none;
+  }
+  .dash-block-more:hover { color: var(--fg); }
+  .dash-stack-tabs {
+    border-bottom: 0;
+    flex-wrap: wrap;
+  }
+
+  /* ── Stacks ── */
+  .dash-skeleton-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px;
+  }
+  .dash-stack-empty {
+    padding: 28px 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .dash-empty-title {
+    font-size: 14px;
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .dash-empty-body {
+    margin: 0;
+    color: var(--fg-muted);
+    font-size: 13px;
+    line-height: 1.6;
+    max-width: 60ch;
+  }
+  .dash-stack-list { overflow: hidden; }
+
+  .dash-stack-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .dash-stack-id {
+    font-size: 13.5px;
+    color: var(--fg);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .dash-stack-meta {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+    letter-spacing: 0.04em;
+  }
+  .dash-stack-services {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+    min-width: 0;
+  }
+  .dash-stack-service {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: var(--surface-hover);
+    color: var(--fg-muted);
+  }
+  .dash-stack-service-more {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+  }
+  .dash-stack-service-empty {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-subtle);
+    font-style: normal;
+  }
+  .dash-stack-arrow { color: var(--fg-subtle); display: inline-flex; }
+
+  .dash-overflow {
+    margin-top: 4px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--fg-muted);
+  }
+  .dash-overflow a { color: inherit; text-decoration: none; }
+  .dash-overflow a:hover { color: var(--accent-fg); }
+
+  /* ── Hosts — transparent surface, hairline-only row dividers
+        (no card chrome). Top + bottom rules pin the list visually
+        without giving it a "tile" appearance. ── */
+  .dash-host-list {
+    border-top: 1px solid var(--border);
+  }
+  .dash-host-empty {
+    padding: 22px 24px;
+    color: var(--fg-muted);
+    text-align: center;
+    font-size: 13px;
+  }
+  .dash-host-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(120px, 1fr)) auto;
+    gap: 24px;
+    padding: 20px 4px;
+    align-items: center;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .dash-host-row:last-child { border-bottom: 0; }
+  @media (max-width: 1280px) {
+    .dash-host-row {
+      grid-template-columns: 1fr 1fr;
+      grid-row-gap: 14px;
+    }
+    .dash-host-row > :first-child { grid-column: 1 / -1; }
+  }
+  .dash-host-id {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  :global(.dash-host-id-ico) { color: var(--color-brand-400); flex-shrink: 0; }
+  .dash-host-id-block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  .dash-host-name {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--fg);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .dash-host-meta {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+    letter-spacing: 0.04em;
+  }
+  .dash-host-sep { color: var(--border-strong); }
+  .dash-host-tag {
+    border: 1px solid var(--border);
+    padding: 0 6px;
+    border-radius: 3px;
+    color: var(--fg-muted);
+  }
+  .dash-host-tag-more { color: var(--fg-subtle); }
+
+  .dash-host-bar { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .dash-host-bar-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .dash-host-bar-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+  }
+  .dash-host-bar-value {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg);
+    font-variant-numeric: tabular-nums;
+  }
+  .dash-host-bar-meta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-subtle);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ── Activity feed ── */
+  .dash-feed-card { padding: 4px 16px; }
+  .dash-feed-empty {
+    padding: 26px;
+    text-align: center;
+    color: var(--fg-muted);
+    font-size: 12.5px;
+  }
+  .dash-feed-dot {
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    border-radius: 999px;
+    margin-right: 8px;
+    background: var(--color-success-500);
+    transform: translateY(-1px);
+  }
+  .dash-feed-dot[data-kind='warn'] { background: var(--color-warning-500); }
+  .dash-feed-dot[data-kind='err']  { background: var(--color-danger-500); }
+
+  :global(.animate-spin) { animation: dash-spin 0.9s linear infinite; }
+  @keyframes dash-spin { to { transform: rotate(360deg); } }
+</style>

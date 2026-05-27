@@ -34,16 +34,21 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/deploy"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/ldapauth"
 	"github.com/dockmesh/dockmesh/internal/metrics"
 	"github.com/dockmesh/dockmesh/internal/migration"
+	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/notify"
+	"github.com/dockmesh/dockmesh/internal/oauth2auth"
 	"github.com/dockmesh/dockmesh/internal/oidc"
 	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/dockmesh/dockmesh/internal/proxy"
+	"github.com/dockmesh/dockmesh/internal/saml"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/scaling"
 	"github.com/dockmesh/dockmesh/internal/settings"
@@ -150,6 +155,15 @@ func loadEnvFileFromArgs() error {
 		}
 	}
 	return nil
+}
+
+// countServicesString returns "5 services" / "1 service" for use in
+// notification bodies. Tiny but used in a couple of producer paths.
+func countServicesString(n int) string {
+	if n == 1 {
+		return "1 service"
+	}
+	return fmt.Sprintf("%d services", n)
 }
 
 func main() {
@@ -402,6 +416,9 @@ func main() {
 	proxySvc := proxy.NewService(database, dockerCli, false)
 	updaterSvc := updater.NewService(dockerCli, database)
 	oidcSvc := oidc.NewService(database, authSvc, secretsSvc, cfg.BaseURL)
+	samlSvc := saml.NewService(database, authSvc, secretsSvc, cfg.BaseURL)
+	ldapSvc := ldapauth.NewService(database, authSvc, secretsSvc)
+	oauth2Svc := oauth2auth.NewService(database, authSvc, secretsSvc, cfg.BaseURL)
 
 	metricsCol := metrics.NewCollector(database, dockerCli, 30*time.Second, metrics.DefaultRetention)
 	metricsCol.Start(ctx)
@@ -535,6 +552,10 @@ func main() {
 			slog.Warn("proxy boot-up failed — toggle off/on in Settings once Docker is reachable", "err", err)
 		}
 	}
+	// Start the ACME event tailer regardless of current proxy state —
+	// the loop is dormant when the proxy is disabled and reconnects
+	// automatically once the container appears.
+	proxySvc.StartACMETailer(ctx)
 
 	globalEnvStore := globalenv.NewStore(database)
 
@@ -557,11 +578,40 @@ func main() {
 	// bytes in the DB, same trade-off as the existing .env storage.
 	registriesSvc := registries.New(database, secretsSvc)
 
+	// Notification center backing store. Producers (gitDeploy, alerts,
+	// backups, …) call Emit so the bell-icon dropdown can render a
+	// durable timeline of platform events.
+	notifSvc := notifications.NewService(database)
+
+	// Wire the registries service into every code path that pulls an
+	// image. Without this, compose deploys + the "update image" button
+	// + git-source auto-deploys all hit the daemon API anonymously and
+	// private registries (GHCR, ECR, Quay, …) reply 401.
+	composeSvc.SetAuthResolver(registriesSvc)
+	updaterSvc.SetAuthResolver(registriesSvc)
+	hostRegistry.Local().SetAuthResolver(registriesSvc)
+
+	// Deploy progress tracker — same propagation pattern as the auth
+	// resolver. Frontend polls /stacks/{name}/deploy/progress for the
+	// live phase + service + elapsed indicator.
+	deployTracker := deploy.NewTracker()
+	composeSvc.SetProgressTracker(deployTracker)
+	hostRegistry.Local().SetProgressTracker(deployTracker)
+
+	// Deployment history store. Created BEFORE gitDeploy so the
+	// auto-deploy closure below can write an entry per git-triggered
+	// deploy — without that, /deployments only ever shows manual ones.
+	deployHistoryStore := stacks.NewHistoryStore(database)
+
 	// Git-backed stacks (P.11.11). Cache dir sits under the DB data
 	// dir so operators who override DOCKMESH_DB_PATH get the matching
 	// location automatically. Auto-deploy closure uses LocalHost for
 	// now; remote-agent git-auto-deploy is a follow-up slice.
 	gitCacheDir := filepath.Join(filepath.Dir(cfg.DBPath), "git-cache")
+	// Forward-declared so the gitDeploy closure can look up the
+	// last-synced commit SHA from the source row when recording the
+	// history entry. gitsource.New populates this slot below.
+	var gitSourceSvc *gitsource.Service
 	gitDeploy := func(ctx context.Context, stackName string) (any, error) {
 		if dockerCli == nil {
 			return nil, fmt.Errorf("docker unavailable")
@@ -570,10 +620,85 @@ func main() {
 		if err != nil {
 			return nil, err
 		}
-		lh := host.NewLocal(dockerCli)
-		return lh.DeployStack(ctx, stackName, detail.Compose, detail.Env)
+		start := time.Now()
+		// Reuse the shared LocalHost so the registries-auth wiring
+		// applied at startup is honoured. compose.WithForcePull forces
+		// every image in the stack to re-pull so a fresh push to GHCR
+		// (or any registry) is actually picked up, even when only the
+		// image manifest changed and the compose.yaml is untouched.
+		res, deployErr := hostRegistry.Local().DeployStack(
+			compose.WithForcePull(ctx), stackName, detail.Compose, detail.Env)
+		durationMS := time.Since(start).Milliseconds()
+
+		// Pull the SHA the source just synced to — gitsource.Sync
+		// persists it before calling the deploy callback, so by the
+		// time we're here the row is up to date.
+		gitSHA := ""
+		if gitSourceSvc != nil {
+			if src, gerr := gitSourceSvc.Get(ctx, stackName); gerr == nil && src != nil {
+				gitSHA = src.LastSyncSHA
+			}
+		}
+
+		// Notification-center event for the bell icon. Broadcast so
+		// every admin sees git auto-deploys, not just whoever triggered
+		// the underlying webhook/poll.
+		if notifSvc != nil {
+			if deployErr != nil {
+				_, _ = notifSvc.Emit(ctx, notifications.EmitInput{
+					Kind:     notifications.KindDeployFail,
+					Severity: notifications.SevError,
+					Title:    "Git auto-deploy failed: " + stackName,
+					Body:     deployErr.Error(),
+					Link:     "/stacks/" + stackName,
+				})
+			} else if res != nil {
+				shaShort := ""
+				if gitSHA != "" && len(gitSHA) >= 7 {
+					shaShort = gitSHA[:7]
+				}
+				body := "stack synced from git"
+				if shaShort != "" {
+					body = "synced to " + shaShort + " — " + countServicesString(len(res.Services))
+				}
+				_, _ = notifSvc.Emit(ctx, notifications.EmitInput{
+					Kind:     notifications.KindDeployOK,
+					Severity: notifications.SevSuccess,
+					Title:    "Git auto-deploy: " + stackName,
+					Body:     body,
+					Link:     "/stacks/" + stackName,
+				})
+			}
+		}
+
+		// Always record a history entry — success OR failure — so the
+		// timeline reflects every git-triggered attempt, not just the
+		// happy path. ErrorMessage is empty on success.
+		if deployHistoryStore != nil {
+			services := make([]stacks.DeployHistoryService, 0)
+			if res != nil {
+				for _, s := range res.Services {
+					services = append(services, stacks.DeployHistoryService{Service: s.Name, Image: s.Image})
+				}
+			}
+			success := deployErr == nil
+			errMsg := ""
+			if deployErr != nil {
+				errMsg = deployErr.Error()
+			}
+			if _, herr := deployHistoryStore.RecordWithStatus(ctx, stackName, "local",
+				detail.Compose, "git auto-deploy", "", services,
+				success, durationMS, gitSHA, errMsg); herr != nil {
+				slog.Warn("git auto-deploy: record history failed",
+					"stack", stackName, "err", herr)
+			}
+		}
+		if deployErr != nil {
+			return nil, deployErr
+		}
+		return res, nil
 	}
-	gitSourceSvc := gitsource.New(database, secretsSvc, stacksMgr, gitCacheDir, gitDeploy)
+	gitSourceSvc = gitsource.New(database, secretsSvc, stacksMgr, gitCacheDir, gitDeploy)
 	gitSourceSvc.Start(ctx)
 	defer gitSourceSvc.Stop()
 
@@ -618,7 +743,6 @@ func main() {
 	}
 
 	deployStore := stacks.NewDeploymentStore(database)
-	deployHistoryStore := stacks.NewHistoryStore(database)
 	depStore := stacks.NewDependencyStore(database)
 	migrationSvc := migration.NewService(database, hostRegistry, stacksMgr, deployStore)
 	if err := migrationSvc.Start(ctx); err != nil {
@@ -757,6 +881,8 @@ func main() {
 		Stacks:       stacksMgr,
 		Deployments:  deployStore,
 		DeployHistory: deployHistoryStore,
+		DeployTracker: deployTracker,
+		Notifications: notifSvc,
 		Dependencies: depStore,
 		Compose:      composeSvc,
 		LoginLimiter: loginLimiter,
@@ -765,6 +891,9 @@ func main() {
 		Proxy:        proxySvc,
 		Updater:      updaterSvc,
 		OIDC:         oidcSvc,
+		SAML:         samlSvc,
+		LDAP:         ldapSvc,
+		OAuth2:       oauth2Svc,
 		Metrics:      metricsCol,
 		Notify:       notifySvc,
 		Alerts:       alertsSvc,
@@ -790,7 +919,8 @@ func main() {
 		SelfUpdate:     selfUpdateChk,
 		SetupState:     setupState,
 		SetupCommit_:   setupCommit,
-		JWTSecret:    cfg.JWTSecret,
+		JWTSecret:      cfg.JWTSecret,
+		RBACv2Enforce:  cfg.RBACv2Enforce,
 	})
 	router := api.NewRouter(h, authSvc, webFS, cfg.MetricsAuth, setupState)
 

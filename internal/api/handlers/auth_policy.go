@@ -41,6 +41,37 @@ func (h *Handlers) UpdatePasswordPolicy(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, auth.LoadPolicy(h.Settings))
 }
 
+// GetSignInConfig returns the current sign-in-flow settings.
+func (h *Handlers) GetSignInConfig(w http.ResponseWriter, r *http.Request) {
+	if h.Settings == nil {
+		writeError(w, http.StatusServiceUnavailable, "settings store not configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, auth.LoadSignInConfig(h.Settings))
+}
+
+// UpdateSignInConfig persists new sign-in-flow settings.
+func (h *Handlers) UpdateSignInConfig(w http.ResponseWriter, r *http.Request) {
+	if h.Settings == nil {
+		writeError(w, http.StatusServiceUnavailable, "settings store not configured")
+		return
+	}
+	var c auth.SignInConfig
+	if err := decodeJSON(r, &c); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := auth.SaveSignInConfig(r.Context(), h.Settings, c); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	h.audit(r, "auth.signin_config_update", "", map[string]any{
+		"allow_local_password":  c.AllowLocalPassword,
+		"require_tfa_for_admin": c.RequireTFAForAdmin,
+	})
+	writeJSON(w, http.StatusOK, auth.LoadSignInConfig(h.Settings))
+}
+
 // UnlockUser clears the lockout state on a user. Used after an
 // operator has verified via another channel that the real user was
 // locked out (not the attacker).

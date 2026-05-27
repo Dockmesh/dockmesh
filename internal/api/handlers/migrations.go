@@ -7,6 +7,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/migration"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -19,6 +20,11 @@ func (h *Handlers) InitiateMigration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	scopeReq := h.stackScopeReq(r.Context(), "", name)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
+		return
+	}
 	var req migration.MigrateRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
@@ -72,12 +78,17 @@ func (h *Handlers) RollbackMigration(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "migration service unavailable")
 		return
 	}
+	name := chi.URLParam(r, "name")
+	scopeReq := h.stackScopeReq(r.Context(), "", name)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
+		return
+	}
 	id := chi.URLParam(r, "id")
 	if err := h.Migrations.Rollback(r.Context(), id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	name := chi.URLParam(r, "name")
 	h.audit(r, audit.ActionStackDeploy, name, map[string]any{
 		"action":       "migrate-rollback",
 		"migration_id": id,
@@ -119,6 +130,11 @@ func (h *Handlers) PreflightMigration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	scopeReq := h.stackScopeReq(r.Context(), "", name)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
+		return
+	}
 	var req migration.MigrateRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
@@ -140,6 +156,12 @@ func (h *Handlers) PurgeSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "migration service unavailable")
 		return
 	}
+	name := chi.URLParam(r, "name")
+	scopeReq := h.stackScopeReq(r.Context(), "", name)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
+		return
+	}
 	id := chi.URLParam(r, "id")
 	if err := h.Migrations.PurgeSource(r.Context(), id); err != nil {
 		if err == migration.ErrNotFound {
@@ -149,7 +171,6 @@ func (h *Handlers) PurgeSource(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	name := chi.URLParam(r, "name")
 	h.audit(r, audit.ActionStackDeploy, name, map[string]any{
 		"action":       "migrate-purge-source",
 		"migration_id": id,

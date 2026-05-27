@@ -10,6 +10,30 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// BatchContainerStats returns the latest CPU + memory sample for
+// every container that's reported in the last 60 seconds. UI uses
+// this for the containers-list CPU/Mem columns — far cheaper than
+// the per-container WebSocket stream the detail view uses.
+//
+//	GET /api/v1/hosts/{id}/stats/containers
+//
+// (the host id is accepted in the path for symmetry with the other
+// per-host endpoints, but the metrics collector currently aggregates
+// across the local docker daemon only — agent containers don't yet
+// flow through the local metrics_raw table)
+func (h *Handlers) BatchContainerStats(w http.ResponseWriter, r *http.Request) {
+	if h.Metrics == nil {
+		writeError(w, http.StatusServiceUnavailable, "metrics not configured")
+		return
+	}
+	latest, err := h.Metrics.LatestPerContainer(r.Context(), 60)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, latest)
+}
+
 // GetMetrics returns historical samples for a container. The id parameter
 // is resolved to a container name via InspectContainer so the URL can use
 // the current id while the DB continues to key on name.

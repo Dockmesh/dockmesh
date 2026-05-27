@@ -326,6 +326,52 @@ type Sample struct {
 	BlkWrite   uint64  `json:"blk_write"`
 }
 
+// LatestPerContainer returns the most-recent metrics_raw sample for
+// every container that has reported within the last `maxAgeSec`
+// seconds (default 60). Used by the containers-list batch-stats
+// endpoint so the UI can show CPU + Mem columns without fanning out
+// to N WebSocket streams.
+type Latest struct {
+	Name       string  `json:"name"`
+	TS         int64   `json:"ts"`
+	CPUPercent float64 `json:"cpu_percent"`
+	MemUsed    uint64  `json:"mem_used"`
+	MemLimit   uint64  `json:"mem_limit"`
+}
+
+func (c *Collector) LatestPerContainer(ctx context.Context, maxAgeSec int64) ([]Latest, error) {
+	if maxAgeSec <= 0 {
+		maxAgeSec = 60
+	}
+	cutoff := time.Now().Unix() - maxAgeSec
+	// "MAX(ts) per container" trick: GROUP BY name, take MAX(ts), JOIN
+	// back to the raw row for the rest of the columns.
+	rows, err := c.db.QueryContext(ctx, `
+		SELECT m.container_name, m.ts, m.cpu_percent, m.mem_used, m.mem_limit
+		  FROM metrics_raw m
+		  JOIN (
+		      SELECT container_name, MAX(ts) AS maxts
+		        FROM metrics_raw
+		       WHERE ts >= ?
+		    GROUP BY container_name
+		  ) latest
+		    ON latest.container_name = m.container_name
+		   AND latest.maxts = m.ts`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Latest{}
+	for rows.Next() {
+		var l Latest
+		if err := rows.Scan(&l.Name, &l.TS, &l.CPUPercent, &l.MemUsed, &l.MemLimit); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
 func (c *Collector) Query(ctx context.Context, q Query) ([]Sample, error) {
 	table := "metrics_raw"
 	switch q.Resolution {

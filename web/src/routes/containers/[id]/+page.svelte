@@ -7,10 +7,15 @@
   import { FitAddon } from '@xterm/addon-fit';
   import '@xterm/xterm/css/xterm.css';
   import { Card, Badge, Button, Skeleton } from '$lib/components/ui';
+  import { Eyebrow, StatusPill, EdMetric, Sparkline } from '$lib/components/editorial';
+  // Files-tab icon — mockup uses the "image" picture-frame icon
+  // (Icons.image in shell.jsx); lucide's Image is the closest match.
+  import { Image as FilesIcon, Search } from 'lucide-svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
-  import { allowed } from '$lib/rbac';
+  import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
+  import { pageContext } from '$lib/stores/pageContext.svelte';
   import type { UpdatePreview, UpdateHistoryEntry, MetricsSample } from '$lib/api';
   import {
     ChevronLeft,
@@ -34,12 +39,17 @@
     Tag,
     Pause,
     PlayCircle,
-    Zap
+    Zap,
+    ArrowRight
   } from 'lucide-svelte';
 
   const id = $derived($page.params.id);
-  const canControl = $derived(allowed('container.control'));
-  const canExec = $derived(allowed('container.exec'));
+  // Scope-aware perm gates: containers.update / .exec also require the
+  // caller's role-scope to cover this container's host + stack (if any).
+  const ctxStack = $derived(info?.Config?.Labels?.['com.docker.compose.project'] as string | undefined);
+  const ctxHost = $derived(targetHost);
+  const canControl = $derived(allowed('containers.update', { stack: ctxStack, host: ctxHost }));
+  const canExec = $derived(allowed('containers.exec', { stack: ctxStack, host: ctxHost }));
   // Resolve the host: prefer the URL ?host=… (set when the user navigated
   // here from a remote-host listing), otherwise the global selection.
   const targetHost = $derived($page.url.searchParams.get('host') || hosts.id);
@@ -47,7 +57,65 @@
 
   let info = $state<any>(null);
   let loading = $state(true);
-  let tab = $state<'overview' | 'logs' | 'exec' | 'updates' | 'inspect'>('overview');
+  let tab = $state<'overview' | 'logs' | 'exec' | 'updates' | 'inspect' | 'network' | 'files'>('overview');
+
+  // More-menu dropdown for the header action cluster + env-show-more
+  // toggle for the Identity block. Both are local UX state, no
+  // persistence.
+  let moreOpen = $state(false);
+  let envExpanded = $state(false);
+  let logFilter = $state<'all' | 'error' | 'warn' | 'info' | 'fatal'>('all');
+  let logQuery = $state('');
+  let inspectView = $state<'pretty' | 'raw'>('pretty');
+
+  function logLevelOf(line: string): 'fatal' | 'error' | 'warn' | 'info' | 'debug' | '' {
+    const l = line.toLowerCase();
+    if (/(fatal|panic)/.test(l)) return 'fatal';
+    if (/(\berror\b|level=error|err\s*=)/.test(l)) return 'error';
+    if (/(\bwarn\b|level=warn|warning)/.test(l)) return 'warn';
+    if (/(\binfo\b|level=info)/.test(l)) return 'info';
+    if (/(\bdebug\b|level=debug)/.test(l)) return 'debug';
+    return '';
+  }
+  // Pull a leading ISO timestamp out of a docker log line and shorten
+  // it to "HH:MM:SS.mmm" for the dedicated time column. Falls back to
+  // empty + the raw line when no timestamp is present.
+  function parseLogLine(line: string): { ts: string; body: string } {
+    const m = line.match(/^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)\s+(.*)$/);
+    if (!m) return { ts: '', body: line };
+    const t = m[1].match(/[T ](\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?)/);
+    return { ts: t ? t[1] : m[1], body: m[2] };
+  }
+  // logLineEntries / logCounts / filteredLogLines are declared further
+  // down — see right after `let logs = $state<string[]>([])` to avoid
+  // TDZ on the `logs` reference inside the derived expressions.
+
+  // The image tag pill ("v3.2.0", "16-alpine", "latest") — derived from
+  // `Config.Image`. If the image has no explicit tag the registry resolved
+  // it to `latest`, so default to that.
+  const imageTag = $derived.by<string | null>(() => {
+    const ref: string | undefined = info?.Config?.Image;
+    if (!ref) return null;
+    const colon = ref.lastIndexOf(':');
+    if (colon < 0 || ref.indexOf('/') > colon) return 'latest';
+    return ref.slice(colon + 1) || 'latest';
+  });
+  // Strip a leading "v" so version arrows render cleanly: v3.2.1 → 3.2.1.
+  function trimV(s?: string | null): string {
+    return (s ?? '').replace(/^v/i, '');
+  }
+  // semver-ish bump classification when both sides parse cleanly.
+  function semverBump(a: string, b: string): 'major' | 'minor' | 'patch' | null {
+    const re = /^(\d+)\.(\d+)\.(\d+)/;
+    const ma = re.exec(a); const mb = re.exec(b);
+    if (!ma || !mb) return null;
+    if (ma[1] !== mb[1]) return 'major';
+    if (ma[2] !== mb[2]) return 'minor';
+    if (ma[3] !== mb[3]) return 'patch';
+    return null;
+  }
+  // updatePreview-dependent deriveds are declared further down, right
+  // after `let updatePreview = …`, to avoid TDZ.
 
   // For remote hosts in 3.1.2.4: Logs / Stats / Terminal / Inspect work.
   // Updates is still local-only (image pulls live on the central server's
@@ -63,9 +131,50 @@
   let updateHistory = $state<UpdateHistoryEntry[]>([]);
   let previewLoading = $state(false);
   let updateBusy = $state(false);
+  // Deriveds that read `updatePreview` — must come after the declaration.
+  const newTag = $derived(trimV(updatePreview?.latest_release?.tag));
+  const currentTagShort = $derived(trimV(imageTag));
+  const versionBump = $derived.by<'major' | 'minor' | 'patch' | null>(() => {
+    if (!newTag || !currentTagShort) return null;
+    return semverBump(currentTagShort, newTag);
+  });
+  const updateAvailable = $derived(
+    !!updatePreview?.latest_release && !!newTag && newTag !== currentTagShort
+  );
+  // Size delta in MB. Positive = remote is larger. null when either side
+  // is missing — we don't fake a delta we can't compute.
+  const sizeDeltaMB = $derived.by<number | null>(() => {
+    const a = updatePreview?.local_size;
+    const b = updatePreview?.remote_size;
+    if (!a || !b) return null;
+    return (b - a) / (1024 * 1024);
+  });
+  function fmtSizeDelta(mb: number): string {
+    const sign = mb >= 0 ? '+' : '−';
+    return `${sign}${Math.abs(mb).toFixed(1)} MB`;
+  }
 
   // Logs
   let logs = $state<string[]>([]);
+  // Logs derived state — depends on `logs` so must come after it.
+  const logLineEntries = $derived(
+    logs.map((raw) => {
+      const { ts, body } = parseLogLine(raw);
+      return { line: body, ts, lvl: logLevelOf(body) };
+    })
+  );
+  const logCounts = $derived.by(() => {
+    const c: Record<string, number> = { error: 0, warn: 0, info: 0, fatal: 0, debug: 0 };
+    for (const e of logLineEntries) if (e.lvl) c[e.lvl] = (c[e.lvl] ?? 0) + 1;
+    return c;
+  });
+  const filteredLogLines = $derived(
+    logLineEntries.filter((e) => {
+      if (logFilter !== 'all' && e.lvl !== logFilter) return false;
+      if (logQuery && !e.line.toLowerCase().includes(logQuery.toLowerCase())) return false;
+      return true;
+    })
+  );
   let wsConnected = $state(false);
   let autoScroll = $state(true);
   let logContainer: HTMLDivElement | null = $state(null);
@@ -499,6 +608,24 @@
     disconnectStats();
   });
 
+  $effect(() => {
+    if (info) {
+      const svc = info.Config?.Labels?.['com.docker.compose.service'];
+      const proj = info.Config?.Labels?.['com.docker.compose.project'];
+      const fromStack = $page.url.searchParams.get('from') === 'stack';
+      const name = svc || containerName(info) || id.slice(0, 12);
+      if (fromStack && proj) {
+        pageContext.set(name, [
+          { label: 'stacks', href: '/stacks' },
+          { label: proj, href: `/stacks/${encodeURIComponent(proj)}` },
+        ]);
+      } else {
+        pageContext.set(name);
+      }
+    }
+    return () => pageContext.clear();
+  });
+
   // Helpers
   function containerName(inf: any): string {
     return (inf?.Name ?? '').replace(/^\//, '');
@@ -575,506 +702,2245 @@
   }
 </script>
 
-<section class="space-y-5">
-  <a href="/containers" class="inline-flex items-center gap-1 text-sm text-[var(--fg-muted)] hover:text-[var(--fg)]">
-    <ChevronLeft class="w-4 h-4" />
-    Containers
-  </a>
-
+<section class="ctn-frame">
   {#if loading}
-    <Skeleton width="40%" height="2rem" />
-    <Skeleton width="70%" height="1rem" />
+    <div class="ctn-skeleton">
+      <Skeleton width="40%" height="2rem" />
+      <Skeleton width="70%" height="1rem" />
+    </div>
   {:else if info}
-    <div class="flex items-center justify-between flex-wrap gap-3">
-      <div class="flex items-center gap-3 min-w-0">
-        <h2 class="text-2xl font-semibold tracking-tight font-mono truncate">
-          {containerName(info) || id.slice(0, 12)}
-        </h2>
-        <Badge variant={info.State?.Running ? 'success' : 'default'} dot>
-          {info.State?.Status ?? 'unknown'}
-        </Badge>
+    {@const projectLabel = info.Config?.Labels?.['com.docker.compose.project']}
+    {@const serviceLabel = info.Config?.Labels?.['com.docker.compose.service']}
+
+    <!-- Editorial header — title alone on its own row, then a SECOND
+         row below with status pill + version pill + uptime + host + id
+         in a mono meta line. Buttons compress to Restart / Stop / Kill /
+         More menu (Recreate / Pause / Copy ID / Remove); matches the
+         mockup's container-detail header pattern. -->
+    <header class="ctn-header">
+      <div class="ctn-header-text">
+        <h1 class="ed-title ctn-title">{serviceLabel || containerName(info) || id.slice(0, 12)}</h1>
+        <div class="ctn-meta-row">
+          {#if info.State?.Paused}
+            <StatusPill status="warn" label="paused" />
+          {:else if info.State?.Running}
+            <StatusPill status="running" />
+          {:else}
+            <StatusPill status="stopped" label={info.State?.Status ?? 'stopped'} />
+          {/if}
+          {#if imageTag}
+            <span class="dm-pill dm-pill-neutral ctn-meta-pill">{imageTag}</span>
+          {/if}
+          <span class="ctn-meta-sep">·</span>
+          <span class="ctn-meta-cell">up {fmtRelTime(info.State?.StartedAt)}{#if (info.RestartCount ?? 0) > 0}, {info.RestartCount} restart{info.RestartCount === 1 ? '' : 's'}{/if}</span>
+          {#if isRemote && hosts.selected}
+            <span class="ctn-meta-sep">·</span>
+            <span class="ctn-meta-cell">{hosts.selected.name}</span>
+          {/if}
+          <span class="ctn-meta-sep">·</span>
+          <span class="ctn-meta-cell">id {id.slice(0, 12)}</span>
+        </div>
       </div>
       {#if canControl}
-        <div class="flex gap-2 flex-wrap">
+        <div class="ed-actions ctn-actions">
           {#if info.State?.Paused}
-            <!-- Paused containers: resume is the primary action, kill is
-                 still available. Restart / Stop don't apply to paused. -->
-            <Button variant="primary" onclick={() => action('unpause')}>
-              <PlayCircle class="w-4 h-4" /> Resume
-            </Button>
-            <Button variant="secondary" onclick={killContainer}>
-              <Zap class="w-4 h-4" /> Kill
-            </Button>
+            <button class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => action('unpause')}>
+              <PlayCircle size={13} strokeWidth={1.5} /> Resume
+            </button>
+            <button class="dm-btn dm-btn-ghost dm-btn-sm ctn-btn-kill" onclick={killContainer}>
+              <Zap size={13} strokeWidth={1.5} /> Kill
+            </button>
           {:else if info.State?.Running}
-            <Button variant="secondary" onclick={() => action('restart')}>
-              <RotateCw class="w-4 h-4" /> Restart
-            </Button>
-            <Button variant="secondary" onclick={() => action('pause')}>
-              <Pause class="w-4 h-4" /> Pause
-            </Button>
-            <Button variant="secondary" onclick={() => action('stop')}>
-              <Square class="w-4 h-4" /> Stop
-            </Button>
-            <Button variant="secondary" onclick={killContainer}>
-              <Zap class="w-4 h-4" /> Kill
-            </Button>
+            <button class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => action('restart')}>
+              <RotateCw size={13} strokeWidth={1.5} /> Restart
+            </button>
+            <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick={() => action('stop')}>
+              <Square size={13} strokeWidth={1.5} /> Stop
+            </button>
+            <button class="dm-btn dm-btn-ghost dm-btn-sm ctn-btn-kill" onclick={killContainer}>
+              <Zap size={13} strokeWidth={1.5} /> Kill
+            </button>
           {:else}
-            <Button variant="primary" onclick={() => action('start')}>
-              <Play class="w-4 h-4" /> Start
-            </Button>
+            <button class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => action('start')}>
+              <Play size={13} strokeWidth={1.5} /> Start
+            </button>
           {/if}
-          <Button variant="danger" onclick={remove}>
-            <Trash2 class="w-4 h-4" /> Remove
-          </Button>
+          <div class="ctn-more-wrap">
+            <button
+              type="button"
+              class="dm-btn dm-btn-ghost dm-btn-sm ctn-more-btn"
+              onclick={() => (moreOpen = !moreOpen)}
+              aria-haspopup="menu"
+              aria-expanded={moreOpen}
+              aria-label="More actions"
+              title="More"
+            >
+              <span class="ctn-more-dots" aria-hidden="true">···</span>
+            </button>
+            {#if moreOpen}
+              <button
+                type="button"
+                class="ctn-more-overlay"
+                aria-label="Close menu"
+                onclick={() => (moreOpen = false)}
+              ></button>
+              <div class="ctn-more-menu" role="menu">
+                {#if info.State?.Running}
+                  <button
+                    type="button"
+                    class="ctn-more-item"
+                    role="menuitem"
+                    onclick={() => { moreOpen = false; action('pause'); }}
+                  >
+                    <Pause size={12} strokeWidth={1.5} /> Pause
+                  </button>
+                {/if}
+                <button
+                  type="button"
+                  class="ctn-more-item"
+                  role="menuitem"
+                  onclick={async () => {
+                    moreOpen = false;
+                    try { await navigator.clipboard?.writeText(info.Id ?? id); toast.info('Copied container ID'); } catch {}
+                  }}
+                >
+                  <FileText size={12} strokeWidth={1.5} /> Copy ID
+                </button>
+                <div class="ctn-more-sep"></div>
+                <button
+                  type="button"
+                  class="ctn-more-item ctn-more-item-danger"
+                  role="menuitem"
+                  onclick={() => { moreOpen = false; remove(); }}
+                >
+                  <Trash2 size={12} strokeWidth={1.5} /> Remove
+                </button>
+              </div>
+            {/if}
+          </div>
         </div>
       {/if}
-    </div>
-
-    <!-- Info cards -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <Card class="p-4">
-        <div class="text-xs text-[var(--fg-muted)] uppercase tracking-wider font-medium">Image</div>
-        <div class="font-mono text-sm mt-1 truncate">{info.Config?.Image}</div>
-      </Card>
-      <Card class="p-4">
-        <div class="text-xs text-[var(--fg-muted)] uppercase tracking-wider font-medium">Ports</div>
-        <div class="font-mono text-sm mt-1 truncate">{portList(info)}</div>
-      </Card>
-      <Card class="p-4">
-        <div class="text-xs text-[var(--fg-muted)] uppercase tracking-wider font-medium">Created</div>
-        <div class="font-mono text-xs mt-1">{info.Created?.slice(0, 19).replace('T', ' ')}</div>
-      </Card>
-    </div>
+    </header>
   {/if}
-
-  <!-- Tabs -->
-  <div class="border-b border-[var(--border)] flex gap-1">
-    {#snippet tabBtn(id: typeof tab, label: string, Icon: any, connected: boolean)}
-      <button
-        class="px-4 py-2.5 text-sm border-b-2 transition-colors flex items-center gap-2
-               {tab === id
-          ? 'border-[var(--color-brand-500)] text-[var(--fg)]'
-          : 'border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]'}"
-        onclick={() => (tab = id)}
-      >
-        <Icon class="w-3.5 h-3.5" />
-        {label}
-        {#if connected && tab === id}
-          <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-success-500)]"></span>
-        {/if}
-      </button>
-    {/snippet}
-    {@render tabBtn('overview', 'Overview', Info, statsConnected)}
-    {@render tabBtn('logs', 'Logs', FileText, wsConnected)}
-    {#if canExec}
-      {@render tabBtn('exec', 'Terminal', TerminalIcon, execConnected)}
-    {/if}
-    {#if canControl && !isRemote}
-      {@render tabBtn('updates', 'Updates', Download, false)}
-    {/if}
-    {@render tabBtn('inspect', 'Inspect', Code2, false)}
-  </div>
 
   {#if isRemote}
-    <div class="dm-card p-3 text-xs text-[var(--fg-muted)] flex items-center gap-2">
-      <span class="text-[var(--color-brand-400)]">⚡</span>
-      Remote host — Logs, Stats, Terminal and Inspect are streamed via the agent.
-      Image updates are still local-only (coming with stack deploy in 3.1.3).
+    <div class="ctn-remote">
+      <span class="ctn-remote-bullet">·</span>
+      Remote host — Logs / Stats / Terminal / Inspect stream via the agent. Image updates stay
+      local-only on the central daemon.
     </div>
   {/if}
+
+  <!-- Live stats — ALWAYS visible above the tab strip (not gated by
+       which tab the operator is on). Mockup-faithful: CPU / Memory /
+       Network are current-state snapshots that stay relevant whether
+       you're reading Logs, opening a Terminal, or browsing Inspect. -->
+  {#if info && stats}
+    {@const cpuVals = statsHistory.map((s) => s.cpu_percent)}
+    {@const memVals = statsHistory.map((s) => s.mem_percent)}
+    {@const rxVals = statsHistory.map((s) => s.net_rx)}
+    {@const txVals = statsHistory.map((s) => s.net_tx)}
+    {@const netMax = Math.max(1, ...rxVals, ...txVals)}
+    {@const netW = 100}
+    {@const netH = 32}
+    {@const netPath = (vals: number[], baseline = false) => {
+      if (vals.length < 2) return '';
+      const pts = vals.map((v, i) => `${(i / (vals.length - 1) * netW).toFixed(1)},${(netH - (v / netMax) * (netH - 2) - 1).toFixed(1)}`);
+      return baseline ? `M0,${netH} L${pts.join(' L')} L${netW},${netH} Z` : `M${pts.join(' L')}`;
+    }}
+    <div class="ctn-stats">
+      <EdMetric
+        label="CPU"
+        value={stats.cpu_percent.toFixed(1)}
+        unit="%"
+        meta={statsHistory.length > 1 ? `${statsHistory.length} samples · last 60s` : 'live'}
+        spark={statsHistory.length > 1 ? cpuVals : undefined}
+        sparkColor={stats.cpu_percent > 85
+          ? 'var(--color-danger-500)'
+          : stats.cpu_percent > 60
+            ? 'var(--color-warning-500)'
+            : 'var(--accent)'}
+      />
+      <EdMetric
+        label="Memory"
+        value={formatBytes(stats.mem_used)}
+        meta={stats.mem_limit > 0
+          ? `${stats.mem_percent.toFixed(0)}% of ${formatBytes(stats.mem_limit)} limit`
+          : 'no limit set'}
+        spark={statsHistory.length > 1 ? memVals : undefined}
+        sparkColor={stats.mem_percent > 85
+          ? 'var(--color-danger-500)'
+          : stats.mem_percent > 60
+            ? 'var(--color-warning-500)'
+            : 'var(--color-success-500)'}
+      />
+      <div class="ed-metric">
+        <div class="ctn-net-head">
+          <span class="ed-metric-label">Network · in / out</span>
+          <span class="ed-metric-meta">MB/s</span>
+        </div>
+        <div class="ed-metric-value">
+          {formatBytes(stats.net_rx)}<span class="unit"> / {formatBytes(stats.net_tx)}</span>
+        </div>
+        {#if statsHistory.length > 1}
+          <svg class="dm-spark" viewBox="0 0 {netW} {netH}" preserveAspectRatio="none">
+            <path d={netPath(txVals, true)} class="dm-spark-fill" style="opacity: 0.07" />
+            <path d={netPath(rxVals)} class="dm-spark-line" style="stroke: var(--accent); opacity: 0.75" />
+            <path d={netPath(txVals)} class="dm-spark-line" style="stroke: var(--color-warning-400); opacity: 0.85" />
+          </svg>
+        {/if}
+        <span class="ed-metric-meta">in solid · out warn · cumulative since start</span>
+      </div>
+    </div>
+  {:else if info && statsConnected}
+    <div class="ctn-stats-pending">waiting for first stats sample…</div>
+  {/if}
+
+  <!-- Editorial tab strip. Live indicators (green dot for active stream)
+       sit on the per-tab counter slot so operators can tell at a glance
+       which feeds are open. -->
+  <div class="ed-tabs ctn-tabs" role="tablist" aria-label="Container sections">
+    <button
+      role="tab"
+      type="button"
+      aria-selected={tab === 'overview'}
+      class="ed-tab"
+      class:active={tab === 'overview'}
+      onclick={() => (tab = 'overview')}
+    >
+      <Info size={13} strokeWidth={1.5} />
+      Overview
+    </button>
+    <button
+      role="tab"
+      type="button"
+      aria-selected={tab === 'logs'}
+      class="ed-tab"
+      class:active={tab === 'logs'}
+      onclick={() => (tab = 'logs')}
+    >
+      <FileText size={13} strokeWidth={1.5} />
+      Logs
+      {#if wsConnected}<span class="count" style="color: var(--color-success-400)">stream</span>{/if}
+    </button>
+    {#if canExec}
+      <button
+        role="tab"
+        type="button"
+        aria-selected={tab === 'exec'}
+        class="ed-tab"
+        class:active={tab === 'exec'}
+        onclick={() => (tab = 'exec')}
+      >
+        <TerminalIcon size={13} strokeWidth={1.5} />
+        Terminal
+        {#if execConnected}<span class="count" style="color: var(--color-success-400)">attached</span>{/if}
+      </button>
+    {/if}
+    <button
+      role="tab"
+      type="button"
+      aria-selected={tab === 'inspect'}
+      class="ed-tab"
+      class:active={tab === 'inspect'}
+      onclick={() => (tab = 'inspect')}
+    >
+      <Code2 size={13} strokeWidth={1.5} />
+      Inspect
+    </button>
+    <button
+      role="tab"
+      type="button"
+      aria-selected={tab === 'network'}
+      class="ed-tab"
+      class:active={tab === 'network'}
+      onclick={() => (tab = 'network')}
+    >
+      <Network size={13} strokeWidth={1.5} />
+      Network
+      {#if info && Object.keys(info.NetworkSettings?.Networks ?? {}).length > 0}
+        <span class="count">{Object.keys(info.NetworkSettings?.Networks ?? {}).length}</span>
+      {/if}
+    </button>
+    <button
+      role="tab"
+      type="button"
+      aria-selected={tab === 'files'}
+      class="ed-tab"
+      class:active={tab === 'files'}
+      onclick={() => (tab = 'files')}
+    >
+      <FilesIcon size={13} strokeWidth={1.5} />
+      Files
+    </button>
+    {#if canControl && !isRemote}
+      <button
+        role="tab"
+        type="button"
+        aria-selected={tab === 'updates'}
+        class="ed-tab"
+        class:active={tab === 'updates'}
+        onclick={() => (tab = 'updates')}
+      >
+        <Download size={13} strokeWidth={1.5} />
+        Updates
+        {#if updateHistory.length > 0}<span class="count">{updateHistory.length}</span>{/if}
+      </button>
+    {/if}
+  </div>
 
   <!-- Tab panels -->
   {#if tab === 'overview' && info}
-    <!-- Live Stats (merged from Stats tab) -->
-    {#if stats}
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Card class="p-4">
-          <div class="flex justify-between items-baseline mb-2">
-            <div class="text-[10px] text-[var(--fg-muted)] uppercase tracking-wider font-medium">CPU</div>
-            <div class="text-xl font-semibold font-mono tabular-nums">
-              {stats.cpu_percent.toFixed(1)}<span class="text-xs text-[var(--fg-muted)]">%</span>
+    {@const projectLabel2 = info.Config?.Labels?.['com.docker.compose.project']}
+    {@const serviceLabel2 = info.Config?.Labels?.['com.docker.compose.service']}
+    {@const envLines = (info.Config?.Env ?? []) as string[]}
+    {@const portsMap = (info.NetworkSettings?.Ports ?? {}) as Record<string, Array<{HostIp: string; HostPort: string}> | null>}
+    {@const portRows = Object.entries(portsMap).map(([k, v]) => ({
+      port: k,
+      bindings: (v ?? []) as Array<{HostIp: string; HostPort: string}>,
+    }))}
+    {@const networks = Object.entries(info.NetworkSettings?.Networks ?? {}) as Array<[string, any]>}
+    {@const mounts = (info.Mounts ?? []) as any[]}
+    {@const health = info.State?.Health}
+    {@const cmdParts = [...(info.Config?.Entrypoint ?? []), ...(info.Config?.Cmd ?? [])]}
+    {@const restartCount = info.RestartCount ?? info.State?.RestartCount ?? 0}
+
+    <!-- 2-column overview: identity / health / restarts on the left,
+         mounts / networks / stack-context / endpoints in the right rail. -->
+    <div class="ctn-overview">
+      <div class="ctn-overview-main">
+        <!-- Identity -->
+        <section class="ctn-block">
+          <Eyebrow>Identity</Eyebrow>
+          <dl class="ctn-kv">
+            <dt>id</dt>
+            <dd>{id.slice(0, 12)}</dd>
+
+            <dt>image</dt>
+            <dd>{info.Config?.Image}</dd>
+
+            {#if cmdParts.length > 0}
+              <dt>cmd</dt>
+              <dd>{JSON.stringify(cmdParts)}</dd>
+            {/if}
+
+            {#if envLines.length > 0}
+              <dt>env</dt>
+              <dd class="ctn-kv-env">
+                {#each (envExpanded ? envLines : envLines.slice(0, 3)) as e (e)}
+                  {@const idx = e.indexOf('=')}
+                  {@const k = idx >= 0 ? e.slice(0, idx) : e}
+                  {@const v = idx >= 0 ? e.slice(idx + 1) : ''}
+                  {@const isSec = /password|secret|token|api[_-]?key|credential/i.test(k)}
+                  <span class="ctn-kv-env-pair">
+                    <span class="ctn-kv-env-key">{k}</span>=<span class:secret={isSec}>{isSec ? '••••••' : (v.length > 50 ? v.slice(0, 50) + '…' : v)}</span>
+                  </span>
+                {/each}
+                {#if envLines.length > 3}
+                  <button
+                    type="button"
+                    class="ctn-kv-env-toggle"
+                    onclick={() => (envExpanded = !envExpanded)}
+                  >
+                    {envExpanded
+                      ? `hide ${envLines.length - 3}`
+                      : `show ${envLines.length - 3} more`}
+                  </button>
+                {/if}
+              </dd>
+            {/if}
+
+            {#if portRows.length > 0}
+              <dt>ports</dt>
+              <dd>
+                {#each portRows as p, i (p.port)}{#if i > 0} · {/if}{p.port}{/each}
+              </dd>
+            {/if}
+
+            <dt>created</dt>
+            <dd>{info.Created?.slice(0, 19).replace('T', ' ')} · {fmtRelTime(info.Created)}</dd>
+
+            {#if info.HostConfig?.RestartPolicy?.Name}
+              <dt>restart</dt>
+              <dd>{info.HostConfig.RestartPolicy.Name}</dd>
+            {/if}
+
+            {#if info.Config?.User}
+              <dt>user</dt>
+              <dd>{info.Config.User}</dd>
+            {/if}
+          </dl>
+        </section>
+
+        <!-- Health — single bordered container wrapping the row(s).
+             Probe meta-line shows the actual healthcheck command + interval
+             ("CMD curl http://… · every 5s"), not a raw timestamp. Docker
+             only exposes one healthcheck per container; we render exactly
+             that one row, status-coloured. -->
+        <section class="ctn-block">
+          <Eyebrow>Health</Eyebrow>
+          {#if !health || health.Status === 'none'}
+            <p class="ctn-empty-line">No <code>healthcheck</code> configured. Status comes from the container's running/stopped state only.</p>
+          {:else}
+            {@const probeTest = info.Config?.Healthcheck?.Test}
+            {@const probeCmd = Array.isArray(probeTest) && probeTest.length > 1
+              ? `${probeTest[0]} ${probeTest.slice(1).join(' ')}`.slice(0, 80)
+              : 'CMD'}
+            {@const probeIntervalNs = info.Config?.Healthcheck?.Interval ?? 0}
+            {@const probeIntervalSec = Math.max(1, Math.round(probeIntervalNs / 1_000_000_000))}
+            {@const probeMeta = `${probeCmd} · every ${probeIntervalSec}s`}
+            <div class="ctn-health-box">
+              {#if health.Status === 'unhealthy'}
+                <div class="ed-row" data-status="failing" style="grid-template-columns: 6px 1fr auto auto">
+                  <span class="stripe"></span>
+                  <div class="ctn-health-namecell">
+                    <span class="ctn-health-name">healthcheck</span>
+                    <div class="ctn-health-detail">{probeMeta}</div>
+                  </div>
+                  <div class="ctn-health-status">
+                    <span class="dm-pill dm-pill-danger ctn-health-pill"><span class="dm-pill-dot"></span>exit {health.Log?.[0]?.ExitCode ?? '?'}</span>
+                    {#if health.FailingStreak > 0}
+                      <span class="ctn-health-streak">{health.FailingStreak} consecutive failures</span>
+                    {/if}
+                  </div>
+                  <span class="ctn-health-when">since {fmtRelTime(health.Log?.[0]?.Start)}</span>
+                </div>
+                {#if health.Log?.[0]?.Output}
+                  <pre class="ctn-health-output">{health.Log[0].Output.slice(0, 400)}</pre>
+                {/if}
+              {:else if health.Status === 'starting'}
+                <div class="ed-row" data-status="degraded" style="grid-template-columns: 6px 1fr auto auto">
+                  <span class="stripe"></span>
+                  <div class="ctn-health-namecell">
+                    <span class="ctn-health-name">healthcheck</span>
+                    <div class="ctn-health-detail">{probeMeta}</div>
+                  </div>
+                  <div class="ctn-health-status">
+                    <span class="dm-pill dm-pill-warning ctn-health-pill"><span class="dm-pill-dot"></span>starting</span>
+                  </div>
+                  <span class="ctn-health-when">{fmtRelTime(info.State?.StartedAt)}</span>
+                </div>
+              {:else}
+                <div class="ed-row" data-status="running" style="grid-template-columns: 6px 1fr auto auto">
+                  <span class="stripe"></span>
+                  <div class="ctn-health-namecell">
+                    <span class="ctn-health-name">healthcheck</span>
+                    <div class="ctn-health-detail">{probeMeta}</div>
+                  </div>
+                  <div class="ctn-health-status">
+                    <span class="dm-pill dm-pill-success ctn-health-pill"><span class="dm-pill-dot"></span>healthy</span>
+                  </div>
+                  <span class="ctn-health-when">last ok {fmtRelTime(health.Log?.[0]?.End)}</span>
+                </div>
+              {/if}
             </div>
-          </div>
-          <svg viewBox="0 0 200 40" class="w-full h-10">
-            <defs><linearGradient id="cpu-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#06b6d4" stop-opacity="0.3" /><stop offset="100%" stop-color="#06b6d4" stop-opacity="0" /></linearGradient></defs>
-            <path d={sparkArea(statsHistory.map(s => s.cpu_percent), 100, 200, 40)} fill="url(#cpu-g)" />
-            <path d={sparkPath(statsHistory.map(s => s.cpu_percent), 100, 200, 40)} fill="none" stroke="#06b6d4" stroke-width="1.5" stroke-linejoin="round" />
-          </svg>
-        </Card>
-        <Card class="p-4">
-          <div class="flex justify-between items-baseline mb-2">
-            <div class="text-[10px] text-[var(--fg-muted)] uppercase tracking-wider font-medium">Memory</div>
-            <div class="text-xl font-semibold font-mono tabular-nums">
-              {stats.mem_percent.toFixed(1)}<span class="text-xs text-[var(--fg-muted)]">%</span>
-            </div>
-          </div>
-          <div class="text-[10px] text-[var(--fg-subtle)] font-mono -mt-1 mb-1">{formatBytes(stats.mem_used)} / {formatBytes(stats.mem_limit)}</div>
-          <svg viewBox="0 0 200 40" class="w-full h-10">
-            <defs><linearGradient id="mem-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#22c55e" stop-opacity="0.3" /><stop offset="100%" stop-color="#22c55e" stop-opacity="0" /></linearGradient></defs>
-            <path d={sparkArea(statsHistory.map(s => s.mem_percent), 100, 200, 40)} fill="url(#mem-g)" />
-            <path d={sparkPath(statsHistory.map(s => s.mem_percent), 100, 200, 40)} fill="none" stroke="#22c55e" stroke-width="1.5" stroke-linejoin="round" />
-          </svg>
-        </Card>
-        <Card class="p-4">
-          <div class="text-[10px] text-[var(--fg-muted)] uppercase tracking-wider font-medium mb-2">Network</div>
-          <div class="grid grid-cols-2 gap-2">
-            <div><div class="text-[10px] text-[var(--fg-subtle)]">↓ rx</div><div class="text-sm font-mono tabular-nums">{formatBytes(stats.net_rx)}</div></div>
-            <div><div class="text-[10px] text-[var(--fg-subtle)]">↑ tx</div><div class="text-sm font-mono tabular-nums">{formatBytes(stats.net_tx)}</div></div>
-          </div>
-        </Card>
-        <Card class="p-4">
-          <div class="text-[10px] text-[var(--fg-muted)] uppercase tracking-wider font-medium mb-2">Block I/O · PIDs</div>
-          <div class="grid grid-cols-3 gap-2">
-            <div><div class="text-[10px] text-[var(--fg-subtle)]">read</div><div class="text-xs font-mono tabular-nums">{formatBytes(stats.blk_read)}</div></div>
-            <div><div class="text-[10px] text-[var(--fg-subtle)]">write</div><div class="text-xs font-mono tabular-nums">{formatBytes(stats.blk_write)}</div></div>
-            <div><div class="text-[10px] text-[var(--fg-subtle)]">pids</div><div class="text-xs font-mono tabular-nums">{stats.pids_current}</div></div>
-          </div>
-        </Card>
+          {/if}
+        </section>
+
+        <!-- Restart history (summarized — Docker doesn't expose individual
+             restart events, so we show count + last-start + last-exit). -->
+        <section class="ctn-block">
+          <Eyebrow>Restart history · {restartCount} restart{restartCount === 1 ? '' : 's'}</Eyebrow>
+          {#if restartCount === 0 && info.State?.Running}
+            <p class="ctn-empty-line">No restarts since this container was created. Running cleanly since <strong>{fmtRelTime(info.State?.StartedAt)}</strong>.</p>
+          {:else}
+            <ol class="ctn-restart-list">
+              {#if info.State?.StartedAt}
+                <li class="ed-feed-item">
+                  <span class="ed-feed-time">{fmtRelTime(info.State.StartedAt)}</span>
+                  <span class="ed-feed-text">
+                    <strong>last start</strong> · {info.State?.Running ? 'currently running' : 'not running'}
+                  </span>
+                  <span class="ed-feed-actor">
+                    {#if info.State?.ExitCode !== undefined && info.State.ExitCode !== 0}
+                      exit {info.State.ExitCode}
+                    {:else if !info.State?.Running}
+                      stopped
+                    {:else}
+                      live
+                    {/if}
+                  </span>
+                </li>
+              {/if}
+              {#if info.State?.FinishedAt && info.State.FinishedAt !== '0001-01-01T00:00:00Z'}
+                <li class="ed-feed-item">
+                  <span class="ed-feed-time">{fmtRelTime(info.State.FinishedAt)}</span>
+                  <span class="ed-feed-text">
+                    <strong>last finish</strong> · {info.State?.Error || 'clean exit'}
+                  </span>
+                  <span class="ed-feed-actor">
+                    exit {info.State?.ExitCode ?? 0}
+                  </span>
+                </li>
+              {/if}
+            </ol>
+            <p class="ctn-restart-note">
+              Per-restart details (reason, signal, OOM kill) aren't surfaced by Docker — the count above is the lifetime restart count for this container id.
+            </p>
+          {/if}
+        </section>
       </div>
-    {:else if statsConnected}
-      <Card class="p-4 text-center text-xs text-[var(--fg-muted)]">waiting for first stats sample…</Card>
-    {/if}
 
-    <!-- History chart -->
-    {#if historySamples.length > 0 || historyLoading}
-      <Card class="p-4">
-        <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <h3 class="font-semibold text-xs uppercase tracking-wider text-[var(--fg-muted)]">History</h3>
-          <div class="flex gap-1 text-[10px]">
-            {#each ['1h', '6h', '24h', '7d', '30d'] as const as r}
-              <button
-                class="px-2 py-0.5 rounded font-mono transition-colors
-                       {historyRange === r
-                  ? 'bg-[var(--color-brand-500)] text-white'
-                  : 'text-[var(--fg-muted)] hover:bg-[var(--surface-hover)]'}"
-                onclick={() => { historyRange = r; loadHistory(); }}
-              >{r}</button>
-            {/each}
-          </div>
-        </div>
-        {#if historyLoading && historySamples.length === 0}
-          <div class="text-xs text-[var(--fg-muted)]">loading…</div>
-        {:else if historySamples.length === 0}
-          <div class="text-xs text-[var(--fg-muted)]">no samples yet</div>
-        {:else}
-          {@const cpuVals = historySamples.map(s => s.cpu_percent)}
-          {@const memPct = historySamples.map(s => s.mem_limit > 0 ? (s.mem_used / s.mem_limit) * 100 : 0)}
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div>
-              <div class="flex justify-between text-[10px] text-[var(--fg-muted)] mb-1"><span>CPU %</span><span>{cpuVals.length} samples</span></div>
-              <svg viewBox="0 0 400 60" class="w-full h-14">
-                <defs><linearGradient id="hcpu" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#06b6d4" stop-opacity="0.3" /><stop offset="100%" stop-color="#06b6d4" stop-opacity="0" /></linearGradient></defs>
-                <path d={sparkArea(cpuVals, 100, 400, 60)} fill="url(#hcpu)" />
-                <path d={sparkPath(cpuVals, 100, 400, 60)} fill="none" stroke="#06b6d4" stroke-width="1.5" stroke-linejoin="round" />
-              </svg>
-            </div>
-            <div>
-              <div class="flex justify-between text-[10px] text-[var(--fg-muted)] mb-1"><span>Memory %</span><span>peak {Math.max(...memPct).toFixed(1)}%</span></div>
-              <svg viewBox="0 0 400 60" class="w-full h-14">
-                <defs><linearGradient id="hmem" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#22c55e" stop-opacity="0.3" /><stop offset="100%" stop-color="#22c55e" stop-opacity="0" /></linearGradient></defs>
-                <path d={sparkArea(memPct, 100, 400, 60)} fill="url(#hmem)" />
-                <path d={sparkPath(memPct, 100, 400, 60)} fill="none" stroke="#22c55e" stroke-width="1.5" stroke-linejoin="round" />
-              </svg>
-            </div>
-          </div>
+      <!-- Right rail. Mounts / Networks / Endpoints sit on `.dm-card`
+           (filled background); Stack context uses `.dm-card-flat`
+           (border only, transparent) — same chrome as the mockup. -->
+      <aside class="ctn-overview-rail">
+        <section class="dm-card ctn-rail-card">
+          <Eyebrow>Mounts · {mounts.length}</Eyebrow>
+          {#if mounts.length === 0}
+            <p class="ctn-empty-line">No volumes or bind mounts.</p>
+          {:else}
+            <ul class="ctn-mounts">
+              {#each mounts as m (m.Destination)}
+                <li>
+                  <span class="ctn-mount-name">{m.Name || m.Source}</span>
+                  <span class="ctn-mount-arrow">→</span>
+                  <span class="ctn-mount-dest">{m.Destination}</span>
+                  {#if m.RW === false}<span class="dm-pill dm-pill-neutral ctn-mount-ro">ro</span>{/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </section>
+
+        <section class="dm-card ctn-rail-card">
+          <Eyebrow>Networks · {networks.length}</Eyebrow>
+          {#if networks.length === 0}
+            <p class="ctn-empty-line">Not attached to any user network.</p>
+          {:else}
+            <ul class="ctn-networks">
+              {#each networks as [netName, cfg] (netName)}
+                <li>
+                  <span class="ctn-network-name">{netName}</span>
+                  {#if cfg?.IPAddress}
+                    <span class="ctn-network-sep">·</span>
+                    <span class="ctn-network-ip">{cfg.IPAddress}</span>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </section>
+
+        {#if projectLabel2}
+          <section class="dm-card-flat ctn-rail-card">
+            <Eyebrow>Stack context</Eyebrow>
+            <p class="ctn-stack-blurb">
+              Service <em class="ed-accent">{serviceLabel2 || '—'}</em> of stack
+              <em class="ed-accent">{projectLabel2}</em>.
+            </p>
+            <a href={`/stacks/${encodeURIComponent(projectLabel2)}`} class="dm-btn dm-btn-secondary dm-btn-sm ctn-stack-link">
+              ↑ Open {projectLabel2}
+            </a>
+          </section>
         {/if}
-      </Card>
-    {/if}
 
-    <!-- Config sections -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <!-- Environment Variables -->
-      <Card>
-        <div class="px-5 py-3 border-b border-[var(--border)] text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider flex items-center gap-2">
-          <Tag class="w-3.5 h-3.5" /> Environment ({(info.Config?.Env ?? []).length})
-        </div>
-        <div class="max-h-64 overflow-auto">
-          {#if (info.Config?.Env ?? []).length === 0}
-            <div class="px-5 py-4 text-xs text-[var(--fg-subtle)]">No environment variables</div>
+        <section class="dm-card ctn-rail-card">
+          <Eyebrow>Endpoints</Eyebrow>
+          {#if portRows.length === 0}
+            <p class="ctn-empty-line">No exposed ports.</p>
           {:else}
-            <div class="divide-y divide-[var(--border)]">
-              {#each info.Config?.Env ?? [] as envLine}
-                {@const idx = envLine.indexOf('=')}
-                {@const key = idx >= 0 ? envLine.slice(0, idx) : envLine}
-                {@const val = idx >= 0 ? envLine.slice(idx + 1) : ''}
-                <div class="px-5 py-2 flex gap-2 text-xs hover:bg-[var(--surface-hover)]">
-                  <span class="font-mono font-medium text-[var(--fg)] shrink-0">{key}</span>
-                  <span class="font-mono text-[var(--fg-muted)] truncate" title={val}>{val || '(empty)'}</span>
-                </div>
+            <ul class="ctn-endpoints">
+              {#each portRows as p (p.port)}
+                {#if p.bindings.length > 0}
+                  {#each p.bindings as b (b.HostIp + b.HostPort)}
+                    <li>
+                      <span class="ctn-endpoint-port">:{b.HostPort} → {p.port}</span>
+                      <span class="ctn-endpoint-mode-host">host</span>
+                      <ExternalLink size={11} strokeWidth={1.5} class="ctn-endpoint-icon" />
+                    </li>
+                  {/each}
+                {:else}
+                  <li>
+                    <span class="ctn-endpoint-port">{p.port}</span>
+                    <span class="ctn-endpoint-mode">internal</span>
+                  </li>
+                {/if}
               {/each}
-            </div>
+            </ul>
           {/if}
-        </div>
-      </Card>
-
-      <!-- Mounts / Volumes -->
-      <Card>
-        <div class="px-5 py-3 border-b border-[var(--border)] text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider flex items-center gap-2">
-          <HardDrive class="w-3.5 h-3.5" /> Mounts ({(info.Mounts ?? []).length})
-        </div>
-        <div class="max-h-64 overflow-auto">
-          {#if (info.Mounts ?? []).length === 0}
-            <div class="px-5 py-4 text-xs text-[var(--fg-subtle)]">No mounts</div>
-          {:else}
-            <div class="divide-y divide-[var(--border)]">
-              {#each info.Mounts ?? [] as m}
-                <div class="px-5 py-2.5 text-xs hover:bg-[var(--surface-hover)]">
-                  <div class="flex items-center gap-2">
-                    <Badge variant={m.Type === 'volume' ? 'info' : 'default'}>{m.Type}</Badge>
-                    <span class="font-mono text-[var(--fg)] truncate">{m.Name || m.Source}</span>
-                    {#if m.RW === false}<Badge variant="warning">ro</Badge>{/if}
-                  </div>
-                  <div class="font-mono text-[var(--fg-muted)] mt-0.5 truncate" title={m.Destination}>→ {m.Destination}</div>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      </Card>
-
-      <!-- Networks -->
-      <Card>
-        <div class="px-5 py-3 border-b border-[var(--border)] text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider flex items-center gap-2">
-          <Network class="w-3.5 h-3.5" /> Networks ({Object.keys(info.NetworkSettings?.Networks ?? {}).length})
-        </div>
-        <div class="max-h-64 overflow-auto">
-          {#if Object.keys(info.NetworkSettings?.Networks ?? {}).length === 0}
-            <div class="px-5 py-4 text-xs text-[var(--fg-subtle)]">No networks</div>
-          {:else}
-            <div class="divide-y divide-[var(--border)]">
-              {#each Object.entries(info.NetworkSettings?.Networks ?? {}) as [netName, netCfg]}
-                {@const cfg = netCfg as any}
-                <div class="px-5 py-2.5 text-xs hover:bg-[var(--surface-hover)]">
-                  <div class="font-mono font-medium text-[var(--fg)]">{netName}</div>
-                  <div class="text-[var(--fg-muted)] mt-0.5 font-mono">
-                    {#if cfg?.IPAddress}IP: {cfg.IPAddress}{/if}
-                    {#if cfg?.Gateway} · GW: {cfg.Gateway}{/if}
-                    {#if cfg?.MacAddress} · MAC: {cfg.MacAddress}{/if}
-                  </div>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      </Card>
-
-      <!-- Labels + Config -->
-      <Card>
-        <div class="px-5 py-3 border-b border-[var(--border)] text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider flex items-center gap-2">
-          <Info class="w-3.5 h-3.5" /> Configuration
-        </div>
-        <div class="divide-y divide-[var(--border)]">
-          <div class="px-5 py-2.5 flex justify-between text-xs">
-            <span class="text-[var(--fg-muted)]">Restart Policy</span>
-            <span class="font-mono text-[var(--fg)]">{info.HostConfig?.RestartPolicy?.Name ?? '—'}</span>
-          </div>
-          <div class="px-5 py-2.5 flex justify-between text-xs">
-            <span class="text-[var(--fg-muted)]">Working Dir</span>
-            <span class="font-mono text-[var(--fg)]">{info.Config?.WorkingDir || '/'}</span>
-          </div>
-          <div class="px-5 py-2.5 flex justify-between text-xs">
-            <span class="text-[var(--fg-muted)]">User</span>
-            <span class="font-mono text-[var(--fg)]">{info.Config?.User || 'root'}</span>
-          </div>
-          <div class="px-5 py-2.5 flex justify-between text-xs">
-            <span class="text-[var(--fg-muted)]">Entrypoint</span>
-            <span class="font-mono text-[var(--fg)] truncate max-w-[200px]" title={(info.Config?.Entrypoint ?? []).join(' ')}>
-              {(info.Config?.Entrypoint ?? []).join(' ') || '—'}
-            </span>
-          </div>
-          <div class="px-5 py-2.5 flex justify-between text-xs">
-            <span class="text-[var(--fg-muted)]">Command</span>
-            <span class="font-mono text-[var(--fg)] truncate max-w-[200px]" title={(info.Config?.Cmd ?? []).join(' ')}>
-              {(info.Config?.Cmd ?? []).join(' ') || '—'}
-            </span>
-          </div>
-          <div class="px-5 py-2.5 flex justify-between text-xs">
-            <span class="text-[var(--fg-muted)]">Privileged</span>
-            <span class="font-mono text-[var(--fg)]">{info.HostConfig?.Privileged ? 'yes' : 'no'}</span>
-          </div>
-          <div class="px-5 py-2.5 flex justify-between text-xs">
-            <span class="text-[var(--fg-muted)]">Network Mode</span>
-            <span class="font-mono text-[var(--fg)]">{info.HostConfig?.NetworkMode ?? '—'}</span>
-          </div>
-        </div>
-
-        <!-- Labels subsection -->
-        {#if Object.keys(info.Config?.Labels ?? {}).length > 0}
-          <div class="px-5 py-3 border-t border-[var(--border)] text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">
-            Labels ({Object.keys(info.Config?.Labels ?? {}).length})
-          </div>
-          <div class="max-h-48 overflow-auto divide-y divide-[var(--border)]">
-            {#each Object.entries(info.Config?.Labels ?? {}).sort(([a], [b]) => a.localeCompare(b)) as [k, v]}
-              <div class="px-5 py-1.5 flex gap-2 text-[10px] hover:bg-[var(--surface-hover)]">
-                <span class="font-mono font-medium text-[var(--fg)] shrink-0">{k}</span>
-                <span class="font-mono text-[var(--fg-muted)] truncate">{v}</span>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </Card>
+        </section>
+      </aside>
     </div>
   {:else if tab === 'logs'}
-    <div class="flex items-center gap-3 text-sm">
-      <label class="flex items-center gap-2 cursor-pointer">
-        <input type="checkbox" bind:checked={autoScroll} class="accent-[var(--color-brand-500)]" />
-        <span class="text-[var(--fg-muted)]">auto-scroll</span>
-      </label>
-      <Button size="xs" variant="ghost" onclick={() => (logs = [])}>
-        <Trash class="w-3.5 h-3.5" /> Clear
-      </Button>
-      {#if wsConnected}
-        <Button size="xs" variant="ghost" onclick={disconnectLogs}>
-          <LinkIcon class="w-3.5 h-3.5" /> Disconnect
-        </Button>
-      {:else}
-        <Button size="xs" variant="ghost" onclick={connectLogs}>
-          <LinkIcon class="w-3.5 h-3.5" /> Reconnect
-        </Button>
-      {/if}
-      <span class="text-xs text-[var(--fg-subtle)] ml-auto">{logs.length} lines</span>
-    </div>
-    <div
-      bind:this={logContainer}
-      class="h-[60vh] overflow-auto rounded-xl border border-[var(--border)] bg-black p-4 font-mono text-xs leading-relaxed"
-      style="font-family: var(--font-mono);"
-    >
-      {#each logs as line, i (i)}
-        <div class="whitespace-pre-wrap break-all log-line">{@html colorizeLog(line)}</div>
-      {/each}
-      {#if logs.length === 0 && wsConnected}
-        <div class="text-[var(--fg-subtle)]">waiting for log output…</div>
-      {:else if logs.length === 0}
-        <div class="text-[var(--fg-subtle)]">disconnected</div>
-      {/if}
+    <div class="ctn-tab-pane">
+      <div class="ctn-logs-bar">
+        <div class="ctn-log-filters">
+          {#each [
+            ['all', 'All', logs.length],
+            ['error', 'Error', logCounts.error],
+            ['warn', 'Warn', logCounts.warn],
+            ['info', 'Info', logCounts.info],
+            ['fatal', 'Fatal', logCounts.fatal],
+          ] as [id, label, n] (id)}
+            <button
+              type="button"
+              class="ctn-log-filter"
+              class:active={logFilter === id}
+              onclick={() => (logFilter = id as any)}
+            >{label}<span class="ctn-log-filter-count">{n}</span></button>
+          {/each}
+        </div>
+
+        <div class="ctn-log-actions">
+          <div class="ctn-log-grep">
+            <Search size={12} strokeWidth={1.5} class="ctn-log-grep-icon" />
+            <input
+              type="text"
+              placeholder="grep…"
+              bind:value={logQuery}
+              class="ctn-log-grep-input"
+            />
+          </div>
+          <button
+            type="button"
+            class="ctn-log-follow"
+            class:on={wsConnected}
+            onclick={() => { wsConnected ? disconnectLogs() : connectLogs(); }}
+          >
+            <span class="ctn-log-follow-dot"></span>
+            {wsConnected ? 'following' : 'paused'}
+          </button>
+          <button
+            type="button"
+            class="dm-btn dm-btn-ghost dm-btn-xs"
+            onclick={() => (logs = [])}
+          >
+            <Trash size={11} strokeWidth={1.5} /> Clear
+          </button>
+        </div>
+      </div>
+
+      <div class="ctn-term ctn-logs-viewer" bind:this={logContainer}>
+        {#each filteredLogLines as e, i (i)}
+          <div class="ctn-log-row" data-lvl={e.lvl}>
+            <span class="ctn-log-ts">{e.ts}</span>
+            <span class="ctn-log-lvl ctn-log-lvl--{e.lvl || 'plain'}">{e.lvl || '·'}</span>
+            <span class="ctn-log-msg">{@html colorizeLog(e.line)}</span>
+          </div>
+        {/each}
+        {#if filteredLogLines.length === 0 && logs.length > 0}
+          <div class="ctn-logs-empty"><em>no lines match this filter.</em></div>
+        {:else if logs.length === 0 && wsConnected}
+          <div class="ctn-logs-empty"><em>waiting for first line…</em></div>
+        {:else if logs.length === 0}
+          <div class="ctn-logs-empty"><em>not streaming — click "paused" to reconnect.</em></div>
+        {/if}
+        {#if wsConnected && logs.length > 0}
+          <div class="ctn-log-row" style="opacity: 0.55">
+            <span class="ctn-log-ts"></span>
+            <span class="ctn-log-lvl ctn-log-lvl--info">···</span>
+            <span class="ctn-log-msg">waiting for next line<span class="ed-cursor"></span></span>
+          </div>
+        {/if}
+      </div>
+
+      <div class="ctn-log-foot">
+        <span>
+          {filteredLogLines.length} of {logs.length} lines · stream
+          <em class="ed-accent">{containerName(info) || id.slice(0, 12)}</em>
+        </span>
+        <span>tail · since boot</span>
+      </div>
     </div>
   {:else if tab === 'exec'}
-    <div class="flex items-center gap-3 text-sm">
-      <label class="flex items-center gap-2">
-        <span class="text-[var(--fg-muted)]">Shell:</span>
-        <select class="dm-input !py-1 !px-2 !w-auto text-sm" bind:value={execShell}>
-          <option value="sh">/bin/sh</option>
-          <option value="bash">/bin/bash</option>
-        </select>
-      </label>
-      <Button size="xs" variant="ghost" onclick={connectExec}>Reconnect</Button>
-      <span class="text-xs text-[var(--fg-subtle)] ml-auto">
-        {execConnected ? 'connected' : 'disconnected'}
-      </span>
+    <div class="ctn-tab-pane">
+      <div class="ctn-term-bar">
+        <div class="ctn-term-shell-pills">
+          <span class="ctn-term-shell-label">shell:</span>
+          {#each ['sh', 'bash'] as const as s (s)}
+            <button
+              type="button"
+              class="ctn-shell-pill"
+              class:active={execShell === s}
+              disabled={execConnected}
+              onclick={() => (execShell = s)}
+            >{s}</button>
+          {/each}
+        </div>
+        <div class="ctn-term-actions">
+          {#if !execConnected}
+            <button
+              type="button"
+              class="dm-btn dm-btn-primary dm-btn-sm"
+              onclick={connectExec}
+            >
+              <TerminalIcon size={12} strokeWidth={1.5} /> Attach to /bin/{execShell}
+            </button>
+          {:else}
+            <span class="dm-pill dm-pill-success ctn-meta-pill">
+              <span class="dm-pill-dot"></span>attached
+            </span>
+            <button
+              type="button"
+              class="dm-btn dm-btn-ghost dm-btn-sm"
+              onclick={disconnectExec}
+            >Detach</button>
+          {/if}
+        </div>
+      </div>
+      <div bind:this={execContainer} class="ctn-term-shell"></div>
+      <div class="ctn-term-foot">
+        {#if execConnected}
+          connected to <em class="ed-accent">/bin/{execShell}</em> · try
+          <code>ls /etc</code>, <code>ps</code>, <code>env</code>
+        {:else}
+          not attached · Attach uses <em class="ed-accent">docker exec</em> against the running container
+        {/if}
+      </div>
     </div>
-    <div bind:this={execContainer} class="h-[60vh] rounded-xl border border-[var(--border)] bg-black p-3"></div>
   {:else if tab === 'updates'}
-    <div class="space-y-4">
-      <!-- Preview card -->
-      {#if previewLoading && !updatePreview}
-        <Card class="p-5">
-          <Skeleton width="40%" height="1.25rem" />
-          <Skeleton class="mt-3" width="70%" height="0.85rem" />
-        </Card>
-      {:else if updatePreview}
-        <Card class="p-5">
-          <div class="flex items-start justify-between flex-wrap gap-4">
-            <div class="flex items-start gap-3">
-              <div class="w-10 h-10 rounded-lg bg-[color-mix(in_srgb,var(--color-brand-500)_15%,transparent)] text-[var(--color-brand-400)] flex items-center justify-center shrink-0">
-                <Package class="w-5 h-5" />
-              </div>
-              <div>
-                <div class="font-mono text-sm">{updatePreview.image}</div>
-                <div class="text-xs text-[var(--fg-muted)] mt-1 space-y-0.5 font-mono">
-                  <div>local: {shortDigest(updatePreview.current_digest)} · built {fmtRelTime(updatePreview.current_created)}</div>
-                  {#if updatePreview.remote_last_updated}
-                    <div>remote: pushed {fmtRelTime(updatePreview.remote_last_updated)} · {fmtMB(updatePreview.remote_size)}</div>
+    <div class="ctn-tab-pane ctn-updates-grid">
+      <div class="ctn-updates-main">
+        {#if previewLoading && !updatePreview}
+          <div class="dm-card ctn-updates-card">
+            <Skeleton width="40%" height="1.25rem" />
+            <Skeleton width="70%" height="0.85rem" />
+          </div>
+        {:else if updatePreview}
+          {#if updateAvailable}
+            <!-- Update available banner — accent border, version diff,
+                 release meta sentence, primary action. -->
+            <div class="dm-card ctn-updates-banner">
+              <div class="ctn-updates-banner-head">
+                <div class="ctn-updates-banner-text">
+                  <div class="ctn-updates-banner-eyebrow">
+                    <Eyebrow>Update available</Eyebrow>
+                  </div>
+                  <div class="ctn-updates-vdiff">
+                    <span class="ctn-updates-vdiff-old">{currentTagShort || imageTag}</span>
+                    <ArrowRight size={14} strokeWidth={1.5} class="ctn-updates-vdiff-arrow" />
+                    <span class="ctn-updates-vdiff-new">{newTag}</span>
+                    {#if versionBump}
+                      <span
+                        class="dm-pill ctn-meta-pill"
+                        class:dm-pill-success={versionBump === 'patch'}
+                        class:dm-pill-neutral={versionBump === 'minor'}
+                        class:dm-pill-warning={versionBump === 'major'}
+                      >{versionBump}</span>
+                    {/if}
+                  </div>
+                  <p class="ctn-updates-banner-meta">
+                    {#if updatePreview.remote_last_updated}
+                      Released <span class="ctn-updates-rel">{fmtRelTime(updatePreview.remote_last_updated)}</span>{#if updatePreview.remote_size} · <span class="ctn-updates-rel">{fmtMB(updatePreview.remote_size)}</span>{/if}.
+                    {/if}
+                    {#if updatePreview.latest_release?.name && updatePreview.latest_release.name !== updatePreview.latest_release.tag}
+                      {updatePreview.latest_release.name}.
+                    {/if}
+                  </p>
+                </div>
+                <div class="ctn-updates-banner-actions">
+                  <button
+                    type="button"
+                    class="dm-btn dm-btn-primary dm-btn-sm"
+                    onclick={doUpdate}
+                    disabled={updateBusy}
+                  >
+                    <Download size={12} strokeWidth={1.5} />
+                    {updateBusy ? 'Pulling…' : 'Pull & restart'}
+                  </button>
+                  {#if updatePreview.latest_release?.url}
+                    <a
+                      href={updatePreview.latest_release.url}
+                      target="_blank"
+                      rel="noopener"
+                      class="dm-btn dm-btn-secondary dm-btn-sm"
+                    >
+                      <ExternalLink size={11} strokeWidth={1.5} /> Release
+                    </a>
                   {/if}
                 </div>
-                <div class="flex gap-3 mt-2 text-xs">
+              </div>
+              {#if updatePreview.warnings && updatePreview.warnings.length > 0}
+                <div class="ctn-updates-warnings">
+                  {updatePreview.warnings.join(' · ')}
+                </div>
+              {/if}
+            </div>
+          {:else}
+            <!-- Up to date — no version diff, just a calm reassurance card. -->
+            <div class="dm-card ctn-updates-card">
+              <div class="ctn-updates-head">
+                <div class="ctn-updates-image">
+                  <span class="ctn-updates-icon-wrap">
+                    <Package size={18} strokeWidth={1.5} />
+                  </span>
+                  <div>
+                    <Eyebrow>Up to date</Eyebrow>
+                    <div class="ctn-updates-image-ref">{updatePreview.image}</div>
+                    <div class="ctn-updates-image-meta">
+                      <div>local: {shortDigest(updatePreview.current_digest)} · built {fmtRelTime(updatePreview.current_created)}</div>
+                      {#if updatePreview.remote_last_updated}
+                        <div>remote: pushed {fmtRelTime(updatePreview.remote_last_updated)} · {fmtMB(updatePreview.remote_size)}</div>
+                      {/if}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  class="dm-btn dm-btn-secondary dm-btn-sm"
+                  onclick={doUpdate}
+                  disabled={updateBusy}
+                >
+                  <Download size={12} strokeWidth={1.5} />
+                  {updateBusy ? 'Pulling…' : 'Re-pull image'}
+                </button>
+              </div>
+            </div>
+          {/if}
+
+          {#if updatePreview.latest_release?.body}
+            <!-- Release notes — render the upstream body verbatim in a
+                 framed text block. We tried parsing it into a tagged
+                 bullet list, but real release bodies are often prose
+                 (Vaultwarden, Caddy, …), so the structured list lost
+                 information. The text block keeps everything. -->
+            <section class="ctn-block">
+              <div class="ctn-updates-release-head">
+                <div class="ctn-updates-release-title">
+                  <Eyebrow>
+                    Release notes{#if updatePreview.latest_release.tag} · {updatePreview.latest_release.tag}{/if}
+                  </Eyebrow>
+                  {#if updatePreview.latest_release.name && updatePreview.latest_release.name !== updatePreview.latest_release.tag}
+                    <h3>{updatePreview.latest_release.name}</h3>
+                  {/if}
+                </div>
+                {#if updatePreview.latest_release.url}
+                  <a
+                    href={updatePreview.latest_release.url}
+                    target="_blank"
+                    rel="noopener"
+                    class="ctn-inline-link"
+                  >
+                    Open on GitHub <ExternalLink size={11} strokeWidth={1.5} />
+                  </a>
+                {/if}
+              </div>
+              <pre class="ctn-updates-release-body">{updatePreview.latest_release.body}</pre>
+            </section>
+          {/if}
+
+          <!-- Image facts mini-grid — only the data we actually have:
+               size on the registry, push time, local digest. No fake
+               "size delta" or "CVEs resolved" since we don't compute
+               those yet. -->
+          {#if updatePreview.local_size || updatePreview.remote_size || updatePreview.remote_last_updated || updatePreview.current_digest}
+            <section class="ctn-block">
+              <Eyebrow>
+                {#if updateAvailable && currentTagShort && newTag}
+                  Image diff · {updatePreview.image.split(':')[0]}:{currentTagShort} → {newTag}
+                {:else}
+                  Image · {updatePreview.image}
+                {/if}
+              </Eyebrow>
+              <div class="ctn-updates-imgdiff">
+                {#if sizeDeltaMB !== null}
+                  <div class="ed-metric ctn-updates-metric">
+                    <span class="ed-metric-label">size delta</span>
+                    <div
+                      class="ed-metric-value"
+                      class:ctn-updates-delta-down={sizeDeltaMB < 0}
+                      class:ctn-updates-delta-up={sizeDeltaMB > 0}
+                    >{fmtSizeDelta(sizeDeltaMB)}</div>
+                    <span class="ed-metric-meta">from {fmtMB(updatePreview.local_size)}</span>
+                  </div>
+                {:else if updatePreview.remote_size}
+                  <div class="ed-metric ctn-updates-metric">
+                    <span class="ed-metric-label">remote size</span>
+                    <div class="ed-metric-value">{fmtMB(updatePreview.remote_size)}</div>
+                    <span class="ed-metric-meta">on registry</span>
+                  </div>
+                {/if}
+                {#if updatePreview.remote_last_updated}
+                  <div class="ed-metric ctn-updates-metric">
+                    <span class="ed-metric-label">pushed</span>
+                    <div class="ed-metric-value">{fmtRelTime(updatePreview.remote_last_updated)}</div>
+                    <span class="ed-metric-meta">{newTag || updatePreview.latest_release?.tag || 'latest tag'}</span>
+                  </div>
+                {/if}
+                {#if updatePreview.current_digest}
+                  <div class="ed-metric ctn-updates-metric">
+                    <span class="ed-metric-label">local digest</span>
+                    <div class="ed-metric-value mono">{shortDigest(updatePreview.current_digest)}</div>
+                    <span class="ed-metric-meta">built {fmtRelTime(updatePreview.current_created)}</span>
+                  </div>
+                {/if}
+              </div>
+              {#if updatePreview.docker_hub_url || updatePreview.github_url}
+                <div class="ctn-updates-links">
                   {#if updatePreview.docker_hub_url}
-                    <a href={updatePreview.docker_hub_url} target="_blank" rel="noopener" class="text-[var(--color-brand-400)] hover:underline inline-flex items-center gap-1">
-                      Docker Hub <ExternalLink class="w-3 h-3" />
+                    <a href={updatePreview.docker_hub_url} target="_blank" rel="noopener">
+                      Docker Hub <ExternalLink size={10} strokeWidth={1.5} />
                     </a>
                   {/if}
                   {#if updatePreview.github_url}
-                    <a href={updatePreview.github_url} target="_blank" rel="noopener" class="text-[var(--color-brand-400)] hover:underline inline-flex items-center gap-1">
-                      GitHub <ExternalLink class="w-3 h-3" />
+                    <a href={updatePreview.github_url} target="_blank" rel="noopener">
+                      GitHub <ExternalLink size={10} strokeWidth={1.5} />
                     </a>
                   {/if}
                 </div>
-              </div>
-            </div>
-            <Button variant="primary" onclick={doUpdate} loading={updateBusy}>
-              <Download class="w-4 h-4" /> Pull & update
-            </Button>
-          </div>
-
-          {#if updatePreview.warnings && updatePreview.warnings.length > 0}
-            <div class="text-xs text-[var(--fg-subtle)] mt-3">
-              {updatePreview.warnings.join(' · ')}
-            </div>
+              {/if}
+            </section>
           {/if}
-        </Card>
-
-        {#if updatePreview.latest_release}
-          <Card>
-            <div class="px-5 py-3 border-b border-[var(--border)] flex items-center justify-between">
-              <div class="flex items-center gap-2">
-                <h3 class="font-semibold text-sm">
-                  {updatePreview.latest_release.name || updatePreview.latest_release.tag}
-                </h3>
-                <Badge variant="info">{updatePreview.latest_release.tag}</Badge>
-              </div>
-              <a href={updatePreview.latest_release.url} target="_blank" rel="noopener"
-                 class="text-xs text-[var(--color-brand-400)] hover:underline inline-flex items-center gap-1">
-                Open release <ExternalLink class="w-3 h-3" />
-              </a>
-            </div>
-            <div class="p-5 max-h-[40vh] overflow-auto">
-              <pre class="font-mono text-xs whitespace-pre-wrap break-words text-[var(--fg-muted)]">{updatePreview.latest_release.body || '(no release notes)'}</pre>
-            </div>
-          </Card>
         {/if}
-      {/if}
+      </div>
 
-      <!-- History -->
-      {#if updateHistory.length > 0}
-        <Card>
-          <div class="px-5 py-3 border-b border-[var(--border)] text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">
-            History
+      <aside class="ctn-updates-rail">
+        <div class="dm-card-flat ctn-updates-rail-card">
+          <Eyebrow>Version history</Eyebrow>
+          <ul class="ctn-updates-versions">
+            <li>
+              <span class="ctn-updates-version-tag current">{currentTagShort || imageTag || '—'}</span>
+              <span class="ctn-updates-version-meta">
+                current{#if info?.State?.StartedAt} · {fmtRelTime(info.State.StartedAt)}{/if}
+              </span>
+            </li>
+            {#each updateHistory.slice(0, 6) as e (e.id)}
+              {@const tag = (e.image_ref.includes(':') ? e.image_ref.split(':').pop() : e.image_ref) || ''}
+              <li>
+                <span class="ctn-updates-version-tag">{trimV(tag) || shortDigest(e.old_digest)}</span>
+                <span class="ctn-updates-version-meta">
+                  {fmtRelTime(e.applied_at)}{#if e.rolled_back_at} · rolled back{/if}
+                </span>
+              </li>
+            {/each}
+          </ul>
+          {#if updateHistory.length === 0}
+            <p class="ctn-updates-rail-empty">No previous versions yet.</p>
+          {/if}
+        </div>
+
+        {#if updateHistory.length > 0}
+          <div class="dm-card-flat ctn-updates-rail-card">
+            <Eyebrow>Rollback timeline</Eyebrow>
+            <ol class="ctn-updates-history">
+              <span class="ctn-updates-history-rule" aria-hidden="true"></span>
+              {#each updateHistory as e, i (e.id)}
+                <li class="ctn-updates-history-row">
+                  <span class="ctn-updates-history-dot" class:current={i === 0} aria-hidden="true"></span>
+                  <div class="ctn-updates-history-body">
+                    <div class="ctn-updates-history-head">
+                      <span class="ctn-updates-history-ref">{e.image_ref}</span>
+                      {#if e.rolled_back_at}
+                        <span class="dm-pill dm-pill-warning ctn-meta-pill"><span class="dm-pill-dot"></span>rolled back</span>
+                      {:else}
+                        <button
+                          type="button"
+                          class="dm-btn dm-btn-ghost dm-btn-xs"
+                          onclick={() => doRollback(e.id)}
+                          disabled={updateBusy}
+                          title="Roll back to this image"
+                        >
+                          <Undo2 size={11} strokeWidth={1.5} /> Rollback
+                        </button>
+                      {/if}
+                    </div>
+                    <span class="ctn-updates-history-meta">
+                      {shortDigest(e.old_digest)} → {shortDigest(e.new_digest)} · {fmtRelTime(e.applied_at)}
+                    </span>
+                  </div>
+                </li>
+              {/each}
+            </ol>
           </div>
-          <div class="divide-y divide-[var(--border)]">
-            {#each updateHistory as e}
-              <div class="flex items-center gap-3 px-5 py-3">
-                <div class="flex-1 min-w-0">
-                  <div class="font-mono text-sm truncate">{e.image_ref}</div>
-                  <div class="text-xs text-[var(--fg-muted)] font-mono truncate">
-                    {shortDigest(e.old_digest)} → {shortDigest(e.new_digest)} · {fmtRelTime(e.applied_at)}
+        {/if}
+      </aside>
+    </div>
+  {:else if tab === 'inspect'}
+    <div class="ctn-tab-pane">
+      <div class="ctn-inspect-bar">
+        <Eyebrow>docker inspect · <em class="ed-accent">{containerName(info) || id.slice(0, 12)}</em></Eyebrow>
+        <div class="ctn-inspect-actions">
+          {#each ['pretty', 'raw'] as v (v)}
+            <button
+              type="button"
+              class="ctn-inspect-toggle"
+              class:active={inspectView === v}
+              onclick={() => (inspectView = v as any)}
+            >{v}</button>
+          {/each}
+          <button
+            type="button"
+            class="dm-btn dm-btn-ghost dm-btn-xs"
+            onclick={async () => {
+              try { await navigator.clipboard?.writeText(JSON.stringify(info, null, 2)); toast.info('Copied JSON'); } catch {}
+            }}
+          >
+            <FileText size={11} strokeWidth={1.5} /> Copy
+          </button>
+        </div>
+      </div>
+      {#if inspectView === 'raw'}
+        <pre class="ctn-term ctn-inspect-pre">{JSON.stringify(info, null, 2)}</pre>
+      {:else}
+        <pre class="ctn-term ctn-inspect-pre json-view">{@html highlightJSON(info)}</pre>
+      {/if}
+    </div>
+  {:else if tab === 'network' && info}
+    {@const netEntries = Object.entries(info.NetworkSettings?.Networks ?? {}) as Array<[string, any]>}
+    {@const portsMap2 = (info.NetworkSettings?.Ports ?? {}) as Record<string, Array<{HostIp: string; HostPort: string}> | null>}
+    {@const portRows2 = Object.entries(portsMap2).map(([k, v]) => ({ port: k, bindings: (v ?? []) as Array<{HostIp: string; HostPort: string}> }))}
+    <div class="ctn-network-pane-v2">
+      <!-- LEFT: Connected networks -->
+      <div>
+        <Eyebrow>Connected networks</Eyebrow>
+        {#if netEntries.length === 0}
+          <div class="ctn-network-empty">
+            <p>Not attached to any user network. Default bridge or host networking.</p>
+          </div>
+        {:else}
+          <div class="ctn-network-list">
+            {#each netEntries as [netName, cfg] (netName)}
+              <div class="ed-row" data-status="running" style="grid-template-columns: 6px 1fr auto">
+                <span class="stripe"></span>
+                <div class="ctn-network-id">
+                  <div class="ctn-network-name">{netName}</div>
+                  <div class="ctn-network-meta">
+                    {cfg?.NetworkID ? (cfg.NetworkID as string).slice(0, 12) : 'bridge'}
+                    {#if cfg?.IPPrefixLen}
+                      <span class="ctn-meta-sep">·</span>{cfg.IPAddress}/{cfg.IPPrefixLen}
+                    {/if}
                   </div>
                 </div>
-                {#if e.rolled_back_at}
-                  <Badge variant="warning">rolled back</Badge>
-                {:else}
-                  <Button size="xs" variant="ghost" onclick={() => doRollback(e.id)} disabled={updateBusy}>
-                    <Undo2 class="w-3.5 h-3.5" /> Rollback
-                  </Button>
-                {/if}
+                <div class="ctn-network-addr">
+                  {#if cfg?.IPAddress}<div>{cfg.IPAddress}</div>{/if}
+                  {#if cfg?.MacAddress}<div class="ctn-network-mac">{cfg.MacAddress}</div>{/if}
+                </div>
               </div>
             {/each}
           </div>
-        </Card>
+        {/if}
+        <p class="ctn-network-note">
+          Container is on {netEntries.length === 0 ? 'no user' : netEntries.length === 1 ? 'a single' : `${netEntries.length}`} network{netEntries.length === 1 ? '' : 's'}. Attach more via the Networks page or via <code>compose.yaml</code>.
+        </p>
+      </div>
+
+      <!-- RIGHT: Port bindings -->
+      <div>
+        <Eyebrow>Port bindings · {portRows2.length}</Eyebrow>
+        {#if portRows2.length === 0}
+          <div class="ctn-network-empty">
+            <p>No ports declared in the image or compose.</p>
+          </div>
+        {:else}
+          <div class="ctn-network-list">
+            {#each portRows2 as p (p.port)}
+              {#if p.bindings.length > 0}
+                {#each p.bindings as b, j (b.HostIp + b.HostPort + j)}
+                  <div class="ctn-port-row">
+                    <span class="ctn-port-name">{p.port}</span>
+                    <span class="dm-pill dm-pill-success ctn-meta-pill">{b.HostIp || '0.0.0.0'}:{b.HostPort}</span>
+                    <span class="ctn-port-note">host-mapped</span>
+                  </div>
+                {/each}
+              {:else}
+                <div class="ctn-port-row">
+                  <span class="ctn-port-name">{p.port}</span>
+                  <span class="dm-pill dm-pill-neutral ctn-meta-pill">internal</span>
+                  <span class="ctn-port-note">no host binding</span>
+                </div>
+              {/if}
+            {/each}
+          </div>
+        {/if}
+        <p class="ctn-network-note">
+          Internal ports are reachable from other containers on the same network only.
+        </p>
+      </div>
+
+      <!-- BOTTOM: Throughput row, full-width -->
+      {#if stats}
+        <div class="ctn-network-throughput">
+          <Eyebrow>Throughput · last 60s</Eyebrow>
+          <div class="ctn-throughput-grid">
+            <EdMetric
+              label="rx total"
+              value={formatBytes(stats.net_rx)}
+              meta="since start"
+            />
+            <EdMetric
+              label="tx total"
+              value={formatBytes(stats.net_tx)}
+              meta="since start"
+            />
+            <EdMetric
+              label="rx rate"
+              value={statsHistory.length > 1
+                ? `${formatBytes(Math.max(0, stats.net_rx - statsHistory[0].net_rx) / Math.max(1, statsHistory.length))}/s`
+                : '—'}
+              meta="avg over buffer"
+            />
+            <EdMetric
+              label="tx rate"
+              value={statsHistory.length > 1
+                ? `${formatBytes(Math.max(0, stats.net_tx - statsHistory[0].net_tx) / Math.max(1, statsHistory.length))}/s`
+                : '—'}
+              meta="avg over buffer"
+            />
+          </div>
+        </div>
       {/if}
     </div>
-  {:else if tab === 'inspect'}
-    <Card>
-      <pre class="h-[60vh] overflow-auto p-5 font-mono text-xs leading-relaxed json-view">{@html highlightJSON(info)}</pre>
-    </Card>
+  {:else if tab === 'files' && info}
+    <div class="ctn-files-pane">
+      <div class="ctn-files-bar">
+        <p class="ctn-files-blurb">
+          Read-only view of the container's writable layer plus volume mounts.
+          <em class="ed-accent">Diff</em> shows what changed since the image was pulled.
+        </p>
+        <div class="ctn-log-filters">
+          {#each ['all', 'added', 'modified', 'missing', 'volumes'] as f (f)}
+            <button type="button" class="ctn-log-filter" class:active={f === 'all'} disabled>
+              {f.charAt(0).toUpperCase() + f.slice(1)}<span class="ctn-log-filter-count">—</span>
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <div class="ctn-files-table">
+        <div class="ctn-files-head">
+          <span>diff</span>
+          <span>path</span>
+          <span class="ctn-files-cell-right">size</span>
+          <span>modified</span>
+          <span></span>
+        </div>
+        <div class="ctn-files-pending">
+          <FilesIcon size={18} strokeWidth={1.5} class="ctn-files-icon" />
+          <p>
+            Filesystem diff isn't wired to a backend yet. Docker's
+            <code>/containers/{'{id}'}/changes</code> + <code>/archive</code> APIs are the source —
+            once that lands, this table will show added / modified / missing files plus volume
+            mounts with per-row View buttons.
+          </p>
+          <p class="ctn-files-detail">
+            For now, use <strong>Terminal</strong> with <code>ls</code> / <code>cat</code> or pull
+            files out of the host shell with <code>docker cp {id.slice(0, 12)}:/path .</code>
+          </p>
+        </div>
+      </div>
+    </div>
   {/if}
 </section>
 
 <style>
+  /* ─────────── Editorial container-detail layout ─────────── */
+  .ctn-frame {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    max-width: 1480px;
+    padding-bottom: 48px;
+  }
+  .ctn-skeleton { display: flex; flex-direction: column; gap: 10px; }
+
+  .ctn-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .ctn-header-text { min-width: 0; max-width: 80ch; flex: 1 1 40ch; }
+  .ctn-title {
+    font-size: 24px;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    margin-top: 8px;
+  }
+  /* Container service-names look right in mono-bold (programmatic identity)
+     — override the global .ed-title em italic-serif treatment. */
+  .ctn-title :global(em) {
+    font-family: var(--font-mono);
+    font-style: normal;
+    font-weight: 700;
+    color: var(--fg);
+    letter-spacing: -0.01em;
+  }
+  /* Meta row sits on its OWN line below the title — status pill + version
+     pill + uptime + host + id. Mockup-faithful. */
+  .ctn-meta-row {
+    margin-top: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-subtle);
+    letter-spacing: 0.02em;
+  }
+  .ctn-meta-sep { color: var(--border-strong); }
+  .ctn-meta-cell { color: var(--fg-subtle); }
+  .ctn-meta-pill { font-size: 9.5px; }
+
+  /* Action cluster + more menu */
+  .ctn-actions { gap: 6px; }
+  .ctn-btn-kill { color: var(--color-danger-400); }
+  .ctn-btn-kill:hover { color: var(--color-danger-500); background: color-mix(in srgb, var(--color-danger-500) 10%, transparent); }
+  .ctn-more-wrap { position: relative; }
+  .ctn-more-btn { padding: 0.35rem 0.55rem; }
+  .ctn-more-dots {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    letter-spacing: 0;
+    line-height: 1;
+    transform: translateY(-3px);
+  }
+  .ctn-more-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: transparent;
+    border: 0;
+    cursor: default;
+  }
+  .ctn-more-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 180px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 4px;
+    z-index: 40;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  }
+  .ctn-more-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 10px;
+    background: transparent;
+    border: 0;
+    color: var(--fg);
+    font-size: 12.5px;
+    cursor: pointer;
+    text-align: left;
+    border-radius: 4px;
+    font-family: inherit;
+  }
+  .ctn-more-item:hover { background: var(--surface-hover); }
+  .ctn-more-item-danger { color: var(--color-danger-400); }
+  .ctn-more-item-danger:hover { background: color-mix(in srgb, var(--color-danger-500) 12%, transparent); }
+  .ctn-more-sep { height: 1px; background: var(--border); margin: 4px 0; }
+
+  .ctn-remote {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border: 1px solid color-mix(in srgb, var(--color-brand-500) 30%, var(--border));
+    background: color-mix(in srgb, var(--color-brand-500) 5%, transparent);
+    border-radius: 5px;
+    color: var(--fg-muted);
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+  .ctn-remote-bullet { color: var(--color-brand-400); font-weight: 700; }
+
+  .ctn-tabs { margin-top: 6px; }
+
+  .ctn-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-top: 14px;
+  }
+  .ctn-stats-pending {
+    margin-top: 14px;
+    padding: 18px 0;
+    color: var(--fg-muted);
+    font-size: 13px;
+    text-align: center;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  /* ─────────── 2-column overview ──────────
+     Right rail is fixed 320px (smaller than the left main column) per
+     the mockup's grid: `minmax(0, 1fr) 320px`. Mounts/Networks/Endpoints
+     get filled-card chrome (`.dm-card`); Stack-context uses the flat
+     border-only variant (`.dm-card-flat`). */
+  .ctn-overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 32px;
+    margin-top: 14px;
+  }
+  @media (max-width: 1100px) {
+    .ctn-overview { grid-template-columns: 1fr; gap: 28px; }
+  }
+  .ctn-overview-main { display: flex; flex-direction: column; gap: 36px; min-width: 0; }
+  .ctn-overview-rail { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+  .ctn-block { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .ctn-rail-card { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 10px; }
+  .ctn-empty-line {
+    margin: 0;
+    color: var(--fg-subtle);
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+  .ctn-empty-line code { font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-muted); }
+
+  /* ─────────── Identity KV ─────────── */
+  .ctn-kv {
+    margin: 0;
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    column-gap: 14px;
+    row-gap: 8px;
+    align-items: baseline;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+  }
+  .ctn-kv dt {
+    margin: 0;
+    color: var(--fg-subtle);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: lowercase;
+  }
+  .ctn-kv dd {
+    margin: 0;
+    color: var(--fg);
+    word-break: break-all;
+  }
+  .ctn-kv-env {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+  .ctn-kv-env-pair { color: var(--fg-muted); }
+  .ctn-kv-env-pair .secret { color: var(--fg-subtle); font-style: normal; }
+  .ctn-kv-env-more { color: var(--fg-subtle); font-style: normal; }
+
+  /* ─────────── Health ──────────
+     Bordered container wraps the row(s) — even a single row gets the
+     border so the section reads as a discrete card-without-fill. */
+  .ctn-health-box {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .ctn-health-namecell { display: flex; flex-direction: column; gap: 2px; }
+  .ctn-health-name {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .ctn-health-detail {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+    letter-spacing: 0.04em;
+  }
+  .ctn-health-status { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; color: var(--fg-muted); }
+  .ctn-health-pill { font-size: 9.5px; }
+  .ctn-health-streak { font-size: 11.5px; }
+  .ctn-health-when {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-subtle);
+  }
+  .ctn-health-output {
+    margin: 0;
+    padding: 10px 14px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    max-height: 140px;
+    overflow: auto;
+  }
+
+  /* Network tile dual-line layout — compact label/value head row. */
+  .ctn-net-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+
+  /* Identity env show-more button */
+  .ctn-kv-env-key { color: var(--fg); }
+  .ctn-kv-env-toggle {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    color: var(--accent-fg);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    margin-left: 4px;
+  }
+  .ctn-kv-env-toggle:hover { color: var(--fg); }
+
+  /* ─────────── Restart history ─────────── */
+  .ctn-restart-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .ctn-restart-note {
+    margin: 8px 0 0;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+    line-height: 1.55;
+    letter-spacing: 0.02em;
+  }
+
+  /* ─────────── Right-rail blocks ─────────── */
+  .ctn-mounts {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .ctn-mounts li {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+  .ctn-mount-name { color: var(--accent-fg); word-break: break-all; }
+  .ctn-mount-arrow { color: var(--fg-subtle); }
+  .ctn-mount-dest { color: var(--fg-muted); word-break: break-all; }
+  .ctn-mount-ro { font-size: 9px; padding: 0 4px; }
+
+  .ctn-networks {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .ctn-networks li {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+  .ctn-network-name { color: var(--fg); }
+  .ctn-network-sep { color: var(--border-strong); margin: 0 6px; }
+  .ctn-network-ip { color: var(--fg-subtle); }
+
+  .ctn-stack-blurb {
+    margin: 0;
+    font-size: 12.5px;
+    color: var(--fg-muted);
+    line-height: 1.55;
+  }
+  .ctn-stack-link { width: 100%; text-decoration: none; }
+
+  .ctn-endpoints {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .ctn-endpoints li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+  }
+  .ctn-endpoints li:last-child { border-bottom: 0; }
+  .ctn-endpoint-port { color: var(--fg); }
+  .ctn-endpoint-mode-host {
+    font-size: 9.5px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid color-mix(in srgb, var(--color-success-500) 40%, var(--border));
+    color: var(--color-success-400);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .ctn-endpoint-mode {
+    font-size: 9.5px;
+    color: var(--fg-subtle);
+    text-transform: lowercase;
+    letter-spacing: 0.04em;
+  }
+  :global(.ctn-endpoint-icon) { color: var(--fg-subtle); flex-shrink: 0; }
+
+  /* ─────────── Network tab — 2-column with bottom throughput row ─────────── */
+  .ctn-network-pane-v2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin-top: 14px;
+  }
+  @media (max-width: 1100px) {
+    .ctn-network-pane-v2 { grid-template-columns: 1fr; }
+  }
+  .ctn-network-list {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .ctn-network-id { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .ctn-network-name {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--fg);
+  }
+  .ctn-network-meta {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+    letter-spacing: 0.04em;
+  }
+  .ctn-network-addr {
+    text-align: right;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg);
+  }
+  .ctn-network-mac {
+    color: var(--fg-subtle);
+    font-size: 10.5px;
+    margin-top: 2px;
+  }
+  .ctn-network-note {
+    margin: 8px 0 0;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+    line-height: 1.55;
+  }
+  .ctn-network-note code {
+    color: var(--fg-muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0 4px;
+  }
+  .ctn-port-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 12px;
+    padding: 12px 14px;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+  }
+  .ctn-port-row:last-child { border-bottom: 0; }
+  .ctn-port-name { font-family: var(--font-mono); font-size: 12.5px; color: var(--fg); }
+  .ctn-port-note {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+    letter-spacing: 0.04em;
+  }
+  .ctn-network-throughput {
+    grid-column: 1 / -1;
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .ctn-throughput-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+  }
+
+  /* legacy network-pane styles kept for backward compat (not used by v2) */
+  .ctn-network-pane {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-top: 14px;
+  }
+  .ctn-network-card {
+    padding: 16px 20px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .ctn-network-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .ctn-inline-link {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent-fg);
+    letter-spacing: 0.04em;
+    text-decoration: none;
+  }
+  .ctn-inline-link:hover { color: var(--fg); }
+  .ctn-network-kv {
+    margin: 0;
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    column-gap: 14px;
+    row-gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+  .ctn-network-kv dt {
+    color: var(--fg-subtle);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: lowercase;
+  }
+  .ctn-network-kv dd { margin: 0; color: var(--fg); word-break: break-all; }
+  .ctn-network-empty {
+    padding: 32px 28px;
+    border: 1px dashed var(--border-strong);
+    border-radius: 6px;
+    color: var(--fg-muted);
+    font-size: 13px;
+    line-height: 1.6;
+    text-align: center;
+  }
+  .ctn-network-empty p { margin: 0; }
+
+  /* ─────────── Files tab — table chrome to mirror the mockup, with
+                an honest "no backend yet" full-row state. ─────────── */
+  .ctn-files-pane {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 14px;
+  }
+  .ctn-files-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .ctn-files-blurb {
+    margin: 0;
+    color: var(--fg-muted);
+    font-size: 12.5px;
+    line-height: 1.55;
+    max-width: 60ch;
+  }
+  .ctn-files-table {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .ctn-files-head {
+    display: grid;
+    grid-template-columns: 100px 1fr 110px 160px 90px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-subtle);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .ctn-files-cell-right { text-align: right; }
+  .ctn-files-pending {
+    padding: 40px 28px;
+    text-align: center;
+    color: var(--fg-muted);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .ctn-files-pending p {
+    margin: 0;
+    max-width: 60ch;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .ctn-files-pending code {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-muted);
+    padding: 1px 5px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+  }
+
+  /* legacy files-empty kept for backward compat */
+  .ctn-files-empty {
+    padding: 56px 28px;
+    border: 1px dashed var(--border-strong);
+    border-radius: 6px;
+    color: var(--fg-muted);
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  :global(.ctn-files-icon) { color: var(--fg-subtle); margin-bottom: 4px; }
+  .ctn-files-empty h3 {
+    margin: 0;
+    font-size: 16px;
+    color: var(--fg);
+    font-weight: 600;
+  }
+  .ctn-files-empty p {
+    margin: 0;
+    max-width: 60ch;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .ctn-files-detail {
+    color: var(--fg-subtle);
+    font-size: 12px;
+  }
+  .ctn-files-empty code {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-muted);
+    padding: 1px 5px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+  }
+
+  /* ─────────── Generic per-tab pane ─────────── */
+  .ctn-tab-pane {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 14px;
+  }
+
+  /* ─────────── Generic terminal-style block — used by Logs viewer,
+                Terminal pane, Inspect viewer. ─────────── */
+  .ctn-term {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.65;
+    color: #e6edf3;
+    overflow: auto;
+  }
+
+  /* ─────────── Logs ─────────── */
+  .ctn-logs-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .ctn-log-filters { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+  .ctn-log-filter {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 4px 9px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    line-height: 1.3;
+  }
+  .ctn-log-filter:hover { color: var(--fg); background: var(--surface-hover); }
+  .ctn-log-filter.active {
+    background: var(--bg-elevated);
+    border-color: var(--border-strong);
+    color: var(--fg);
+  }
+  .ctn-log-filter:disabled { opacity: 0.4; cursor: not-allowed; }
+  .ctn-log-filter-count { color: var(--fg-subtle); font-size: 10px; }
+
+  .ctn-log-actions { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .ctn-log-grep {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+  :global(.ctn-log-grep-icon) {
+    position: absolute;
+    left: 8px;
+    color: var(--fg-subtle);
+    pointer-events: none;
+  }
+  .ctn-log-grep-input {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 4px 8px 4px 26px;
+    width: 180px;
+  }
+  .ctn-log-grep-input:focus { outline: none; border-color: var(--color-brand-500); }
+  .ctn-log-follow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 4px 9px;
+    cursor: pointer;
+  }
+  .ctn-log-follow.on {
+    color: var(--accent-fg);
+    border-color: color-mix(in srgb, var(--color-brand-500) 40%, var(--border));
+    background: var(--accent-bg);
+  }
+  .ctn-log-follow-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--fg-subtle);
+  }
+  .ctn-log-follow.on .ctn-log-follow-dot {
+    background: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand-500) 25%, transparent);
+  }
+
+  .ctn-logs-viewer {
+    max-height: 60vh;
+    min-height: 320px;
+  }
+  .ctn-logs-empty {
+    padding: 22px;
+    text-align: center;
+    color: rgba(230, 237, 243, 0.55);
+    font-size: 12.5px;
+  }
+  .ctn-log-row {
+    display: grid;
+    grid-template-columns: 96px 56px 1fr;
+    gap: 12px;
+    padding: 1px 0;
+    align-items: baseline;
+  }
+  .ctn-log-ts {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: rgba(230, 237, 243, 0.45);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    text-align: right;
+  }
+  .ctn-log-lvl {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: rgba(230, 237, 243, 0.55);
+    text-align: right;
+  }
+  .ctn-log-lvl--fatal { color: var(--color-danger-400); font-weight: 600; }
+  .ctn-log-lvl--error { color: var(--color-danger-400); }
+  .ctn-log-lvl--warn  { color: var(--color-warning-400); }
+  .ctn-log-lvl--info  { color: var(--accent-fg); }
+  .ctn-log-lvl--debug { color: var(--fg-subtle); }
+  .ctn-log-msg {
+    color: #e6edf3;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .ctn-log-foot {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-subtle);
+  }
+
+  /* ─────────── Terminal ─────────── */
+  .ctn-term-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .ctn-term-shell-pills { display: inline-flex; gap: 6px; align-items: center; }
+  .ctn-term-shell-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+    margin-right: 4px;
+  }
+  .ctn-shell-pill {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+  .ctn-shell-pill:hover:not(:disabled) { color: var(--fg); background: var(--surface-hover); }
+  .ctn-shell-pill.active {
+    background: var(--bg-elevated);
+    border-color: var(--border-strong);
+    color: var(--fg);
+  }
+  .ctn-shell-pill:disabled { opacity: 0.45; cursor: not-allowed; }
+  .ctn-term-actions { display: inline-flex; gap: 8px; align-items: center; }
+  .ctn-term-shell {
+    height: 60vh;
+    min-height: 320px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #0d1117;
+    padding: 12px;
+  }
+  .ctn-term-foot {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-subtle);
+  }
+  .ctn-term-foot code { color: var(--fg-muted); }
+
+  /* ─────────── Inspect ─────────── */
+  .ctn-inspect-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .ctn-inspect-actions { display: inline-flex; gap: 6px; align-items: center; }
+  .ctn-inspect-toggle {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .ctn-inspect-toggle.active {
+    background: var(--bg-elevated);
+    border-color: var(--border-strong);
+    color: var(--fg);
+  }
+  .ctn-inspect-pre {
+    margin: 0;
+    height: 60vh;
+    min-height: 320px;
+    padding: 14px 18px;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  /* Updates pane — 2-col layout with right rail for version history. */
+  .ctn-updates-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 28px;
+    align-items: start;
+  }
+  @media (max-width: 980px) {
+    .ctn-updates-grid { grid-template-columns: 1fr; }
+  }
+  .ctn-updates-main { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+  .ctn-updates-rail { display: flex; flex-direction: column; gap: 16px; }
+  .ctn-updates-rail-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .ctn-updates-rail-empty {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-subtle);
+  }
+  .ctn-updates-versions {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.85;
+  }
+  .ctn-updates-versions li {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .ctn-updates-version-tag {
+    color: var(--fg-muted);
+    word-break: break-all;
+  }
+  .ctn-updates-version-tag.current { color: var(--accent-fg); font-weight: 500; }
+  .ctn-updates-version-meta { color: var(--fg-subtle); }
+
+  /* Update-available banner — accent border only, no fill, so the card
+     sits as a quiet outline against the page background. */
+  .ctn-updates-banner {
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    border-color: color-mix(in srgb, var(--color-brand-500) 60%, var(--border));
+    background: transparent;
+  }
+  .ctn-updates-banner-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .ctn-updates-banner-text { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .ctn-updates-banner-eyebrow { display: block; }
+  .ctn-updates-banner-actions { display: inline-flex; gap: 8px; flex-shrink: 0; align-items: center; }
+  .ctn-updates-rel {
+    font-family: var(--font-mono);
+    font-style: normal;
+    color: var(--fg);
+    letter-spacing: 0.01em;
+  }
+  .ctn-updates-vdiff {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-top: 6px;
+    font-family: var(--font-mono);
+  }
+  .ctn-updates-vdiff-old {
+    font-size: 14px;
+    color: var(--fg-subtle);
+    text-decoration: line-through;
+  }
+  .ctn-updates-vdiff-arrow { color: var(--fg-subtle); align-self: center; }
+  .ctn-updates-vdiff-new {
+    font-size: 20px;
+    color: var(--accent-fg);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+  .ctn-updates-banner-meta {
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: var(--fg-muted);
+    max-width: 56ch;
+    line-height: 1.55;
+  }
+  .ctn-updates-card { padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
+
+  /* Image diff metrics — 3-col EdMetric grid below the changelog. */
+  .ctn-updates-imgdiff {
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+  }
+  .ctn-updates-metric { padding: 12px 14px; }
+  .ctn-updates-metric .ed-metric-value.mono {
+    font-family: var(--font-mono);
+    font-size: 14px;
+  }
+  .ctn-updates-delta-down { color: var(--color-success-400); }
+  .ctn-updates-delta-up { color: var(--color-warning-400); }
+  .ctn-updates-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .ctn-updates-image {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    min-width: 0;
+  }
+  .ctn-updates-icon-wrap {
+    width: 36px;
+    height: 36px;
+    border-radius: 5px;
+    border: 1px solid color-mix(in srgb, var(--color-brand-500) 35%, var(--border));
+    background: color-mix(in srgb, var(--color-brand-500) 10%, transparent);
+    color: var(--color-brand-400);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .ctn-updates-image-ref {
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .ctn-updates-image-meta {
+    margin-top: 6px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-subtle);
+    line-height: 1.6;
+  }
+  .ctn-updates-links {
+    margin-top: 8px;
+    display: flex;
+    gap: 14px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .ctn-updates-links a {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--accent-fg);
+    text-decoration: none;
+    letter-spacing: 0.02em;
+  }
+  .ctn-updates-links a:hover { color: var(--fg); }
+  .ctn-updates-warnings {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--color-warning-400);
+    letter-spacing: 0.04em;
+  }
+  .ctn-updates-release-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .ctn-updates-release-title h3 {
+    margin: 4px 0 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--fg);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ctn-updates-release-body {
+    margin: 0;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 40vh;
+    overflow: auto;
+    line-height: 1.55;
+  }
+
+  /* Update-history timeline — same shape as the stack-detail history. */
+  .ctn-updates-history {
+    list-style: none;
+    margin: 0;
+    padding: 8px 0 0;
+    position: relative;
+  }
+  .ctn-updates-history-rule {
+    position: absolute;
+    left: 7px;
+    top: 14px;
+    bottom: 14px;
+    width: 1px;
+    background: var(--border);
+  }
+  .ctn-updates-history-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 22px 1fr;
+    gap: 12px;
+    padding: 10px 0 14px;
+  }
+  .ctn-updates-history-dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 999px;
+    background: var(--bg);
+    border: 2px solid var(--border-strong);
+    margin-top: 6px;
+    margin-left: 2px;
+    z-index: 1;
+  }
+  .ctn-updates-history-dot.current { border-color: var(--color-success-500); }
+  .ctn-updates-history-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .ctn-updates-history-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .ctn-updates-history-ref {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--fg);
+    font-weight: 500;
+    word-break: break-all;
+  }
+  .ctn-updates-history-meta {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-subtle);
+    letter-spacing: 0.02em;
+  }
+  .ctn-updates-history-spacer { flex: 1; }
+
+  /* Inspect pane — JSON viewer in a single editorial card. */
+  .ctn-inspect-card { padding: 0; overflow: hidden; }
+  .ctn-inspect-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .ctn-inspect-body {
+    margin: 0;
+    padding: 18px;
+    max-height: 60vh;
+    min-height: 320px;
+    overflow: auto;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--fg);
+  }
+
   /* JSON syntax highlighting */
   :global(.json-view .json-key) { color: #7dd3fc; }
   :global(.json-view .json-string) { color: #86efac; }
   :global(.json-view .json-number) { color: #fdba74; }
   :global(.json-view .json-bool) { color: #c4b5fd; }
-  :global(.json-view .json-null) { color: #94a3b8; font-style: italic; }
+  :global(.json-view .json-null) { color: #94a3b8; font-style: normal; }
 
   /* Log line colorization */
   :global(.log-line) { color: #d4d4d4; }

@@ -223,6 +223,16 @@ func (h *RemoteHost) ListImages(ctx context.Context, all bool) ([]dtypes.ImageSu
 	return out, nil
 }
 
+// InspectImage on remote agents requires a new agent-protocol frame
+// (FrameReqImageInspect) that hasn't shipped yet. Until that lands we
+// return a sentinel "not implemented" error; the handler maps it to a
+// 501 so the UI can show "image inspect not yet supported on remote
+// agents". Tracked alongside the other agent-protocol gaps in
+// internal/host/remote.go.
+func (h *RemoteHost) InspectImage(ctx context.Context, id string) (dtypes.ImageInspect, error) {
+	return dtypes.ImageInspect{}, fmt.Errorf("image inspect not yet implemented over agent protocol")
+}
+
 func (h *RemoteHost) ListNetworks(ctx context.Context) ([]dtypes.NetworkResource, error) {
 	data, err := h.request(ctx, agents.FrameReqNetworkList, nil)
 	if err != nil {

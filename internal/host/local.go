@@ -15,13 +15,53 @@ import (
 	"github.com/docker/docker/api/types/volume"
 )
 
+// authResolver matches the interface compose.Service expects so the
+// configured registries service can be passed through to every fresh
+// compose.Service this host constructs.
+type authResolver interface {
+	ResolveAuthForImage(ctx context.Context, image string, hostTags []string) (string, error)
+}
+
+// progressTracker matches what compose.Service expects via its
+// SetProgressTracker setter. Plain string for phase so we don't have
+// to import the deploy package here.
+type progressTracker interface {
+	Begin(stack string, totalServices int)
+	SetPhase(stack string, phase string, service, image string, step int)
+	Finish(stack string, err error)
+}
+
 // LocalHost wraps the embedded docker.Client. It's identified by the
 // fixed id "local".
 type LocalHost struct {
-	cli *docker.Client
+	cli     *docker.Client
+	auth    authResolver
+	tracker progressTracker
 }
 
 func NewLocal(cli *docker.Client) *LocalHost { return &LocalHost{cli: cli} }
+
+// SetAuthResolver wires the registries service into every compose
+// operation this host triggers (deploy, stop, status, cleanup). Lets
+// the central registries store back authenticated pulls without
+// touching every compose.NewService call site.
+func (h *LocalHost) SetAuthResolver(r authResolver) { h.auth = r }
+
+// SetProgressTracker propagates deploy-progress reporting into every
+// fresh compose.Service this host constructs, so the UI's live
+// indicator works for both manual deploys and git auto-deploys.
+func (h *LocalHost) SetProgressTracker(t progressTracker) { h.tracker = t }
+
+func (h *LocalHost) newComposeSvc() *compose.Service {
+	svc := compose.NewService(h.cli, nil)
+	if h.auth != nil {
+		svc.SetAuthResolver(h.auth)
+	}
+	if h.tracker != nil {
+		svc.SetProgressTracker(h.tracker)
+	}
+	return svc
+}
 
 func (h *LocalHost) ID() string   { return "local" }
 func (h *LocalHost) Name() string { return "Local" }
@@ -130,7 +170,7 @@ func (h *LocalHost) DeployStack(ctx context.Context, name, composeYAML, envConte
 	if err != nil {
 		return nil, err
 	}
-	svc := compose.NewService(h.cli, nil)
+	svc := h.newComposeSvc()
 	return svc.DeployProject(ctx, proj)
 }
 
@@ -138,28 +178,28 @@ func (h *LocalHost) StopStack(ctx context.Context, name string) error {
 	if h.cli == nil || !h.cli.Connected() {
 		return ErrNoDocker
 	}
-	return compose.NewService(h.cli, nil).Stop(ctx, name)
+	return h.newComposeSvc().Stop(ctx, name)
 }
 
 func (h *LocalHost) StackStatus(ctx context.Context, name string) ([]compose.StatusEntry, error) {
 	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
-	return compose.NewService(h.cli, nil).Status(ctx, name)
+	return h.newComposeSvc().Status(ctx, name)
 }
 
 func (h *LocalHost) CleanupStack(ctx context.Context, name string, opts compose.CleanupOpts) (*compose.CleanupResult, error) {
 	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
-	return compose.NewService(h.cli, nil).Cleanup(ctx, name, opts)
+	return h.newComposeSvc().Cleanup(ctx, name, opts)
 }
 
 func (h *LocalHost) CleanupPreview(ctx context.Context, name string) (*compose.CleanupPlan, error) {
 	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
-	return compose.NewService(h.cli, nil).CleanupPreview(ctx, name)
+	return h.newComposeSvc().CleanupPreview(ctx, name)
 }
 
 // writeStagingDir creates a tmp directory containing compose.yaml and an
@@ -215,6 +255,13 @@ func (h *LocalHost) ListImages(ctx context.Context, all bool) ([]dtypes.ImageSum
 		return nil, ErrNoDocker
 	}
 	return h.cli.ListImages(ctx, all)
+}
+
+func (h *LocalHost) InspectImage(ctx context.Context, id string) (dtypes.ImageInspect, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return dtypes.ImageInspect{}, ErrNoDocker
+	}
+	return h.cli.InspectImage(ctx, id)
 }
 
 func (h *LocalHost) RemoveImage(ctx context.Context, id string, force bool) ([]dtypes.ImageDeleteResponseItem, error) {
@@ -352,7 +399,7 @@ func (h *LocalHost) ScaleService(ctx context.Context, name, composeYAML, envCont
 	if err != nil {
 		return nil, err
 	}
-	return compose.NewService(h.cli, nil).ScaleService(ctx, proj, service, replicas)
+	return h.newComposeSvc().ScaleService(ctx, proj, service, replicas)
 }
 
 func (h *LocalHost) CheckScale(ctx context.Context, name, composeYAML, envContent, service string) (*compose.ScaleCheck, error) {
@@ -368,7 +415,7 @@ func (h *LocalHost) CheckScale(ctx context.Context, name, composeYAML, envConten
 	if err != nil {
 		return nil, err
 	}
-	return compose.NewService(h.cli, nil).CheckScale(ctx, proj, service)
+	return h.newComposeSvc().CheckScale(ctx, proj, service)
 }
 
 // RollingReplace runs a rolling replacement of a service's replicas
@@ -388,7 +435,7 @@ func (h *LocalHost) RollingReplace(ctx context.Context, name, composeYAML, envCo
 	if err != nil {
 		return nil, err
 	}
-	return compose.NewService(h.cli, nil).RollingReplace(ctx, proj, service, opts)
+	return h.newComposeSvc().RollingReplace(ctx, proj, service, opts)
 }
 
 // SystemMetrics reads host-level CPU / memory / disk / uptime via the

@@ -78,10 +78,11 @@ func (g *GrypeCLI) Scan(ctx context.Context, image string) (*Report, error) {
 	}
 
 	rep := &Report{
-		Image:          image,
-		Scanner:        "grype",
-		ScannerVersion: raw.Descriptor.Version,
-		ScannedAt:      time.Now().UTC(),
+		Image:           image,
+		Scanner:         "grype",
+		ScannerVersion:  raw.Descriptor.Version,
+		ScannedAt:       time.Now().UTC(),
+		Vulnerabilities: []Vulnerability{},
 	}
 	for _, m := range raw.Matches {
 		sev := normalizeSeverity(m.Vulnerability.Severity)

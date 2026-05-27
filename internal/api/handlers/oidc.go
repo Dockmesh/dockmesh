@@ -232,6 +232,49 @@ func (h *Handlers) DeleteOIDCProvider(w http.ResponseWriter, r *http.Request) {
 // TestOIDCDiscovery validates a candidate issuer URL without saving it.
 // Called from the Add/Edit provider modal so admins find a bad issuer
 // BEFORE users hit "Sign in with …" and see a 404 about mismatched
+// TestOIDCProvider runs discovery against a configured provider's
+// stored issuer URL and persists the result (last_tested_at +
+// last_test_ok / last_test_error). The frontend renders a green/red
+// dot next to the provider based on these fields.
+//
+//	POST /api/v1/oidc/providers/{id}/test
+func (h *Handlers) TestOIDCProvider(w http.ResponseWriter, r *http.Request) {
+	if h.OIDC == nil {
+		writeError(w, http.StatusServiceUnavailable, "oidc not configured")
+		return
+	}
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	prov, err := h.OIDC.GetProvider(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "provider not found")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	report, derr := h.OIDC.TestDiscovery(ctx, prov.IssuerURL)
+	if derr != nil {
+		_ = h.OIDC.RecordProviderTest(r.Context(), id, false, derr.Error())
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":    false,
+			"error": derr.Error(),
+		})
+		return
+	}
+	_ = h.OIDC.RecordProviderTest(r.Context(), id, true, "")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                     true,
+		"issuer":                 report.Issuer,
+		"authorization_endpoint": report.AuthorizationEndpoint,
+		"token_endpoint":         report.TokenEndpoint,
+		"userinfo_endpoint":      report.UserinfoEndpoint,
+	})
+}
+
 // issuer. Returns { ok: true, issuer, endpoints } on success.
 func (h *Handlers) TestOIDCDiscovery(w http.ResponseWriter, r *http.Request) {
 	if h.OIDC == nil {

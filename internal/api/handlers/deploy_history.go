@@ -8,6 +8,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
 )
@@ -90,6 +91,11 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	name := chi.URLParam(r, "name")
+	scopeReq := h.stackScopeReq(r.Context(), target.ID(), name)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
+		return
+	}
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -132,8 +138,10 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Record the rollback itself as a new history row so the list
-	// shows "rolled back to #ID" as a first-class event.
-	note := "rollback to #" + strconv.FormatInt(entry.ID, 10)
+	// shows "rolled back to #N" as a first-class event. Uses the
+	// per-stack version counter so the note matches what the UI
+	// shows in the timeline (#1, #2, …) rather than the global DB id.
+	note := "rollback to #" + strconv.Itoa(entry.Version)
 	services := make([]stacks.DeployHistoryService, 0, len(res.Services))
 	for _, s := range res.Services {
 		services = append(services, stacks.DeployHistoryService{Service: s.Name, Image: s.Image})

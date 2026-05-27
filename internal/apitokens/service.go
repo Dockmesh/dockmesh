@@ -56,7 +56,11 @@ type Token struct {
 	Prefix     string     `json:"prefix"` // 'dmt_XXXXXXXX', shown in UI
 	Name       string     `json:"name"`
 	Role       string     `json:"role"`
-	CreatedBy  *int64     `json:"created_by,omitempty"`
+	// users.id is a TEXT UUID in this codebase, even though the
+	// api_tokens schema declared the column as INTEGER. SQLite is
+	// dynamic-typed so we can store strings here; the *string here
+	// keeps Go's view aligned with reality.
+	CreatedBy  *string    `json:"created_by,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
@@ -111,8 +115,8 @@ func scanRowListing(row interface {
 type CreateInput struct {
 	Name            string
 	Role            string
-	ExpiresInDays   int    // 0 = no expiry
-	CreatedByUserID *int64 // nil for CLI-created tokens
+	ExpiresInDays   int     // 0 = no expiry
+	CreatedByUserID *string // nil for CLI-created tokens; UUID otherwise
 }
 
 // Service persists tokens and provides middleware-friendly lookup.

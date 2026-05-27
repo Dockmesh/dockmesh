@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -55,13 +56,96 @@ const (
 // healthcheck: is wired into the container config as of P.12.5a and
 // WaitHealthy is called after ContainerStart so a failing probe
 // surfaces at deploy time rather than silently in docker ps.
+// authResolver is what compose calls before every image pull so the
+// daemon API gets a proper X-Registry-Auth blob instead of an anonymous
+// request. registries.Service satisfies this — we keep it as an interface
+// to avoid pulling the whole registries package into compose's import
+// graph (would create an import cycle via the handler glue).
+type authResolver interface {
+	ResolveAuthForImage(ctx context.Context, image string, hostTags []string) (string, error)
+}
+
+// progressTracker is what compose updates as it walks through a
+// deploy. Kept as an interface so the deploy package doesn't pull
+// every consumer (api/handlers, gitsource) into compose's import
+// graph. Nil = no live progress (legacy behaviour). Phase is a plain
+// string so the deploy package can define its own typed constants
+// without imposing them on compose.
+type progressTracker interface {
+	Begin(stack string, totalServices int)
+	SetPhase(stack string, phase string, service, image string, step int)
+	Finish(stack string, err error)
+}
+
+const (
+	progressPulling    = "pulling"
+	progressCreating   = "creating"
+	progressStarting   = "starting_container"
+	progressHealthwait = "healthcheck"
+)
+
 type Service struct {
-	docker *docker.Client
-	stacks *stacks.Manager
+	docker  *docker.Client
+	stacks  *stacks.Manager
+	auth    authResolver
+	tracker progressTracker
 }
 
 func NewService(d *docker.Client, s *stacks.Manager) *Service {
 	return &Service{docker: d, stacks: s}
+}
+
+// SetAuthResolver wires the registries service in post-construction so
+// main.go's ordering stays simple. Nil disables auth → pulls fall back
+// to anonymous, same as before.
+func (s *Service) SetAuthResolver(r authResolver) { s.auth = r }
+
+// SetProgressTracker wires the deploy.Tracker so the UI gets live
+// phase + service + elapsed updates during a deploy. Nil is safe — all
+// tracker calls are guarded by the package-level helper.
+func (s *Service) SetProgressTracker(t progressTracker) { s.tracker = t }
+
+// forcePullCtxKey is a private type so callers can only set it via
+// WithForcePull. The value indicates "ignore the local-cache check on
+// every image in this deploy and pull from the registry instead".
+type forcePullCtxKey struct{}
+
+// WithForcePull marks the context so the deploy executor pulls every
+// image regardless of whether it's already cached locally. Used by
+// the git-source auto-deploy path so a fresh push to GHCR is actually
+// picked up even when compose.yaml didn't move.
+func WithForcePull(ctx context.Context) context.Context {
+	return context.WithValue(ctx, forcePullCtxKey{}, true)
+}
+
+func forcePullRequested(ctx context.Context) bool {
+	v, _ := ctx.Value(forcePullCtxKey{}).(bool)
+	return v
+}
+
+// resolveImageAuth returns the base64 X-Registry-Auth blob for an image,
+// or empty string when no matching registry credential exists (= fall
+// back to anonymous pull, current behaviour). Logs the resolution
+// outcome so a 401 on the actual pull can be triaged against whether
+// we even sent credentials.
+func (s *Service) resolveImageAuth(ctx context.Context, image string) string {
+	if s.auth == nil {
+		slog.Debug("image pull: no auth resolver wired", "image", image)
+		return ""
+	}
+	auth, err := s.auth.ResolveAuthForImage(ctx, image, nil)
+	if err != nil {
+		slog.Warn("image pull: auth resolve error", "image", image, "err", err)
+		return ""
+	}
+	if auth == "" {
+		slog.Info("image pull: no matching registry credential, falling back to anonymous",
+			"image", image)
+	} else {
+		slog.Info("image pull: using registry credential",
+			"image", image, "auth_bytes", len(auth))
+	}
+	return auth
 }
 
 type DeployResult struct {
@@ -121,7 +205,7 @@ func (s *Service) Deploy(ctx context.Context, stackName string) (*DeployResult, 
 // This is the seam that lets the agent reuse the exact same deploy code:
 // the agent receives compose+env over the WS, parses it from a tmpdir, and
 // calls DeployProject directly. No stacks.Manager dependency needed.
-func (s *Service) DeployProject(ctx context.Context, proj *composetypes.Project) (*DeployResult, error) {
+func (s *Service) DeployProject(ctx context.Context, proj *composetypes.Project) (res *DeployResult, deployErr error) {
 	if s.docker == nil {
 		return nil, errors.New("docker unavailable")
 	}
@@ -136,6 +220,19 @@ func (s *Service) DeployProject(ctx context.Context, proj *composetypes.Project)
 
 	cli := s.docker.Raw()
 	result := &DeployResult{Stack: proj.Name}
+
+	// Live progress for the UI — Begin once, Finish after the loop or
+	// on early-exit error. The tracker is nil-safe.
+	totalServices := len(proj.Services)
+	if s.tracker != nil {
+		s.tracker.Begin(proj.Name, totalServices)
+		defer func() {
+			// Finish records the terminal state. The deferred close
+			// catches early returns from the network/volume reconcile
+			// paths too; the actual err is shadowed via deployErr.
+			s.tracker.Finish(proj.Name, deployErr)
+		}()
+	}
 
 	netNames, err := s.reconcileNetworks(ctx, cli, proj, result)
 	if err != nil {
@@ -156,17 +253,93 @@ func (s *Service) DeployProject(ctx context.Context, proj *composetypes.Project)
 	}
 	sort.Strings(names)
 
-	for _, name := range names {
+	// Phase 1 — pull every image BEFORE we touch any existing container.
+	// If a required image is missing locally AND the pull fails (GHCR
+	// down, bad credentials, image not found, …), abort here so the
+	// previous deployment keeps running. Without this guard the loop
+	// below would stop the old container, then fail to pull, leaving a
+	// phantom stack with 502s in the proxy.
+	if err := s.prePullImages(ctx, cli, proj, names); err != nil {
+		span.SetStatus(codes.Error, "pre-pull")
+		span.RecordError(err)
+		deployErr = err
+		return nil, deployErr
+	}
+
+	// Phase 2 — tear down + recreate per service. Pulls already happened
+	// in phase 1 so deployService no longer touches the registry.
+	for i, name := range names {
 		svc := proj.Services[name]
-		sr, err := s.deployService(ctx, cli, proj, svc, netNames)
+		sr, err := s.deployService(ctx, cli, proj, svc, netNames, i+1)
 		if err != nil {
 			span.SetStatus(codes.Error, "service "+name)
 			span.RecordError(err)
-			return nil, fmt.Errorf("service %s: %w", name, err)
+			deployErr = fmt.Errorf("service %s: %w", name, err)
+			return nil, deployErr
 		}
 		result.Services = append(result.Services, *sr)
 	}
+	res = result
 	return result, nil
+}
+
+// prePullImages walks every service in deploy order and pulls the image
+// when needed (svc.PullPolicy=always, WithForcePull(ctx), or no cached
+// copy). A pull failure is fatal ONLY when the image isn't cached
+// locally — otherwise we log and keep the cached copy, matching the
+// previous in-loop behaviour. Runs before any container is stopped, so
+// abort here leaves the existing deployment intact (fix for the
+// "frontend-orphan after failed pull" bug).
+func (s *Service) prePullImages(ctx context.Context, cli *client.Client, proj *composetypes.Project, names []string) error {
+	for i, name := range names {
+		svc := proj.Services[name]
+		if svc.Image == "" {
+			// validated again per-service in deployService — let that
+			// error message stand. No pull to attempt either way.
+			continue
+		}
+		_, _, localErr := cli.ImageInspectWithRaw(ctx, svc.Image)
+		localMissing := errdefs.IsNotFound(localErr)
+		if localErr != nil && !localMissing {
+			return fmt.Errorf("image inspect %s: %w", svc.Image, localErr)
+		}
+		needsPull := localMissing || forcePullRequested(ctx) ||
+			strings.EqualFold(svc.PullPolicy, "always")
+		if !needsPull {
+			continue
+		}
+		if s.tracker != nil {
+			s.tracker.SetPhase(proj.Name, progressPulling, svc.Name, svc.Image, i+1)
+		}
+		pullCtx, pullSpan := composeTracer.Start(ctx, "compose.pull_image",
+			trace.WithAttributes(
+				attribute.String("stack", proj.Name),
+				attribute.String("service", svc.Name),
+				attribute.String("image", svc.Image),
+				attribute.Bool("forced", !localMissing),
+			))
+		auth := s.resolveImageAuth(pullCtx, svc.Image)
+		rc, err := cli.ImagePull(pullCtx, svc.Image, dtypes.ImagePullOptions{RegistryAuth: auth})
+		if err != nil {
+			pullSpan.SetStatus(codes.Error, err.Error())
+			pullSpan.End()
+			if !localMissing {
+				slog.Warn("image pull failed, using cached copy",
+					"image", svc.Image, "err", err)
+				continue
+			}
+			return fmt.Errorf("image pull %s: %w", svc.Image, err)
+		}
+		if _, err := io.Copy(io.Discard, rc); err != nil {
+			rc.Close()
+			pullSpan.SetStatus(codes.Error, err.Error())
+			pullSpan.End()
+			return fmt.Errorf("image pull read %s: %w", svc.Image, err)
+		}
+		rc.Close()
+		pullSpan.End()
+	}
+	return nil
 }
 
 func (s *Service) Stop(ctx context.Context, stackName string) error {
@@ -303,9 +476,14 @@ func (s *Service) reconcileVolumes(ctx context.Context, cli *client.Client, proj
 // per-service deployment
 // -----------------------------------------------------------------------------
 
-func (s *Service) deployService(ctx context.Context, cli *client.Client, proj *composetypes.Project, svc composetypes.ServiceConfig, netNames map[string]string) (*ServiceResult, error) {
+func (s *Service) deployService(ctx context.Context, cli *client.Client, proj *composetypes.Project, svc composetypes.ServiceConfig, netNames map[string]string, step int) (*ServiceResult, error) {
 	if svc.Image == "" {
 		return nil, errors.New("image is required (build: not supported in phase 1)")
+	}
+	track := func(phase string) {
+		if s.tracker != nil {
+			s.tracker.SetPhase(proj.Name, phase, svc.Name, svc.Image, step)
+		}
 	}
 
 	containerName := svc.ContainerName
@@ -313,39 +491,16 @@ func (s *Service) deployService(ctx context.Context, cli *client.Client, proj *c
 		containerName = fmt.Sprintf("%s-%s-1", proj.Name, svc.Name)
 	}
 
+	// Pulls already happened in DeployProject.prePullImages — by the
+	// time we get here every required image is in the local cache (or
+	// the deploy aborted before touching containers).
+
 	// Remove any existing container with the same name (idempotent redeploy).
 	if existing, err := cli.ContainerInspect(ctx, containerName); err == nil {
 		_ = cli.ContainerStop(ctx, existing.ID, container.StopOptions{})
 		if err := cli.ContainerRemove(ctx, existing.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
 			return nil, fmt.Errorf("remove existing %s: %w", containerName, err)
 		}
-	}
-
-	// Ensure image is present locally (spans image_pull only when we actually pull).
-	if _, _, err := cli.ImageInspectWithRaw(ctx, svc.Image); err != nil {
-		if !errdefs.IsNotFound(err) {
-			return nil, fmt.Errorf("image inspect %s: %w", svc.Image, err)
-		}
-		pullCtx, pullSpan := composeTracer.Start(ctx, "compose.pull_image",
-			trace.WithAttributes(
-				attribute.String("stack", proj.Name),
-				attribute.String("service", svc.Name),
-				attribute.String("image", svc.Image),
-			))
-		rc, err := cli.ImagePull(pullCtx, svc.Image, dtypes.ImagePullOptions{})
-		if err != nil {
-			pullSpan.SetStatus(codes.Error, err.Error())
-			pullSpan.End()
-			return nil, fmt.Errorf("image pull %s: %w", svc.Image, err)
-		}
-		if _, err := io.Copy(io.Discard, rc); err != nil {
-			rc.Close()
-			pullSpan.SetStatus(codes.Error, err.Error())
-			pullSpan.End()
-			return nil, fmt.Errorf("image pull read %s: %w", svc.Image, err)
-		}
-		rc.Close()
-		pullSpan.End()
 	}
 
 	cfg, hostCfg, netCfg, err := serviceToContainerConfig(proj, svc, netNames)
@@ -362,18 +517,21 @@ func (s *Service) deployService(ctx context.Context, cli *client.Client, proj *c
 		))
 	defer startSpan.End()
 
+	track(progressCreating)
 	resp, err := cli.ContainerCreate(startCtx, cfg, hostCfg, netCfg, nil, containerName)
 	if err != nil {
 		startSpan.SetStatus(codes.Error, "create")
 		startSpan.RecordError(err)
 		return nil, fmt.Errorf("container create %s: %w", containerName, err)
 	}
+	track(progressStarting)
 	startSpan.SetAttributes(attribute.String("container.id", resp.ID))
 	if err := cli.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
 		startSpan.SetStatus(codes.Error, "start")
 		startSpan.RecordError(err)
 		return nil, fmt.Errorf("container start %s: %w", containerName, err)
 	}
+	track(progressHealthwait)
 	if err := WaitHealthy(startCtx, cli, resp.ID, &svc); err != nil {
 		startSpan.SetStatus(codes.Error, "unhealthy")
 		startSpan.RecordError(err)

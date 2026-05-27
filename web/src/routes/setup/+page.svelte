@@ -9,8 +9,8 @@
   // The visual language is a 1:1 port of the claude.ai mockup — dot
   // mesh, watermark step number, eyebrow with typed text + cursor,
   // subway-rail on the left edge, italic accent words in titles, and a
-  // terminal-output triumph for step 7. CSS lives in a scoped <style>
-  // block so this file is fully self-contained.
+  // terminal-output triumph for step 7. CSS lives in a scoped style
+  // block at the bottom so this file is fully self-contained.
   import { onMount, onDestroy } from 'svelte';
 
   type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7;
@@ -1246,8 +1246,8 @@
   }
   :global(.ed-title-accent) {
     color: var(--color-brand-300);
-    font-style: italic;
-    font-weight: 500;
+    font-style: normal;
+    font-weight: inherit;
   }
   .ed-subtitle {
     font-size: 16px;

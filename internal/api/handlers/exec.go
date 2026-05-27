@@ -9,6 +9,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
+
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // WSExec proxies an interactive exec session over a WebSocket. Honours
@@ -38,6 +40,11 @@ func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
 	}
 
 	containerID := chi.URLParam(r, "id")
+	scopeReq := h.containerScopeReq(r.Context(), target.ID(), containerID)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermContainersExec, scopeReq, "container "+containerID)
+		return
+	}
 	cmd := r.URL.Query().Get("cmd")
 	if cmd == "" {
 		cmd = "/bin/sh"

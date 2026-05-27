@@ -10,6 +10,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/pkg/version"
 	"github.com/go-chi/chi/v5"
 )
@@ -77,6 +78,11 @@ func (h *Handlers) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
+	scopeReq := h.hostScopeReq(r.Context(), id)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermHostsDelete, scopeReq, "host "+id)
+		return
+	}
 	if err := h.Agents.Delete(r.Context(), id); errors.Is(err, agents.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
@@ -133,6 +139,11 @@ func (h *Handlers) UpgradeAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
+	scopeReq := h.hostScopeReq(r.Context(), id)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+id)
+		return
+	}
 	ag := h.Agents.GetConnected(id)
 	if ag == nil {
 		writeError(w, http.StatusServiceUnavailable, "agent not connected")

@@ -4,19 +4,24 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { hosts } from '$lib/stores/host.svelte';
+  import { pageContext } from '$lib/stores/pageContext.svelte';
   import { api } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
-  import { Toaster, ConfirmDialog, UpdateBanner } from '$lib/components/ui';
-  import { allowed } from '$lib/rbac';
+  import { Toaster, ConfirmDialog, UpdateBanner, HealthDot } from '$lib/components/ui';
+  import NotificationCenter from '$lib/components/ui/NotificationCenter.svelte';
+  import BackupHealthPill from '$lib/components/BackupHealthPill.svelte';
+  import MigrationActivePill from '$lib/components/MigrationActivePill.svelte';
+  import MigrationDrawer from '$lib/components/MigrationDrawer.svelte';
+  import { allowed } from '$lib/rbac.svelte';
   import {
     LayoutDashboard,
     Layers,
     Box,
-    Image as ImageIcon,
+    Boxes,
     Globe,
+    GitBranch,
     Bell,
     Archive,
-    Network as NetworkIcon,
     Server,
     Settings as SettingsIcon,
     Moon,
@@ -24,8 +29,6 @@
     LogOut,
     Menu,
     X,
-    HardDrive,
-    ChevronDown,
     ChevronsLeft,
     ChevronsRight,
     ArrowRightLeft,
@@ -34,19 +37,38 @@
     Users as UsersIcon,
     ShieldCheck as ShieldCheckIcon,
     KeyRound,
-    UserCircle
+    UserCircle,
   } from 'lucide-svelte';
-  import { HealthDot } from '$lib/components/ui';
 
   let { children } = $props();
   let theme = $state<'light' | 'dark'>('dark');
   let mobileOpen = $state(false);
   let hostMenuOpen = $state(false);
   let userMenuOpen = $state(false);
+  let hostMenuRef = $state<HTMLDivElement | null>(null);
+  // Global migrations drawer — opens from the topbar pill, can also be
+  // triggered from stack/host pages later.
+  let migDrawerOpen = $state(false);
 
-  // Desktop sidebar collapse — persisted in localStorage so the choice
-  // survives reloads. Mobile always uses the off-canvas full-width
-  // panel regardless of this flag.
+  // Click-outside handler for the topbar host picker. We can't use the
+  // .app-overlay trick the sidebar uses, because the topbar has
+  // `backdrop-filter: blur(...)` which turns it into the containing
+  // block for `position: fixed` descendants — the overlay then only
+  // covers the topbar height, not the viewport. Instead, listen on the
+  // window while the menu is open and close it for any mousedown
+  // outside the wrapper.
+  $effect(() => {
+    if (!hostMenuOpen) return;
+    function onDocDown(e: MouseEvent) {
+      if (!hostMenuRef) return;
+      if (e.target instanceof Node && hostMenuRef.contains(e.target)) return;
+      hostMenuOpen = false;
+    }
+    window.addEventListener('mousedown', onDocDown);
+    return () => window.removeEventListener('mousedown', onDocDown);
+  });
+
+  // Sidebar collapse — persisted across reloads.
   let sidebarCollapsed = $state<boolean>(
     typeof localStorage !== 'undefined' && localStorage.getItem('dm_sidebar_collapsed') === '1'
   );
@@ -54,68 +76,118 @@
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('dm_sidebar_collapsed', sidebarCollapsed ? '1' : '0');
     }
-    // A collapsed sidebar can't host the host-switcher dropdown — force
-    // it closed so we don't leak an orphaned popover.
     if (sidebarCollapsed) hostMenuOpen = false;
   });
 
-  // Refresh the available host list whenever auth flips on, and poll
-  // every 10s so newly-connected agents show up in the switcher without
-  // a page reload.
+  // Theme persistence — also seed from the value the login page may have
+  // stored before auth, so the editorial dark/light choice carries over.
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = localStorage.getItem('dockmesh.theme');
+    if (stored === 'light' || stored === 'dark') theme = stored;
+  });
+  $effect(() => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('dockmesh.theme', theme);
+  });
+
+  // Host poll: refresh available hosts every 10s while authenticated.
+  // Also refreshes the per-host meta the topbar host-picker shows
+  // (`v0.4.0 · 12d`-style strings) by pulling /agents (version + uptime
+  // from online_since) and /system/info (server version + uptime). Both
+  // polled together so the picker stays in sync with the visible host
+  // list. Failures are silent — the menu falls back to status text.
   let hostPollTimer: ReturnType<typeof setInterval> | null = null;
+  let agentsByID = $state<Record<string, { version?: string; online_since?: string; status: string }>>({});
+  let serverInfo = $state<{ version: string; uptime_seconds: number } | null>(null);
   async function refreshHosts() {
     if (!auth.isAuthenticated) return;
     try {
       const list = await api.hosts.list();
       hosts.setAvailable(list);
     } catch {
-      /* ignore — we'll retry on the next tick */
+      /* ignore */
+    }
+    try {
+      const ags = await api.agents.list();
+      const map: Record<string, { version?: string; online_since?: string; status: string }> = {};
+      for (const a of ags) map[a.id] = { version: a.version, online_since: a.online_since, status: a.status };
+      agentsByID = map;
+    } catch {
+      /* ignore */
+    }
+    try {
+      const info = await api.system.info();
+      serverInfo = { version: info.version, uptime_seconds: info.uptime_seconds };
+    } catch {
+      /* ignore */
     }
   }
   $effect(() => {
     if (auth.isAuthenticated) {
       refreshHosts();
-      if (!hostPollTimer) {
-        hostPollTimer = setInterval(refreshHosts, 10000);
-      }
+      if (!hostPollTimer) hostPollTimer = setInterval(refreshHosts, 10000);
     } else if (hostPollTimer) {
       clearInterval(hostPollTimer);
       hostPollTimer = null;
     }
   });
 
-  $effect(() => {
-    if (typeof document !== 'undefined') {
-      document.documentElement.dataset.theme = theme;
+  // Format helpers used by the topbar host-picker meta column.
+  function fmtUptimeShort(seconds: number): string {
+    if (!seconds || seconds < 60) return `${Math.round(seconds)}s`;
+    const m = Math.floor(seconds / 60);
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h`;
+    const d = Math.floor(h / 24);
+    return `${d}d`;
+  }
+  function fmtUptimeFromISO(iso?: string): string | null {
+    if (!iso) return null;
+    const t = Date.parse(iso);
+    if (!t || isNaN(t)) return null;
+    return fmtUptimeShort((Date.now() - t) / 1000);
+  }
+  function metaFor(h: { id: string; kind: string; status: string }): string {
+    if (h.kind === 'all') return 'fleet-wide';
+    if (h.id === 'local') {
+      if (!serverInfo) return 'local';
+      const up = fmtUptimeShort(serverInfo.uptime_seconds);
+      return `v${serverInfo.version} · ${up}`;
     }
-  });
+    const a = agentsByID[h.id];
+    if (!a) return h.status;
+    if (a.status !== 'online') return a.status;
+    const up = fmtUptimeFromISO(a.online_since);
+    if (!a.version && !up) return 'online';
+    if (!a.version) return up ?? 'online';
+    if (!up) return `v${a.version}`;
+    return `v${a.version} · ${up}`;
+  }
 
-  // Setup-mode probe. When the server has no admin yet, every path
-  // outside /setup* should bounce to the wizard, not to /login (login
-  // can't succeed against an unconfigured server). Probed once on app
-  // boot via /api/v1/setup/status — public, cheap, doesn't need auth.
+  // Setup-mode probe (P.14.3).
   let setupProbed = $state(false);
   let setupActive = $state(false);
   $effect(() => {
     if (setupProbed) return;
     fetch('/api/v1/setup/status')
       .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((d) => { setupActive = !!d.active; })
-      .catch(() => { /* assume not in setup mode if probe fails */ })
-      .finally(() => { setupProbed = true; });
+      .then((d) => {
+        setupActive = !!d.active;
+      })
+      .catch(() => {})
+      .finally(() => {
+        setupProbed = true;
+      });
   });
 
-  // Route guard. P.14.3:
-  //   - /setup* always passes through (the wizard owns its own page).
-  //   - If setup-mode is active, anything else redirects to /setup so
-  //     the operator lands on the wizard whether they typed /, /login
-  //     or any deep link.
-  //   - Otherwise the legacy auth gate applies: unauthenticated visits
-  //     go to /login, authenticated visits at /login go to /.
+  // Route guard.
   $effect(() => {
     const path = $page.url.pathname;
     if (path === '/setup' || path.startsWith('/setup/')) return;
-    if (!setupProbed) return; // wait for the probe before redirecting
+    if (!setupProbed) return;
     if (setupActive) {
       goto('/setup');
       return;
@@ -137,16 +209,6 @@
     goto('/login');
   }
 
-  // Nav structure:
-  //  - Untitled top group = daily-use items (Dashboard, Stacks, Containers,
-  //    Images, Agents). This is the "most-clicked" cluster; keeping it
-  //    ungrouped matches modern patterns (Supabase, Vercel, Notion).
-  //  - NETWORK = the networking layer (Networks, Proxy).
-  //  - AUTOMATION = things that run on a schedule / react to events.
-  //  - Settings is rendered separately above the user card at the bottom,
-  //    not inside `sections`, so it sits apart from day-to-day nav — the
-  //    standard "tool config lives next to user identity" pattern used by
-  //    Notion, Slack, Figma, Linear, GitLab.
   type NavItem = { href: string; label: string; icon: any; show: boolean };
   type NavSection = { title: string | null; items: NavItem[] };
 
@@ -157,45 +219,37 @@
           title: null,
           items: [
             { href: '/', label: 'Dashboard', icon: LayoutDashboard, show: true },
-            { href: '/stacks', label: 'Stacks', icon: Layers, show: true },
-            { href: '/templates', label: 'Templates', icon: Package, show: true },
-            { href: '/containers', label: 'Containers', icon: Box, show: true },
-            { href: '/images', label: 'Images', icon: ImageIcon, show: allowed('image.write') || allowed('read') },
-            { href: '/volumes', label: 'Volumes', icon: HardDrive, show: allowed('read') },
-            { href: '/agents', label: 'Agents', icon: Server, show: allowed('user.manage') },
-            { href: '/migrations', label: 'Migrations', icon: ArrowRightLeft, show: allowed('stack.deploy') }
-          ]
+            { href: '/stacks', label: 'Stacks', icon: Layers, show: allowed('stacks.view') },
+            { href: '/templates', label: 'Templates', icon: Package, show: allowed('templates.view') },
+            { href: '/containers', label: 'Containers', icon: Box, show: allowed('containers.view') },
+            { href: '/resources', label: 'Resources', icon: Boxes, show: allowed('images.view') || allowed('volumes.view') || allowed('networks.view') },
+            { href: '/hosts', label: 'Hosts', icon: Server, show: allowed('hosts.view') },
+          ],
         },
         {
           title: 'Network',
           items: [
-            { href: '/networks', label: 'Networks', icon: NetworkIcon, show: allowed('read') },
-            { href: '/proxy', label: 'Proxy', icon: Globe, show: allowed('user.manage') }
-          ]
+            { href: '/topology', label: 'Topology', icon: GitBranch, show: allowed('containers.view') },
+            { href: '/proxy', label: 'Proxy', icon: Globe, show: allowed('proxy.view') },
+          ],
         },
         {
           title: 'Automation',
           items: [
-            { href: '/environment', label: 'Environment', icon: Box, show: allowed('user.manage') },
-            { href: '/alerts', label: 'Alerts', icon: Bell, show: allowed('user.manage') },
-            { href: '/backups', label: 'Backups', icon: Archive, show: allowed('user.manage') }
-          ]
+            { href: '/environment', label: 'Environment', icon: Box, show: allowed('system.update') },
+            { href: '/alerts', label: 'Alerts', icon: Bell, show: allowed('alerts.view') },
+            { href: '/backups', label: 'Backups', icon: Archive, show: allowed('backups.view') },
+          ],
         },
-        // Platform-admin group — promoted out of Settings tabs to
-        // first-class sidebar entries. The old 8-tab Settings page
-        // buried compliance + user-management below fold; modern peers
-        // (Portainer Business, Rancher, Coolify) all expose these as
-        // top-level nav. RBAC-gated: non-admins don't see this group
-        // at all, so operator sidebars stay lean.
         {
           title: 'Platform',
           items: [
-            { href: '/users', label: 'Users & Roles', icon: UsersIcon, show: allowed('user.manage') },
-            { href: '/authentication', label: 'Authentication', icon: ShieldCheckIcon, show: allowed('user.manage') },
-            { href: '/registries', label: 'Registries', icon: KeyRound, show: allowed('user.manage') },
-            { href: '/audit', label: 'Audit Log', icon: Activity, show: allowed('audit.read') || allowed('user.manage') }
-          ]
-        }
+            { href: '/users', label: 'Users & Roles', icon: UsersIcon, show: allowed('users.view') },
+            { href: '/authentication', label: 'Authentication', icon: ShieldCheckIcon, show: allowed('system.update') },
+            { href: '/registries', label: 'Registries', icon: KeyRound, show: allowed('registries.view') },
+            { href: '/audit', label: 'Audit Log', icon: Activity, show: allowed('audit.view') },
+          ],
+        },
       ] as NavSection[]
     )
       .map((s) => ({ ...s, items: s.items.filter((i) => i.show) }))
@@ -207,346 +261,354 @@
     if (href === '/') return p === '/';
     return p === href || p.startsWith(href + '/');
   }
+
+  // Crumb derived from the current pathname. The first segment becomes the
+  // section ("fleet" for daily-use, otherwise the segment itself); the
+  // rendered label is the readable label of the matching nav item.
+  const crumb = $derived.by<{ section: string; leaf: string; leafHref: string }>(() => {
+    const p = $page.url.pathname;
+    if (p === '/') return { section: 'fleet', leaf: 'dashboard', leafHref: '/' };
+    if (p === '/settings' || p.startsWith('/settings/'))
+      return { section: 'platform', leaf: 'settings', leafHref: '/settings' };
+    if (p === '/account' || p.startsWith('/account/'))
+      return { section: 'profile', leaf: 'account', leafHref: '/account' };
+    if (p === '/tokens' || p.startsWith('/tokens/'))
+      return { section: 'profile', leaf: 'api tokens', leafHref: '/tokens' };
+    // Resource detail pages (volumes/networks/images) live under the
+    // Resources tab strip — the breadcrumb should send users back there
+    // rather than to a bare /volumes route that doesn't exist.
+    if (p.startsWith('/volumes/'))
+      return { section: 'fleet', leaf: 'resources', leafHref: '/resources?tab=volumes' };
+    if (p.startsWith('/networks/'))
+      return { section: 'fleet', leaf: 'resources', leafHref: '/resources?tab=networks' };
+    if (p.startsWith('/images/'))
+      return { section: 'fleet', leaf: 'resources', leafHref: '/resources?tab=images' };
+    for (const sec of sections) {
+      for (const it of sec.items) {
+        if (p === it.href || p.startsWith(it.href + '/')) {
+          return {
+            section: sec.title ? sec.title.toLowerCase() : 'fleet',
+            leaf: it.label.toLowerCase(),
+            leafHref: it.href,
+          };
+        }
+      }
+    }
+    // Fallback: derive from the first path segment.
+    const seg = p.split('/').filter(Boolean)[0] ?? 'fleet';
+    return { section: 'fleet', leaf: seg.replace(/-/g, ' '), leafHref: `/${seg}` };
+  });
+
+  const userInitial = $derived(auth.user?.username?.[0]?.toUpperCase() ?? '?');
 </script>
 
 <Toaster />
 <ConfirmDialog />
+<MigrationDrawer bind:open={migDrawerOpen} />
 
 {#if $page.url.pathname === '/setup' || $page.url.pathname.startsWith('/setup/')}
-  <!-- Wizard owns the whole screen — no dashboard chrome around it. -->
   {@render children()}
 {:else if !setupProbed || setupActive}
-  <!-- During the setup-status probe (and while we're redirecting to
-       /setup if it returns active), render nothing. Avoids a brief
-       flash of the login screen on a server that's about to redirect
-       the operator into the install wizard. -->
+  <!-- Render nothing while we figure out where the operator should land. -->
 {:else if $page.url.pathname === '/login'}
   {@render children()}
 {:else if auth.isAuthenticated}
-  <div class="flex h-screen overflow-hidden">
-    <!-- Sidebar -->
-    <aside
-      class="fixed md:static inset-y-0 left-0 z-40 {sidebarCollapsed ? 'md:w-16' : 'md:w-64'} w-64 bg-[var(--bg)] border-r border-[var(--border)] flex flex-col transform {mobileOpen
-        ? 'translate-x-0'
-        : '-translate-x-full'} md:translate-x-0 transition-[width,transform] duration-200 relative"
+  <div class="ed-stage app-stage-root">
+    <div
+      class="app-shell"
+      class:app-shell-collapsed={sidebarCollapsed}
+      class:mobile-open={mobileOpen}
     >
-      <!-- Collapse toggle: anchored to the aside's right edge so it
-           stays at the same absolute position regardless of the
-           collapsed/expanded state. Previously it jumped between the
-           header (expanded) and a centred button below (collapsed),
-           which read as a visual glitch. -->
-      <button
-        onclick={() => (sidebarCollapsed = !sidebarCollapsed)}
-        class="hidden md:flex absolute top-[22px] -right-3 z-10 w-6 h-6 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--fg-muted)] hover:text-[var(--fg)] hover:border-[var(--color-brand-500)] shadow-sm transition-colors"
-        title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-      >
-        {#if sidebarCollapsed}
-          <ChevronsRight class="w-3.5 h-3.5" />
-        {:else}
-          <ChevronsLeft class="w-3.5 h-3.5" />
-        {/if}
-      </button>
-
-      <div class="h-16 flex items-center border-b border-[var(--border)] {sidebarCollapsed ? 'justify-center px-2' : 'px-4'}">
-        <a href="/" class="flex items-center gap-2.5 min-w-0" aria-label="dockmesh home">
-          <!-- Real brand mark from /static/logo-mark.svg (same artwork
-               the marketing site + favicon use). Previously the sidebar
-               inlined a simplified polygon approximation that drifted
-               from the actual brand — using the real SVG keeps product
-               UI + marketing + docs visually in sync. -->
-          <img src="/logo-mark.svg" alt="" aria-hidden="true" class="h-9 w-9 shrink-0" />
-          {#if !sidebarCollapsed}
-            <!-- Wordmark as HTML so the text inherits var(--fg) and
-                 stays readable under both light and dark themes. -->
-            <!-- Lowercase wordmark with cyan "mesh" accent — matches the
-                 brand lockup on the marketing site + docs. -->
-            <span class="text-[1.15rem] font-semibold tracking-tight text-[var(--fg)] select-none">dock<span class="text-[var(--color-brand-400)]">mesh</span></span>
-          {/if}
-        </a>
-      </div>
-
-      <!-- Host switcher — structurally the parent of every action below
-           it. Placed here (not in the header) so users never lose sight
-           of which host they're operating on. When more than one host
-           is registered, a virtual "All hosts" entry sits at the top
-           of the dropdown and fans out list pages across every online
-           host simultaneously. -->
-      <!-- Collapsed host indicator: icon + colored dot so admin
-           keeps multi-host awareness even with the sidebar folded. -->
-      {#if hosts.available.length > 0 && sidebarCollapsed}
-        <div class="hidden md:flex flex-col items-center py-2 border-b border-[var(--border)]">
-          <button
-            class="p-1.5 rounded-md hover:bg-[var(--surface-hover)] relative"
-            title="{hosts.selected?.name ?? 'Local'} ({hosts.selected?.kind ?? 'local'})"
-            onclick={() => (sidebarCollapsed = false)}
-          >
-            {#if hosts.selected?.kind === 'all'}
-              <Layers class="w-4 h-4 text-[var(--color-brand-400)]" />
-            {:else if hosts.selected?.kind === 'agent'}
-              <Server class="w-4 h-4 text-[var(--color-brand-400)]" />
-            {:else}
-              <HardDrive class="w-4 h-4 text-[var(--fg-muted)]" />
+      <!-- ─────────────────────────────────────────── Sidebar -->
+      <aside class="app-nav">
+        <div class="app-nav-brand">
+          <a href="/" aria-label="dockmesh home">
+            <span class="brand-mark">
+              <img src="/logo-mark.svg" alt="" aria-hidden="true" width="22" height="22" />
+            </span>
+            {#if !sidebarCollapsed}
+              <span>dock<span class="accent">mesh</span></span>
             {/if}
-            <span class="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full {hosts.isAll ? 'bg-[var(--color-brand-500)]' : hosts.selected?.status === 'online' ? 'bg-[var(--color-success-500)]' : 'bg-[var(--fg-subtle)]'}"></span>
-          </button>
-        </div>
-      {/if}
-      {#if hosts.available.length > 0 && !sidebarCollapsed}
-        <div class="px-3 pt-3 pb-2 border-b border-[var(--border)]">
-          <div class="text-[10px] uppercase tracking-wider text-[var(--fg-subtle)] font-medium px-2 pb-1.5">
-            Host
-          </div>
-          <div class="relative">
-            <button
-              class="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:border-[var(--color-brand-500)] hover:bg-[var(--surface-hover)] transition-colors"
-              onclick={() => (hostMenuOpen = !hostMenuOpen)}
-              aria-haspopup="listbox"
-              aria-expanded={hostMenuOpen}
-            >
-              {#if hosts.selected?.kind === 'all'}
-                <Layers class="w-4 h-4 text-[var(--color-brand-400)] shrink-0" />
-              {:else if hosts.selected?.kind === 'local'}
-                <HardDrive class="w-4 h-4 text-[var(--color-brand-400)] shrink-0" />
-              {:else}
-                <Server class="w-4 h-4 text-[var(--color-brand-400)] shrink-0" />
-              {/if}
-              <span class="font-mono text-xs text-[var(--fg)] flex-1 text-left truncate">{hosts.selected?.name ?? 'Local'}</span>
-              {#if hosts.selected?.kind === 'agent' && hosts.selected.status !== 'online'}
-                <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-warning-500)] shrink-0"></span>
-              {:else}
-                <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-success-500)] shrink-0"></span>
-              {/if}
-              <ChevronDown class="w-3.5 h-3.5 text-[var(--fg-muted)] shrink-0" />
-            </button>
-            {#if hostMenuOpen}
-              <button
-                class="fixed inset-0 z-30 cursor-default"
-                aria-label="Close host menu"
-                onclick={() => (hostMenuOpen = false)}
-              ></button>
-              <div
-                class="absolute left-0 right-0 top-full mt-1 z-40 bg-[var(--bg-elevated)] border border-[var(--border-strong)] rounded-lg shadow-2xl py-1"
-                role="listbox"
-              >
-                {#each hosts.withAll as h, idx}
-                  {@const online = h.status === 'online'}
-                  <button
-                    class="w-full text-left px-3 py-2 text-sm hover:bg-[var(--surface-hover)] flex items-center gap-2 disabled:opacity-50"
-                    onclick={() => {
-                      hosts.set(h.id);
-                      hostMenuOpen = false;
-                    }}
-                    disabled={!online}
-                    role="option"
-                    aria-selected={h.id === hosts.id}
-                  >
-                    {#if h.kind === 'all'}
-                      <Layers class="w-3.5 h-3.5 text-[var(--color-brand-400)] shrink-0" />
-                    {:else if h.kind === 'local'}
-                      <HardDrive class="w-3.5 h-3.5 text-[var(--color-brand-400)] shrink-0" />
-                    {:else}
-                      <Server class="w-3.5 h-3.5 text-[var(--color-brand-400)] shrink-0" />
-                    {/if}
-                    <span class="font-mono text-xs flex-1 truncate">{h.name}</span>
-                    {#if online}
-                      <span class="w-1.5 h-1.5 rounded-full bg-[var(--color-success-500)]"></span>
-                    {:else}
-                      <span class="text-[10px] text-[var(--fg-subtle)]">{h.status}</span>
-                    {/if}
-                    {#if h.id === hosts.id}
-                      <span class="text-[var(--color-brand-400)] text-xs">●</span>
-                    {/if}
-                  </button>
-                  <!-- Separator between the virtual "All hosts" entry
-                       and the real host list. Keeps the two semantically
-                       distinct so users don't confuse a fan-out with a
-                       specific host selection. -->
-                  {#if idx === 0 && h.kind === 'all'}
-                    <div class="my-1 border-t border-[var(--border)]"></div>
-                  {/if}
-                {/each}
-              </div>
-            {/if}
-          </div>
-        </div>
-      {/if}
-
-      <nav class="flex-1 {sidebarCollapsed ? 'px-2' : 'px-3'} py-3 overflow-y-auto">
-        {#each sections as section, idx}
-          {#if section.title && !sidebarCollapsed}
-            <div class="px-3 {idx === 0 ? 'pt-1' : 'pt-4'} pb-1.5 text-[10px] uppercase tracking-wider text-[var(--fg-subtle)] font-medium">
-              {section.title}
-            </div>
-          {:else if idx > 0}
-            <div class="my-2 border-t border-[var(--border)]"></div>
-          {/if}
-          <div class="space-y-0.5">
-            {#each section.items as item}
-              {@const Icon = item.icon}
-              {@const active = isActive(item.href)}
-              <a
-                href={item.href}
-                onclick={() => (mobileOpen = false)}
-                title={sidebarCollapsed ? item.label : undefined}
-                class="relative flex items-center {sidebarCollapsed ? 'justify-center px-2' : 'gap-3 px-3'} py-2 rounded-lg text-sm transition-colors
-                       {active
-                  ? 'bg-[var(--accent-bg)] text-[var(--accent-fg)] font-medium'
-                  : 'text-[var(--fg-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]'}"
-              >
-                {#if active && !sidebarCollapsed}
-                  <span class="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-r-full bg-[var(--accent)]"></span>
-                {/if}
-                <Icon class="w-4 h-4 shrink-0" />
-                {#if !sidebarCollapsed}<span>{item.label}</span>{/if}
-              </a>
-            {/each}
-          </div>
-        {/each}
-      </nav>
-
-      <!-- Sidebar footer: Settings (tool config) sits directly above the
-           user card (identity) — both are "meta" actions, visually anchored
-           at the bottom of the sidebar. This pairing is the default
-           pattern in every modern SaaS tool (Notion, Slack, Linear, …). -->
-      <div class="border-t border-[var(--border)] {sidebarCollapsed ? 'px-2' : 'px-3'} pt-2 pb-2 space-y-0.5">
-        <a
-          href="/settings"
-          onclick={() => (mobileOpen = false)}
-          title={sidebarCollapsed ? 'Settings' : undefined}
-          class="relative flex items-center {sidebarCollapsed ? 'justify-center px-2' : 'gap-3 px-3'} py-2 rounded-lg text-sm transition-colors
-                 {isActive('/settings')
-            ? 'bg-[var(--accent-bg)] text-[var(--accent-fg)] font-medium'
-            : 'text-[var(--fg-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]'}"
-        >
-          {#if isActive('/settings') && !sidebarCollapsed}
-            <span class="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-r-full bg-[var(--accent)]"></span>
-          {/if}
-          <SettingsIcon class="w-4 h-4 shrink-0" />
-          {#if !sidebarCollapsed}<span>Settings</span>{/if}
-        </a>
-      </div>
-      <!-- User card with dropdown menu.
-           The avatar is the entry point for PERSONAL actions — Profile
-           (account settings, password, 2FA) and Personal API Tokens.
-           Matches the pattern GitHub/Linear/Vercel all use: click avatar
-           → dropdown → user-scoped choices. Theme toggle + HealthDot stay
-           outside the dropdown because they're one-click affordances
-           (nobody wants to click avatar → submenu → toggle theme). -->
-      <div class="{sidebarCollapsed ? 'px-2' : 'px-3'} py-2 border-t border-[var(--border)] relative">
-        <div class="flex items-center {sidebarCollapsed ? 'flex-col gap-1' : 'gap-2 px-2'} py-1.5 rounded-lg">
+          </a>
           <button
             type="button"
+            class="app-nav-collapse"
+            onclick={() => (sidebarCollapsed = !sidebarCollapsed)}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {#if sidebarCollapsed}
+              <ChevronsRight size={12} strokeWidth={1.5} />
+            {:else}
+              <ChevronsLeft size={12} strokeWidth={1.5} />
+            {/if}
+          </button>
+        </div>
+
+        <nav class="app-nav-scroll">
+          {#each sections as section (section.title ?? '_top')}
+            <div class="app-nav-section">
+              {#if section.title && !sidebarCollapsed}
+                <span class="app-nav-section-label">{section.title}</span>
+              {/if}
+              {#each section.items as item (item.href)}
+                {@const Icon = item.icon}
+                <a
+                  href={item.href}
+                  class="app-nav-item"
+                  class:active={isActive(item.href)}
+                  title={sidebarCollapsed ? item.label : undefined}
+                  onclick={() => (mobileOpen = false)}
+                >
+                  <Icon size={15} strokeWidth={1.5} />
+                  <span class="app-nav-item-label">{item.label}</span>
+                </a>
+              {/each}
+            </div>
+          {/each}
+
+          <!-- Settings sits in its own section above the user footer. -->
+          <div class="app-nav-section">
+            <a
+              href="/settings"
+              class="app-nav-item"
+              class:active={isActive('/settings')}
+              title={sidebarCollapsed ? 'Settings' : undefined}
+              onclick={() => (mobileOpen = false)}
+            >
+              <SettingsIcon size={15} strokeWidth={1.5} />
+              <span class="app-nav-item-label">Settings</span>
+            </a>
+          </div>
+        </nav>
+
+        <div class="app-nav-footer" style="position: relative;">
+          <button
+            type="button"
+            class="app-nav-avatar"
             onclick={() => (userMenuOpen = !userMenuOpen)}
-            class="flex items-center gap-2 min-w-0 {sidebarCollapsed ? '' : 'flex-1'} rounded-md hover:bg-[var(--surface-hover)] p-0.5 -m-0.5 transition-colors"
             title={sidebarCollapsed ? `${auth.user?.username} (${auth.user?.role})` : 'Open user menu'}
             aria-haspopup="menu"
             aria-expanded={userMenuOpen}
           >
-            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white text-xs font-semibold shrink-0">
-              {auth.user?.username?.[0]?.toUpperCase() ?? '?'}
-            </div>
-            {#if !sidebarCollapsed}
-              <div class="flex-1 min-w-0 text-left">
-                <div class="text-sm font-medium text-[var(--fg)] truncate">{auth.user?.username}</div>
-                <div class="text-[11px] text-[var(--fg-muted)] truncate">{auth.user?.role}</div>
-              </div>
-            {/if}
+            {userInitial}
           </button>
+          {#if !sidebarCollapsed}
+            <div class="app-nav-userblock">
+              <span class="name">{auth.user?.username ?? '—'}</span>
+              <span class="role">{auth.user?.role ?? ''}</span>
+            </div>
+          {/if}
           {#if auth.isAuthenticated}
             <HealthDot />
           {/if}
+
+          {#if userMenuOpen}
+            <button
+              type="button"
+              class="app-overlay"
+              aria-label="Close menu"
+              onclick={() => (userMenuOpen = false)}
+            ></button>
+            <div class="app-user-menu" role="menu">
+              <div class="app-user-menu-head">
+                <div class="name">{auth.user?.username}</div>
+                <div class="role">{auth.user?.role}</div>
+              </div>
+              <a
+                href="/account"
+                class="app-user-menu-item"
+                role="menuitem"
+                onclick={() => (userMenuOpen = false)}
+              >
+                <UserCircle size={13} strokeWidth={1.5} />
+                Profile &amp; security
+              </a>
+              <a
+                href="/tokens"
+                class="app-user-menu-item"
+                role="menuitem"
+                onclick={() => (userMenuOpen = false)}
+              >
+                <KeyRound size={13} strokeWidth={1.5} />
+                API tokens
+              </a>
+              <div class="app-user-menu-sep"></div>
+              <button
+                type="button"
+                class="app-user-menu-item danger"
+                role="menuitem"
+                onclick={() => {
+                  userMenuOpen = false;
+                  doLogout();
+                }}
+              >
+                <LogOut size={13} strokeWidth={1.5} />
+                Sign out
+              </button>
+            </div>
+          {/if}
+        </div>
+      </aside>
+
+      <!-- ─────────────────────────────────────────── Main column -->
+      <main class="app-main">
+        <div class="app-mobile-bar">
           <button
+            type="button"
+            class="app-mobile-button"
+            onclick={() => (mobileOpen = !mobileOpen)}
+            aria-label="Toggle sidebar"
+          >
+            {#if mobileOpen}
+              <X size={16} strokeWidth={1.5} />
+            {:else}
+              <Menu size={16} strokeWidth={1.5} />
+            {/if}
+          </button>
+          <span class="app-mobile-title">{crumb.leaf}</span>
+        </div>
+
+        <div class="app-topbar">
+          <div class="app-topbar-crumb">
+            <span>{crumb.section}</span>
+            <span class="sep">/</span>
+            {#if pageContext.entityName}
+              {#if pageContext.trail.length > 0}
+                {#each pageContext.trail as t}
+                  {#if t.href}
+                    <a href={t.href} class="leaf-link">{t.label}</a>
+                  {:else}
+                    <span>{t.label}</span>
+                  {/if}
+                  <span class="sep">/</span>
+                {/each}
+              {:else}
+                <a href={crumb.leafHref} class="leaf-link">{crumb.leaf}</a>
+                <span class="sep">/</span>
+              {/if}
+              <span class="leaf">{pageContext.entityName}</span>
+            {:else}
+              <span class="leaf">{crumb.leaf}</span>
+            {/if}
+          </div>
+
+          <!-- Alerts slot — surfaces backup health + live migration state.
+               Lives left of the host-picker so it sits in the natural
+               left-to-right reading order: page · alerts · host · theme. -->
+          <div class="app-topbar-alerts" aria-live="polite">
+            <MigrationActivePill onOpen={() => (migDrawerOpen = true)} />
+            <BackupHealthPill />
+          </div>
+
+          <!-- Host picker (lens) — replaces the old sidebar host-block.
+               Mockup pattern: dot · label · meta · ▾ . The popover is
+               labeled "Lens — filter pages by host" so it's clear the
+               selection narrows the current view rather than navigating. -->
+          {#if hosts.available.length > 0}
+            {@const sel = hosts.selected ?? hosts.available[0]}
+            {@const selWarn = sel?.kind === 'agent' && sel?.status !== 'online'}
+            <div class="app-topbar-host-wrap" bind:this={hostMenuRef} style="position: relative;">
+              <button
+                type="button"
+                class="app-topbar-host-btn"
+                onclick={() => (hostMenuOpen = !hostMenuOpen)}
+                aria-haspopup="listbox"
+                aria-expanded={hostMenuOpen}
+              >
+                <span class={sel?.kind === 'all' ? 'dot-brand' : selWarn ? 'dot-warn' : 'dot-ok'}></span>
+                <span class="label">{sel?.name ?? 'local'}</span>
+                <span class="sep">·</span>
+                <span class="meta">{sel ? metaFor(sel) : ''}</span>
+                <span class="caret">▾</span>
+              </button>
+              {#if hostMenuOpen}
+                <div class="app-topbar-host-menu" role="listbox">
+                  <div class="app-topbar-host-menu-label">Lens — filter pages by host</div>
+                  {#each hosts.withAll as h, idx (h.id)}
+                    {@const online = h.status === 'online'}
+                    {@const itemWarn = h.kind === 'agent' && h.status !== 'online'}
+                    <button
+                      type="button"
+                      class="app-topbar-host-menu-item"
+                      class:active={h.id === hosts.id}
+                      onclick={() => {
+                        hosts.set(h.id);
+                        hostMenuOpen = false;
+                      }}
+                      disabled={!online}
+                      role="option"
+                      aria-selected={h.id === hosts.id}
+                    >
+                      <span class={h.kind === 'all' ? 'dot-brand' : itemWarn ? 'dot-warn' : 'dot-ok'}></span>
+                      <span class="label">{h.name}</span>
+                      <span class="meta">{metaFor(h)}</span>
+                      {#if h.id === hosts.id}<span class="check">✓</span>{/if}
+                    </button>
+                    {#if idx === 0 && h.kind === 'all'}
+                      <div class="app-topbar-host-menu-divider"></div>
+                    {/if}
+                  {/each}
+                  <div class="app-topbar-host-menu-divider"></div>
+                  <a href="/hosts" class="app-topbar-host-menu-item manage" onclick={() => (hostMenuOpen = false)}>
+                    <Server size={11} strokeWidth={1.5} />
+                    <span class="label">Manage hosts</span>
+                  </a>
+                </div>
+              {/if}
+            </div>
+          {/if}
+
+          <NotificationCenter />
+
+          <button
+            type="button"
+            class="app-topbar-theme-btn"
             onclick={() => (theme = theme === 'dark' ? 'light' : 'dark')}
-            class="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]"
-            title="Toggle theme"
+            title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
             aria-label="Toggle theme"
           >
-            {#if theme === 'dark'}<Sun class="w-4 h-4" />{:else}<Moon class="w-4 h-4" />{/if}
+            {#if theme === 'dark'}
+              <Sun size={13} strokeWidth={1.5} />
+            {:else}
+              <Moon size={13} strokeWidth={1.5} />
+            {/if}
           </button>
         </div>
 
-        {#if userMenuOpen}
-          <!-- Backdrop captures outside-clicks without blocking the sidebar
-               layout. z-index stays below the dropdown itself. -->
-          <button
-            type="button"
-            class="fixed inset-0 z-30 cursor-default"
-            aria-label="Close menu"
-            onclick={() => (userMenuOpen = false)}
-          ></button>
-          <div
-            class="absolute bottom-full mb-1 {sidebarCollapsed ? 'left-10' : 'left-3 right-3'} z-40 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-xl overflow-hidden"
-            role="menu"
-          >
-            <div class="px-3 py-2 border-b border-[var(--border)]">
-              <div class="text-sm font-medium text-[var(--fg)] truncate">{auth.user?.username}</div>
-              <div class="text-xs text-[var(--fg-muted)] truncate">{auth.user?.role}</div>
-            </div>
-            <a
-              href="/account"
-              onclick={() => (userMenuOpen = false)}
-              class="flex items-center gap-2 px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--surface-hover)]"
-              role="menuitem"
-            >
-              <UserCircle class="w-4 h-4 text-[var(--fg-muted)]" />
-              Profile &amp; security
-            </a>
-            <a
-              href="/tokens"
-              onclick={() => (userMenuOpen = false)}
-              class="flex items-center gap-2 px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--surface-hover)]"
-              role="menuitem"
-            >
-              <KeyRound class="w-4 h-4 text-[var(--fg-muted)]" />
-              API tokens
-            </a>
-            <div class="border-t border-[var(--border)]"></div>
-            <button
-              type="button"
-              onclick={() => { userMenuOpen = false; doLogout(); }}
-              class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--surface-hover)] text-left"
-              role="menuitem"
-            >
-              <LogOut class="w-4 h-4 text-[var(--fg-muted)]" />
-              Sign out
-            </button>
-          </div>
-        {/if}
-      </div>
-    </aside>
+        <UpdateBanner />
 
-    <!-- Mobile overlay -->
-    {#if mobileOpen}
-      <button
-        class="fixed inset-0 bg-black/50 z-30 md:hidden"
-        aria-label="Close sidebar"
-        onclick={() => (mobileOpen = false)}
-      ></button>
-    {/if}
-
-    <!-- Main -->
-    <div class="flex-1 flex flex-col min-w-0 bg-[var(--bg-elevated)]">
-      <!-- Mobile-only top bar: hamburger to toggle the off-canvas sidebar.
-           On desktop the sidebar is always visible so we drop the whole
-           header — each page provides its own H1 + sub-title, and the
-           sidebar border is the only chrome. -->
-      <header class="md:hidden h-12 shrink-0 border-b border-[var(--border)] bg-[var(--bg)] flex items-center px-4">
-        <button
-          class="p-2 -ml-2 rounded-md text-[var(--fg-muted)] hover:bg-[var(--surface-hover)]"
-          onclick={() => (mobileOpen = !mobileOpen)}
-          aria-label="Toggle sidebar"
-        >
-          {#if mobileOpen}<X class="w-5 h-5" />{:else}<Menu class="w-5 h-5" />{/if}
-        </button>
-      </header>
-
-      <UpdateBanner />
-      <main class="flex-1 overflow-auto px-5 md:px-8 py-6 md:py-10">
-        <div class="max-w-7xl mx-auto dm-fade-in">
+        <div class="app-page dm-fade-in">
           {@render children()}
         </div>
       </main>
     </div>
   </div>
 {/if}
+
+<style>
+  .app-stage-root { min-height: 100vh; }
+  .app-main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 100vh;
+  }
+  .app-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    background: transparent;
+    border: 0;
+    cursor: default;
+  }
+  .app-mobile-title {
+    margin-left: 8px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg);
+    letter-spacing: 0.04em;
+    text-transform: lowercase;
+  }
+  :global(.text-brand-accent) { color: var(--color-brand-400); flex-shrink: 0; }
+</style>

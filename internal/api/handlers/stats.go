@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 
@@ -34,6 +35,11 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	containerID := chi.URLParam(r, "id")
+	scopeReq := h.containerScopeReq(r.Context(), target.ID(), containerID)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermContainersLogs, scopeReq, "container "+containerID)
+		return
+	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Warn("ws stats upgrade failed", "err", err)

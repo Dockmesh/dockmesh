@@ -35,6 +35,9 @@ type VarInput struct {
 // ErrDuplicateKey is returned by Create/Update when the key is taken.
 var ErrDuplicateKey = errors.New("a global variable with that key already exists")
 
+// ErrNotFound is returned by Get when the id doesn't exist.
+var ErrNotFound = errors.New("variable not found")
+
 type Store struct {
 	db *sql.DB
 }
@@ -108,11 +111,19 @@ func (s *Store) Delete(ctx context.Context, id int64) error {
 }
 
 func (s *Store) get(ctx context.Context, id int64) (*Var, error) {
+	return s.Get(ctx, id)
+}
+
+// Get returns one row by id, ErrNotFound when absent.
+func (s *Store) Get(ctx context.Context, id int64) (*Var, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, key, value, group_name, encrypted, created_at, updated_at FROM global_env WHERE id = ?`, id)
 	var v Var
 	var enc int
 	if err := row.Scan(&v.ID, &v.Key, &v.Value, &v.Group, &enc, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
 		return nil, err
 	}
 	v.Encrypted = enc == 1

@@ -8,12 +8,13 @@
 #    curl -fsSL https://get.dockmesh.dev | DOCKMESH_INSTALL_DIR=/opt/bin bash
 #
 #  Env vars:
-#    DOCKMESH_VERSION       tag to install (default: latest release)
-#    DOCKMESH_CHANNEL       stable | testing      (default: stable)
-#    DOCKMESH_INSTALL_DIR   bin directory         (default: /usr/local/bin)
-#    DOCKMESH_NO_SUDO       1 to skip sudo        (default: sudo if not root)
-#    DOCKMESH_FORCE         1 to reinstall even if already on latest version
-#    NO_COLOR               1 to disable ANSI colors
+#    DOCKMESH_VERSION         tag to install (default: latest release)
+#    DOCKMESH_CHANNEL         stable | testing      (default: stable)
+#    DOCKMESH_INSTALL_DIR     bin directory         (default: /usr/local/bin)
+#    DOCKMESH_NO_SUDO         1 to skip sudo        (default: sudo if not root)
+#    DOCKMESH_FORCE           1 to reinstall even if already on latest version
+#    DOCKMESH_NO_SCANNER      1 to skip Grype CVE scanner install (default: install)
+#    NO_COLOR                 1 to disable ANSI colors
 #
 #  What this script does:
 #    - Detects OS, architecture, distribution
@@ -655,6 +656,20 @@ if [ "$IS_UPGRADE" = "1" ]; then
   NEW_VERSION_LINE="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || echo "$DM_VERSION")"
   ok "replaced        $INSTALL_DIR/dockmesh      ($DM_VERSION)"
 
+  # Backfill grype on upgrade for installs predating the scanner-bundle.
+  # Same skip flag as fresh install. We keep the old binary if grype is
+  # already on the host — `grype` self-updates its DB, not its binary.
+  if [ "${DOCKMESH_NO_SCANNER:-0}" != "1" ] && ! command -v grype >/dev/null 2>&1; then
+    info "installing grype (CVE scanner)..."
+    if curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+        | $USE_SUDO sh -s -- -b "$INSTALL_DIR" >/dev/null 2>&1; then
+      GRYPE_VER="$(grype version 2>/dev/null | awk -F: '/^[Vv]ersion:/{gsub(/ /, "", $2); print $2; exit}')"
+      ok "grype scanner   installed (v${GRYPE_VER:-unknown})"
+    else
+      warn "grype install failed — CVE scanning disabled"
+    fi
+  fi
+
   # dmctl ships alongside the server binary since v0.2.0 (stack adopt,
   # scripted deploys, CI). Keep it in sync on upgrades too — older
   # installs predate dmctl entirely and an upgrade there is the first
@@ -783,6 +798,32 @@ tar -xzf "$TMP/$TARBALL" -C "$TMP"
 [ -x "$TMP/dockmesh" ] || die "tarball missing 'dockmesh' binary"
 $USE_SUDO install -m 0755 "$TMP/dockmesh" "$INSTALL_DIR/dockmesh"
 ok "binary          $INSTALL_DIR/dockmesh"
+
+# Grype CVE scanner — drives the "Scan" action in the Resources view.
+# Without it the backend logs "scanner disabled" and the UI returns
+# 503 "scanner not configured" on every scan attempt. Anchore ships
+# a self-contained installer that drops a single binary at our PATH;
+# silent unless installation fails (in which case we warn but proceed
+# — scanning is a non-blocking feature). Skippable via env var for
+# air-gapped / minimal installs.
+if [ "${DOCKMESH_NO_SCANNER:-0}" != "1" ]; then
+  if command -v grype >/dev/null 2>&1; then
+    GRYPE_VER="$(grype version 2>/dev/null | awk -F: '/^[Vv]ersion:/{gsub(/ /, "", $2); print $2; exit}')"
+    ok "grype scanner   already installed (v${GRYPE_VER:-unknown})"
+  else
+    info "installing grype (CVE scanner)..."
+    if curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+        | $USE_SUDO sh -s -- -b "$INSTALL_DIR" >/dev/null 2>&1; then
+      GRYPE_VER="$(grype version 2>/dev/null | awk -F: '/^[Vv]ersion:/{gsub(/ /, "", $2); print $2; exit}')"
+      ok "grype scanner   installed (v${GRYPE_VER:-unknown})"
+    else
+      warn "grype install failed — CVE scanning disabled"
+      say "                    install manually: https://github.com/anchore/grype#installation"
+    fi
+  fi
+else
+  info "grype scanner   skipped (DOCKMESH_NO_SCANNER=1)"
+fi
 
 # dmctl — the operator CLI (stack adopt, scripted deploys, CI). Shipped
 # inside the release tarball; drop it into the same PATH directory as
