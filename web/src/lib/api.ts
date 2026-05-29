@@ -171,8 +171,11 @@ export interface StackListEntry {
   // under "needs attention" and routes to the recovery panel.
   status?: 'ok' | 'needs_recovery';
   // Optional summary fields the host-detail editorial UI references.
-  // Backend currently does not populate them; the UI falls back to
-  // "—" / "running". Tracked in project_hosts_open_punch_list.md.
+  // Populated by ListStacks since 2026-05-29: containers is the count
+  // of running containers labeled with the compose project on the
+  // local host (remote-only stacks stay 0 pending the multi-host
+  // batch). has_volumes is a cheap top-level `volumes:` scan of the
+  // compose file.
   containers?: number;
   has_volumes?: boolean;
 }
@@ -503,6 +506,22 @@ export interface PasswordPolicy {
   rotation_days: number;
   lockout_max_attempts: number;
   lockout_duration_minutes: number;
+}
+
+// Mirrors auth.SignInConfig — sign-in-flow + session-lifecycle settings.
+// The session_* fields are what the Sessions card edits; the booleans
+// (allow_local_password etc.) are read-through fields for the SSO
+// section's "is local password still enabled" check.
+export interface SignInConfig {
+  allow_local_password: boolean;
+  allow_self_register: boolean;
+  auto_create_on_sso: boolean;
+  require_tfa_for_admin: boolean;
+  session_idle_ttl_min: number;       // 0 = no idle timeout
+  session_absolute_ttl_hr: number;    // hard cap on a single session
+  session_remember_me_days: number;
+  session_max_per_user: number;       // 0 = unlimited
+  password_forbid_reuse_count: number;
 }
 
 // P.11.16 — agent upgrade policy.
@@ -1182,6 +1201,18 @@ export const api = {
   health: () => request<{ status: string; version: string; docker: boolean }>('/health'),
 
   auth: {
+    // Unified identity-provider list (OIDC + OAuth2 + SAML + LDAP) so
+    // the Authentication page can render every kind in one round-trip.
+    // `raw` carries the underlying kind-specific record for forms that
+    // need it; ignore for plain row rendering.
+    providers: () => request<Array<{
+      kind: 'oidc' | 'oauth2' | 'saml' | 'ldap';
+      id: number;
+      slug: string;
+      display_name: string;
+      enabled: boolean;
+      raw?: any;
+    }>>('/auth/providers'),
     login: (username: string, password: string) =>
       request<{
         access_token?: string;
@@ -1211,6 +1242,13 @@ export const api = {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(p)
+      }),
+    getSignInConfig: () => request<SignInConfig>('/auth/signin'),
+    setSignInConfig: (c: SignInConfig) =>
+      request<SignInConfig>('/auth/signin', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(c)
       }),
     unlockUser: (id: string) =>
       request<void>(`/users/${encodeURIComponent(id)}/unlock`, { method: 'POST' })
@@ -1599,7 +1637,60 @@ export const api = {
     metrics: (id: string, from: number, to: number, resolution: 'raw' | '1m' | '1h' = 'raw') =>
       request<MetricsSample[]>(
         `/containers/${id}/metrics?from=${from}&to=${to}&resolution=${resolution}`
-      )
+      ),
+    files: {
+      // Path defaults to "/" — the root of the container filesystem.
+      // Reuses VolumeEntry/VolumeFileResult shapes since a single
+      // listed entry is structurally identical between the two.
+      browse: (id: string, path = '/', host = 'local') => {
+        const qs = new URLSearchParams();
+        if (path) qs.set('path', path);
+        if (host && host !== 'local') qs.set('host', host);
+        return request<VolumeEntry[]>(`/containers/${id}/files?${qs.toString()}`);
+      },
+      read: (id: string, path: string, host = 'local') => {
+        const qs = new URLSearchParams({ path });
+        if (host && host !== 'local') qs.set('host', host);
+        return request<VolumeFileResult>(`/containers/${id}/files/content?${qs.toString()}`);
+      },
+      // Returns a browser-triggered download URL — the server streams
+      // application/octet-stream with Content-Disposition: attachment.
+      // We can't use the JSON request() helper here because the body
+      // is binary; instead we build the auth'd URL the caller assigns
+      // to a hidden <a download>. Using a temporary signed link would
+      // be cleaner but the auth header is good enough for now.
+      downloadUrl: (id: string, path: string, host = 'local') => {
+        const qs = new URLSearchParams({ path });
+        if (host && host !== 'local') qs.set('host', host);
+        return `${BASE}/containers/${id}/files/download?${qs.toString()}`;
+      },
+      // Fetches the file as a Blob with the auth header attached. The
+      // caller saves it via URL.createObjectURL — required because
+      // <a download href="…"> can't carry an Authorization header.
+      downloadBlob: async (id: string, path: string, host = 'local') => {
+        const qs = new URLSearchParams({ path });
+        if (host && host !== 'local') qs.set('host', host);
+        const headers: Record<string, string> = {};
+        if (auth.accessToken) headers['Authorization'] = `Bearer ${auth.accessToken}`;
+        const res = await fetch(`${BASE}/containers/${id}/files/download?${qs.toString()}`, { headers });
+        if (!res.ok) {
+          let msg = `${res.status} ${res.statusText}`;
+          try { const j = await res.json(); if (j.error) msg = j.error; } catch { /* ignore */ }
+          throw new ApiError(msg, res.status);
+        }
+        return res.blob();
+      },
+      // Content is sent as base64 over JSON so binary uploads survive
+      // the round-trip. mode is the unix permission bit field — 0 lets
+      // the server pick 0644.
+      write: (id: string, path: string, contentB64: string, mode = 0, host = 'local') => {
+        const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+        return request<{ path: string; bytes: number }>(`/containers/${id}/files${qs}`, {
+          method: 'POST',
+          body: JSON.stringify({ path, content: contentB64, mode })
+        });
+      }
+    }
   },
 
   images: {
@@ -1622,7 +1713,19 @@ export const api = {
     scan: (id: string) =>
       request<ScanReport>(`/images/${encodeURIComponent(id)}/scan`, { method: 'POST' }),
     getScan: (id: string) =>
-      request<ScanReport>(`/images/${encodeURIComponent(id)}/scan`)
+      request<ScanReport>(`/images/${encodeURIComponent(id)}/scan`),
+    // Cached map keyed by image ref from the background update watcher.
+    // Refreshed server-side every 30 min. Empty until the first poll
+    // completes after boot. UI looks up a container's image here to
+    // render the "update available" badge.
+    updates: () => request<Record<string, {
+      image: string;
+      update_available: boolean;
+      local_digest?: string;
+      remote_digest?: string;
+      checked_at: string;
+      error?: string;
+    }>>('/images/updates')
   },
 
   networks: {
@@ -1703,6 +1806,14 @@ export const api = {
       request<void>(`/backups/jobs/${id}/review/${mode}`, { method: 'POST' }),
     listRuns: (limit = 100) => request<BackupRun[]>(`/backups/runs?limit=${limit}`),
     getRun: (runId: number) => request<BackupRun>(`/backups/runs/${runId}`),
+    // Captured log lines for one run. Empty array until the executor
+    // has written at least the "start: ..." narration line.
+    runLog: (runId: number) => request<Array<{
+      id: number;
+      ts: string;
+      stream: 'info' | 'warn' | 'error' | 'hook_stdout' | 'hook_stderr';
+      line: string;
+    }>>(`/backups/runs/${runId}/log`),
     // downloadArchive streams the tar.gz for a successful run. The
     // backend transparently decrypts age-encrypted archives so the
     // user always gets plaintext bytes. We auth via bearer token then
@@ -1775,6 +1886,51 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ username, password, role, email })
       }),
+    // Public preview of an invite (no auth required — used by the
+    // accept page to render "Invitation as <role> for <email>").
+    previewInvite: (token: string) =>
+      request<{
+        role: string;
+        scope_tags: string[];
+        email_hint?: string;
+        expires_at: string;
+      }>(`/invite/${encodeURIComponent(token)}`),
+    // Public redeem of an invite — creates the user + returns a session
+    // pair so the recipient lands signed in.
+    acceptInvite: (token: string, input: { username: string; email?: string; password: string }) =>
+      request<{
+        user: { id: string; username: string; role: string };
+        access_token: string;
+        refresh_token: string;
+      }>(`/invite/${encodeURIComponent(token)}/accept`, {
+        method: 'POST',
+        body: JSON.stringify(input)
+      }),
+    // Invite-link flow (Coolify-style): admin mints a one-time URL,
+    // shares manually, recipient redeems on /invite/<token>.
+    listInvites: (limit = 100) =>
+      request<Array<{
+        id: number;
+        role: string;
+        scope_tags: string[];
+        email_hint?: string;
+        expires_at: string;
+        used_at?: string;
+        created_by: string;
+        created_at: string;
+      }>>(`/invites?limit=${limit}`),
+    createInvite: (input: { role: string; scope_tags?: string[]; email_hint?: string; ttl_hours?: number }) =>
+      request<{
+        id: number;
+        token: string;
+        accept_url: string;
+        role: string;
+        scope_tags: string[];
+        email_hint?: string;
+        expires_at: string;
+      }>('/invites', { method: 'POST', body: JSON.stringify(input) }),
+    revokeInvite: (id: number) =>
+      request<void>(`/invites/${id}`, { method: 'DELETE' }),
     update: (id: string, email: string, role: string, scope_tags?: string[]) =>
       request<{ id: string; username: string; role: string; scope_tags?: string[] }>(`/users/${id}`, {
         method: 'PUT',
@@ -2004,6 +2160,12 @@ export const api = {
     delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' }),
     upgrade: (id: string) =>
       request<{ status: string; version: string }>(`/agents/${id}/upgrade`, { method: 'POST' }),
+    // Re-issue an enrollment token for an existing agent. Old cert
+    // stays valid until the new one is presented. Returns the fresh
+    // token + the curl-bash install command the operator pastes on
+    // the agent host.
+    rotateToken: (id: string) =>
+      request<{ token: string; install_hint: string }>(`/agents/${id}/rotate-token`, { method: 'POST' }),
     // P.11.16 upgrade policy
     getUpgradePolicy: () => request<AgentUpgradePolicy>('/agents/upgrade-policy'),
     setUpgradePolicy: (input: AgentUpgradeInput) =>
@@ -2025,12 +2187,31 @@ export const api = {
     // local ProxyRoute interface can assign the response directly without
     // casting. The backend validates the mode on write anyway.
     listRoutes: () =>
-      request<Array<{ id: number; host: string; upstream: string; tls_mode: 'auto' | 'internal' | 'none'; created_at: string; updated_at: string }>>('/proxy/routes'),
+      request<Array<{ id: number; host: string; upstream: string; tls_mode: 'auto' | 'internal' | 'none'; enabled: boolean; created_at: string; updated_at: string }>>('/proxy/routes'),
     createRoute: (host: string, upstream: string, tls_mode: string) =>
       request<any>('/proxy/routes', { method: 'POST', body: JSON.stringify({ host, upstream, tls_mode }) }),
-    updateRoute: (id: number, upstream: string, tls_mode: string) =>
-      request<void>(`/proxy/routes/${id}`, { method: 'PUT', body: JSON.stringify({ upstream, tls_mode }) }),
+    updateRoute: (id: number, upstream: string, tls_mode: string, enabled?: boolean) =>
+      request<void>(`/proxy/routes/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ upstream, tls_mode, ...(enabled !== undefined ? { enabled } : {}) })
+      }),
+    // Row-level toggle — flip just the enabled flag without round-tripping
+    // upstream + tls_mode unchanged. Disabling stops traffic but keeps
+    // the route definition.
+    setRouteEnabled: (id: number, enabled: boolean) =>
+      request<void>(`/proxy/routes/${id}/enabled`, {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled })
+      }),
     deleteRoute: (id: number) => request<void>(`/proxy/routes/${id}`, { method: 'DELETE' }),
+    routeMetrics: (id: number) =>
+      request<{
+        host: string;
+        requests: number;
+        requests_per_second: number;
+        status_buckets: Record<string, number>;
+        p95_latency_ms: number;
+      }>(`/proxy/routes/${id}/metrics`),
     // Per-host rate + p95 + status-code distribution scraped from
     // Caddy's prometheus endpoint. Returns zeros when Caddy hasn't
     // been configured to expose /metrics — UI hides the charts then.
@@ -2061,6 +2242,12 @@ export const api = {
   },
 
   ws: {
-    ticket: () => request<{ ticket: string }>('/ws/ticket', { method: 'POST' })
+    // Mint a WS ticket bound to a single permission. Each endpoint
+    // requires a specific perm (logs → containers.logs, stats →
+    // containers.view, exec → containers.exec, events → system.view) —
+    // pass the matching one. The server verifies the caller's role
+    // before issuing the ticket.
+    ticket: (forPerm: 'containers.view' | 'containers.logs' | 'containers.exec' | 'system.view') =>
+      request<{ ticket: string }>(`/ws/ticket?for=${encodeURIComponent(forPerm)}`, { method: 'POST' })
   }
 };

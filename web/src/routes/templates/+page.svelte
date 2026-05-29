@@ -622,7 +622,7 @@
     width: 40px;
     height: 40px;
     border: 1px solid var(--border);
-    background: var(--bg);
+    background: var(--surface);
     border-radius: 5px;
     display: inline-flex;
     align-items: center;
@@ -868,7 +868,7 @@
   .tpl-inline-code {
     font-family: var(--font-mono);
     font-size: 11px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     padding: 1px 5px;
     border-radius: 3px;
     border: 1px solid var(--border-subtle);

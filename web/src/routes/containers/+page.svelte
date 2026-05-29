@@ -14,6 +14,7 @@
   import { api, ApiError, isFanOut } from '$lib/api';
   import { goto } from '$app/navigation';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
@@ -279,10 +280,7 @@
   }
 
   function copyId(id: string) {
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(id);
-      toast.info('ID copied');
-    }
+    void copyWithToast(id, 'ID copied');
     openMenuId = null;
   }
 </script>
@@ -541,6 +539,12 @@
             {#if exit !== null && c.State === 'exited'}
               <span class="ctn-state-exit">({exit})</span>
             {/if}
+            {#if c.restart_count && c.restart_count > 0}
+              <span class="ctn-restart-chip" class:ctn-restart-warn={c.restart_count >= 5}
+                title="Container has restarted {c.restart_count}x since its last (re)create">
+                ↻{c.restart_count}
+              </span>
+            {/if}
           </div>
 
           <div class="ctn-cell-health">
@@ -563,6 +567,9 @@
             {#if img.tag}
               <span class="ctn-image-sep">:</span>
               <span class="ctn-image-tag">{img.tag}</span>
+            {/if}
+            {#if c.image_update_available}
+              <span class="ctn-image-update" title="A newer image is available upstream">↑</span>
             {/if}
           </div>
 
@@ -1029,6 +1036,32 @@
     font-family: var(--font-mono);
     font-size: 10px;
     color: var(--fg-subtle);
+  }
+  .ctn-restart-chip {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 1px 5px;
+    margin-left: 4px;
+    border-radius: 3px;
+    background: var(--surface-hover);
+    color: var(--fg-muted);
+    border: 1px solid var(--border-subtle);
+  }
+  .ctn-restart-warn {
+    color: var(--color-warning-400);
+    background: color-mix(in srgb, var(--color-warning-500) 10%, transparent);
+    border-color: color-mix(in srgb, var(--color-warning-500) 30%, transparent);
+  }
+  .ctn-image-update {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 0 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--color-success-400);
+    background: color-mix(in srgb, var(--color-success-500) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-success-500) 30%, transparent);
+    border-radius: 3px;
   }
 
   .ctn-cell-health {

@@ -124,10 +124,10 @@ hero shots.
 
 | | |
 | :-: | :-: |
-| ![Dashboard](.github/shots/01-dashboard-hero.png) | ![Multi-host fleet](.github/shots/06-agents-fleet.png) |
-| Dashboard with live fleet overview | Multi-host agents with mTLS |
-| ![CVE scan](.github/shots/05-cve-scan.png) | ![Backups](.github/shots/08-backups-runs.png) |
-| CVE scanning via Grype | Scheduled encrypted backups |
+| ![Dashboard](.github/shots/01-dashboard.png) | ![Stack detail with Git source](.github/shots/04-stack-detail-githubRepo.png) |
+| Dashboard with live fleet overview | Stack detail with GitOps auto-sync |
+| ![Container logs](.github/shots/08-container-logs.png) | ![Backups](.github/shots/16-backups-runs.png) |
+| Live container logs with filtering | Scheduled encrypted backups |
 
 ## Architecture
 

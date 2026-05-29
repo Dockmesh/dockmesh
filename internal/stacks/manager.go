@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -340,6 +341,9 @@ func (m *Manager) List() []*Stack {
 	for _, s := range m.stacks {
 		out = append(out, s)
 	}
+	// Stable order — map iteration is randomised, and the UI polls
+	// every 10s; without this sort the rows reshuffle between refreshes.
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 

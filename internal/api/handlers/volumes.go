@@ -189,7 +189,10 @@ func mapBrowseStatus(err error) int {
 	case errors.Is(err, host.ErrVolumePathEscape),
 		errors.Is(err, host.ErrVolumePathTooLong),
 		errors.Is(err, host.ErrVolumeNotDir),
-		errors.Is(err, host.ErrVolumeNotFile):
+		errors.Is(err, host.ErrVolumeNotFile),
+		errors.Is(err, host.ErrContainerPathInvalid),
+		errors.Is(err, host.ErrContainerNotDir),
+		errors.Is(err, host.ErrContainerNotFile):
 		return http.StatusBadRequest
 	case errors.Is(err, host.ErrVolumeMountpointMissing):
 		return http.StatusConflict

@@ -14,12 +14,13 @@
     api, ApiError,
     type CustomRole, type OIDCProvider, type OIDCProviderInput,
     type SAMLProvider, type LDAPProvider, type OAuth2Provider,
-    type PasswordPolicy,
+    type PasswordPolicy, type SignInConfig,
   } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { Skeleton } from '$lib/components/ui';
   import { EditorialPage, Eyebrow, Field } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import {
     Plus, Trash2, Edit2, Globe, Copy,
@@ -39,6 +40,13 @@
   let policy = $state<PasswordPolicy | null>(null);
   let policyDirty = $state(false);
   let policySaving = $state(false);
+
+  // Sessions + sign-in flow settings — persisted under the auth.* keys
+  // in the settings store. Loaded once on mount; dirty-tracking on edit;
+  // save = full snapshot PUT.
+  let signin = $state<SignInConfig | null>(null);
+  let signinDirty = $state(false);
+  let signinSaving = $state(false);
 
   let showModal = $state(false);
   let editingProvider = $state<AnyProvider | null>(null);
@@ -69,6 +77,27 @@
   }
   async function loadPolicy() {
     try { policy = await api.auth.getPolicy(); policyDirty = false; } catch { /* read-only flow */ }
+  }
+  async function loadSignin() {
+    try { signin = await api.auth.getSignInConfig(); signinDirty = false; } catch { /* read-only flow */ }
+  }
+  function setSigninField<K extends keyof SignInConfig>(k: K, v: SignInConfig[K]) {
+    if (!signin) return;
+    signin = { ...signin, [k]: v };
+    signinDirty = true;
+  }
+  async function saveSignin() {
+    if (!signin) return;
+    signinSaving = true;
+    try {
+      signin = await api.auth.setSignInConfig(signin);
+      signinDirty = false;
+      toast.success('Session settings saved');
+    } catch (err) {
+      toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      signinSaving = false;
+    }
   }
 
   function openNew() {
@@ -261,10 +290,7 @@
   }
 
   function copyText(s: string) {
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(s);
-      toast.info('Copied');
-    }
+    copyWithToast(s, 'Copied');
   }
 
   const callbackBase = $derived(typeof window !== 'undefined' ? window.location.origin : '');
@@ -275,6 +301,7 @@
       loadProviders();
       loadRoles();
       loadPolicy();
+      loadSignin();
     } else {
       providersLoading = false;
     }
@@ -553,38 +580,140 @@
       <section class="auth-section">
         <Eyebrow>03 · Sessions &amp; sign-in flow</Eyebrow>
 
-        <div class="auth-sliceblock">
-          <div class="auth-policy-grid">
-            <Field label="Idle timeout (min)" hint="Sign out after N minutes of inactivity.">
-              <input type="number" class="dm-input acc-input-mono" value="60" disabled />
-            </Field>
-            <Field label="Absolute lifetime (h)" hint="Hard re-auth regardless of activity.">
-              <input type="number" class="dm-input acc-input-mono" value="24" disabled />
-            </Field>
-            <Field label="Remember-me (days)" hint="How long the cookie extends.">
-              <input type="number" class="dm-input acc-input-mono" value="14" disabled />
-            </Field>
-          </div>
+        {#if signin}
+          <div class="dm-card auth-policy-card">
+            <div class="auth-policy-preview-text">
+              Sessions expire after
+              <em class="ed-accent">{signin.session_absolute_ttl_hr}h</em>
+              {#if signin.session_idle_ttl_min > 0}
+                or <em class="ed-accent">{signin.session_idle_ttl_min}min</em> of inactivity, whichever comes first.
+              {:else}
+                regardless of activity.
+              {/if}
+              Each user may hold at most
+              <em class="ed-accent">{signin.session_max_per_user > 0 ? signin.session_max_per_user : 'unlimited'}</em>
+              concurrent sessions{#if signin.session_max_per_user > 0} — the oldest get evicted on new sign-in{/if}.
+              Revoked + expired rows are hard-deleted after 30 days.
+            </div>
 
-          <div class="auth-toggles">
-            {#each [
-              { label: 'Require 2FA for admin role', hint: 'Admin users must enrol TOTP. Block sign-in until then.' },
-              { label: 'Allow local password sign-in', hint: 'If off, only OIDC/OAuth2/SAML/LDAP providers work.' },
-              { label: 'Auto-create accounts on first SSO sign-in', hint: 'Lands new users in the per-provider default role.' },
-              { label: 'Allow self-registration', hint: 'A "create account" link on the sign-in page.' },
-            ] as t}
+            <div class="auth-policy-grid">
+              <Field label="Idle timeout (min)" hint="Revoke after N minutes without a refresh. 0 = no idle expiry.">
+                <input
+                  type="number"
+                  class="dm-input acc-input-mono"
+                  min="0"
+                  max="1440"
+                  value={signin.session_idle_ttl_min}
+                  oninput={(e) => setSigninField('session_idle_ttl_min', parseInt((e.target as HTMLInputElement).value) || 0)}
+                />
+              </Field>
+              <Field label="Absolute lifetime (h)" hint="Hard cap on a single session before re-auth.">
+                <input
+                  type="number"
+                  class="dm-input acc-input-mono"
+                  min="1"
+                  max="720"
+                  value={signin.session_absolute_ttl_hr}
+                  oninput={(e) => setSigninField('session_absolute_ttl_hr', parseInt((e.target as HTMLInputElement).value) || 1)}
+                />
+              </Field>
+              <Field label="Remember-me (days)" hint="How long a 'stay signed in' session lives.">
+                <input
+                  type="number"
+                  class="dm-input acc-input-mono"
+                  min="0"
+                  max="365"
+                  value={signin.session_remember_me_days}
+                  oninput={(e) => setSigninField('session_remember_me_days', parseInt((e.target as HTMLInputElement).value) || 0)}
+                />
+              </Field>
+              <Field label="Max sessions per user" hint="0 = unlimited. Oldest by last-seen gets evicted first.">
+                <input
+                  type="number"
+                  class="dm-input acc-input-mono"
+                  min="0"
+                  max="200"
+                  value={signin.session_max_per_user}
+                  oninput={(e) => setSigninField('session_max_per_user', parseInt((e.target as HTMLInputElement).value) || 0)}
+                />
+              </Field>
+            </div>
+
+            <div class="auth-toggles">
               <label class="auth-toggle">
-                <span class="auth-toggle-track">
-                  <span class="auth-toggle-knob"></span>
-                </span>
+                <input
+                  type="checkbox"
+                  class="auth-toggle-checkbox"
+                  checked={signin.require_tfa_for_admin}
+                  onchange={(e) => setSigninField('require_tfa_for_admin', (e.target as HTMLInputElement).checked)}
+                />
                 <div class="auth-toggle-text">
-                  <div class="auth-toggle-label">{t.label}</div>
-                  <div class="auth-toggle-hint">{t.hint}</div>
+                  <div class="auth-toggle-label">Require 2FA for admin role</div>
+                  <div class="auth-toggle-hint">Admin users must enrol TOTP. Block sign-in until then.</div>
                 </div>
               </label>
-            {/each}
+              <label class="auth-toggle">
+                <input
+                  type="checkbox"
+                  class="auth-toggle-checkbox"
+                  checked={signin.allow_local_password}
+                  onchange={(e) => setSigninField('allow_local_password', (e.target as HTMLInputElement).checked)}
+                />
+                <div class="auth-toggle-text">
+                  <div class="auth-toggle-label">Allow local password sign-in</div>
+                  <div class="auth-toggle-hint">If off, only OIDC/OAuth2/SAML/LDAP providers work.</div>
+                </div>
+              </label>
+              <label class="auth-toggle">
+                <input
+                  type="checkbox"
+                  class="auth-toggle-checkbox"
+                  checked={signin.auto_create_on_sso}
+                  onchange={(e) => setSigninField('auto_create_on_sso', (e.target as HTMLInputElement).checked)}
+                />
+                <div class="auth-toggle-text">
+                  <div class="auth-toggle-label">Auto-create accounts on first SSO sign-in</div>
+                  <div class="auth-toggle-hint">Lands new users in the per-provider default role.</div>
+                </div>
+              </label>
+              <label class="auth-toggle">
+                <input
+                  type="checkbox"
+                  class="auth-toggle-checkbox"
+                  checked={signin.allow_self_register}
+                  onchange={(e) => setSigninField('allow_self_register', (e.target as HTMLInputElement).checked)}
+                />
+                <div class="auth-toggle-text">
+                  <div class="auth-toggle-label">Allow self-registration</div>
+                  <div class="auth-toggle-hint">A "create account" link on the sign-in page.</div>
+                </div>
+              </label>
+            </div>
+
+            {#if signinDirty}
+              <div class="auth-policy-actions">
+                <button
+                  type="button"
+                  class="dm-btn dm-btn-ghost dm-btn-sm"
+                  onclick={loadSignin}
+                  disabled={signinSaving}
+                >
+                  Discard
+                </button>
+                <button
+                  type="button"
+                  class="dm-btn dm-btn-primary dm-btn-sm"
+                  onclick={saveSignin}
+                  disabled={signinSaving}
+                >
+                  {signinSaving ? 'Saving…' : 'Save settings'}
+                </button>
+              </div>
+            {/if}
           </div>
-        </div>
+        {:else}
+          <Skeleton width="100%" height="12rem" />
+        {/if}
       </section>
     {/if}
   </section>
@@ -679,7 +808,7 @@
     justify-content: center;
     border: 1px solid var(--border-subtle);
     border-radius: 4px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     flex-shrink: 0;
   }
   .auth-provider-text { min-width: 0; }
@@ -802,7 +931,7 @@
   .auth-inline-code {
     font-family: var(--font-mono);
     font-size: 11px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     padding: 1px 5px;
     border-radius: 3px;
     border: 1px solid var(--border);
@@ -818,7 +947,7 @@
   .auth-policy-preview-text {
     padding: 10px 12px;
     border: 1px solid var(--border-subtle);
-    background: var(--bg);
+    background: var(--bg-elevated);
     border-radius: 4px;
     font-family: var(--font-mono);
     font-size: 12.5px;
@@ -886,26 +1015,15 @@
     display: flex;
     align-items: flex-start;
     gap: 12px;
-    cursor: not-allowed;
-    opacity: 0.65;
+    cursor: pointer;
   }
-  .auth-toggle-track {
-    width: 32px;
-    height: 18px;
-    background: var(--border-strong);
-    border-radius: 999px;
-    position: relative;
-    flex-shrink: 0;
-    margin-top: 2px;
-  }
-  .auth-toggle-knob {
-    position: absolute;
-    top: 2px;
-    left: 2px;
+  .auth-toggle-checkbox {
+    margin-top: 3px;
     width: 14px;
     height: 14px;
-    background: white;
-    border-radius: 999px;
+    accent-color: var(--color-brand-500);
+    flex-shrink: 0;
+    cursor: pointer;
   }
   .auth-toggle-text { flex: 1; min-width: 0; }
   .auth-toggle-label {

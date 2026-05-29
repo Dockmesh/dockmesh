@@ -404,7 +404,7 @@
   .rm-cond-word { color: var(--fg-subtle); }
   .rm-cond-select {
     padding: 4px 8px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
     border-radius: 3px;
     color: var(--fg);
@@ -421,7 +421,7 @@
   .rm-cond-num {
     width: 80px;
     padding: 4px 8px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
     border-radius: 3px;
     color: var(--fg);

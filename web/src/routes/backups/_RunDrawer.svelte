@@ -5,9 +5,10 @@
   // download). Per-run log streaming isn't backed yet (BackupRun has
   // status + error but no log array) — placeholder block surfaces what
   // we have and notes the rest is a follow-up.
-  import { type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
+  import { api, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
   import { Eyebrow } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyWithToast } from '$lib/clipboard';
   import {
     X, Copy, RefreshCw, ArrowRight, AlertTriangle, Lock, Undo2, ExternalLink
   } from 'lucide-svelte';
@@ -22,6 +23,26 @@
   let { run, job, target, onclose, onrestore }: Props = $props();
 
   let restoreOpen = $state(false);
+  let logEntries = $state<Array<{ id: number; ts: string; stream: string; line: string }>>([]);
+  let logLoaded = $state(false);
+  let logTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function loadLog() {
+    try {
+      logEntries = await api.backups.runLog(run.id);
+      logLoaded = true;
+    } catch {
+      // empty log is fine
+    }
+    if (run.status === 'running') {
+      logTimer = setTimeout(loadLog, 2000);
+    }
+  }
+  $effect(() => {
+    run.id;
+    loadLog();
+    return () => { if (logTimer) clearTimeout(logTimer); };
+  });
 
   function fmtBytes(n: number): string {
     if (!n) return '—';
@@ -71,10 +92,7 @@
       run.encrypted ? 'Encrypted: yes (age)' : '',
       run.error ? `Error: ${run.error}` : ''
     ].filter(Boolean).join('\n');
-    navigator.clipboard.writeText(lines).then(
-      () => toast.success('Copied'),
-      () => toast.error('Copy failed')
-    );
+    void copyWithToast(lines, 'Copied');
   }
 
   const sp = $derived(statusPill(run.status));
@@ -180,16 +198,16 @@
       </dl>
     </section>
 
-    <!-- Logs (placeholder until backend records them) -->
     <section class="bk-drawer-section">
       <Eyebrow>Log</Eyebrow>
-      <div class="bk-drawer-log-empty">
-        <p class="bk-drawer-section-empty">
-          Per-run log capture isn't recorded by the backend yet — only status + error message survive the run.
-          <a href="#" class="bk-drawer-link" onclick={(e) => { e.preventDefault(); copyDetails(); }}>Copy run metadata</a>
-          for an audit trail.
-        </p>
-      </div>
+      {#if !logLoaded}
+        <p class="bk-drawer-section-empty">Loading…</p>
+      {:else if logEntries.length === 0}
+        <p class="bk-drawer-section-empty">No log lines recorded for this run.</p>
+      {:else}
+        <pre class="bk-drawer-log">{#each logEntries as e (e.id)}<span class="bk-drawer-log-line" data-stream={e.stream}><span class="bk-drawer-log-ts">{new Date(e.ts).toLocaleTimeString()}</span> {e.line}
+</span>{/each}</pre>
+      {/if}
     </section>
 
     <!-- Restore flow -->
@@ -373,6 +391,26 @@
   }
 
   .bk-drawer-section { display: flex; flex-direction: column; gap: 10px; }
+  .bk-drawer-log {
+    margin: 0;
+    padding: 10px 12px;
+    background: var(--terminal, #06090f);
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: #cbd5e1;
+    max-height: 260px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .bk-drawer-log-line { display: block; }
+  .bk-drawer-log-ts { color: #64748b; margin-right: 4px; }
+  .bk-drawer-log-line[data-stream="error"] { color: var(--color-danger-400); }
+  .bk-drawer-log-line[data-stream="warn"] { color: var(--color-warning-400); }
+  .bk-drawer-log-line[data-stream="hook_stderr"] { color: #fca5a5; }
   .bk-drawer-section-head {
     display: flex;
     justify-content: space-between;

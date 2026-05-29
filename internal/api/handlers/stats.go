@@ -18,13 +18,7 @@ import (
 // WSStats streams normalized container stats over a WebSocket.
 // Auth via ?ticket= query parameter (§15.8). Honours ?host= for remote agents.
 func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
-	ticket := r.URL.Query().Get("ticket")
-	if ticket == "" {
-		http.Error(w, "ticket required", http.StatusUnauthorized)
-		return
-	}
-	if _, err := h.Auth.ValidateWSTicket(ticket); err != nil {
-		http.Error(w, "invalid ticket", http.StatusUnauthorized)
+	if !h.requireWSTicketPerm(w, r, rbac.PermContainersView) {
 		return
 	}
 

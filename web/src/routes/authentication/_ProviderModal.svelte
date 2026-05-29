@@ -12,6 +12,7 @@
   } from '$lib/api';
   import { EditorialModal } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyWithToast } from '$lib/clipboard';
   import { ChevronLeft } from 'lucide-svelte';
   import {
     type ProviderKind,
@@ -254,10 +255,7 @@
   }
 
   function copyText(s: string) {
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(s);
-      toast.info('Copied');
-    }
+    copyWithToast(s, 'Copied');
   }
 
   // ── Validation ──────────────────────────────────────────────────────
@@ -705,7 +703,7 @@
     justify-content: center;
     border: 1px solid var(--border-subtle);
     border-radius: 4px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     flex-shrink: 0;
   }
   .pm-kind-text { display: flex; flex-direction: column; min-width: 0; }
@@ -752,7 +750,7 @@
     justify-content: center;
     border: 1px solid var(--border-subtle);
     border-radius: 4px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     flex-shrink: 0;
   }
   .pm-template-text { display: flex; flex-direction: column; min-width: 0; }

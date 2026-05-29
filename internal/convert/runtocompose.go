@@ -52,7 +52,7 @@ type service struct {
 
 // Run parses a `docker run …` command line.
 func Run(cmdline string) (*Result, error) {
-	args, err := shellwords.Parse(cmdline)
+	args, err := shellwords.Parse(normalizeShellInput(cmdline))
 	if err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
 	}
@@ -245,6 +245,31 @@ func applyShort(s *service, warnings *[]string, flag, value string) {
 	default:
 		*warnings = append(*warnings, "unsupported flag: -"+flag)
 	}
+}
+
+// normalizeShellInput collapses shell-style line continuations and stray
+// whitespace so copy-pasted multi-line docker commands tokenize the same
+// as their single-line equivalents. Handles both LF and CRLF line endings.
+//
+//	docker run \
+//	  --name foo \
+//	  nginx:alpine
+//
+// becomes `docker run --name foo nginx:alpine` before shellwords sees it.
+// Without this step shellwords leaves the trailing `\` as a literal token,
+// which the flag parser then mistakes for the image argument.
+func normalizeShellInput(s string) string {
+	// Normalise line endings first so the `\<newline>` collapse below
+	// works regardless of how the operator's clipboard encodes them.
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	// Shell rule: `\<newline>` is a line continuation — drop both chars.
+	s = strings.ReplaceAll(s, "\\\n", " ")
+	// Any surviving newlines (e.g. from a paste without backslashes) get
+	// turned into spaces too — a well-formed `docker run` command never
+	// embeds a real newline inside an argument, so flattening is safe.
+	s = strings.ReplaceAll(s, "\n", " ")
+	return strings.TrimSpace(s)
 }
 
 func imageToKey(image string) string {

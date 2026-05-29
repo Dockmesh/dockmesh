@@ -32,6 +32,9 @@ const (
 	ActionUserUpdate     = "user.update"
 	ActionUserDelete     = "user.delete"
 	ActionUserPassword   = "user.password"
+	ActionRoleCreate     = "role.create"
+	ActionRoleUpdate     = "role.update"
+	ActionRoleDelete     = "role.delete"
 	ActionStackCreate    = "stack.create"
 	ActionStackUpdate    = "stack.update"
 	ActionStackDelete    = "stack.delete"
@@ -42,8 +45,11 @@ const (
 	ActionContainerStop     = "container.stop"
 	ActionContainerKill     = "container.restart"
 	ActionContainerRm       = "container.remove"
-	ActionContainerUpdate   = "container.update"
-	ActionContainerRollback = "container.rollback"
+	ActionContainerUpdate    = "container.update"
+	ActionContainerRollback  = "container.rollback"
+	ActionContainerBrowse    = "container.browse"
+	ActionContainerReadFile  = "container.read_file"
+	ActionContainerWriteFile = "container.write_file"
 	ActionImagePull      = "image.pull"
 	ActionImageRemove    = "image.remove"
 	ActionImagePrune     = "image.prune"
@@ -271,7 +277,11 @@ func (s *Service) ListFiltered(ctx context.Context, f ListFilter) ([]Entry, erro
 		query += ` AND a.user_id = ?`
 		args = append(args, f.UserID)
 	}
-	query += ` ORDER BY a.id DESC LIMIT ?`
+	// Order by ts DESC so chronologically backdated rows (e.g. imported
+	// from another system, or test seed data) sort correctly. The hash
+	// chain is verified separately by id-order, so this is a display-
+	// only change and does not affect tamper-evidence semantics.
+	query += ` ORDER BY a.ts DESC, a.id DESC LIMIT ?`
 	args = append(args, f.Limit)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)

@@ -22,6 +22,10 @@ type Route struct {
 	Host      string    `json:"host"`
 	Upstream  string    `json:"upstream"`
 	TLSMode   string    `json:"tls_mode"` // auto | internal | none
+	// Enabled gates whether this route is included in the generated
+	// Caddyfile. Disabled routes stay in the table for editing but
+	// traffic stops flowing. Default true on new rows (migration 054).
+	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	// Cert metadata — populated by Service.EnrichWithCertInfo() for
@@ -90,7 +94,7 @@ func (s *Service) CreateRoute(ctx context.Context, host, upstream, tlsMode strin
 		return nil, err
 	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO proxy_routes (host, upstream, tls_mode) VALUES (?, ?, ?)`,
+		`INSERT INTO proxy_routes (host, upstream, tls_mode, enabled) VALUES (?, ?, ?, 1)`,
 		host, upstream, tlsMode)
 	if err != nil {
 		// SQLite unique constraint code is vendor-specific; the string
@@ -98,21 +102,36 @@ func (s *Service) CreateRoute(ctx context.Context, host, upstream, tlsMode strin
 		return nil, ErrDuplicateHost
 	}
 	id, _ := res.LastInsertId()
-	route := &Route{ID: id, Host: host, Upstream: upstream, TLSMode: tlsMode}
+	route := &Route{ID: id, Host: host, Upstream: upstream, TLSMode: tlsMode, Enabled: true}
 	if err := s.SyncFromDB(ctx); err != nil {
 		return route, err
 	}
 	return route, nil
 }
 
-// UpdateRoute replaces the upstream and TLS mode of an existing route.
-func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode string) error {
+// UpdateRoute replaces the upstream, TLS mode and enabled state of an
+// existing route. enabled=false keeps the row but excludes it from the
+// generated Caddyfile so traffic stops flowing without losing config.
+func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode string, enabled bool) error {
 	if err := validateTLSMode(tlsMode); err != nil {
 		return err
 	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE proxy_routes SET upstream = ?, tls_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		upstream, tlsMode, id)
+		`UPDATE proxy_routes SET upstream = ?, tls_mode = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		upstream, tlsMode, boolToInt(enabled), id)
+	if err != nil {
+		return err
+	}
+	return s.SyncFromDB(ctx)
+}
+
+// SetRouteEnabled toggles only the enabled flag — used by the row-level
+// disable/enable toggle in the UI so callers don't have to round-trip
+// upstream + tls_mode unchanged.
+func (s *Service) SetRouteEnabled(ctx context.Context, id int64, enabled bool) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE proxy_routes SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		boolToInt(enabled), id)
 	if err != nil {
 		return err
 	}
@@ -129,7 +148,7 @@ func (s *Service) DeleteRoute(ctx context.Context, id int64) error {
 
 func (s *Service) listRoutes(ctx context.Context) ([]Route, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, host, upstream, tls_mode, created_at, updated_at FROM proxy_routes ORDER BY host`)
+		`SELECT id, host, upstream, tls_mode, enabled, created_at, updated_at FROM proxy_routes ORDER BY host`)
 	if err != nil {
 		return nil, err
 	}
@@ -137,12 +156,21 @@ func (s *Service) listRoutes(ctx context.Context) ([]Route, error) {
 	out := []Route{}
 	for rows.Next() {
 		var r Route
-		if err := rows.Scan(&r.ID, &r.Host, &r.Upstream, &r.TLSMode, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		var enabledInt int
+		if err := rows.Scan(&r.ID, &r.Host, &r.Upstream, &r.TLSMode, &enabledInt, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
+		r.Enabled = enabledInt != 0
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func validateTLSMode(m string) error {

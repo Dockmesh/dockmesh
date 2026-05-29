@@ -720,7 +720,7 @@
   .env-inline-code {
     font-family: var(--font-mono);
     font-size: 11.5px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     padding: 1px 5px;
     border-radius: 3px;
     border: 1px solid var(--border-subtle);
@@ -953,7 +953,7 @@
   }
   .env-row:first-child { border-top: 0; }
   .env-row-head {
-    background: var(--bg);
+    background: var(--surface);
     font-family: var(--font-mono);
     font-size: 10.5px;
     letter-spacing: 0.06em;
@@ -990,7 +990,7 @@
     font-size: 11.5px;
     color: var(--fg-muted);
     padding: 3px 7px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
     border-radius: 3px;
     overflow: hidden;

@@ -25,6 +25,7 @@
     EditorialPage, Eyebrow, Field, EditorialModal,
   } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import {
     ShieldCheck, ShieldOff, Copy, Trash2, Terminal, User as UserIcon,
@@ -306,10 +307,7 @@
   }
 
   function copyText(s: string) {
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(s);
-      toast.info('Copied');
-    }
+    copyWithToast(s, 'Copied');
   }
 
   function initials(name: string): string {
@@ -1144,7 +1142,7 @@
     font-size: 12.5px;
     text-align: center;
     user-select: all;
-    background: var(--bg);
+    background: var(--bg-elevated);
   }
 
   /* ── Misc ───────────────────────────────────────────────────── */

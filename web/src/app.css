@@ -177,6 +177,24 @@ body {
    Utility components
    ---------------------------------------------------------------------------*/
 @layer components {
+  /* ───────── Surface hierarchy — read this before adding new styles.
+   *
+   * --bg           page canvas (slate-950). NEVER use for elements;
+   *                only the html/body fill. Reserved as the floor so
+   *                cards sitting on --surface read as "raised".
+   * --bg-elevated  input slots + nested boxes inside cards/modals
+   *                (slate-900). One shade above the floor, signals
+   *                "this is an interactive slot inside a card".
+   * --surface      top-level card / modal surface. Use for any visible
+   *                container on a page (card row, panel, etc).
+   * --surface-hover hover state of --surface. Lighter still.
+   * --surface-active pressed / selected state of --surface.
+   *
+   * Rule of thumb: cards on the page use --surface; inputs/sub-boxes
+   * inside cards or modals use --bg-elevated. If you reach for --bg
+   * for an element background, you almost certainly want --surface.
+   * ───────── */
+
   /* Cards: sit on --surface, which is one step lighter than the
      --bg-elevated content area plus a thin border. Matches the marketing
      hero's subtle border-led hierarchy over the slate-900 content bg. */
@@ -488,31 +506,35 @@ body {
   .dm-pill-danger  { color: var(--color-danger-400);  border-color: color-mix(in srgb, var(--color-danger-500)  40%, var(--border)); }
   .dm-pill-neutral { color: var(--fg-subtle); }
 
-  /* Numeric count badge — square corners, mono, subtle. Used for tab
-     counts, filter-pill counts, "N items" indicators. Status uses the
-     round dm-pill family above; counts use this. See feedback memory:
-     count badges square, status pills round. */
+  /* Numeric count badge — square corners, mono, subtle, with a hairline
+     border. Used for tab counts, filter-pill counts, "N items"
+     indicators. Status uses the round dm-pill family above; counts use
+     this. Aligned with .ed-tab .count further down so any count badge
+     in the app renders identically regardless of which class it carries.
+     See feedback memory: count badges square, status pills round. */
   .ed-count {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     min-width: 18px;
-    padding: 1px 5px;
+    padding: 0 5px;
     font-family: var(--font-mono);
     font-size: 10.5px;
-    line-height: 1.4;
+    line-height: 1.5;
     color: var(--fg-subtle);
-    background: var(--surface-hover);
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 3px;
     letter-spacing: 0.04em;
   }
   /* Active variant — when the count belongs to the currently-selected
-     tab/pill, tint it with brand accent. */
+     tab/pill, tint the border with brand accent. Matches .ed-tab.active
+     .count below. */
   .ed-count.active,
   .active > .ed-count,
   [aria-selected="true"] > .ed-count {
     color: var(--accent-fg);
-    background: color-mix(in srgb, var(--color-brand-500) 16%, transparent);
+    border-color: color-mix(in srgb, var(--color-brand-500) 40%, var(--border));
   }
 
   /* Resource bar — thin, line-art. */
@@ -803,7 +825,7 @@ body {
   .yaml .y-num { color: var(--color-success-400); }
   .yaml .y-com { color: var(--fg-subtle); }
 
-  /* ── Login hero — page is mostly empty, watermark dramatic. */
+  /* ── Login shell — calm flat surface, form sits in a card. */
   .login-shell {
     position: relative;
     min-height: 100vh;
@@ -811,36 +833,7 @@ body {
     align-items: center;
     justify-content: center;
     background: var(--bg);
-    isolation: isolate;
   }
-  .login-shell::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background-image: radial-gradient(circle at 1px 1px, var(--mesh-color) 1px, transparent 0);
-    background-size: 22px 22px;
-    -webkit-mask-image: radial-gradient(ellipse 80% 65% at 50% 50%, #000 30%, transparent 80%);
-            mask-image: radial-gradient(ellipse 80% 65% at 50% 50%, #000 30%, transparent 80%);
-    z-index: 0;
-    pointer-events: none;
-  }
-  .login-watermark {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 0;
-    pointer-events: none;
-    font-family: var(--font-sans);
-    font-weight: 700;
-    font-size: 22vw;
-    line-height: 0.85;
-    color: var(--watermark-color);
-    letter-spacing: -0.04em;
-    user-select: none;
-  }
-
   /* Theme toggle — round, line-art. Same component used in topbar + login. */
   .theme-toggle {
     border: 1px solid var(--border-strong);

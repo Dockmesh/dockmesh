@@ -91,6 +91,21 @@ type Host interface {
 	// a database before the tar. Works on both local and remote hosts.
 	ContainerExec(ctx context.Context, containerID string, cmd []string) (stdout []byte, exitCode int, err error)
 
+	// ContainerBrowseEntries lists one directory level inside a running
+	// or stopped container by tar-streaming the path out and parsing
+	// depth-1 entries. Path must be absolute. Works on scratch images.
+	ContainerBrowseEntries(ctx context.Context, id, p string) ([]VolumeEntry, error)
+	// ContainerReadFile copies a single file out of the container,
+	// returns up to maxBytes plus a binary flag for the UI preview.
+	ContainerReadFile(ctx context.Context, id, p string, maxBytes int64) (*VolumeFileResult, error)
+	// ContainerDownloadFile streams a file's raw bytes out of the
+	// container — used by the Download button so large files bypass
+	// the JSON preview cap. Caller closes the returned ReadCloser.
+	ContainerDownloadFile(ctx context.Context, id, p string) (io.ReadCloser, string, int64, error)
+	// ContainerWriteFile uploads a file into the container at the
+	// given absolute path. Parent dir must exist; mode defaults to 0644.
+	ContainerWriteFile(ctx context.Context, id, p string, data []byte, mode int64) error
+
 	// Stack operations (slice 3.1.3). The handler reads the compose+env
 	// from the central server's filesystem once and passes the content
 	// to whichever host — local writes to a tmpdir + parses + runs;

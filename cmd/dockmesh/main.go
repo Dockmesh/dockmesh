@@ -62,6 +62,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/dockmesh/dockmesh/internal/telemetry"
 	"github.com/dockmesh/dockmesh/internal/templates"
+	"github.com/dockmesh/dockmesh/internal/invites"
 	"github.com/dockmesh/dockmesh/internal/updater"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"github.com/dockmesh/dockmesh/pkg/version"
@@ -415,6 +416,14 @@ func main() {
 	// DB-backed `proxy_enabled` setting outranks the env var default.
 	proxySvc := proxy.NewService(database, dockerCli, false)
 	updaterSvc := updater.NewService(dockerCli, database)
+	// Background image-update watcher: every 30 minutes asks each
+	// running container's registry for a fresher manifest. Result is
+	// surfaced via /api/v1/images/updates and as image_update_available
+	// on the container list. Local-host only — remote agents would need
+	// their own watcher; deferred.
+	updateWatcher := updater.NewWatcher(dockerCli, 30*time.Minute)
+	updateWatcher.Start(ctx)
+	defer updateWatcher.Stop()
 	oidcSvc := oidc.NewService(database, authSvc, secretsSvc, cfg.BaseURL)
 	samlSvc := saml.NewService(database, authSvc, secretsSvc, cfg.BaseURL)
 	ldapSvc := ldapauth.NewService(database, authSvc, secretsSvc)
@@ -535,6 +544,13 @@ func main() {
 	// are live-editable via the UI without a restart.
 	authSvc.SetSettings(settingsStore)
 
+	// Session hygiene: idle-revoke + hard-delete of dead rows. Runs
+	// hourly. Settings (idle TTL, retention) come from the SignInConfig
+	// store so admins can tune them via the Authentication page.
+	sessionCleanup := auth.NewSessionCleanup(database, settingsStore)
+	sessionCleanup.Start(ctx)
+	defer sessionCleanup.Stop()
+
 	// Self-update checker: polls GitHub Releases once a day to surface
 	// "Update available" banner in the UI. Admins can disable via the
 	// update_check_enabled setting (air-gapped installs).
@@ -580,8 +596,10 @@ func main() {
 
 	// Notification center backing store. Producers (gitDeploy, alerts,
 	// backups, …) call Emit so the bell-icon dropdown can render a
-	// durable timeline of platform events.
+	// durable timeline of platform events. Emit with empty UserID fans
+	// out across every user — the directory wiring below feeds that.
 	notifSvc := notifications.NewService(database)
+	notifSvc.SetUserDirectory(authSvc)
 
 	// Wire the registries service into every code path that pulls an
 	// image. Without this, compose deploys + the "update image" button
@@ -707,6 +725,12 @@ func main() {
 	// binary. User-created templates are untouched — SeedBuiltins
 	// only upserts rows where builtin=1.
 	templatesSvc := templates.New(database)
+	// Invite-link service for the Coolify-style "Invite user" flow.
+	// Generates one-time tokens an admin shares via Slack/email/etc.
+	// Cleanup goroutine deletes used + expired rows after 30 days.
+	invitesSvc := invites.New(database, cfg.BaseURL)
+	invitesSvc.Start(ctx)
+	defer invitesSvc.Stop()
 	if err := templatesSvc.SeedBuiltins(ctx); err != nil {
 		slog.Warn("stack templates seed", "err", err)
 	}
@@ -750,6 +774,17 @@ func main() {
 	}
 	migrationSvc.StartCleaner(ctx)
 	drainSvc := migration.NewDrainService(migrationSvc, database)
+
+	// Bell-icon producer wire-up. All services that emit notifications
+	// get the shared notifSvc here, after every dependency has been
+	// constructed. Producers tolerate nil — if we forgot to wire one,
+	// it just stays silent instead of crashing.
+	alertsSvc.SetNotifier(notifSvc)
+	backupSvc.SetNotifier(notifSvc)
+	updateWatcher.SetNotifier(notifSvc)
+	agentsSvc.SetNotifier(notifSvc)
+	selfUpdateChk.SetNotifier(notifSvc)
+	migrationSvc.SetNotifier(notifSvc)
 
 	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
 
@@ -890,6 +925,7 @@ func main() {
 		ScanStore:    scanStore,
 		Proxy:        proxySvc,
 		Updater:      updaterSvc,
+		UpdateWatcher: updateWatcher,
 		OIDC:         oidcSvc,
 		SAML:         samlSvc,
 		LDAP:         ldapSvc,
@@ -912,6 +948,7 @@ func main() {
 		Registries:   registriesSvc,
 		GitSource:    gitSourceSvc,
 		Templates:      templatesSvc,
+		Invites:        invitesSvc,
 		AuditRetention: auditRetention,
 		AuditWebhook:   auditWebhook,
 		AgentUpgrade:   agentUpgrade,

@@ -21,6 +21,7 @@
   import { Skeleton } from '$lib/components/ui';
   import { EditorialPage, Eyebrow, Field, EditorialModal } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyToClipboard } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import {
     Plus, Trash2, KeyRound, Copy, Search, AlertCircle,
@@ -175,21 +176,11 @@
 
   async function copyFreshToken() {
     if (!freshToken || !freshRevealed) return;
-    try {
-      if (typeof window !== 'undefined' && window.isSecureContext && navigator.clipboard) {
-        await navigator.clipboard.writeText(freshToken.value);
-      } else {
-        const ta = document.createElement('textarea');
-        ta.value = freshToken.value;
-        ta.style.position = 'fixed'; ta.style.top = '-1000px';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-      }
+    const ok = await copyToClipboard(freshToken.value);
+    if (ok) {
       freshCopied = true;
       setTimeout(() => (freshCopied = false), 1800);
-    } catch {
+    } else {
       toast.error('Copy failed', 'Select and copy the token manually');
     }
   }
@@ -610,7 +601,7 @@
     align-items: center;
     gap: 8px;
     padding: 10px 12px;
-    background: var(--bg);
+    background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 4px;
   }
@@ -769,7 +760,7 @@
   .tok-hint-code {
     font-family: var(--font-mono);
     font-size: 11px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     padding: 1px 5px;
     border-radius: 3px;
     border: 1px solid var(--border);

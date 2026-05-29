@@ -389,7 +389,7 @@
     padding: 14px 16px;
     border: 1px solid var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--bg-elevated);
   }
   .bk-detail-storage.warn { border-left: 3px solid var(--color-warning-500); }
   .bk-detail-storage-head {
@@ -472,7 +472,7 @@
     padding: 8px 12px;
     border: 1px solid var(--border-subtle);
     border-radius: 4px;
-    background: var(--bg);
+    background: var(--surface);
     text-decoration: none;
     color: var(--fg);
     transition: border-color 120ms, background 120ms;

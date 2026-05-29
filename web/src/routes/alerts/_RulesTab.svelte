@@ -462,7 +462,7 @@
   .rt-cond-word { color: var(--fg-subtle); }
   .rt-cond-chip {
     padding: 1px 6px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
     border-radius: 3px;
     color: var(--fg);
@@ -501,7 +501,7 @@
     align-items: center;
     gap: 4px;
     padding: 2px 6px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
     border-radius: 3px;
     font-size: 10.5px;

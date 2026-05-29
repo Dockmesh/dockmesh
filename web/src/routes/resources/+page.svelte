@@ -674,12 +674,14 @@
   // ===================================================================
   //  Loading orchestrator
   // ===================================================================
+  // Fetch all three lists in parallel so the Images / Volumes /
+  // Networks tab counters show real numbers from the first paint
+  // instead of "0" until each tab is clicked. Re-runs whenever the
+  // host selection changes (single-host vs. all-mode).
   async function loadAll() {
-    if (tab === 'images') await loadImages();
-    else if (tab === 'volumes') await loadVolumes();
-    else await loadNetworks();
+    await Promise.all([loadImages(), loadVolumes(), loadNetworks()]);
   }
-  $effect(() => { hosts.id; tab; loadAll(); });
+  $effect(() => { hosts.id; loadAll(); });
   $effect(() => autoRefresh(loadAll, 10_000));
 
   // ===================================================================
@@ -1577,7 +1579,7 @@
     border: 1px solid var(--border);
     border-radius: 4px;
     overflow: hidden;
-    background: var(--bg);
+    background: var(--bg-elevated);
   }
   .res-segctrl-btn {
     padding: 5px 10px;
@@ -1765,7 +1767,7 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     overflow: hidden;
-    background: var(--bg);
+    background: var(--bg-elevated);
   }
   @media (max-width: 720px) {
     .res-topology { grid-template-columns: 1fr; }

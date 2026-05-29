@@ -154,7 +154,7 @@
 <style>
   .oidc-help {
     padding: 8px 10px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 1px dashed var(--border);
     border-radius: 4px;
     font-family: var(--font-mono);

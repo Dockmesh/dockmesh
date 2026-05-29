@@ -17,6 +17,7 @@
   import { Skeleton } from '$lib/components/ui';
   import { Eyebrow } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import {
     Activity, Check, X, Download, RefreshCw, Copy, ArrowUpRight, Plus, Search,
@@ -338,10 +339,7 @@
     return `${Math.floor(s / 86400)}d ago`;
   }
   function copyText(s: string) {
-    navigator.clipboard.writeText(s).then(
-      () => toast.success('Copied'),
-      () => toast.error('Copy failed')
-    );
+    void copyWithToast(s, 'Copied');
   }
   function exportCSV() {
     const rows = ['Timestamp,Action,Target,User,Details']
@@ -840,7 +838,7 @@
     border: 1px solid var(--border);
     border-left: 3px solid var(--color-success-500);
     border-radius: 6px;
-    background: var(--bg);
+    background: var(--surface);
   }
   .audit-chain-broken {
     border-left-color: var(--color-danger-500);
@@ -1121,7 +1119,7 @@
     padding: 14px;
     border: 1px solid var(--border);
     border-radius: 6px;
-    background: var(--bg);
+    background: var(--bg-elevated);
   }
   .audit-pills {
     display: flex;
@@ -1176,7 +1174,7 @@
     padding: 0 28px 0 10px;
     border: 1px solid var(--border);
     border-radius: 4px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     color: var(--fg);
     font-family: var(--font-sans);
     font-size: 13px;
@@ -1256,7 +1254,7 @@
   .audit-day {
     border: 1px solid var(--border);
     border-radius: 6px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     overflow: hidden;
   }
   .audit-day-head {
@@ -1435,7 +1433,7 @@
     text-align: center;
     border: 1px solid var(--border);
     border-radius: 6px;
-    background: var(--bg);
+    background: var(--bg-elevated);
   }
   .audit-empty-title {
     margin-top: 10px;

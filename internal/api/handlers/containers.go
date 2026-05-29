@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
@@ -19,9 +20,11 @@ import (
 // to follow a .row indirection.
 type containerRow struct {
 	dtypes.Container
-	HostID       string `json:"host_id"`
-	HostName     string `json:"host_name"`
-	HealthStatus string `json:"health_status,omitempty"` // healthy / unhealthy / starting / "" (none)
+	HostID                string `json:"host_id"`
+	HostName              string `json:"host_name"`
+	HealthStatus          string `json:"health_status,omitempty"`        // healthy / unhealthy / starting / "" (none)
+	RestartCount          int    `json:"restart_count,omitempty"`         // populated via per-row inspect
+	ImageUpdateAvailable  bool   `json:"image_update_available,omitempty"` // from the update watcher cache
 }
 
 // parseHealthFromStatus extracts the healthcheck verdict from Docker's
@@ -45,6 +48,44 @@ func parseHealthFromStatus(status string) string {
 		return "unhealthy"
 	default:
 		return ""
+	}
+}
+
+// enrichRestartCounts populates RestartCount for each row by inspecting
+// containers in parallel against one host. Bound to maxInflight workers
+// so we don't flood the docker daemon when a host has many containers.
+// Inspect failures are swallowed (count stays 0); the list response is
+// best-effort and never blocks on enrichment errors.
+func enrichRestartCounts(ctx context.Context, target host.Host, rows []containerRow) {
+	const maxInflight = 8
+	sem := make(chan struct{}, maxInflight)
+	var wg sync.WaitGroup
+	for i := range rows {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			info, err := target.InspectContainer(ctx, rows[i].ID)
+			if err != nil {
+				return
+			}
+			rows[i].RestartCount = info.RestartCount
+		}(i)
+	}
+	wg.Wait()
+}
+
+// applyImageUpdateFlags sets ImageUpdateAvailable per row from the
+// background watcher cache. No-op when the watcher is absent.
+func (h *Handlers) applyImageUpdateFlags(rows []containerRow) {
+	if h.UpdateWatcher == nil {
+		return
+	}
+	for i := range rows {
+		if info, ok := h.UpdateWatcher.Get(rows[i].Image); ok && info.UpdateAvailable {
+			rows[i].ImageUpdateAvailable = true
+		}
 	}
 }
 
@@ -76,10 +117,12 @@ func (h *Handlers) ListContainers(w http.ResponseWriter, r *http.Request) {
 						HealthStatus: parseHealthFromStatus(c.Status),
 					}
 				}
+				enrichRestartCounts(ctx, hh, rows)
 				return rows, nil
 			})
 			// Flatten + filter, then re-pack into the FanOutResult shape.
 			res.Items = h.filterContainerRowsByRoleScope(r, res.Items)
+			h.applyImageUpdateFlags(res.Items)
 			writeJSON(w, http.StatusOK, res)
 			return
 		}
@@ -100,19 +143,18 @@ func (h *Handlers) ListContainers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	list = h.filterContainersByRoleScope(r, target.ID(), list)
-	// Enrich each row with the parsed health status so the frontend
-	// doesn't need its own regex on the Docker Status string. The
-	// embedded dtypes.Container marshals flat, so adding a sibling
-	// JSON field is non-breaking for existing single-host callers.
-	enriched := make([]struct {
-		dtypes.Container
-		HealthStatus string `json:"health_status,omitempty"`
-	}, len(list))
+	rows := make([]containerRow, len(list))
 	for i, c := range list {
-		enriched[i].Container = c
-		enriched[i].HealthStatus = parseHealthFromStatus(c.Status)
+		rows[i] = containerRow{
+			Container:    c,
+			HostID:       target.ID(),
+			HostName:     target.Name(),
+			HealthStatus: parseHealthFromStatus(c.Status),
+		}
 	}
-	writeJSON(w, http.StatusOK, enriched)
+	enrichRestartCounts(r.Context(), target, rows)
+	h.applyImageUpdateFlags(rows)
+	writeJSON(w, http.StatusOK, rows)
 }
 
 func (h *Handlers) InspectContainer(w http.ResponseWriter, r *http.Request) {

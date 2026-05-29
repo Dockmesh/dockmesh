@@ -62,6 +62,11 @@ type Claims struct {
 	UserID    string   `json:"uid"`
 	Role      string   `json:"role,omitempty"`
 	ScopeTags []string `json:"scope,omitempty"` // P.11.3: host-tag scope; empty = all hosts
+	// Perm binds a WS ticket to one specific permission (e.g.
+	// "containers.exec"). Absent on access tokens. The WS handler
+	// verifies Perm matches the endpoint's required permission so a
+	// logs-ticket can't be reused on /ws/exec.
+	Perm string `json:"perm,omitempty"`
 	jwt.RegisteredClaims
 }
 

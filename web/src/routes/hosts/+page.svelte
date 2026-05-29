@@ -17,6 +17,7 @@
   import { Skeleton, EmptyState } from '$lib/components/ui';
   import { Eyebrow } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import {
     Server, Plus, RefreshCw, Search, MoreVertical,
@@ -207,14 +208,12 @@
     openMenu = null;
   }
 
-  async function copyEnrollURL(r: Row) {
-    if (typeof navigator === 'undefined' || !navigator.clipboard) return;
+  async function copyEnrollURL(_r: Row) {
     // The original install URL isn't stored after creation; provide a
     // best-effort URL pointing at the agent endpoint. For a real reissue,
     // use the rotate-token action.
     const url = `${window.location.origin}/api/v1/agents/enroll`;
-    try { await navigator.clipboard.writeText(url); toast.info('Enrollment URL copied'); }
-    catch { toast.error('Copy failed'); }
+    await copyWithToast(url, 'Enrollment URL copied');
     openMenu = null;
   }
 
@@ -944,7 +943,7 @@
     padding: 10px 12px;
     border: 1px solid var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--surface);
   }
   .ed-host-tags-input {
     flex: 1 1 140px;

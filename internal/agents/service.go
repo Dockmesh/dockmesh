@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
@@ -72,10 +73,15 @@ type Service struct {
 	pki       *pki.Manager
 	publicURL string // public HTTPS URL of the main dockmesh server
 	agentURL  string // wss URL of the mTLS agent listener (e.g. wss://host:8443)
+	notifs    *notifications.Service
 
 	mu        sync.RWMutex
 	connected map[string]*ConnectedAgent // keyed by agent id
 }
+
+// SetNotifier wires in the bell-icon notification center so agent
+// offline transitions emit an entry. Optional — nil disables.
+func (s *Service) SetNotifier(n *notifications.Service) { s.notifs = n }
 
 // ConnectedAgent is held in memory while the agent's WS is open. HTTP
 // handlers ask the remote agent to do things via Request() (one-shot
@@ -445,6 +451,15 @@ func (s *Service) markOffline(ag *ConnectedAgent) {
 	// Clear online_since on offline so the next online transition starts
 	// the uptime clock fresh. Compliance + UX both want this behaviour.
 	_, _ = s.db.Exec(`UPDATE agents SET status = 'offline', online_since = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, ag.ID)
+	if s.notifs != nil {
+		_, _ = s.notifs.Emit(context.Background(), notifications.EmitInput{
+			Kind:     notifications.KindAgentOffline,
+			Severity: notifications.SevWarning,
+			Title:    "Agent offline: " + ag.Name,
+			Body:     "Heartbeat lost — checking again in a few seconds",
+			Link:     "/hosts/" + ag.ID,
+		})
+	}
 }
 
 func (s *Service) touchHeartbeat(ctx context.Context, id string) {

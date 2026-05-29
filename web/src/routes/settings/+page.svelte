@@ -5,6 +5,7 @@
   import { api, ApiError } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { EditorialPage, Eyebrow, Field } from '$lib/components/editorial';
   import { Skeleton } from '$lib/components/ui';
@@ -126,14 +127,7 @@
   }
 
   async function copyUpgradeCmd(cmd: string) {
-    try {
-      if (typeof navigator !== 'undefined' && navigator.clipboard) {
-        await navigator.clipboard.writeText(cmd);
-        toast.success('Command copied');
-      }
-    } catch {
-      toast.error('Copy failed', 'Select the command manually and Ctrl+C');
-    }
+    await copyWithToast(cmd, 'Command copied');
   }
 
   function fmtUptime(secs?: number): string {
@@ -463,7 +457,7 @@
   .set-inline-code {
     font-family: var(--font-mono);
     font-size: 11.5px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     padding: 1px 5px;
     border-radius: 3px;
     border: 1px solid var(--border-subtle);
@@ -565,7 +559,7 @@
   .set-upgrade-cmd {
     flex: 1;
     padding: 7px 10px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: 4px;
     font-family: var(--font-mono);
@@ -698,7 +692,7 @@
     height: 36px;
     border-radius: 6px;
     border: 1px solid var(--border-subtle);
-    background: var(--bg);
+    background: var(--bg-elevated);
     display: inline-flex;
     align-items: center;
     justify-content: center;

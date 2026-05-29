@@ -70,6 +70,15 @@ type stackListEntry struct {
 	*stacks.Stack
 	Deployment *stacks.Deployment `json:"deployment,omitempty"`
 	Status     string             `json:"status,omitempty"`
+	// Containers counts running containers carrying the
+	// `com.docker.compose.project=<name>` label on the LOCAL docker
+	// daemon. Stacks deployed via a remote agent leave this at 0 until
+	// a multi-host stats batch lands (deferred). UI shows "—" for 0.
+	Containers int `json:"containers,omitempty"`
+	// HasVolumes is true when the compose.yaml declares a top-level
+	// `volumes:` key. Used by the host-detail editorial UI to mark
+	// stacks with persistent state.
+	HasVolumes bool `json:"has_volumes,omitempty"`
 }
 
 func (h *Handlers) ListStacks(w http.ResponseWriter, r *http.Request) {
@@ -81,6 +90,22 @@ func (h *Handlers) ListStacks(w http.ResponseWriter, r *http.Request) {
 		deps, err = h.Deployments.All(r.Context())
 		if err != nil {
 			slog.Warn("list stacks: deployment query", "err", err)
+		}
+	}
+	// One ContainerList → map of compose-project → running count. Cheap
+	// vs N+1 inspect calls. Local-host only for now; stacks deployed
+	// only on a remote agent stay at 0 until we batch across hosts.
+	containerCounts := map[string]int{}
+	if h.Docker != nil {
+		if running, err := h.Docker.Raw().ContainerList(r.Context(), dtypes.ContainerListOptions{All: false}); err == nil {
+			for _, c := range running {
+				if c.Labels == nil {
+					continue
+				}
+				if proj := c.Labels["com.docker.compose.project"]; proj != "" {
+					containerCounts[proj]++
+				}
+			}
 		}
 	}
 	// Resolve host names for each deployment.
@@ -114,9 +139,11 @@ func (h *Handlers) ListStacks(w http.ResponseWriter, r *http.Request) {
 			if detail.Status == "needs_recovery" {
 				entry.Status = "needs_recovery"
 			}
+			entry.HasVolumes = composeDeclaresVolumes(detail.Compose)
 		} else if errors.Is(err, stacks.ErrNotFound) {
 			entry.Status = "needs_recovery"
 		}
+		entry.Containers = containerCounts[s.Name]
 		out = append(out, entry)
 	}
 	// Surface ghost deployments — a deployment row whose compose file
@@ -1064,6 +1091,30 @@ func (h *Handlers) deleteStackFromAgent(ctx context.Context, hostID, name string
 func mustJSON(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+// composeDeclaresVolumes is a cheap pre-parse check for a top-level
+// `volumes:` key in a compose YAML. We don't need the full parser for
+// the list-page summary indicator — a line-scan that ignores indented
+// children + comments catches the common case. Misses creative
+// formatting (multi-doc YAML, etc.) but the worst that happens is the
+// indicator doesn't render — never a wrong-positive.
+func composeDeclaresVolumes(compose string) bool {
+	for _, line := range strings.Split(compose, "\n") {
+		// Skip comments + blanks.
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		// Top-level keys have no leading whitespace.
+		if line != trimmed {
+			continue
+		}
+		if strings.HasPrefix(line, "volumes:") {
+			return true
+		}
+	}
+	return false
 }
 
 func writeStackError(w http.ResponseWriter, err error) {

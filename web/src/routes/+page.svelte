@@ -567,46 +567,48 @@
           {/if}
         </div>
       {:else}
-        <div class="dm-card dash-stack-list">
-          {#each filteredStacks as s (s.name)}
-            <EdRow
-              status={rowStatus(s.state)}
-              href={`/stacks/${s.name}`}
-              columns="6px minmax(0, 1.6fr) 1.4fr 0.8fr auto"
-            >
-              <span class="dash-stack-name">
-                <span class="dash-stack-id">{s.name}</span>
-                <span class="dash-stack-meta">
-                  {s.services.length} service{s.services.length === 1 ? '' : 's'}
+        <div class="dash-stack-wrap">
+          <div class="dm-card dash-stack-list">
+            {#each filteredStacks as s (s.name)}
+              <EdRow
+                status={rowStatus(s.state)}
+                href={`/stacks/${s.name}`}
+                columns="6px minmax(0, 1.6fr) 1.4fr 0.8fr auto"
+              >
+                <span class="dash-stack-name">
+                  <span class="dash-stack-id">{s.name}</span>
+                  <span class="dash-stack-meta">
+                    {s.services.length} service{s.services.length === 1 ? '' : 's'}
+                  </span>
                 </span>
-              </span>
-              <span class="dash-stack-services">
-                {#if s.services.length > 0}
-                  {#each s.services.slice(0, 4) as svc (svc.name)}
-                    <span class="dash-stack-service">{svc.name}</span>
-                  {/each}
-                  {#if s.services.length > 4}
-                    <span class="dash-stack-service-more">+{s.services.length - 4}</span>
+                <span class="dash-stack-services">
+                  {#if s.services.length > 0}
+                    {#each s.services.slice(0, 4) as svc (svc.name)}
+                      <span class="dash-stack-service">{svc.name}</span>
+                    {/each}
+                    {#if s.services.length > 4}
+                      <span class="dash-stack-service-more">+{s.services.length - 4}</span>
+                    {/if}
+                  {:else}
+                    <span class="dash-stack-service-empty">no containers</span>
                   {/if}
-                {:else}
-                  <span class="dash-stack-service-empty">no containers</span>
-                {/if}
-              </span>
-              <StatusPill status={pillStatus(s.state)} />
-              <span class="dash-stack-arrow" aria-hidden="true">
-                <ArrowRight size={13} strokeWidth={1.5} />
-              </span>
-            </EdRow>
-          {/each}
-        </div>
-
-        {#if hiddenStackCount > 0}
-          <div class="dash-overflow">
-            <a href="/stacks">
-              +{hiddenStackCount} more — view all on the Stacks page →
-            </a>
+                </span>
+                <StatusPill status={pillStatus(s.state)} />
+                <span class="dash-stack-arrow" aria-hidden="true">
+                  <ArrowRight size={13} strokeWidth={1.5} />
+                </span>
+              </EdRow>
+            {/each}
           </div>
-        {/if}
+
+          {#if hiddenStackCount > 0}
+            <div class="dash-overflow">
+              <a href="/stacks">
+                +{hiddenStackCount} more — view all on the Stacks page →
+              </a>
+            </div>
+          {/if}
+        </div>
       {/if}
     </div>
 
@@ -934,6 +936,16 @@
     font-size: 13px;
     line-height: 1.6;
     max-width: 60ch;
+  }
+  /* Wrapper exists so the stacks list + "+N more" link are a SINGLE
+     subgrid child of .dash-block. Without it, both children get
+     auto-placed into the same content row and overlap — the overflow
+     div then steals pointer events from the rows underneath. */
+  .dash-stack-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
   }
   .dash-stack-list { overflow: hidden; }
 

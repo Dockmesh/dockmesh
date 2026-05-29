@@ -10,6 +10,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/google/uuid"
 )
@@ -23,10 +24,15 @@ type Service struct {
 	stacks      *stacks.Manager
 	deployments *stacks.DeploymentStore
 	db          *sql.DB
+	notifs      *notifications.Service
 
 	mu     sync.Mutex
 	active map[string]context.CancelFunc // migration ID → cancel
 }
+
+// SetNotifier wires in the bell-icon notification center so each
+// finished migration emits a success/failure notification.
+func (s *Service) SetNotifier(n *notifications.Service) { s.notifs = n }
 
 func NewService(db *sql.DB, hr *host.Registry, sm *stacks.Manager, ds *stacks.DeploymentStore) *Service {
 	return &Service{
@@ -160,12 +166,30 @@ func (s *Service) run(ctx context.Context, migrationID string) {
 			if p.status == StatusStarting || p.status == StatusPostRestore || p.status == StatusHealthCheck {
 				s.rollback(context.Background(), m)
 			}
+			if s.notifs != nil {
+				_, _ = s.notifs.Emit(context.Background(), notifications.EmitInput{
+					Kind:     notifications.KindMigrationFail,
+					Severity: notifications.SevError,
+					Title:    "Stack migration failed: " + m.StackName,
+					Body:     "Phase " + p.status + ": " + err.Error(),
+					Link:     "/migrations",
+				})
+			}
 			return
 		}
 	}
 
 	_ = s.store.UpdateStatus(ctx, m.ID, StatusCompleted, "done", "")
 	slog.Info("migration completed", "id", m.ID, "stack", m.StackName)
+	if s.notifs != nil {
+		_, _ = s.notifs.Emit(context.Background(), notifications.EmitInput{
+			Kind:     notifications.KindMigrationOK,
+			Severity: notifications.SevSuccess,
+			Title:    "Stack migrated: " + m.StackName,
+			Body:     "Moved from " + m.SourceHostID + " to " + m.TargetHostID,
+			Link:     "/migrations",
+		})
+	}
 }
 
 // Phase stubs — each will be implemented in subsequent commits.

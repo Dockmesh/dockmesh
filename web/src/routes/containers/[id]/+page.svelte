@@ -8,10 +8,11 @@
   import '@xterm/xterm/css/xterm.css';
   import { Card, Badge, Button, Skeleton } from '$lib/components/ui';
   import { Eyebrow, StatusPill, EdMetric, Sparkline } from '$lib/components/editorial';
-  // Files-tab icon — mockup uses the "image" picture-frame icon
-  // (Icons.image in shell.jsx); lucide's Image is the closest match.
-  import { Image as FilesIcon, Search } from 'lucide-svelte';
+  // Files-tab icons. FilesIcon kept for the tab navigation chip;
+  // Folder/FileText/Link2 are used inside the file browser rows.
+  import { Image as FilesIcon, Search, Folder, File as FileIcon, Link2, Upload, ChevronRight, Save, X as XIcon, Pencil } from 'lucide-svelte';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
@@ -67,6 +68,279 @@
   let logFilter = $state<'all' | 'error' | 'warn' | 'info' | 'fatal'>('all');
   let logQuery = $state('');
   let inspectView = $state<'pretty' | 'raw'>('pretty');
+
+  // -------- Files tab state -------------------------------------------
+  // Browser through the container filesystem. Tar-stream parsing on
+  // the backend means this works even on scratch / distroless images.
+  type CtnFileEntry = {
+    name: string;
+    type: 'file' | 'dir' | 'symlink';
+    size: number;
+    mode: string;
+    mod_time: string;
+    link_dest?: string;
+  };
+  let filesPath = $state<string>('/');
+  let filesEntries = $state<CtnFileEntry[]>([]);
+  let filesLoading = $state(false);
+  let filesError = $state<string | null>(null);
+  let filesLoaded = $state(false); // track whether we've fetched at least once
+  // Preview pane state — `null` means "nothing selected".
+  let filesPreview = $state<{
+    path: string;
+    name: string;
+    content: string;         // decoded UTF-8 text (or "" for binary)
+    size: number;
+    truncated: boolean;
+    binary: boolean;
+  } | null>(null);
+  let filesPreviewLoading = $state(false);
+  let filesEditing = $state(false);
+  let filesEditValue = $state('');
+  let filesSaving = $state(false);
+
+  // Breadcrumb segments: ['', 'etc', 'nginx'] for "/etc/nginx".
+  const filesCrumbs = $derived.by(() => {
+    const segs = filesPath.split('/').filter(Boolean);
+    const acc: { label: string; path: string }[] = [{ label: '/', path: '/' }];
+    let cur = '';
+    for (const s of segs) {
+      cur += '/' + s;
+      acc.push({ label: s, path: cur });
+    }
+    return acc;
+  });
+
+  // Sort: dirs first (alphabetical), then symlinks, then files.
+  const filesSorted = $derived.by(() => {
+    const rank: Record<string, number> = { dir: 0, symlink: 1, file: 2 };
+    return [...filesEntries].sort((a, b) => {
+      const r = (rank[a.type] ?? 9) - (rank[b.type] ?? 9);
+      if (r !== 0) return r;
+      return a.name.localeCompare(b.name);
+    });
+  });
+
+  function joinPath(base: string, name: string): string {
+    if (base === '/' || base === '') return '/' + name;
+    return base.replace(/\/$/, '') + '/' + name;
+  }
+  function parentPath(p: string): string {
+    if (p === '/' || p === '') return '/';
+    const idx = p.lastIndexOf('/');
+    if (idx <= 0) return '/';
+    return p.slice(0, idx);
+  }
+
+  async function loadFiles(targetPath: string) {
+    filesLoading = true;
+    filesError = null;
+    try {
+      const entries = await api.containers.files.browse(id, targetPath, targetHost);
+      filesEntries = entries as CtnFileEntry[];
+      filesPath = targetPath;
+    } catch (e) {
+      filesError = e instanceof Error ? e.message : String(e);
+      filesEntries = [];
+    } finally {
+      // `filesLoaded` flips true on both success AND error so the auto-
+      // load $effect below doesn't loop on an empty directory or a
+      // permission denial.
+      filesLoaded = true;
+      filesLoading = false;
+    }
+  }
+
+  async function openEntry(entry: CtnFileEntry) {
+    if (entry.type === 'dir') {
+      await loadFiles(joinPath(filesPath, entry.name));
+      filesPreview = null;
+      filesEditing = false;
+      return;
+    }
+    if (entry.type === 'symlink') {
+      // Resolve symlinks pragmatically: absolute → as-is, relative →
+      // joined onto the current dir. We don't stat-follow; if the
+      // target is a dir the browse will succeed, otherwise we treat
+      // it like a regular file read.
+      const dest = entry.link_dest ?? '';
+      if (!dest) return;
+      const resolved = dest.startsWith('/') ? dest : joinPath(filesPath, dest);
+      try {
+        await loadFiles(resolved);
+        filesPreview = null;
+        filesEditing = false;
+        return;
+      } catch {
+        await openFilePreview(resolved, entry.name);
+        return;
+      }
+    }
+    await openFilePreview(joinPath(filesPath, entry.name), entry.name);
+  }
+
+  async function openFilePreview(fullPath: string, name: string) {
+    filesPreviewLoading = true;
+    filesEditing = false;
+    try {
+      const res = await api.containers.files.read(id, fullPath, targetHost);
+      // Backend ships content as base64 (Go []byte). Decode to UTF-8
+      // only when non-binary; binary preview shows a placeholder.
+      let text = '';
+      if (!res.binary) {
+        try {
+          text = decodeURIComponent(escape(atob(res.content || '')));
+        } catch {
+          text = atob(res.content || '');
+        }
+      }
+      filesPreview = {
+        path: fullPath,
+        name,
+        content: text,
+        size: res.size,
+        truncated: res.truncated,
+        binary: res.binary
+      };
+      filesEditValue = text;
+    } catch (e) {
+      filesError = e instanceof Error ? e.message : String(e);
+      filesPreview = null;
+    } finally {
+      filesPreviewLoading = false;
+    }
+  }
+
+  async function downloadCurrentPreview() {
+    if (!filesPreview) return;
+    try {
+      const blob = await api.containers.files.downloadBlob(id, filesPreview.path, targetHost);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filesPreview.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Download failed');
+    }
+  }
+
+  async function downloadEntry(entry: CtnFileEntry) {
+    const full = joinPath(filesPath, entry.name);
+    try {
+      const blob = await api.containers.files.downloadBlob(id, full, targetHost);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = entry.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Download failed');
+    }
+  }
+
+  async function saveEdit() {
+    if (!filesPreview) return;
+    filesSaving = true;
+    try {
+      // UTF-8 → base64. btoa requires latin-1; convert via TextEncoder.
+      const bytes = new TextEncoder().encode(filesEditValue);
+      let bin = '';
+      for (const b of bytes) bin += String.fromCharCode(b);
+      const b64 = btoa(bin);
+      await api.containers.files.write(id, filesPreview.path, b64, 0, targetHost);
+      filesPreview = {
+        ...filesPreview,
+        content: filesEditValue,
+        size: bytes.length,
+        truncated: false
+      };
+      filesEditing = false;
+      toast.success('File saved');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      filesSaving = false;
+    }
+  }
+
+  async function uploadFile(file: File) {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const arr = new Uint8Array(reader.result as ArrayBuffer);
+      let bin = '';
+      for (const b of arr) bin += String.fromCharCode(b);
+      const b64 = btoa(bin);
+      const dest = joinPath(filesPath, file.name);
+      try {
+        await api.containers.files.write(id, dest, b64, 0, targetHost);
+        toast.success(`Uploaded ${file.name}`);
+        await loadFiles(filesPath);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Upload failed');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function pickAndUpload() {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.onchange = () => {
+      if (inp.files && inp.files[0]) uploadFile(inp.files[0]);
+    };
+    inp.click();
+  }
+
+  function formatFileSize(n: number): string {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  }
+
+  function formatRelativeTime(iso: string): string {
+    if (!iso) return '';
+    const t = new Date(iso).getTime();
+    if (!t) return '';
+    const diff = Date.now() - t;
+    if (diff < 0) return new Date(iso).toLocaleString();
+    const sec = Math.floor(diff / 1000);
+    if (sec < 60) return `${sec}s ago`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr}h ago`;
+    const days = Math.floor(hr / 24);
+    if (days < 30) return `${days}d ago`;
+    return new Date(iso).toLocaleDateString();
+  }
+
+  // Auto-load the root listing when the Files tab is opened for the
+  // first time. Re-load when the targetHost changes — switching hosts
+  // would otherwise show stale data. Depends only on `filesLoaded` so
+  // an empty directory or a permission error doesn't trigger a loop.
+  $effect(() => {
+    if (tab !== 'files') return;
+    if (!filesLoaded && !filesLoading) {
+      loadFiles(filesPath);
+    }
+  });
+  $effect(() => {
+    // Reset on host switch — strip out cached state.
+    targetHost; // dep
+    filesLoaded = false;
+    filesEntries = [];
+    filesPreview = null;
+    filesEditing = false;
+    filesPath = '/';
+  });
 
   function logLevelOf(line: string): 'fatal' | 'error' | 'warn' | 'info' | 'debug' | '' {
     const l = line.toLowerCase();
@@ -349,7 +623,7 @@
 
   async function openLogsSocket() {
     try {
-      const { ticket } = await api.ws.ticket();
+      const { ticket } = await api.ws.ticket('containers.logs');
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const hostQs = isRemote ? `&host=${encodeURIComponent(targetHost)}` : '';
       ws = new WebSocket(`${proto}//${location.host}/api/v1/ws/logs/${id}?ticket=${ticket}&tail=200${hostQs}`);
@@ -408,7 +682,7 @@
 
   async function openStatsSocket() {
     try {
-      const { ticket } = await api.ws.ticket();
+      const { ticket } = await api.ws.ticket('containers.view');
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const hostQs = isRemote ? `&host=${encodeURIComponent(targetHost)}` : '';
       statsWs = new WebSocket(`${proto}//${location.host}/api/v1/ws/stats/${id}?ticket=${ticket}${hostQs}`);
@@ -480,7 +754,7 @@
     fitAddon.fit();
 
     try {
-      const { ticket } = await api.ws.ticket();
+      const { ticket } = await api.ws.ticket('containers.exec');
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const cmd = execShell === 'bash' ? '/bin/bash' : '/bin/sh';
       const hostQs = isRemote ? `&host=${encodeURIComponent(targetHost)}` : '';
@@ -801,7 +1075,7 @@
                   role="menuitem"
                   onclick={async () => {
                     moreOpen = false;
-                    try { await navigator.clipboard?.writeText(info.Id ?? id); toast.info('Copied container ID'); } catch {}
+                    void copyWithToast(info.Id ?? id, 'Copied container ID');
                   }}
                 >
                   <FileText size={12} strokeWidth={1.5} /> Copy ID
@@ -1663,7 +1937,7 @@
             type="button"
             class="dm-btn dm-btn-ghost dm-btn-xs"
             onclick={async () => {
-              try { await navigator.clipboard?.writeText(JSON.stringify(info, null, 2)); toast.info('Copied JSON'); } catch {}
+              void copyWithToast(JSON.stringify(info, null, 2), 'Copied JSON');
             }}
           >
             <FileText size={11} strokeWidth={1.5} /> Copy
@@ -1784,41 +2058,201 @@
   {:else if tab === 'files' && info}
     <div class="ctn-files-pane">
       <div class="ctn-files-bar">
-        <p class="ctn-files-blurb">
-          Read-only view of the container's writable layer plus volume mounts.
-          <em class="ed-accent">Diff</em> shows what changed since the image was pulled.
-        </p>
-        <div class="ctn-log-filters">
-          {#each ['all', 'added', 'modified', 'missing', 'volumes'] as f (f)}
-            <button type="button" class="ctn-log-filter" class:active={f === 'all'} disabled>
-              {f.charAt(0).toUpperCase() + f.slice(1)}<span class="ctn-log-filter-count">—</span>
-            </button>
+        <nav class="ctn-files-crumbs" aria-label="Path">
+          {#each filesCrumbs as crumb, i (crumb.path)}
+            {#if i > 0}
+              <ChevronRight size={12} strokeWidth={1.5} class="ctn-files-crumb-sep" />
+            {/if}
+            <button
+              type="button"
+              class="ctn-files-crumb"
+              class:active={crumb.path === filesPath}
+              onclick={() => loadFiles(crumb.path)}
+            >{crumb.label}</button>
           {/each}
+        </nav>
+        <div class="ctn-files-actions">
+          <button
+            type="button"
+            class="ctn-files-action"
+            onclick={pickAndUpload}
+            disabled={!canExec || isRemote}
+            title={isRemote ? 'Container files browse on remote hosts not yet implemented' : (!canExec ? 'Upload requires containers.exec' : 'Upload a file into this directory')}
+          >
+            <Upload size={13} strokeWidth={1.6} />
+            <span>Upload</span>
+          </button>
         </div>
       </div>
 
+      {#if filesError}
+        <div class="ctn-files-error">
+          <p>{filesError}</p>
+          <button type="button" class="ctn-files-action" onclick={() => loadFiles(filesPath)}>Retry</button>
+        </div>
+      {/if}
+
       <div class="ctn-files-table">
         <div class="ctn-files-head">
-          <span>diff</span>
-          <span>path</span>
+          <span>name</span>
           <span class="ctn-files-cell-right">size</span>
+          <span>mode</span>
           <span>modified</span>
           <span></span>
         </div>
-        <div class="ctn-files-pending">
-          <FilesIcon size={18} strokeWidth={1.5} class="ctn-files-icon" />
-          <p>
-            Filesystem diff isn't wired to a backend yet. Docker's
-            <code>/containers/{'{id}'}/changes</code> + <code>/archive</code> APIs are the source —
-            once that lands, this table will show added / modified / missing files plus volume
-            mounts with per-row View buttons.
-          </p>
-          <p class="ctn-files-detail">
-            For now, use <strong>Terminal</strong> with <code>ls</code> / <code>cat</code> or pull
-            files out of the host shell with <code>docker cp {id.slice(0, 12)}:/path .</code>
-          </p>
-        </div>
+        {#if filesLoading && !filesEntries.length}
+          <div class="ctn-files-pending">
+            <p>Loading {filesPath}…</p>
+          </div>
+        {:else if !filesEntries.length}
+          <div class="ctn-files-pending">
+            <FilesIcon size={18} strokeWidth={1.5} class="ctn-files-icon" />
+            <p>Empty directory.</p>
+          </div>
+        {:else}
+          {#if filesPath !== '/'}
+            <div
+              role="button"
+              tabindex="0"
+              class="ctn-files-row"
+              onclick={() => loadFiles(parentPath(filesPath))}
+              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); loadFiles(parentPath(filesPath)); } }}
+            >
+              <span class="ctn-files-name">
+                <Folder size={14} strokeWidth={1.6} class="ctn-files-row-icon" />
+                <span>..</span>
+              </span>
+              <span class="ctn-files-cell-right">—</span>
+              <span class="ctn-files-mode">—</span>
+              <span class="ctn-files-modified">parent</span>
+              <span></span>
+            </div>
+          {/if}
+          {#each filesSorted as entry (entry.name)}
+            <div
+              role="button"
+              tabindex="0"
+              class="ctn-files-row"
+              class:active={filesPreview?.path === joinPath(filesPath, entry.name)}
+              onclick={() => openEntry(entry)}
+              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEntry(entry); } }}
+            >
+              <span class="ctn-files-name">
+                {#if entry.type === 'dir'}
+                  <Folder size={14} strokeWidth={1.6} class="ctn-files-row-icon" />
+                {:else if entry.type === 'symlink'}
+                  <Link2 size={14} strokeWidth={1.6} class="ctn-files-row-icon" />
+                {:else}
+                  <FileIcon size={14} strokeWidth={1.6} class="ctn-files-row-icon" />
+                {/if}
+                <span class="ctn-files-name-text">{entry.name}</span>
+                {#if entry.type === 'symlink' && entry.link_dest}
+                  <span class="ctn-files-link-dest">→ {entry.link_dest}</span>
+                {/if}
+              </span>
+              <span class="ctn-files-cell-right">{entry.type === 'dir' ? '—' : formatFileSize(entry.size)}</span>
+              <span class="ctn-files-mode">{entry.mode}</span>
+              <span class="ctn-files-modified">{formatRelativeTime(entry.mod_time)}</span>
+              <span class="ctn-files-row-actions">
+                {#if entry.type === 'file'}
+                  <button
+                    type="button"
+                    class="ctn-files-row-action"
+                    onclick={(e) => { e.stopPropagation(); downloadEntry(entry); }}
+                    title="Download"
+                  >
+                    <Download size={13} strokeWidth={1.6} />
+                  </button>
+                {/if}
+              </span>
+            </div>
+          {/each}
+        {/if}
       </div>
+
+      {#if filesPreview}
+        <div class="ctn-files-preview">
+          <div class="ctn-files-preview-bar">
+            <div class="ctn-files-preview-meta">
+              <code class="ctn-files-preview-path">{filesPreview.path}</code>
+              <span class="ctn-files-preview-size">
+                {formatFileSize(filesPreview.size)}
+                {#if filesPreview.truncated}
+                  · truncated at 1 MiB
+                {/if}
+                {#if filesPreview.binary}
+                  · binary
+                {/if}
+              </span>
+            </div>
+            <div class="ctn-files-preview-actions">
+              {#if filesEditing}
+                <button
+                  type="button"
+                  class="ctn-files-action"
+                  onclick={() => { filesEditing = false; filesEditValue = filesPreview?.content ?? ''; }}
+                  disabled={filesSaving}
+                >
+                  <XIcon size={13} strokeWidth={1.6} />
+                  <span>Cancel</span>
+                </button>
+                <button
+                  type="button"
+                  class="ctn-files-action ctn-files-action-primary"
+                  onclick={saveEdit}
+                  disabled={filesSaving}
+                >
+                  <Save size={13} strokeWidth={1.6} />
+                  <span>{filesSaving ? 'Saving…' : 'Save'}</span>
+                </button>
+              {:else}
+                <button
+                  type="button"
+                  class="ctn-files-action"
+                  onclick={downloadCurrentPreview}
+                >
+                  <Download size={13} strokeWidth={1.6} />
+                  <span>Download</span>
+                </button>
+                {#if !filesPreview.binary && !filesPreview.truncated}
+                  <button
+                    type="button"
+                    class="ctn-files-action"
+                    onclick={() => { filesEditValue = filesPreview?.content ?? ''; filesEditing = true; }}
+                    disabled={!canExec || isRemote}
+                    title={isRemote ? 'Editing on remote hosts not yet implemented' : (!canExec ? 'Edit requires containers.exec' : 'Edit this file')}
+                  >
+                    <Pencil size={13} strokeWidth={1.6} />
+                    <span>Edit</span>
+                  </button>
+                {/if}
+              {/if}
+              <button
+                type="button"
+                class="ctn-files-action"
+                onclick={() => { filesPreview = null; filesEditing = false; }}
+              >
+                <XIcon size={13} strokeWidth={1.6} />
+              </button>
+            </div>
+          </div>
+          {#if filesPreviewLoading}
+            <div class="ctn-files-preview-body ctn-files-preview-loading">Loading…</div>
+          {:else if filesPreview.binary}
+            <div class="ctn-files-preview-body ctn-files-preview-binary">
+              Binary file — preview disabled. Use Download to fetch the raw bytes.
+            </div>
+          {:else if filesEditing}
+            <textarea
+              class="ctn-files-preview-edit"
+              bind:value={filesEditValue}
+              spellcheck="false"
+            ></textarea>
+          {:else}
+            <pre class="ctn-files-preview-body"><code>{filesPreview.content}</code></pre>
+          {/if}
+        </div>
+      {/if}
     </div>
   {/if}
 </section>
@@ -2050,7 +2484,7 @@
     margin: 0;
     padding: 10px 14px;
     border-top: 1px solid var(--border);
-    background: var(--bg);
+    background: var(--bg-elevated);
     color: var(--fg-muted);
     font-family: var(--font-mono);
     font-size: 11px;
@@ -2332,22 +2766,75 @@
     gap: 16px;
     flex-wrap: wrap;
   }
-  .ctn-files-blurb {
-    margin: 0;
-    color: var(--fg-muted);
-    font-size: 12.5px;
-    line-height: 1.55;
-    max-width: 60ch;
+  .ctn-files-crumbs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    font-family: var(--font-mono);
+    font-size: 12px;
   }
+  .ctn-files-crumb {
+    background: transparent;
+    border: 0;
+    padding: 4px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--fg-muted);
+    font: inherit;
+  }
+  .ctn-files-crumb:hover { color: var(--fg); background: var(--surface); }
+  .ctn-files-crumb.active { color: var(--fg); }
+  :global(.ctn-files-crumb-sep) { color: var(--fg-subtle); }
+
+  .ctn-files-actions { display: flex; gap: 6px; }
+  .ctn-files-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--fg);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .ctn-files-action:hover:not(:disabled) { background: var(--surface); }
+  .ctn-files-action:disabled { opacity: 0.5; cursor: not-allowed; }
+  .ctn-files-action-primary {
+    background: var(--fg);
+    color: var(--bg);
+    border-color: var(--fg);
+  }
+
+  .ctn-files-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-left: 3px solid #c0392b;
+    border-radius: 4px;
+    background: var(--surface);
+  }
+  .ctn-files-error p { margin: 0; font-size: 12.5px; color: var(--fg); }
+
   .ctn-files-table {
     border: 1px solid var(--border);
     border-radius: 6px;
     overflow: hidden;
   }
-  .ctn-files-head {
+  .ctn-files-head,
+  .ctn-files-row {
     display: grid;
-    grid-template-columns: 100px 1fr 110px 160px 90px;
-    padding: 10px 14px;
+    grid-template-columns: minmax(0, 1fr) 100px 110px 140px 60px;
+    align-items: center;
+    padding: 8px 14px;
+    gap: 12px;
+  }
+  .ctn-files-head {
     background: var(--surface);
     border-bottom: 1px solid var(--border);
     font-family: var(--font-mono);
@@ -2356,7 +2843,71 @@
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
-  .ctn-files-cell-right { text-align: right; }
+  .ctn-files-row {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--border-subtle);
+    cursor: pointer;
+    font: inherit;
+    color: var(--fg);
+  }
+  .ctn-files-row:last-child { border-bottom: 0; }
+  .ctn-files-row:hover { background: var(--surface-hover, var(--surface)); }
+  .ctn-files-row.active { background: var(--surface); }
+  .ctn-files-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    overflow: hidden;
+  }
+  :global(.ctn-files-row-icon) { color: var(--fg-muted); flex-shrink: 0; }
+  .ctn-files-name-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 13px;
+  }
+  .ctn-files-link-dest {
+    color: var(--fg-subtle);
+    font-size: 11.5px;
+    margin-left: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ctn-files-cell-right {
+    text-align: right;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-muted);
+  }
+  .ctn-files-mode {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-muted);
+  }
+  .ctn-files-modified {
+    font-size: 11.5px;
+    color: var(--fg-muted);
+  }
+  .ctn-files-row-actions {
+    display: inline-flex;
+    justify-content: flex-end;
+    gap: 4px;
+  }
+  .ctn-files-row-action {
+    background: transparent;
+    border: 0;
+    padding: 4px;
+    border-radius: 3px;
+    cursor: pointer;
+    color: var(--fg-muted);
+  }
+  .ctn-files-row-action:hover { background: var(--surface-hover, var(--surface)); color: var(--fg); }
+
   .ctn-files-pending {
     padding: 40px 28px;
     text-align: center;
@@ -2372,54 +2923,83 @@
     font-size: 13px;
     line-height: 1.6;
   }
-  .ctn-files-pending code {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-muted);
-    padding: 1px 5px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-  }
 
-  /* legacy files-empty kept for backward compat */
-  .ctn-files-empty {
-    padding: 56px 28px;
-    border: 1px dashed var(--border-strong);
-    border-radius: 6px;
-    color: var(--fg-muted);
-    text-align: center;
+  /* ─────────── File preview pane ─────────── */
+  .ctn-files-preview {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 10px;
-  }
-  :global(.ctn-files-icon) { color: var(--fg-subtle); margin-bottom: 4px; }
-  .ctn-files-empty h3 {
-    margin: 0;
-    font-size: 16px;
-    color: var(--fg);
-    font-weight: 600;
-  }
-  .ctn-files-empty p {
-    margin: 0;
-    max-width: 60ch;
-    font-size: 13px;
-    line-height: 1.6;
-  }
-  .ctn-files-detail {
-    color: var(--fg-subtle);
-    font-size: 12px;
-  }
-  .ctn-files-empty code {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-muted);
-    padding: 1px 5px;
-    background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 3px;
+    border-radius: 6px;
+    overflow: hidden;
   }
+  .ctn-files-preview-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .ctn-files-preview-meta {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+  .ctn-files-preview-path {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 60ch;
+  }
+  .ctn-files-preview-size {
+    font-size: 11.5px;
+    color: var(--fg-subtle);
+  }
+  .ctn-files-preview-actions { display: inline-flex; gap: 6px; }
+  .ctn-files-preview-body {
+    margin: 0;
+    padding: 14px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--fg);
+    background: var(--bg-elevated);
+    max-height: 60vh;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .ctn-files-preview-loading,
+  .ctn-files-preview-binary {
+    color: var(--fg-muted);
+    font-style: italic;
+    text-align: center;
+    padding: 32px 16px;
+  }
+  .ctn-files-preview-edit {
+    width: 100%;
+    min-height: 320px;
+    max-height: 60vh;
+    padding: 14px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--fg);
+    background: var(--bg-elevated);
+    border: 0;
+    resize: vertical;
+    outline: none;
+  }
+  .ctn-files-preview-edit:focus { background: var(--surface); }
+
+  :global(.ctn-files-icon) { color: var(--fg-subtle); margin-bottom: 4px; }
 
   /* ─────────── Generic per-tab pane ─────────── */
   .ctn-tab-pane {
@@ -2848,7 +3428,7 @@
     padding: 12px 14px;
     border: 1px solid var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     font-family: var(--font-mono);
     font-size: 11.5px;
     color: var(--fg-muted);
@@ -2885,7 +3465,7 @@
     width: 11px;
     height: 11px;
     border-radius: 999px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 2px solid var(--border-strong);
     margin-top: 6px;
     margin-left: 2px;

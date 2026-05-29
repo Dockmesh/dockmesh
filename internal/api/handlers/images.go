@@ -169,10 +169,9 @@ func (h *Handlers) PullImage(w http.ResponseWriter, r *http.Request) {
 }
 
 // InspectImage returns the full Docker ImageInspect for the chosen
-// host (?host=…, defaults local). RemoteHost currently returns a
-// "not implemented" sentinel until the agent protocol carries the
-// inspect frame — we map that to 501 so the UI can render a helpful
-// banner instead of a generic error.
+// host (?host=…, defaults local). The 501-on-remote fallback that
+// used to live here is gone now that the agent protocol carries the
+// inspect frame (FrameReqImageInspect, 2026-05-29).
 func (h *Handlers) InspectImage(w http.ResponseWriter, r *http.Request) {
 	target, err := h.pickHost(r)
 	if err != nil {
@@ -187,10 +186,6 @@ func (h *Handlers) InspectImage(w http.ResponseWriter, r *http.Request) {
 	id, _ := url.PathUnescape(chi.URLParam(r, "id"))
 	info, err := target.InspectImage(r.Context(), id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not yet implemented") {
-			writeError(w, http.StatusNotImplemented, err.Error())
-			return
-		}
 		writeError(w, imageErrorStatus(err), err.Error())
 		return
 	}
@@ -240,4 +235,18 @@ func (h *Handlers) PruneImages(w http.ResponseWriter, r *http.Request) {
 		"host":            target.ID(),
 	})
 	writeJSON(w, http.StatusOK, report)
+}
+
+// ListImageUpdates returns the cache from the background update watcher
+// as a map keyed by image reference. UI uses this both for the "updates
+// available" badge per container and for the resources/images-tab
+// drawer that lists which images have newer manifests upstream.
+//
+//	GET /api/v1/images/updates
+func (h *Handlers) ListImageUpdates(w http.ResponseWriter, r *http.Request) {
+	if h.UpdateWatcher == nil {
+		writeJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.UpdateWatcher.Snapshot())
 }

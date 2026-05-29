@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/notify"
 )
 
@@ -41,6 +42,11 @@ type Rule struct {
 	Severity        string     `json:"severity"`         // critical | warning | info
 	CooldownSeconds int        `json:"cooldown_seconds"` // suppress re-notify for this long
 	MutedUntil      *time.Time `json:"muted_until,omitempty"`
+	// MuteSchedule is a JSON-encoded MuteSchedule (see schedule.go) for
+	// recurring quiet-hours. When non-empty and IsMutedNow returns true
+	// at fire time, notifications are suppressed (but firing state and
+	// history still update so the UI shows the rule is breached).
+	MuteSchedule    string     `json:"mute_schedule"`
 	// Builtin rules ship with the server (P.11.5). The UI marks them
 	// with a badge and disables the Delete action. Admins can still
 	// disable, edit thresholds, and attach channels — only deletion is
@@ -79,6 +85,7 @@ type RuleInput struct {
 	Severity        string  `json:"severity"`
 	CooldownSeconds int     `json:"cooldown_seconds"`
 	MutedUntil      string  `json:"muted_until,omitempty"` // ISO timestamp or empty
+	MuteSchedule    string  `json:"mute_schedule,omitempty"`
 }
 
 // PromRecorder is the alerts-side hook into the prometheus collector.
@@ -91,6 +98,7 @@ type PromRecorder interface {
 type Service struct {
 	db     *sql.DB
 	notify *notify.Service
+	notifs *notifications.Service
 	prom   PromRecorder
 
 	stop chan struct{}
@@ -104,6 +112,11 @@ type Service struct {
 
 // SetProm attaches a prom recorder after construction. Nil clears it.
 func (s *Service) SetProm(p PromRecorder) { s.prom = p }
+
+// SetNotifier wires in the bell-icon notification center. Optional —
+// nil means "no notifications emitted by the alert engine", same as
+// before. Set this in main.go after notifSvc is constructed.
+func (s *Service) SetNotifier(n *notifications.Service) { s.notifs = n }
 
 func NewService(db *sql.DB, notifier *notify.Service) *Service {
 	return &Service{
@@ -170,7 +183,7 @@ func (s *Service) ListRules(ctx context.Context) ([]Rule, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, container_filter, metric, operator, threshold,
 		       duration_seconds, channel_ids, enabled,
-		       severity, cooldown_seconds, muted_until, builtin,
+		       severity, cooldown_seconds, muted_until, mute_schedule, builtin,
 		       firing_since, last_triggered_at, last_resolved_at,
 		       created_at, updated_at
 		FROM alert_rules ORDER BY builtin DESC, id DESC`)
@@ -212,10 +225,10 @@ func (s *Service) Create(ctx context.Context, in RuleInput) (*Rule, error) {
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO alert_rules
 			(name, container_filter, metric, operator, threshold,
-			 duration_seconds, channel_ids, enabled, severity, cooldown_seconds, muted_until)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 duration_seconds, channel_ids, enabled, severity, cooldown_seconds, muted_until, mute_schedule)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.Name, in.ContainerFilter, in.Metric, in.Operator, in.Threshold,
-		in.DurationSeconds, string(ids), boolInt(in.Enabled), sev, cooldown, mutedUntil)
+		in.DurationSeconds, string(ids), boolInt(in.Enabled), sev, cooldown, mutedUntil, in.MuteSchedule)
 	if err != nil {
 		return nil, err
 	}
@@ -247,11 +260,11 @@ func (s *Service) Update(ctx context.Context, id int64, in RuleInput) (*Rule, er
 		UPDATE alert_rules SET
 			name = ?, container_filter = ?, metric = ?, operator = ?,
 			threshold = ?, duration_seconds = ?, channel_ids = ?, enabled = ?,
-			severity = ?, cooldown_seconds = ?, muted_until = ?,
+			severity = ?, cooldown_seconds = ?, muted_until = ?, mute_schedule = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
 		in.Name, in.ContainerFilter, in.Metric, in.Operator, in.Threshold,
-		in.DurationSeconds, string(ids), boolInt(in.Enabled), sev, cooldown, mutedUntil, id); err != nil {
+		in.DurationSeconds, string(ids), boolInt(in.Enabled), sev, cooldown, mutedUntil, in.MuteSchedule, id); err != nil {
 		return nil, err
 	}
 	return s.getRule(ctx, id)
@@ -290,7 +303,7 @@ func (s *Service) History(ctx context.Context, limit int) ([]HistoryEntry, error
 		       COALESCE(h.value, 0), COALESCE(h.threshold, 0), h.occurred_at
 		  FROM alert_history h
 		  LEFT JOIN alert_rules r ON r.id = h.rule_id
-		 ORDER BY h.id DESC LIMIT ?`, limit)
+		 ORDER BY h.occurred_at DESC, h.id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -547,7 +560,16 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, container string, value
 		s.prom.IncAlertFired(sev, r.Name)
 	}
 
-	if s.notify != nil && len(r.ChannelIDs) > 0 {
+	muted := IsMutedNow(r.MuteSchedule, ts)
+	if muted {
+		slog.Info("alert fire silenced by mute_schedule", "rule", r.Name, "container", container)
+	}
+
+	if s.notify != nil && len(r.ChannelIDs) > 0 && !muted {
+		// Rule-level mute_schedule: if the rule is currently inside its
+		// quiet-hours window, fire still updates history + firing state
+		// (so the UI shows the breach) but no channels get pinged.
+		// Channel-level mute is enforced inside notify.SendTo.
 		level := notify.LevelWarning
 		if r.Operator == "gt" && value >= r.Threshold*1.5 {
 			level = notify.LevelCritical
@@ -561,6 +583,26 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, container string, value
 			Value:     value,
 			Threshold: r.Threshold,
 			Time:      ts,
+		})
+	}
+
+	// Bell-icon feed — independent of the channel-list. Even when the
+	// rule has no external channels set, operators want a durable trail
+	// in the UI. Mute schedule still suppresses (consistent with the
+	// channel path).
+	if s.notifs != nil && !muted {
+		sev := notifications.SevWarning
+		if r.Severity == "critical" {
+			sev = notifications.SevError
+		} else if r.Severity == "info" {
+			sev = notifications.SevInfo
+		}
+		_, _ = s.notifs.Emit(ctx, notifications.EmitInput{
+			Kind:     notifications.KindAlertFire,
+			Severity: sev,
+			Title:    "Alert firing: " + r.Name,
+			Body:     msg,
+			Link:     "/alerts",
 		})
 	}
 }
@@ -608,7 +650,7 @@ func (s *Service) getRule(ctx context.Context, id int64) (*Rule, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, container_filter, metric, operator, threshold,
 		       duration_seconds, channel_ids, enabled,
-		       severity, cooldown_seconds, muted_until, builtin,
+		       severity, cooldown_seconds, muted_until, mute_schedule, builtin,
 		       firing_since, last_triggered_at, last_resolved_at,
 		       created_at, updated_at
 		FROM alert_rules WHERE id = ?`, id)
@@ -625,15 +667,17 @@ func scanRule(r rowScanner) (*Rule, error) {
 	var enabled, builtin int
 	var severity sql.NullString
 	var mutedUntil sql.NullTime
+	var muteSchedule sql.NullString
 	var firingSince, lastT, lastR sql.NullTime
 	if err := r.Scan(
 		&rule.ID, &rule.Name, &rule.ContainerFilter, &rule.Metric, &rule.Operator,
 		&rule.Threshold, &rule.DurationSeconds, &ids, &enabled,
-		&severity, &rule.CooldownSeconds, &mutedUntil, &builtin,
+		&severity, &rule.CooldownSeconds, &mutedUntil, &muteSchedule, &builtin,
 		&firingSince, &lastT, &lastR, &rule.CreatedAt, &rule.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
+	rule.MuteSchedule = muteSchedule.String
 	rule.Enabled = enabled == 1
 	rule.Builtin = builtin == 1
 	rule.Severity = severity.String

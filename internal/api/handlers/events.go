@@ -7,6 +7,8 @@ import (
 	"net/http"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // WSEvents streams Docker events AND stack filesystem events as JSON messages
@@ -16,13 +18,7 @@ import (
 //   Docker:  {"source":"docker", "type":"container", "action":"start", "id":"...", "name":"..."}
 //   Stacks:  {"source":"stacks", "type":"modified|created|removed", "name":"...", "file":"compose.yaml"}
 func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
-	ticket := r.URL.Query().Get("ticket")
-	if ticket == "" {
-		http.Error(w, "ticket required", http.StatusUnauthorized)
-		return
-	}
-	if _, err := h.Auth.ValidateWSTicket(ticket); err != nil {
-		http.Error(w, "invalid ticket", http.StatusUnauthorized)
+	if !h.requireWSTicketPerm(w, r, rbac.PermSystemView) {
 		return
 	}
 

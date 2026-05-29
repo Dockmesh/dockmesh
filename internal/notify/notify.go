@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 )
@@ -48,6 +49,11 @@ type Channel struct {
 	Name      string          `json:"name"`
 	Config    json.RawMessage `json:"config"`
 	Enabled   bool            `json:"enabled"`
+	// MuteSchedule is a JSON-encoded recurring-quiet-hours blob in the
+	// same shape as alert_rules.mute_schedule (see internal/alerts/
+	// schedule.go). When non-empty and the current time falls inside a
+	// range, Send/SendToAll skip the channel silently.
+	MuteSchedule string `json:"mute_schedule"`
 	CreatedAt time.Time       `json:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at"`
 }
@@ -78,7 +84,7 @@ func NewService(db *sql.DB) *Service {
 // at startup and after every CRUD mutation.
 func (s *Service) Reload(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, type, name, config, enabled, created_at, updated_at FROM notification_channels`)
+		`SELECT id, type, name, config, enabled, mute_schedule, created_at, updated_at FROM notification_channels`)
 	if err != nil {
 		return err
 	}
@@ -87,12 +93,13 @@ func (s *Service) Reload(ctx context.Context) error {
 	for rows.Next() {
 		var c Channel
 		var enabled int
-		var cfg string
-		if err := rows.Scan(&c.ID, &c.Type, &c.Name, &cfg, &enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		var cfg, muteSched string
+		if err := rows.Scan(&c.ID, &c.Type, &c.Name, &cfg, &enabled, &muteSched, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return err
 		}
 		c.Enabled = enabled == 1
 		c.Config = json.RawMessage(cfg)
+		c.MuteSchedule = muteSched
 		next[c.ID] = &c
 	}
 	s.mu.Lock()
@@ -103,7 +110,9 @@ func (s *Service) Reload(ctx context.Context) error {
 
 // SendTo dispatches n to a single channel by id. Returns the channel
 // implementation's error (if any) so handlers can surface it via the
-// "Test" button in the UI.
+// "Test" button in the UI. Honours the channel's mute_schedule unless
+// the caller is the explicit test path (handler-level "test" actions
+// should bypass mute by calling buildChannel + Send directly).
 func (s *Service) SendTo(ctx context.Context, id int64, n Notification) error {
 	s.mu.RLock()
 	c, ok := s.cache[id]
@@ -113,6 +122,11 @@ func (s *Service) SendTo(ctx context.Context, id int64, n Notification) error {
 	}
 	if !c.Enabled {
 		return errors.New("channel disabled")
+	}
+	if isMutedNow(c.MuteSchedule, time.Now()) {
+		// Silently skip — not an error from the caller's perspective.
+		// The rule-level audit / history already records the firing.
+		return nil
 	}
 	impl, err := buildChannel(c, s.http)
 	if err != nil {
@@ -134,7 +148,9 @@ func (s *Service) SendToAll(ctx context.Context, ids []int64, n Notification) {
 	}
 }
 
-// Channels returns the in-memory snapshot (used by handlers).
+// Channels returns the in-memory snapshot sorted by id ASC. Stable
+// order matters because the UI polls every 10s; an unsorted iteration
+// would jumble the channel list between refreshes.
 func (s *Service) Channels() []Channel {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -142,6 +158,7 @@ func (s *Service) Channels() []Channel {
 	for _, c := range s.cache {
 		out = append(out, *c)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 
@@ -150,10 +167,11 @@ func (s *Service) Channels() []Channel {
 // -----------------------------------------------------------------------------
 
 type ChannelInput struct {
-	Type    string          `json:"type"`
-	Name    string          `json:"name"`
-	Config  json.RawMessage `json:"config"`
-	Enabled bool            `json:"enabled"`
+	Type         string          `json:"type"`
+	Name         string          `json:"name"`
+	Config       json.RawMessage `json:"config"`
+	Enabled      bool            `json:"enabled"`
+	MuteSchedule string          `json:"mute_schedule,omitempty"`
 }
 
 var ErrUnknownType = errors.New("unknown channel type")
@@ -175,9 +193,9 @@ func (s *Service) Create(ctx context.Context, in ChannelInput) (*Channel, error)
 		in.Config = json.RawMessage("{}")
 	}
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO notification_channels (type, name, config, enabled)
-		VALUES (?, ?, ?, ?)`,
-		in.Type, in.Name, string(in.Config), boolInt(in.Enabled))
+		INSERT INTO notification_channels (type, name, config, enabled, mute_schedule)
+		VALUES (?, ?, ?, ?, ?)`,
+		in.Type, in.Name, string(in.Config), boolInt(in.Enabled), in.MuteSchedule)
 	if err != nil {
 		return nil, err
 	}
@@ -197,9 +215,9 @@ func (s *Service) Update(ctx context.Context, id int64, in ChannelInput) (*Chann
 	}
 	if _, err := s.db.ExecContext(ctx, `
 		UPDATE notification_channels
-		SET type = ?, name = ?, config = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
+		SET type = ?, name = ?, config = ?, enabled = ?, mute_schedule = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
-		in.Type, in.Name, string(in.Config), boolInt(in.Enabled), id); err != nil {
+		in.Type, in.Name, string(in.Config), boolInt(in.Enabled), in.MuteSchedule, id); err != nil {
 		return nil, err
 	}
 	if err := s.Reload(ctx); err != nil {

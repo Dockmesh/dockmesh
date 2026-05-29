@@ -12,6 +12,7 @@
   import { Skeleton, EmptyState } from '$lib/components/ui';
   import { Eyebrow } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
@@ -193,10 +194,7 @@
 
   function copyMountpoint() {
     if (!inspect?.Mountpoint) return;
-    navigator.clipboard.writeText(inspect.Mountpoint).then(
-      () => toast.success('Copied', 'mountpoint to clipboard'),
-      () => toast.error('Copy failed')
-    );
+    void copyWithToast(inspect.Mountpoint, 'Copied', 'mountpoint to clipboard');
   }
 
   async function deleteVolume() {
@@ -587,7 +585,7 @@
   .vol-detail-opts {
     margin: 0;
     padding: 10px 12px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: 4px;
     font-size: 12px;
@@ -756,14 +754,14 @@
     text-align: center;
     font-size: 12px;
     color: var(--fg-subtle);
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: 4px;
   }
   .vol-detail-preview {
     margin: 0;
     padding: 12px 14px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: 4px;
     font-size: 12px;

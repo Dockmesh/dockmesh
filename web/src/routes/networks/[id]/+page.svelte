@@ -8,6 +8,7 @@
   import { Skeleton, EmptyState } from '$lib/components/ui';
   import { Eyebrow } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import { allowed } from '$lib/rbac.svelte';
@@ -44,10 +45,7 @@
   });
 
   function copy(s: string) {
-    navigator.clipboard.writeText(s).then(
-      () => toast.success('Copied'),
-      () => toast.error('Copy failed')
-    );
+    void copyWithToast(s, 'Copied');
   }
 
   // Connected containers come back from inspect.Containers as a
@@ -418,7 +416,7 @@
   .net-detail-opts {
     margin: 0;
     padding: 10px 12px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: 4px;
     font-size: 12px;

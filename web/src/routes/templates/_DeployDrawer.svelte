@@ -295,7 +295,7 @@
     right: 0;
     height: 100vh;
     width: min(560px, 92vw);
-    background: var(--bg);
+    background: var(--surface);
     border-left: 1px solid var(--border-strong);
     z-index: 100;
     display: flex;

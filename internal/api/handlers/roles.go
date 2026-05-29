@@ -64,8 +64,7 @@ func (h *Handlers) CreateRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionUserCreate, in.Name, map[string]any{
-		"action":      "role-create",
+	h.audit(r, audit.ActionRoleCreate, in.Name, map[string]any{
 		"permissions": len(in.Permissions),
 	})
 	role, _ := h.Roles.Get(in.Name)
@@ -90,8 +89,7 @@ func (h *Handlers) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionUserCreate, name, map[string]any{
-		"action":      "role-update",
+	h.audit(r, audit.ActionRoleUpdate, name, map[string]any{
 		"permissions": len(in.Permissions),
 	})
 	role, _ := h.Roles.Get(name)
@@ -111,7 +109,7 @@ func (h *Handlers) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionUserCreate, name, map[string]any{"action": "role-delete"})
+	h.audit(r, audit.ActionRoleDelete, name, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 

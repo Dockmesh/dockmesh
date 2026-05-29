@@ -93,6 +93,12 @@ func buildConfig(routes []Route) *caddyConfig {
 	var policies []caddyAutomationPolicy
 	server := cfg.Apps.HTTP.Servers["dockmesh"]
 	for _, r := range routes {
+		// Disabled routes stay in the DB but are not pushed to Caddy —
+		// traffic stops flowing without losing the host/upstream
+		// config. Operators can re-enable in one click.
+		if !r.Enabled {
+			continue
+		}
 		server.Routes = append(server.Routes, caddyRoute{
 			Match: []caddyMatch{{Host: []string{r.Host}}},
 			Handle: []caddyHandler{

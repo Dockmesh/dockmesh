@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/settings"
 )
 
@@ -74,10 +75,17 @@ type Checker struct {
 	settings *settings.Store
 	current  string
 	client   *http.Client
+	notifs   *notifications.Service
 
 	mu      sync.RWMutex
 	lastErr string
+	lastNotifiedVersion string
 }
+
+// SetNotifier wires in the bell-icon notification center so a new
+// upstream release fires one notification (not one per poll cycle —
+// the checker dedups by version).
+func (c *Checker) SetNotifier(n *notifications.Service) { c.notifs = n }
 
 // New wires a Checker to its dependencies. `current` is the runtime
 // version string from pkg/version — pass "dev" for local builds and
@@ -210,7 +218,30 @@ func (c *Checker) CheckNow(ctx context.Context) error {
 	_ = c.settings.Set(ctx, "update_published_at", published)
 
 	c.recordErr(nil)
-	slog.Info("selfupdate: checked", "current", c.current, "latest", rel.TagName, "update_available", isNewer(c.current, rel.TagName) || isDevVersion(c.current))
+	updateAvailable := isNewer(c.current, rel.TagName) || isDevVersion(c.current)
+	slog.Info("selfupdate: checked", "current", c.current, "latest", rel.TagName, "update_available", updateAvailable)
+
+	// Bell-icon notification — only when a new version is available
+	// AND we haven't already pinged for this exact version. Without
+	// the dedup admins would get a fresh notification every 24h until
+	// they upgrade.
+	if c.notifs != nil && updateAvailable {
+		c.mu.Lock()
+		alreadyNotified := c.lastNotifiedVersion == rel.TagName
+		if !alreadyNotified {
+			c.lastNotifiedVersion = rel.TagName
+		}
+		c.mu.Unlock()
+		if !alreadyNotified {
+			_, _ = c.notifs.Emit(ctx, notifications.EmitInput{
+				Kind:     notifications.KindSystemUpgrade,
+				Severity: notifications.SevInfo,
+				Title:    "Dockmesh " + rel.TagName + " available",
+				Body:     "Current version: " + c.current,
+				Link:     "/settings?tab=system",
+			})
+		}
+	}
 	return nil
 }
 

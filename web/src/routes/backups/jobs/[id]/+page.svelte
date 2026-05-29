@@ -500,7 +500,7 @@
     padding: 8px 12px;
     border: 1px solid var(--border-subtle);
     border-radius: 4px;
-    background: var(--bg);
+    background: var(--surface);
   }
   .bk-detail-list-name {
     font-size: 12.5px;
@@ -584,7 +584,7 @@
     border: 1px solid var(--border);
     border-radius: 5px;
     overflow: hidden;
-    background: var(--bg);
+    background: var(--bg-elevated);
     margin-top: 8px;
   }
   .bk-detail-runs-row {

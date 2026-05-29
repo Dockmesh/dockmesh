@@ -18,12 +18,14 @@ import (
 // wsTicket issues a short-lived WS auth ticket via POST /ws/ticket.
 // The Dockmesh server uses this pattern because browsers can't attach
 // Authorization headers to WebSocket upgrades; dmctl follows the same
-// pattern for consistency with the web UI.
-func (c *Client) wsTicket() (string, error) {
+// pattern for consistency with the web UI. The ticket is bound to the
+// requested permission (containers.logs, containers.exec, etc.) — the
+// matching WS endpoint rejects mismatched tickets.
+func (c *Client) wsTicket(forPerm string) (string, error) {
 	var out struct {
 		Ticket string `json:"ticket"`
 	}
-	if err := c.request("POST", "/api/v1/ws/ticket", nil, nil, &out); err != nil {
+	if err := c.request("POST", "/api/v1/ws/ticket?for="+url.QueryEscape(forPerm), nil, nil, &out); err != nil {
 		return "", err
 	}
 	return out.Ticket, nil
@@ -54,7 +56,7 @@ func (c *Client) wsDialer() *websocket.Dialer {
 // and copies inbound frames to stdout, line-prefixed when prefix != "".
 // Terminates on Ctrl-C, socket close, or an inbound read error.
 func streamContainerLogs(c *Client, containerID, tail string, follow bool, prefix string) error {
-	ticket, err := c.wsTicket()
+	ticket, err := c.wsTicket("containers.logs")
 	if err != nil {
 		return err
 	}

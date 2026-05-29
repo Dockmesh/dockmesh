@@ -371,19 +371,19 @@
 
   $effect(() => {
     if (!allowed('backups.update')) { goto('/'); return; }
-    if (tab === 'jobs') { loadJobs(); loadTargets(); }
-    else if (tab === 'runs') { loadRuns(); loadJobs(); }
-    else if (tab === 'targets') loadTargets();
+    // Load every list on mount so the Jobs/Runs/Targets tab counters
+    // show real numbers immediately instead of "0" until the operator
+    // clicks each tab. Parallel via Promise.all — the three endpoints
+    // are small enough that fetching all of them costs no more than a
+    // single one on a warm connection.
+    Promise.all([loadJobs(), loadRuns(), loadTargets()]);
   });
 
-  // Poll the current tab's data every 5s so "run now" + scheduled
-  // runs update their state without a manual refresh.
+  // Poll every list every 5s so all counters + the active tab stay
+  // fresh — e.g. when a run kicks off in the background while the
+  // operator is on the Jobs tab, the Runs counter ticks up live.
   $effect(() => {
-    const refresh = () => {
-      if (tab === 'jobs') { loadJobs(); loadTargets(); }
-      else if (tab === 'runs') { loadRuns(); }
-      else if (tab === 'targets') loadTargets();
-    };
+    const refresh = () => { loadJobs(); loadRuns(); loadTargets(); };
     return autoRefresh(refresh, 5_000);
   });
 
@@ -1752,7 +1752,7 @@
   .bk-job-card {
     border: 1px solid var(--border);
     border-radius: 6px;
-    background: var(--bg);
+    background: var(--surface);
     padding: 14px 16px 16px;
     display: flex;
     flex-direction: column;
@@ -2107,7 +2107,7 @@
     padding: 0 28px 0 10px;
     border: 1px solid var(--border);
     border-radius: 4px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     color: var(--fg);
     font-family: var(--font-sans);
     font-size: 13px;
@@ -2212,7 +2212,7 @@
   .bk-target-card {
     border: 1px solid var(--border);
     border-radius: 6px;
-    background: var(--bg);
+    background: var(--surface);
     padding: 16px 18px 18px;
     display: flex;
     flex-direction: column;

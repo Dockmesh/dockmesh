@@ -146,7 +146,7 @@
     if (!svc.container_id) return;
     if (logSockets.has(svc.service)) return;
     try {
-      const { ticket } = await api.ws.ticket();
+      const { ticket } = await api.ws.ticket('containers.logs');
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const hostQs = isRemote ? `&host=${encodeURIComponent(stackHost)}` : '';
       const ws = new WebSocket(
@@ -415,7 +415,7 @@
     if (statsSockets.has(svc.service)) return;
     if (!svc.container_id || svc.state !== 'running') return;
     try {
-      const { ticket } = await api.ws.ticket();
+      const { ticket } = await api.ws.ticket('containers.view');
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const hostQs = isRemote ? `&host=${encodeURIComponent(stackHost)}` : '';
       const ws = new WebSocket(
@@ -1750,20 +1750,22 @@
           class="gs-card gs-card-empty"
           onclick={openGitDialog}
         >
-          <div class="gs-card-icon gs-card-icon-empty">
-            <GitBranch size={16} strokeWidth={1.5} />
-          </div>
-          <div class="gs-card-body">
-            <div class="gs-empty-title">Connect a git repository</div>
-            <div class="gs-empty-blurb">
-              Sync <code>compose.yaml</code> and <code>.env</code> from a public or private repo. Auto-deploy on push, or pull on demand.
+          <div class="gs-card-main">
+            <div class="gs-card-icon gs-card-icon-empty">
+              <GitBranch size={16} strokeWidth={1.5} />
             </div>
-          </div>
-          <div class="gs-empty-cta">
-            <span class="dm-btn dm-btn-primary dm-btn-sm">
-              <LinkIcon size={12} strokeWidth={1.5} />
-              Connect
-            </span>
+            <div class="gs-card-body">
+              <div class="gs-empty-title">Connect a git repository</div>
+              <div class="gs-empty-blurb">
+                Sync <code>compose.yaml</code> and <code>.env</code> from a public or private repo. Auto-deploy on push, or pull on demand.
+              </div>
+            </div>
+            <div class="gs-empty-cta">
+              <span class="dm-btn dm-btn-primary dm-btn-sm">
+                <LinkIcon size={12} strokeWidth={1.5} />
+                Connect
+              </span>
+            </div>
           </div>
         </button>
       {/if}
@@ -3422,7 +3424,7 @@
     padding: 14px 16px;
     border: 1px solid var(--border);
     border-radius: 6px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     color: var(--fg);
     font-family: var(--font-mono);
     font-size: 12.5px;
@@ -3444,7 +3446,7 @@
     padding: 14px 16px;
     border: 1px solid var(--border);
     border-radius: 6px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     font-family: var(--font-mono);
     font-size: 12.5px;
     line-height: 1.65;
@@ -3652,7 +3654,7 @@
     width: 11px;
     height: 11px;
     border-radius: 999px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 2px solid var(--border-strong);
     margin-top: 6px;
     margin-left: 2px;
@@ -3875,7 +3877,7 @@
     font-weight: 500;
   }
   .gs-card {
-    background: var(--bg);
+    background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 6px;
     display: flex;
@@ -3981,7 +3983,7 @@
     text-align: left;
     cursor: pointer;
     width: 100%;
-    background: var(--bg);
+    background: var(--surface);
   }
   .gs-card-empty:hover {
     border-color: color-mix(in srgb, var(--color-brand-500) 40%, var(--border));

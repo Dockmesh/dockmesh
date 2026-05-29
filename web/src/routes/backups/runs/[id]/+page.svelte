@@ -10,6 +10,7 @@
   import { Eyebrow } from '$lib/components/editorial';
   import { Skeleton, EmptyState } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import {
@@ -27,6 +28,9 @@
   let job = $state<BackupJob | null>(null);
   let loading = $state(true);
   let notFound = $state(false);
+  let logEntries = $state<Array<{ id: number; ts: string; stream: string; line: string }>>([]);
+  let logLoaded = $state(false);
+  let logTimer: ReturnType<typeof setTimeout> | null = null;
 
   async function load() {
     loading = true;
@@ -45,7 +49,26 @@
       loading = false;
     }
   }
-  $effect(() => { id; load(); });
+
+  async function loadLog() {
+    try {
+      logEntries = await api.backups.runLog(id);
+      logLoaded = true;
+    } catch {
+      // Log endpoint failures are silent — empty log is fine.
+    }
+    // While the run is still running, poll every 2s so new lines stream in.
+    // For terminal runs (success/failed/error) the log is final, no need to poll.
+    if (run?.status === 'running') {
+      logTimer = setTimeout(loadLog, 2000);
+    }
+  }
+
+  $effect(() => {
+    id;
+    load().then(() => loadLog());
+    return () => { if (logTimer) clearTimeout(logTimer); };
+  });
 
   let restoreOpen = $state(false);
   let restoreVolume = $state('');
@@ -130,10 +153,7 @@
       run.encrypted ? 'Encrypted: yes (age)' : '',
       run.error ? `Error: ${run.error}` : ''
     ].filter(Boolean).join('\n');
-    navigator.clipboard.writeText(lines).then(
-      () => toast.success('Copied'),
-      () => toast.error('Copy failed')
-    );
+    void copyWithToast(lines, 'Copied');
   }
 
   const restoreModes: { id: 'in-place' | 'alongside' | 'download'; title: string; blurb: string; danger?: boolean }[] = [
@@ -269,14 +289,24 @@
 
         <section class="bk-detail-section dm-card">
           <Eyebrow>Log</Eyebrow>
-          <div class="bk-detail-log-empty">
+          {#if !logLoaded}
+            <p class="bk-detail-empty">Loading…</p>
+          {:else if logEntries.length === 0}
             <p class="bk-detail-empty">
-              Per-run log capture isn't recorded by the backend yet — only status + error message survive the run.
-              <button type="button" class="bk-detail-link" onclick={copyDetails}>Copy run metadata</button>
-              for an audit trail.
+              No log lines recorded for this run.
+              {#if run.status === 'running'}
+                Streaming will start once the executor emits its first phase.
+              {/if}
             </p>
-          </div>
+          {:else}
+            <pre class="bk-detail-log">{#each logEntries as e (e.id)}<span class="bk-detail-log-line" data-stream={e.stream}><span class="bk-detail-log-ts">{new Date(e.ts).toLocaleTimeString()}</span> <span class="bk-detail-log-stream">{e.stream}</span> {e.line}
+</span>{/each}</pre>
+            {#if run.status === 'running'}
+              <p class="bk-detail-empty">live · refreshing every 2s</p>
+            {/if}
+          {/if}
         </section>
+
       </div>
 
       <!-- Right column — restore flow -->
@@ -482,6 +512,33 @@
     color: var(--fg-subtle);
     line-height: 1.55;
   }
+  .bk-detail-log {
+    margin: 8px 0 0;
+    padding: 12px 14px;
+    background: var(--terminal, #06090f);
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: #cbd5e1;
+    max-height: 420px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .bk-detail-log-line { display: block; }
+  .bk-detail-log-ts { color: #64748b; }
+  .bk-detail-log-stream {
+    display: inline-block;
+    width: 10ch;
+    margin-right: 4px;
+    color: #64748b;
+  }
+  .bk-detail-log-line[data-stream="error"] { color: var(--color-danger-400); }
+  .bk-detail-log-line[data-stream="warn"] { color: var(--color-warning-400); }
+  .bk-detail-log-line[data-stream="hook_stdout"] { color: #e2e8f0; }
+  .bk-detail-log-line[data-stream="hook_stderr"] { color: #fca5a5; }
   .bk-detail-block-body {
     margin: 8px 0 0;
     font-size: 13px;
@@ -541,7 +598,7 @@
     text-align: center;
     border: 1px dashed var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--bg-elevated);
   }
 
   .bk-detail-source-chips {
@@ -564,7 +621,7 @@
     padding: 12px 14px;
     border: 1px solid var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--surface);
     cursor: pointer;
     text-align: left;
     width: 100%;
@@ -606,7 +663,7 @@
     margin-top: 8px;
     border: 1px solid var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     text-decoration: none;
     color: var(--fg);
     transition: border-color 120ms, background 120ms;
@@ -662,7 +719,7 @@
     padding: 0 12px;
     border: 1px solid var(--border);
     border-radius: 4px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     color: var(--fg);
     font-size: 13px;
   }

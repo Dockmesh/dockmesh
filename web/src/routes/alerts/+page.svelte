@@ -73,20 +73,16 @@
 
   $effect(() => {
     if (!allowed('alerts.update')) { goto('/'); return; }
-    // Rules tab needs both rules + channels (channel-name lookup);
-    // Channels tab needs both for the "used by N rules" count.
-    if (tab === 'rules') { loadRules(); loadChannels(); }
-    else if (tab === 'channels') { loadChannels(); loadRules(); }
-    else if (tab === 'history') loadHistory();
+    // Load all three on mount so the Rules / Channels / History tab
+    // counters show real numbers from the start, not "0" until each
+    // tab is clicked.
+    Promise.all([loadRules(), loadChannels(), loadHistory()]);
   });
 
-  // Poll the active tab every 10s. History is the live-alert feed.
+  // Poll every list every 10s so all counters + the firing-since
+  // indicator stay fresh, not just the active tab.
   $effect(() => {
-    const refresh = () => {
-      if (tab === 'history') loadHistory();
-      else if (tab === 'rules') loadRules();
-      else if (tab === 'channels') loadChannels();
-    };
+    const refresh = () => { loadRules(); loadChannels(); loadHistory(); };
     return autoRefresh(refresh, 10_000);
   });
 
@@ -153,38 +149,39 @@
     </header>
 
     <!-- ─────────────────── Sub-Tabs ─────────────────── -->
-    <div class="al-tabs" role="tablist">
+    <div class="ed-tabs" role="tablist">
       <button
         type="button"
-        class="al-tab"
-        class:al-tab-active={tab === 'rules'}
+        class="ed-tab"
+        class:active={tab === 'rules'}
         onclick={() => setTab('rules')}
       >
-        <BellRing size={12} strokeWidth={1.5} />
+        <BellRing size={13} strokeWidth={1.5} />
         Rules
-        <span class="al-tab-count">{rules.length}</span>
+        <span class="count">{rules.length}</span>
         {#if firingCount > 0}
           <span class="al-tab-fire">{firingCount}</span>
         {/if}
       </button>
       <button
         type="button"
-        class="al-tab"
-        class:al-tab-active={tab === 'channels'}
+        class="ed-tab"
+        class:active={tab === 'channels'}
         onclick={() => setTab('channels')}
       >
-        <Bell size={12} strokeWidth={1.5} />
+        <Bell size={13} strokeWidth={1.5} />
         Channels
-        <span class="al-tab-count">{channels.length}</span>
+        <span class="count">{channels.length}</span>
       </button>
       <button
         type="button"
-        class="al-tab"
-        class:al-tab-active={tab === 'history'}
+        class="ed-tab"
+        class:active={tab === 'history'}
         onclick={() => setTab('history')}
       >
-        <Activity size={12} strokeWidth={1.5} />
+        <Activity size={13} strokeWidth={1.5} />
         History
+        <span class="count">{history.length}</span>
       </button>
     </div>
 
@@ -343,40 +340,9 @@
     max-width: 70ch;
   }
 
-  /* ── Sub-tabs ───────────────────────────────────────────────── */
-  .al-tabs {
-    display: flex;
-    gap: 0;
-    border-bottom: 1px solid var(--border-subtle);
-  }
-  .al-tab {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 10px 16px;
-    background: transparent;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    cursor: pointer;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    letter-spacing: 0.04em;
-    color: var(--fg-subtle);
-  }
-  .al-tab:hover { color: var(--fg); }
-  .al-tab-active {
-    color: var(--fg);
-    border-bottom-color: var(--accent);
-  }
-  .al-tab-count {
-    font-size: 10px;
-    color: var(--fg-subtle);
-    padding: 0 5px;
-    background: var(--bg);
-    border: 1px solid var(--border-subtle);
-    border-radius: 999px;
-  }
-  .al-tab-active .al-tab-count { color: var(--fg-muted); }
+  /* ── Sub-tabs use global .ed-tabs / .ed-tab / .count from app.css.
+        Only the "firing" pill stays local — it's a status indicator,
+        not a count badge, and red+rounded is intentional. ───────── */
   .al-tab-fire {
     font-size: 9.5px;
     padding: 1px 6px;

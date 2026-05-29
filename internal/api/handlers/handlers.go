@@ -41,6 +41,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/templates"
 	"github.com/dockmesh/dockmesh/internal/updater"
+	"github.com/dockmesh/dockmesh/internal/invites"
 )
 
 type Handlers struct {
@@ -60,6 +61,7 @@ type Handlers struct {
 	ScanStore    *scanner.Store
 	Proxy        *proxy.Service
 	Updater      *updater.Service
+	UpdateWatcher *updater.Watcher
 	OIDC         *oidc.Service
 	SAML         *saml.Service
 	LDAP         *ldapauth.Service
@@ -82,6 +84,7 @@ type Handlers struct {
 	Registries     *registries.Service
 	GitSource      *gitsource.Service
 	Templates      *templates.Service
+	Invites        *invites.Service
 	AuditRetention *audit.Retention
 	AuditWebhook   *audit.Webhook
 	AgentUpgrade   *agents.UpgradeController
@@ -114,6 +117,7 @@ type Deps struct {
 	ScanStore    *scanner.Store
 	Proxy        *proxy.Service
 	Updater      *updater.Service
+	UpdateWatcher *updater.Watcher
 	OIDC         *oidc.Service
 	SAML         *saml.Service
 	LDAP         *ldapauth.Service
@@ -136,6 +140,7 @@ type Deps struct {
 	Registries     *registries.Service
 	GitSource      *gitsource.Service
 	Templates      *templates.Service
+	Invites        *invites.Service
 	AuditRetention *audit.Retention
 	AuditWebhook   *audit.Webhook
 	AgentUpgrade   *agents.UpgradeController
@@ -165,6 +170,7 @@ func New(d Deps) *Handlers {
 		ScanStore:   d.ScanStore,
 		Proxy:       d.Proxy,
 		Updater:     d.Updater,
+		UpdateWatcher: d.UpdateWatcher,
 		OIDC:        d.OIDC,
 		SAML:        d.SAML,
 		LDAP:        d.LDAP,
@@ -187,6 +193,7 @@ func New(d Deps) *Handlers {
 		Registries:  d.Registries,
 		GitSource:      d.GitSource,
 		Templates:      d.Templates,
+		Invites:        d.Invites,
 		AuditRetention: d.AuditRetention,
 		AuditWebhook:   d.AuditWebhook,
 		AgentUpgrade:   d.AgentUpgrade,

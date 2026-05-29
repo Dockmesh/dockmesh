@@ -123,7 +123,7 @@ func containersExecCmd() *cobra.Command {
 //   - BinaryMessage server→client = stdout/stderr (TTY merged)
 //   - TextMessage   client→server = JSON {"type":"resize","cols":N,"rows":M}
 func runExec(c *Client, containerID, cmdStr string) error {
-	ticket, err := c.wsTicket()
+	ticket, err := c.wsTicket("containers.exec")
 	if err != nil {
 		return err
 	}

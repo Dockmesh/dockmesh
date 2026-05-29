@@ -801,7 +801,7 @@
     justify-content: center;
     border: 1px solid var(--border-subtle);
     border-radius: 4px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     flex-shrink: 0;
   }
   .reg-rail-text { min-width: 0; flex: 1; }
@@ -888,7 +888,7 @@
     justify-content: center;
     border: 1px solid var(--border-subtle);
     border-radius: 4px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     flex-shrink: 0;
   }
   .reg-name-text { min-width: 0; flex: 1; }
@@ -1047,7 +1047,7 @@
   .reg-hint-code {
     font-family: var(--font-mono);
     font-size: 11px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     padding: 1px 5px;
     border-radius: 3px;
     border: 1px solid var(--border);
@@ -1089,7 +1089,7 @@
 
   .reg-help {
     padding: 8px 10px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 1px dashed var(--border);
     border-radius: 4px;
     font-family: var(--font-mono);

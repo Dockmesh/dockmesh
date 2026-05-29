@@ -9,6 +9,7 @@
   import { api, ApiError, type AgentCreateResult } from '$lib/api';
   import { Eyebrow } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyToClipboard } from '$lib/clipboard';
   import { Plus, X, Check, Copy, ArrowRight } from 'lucide-svelte';
 
   interface Props {
@@ -73,12 +74,14 @@
   }
 
   async function copyCmd() {
-    if (!createResult || typeof navigator === 'undefined' || !navigator.clipboard) return;
-    try {
-      await navigator.clipboard.writeText(createResult.install_hint);
+    if (!createResult) return;
+    const ok = await copyToClipboard(createResult.install_hint);
+    if (ok) {
       copied = true;
       setTimeout(() => (copied = false), 1500);
-    } catch { toast.error('Copy failed'); }
+    } else {
+      toast.error('Copy failed', 'Select the text manually and use Ctrl+C');
+    }
   }
 
   // Section 03 — poll for agent to come online.
@@ -367,7 +370,7 @@
     padding: 8px 10px;
     border: 1px solid var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--surface);
   }
   .ed-host-tags-input {
     flex: 1 1 140px; border: 0; background: transparent;
@@ -409,7 +412,7 @@
   .ed-add-host-cmd {
     margin: 0;
     padding: 14px 16px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: 6px;
     font-family: var(--font-mono);

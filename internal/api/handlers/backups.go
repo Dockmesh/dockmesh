@@ -199,6 +199,30 @@ func (h *Handlers) GetBackupRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, run)
 }
 
+// GetBackupRunLog returns the captured log lines for one run, in
+// chronological order. Includes info/warn/error narration emitted by
+// the executor at phase boundaries plus verbatim hook stdout/stderr
+// (capped at 16 KB per hook so noisy hooks can't blow the table).
+//
+//	GET /api/v1/backups/runs/{id}/log
+func (h *Handlers) GetBackupRunLog(w http.ResponseWriter, r *http.Request) {
+	if h.Backups == nil {
+		writeError(w, http.StatusServiceUnavailable, "backups not configured")
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	entries, err := h.Backups.RunLog(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
 // DownloadBackupArchive streams the run's archive bytes to the
 // caller. The Service handles transparent decryption for runs that
 // were stored encrypted (via age) — admins downloading an archive

@@ -56,6 +56,12 @@
   );
   let newEnv = $state('');
   let creating = $state(false);
+  // Host the new stack should deploy onto when the operator picks
+  // "Create & deploy". Defaults to whatever the sidebar host switcher
+  // is currently on; ignored when only `local` is available. The picker
+  // is hidden unless multi-host is configured to keep the modal lean for
+  // single-host installs.
+  let newHostId = $state('local');
 
   // Create-modal source toggle. "editor" = paste compose + env. "git" =
   // clone from a repository (the backend's POST /stacks/from-git path
@@ -159,24 +165,46 @@
 
   async function create(e: Event) {
     e.preventDefault();
+    await runCreate(false);
+  }
+
+  async function createAndDeploy() {
+    await runCreate(true);
+  }
+
+  // Shared create flow. `deploy` controls whether we follow the create
+  // call with a deploy on the picked host — for the git path the deploy
+  // is unconditional because the import endpoint already syncs but
+  // doesn't bring up containers.
+  async function runCreate(deploy: boolean) {
     creating = true;
     lastGitDrift = null;
+    const stackName = newName;
+    const targetHost = newHostId || 'local';
     try {
       if (createMode === 'git') {
-        const res = await api.stacks.createFromGit(newName, normalizeGitInput(newGit));
+        const res = await api.stacks.createFromGit(stackName, normalizeGitInput(newGit));
         const driftCount =
           (res.sync?.env_drift?.new_from_repo?.length ?? 0) +
           (res.sync?.env_drift?.new_from_compose?.length ?? 0);
         toast.success(
           'Stack imported',
           driftCount > 0
-            ? `${newName} · ${driftCount} env var${driftCount === 1 ? '' : 's'} need values`
-            : `${newName} · synced ${res.sync?.new_sha?.slice(0, 7) ?? ''}`,
+            ? `${stackName} · ${driftCount} env var${driftCount === 1 ? '' : 's'} need values`
+            : `${stackName} · synced ${res.sync?.new_sha?.slice(0, 7) ?? ''}`,
         );
         lastGitDrift = res.sync?.env_drift ?? null;
       } else {
-        await api.stacks.create(newName, newCompose, newEnv || undefined);
-        toast.success('Stack created', newName);
+        await api.stacks.create(stackName, newCompose, newEnv || undefined);
+        toast.success('Stack created', stackName);
+      }
+      if (deploy) {
+        try {
+          await api.stacks.deploy(stackName, targetHost);
+          toast.success('Deploy started', `${stackName} → ${targetHost === 'local' ? 'local' : targetHost}`);
+        } catch (err) {
+          toast.error('Deploy failed', err instanceof ApiError ? err.message : undefined);
+        }
       }
       showCreate = false;
       newName = '';
@@ -372,7 +400,7 @@
         <button
           type="button"
           class="dm-btn dm-btn-primary dm-btn-sm"
-          onclick={() => (showCreate = true)}
+          onclick={() => { newHostId = hosts.isAll ? 'local' : hosts.id; showCreate = true; }}
         >
           <Plus size={13} strokeWidth={1.5} />
           New stack
@@ -542,7 +570,7 @@
           <button
             type="button"
             class="dm-btn dm-btn-primary dm-btn-sm"
-            onclick={() => (showCreate = true)}
+            onclick={() => { newHostId = hosts.isAll ? 'local' : hosts.id; showCreate = true; }}
           >
             <Plus size={13} strokeWidth={1.5} /> Create stack
           </button>
@@ -651,6 +679,26 @@
     </div>
 
     <Input label="Name" placeholder="my-stack" bind:value={newName} disabled={creating} />
+
+    <!-- Host picker — only meaningful when more than one host is wired up.
+         The compose.yaml itself is host-neutral on disk; this picks the
+         target host for the optional "Create & deploy" action. Falls
+         back to whatever the sidebar host switcher had selected. -->
+    {#if hosts.available.filter((h) => h.kind !== 'all').length > 1}
+      <div>
+        <label for="new-host" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">
+          Deploy on host
+        </label>
+        <select id="new-host" class="dm-input text-sm w-full" bind:value={newHostId} disabled={creating}>
+          {#each hosts.available.filter((h) => h.kind !== 'all') as h (h.id)}
+            <option value={h.id}>{h.name}{h.id === 'local' ? ' (server)' : ''}</option>
+          {/each}
+        </select>
+        <p class="text-[10.5px] text-[var(--fg-subtle)] mt-1">
+          Only used when you pick <em>Create &amp; deploy</em>. Plain <em>Create</em> saves the compose host-neutrally.
+        </p>
+      </div>
+    {/if}
 
     <!-- Source picker: paste-it or pull-it-from-a-repo. -->
     <div class="flex gap-1 p-1 rounded bg-[var(--bg-muted,rgba(0,0,0,0.04))] w-fit">
@@ -829,7 +877,7 @@
   {#snippet footer()}
     <Button variant="secondary" onclick={() => (showCreate = false)}>Cancel</Button>
     <Button
-      variant="primary"
+      variant="secondary"
       type="submit"
       form="create-stack-form"
       loading={creating}
@@ -837,6 +885,15 @@
         (createMode === 'editor' ? !newCompose : !newGit.repo_url)}
     >
       {createMode === 'git' ? 'Import & sync' : 'Create'}
+    </Button>
+    <Button
+      variant="primary"
+      loading={creating}
+      disabled={creating || !newName || !canDeploy ||
+        (createMode === 'editor' ? !newCompose : !newGit.repo_url)}
+      onclick={createAndDeploy}
+    >
+      Create & deploy
     </Button>
   {/snippet}
 </Modal>

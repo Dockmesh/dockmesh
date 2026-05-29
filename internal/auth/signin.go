@@ -12,14 +12,15 @@ import (
 
 // Setting keys for the sign-in flow.
 const (
-	AllowLocalPasswordKey      = "auth.allow_local_password"        // 1 = local pw login enabled
-	AllowSelfRegisterKey       = "auth.allow_self_register"         // 1 = self-serve signup
-	AutoCreateOnSSOKey         = "auth.auto_create_on_sso"          // 1 = create user on first SSO login
-	RequireTFAForAdminKey      = "auth.require_tfa_for_admin"       // 1 = admins MUST have TOTP
-	SessionIdleTTLMinKey       = "auth.session_idle_ttl_min"        // minutes; 0 = no idle expiry
-	SessionAbsoluteTTLHrKey    = "auth.session_absolute_ttl_hr"     // hours; hard cap on refresh chain
-	SessionRememberMeDaysKey   = "auth.session_remember_me_days"    // days; "stay signed in" duration
-	PasswordForbidReuseCountKey = "auth.password_forbid_reuse_count" // N most-recent disallowed
+	AllowLocalPasswordKey       = "auth.allow_local_password"         // 1 = local pw login enabled
+	AllowSelfRegisterKey        = "auth.allow_self_register"          // 1 = self-serve signup
+	AutoCreateOnSSOKey          = "auth.auto_create_on_sso"           // 1 = create user on first SSO login
+	RequireTFAForAdminKey       = "auth.require_tfa_for_admin"        // 1 = admins MUST have TOTP
+	SessionIdleTTLMinKey        = "auth.session_idle_ttl_min"         // minutes; 0 = no idle expiry
+	SessionAbsoluteTTLHrKey     = "auth.session_absolute_ttl_hr"      // hours; hard cap on refresh chain
+	SessionRememberMeDaysKey    = "auth.session_remember_me_days"     // days; "stay signed in" duration
+	SessionMaxPerUserKey        = "auth.session_max_per_user"         // cap on concurrent active sessions per user; 0 = unlimited
+	PasswordForbidReuseCountKey = "auth.password_forbid_reuse_count"  // N most-recent disallowed
 )
 
 // SignInConfig is the typed snapshot of the sign-in-flow settings.
@@ -31,6 +32,7 @@ type SignInConfig struct {
 	SessionIdleTTLMin        int  `json:"session_idle_ttl_min"`
 	SessionAbsoluteTTLHr     int  `json:"session_absolute_ttl_hr"`
 	SessionRememberMeDays    int  `json:"session_remember_me_days"`
+	SessionMaxPerUser        int  `json:"session_max_per_user"`
 	PasswordForbidReuseCount int  `json:"password_forbid_reuse_count"`
 }
 
@@ -47,6 +49,7 @@ func LoadSignInConfig(s SettingsReader) SignInConfig {
 		SessionIdleTTLMin:        intSetting(s, SessionIdleTTLMinKey, 60),
 		SessionAbsoluteTTLHr:     intSetting(s, SessionAbsoluteTTLHrKey, 24),
 		SessionRememberMeDays:    intSetting(s, SessionRememberMeDaysKey, 14),
+		SessionMaxPerUser:        intSetting(s, SessionMaxPerUserKey, 20),
 		PasswordForbidReuseCount: intSetting(s, PasswordForbidReuseCountKey, 0),
 	}
 }
@@ -61,6 +64,9 @@ func SaveSignInConfig(ctx context.Context, s SettingsReader, c SignInConfig) err
 	}
 	if c.SessionRememberMeDays < 0 || c.SessionRememberMeDays > 365 {
 		return errors.New("session_remember_me_days must be 0..365")
+	}
+	if c.SessionMaxPerUser < 0 || c.SessionMaxPerUser > 200 {
+		return errors.New("session_max_per_user must be 0..200 (0 = unlimited)")
 	}
 	if c.PasswordForbidReuseCount < 0 || c.PasswordForbidReuseCount > 24 {
 		return errors.New("password_forbid_reuse_count must be 0..24")
@@ -85,6 +91,9 @@ func SaveSignInConfig(ctx context.Context, s SettingsReader, c SignInConfig) err
 		return err
 	}
 	if err := set(SessionRememberMeDaysKey, strconv.Itoa(c.SessionRememberMeDays)); err != nil {
+		return err
+	}
+	if err := set(SessionMaxPerUserKey, strconv.Itoa(c.SessionMaxPerUser)); err != nil {
 		return err
 	}
 	return set(PasswordForbidReuseCountKey, strconv.Itoa(c.PasswordForbidReuseCount))

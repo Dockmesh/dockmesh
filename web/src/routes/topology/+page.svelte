@@ -737,7 +737,7 @@
     border: 1px solid var(--border);
     border-radius: 4px;
     padding: 2px;
-    background: var(--bg);
+    background: var(--bg-elevated);
   }
   .topo-zoom-btn {
     background: transparent;
@@ -774,7 +774,7 @@
     height: 72vh;
     display: block;
     cursor: grab;
-    background: var(--bg);
+    background: var(--bg-elevated);
   }
   .topo-svg.panning { cursor: grabbing; }
   .topo-node { cursor: pointer; }
@@ -929,7 +929,7 @@
     padding: 4px 10px;
     border: 1px solid var(--border);
     border-radius: 3px;
-    background: var(--bg);
+    background: var(--bg-elevated);
   }
   .topo-side-cta {
     margin-top: 16px;

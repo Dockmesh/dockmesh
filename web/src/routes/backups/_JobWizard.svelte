@@ -357,10 +357,14 @@
         <div class="wiz-field">
           <label class="wiz-field-label" for="sch-min">At minute</label>
           <span class="wiz-field-hint">Within each hour. 0 = on the hour.</span>
-          <div class="wiz-slider">
-            <input id="sch-min" type="range" min="0" max="59" bind:value={minute} />
-            <span class="wiz-slider-val font-mono">:{String(minute).padStart(2, '0')}</span>
-          </div>
+          <input
+            id="sch-min"
+            type="number"
+            class="wiz-input wiz-input-mono wiz-input-narrow"
+            min="0"
+            max="59"
+            bind:value={minute}
+          />
         </div>
       {/if}
 
@@ -376,12 +380,19 @@
           </div>
         {/if}
         <div class="wiz-field">
-          <label class="wiz-field-label" for="sch-hour">At hour</label>
+          <label class="wiz-field-label" for="sch-time">At time</label>
           <span class="wiz-field-hint">Local server time. Backups run a few minutes earlier than typical traffic peak.</span>
-          <div class="wiz-slider">
-            <input id="sch-hour" type="range" min="0" max="23" bind:value={hour} />
-            <span class="wiz-slider-val font-mono">{String(hour).padStart(2, '0')}:{String(minute).padStart(2, '0')}</span>
-          </div>
+          <input
+            id="sch-time"
+            type="time"
+            class="wiz-input wiz-input-mono wiz-input-narrow"
+            value={`${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`}
+            onchange={(e) => {
+              const parts = ((e.currentTarget as HTMLInputElement).value || '00:00').split(':');
+              hour = parseInt(parts[0], 10) || 0;
+              minute = parseInt(parts[1], 10) || 0;
+            }}
+          />
         </div>
       {/if}
 
@@ -645,7 +656,7 @@
     padding: 0 12px;
     border: 1px solid var(--border);
     border-radius: 4px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     color: var(--fg);
     font-size: 13px;
     transition: border-color 120ms;
@@ -655,6 +666,10 @@
     border-color: var(--accent);
   }
   .wiz-input-mono { font-family: var(--font-mono); }
+  .wiz-input-narrow { width: auto; min-width: 110px; max-width: 160px; align-self: flex-start; }
+  /* Native time/number inputs render a tiny picker icon on Webkit —
+     invert to match the dark theme. */
+  .wiz-input::-webkit-calendar-picker-indicator { filter: invert(0.7); cursor: pointer; }
 
   /* Source-type radio cards */
   .wiz-radio-grid {
@@ -669,7 +684,7 @@
     padding: 12px 14px;
     border: 1px solid var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     cursor: pointer;
     text-align: left;
     color: var(--fg-muted);
@@ -736,7 +751,7 @@
     padding: 10px 14px;
     border: 1px solid var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     color: var(--fg-muted);
     font-size: 12px;
     line-height: 1.55;
@@ -763,7 +778,7 @@
     padding: 10px 14px;
     border: 1px solid var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     cursor: pointer;
     text-align: left;
     color: var(--fg);
@@ -835,7 +850,7 @@
     padding: 12px 14px;
     border: 1px solid var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     cursor: pointer;
   }
   .wiz-toggle:hover { border-color: var(--border-strong); }
@@ -877,7 +892,7 @@
     padding: 10px 12px;
     border: 1px solid var(--border);
     border-radius: 4px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     cursor: pointer;
     transition: border-color 120ms, background 120ms;
   }

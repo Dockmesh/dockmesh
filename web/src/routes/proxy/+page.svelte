@@ -24,6 +24,7 @@
     host: string;
     upstream: string;
     tls_mode: 'auto' | 'internal' | 'none';
+    enabled: boolean;
     created_at?: string;
     updated_at?: string;
   }
@@ -271,6 +272,17 @@
       toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
     } finally {
       saving = false;
+    }
+  }
+
+  async function toggleEnabled(r: ProxyRoute) {
+    const next = !r.enabled;
+    try {
+      await api.proxy.setRouteEnabled(r.id, next);
+      toast.success(next ? 'Enabled' : 'Disabled', r.host);
+      await load();
+    } catch (err) {
+      toast.error('Toggle failed', err instanceof ApiError ? err.message : undefined);
     }
   }
 
@@ -526,7 +538,7 @@
         </div>
 
         {#each visible as r (r.id)}
-          <div class="pxy-row" class:pxy-row-selected={selected.has(r.id)}>
+          <div class="pxy-row" class:pxy-row-selected={selected.has(r.id)} class:pxy-row-disabled={!r.enabled}>
             <span class="pxy-col-check">
               <input
                 type="checkbox"
@@ -537,6 +549,9 @@
 
             <div class="pxy-cell-host">
               <span class="pxy-host">{r.host}</span>
+              {#if !r.enabled}
+                <span class="pxy-disabled-pill" title="Route is disabled — kept in config but not served by Caddy">disabled</span>
+              {/if}
               <a
                 href="https://{r.host}"
                 target="_blank"
@@ -561,6 +576,19 @@
             <span class="pxy-cell-created">{fmtDate(r.created_at)}</span>
 
             <div class="pxy-cell-actions">
+              <button
+                type="button"
+                class="pxy-icon-btn"
+                onclick={() => toggleEnabled(r)}
+                title={r.enabled ? 'Disable' : 'Enable'}
+                aria-label={r.enabled ? 'Disable' : 'Enable'}
+              >
+                {#if r.enabled}
+                  <PowerOff size={11} strokeWidth={1.5} />
+                {:else}
+                  <Power size={11} strokeWidth={1.5} />
+                {/if}
+              </button>
               <button
                 type="button"
                 class="pxy-icon-btn"
@@ -803,7 +831,7 @@
     justify-content: center;
     border: 1px solid var(--border);
     border-radius: 999px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     color: var(--fg-subtle);
   }
   .pxy-status[data-state="running"] .pxy-status-icon {
@@ -958,6 +986,18 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .pxy-row-disabled .pxy-host { color: var(--fg-muted); text-decoration: line-through; }
+  .pxy-disabled-pill {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--surface-hover);
+    color: var(--fg-muted);
+    border: 1px solid var(--border-subtle);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
   .pxy-host-open {
     color: var(--fg-subtle);
@@ -1133,8 +1173,8 @@
     .pxy-insight-grid { grid-template-columns: 1fr; }
   }
   .pxy-card {
-    background: var(--ed-surface, #fff);
-    border: 1px solid var(--ed-border, rgba(0, 0, 0, 0.08));
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 6px;
     padding: 20px;
     display: flex;
@@ -1164,13 +1204,26 @@
     font-size: 0.72rem;
     padding: 3px 8px;
     border-radius: 999px;
-    background: rgba(0, 0, 0, 0.04);
+    background: var(--surface-hover);
+    color: var(--fg-muted);
     font-feature-settings: 'tnum';
   }
-  .pxy-status-2xx { background: rgba(34, 197, 94, 0.12); color: rgb(22, 101, 52); }
-  .pxy-status-3xx { background: rgba(59, 130, 246, 0.12); color: rgb(30, 64, 175); }
-  .pxy-status-4xx { background: rgba(234, 179, 8, 0.14); color: rgb(133, 77, 14); }
-  .pxy-status-5xx { background: rgba(239, 68, 68, 0.14); color: rgb(153, 27, 27); }
+  .pxy-status-2xx {
+    background: color-mix(in srgb, var(--color-success-500) 14%, transparent);
+    color: var(--color-success-400);
+  }
+  .pxy-status-3xx {
+    background: color-mix(in srgb, var(--color-brand-500) 14%, transparent);
+    color: var(--color-brand-400);
+  }
+  .pxy-status-4xx {
+    background: color-mix(in srgb, var(--color-warning-500) 14%, transparent);
+    color: var(--color-warning-400);
+  }
+  .pxy-status-5xx {
+    background: color-mix(in srgb, var(--color-danger-500) 14%, transparent);
+    color: var(--color-danger-400);
+  }
   .pxy-per-host {
     width: 100%;
     font-size: 0.78rem;
@@ -1183,11 +1236,11 @@
     letter-spacing: 0.05em;
     opacity: 0.6;
     padding: 6px 4px;
-    border-bottom: 1px solid var(--ed-border, rgba(0, 0, 0, 0.08));
+    border-bottom: 1px solid var(--border);
   }
   .pxy-per-host td {
     padding: 6px 4px;
-    border-bottom: 1px solid var(--ed-border-faint, rgba(0, 0, 0, 0.04));
+    border-bottom: 1px solid var(--border-subtle);
     font-feature-settings: 'tnum';
   }
   .pxy-per-host-name { font-family: var(--ed-font-mono, ui-monospace, monospace); }
@@ -1204,10 +1257,10 @@
     align-items: center;
     font-size: 0.78rem;
     padding: 6px 10px;
-    border-left: 2px solid var(--ed-border, rgba(0, 0, 0, 0.08));
+    border-left: 2px solid var(--border);
   }
-  .pxy-acme-success { border-left-color: rgb(34, 197, 94); }
-  .pxy-acme-failure { border-left-color: rgb(239, 68, 68); }
+  .pxy-acme-success { border-left-color: var(--color-success-500); }
+  .pxy-acme-failure { border-left-color: var(--color-danger-500); }
   .pxy-acme-kind {
     font-size: 0.65rem;
     text-transform: uppercase;
@@ -1217,9 +1270,18 @@
     background: rgba(0, 0, 0, 0.05);
     text-align: center;
   }
-  .pxy-acme-kind-obtain { background: rgba(34, 197, 94, 0.12); color: rgb(22, 101, 52); }
-  .pxy-acme-kind-renew { background: rgba(59, 130, 246, 0.12); color: rgb(30, 64, 175); }
-  .pxy-acme-kind-failure { background: rgba(239, 68, 68, 0.14); color: rgb(153, 27, 27); }
+  .pxy-acme-kind-obtain {
+    background: color-mix(in srgb, var(--color-success-500) 14%, transparent);
+    color: var(--color-success-400);
+  }
+  .pxy-acme-kind-renew {
+    background: color-mix(in srgb, var(--color-brand-500) 14%, transparent);
+    color: var(--color-brand-400);
+  }
+  .pxy-acme-kind-failure {
+    background: color-mix(in srgb, var(--color-danger-500) 14%, transparent);
+    color: var(--color-danger-400);
+  }
   .pxy-acme-host { font-family: var(--ed-font-mono, ui-monospace, monospace); }
   .pxy-acme-msg {
     overflow: hidden;

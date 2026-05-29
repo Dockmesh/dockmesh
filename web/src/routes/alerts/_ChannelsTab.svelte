@@ -267,7 +267,7 @@
     justify-content: center;
     border: 1px solid var(--border-subtle);
     border-radius: 4px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     flex-shrink: 0;
   }
   .ct-card-text { min-width: 0; }
@@ -311,7 +311,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     padding: 6px 8px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
     border-radius: 3px;
   }

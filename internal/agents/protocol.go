@@ -43,9 +43,10 @@ const (
 	FrameReqContainerKill    = "req.containers.kill"
 
 	// Resource listings + mutations (server → agent)
-	FrameReqImageList   = "req.images.list"
-	FrameReqImageRemove = "req.images.remove"
-	FrameReqImagePrune  = "req.images.prune"
+	FrameReqImageList    = "req.images.list"
+	FrameReqImageInspect = "req.images.inspect"
+	FrameReqImageRemove  = "req.images.remove"
+	FrameReqImagePrune   = "req.images.prune"
 	FrameReqNetworkList    = "req.networks.list"
 	FrameReqNetworkInspect = "req.networks.inspect"
 	FrameReqVolumeList     = "req.volumes.list"

@@ -97,6 +97,50 @@ func (s *Service) policy() PolicyConfig {
 	return LoadPolicy(s.settings)
 }
 
+// signInConfig returns the current sign-in flow settings, falling back
+// to the default snapshot when no store is attached. Used by login,
+// refresh, and the cleanup worker so all three see the same numbers.
+func (s *Service) signInConfig() SignInConfig {
+	if s.settings == nil {
+		return SignInConfig{
+			SessionIdleTTLMin:     60,
+			SessionAbsoluteTTLHr:  24,
+			SessionRememberMeDays: 14,
+			SessionMaxPerUser:     20,
+		}
+	}
+	return LoadSignInConfig(s.settings)
+}
+
+// enforceSessionCap revokes the oldest active sessions for `userID` so
+// the count stays at most `cap-1` — leaving room for the one we're
+// about to insert. cap=0 means "unlimited" and is a no-op. Ordering is
+// by last_seen_at then created_at: a session that's still receiving
+// refresh hits should be the last one to die, even if it's an old
+// family. SQLite's lack of UPDATE+ORDER+LIMIT forces the sub-select.
+func (s *Service) enforceSessionCap(ctx context.Context, userID string, cap int) error {
+	if cap <= 0 {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE sessions
+		   SET revoked_at = CURRENT_TIMESTAMP
+		 WHERE family_id IN (
+		   SELECT family_id FROM sessions
+		    WHERE user_id = ?
+		      AND revoked_at IS NULL
+		      AND expires_at > CURRENT_TIMESTAMP
+		    ORDER BY COALESCE(last_seen_at, created_at) ASC, created_at ASC
+		    LIMIT MAX(0, (
+		      SELECT COUNT(*) FROM sessions
+		       WHERE user_id = ?
+		         AND revoked_at IS NULL
+		         AND expires_at > CURRENT_TIMESTAMP
+		    ) - ? + 1)
+		 )`, userID, userID, cap)
+	return err
+}
+
 // Bootstrap creates an initial admin user if no users exist.
 // Returns the generated plaintext password so the caller can log it once.
 func (s *Service) Bootstrap(ctx context.Context) (username, password string, created bool, err error) {
@@ -264,6 +308,29 @@ func (s *Service) GetAvatar(ctx context.Context, id string) ([]byte, string, err
 		return nil, "", nil
 	}
 	return blob, mime.String, nil
+}
+
+// ListActiveUserIDs returns just the ids of currently-known users.
+// Used by notifications fan-out so the producer doesn't pay for the
+// full User struct + scope-tag parsing on every emit. "Active" here
+// means "row exists in the users table" — we don't have a suspended-
+// account concept yet, so the filter is degenerate. If/when we add
+// one (last_login_at-based or explicit), narrow this query.
+func (s *Service) ListActiveUserIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM users`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
@@ -518,9 +585,25 @@ func (s *Service) VerifyLoginMFA(ctx context.Context, mfaToken, code, userAgent,
 
 // startSession inserts the sessions row and mints the token pair. Shared
 // between password-only login and MFA-completed login.
+//
+// Session lifetime + concurrency are read from the SignInConfig settings
+// (with the hardcoded refreshTTL as a fallback when no settings store is
+// wired). Before inserting, sessions over the per-user cap are revoked
+// so a runaway client (lost localStorage, repeated re-logins) can never
+// pile up indefinitely — the oldest by last_seen_at gets evicted first.
 func (s *Service) startSession(ctx context.Context, u User, userAgent, ip string) (*LoginResult, error) {
+	cfg := s.signInConfig()
+	absoluteTTL := s.refreshTTL
+	if cfg.SessionAbsoluteTTLHr > 0 {
+		absoluteTTL = time.Duration(cfg.SessionAbsoluteTTLHr) * time.Hour
+	}
+	if err := s.enforceSessionCap(ctx, u.ID, cfg.SessionMaxPerUser); err != nil {
+		// Soft-fail: a cap-enforcement error shouldn't block a legitimate
+		// login. Log via the error path and let the new session through.
+		_ = err
+	}
 	familyID := uuid.NewString()
-	expiresAt := time.Now().Add(s.refreshTTL)
+	expiresAt := time.Now().Add(absoluteTTL)
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO sessions (family_id, user_id, current_seq, user_agent, ip, expires_at) VALUES (?, ?, 0, ?, ?, ?)`,
 		familyID, u.ID, nullable(userAgent), nullable(ip), expiresAt); err != nil {
@@ -577,10 +660,11 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*LoginResul
 		currentSeq int
 		revokedAt  sql.NullTime
 		expiresAt  time.Time
+		lastSeenAt sql.NullTime
 	)
 	err = s.db.QueryRowContext(ctx,
-		`SELECT user_id, current_seq, revoked_at, expires_at FROM sessions WHERE family_id = ?`,
-		claims.FamilyID).Scan(&userID, &currentSeq, &revokedAt, &expiresAt)
+		`SELECT user_id, current_seq, revoked_at, expires_at, last_seen_at FROM sessions WHERE family_id = ?`,
+		claims.FamilyID).Scan(&userID, &currentSeq, &revokedAt, &expiresAt, &lastSeenAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrInvalidToken
 	}
@@ -593,6 +677,23 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*LoginResul
 	if time.Now().After(expiresAt) {
 		return nil, ErrInvalidToken
 	}
+	// Idle timeout: if the session hasn't seen a refresh hit within the
+	// configured window, revoke it now and force a fresh login. Catches
+	// the "browser tab left open for a week, then resumed" case without
+	// waiting for the absolute TTL to run out. 0 = disabled.
+	cfg := s.signInConfig()
+	if cfg.SessionIdleTTLMin > 0 {
+		anchor := expiresAt.Add(-time.Duration(cfg.SessionAbsoluteTTLHr) * time.Hour)
+		if lastSeenAt.Valid {
+			anchor = lastSeenAt.Time
+		}
+		idleCutoff := time.Now().Add(-time.Duration(cfg.SessionIdleTTLMin) * time.Minute)
+		if anchor.Before(idleCutoff) {
+			_, _ = s.db.ExecContext(ctx,
+				`UPDATE sessions SET revoked_at = CURRENT_TIMESTAMP WHERE family_id = ?`, claims.FamilyID)
+			return nil, ErrInvalidToken
+		}
+	}
 	if claims.Seq != currentSeq {
 		// Reuse of an older refresh token → revoke the whole family.
 		_, _ = s.db.ExecContext(ctx,
@@ -600,15 +701,22 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*LoginResul
 		return nil, ErrTokenReused
 	}
 	newSeq := currentSeq + 1
+	// Sliding window: bump expires_at on every refresh so an active user
+	// never hits the absolute cap unless they go idle long enough to be
+	// killed by the idle check above. New deadline = now + absolute TTL.
+	newExpires := expiresAt
+	if cfg.SessionAbsoluteTTLHr > 0 {
+		newExpires = time.Now().Add(time.Duration(cfg.SessionAbsoluteTTLHr) * time.Hour)
+	}
 	if _, err := s.db.ExecContext(ctx,
-		`UPDATE sessions SET current_seq = ? WHERE family_id = ?`, newSeq, claims.FamilyID); err != nil {
+		`UPDATE sessions SET current_seq = ?, expires_at = ? WHERE family_id = ?`, newSeq, newExpires, claims.FamilyID); err != nil {
 		return nil, err
 	}
 	u, err := s.GetUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	return s.mintPair(*u, claims.FamilyID, newSeq, expiresAt)
+	return s.mintPair(*u, claims.FamilyID, newSeq, newExpires)
 }
 
 func (s *Service) Logout(ctx context.Context, refreshToken string) error {
@@ -686,12 +794,16 @@ func (s *Service) parseRefresh(token string) (*refreshClaims, error) {
 }
 
 // IssueWSTicket creates a short-lived (30s) JWT ticket for WebSocket auth (§15.8).
-// The client obtains it via POST /api/v1/ws/ticket with a valid Bearer token,
-// then passes it as ?ticket=<JWT> on the WebSocket upgrade URL.
-func (s *Service) IssueWSTicket(userID, role string) (string, error) {
+// The client obtains it via POST /api/v1/ws/ticket?for=<perm> with a valid
+// Bearer token, then passes it as ?ticket=<JWT> on the WebSocket upgrade URL.
+// The ticket binds to the requested permission so a logs-ticket can't be
+// reused on /ws/exec — the WS handler compares claims.Perm against the
+// endpoint's required permission and rejects on mismatch.
+func (s *Service) IssueWSTicket(userID, role, perm string) (string, error) {
 	c := Claims{
 		UserID: userID,
 		Role:   role,
+		Perm:   perm,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(30 * time.Second)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -702,13 +814,10 @@ func (s *Service) IssueWSTicket(userID, role string) (string, error) {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString(s.secret)
 }
 
-// ValidateWSTicket verifies a WebSocket ticket JWT and returns the user ID.
-func (s *Service) ValidateWSTicket(token string) (string, error) {
-	c, err := ParseAccessToken(s.secret, token)
-	if err != nil {
-		return "", err
-	}
-	return c.UserID, nil
+// ValidateWSTicket verifies a WebSocket ticket JWT and returns the full
+// claims so handlers can check both the user ID and the bound permission.
+func (s *Service) ValidateWSTicket(token string) (*Claims, error) {
+	return ParseAccessToken(s.secret, token)
 }
 
 func generatePassword(n int) (string, error) {

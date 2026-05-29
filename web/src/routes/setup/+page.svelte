@@ -12,6 +12,7 @@
   // terminal-output triumph for step 7. CSS lives in a scoped style
   // block at the bottom so this file is fully self-contained.
   import { onMount, onDestroy } from 'svelte';
+  import { copyToClipboard as clipboardCopy } from '$lib/clipboard';
 
   type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
@@ -431,7 +432,7 @@
   let copiedKey = $state<string | null>(null);
   let credShowPw = $state(false);
   function copyToClipboard(key: string, value: string) {
-    navigator.clipboard?.writeText(value).catch(() => {});
+    void clipboardCopy(value);
     copiedKey = key;
     setTimeout(() => { if (copiedKey === key) copiedKey = null; }, 1400);
   }
@@ -996,7 +997,7 @@
                 </a>
                 <span class="ed-term-cta-meta">
                   forgot the password? run
-                  <code class="font-mono px-1.5 py-0.5 rounded" style="background: var(--bg); color: var(--fg-muted); border: 1px solid var(--border);">
+                  <code class="font-mono px-1.5 py-0.5 rounded" style="background: var(--bg-elevated); color: var(--fg-muted); border: 1px solid var(--border);">
                     sudo dockmesh admin reset-password
                   </code>
                 </span>
@@ -1031,7 +1032,7 @@
     appearance: none;
     width: 1rem; height: 1rem;
     border: 1px solid var(--border-strong);
-    background: var(--bg);
+    background: var(--bg-elevated);
     flex-shrink: 0;
     cursor: pointer;
     transition: border-color 0.15s ease, background-color 0.15s ease;
@@ -1062,7 +1063,7 @@
   /* ───── Editorial shell ───── */
   .ed-shell {
     min-height: 100vh;
-    background: var(--bg);
+    background: var(--surface);
     color: var(--fg);
     position: relative;
     overflow: hidden;

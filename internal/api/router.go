@@ -113,6 +113,12 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 		// Agent enrollment — token is the auth, no JWT required.
 		r.Post("/agents/enroll", h.EnrollAgent)
 
+		// Invite-link accept flow — token is the auth. Preview shows
+		// "Invitation as <role> for <email_hint>" to the recipient;
+		// accept consumes the token + provisions the user account.
+		r.Get("/invite/{token}", h.PreviewInvite)
+		r.Post("/invite/{token}/accept", h.AcceptInvite)
+
 		// Git webhook endpoint (P.11.11). Public — GitHub / GitLab /
 		// Gitea cannot send Bearer tokens. Signature verification is
 		// done inside the handler using the stack's stored webhook
@@ -179,12 +185,27 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/containers/{id}", h.InspectContainer)
 				// Historical metrics are read-only data, not a control action.
 				r.Get("/containers/{id}/metrics", h.GetMetrics)
+				// File browser (read-only) — list dir + read text preview +
+				// stream raw file bytes for download. Write goes through a
+				// separate group keyed on containers.exec because uploading
+				// a file is effectively code injection.
+				r.Get("/containers/{id}/files", h.BrowseContainerFiles)
+				r.Get("/containers/{id}/files/content", h.ReadContainerFile)
+				r.Get("/containers/{id}/files/download", h.DownloadContainerFile)
 				r.Get("/hosts/{id}/stats/containers", h.BatchContainerStats)
+			})
+
+			// File-write into a container is gated on containers.exec
+			// because the blast radius is the same as a shell session.
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermContainersExec))
+				r.Post("/containers/{id}/files", h.WriteContainerFile)
 			})
 
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermImagesView))
 				r.Get("/images", h.ListImages)
+				r.Get("/images/updates", h.ListImageUpdates)
 				r.Get("/images/{id}", h.InspectImage)
 			})
 
@@ -501,6 +522,12 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermUsersCreate))
 				r.Post("/users", h.CreateUser)
+				// Invite-link flow: admin generates a one-time URL,
+				// shares it manually. Recipient hits the public
+				// /invite/{token} endpoints below to redeem.
+				r.Get("/invites", h.ListInvites)
+				r.Post("/invites", h.CreateInvite)
+				r.Delete("/invites/{id}", h.RevokeInvite)
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermUsersUpdate))
@@ -543,6 +570,16 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/audit/webhook", h.GetAuditWebhook)
 				r.Put("/audit/webhook", h.UpdateAuditWebhook)
 				r.Post("/audit/webhook/test", h.TestAuditWebhook)
+			})
+
+			// -------------------------- UNIFIED PROVIDERS --------------------
+			// Frontend can fetch all four kinds in one round-trip instead
+			// of paging through /oidc/providers + /oauth2/providers + …
+			// Read-only — mutations still go to the per-kind endpoints
+			// because each kind has a different config shape.
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermSystemUpdate))
+				r.Get("/auth/providers", h.ListAuthProviders)
 			})
 
 			// -------------------------- OIDC ADMIN ---------------------------
@@ -659,6 +696,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/backups/targets", h.ListBackupTargets)
 				r.Get("/backups/runs", h.ListBackupRuns)
 				r.Get("/backups/runs/{id}", h.GetBackupRun)
+				r.Get("/backups/runs/{id}/log", h.GetBackupRunLog)
 				// Archive download is gated by backups.view: anyone
 				// who can list runs can also pull the bytes for one
 				// they own. Restore-grade access stays under
@@ -710,6 +748,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Use(middleware.RequirePerm(rbac.PermProxyView))
 				r.Get("/proxy/status", h.ProxyStatus)
 				r.Get("/proxy/routes", h.ListProxyRoutes)
+				r.Get("/proxy/routes/{id}/metrics", h.GetProxyRouteMetrics)
 				r.Get("/proxy/metrics", h.GetProxyMetrics)
 				r.Get("/proxy/acme-events", h.ListACMEEvents)
 			})
@@ -723,6 +762,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermProxyUpdate))
 				r.Put("/proxy/routes/{id}", h.UpdateProxyRoute)
+				r.Patch("/proxy/routes/{id}/enabled", h.SetProxyRouteEnabled)
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermProxyDelete))
@@ -732,9 +772,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 		})
 
 		// WebSocket endpoints — auth via ?ticket= (not Bearer header).
-		// Ticket issuance already goes through RequirePerm(PermRead) on
-		// /ws/ticket — we trust tickets once issued. Future: encode the
-		// target perm into the ticket itself.
+		// Tickets are bound to one permission at issue time
+		// (POST /ws/ticket?for=<perm>). Each handler asserts
+		// claims.Perm == required so a logs-ticket can't reach /ws/exec.
 		r.Get("/ws/logs/{id}", h.WSLogs)
 		r.Get("/ws/events", h.WSEvents)
 		r.Get("/ws/exec/{id}", h.WSExec)

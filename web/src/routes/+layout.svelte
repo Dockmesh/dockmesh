@@ -187,6 +187,9 @@
   $effect(() => {
     const path = $page.url.pathname;
     if (path === '/setup' || path.startsWith('/setup/')) return;
+    // Invite accept pages are reachable without a session — that's the
+    // whole point. The page does its own state handling.
+    if (path.startsWith('/invite/')) return;
     if (!setupProbed) return;
     if (setupActive) {
       goto('/setup');
@@ -310,7 +313,7 @@
   {@render children()}
 {:else if !setupProbed || setupActive}
   <!-- Render nothing while we figure out where the operator should land. -->
-{:else if $page.url.pathname === '/login'}
+{:else if $page.url.pathname === '/login' || $page.url.pathname.startsWith('/invite/')}
   {@render children()}
 {:else if auth.isAuthenticated}
   <div class="ed-stage app-stage-root">

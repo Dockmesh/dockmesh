@@ -2551,6 +2551,34 @@ paths:
                   - $ref: "#/components/schemas/FanOutResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /images/updates:
+    get:
+      operationId: images.updates
+      tags: [images]
+      summary: Map of cached image-update availability
+      description: |
+        Returns the snapshot of the background update watcher: for every
+        running container's image reference seen since startup, whether
+        a newer manifest is available upstream. Refreshed every 30
+        minutes. Map key is the normalized image ref (e.g. `nginx:1.27`).
+      responses:
+        "200":
+          description: Update info per image ref.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  properties:
+                    image: { type: string }
+                    update_available: { type: boolean }
+                    local_digest: { type: string }
+                    remote_digest: { type: string }
+                    checked_at: { type: string, format: date-time }
+                    error: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /images/pull:
     post:
       operationId: images.pull
@@ -3296,12 +3324,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422":
-          description: Verification failed or backup is encrypted.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/BackupVerifyResult" }
-        "422":
-          description: Verification failed — see `sanity.checks` for the failed check(s).
+          description: "Verification failed — see `sanity.checks` for the failed check(s) or `encrypted: true` if the archive is encrypted."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BackupVerifyResult" }
@@ -4104,6 +4127,129 @@ paths:
               schema: { $ref: "#/components/schemas/User" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  # -----------------------------------------------------------------------
+  # invite-link flow — Coolify-style one-time tokens, no SMTP
+  # -----------------------------------------------------------------------
+  /invites:
+    get:
+      operationId: invites.list
+      tags: [users]
+      summary: List recent invites (admin overview)
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, minimum: 1, maximum: 500 }
+      responses:
+        "200":
+          description: Invite list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object }
+    post:
+      operationId: invites.create
+      tags: [users]
+      summary: Mint a one-time invite link
+      description: |
+        Returns the raw token + accept URL exactly once. The admin
+        copies the URL out and shares it manually. No SMTP dependency.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string }
+                scope_tags:
+                  type: array
+                  items: { type: string }
+                email_hint: { type: string }
+                ttl_hours: { type: integer, minimum: 1, maximum: 168 }
+      responses:
+        "201":
+          description: Invite minted.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /invites/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    delete:
+      operationId: invites.revoke
+      tags: [users]
+      summary: Revoke a pending invite
+      responses:
+        "204": { description: Revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /invite/{token}:
+    parameters:
+      - in: path
+        name: token
+        required: true
+        schema: { type: string }
+    get:
+      operationId: invites.preview
+      tags: [auth]
+      summary: Preview an invite (public — used by the accept page)
+      security: []
+      responses:
+        "200":
+          description: Invite preview.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  role: { type: string }
+                  scope_tags: { type: array, items: { type: string } }
+                  email_hint: { type: string }
+                  expires_at: { type: string, format: date-time }
+        "404": { description: invite not found }
+        "410": { description: expired or already used }
+
+  /invite/{token}/accept:
+    parameters:
+      - in: path
+        name: token
+        required: true
+        schema: { type: string }
+    post:
+      operationId: invites.accept
+      tags: [auth]
+      summary: Redeem an invite — create the user + return a session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                email: { type: string }
+                password: { type: string }
+      responses:
+        "201":
+          description: User created + signed in.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { type: object }
+                  access_token: { type: string }
+                  refresh_token: { type: string }
+        "404": { description: invite not found }
+        "409": { description: username or email already taken }
+        "410": { description: expired or already used }
+
   /users:
     get:
       operationId: users.list
@@ -4376,6 +4522,42 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+
+  # -----------------------------------------------------------------------
+  # unified auth providers — single fetch across all four kinds
+  # -----------------------------------------------------------------------
+  /auth/providers:
+    get:
+      operationId: auth.providers
+      tags: [auth]
+      summary: All configured identity providers (OIDC + OAuth2 + SAML + LDAP)
+      description: |
+        Returns one mixed list with a `kind` discriminator so the
+        Authentication page can render every provider without four
+        round-trips. The `raw` field carries the underlying record
+        verbatim — callers that need kind-specific fields read it,
+        others ignore it.
+      responses:
+        "200":
+          description: Provider list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [kind, id, slug, display_name, enabled]
+                  properties:
+                    kind:
+                      type: string
+                      enum: [oidc, oauth2, saml, ldap]
+                    id: { type: integer, format: int64 }
+                    slug: { type: string }
+                    display_name: { type: string }
+                    enabled: { type: boolean }
+                    raw: { type: object, additionalProperties: true }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   # -----------------------------------------------------------------------
   # oidc — provider configuration (admin-only)
@@ -5303,6 +5485,63 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /proxy/routes/{id}/enabled:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    patch:
+      operationId: proxy.set_route_enabled
+      tags: [proxy]
+      summary: Toggle a route's enabled flag without round-tripping upstream/tls_mode
+      description: |
+        Disabled routes stay in the database for editing but are
+        filtered out when the Caddyfile is regenerated — traffic stops
+        flowing without losing host/upstream/TLS-mode config.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "204": { description: Toggled. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /proxy/routes/{id}/metrics:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    get:
+      operationId: proxy.route_metrics
+      tags: [proxy]
+      summary: Current Caddy metrics for one route
+      description: |
+        Returns the per-host slice of the latest metrics snapshot for
+        the route's host. Cheaper than `/proxy/metrics` when only one
+        row is being refreshed (expanded-route panel, etc.). Empty
+        counters when Caddy hasn't scraped yet or the host has no
+        traffic since the last scrape.
+      responses:
+        "200":
+          description: Per-route metrics snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  host: { type: string }
+                  requests: { type: integer }
+                  requests_per_second: { type: number }
+                  status_buckets:
+                    type: object
+                    additionalProperties: { type: integer }
+                  p95_latency_ms: { type: number }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: route not found }
+
   # -----------------------------------------------------------------------
   # convert — docker-run command → compose translation
   # -----------------------------------------------------------------------
@@ -5354,8 +5593,21 @@ paths:
       description: |
         WebSocket upgrade requests cannot carry custom Authorization
         headers from browsers. Clients POST here with a normal Bearer
-        token, get back a short-lived (30s) JWT ticket, and pass it as
-        `?ticket=<jwt>` on the ws:// URL.
+        token plus a `?for=<perm>` query parameter that names the
+        permission the ticket should grant (one of `containers.view`,
+        `containers.logs`, `containers.exec`, `system.view`). The server
+        verifies the caller's role has that permission and issues a 30s
+        JWT bound to it. Each WS endpoint asserts the ticket's bound
+        permission matches its own — a logs-ticket cannot be reused on
+        `/ws/exec`.
+      parameters:
+        - name: for
+          in: query
+          required: true
+          description: Permission the ticket should grant.
+          schema:
+            type: string
+            enum: [containers.view, containers.logs, containers.exec, system.view]
       responses:
         "200":
           description: Ticket.
@@ -5366,7 +5618,9 @@ paths:
                 required: [ticket]
                 properties:
                   ticket: { type: string }
+        "400": { description: missing or invalid for=<perm> }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: caller's role lacks the requested permission }
 
   /ws/logs/{id}:
     get:
@@ -5516,6 +5770,145 @@ paths:
                     block_read_bytes: { type: integer, format: int64 }
                     block_write_bytes: { type: integer, format: int64 }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # -----------------------------------------------------------------------
+  # Container filesystem browser — list dir / read text preview / stream
+  # raw download / upload. All four endpoints walk the daemon's
+  # CopyFromContainer / CopyToContainer tars so they work against scratch
+  # and distroless images (no shell inside the container required).
+  # -----------------------------------------------------------------------
+  /containers/{id}/files:
+    get:
+      operationId: containers.files.browse
+      tags: [containers]
+      summary: List one directory level inside a container's filesystem
+      description: |
+        Tar-streams the requested path out of the container and walks
+        the archive at depth 1. Path must be absolute. Audited on every
+        call because reading container files is a sensitive operation.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+        - name: path
+          in: query
+          schema: { type: string, default: "/" }
+          description: Absolute path inside the container.
+      responses:
+        "200":
+          description: Directory entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/VolumeEntry" }
+        "400":
+          description: Path is empty, not absolute, or points to a non-directory.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: containers.files.write
+      tags: [containers]
+      summary: Upload a single file into the container at an absolute path
+      description: |
+        Requires `containers.exec` because writing a file into a running
+        container is effectively code injection. Parent directory must
+        already exist. Content is base64-encoded so binary uploads work
+        over plain JSON.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, content]
+              properties:
+                path:
+                  type: string
+                  description: Absolute path inside the container.
+                content:
+                  type: string
+                  description: Base64-encoded file content.
+                mode:
+                  type: integer
+                  description: Unix permission bits; defaults to 0644 (420).
+      responses:
+        "200":
+          description: File written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path: { type: string }
+                  bytes: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /containers/{id}/files/content:
+    get:
+      operationId: containers.files.read
+      tags: [containers]
+      summary: Read a file inside the container as a text/binary preview
+      description: |
+        Returns up to 1 MiB of content. `truncated: true` signals the
+        file is larger — the UI then offers a download link. `binary:
+        true` is set when a NUL byte appears in the first 8 KiB (same
+        heuristic git uses) so the UI can avoid rendering garbage.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+        - name: path
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: File content.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VolumeFileResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /containers/{id}/files/download:
+    get:
+      operationId: containers.files.download
+      tags: [containers]
+      summary: Stream a file's raw bytes out of the container for download
+      description: |
+        Streams `application/octet-stream` with `Content-Disposition:
+        attachment` so the browser triggers a file save. Used for binary
+        files and files larger than the preview cap.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+        - name: path
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Raw file bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   # -----------------------------------------------------------------------
@@ -5790,6 +6183,40 @@ paths:
             application/json:
               schema: { type: object, additionalProperties: true }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /backups/runs/{id}/log:
+    get:
+      operationId: backups.run_log
+      tags: [backups]
+      summary: Captured log lines for a backup run (phase narration + hook output)
+      description: |
+        Returns lines emitted by the executor for one run in
+        chronological order. Each entry has `stream` set to one of
+        `info` / `warn` / `error` / `hook_stdout` / `hook_stderr`. Hook
+        output is verbatim and capped at 16 KB per hook to keep the
+        table from growing without bound on noisy hooks.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Log entries (empty array if the run hasn't logged anything yet).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id, ts, stream, line]
+                  properties:
+                    id: { type: integer, format: int64 }
+                    ts: { type: string, format: date-time }
+                    stream:
+                      type: string
+                      enum: [info, warn, error, hook_stdout, hook_stderr]
+                    line: { type: string }
 
   /backups/runs/{id}/archive:
     get:

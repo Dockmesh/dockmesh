@@ -107,6 +107,53 @@ func (s *store) updateJobRunTimes(ctx context.Context, id int64, last, next *tim
 }
 
 // -----------------------------------------------------------------------------
+// run logs
+// -----------------------------------------------------------------------------
+
+// RunLogEntry is one captured line of a backup run.
+type RunLogEntry struct {
+	ID     int64     `json:"id"`
+	TS     time.Time `json:"ts"`
+	Stream string    `json:"stream"`
+	Line   string    `json:"line"`
+}
+
+// appendRunLog inserts a single log row. Best-effort: errors are
+// returned so callers can choose to log them, but the executor's caller
+// must not treat a log-write failure as a backup failure.
+func (s *store) appendRunLog(ctx context.Context, runID int64, stream, line string) error {
+	if line == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO backup_run_logs (run_id, stream, line) VALUES (?, ?, ?)`,
+		runID, stream, line)
+	return err
+}
+
+// listRunLogs returns all captured lines for a run in chronological
+// order (by insertion id, which matches ts ordering since the executor
+// writes serially).
+func (s *store) listRunLogs(ctx context.Context, runID int64) ([]RunLogEntry, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, ts, stream, line FROM backup_run_logs
+		 WHERE run_id = ? ORDER BY id ASC`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RunLogEntry
+	for rows.Next() {
+		var e RunLogEntry
+		if err := rows.Scan(&e.ID, &e.TS, &e.Stream, &e.Line); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// -----------------------------------------------------------------------------
 // runs
 // -----------------------------------------------------------------------------
 

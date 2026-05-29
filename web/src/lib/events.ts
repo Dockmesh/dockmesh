@@ -73,7 +73,7 @@ export class EventStream {
 
     let ticket: string;
     try {
-      const res = await api.ws.ticket();
+      const res = await api.ws.ticket('system.view');
       ticket = res.ticket;
     } catch {
       this.scheduleReconnect();

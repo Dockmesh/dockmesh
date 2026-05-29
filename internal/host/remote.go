@@ -223,14 +223,21 @@ func (h *RemoteHost) ListImages(ctx context.Context, all bool) ([]dtypes.ImageSu
 	return out, nil
 }
 
-// InspectImage on remote agents requires a new agent-protocol frame
-// (FrameReqImageInspect) that hasn't shipped yet. Until that lands we
-// return a sentinel "not implemented" error; the handler maps it to a
-// 501 so the UI can show "image inspect not yet supported on remote
-// agents". Tracked alongside the other agent-protocol gaps in
-// internal/host/remote.go.
+// InspectImage asks the agent for one image's full ImageInspect record.
+// Same shape as Docker SDK's ImageInspectWithRaw on the local daemon,
+// just round-tripped over the agent WebSocket. Returns the docker
+// "no such image" error verbatim when missing so the handler can map
+// to 404.
 func (h *RemoteHost) InspectImage(ctx context.Context, id string) (dtypes.ImageInspect, error) {
-	return dtypes.ImageInspect{}, fmt.Errorf("image inspect not yet implemented over agent protocol")
+	data, err := h.request(ctx, agents.FrameReqImageInspect, agents.ResourceIDReq{ID: id})
+	if err != nil {
+		return dtypes.ImageInspect{}, err
+	}
+	var out dtypes.ImageInspect
+	if err := json.Unmarshal(data, &out); err != nil {
+		return dtypes.ImageInspect{}, fmt.Errorf("decode image inspect: %w", err)
+	}
+	return out, nil
 }
 
 func (h *RemoteHost) ListNetworks(ctx context.Context) ([]dtypes.NetworkResource, error) {
@@ -500,6 +507,26 @@ func (h *RemoteHost) CleanupStack(ctx context.Context, name string, opts compose
 
 func (h *RemoteHost) CleanupPreview(ctx context.Context, name string) (*compose.CleanupPlan, error) {
 	return nil, fmt.Errorf("resource cleanup on remote hosts is not yet implemented — the agent needs matching frame types (follow-up slice)")
+}
+
+// Container file-browser ops aren't carried by the agent protocol yet —
+// the central server can't CopyFromContainer against a remote daemon
+// without a matching frame type. Return clear errors so handlers 501
+// rather than emitting a confusing "frame not handled".
+func (h *RemoteHost) ContainerBrowseEntries(ctx context.Context, id, p string) ([]VolumeEntry, error) {
+	return nil, fmt.Errorf("container file browsing on remote hosts is not yet implemented — the agent needs matching frame types (follow-up slice)")
+}
+
+func (h *RemoteHost) ContainerReadFile(ctx context.Context, id, p string, maxBytes int64) (*VolumeFileResult, error) {
+	return nil, fmt.Errorf("container file browsing on remote hosts is not yet implemented — the agent needs matching frame types (follow-up slice)")
+}
+
+func (h *RemoteHost) ContainerDownloadFile(ctx context.Context, id, p string) (io.ReadCloser, string, int64, error) {
+	return nil, "", 0, fmt.Errorf("container file browsing on remote hosts is not yet implemented — the agent needs matching frame types (follow-up slice)")
+}
+
+func (h *RemoteHost) ContainerWriteFile(ctx context.Context, id, p string, data []byte, mode int64) error {
+	return fmt.Errorf("container file browsing on remote hosts is not yet implemented — the agent needs matching frame types (follow-up slice)")
 }
 
 // Errors

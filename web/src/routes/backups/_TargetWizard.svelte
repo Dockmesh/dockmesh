@@ -418,7 +418,7 @@
     padding: 0 12px;
     border: 1px solid var(--border);
     border-radius: 4px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     color: var(--fg);
     font-size: 13px;
     transition: border-color 120ms;
@@ -438,7 +438,7 @@
     padding: 12px 14px;
     border: 1px solid var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     cursor: pointer;
     text-align: left;
     color: var(--fg-muted);
@@ -479,7 +479,7 @@
     padding: 10px 14px;
     border: 1px solid var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     color: var(--fg-muted);
     font-size: 12px;
     line-height: 1.55;
@@ -508,7 +508,7 @@
   .wiz-test-card {
     border: 1px solid var(--border);
     border-radius: 6px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     padding: 18px 20px 20px;
   }
   .wiz-test-head {

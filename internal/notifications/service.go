@@ -3,17 +3,30 @@
 // backup runner, …) calls Emit() to drop a row; the UI polls
 // /notifications and shows unread-count + a side drawer.
 //
-// Per-user vs broadcast: pass userID="" for broadcast (everyone sees
-// it); pass a concrete users.id for per-user (only that user's
-// dashboard shows it). The list query unions both.
+// Architecture: every row carries a concrete users.id. There are no
+// shared "broadcast" rows. Producers that want "everyone with the
+// admin role should see this" pass an empty UserID; Emit fans out at
+// write time into one row per user. This is the GitHub / Portainer
+// Business pattern — read state is naturally per-user, deletions are
+// scoped, and new sign-ups never see historical notifications because
+// no rows were ever created for them.
 package notifications
 
 import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"time"
 )
+
+// UserDirectory is the subset of auth.Service that Emit needs for
+// fan-out: a list of every active user id the server knows about.
+// Injected via SetUserDirectory so the notifications package doesn't
+// import auth (auth is the bigger graph, easier to keep one-way).
+type UserDirectory interface {
+	ListActiveUserIDs(ctx context.Context) ([]string, error)
+}
 
 // Severity drives the badge color in the UI.
 type Severity string
@@ -31,20 +44,24 @@ const (
 type Kind string
 
 const (
-	KindDeployOK      Kind = "deploy.ok"
-	KindDeployFail    Kind = "deploy.fail"
-	KindAlertFire     Kind = "alert.fire"
-	KindBackupOK      Kind = "backup.ok"
-	KindBackupFail    Kind = "backup.fail"
-	KindImageUpdate   Kind = "image.update"
-	KindAgentOffline  Kind = "agent.offline"
-	KindSystemUpgrade Kind = "system.upgrade"
+	KindDeployOK         Kind = "deploy.ok"
+	KindDeployFail       Kind = "deploy.fail"
+	KindAlertFire        Kind = "alert.fire"
+	KindBackupOK         Kind = "backup.ok"
+	KindBackupFail       Kind = "backup.fail"
+	KindImageUpdate      Kind = "image.update"
+	KindAgentOffline     Kind = "agent.offline"
+	KindSystemUpgrade    Kind = "system.upgrade"
+	KindMigrationOK      Kind = "migration.complete"
+	KindMigrationFail    Kind = "migration.failed"
+	KindCVEFound         Kind = "cve.found"
+	KindInviteAccepted   Kind = "invite.accepted"
 )
 
 // Notification is one row from the table.
 type Notification struct {
 	ID        int64      `json:"id"`
-	UserID    string     `json:"user_id,omitempty"` // empty = broadcast
+	UserID    string     `json:"user_id"`
 	Kind      Kind       `json:"kind"`
 	Severity  Severity   `json:"severity"`
 	Title     string     `json:"title"`
@@ -55,7 +72,8 @@ type Notification struct {
 }
 
 // EmitInput is the producer-facing shape — keeps Emit() readable when
-// callers fill out half the fields.
+// callers fill out half the fields. UserID="" means "fan out to every
+// user known to the directory" (i.e. what used to be a broadcast).
 type EmitInput struct {
 	UserID   string
 	Kind     Kind
@@ -68,22 +86,65 @@ type EmitInput struct {
 var ErrNotFound = errors.New("notification not found")
 
 type Service struct {
-	db *sql.DB
+	db    *sql.DB
+	users UserDirectory
 }
 
 func NewService(db *sql.DB) *Service { return &Service{db: db} }
 
-// Emit drops a new notification. Returns the row id. UserID empty =
-// broadcast (every user sees it on their list). Severity defaults to
-// "info" if unset.
+// SetUserDirectory wires in the user lookup post-construction. The
+// auth service is constructed before notifications, but the directory
+// lookup is only used by Emit — wiring after both exist avoids the
+// cycle. Nil = degrade Emit to "ignore fan-out, log a warning".
+func (s *Service) SetUserDirectory(d UserDirectory) {
+	s.users = d
+}
+
+// Emit drops a notification. If UserID is set, one row is written. If
+// UserID is empty, the user directory is asked for every active user
+// and one row is written per user — the GitHub-style fan-out pattern
+// so read-state is naturally per-user and a brand-new account never
+// sees notifications emitted before it existed.
+//
+// Returns the first inserted row id when fan-out runs (most useful for
+// audit/log lines; callers that care about every row should iterate
+// themselves). Severity defaults to "info" if unset.
 func (s *Service) Emit(ctx context.Context, in EmitInput) (int64, error) {
 	if in.Severity == "" {
 		in.Severity = SevInfo
 	}
-	var userArg sql.NullString
 	if in.UserID != "" {
-		userArg = sql.NullString{String: in.UserID, Valid: true}
+		return s.insertOne(ctx, in.UserID, in)
 	}
+	// Fan-out path. Ask the directory for active users and insert one
+	// row per user. Failures of individual inserts are logged and the
+	// loop continues — losing one fan-out row is better than dropping
+	// the entire emit.
+	if s.users == nil {
+		slog.Warn("notification fan-out skipped — user directory not wired", "kind", in.Kind, "title", in.Title)
+		return 0, nil
+	}
+	ids, err := s.users.ListActiveUserIDs(ctx)
+	if err != nil {
+		return 0, err
+	}
+	var firstID int64
+	for _, uid := range ids {
+		id, err := s.insertOne(ctx, uid, in)
+		if err != nil {
+			slog.Warn("notification fan-out insert failed", "user", uid, "err", err)
+			continue
+		}
+		if firstID == 0 {
+			firstID = id
+		}
+	}
+	return firstID, nil
+}
+
+// insertOne writes a single per-user row. Called both directly (when
+// UserID is set on EmitInput) and from the fan-out loop.
+func (s *Service) insertOne(ctx context.Context, userID string, in EmitInput) (int64, error) {
 	var bodyArg sql.NullString
 	if in.Body != "" {
 		bodyArg = sql.NullString{String: in.Body, Valid: true}
@@ -95,24 +156,24 @@ func (s *Service) Emit(ctx context.Context, in EmitInput) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO notifications (user_id, kind, severity, title, body, link)
 		VALUES (?, ?, ?, ?, ?, ?)`,
-		userArg, string(in.Kind), string(in.Severity), in.Title, bodyArg, linkArg)
+		userID, string(in.Kind), string(in.Severity), in.Title, bodyArg, linkArg)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
-// List returns the most recent notifications for a user — both
-// own + broadcast — newest first. When unreadOnly=true, filters to
-// rows with read_at IS NULL.
+// List returns the most recent notifications for a user, newest
+// first. user_id is required and matched exactly — there are no shared
+// broadcast rows in the schema anymore (see migration 057).
 func (s *Service) List(ctx context.Context, userID string, unreadOnly bool, limit int) ([]Notification, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	q := `SELECT id, COALESCE(user_id, ''), kind, severity, title,
+	q := `SELECT id, user_id, kind, severity, title,
 	             COALESCE(body, ''), COALESCE(link, ''), read_at, created_at
 	      FROM notifications
-	      WHERE (user_id = ? OR user_id IS NULL)`
+	      WHERE user_id = ?`
 	args := []any{userID}
 	if unreadOnly {
 		q += " AND read_at IS NULL"
@@ -144,14 +205,13 @@ func (s *Service) List(ctx context.Context, userID string, unreadOnly bool, limi
 	return out, rows.Err()
 }
 
-// UnreadCount is the bell-badge number. Counts both own + broadcast
-// rows where the caller hasn't acknowledged yet.
+// UnreadCount is the bell-badge number. Per-user only — every row
+// belongs to exactly one user since migration 057.
 func (s *Service) UnreadCount(ctx context.Context, userID string) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM notifications
-		 WHERE (user_id = ? OR user_id IS NULL)
-		   AND read_at IS NULL`, userID).Scan(&n)
+		 WHERE user_id = ? AND read_at IS NULL`, userID).Scan(&n)
 	return n, err
 }
 
@@ -171,13 +231,13 @@ func (s *Service) MarkRead(ctx context.Context, id int64) error {
 	return nil
 }
 
-// MarkAllRead clears the unread badge for a user. Touches both own +
-// broadcast rows the user can see.
+// MarkAllRead clears the unread badge for one user. Touches only that
+// user's rows — fan-out at emit time means each user has their own
+// copy to mark.
 func (s *Service) MarkAllRead(ctx context.Context, userID string) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE notifications SET read_at = CURRENT_TIMESTAMP
-		 WHERE (user_id = ? OR user_id IS NULL)
-		   AND read_at IS NULL`, userID)
+		 WHERE user_id = ? AND read_at IS NULL`, userID)
 	return err
 }
 

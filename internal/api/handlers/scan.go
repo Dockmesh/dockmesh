@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
@@ -51,6 +53,23 @@ func (h *Handlers) ScanImage(w http.ResponseWriter, r *http.Request) {
 		"high":     rep.Summary.High,
 		"total":    rep.Summary.Total(),
 	})
+
+	// Bell-icon notification — only for findings that actually warrant
+	// attention (HIGH or CRITICAL). Lower-severity vulns flow through
+	// the cached report; the bell stays useful instead of crying wolf.
+	if h.Notifications != nil && (rep.Summary.Critical > 0 || rep.Summary.High > 0) {
+		sev := notifications.SevWarning
+		if rep.Summary.Critical > 0 {
+			sev = notifications.SevError
+		}
+		_, _ = h.Notifications.Emit(r.Context(), notifications.EmitInput{
+			Kind:     notifications.KindCVEFound,
+			Severity: sev,
+			Title:    fmt.Sprintf("CVE scan: %s", ref),
+			Body:     fmt.Sprintf("%d critical, %d high", rep.Summary.Critical, rep.Summary.High),
+			Link:     "/resources?tab=images",
+		})
+	}
 	writeJSON(w, http.StatusOK, rep)
 }
 

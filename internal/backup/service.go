@@ -9,6 +9,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/robfig/cron/v3"
@@ -42,6 +43,13 @@ func NewService(db *sql.DB, dc *docker.Client, sm *stacks.Manager, sec *secrets.
 		cron:     cron.New(),
 		entryIDs: make(map[int64]cron.EntryID),
 	}
+}
+
+// SetNotifier wires in the bell-icon notification center so each
+// finished run emits a success/failure notification. Optional — nil
+// means runs only land in the runs table + journald, no bell update.
+func (s *Service) SetNotifier(n *notifications.Service) {
+	s.exec.notifs = n
 }
 
 // SetHostResolver wires in the host registry post-construction so the
@@ -172,6 +180,13 @@ func (s *Service) ListRuns(ctx context.Context, limit int) ([]Run, error) {
 // succeeded (and exists) before streaming bytes.
 func (s *Service) GetRun(ctx context.Context, id int64) (*Run, error) {
 	return s.store.getRun(ctx, id)
+}
+
+// RunLog returns the executor's captured log lines for one run in
+// chronological order. Includes phase narration, hook stdout/stderr,
+// and error lines. Used by the run-detail page's Log section.
+func (s *Service) RunLog(ctx context.Context, id int64) ([]RunLogEntry, error) {
+	return s.store.listRunLogs(ctx, id)
 }
 
 // RunSourceType returns the source type ("system" | "stack" | "volume")

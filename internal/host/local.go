@@ -371,6 +371,38 @@ func (h *LocalHost) ContainerExec(ctx context.Context, containerID string, cmd [
 	return execHelper(ctx, h.cli, containerID, cmd)
 }
 
+func (h *LocalHost) ContainerBrowseEntries(ctx context.Context, id, p string) ([]VolumeEntry, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return nil, ErrNoDocker
+	}
+	return BrowseContainerDir(ctx, h.cli, id, p)
+}
+
+func (h *LocalHost) ContainerReadFile(ctx context.Context, id, p string, maxBytes int64) (*VolumeFileResult, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return nil, ErrNoDocker
+	}
+	return ReadContainerFile(ctx, h.cli, id, p, maxBytes)
+}
+
+func (h *LocalHost) ContainerDownloadFile(ctx context.Context, id, p string) (io.ReadCloser, string, int64, error) {
+	if h.cli == nil || !h.cli.Connected() {
+		return nil, "", 0, ErrNoDocker
+	}
+	rdr, hdr, err := DownloadContainerFile(ctx, h.cli, id, p)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	return rdr, filepath.Base(p), hdr.Size, nil
+}
+
+func (h *LocalHost) ContainerWriteFile(ctx context.Context, id, p string, data []byte, mode int64) error {
+	if h.cli == nil || !h.cli.Connected() {
+		return ErrNoDocker
+	}
+	return WriteContainerFile(ctx, h.cli, id, p, data, mode)
+}
+
 func (h *LocalHost) ListVolumes(ctx context.Context) ([]any, error) {
 	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker

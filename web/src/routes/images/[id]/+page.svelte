@@ -10,6 +10,7 @@
   import { Skeleton, EmptyState, Badge } from '$lib/components/ui';
   import { Eyebrow } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import { allowed } from '$lib/rbac.svelte';
@@ -152,10 +153,7 @@
     return s.replace(/^sha256:/, '').slice(0, 12);
   }
   function copy(s: string) {
-    navigator.clipboard.writeText(s).then(
-      () => toast.success('Copied'),
-      () => toast.error('Copy failed')
-    );
+    void copyWithToast(s, 'Copied');
   }
   function sevColor(s: Severity): 'danger' | 'warning' | 'info' | 'default' {
     if (s === 'critical' || s === 'high') return 'danger';
@@ -728,7 +726,7 @@
   .img-detail-env {
     margin: 0;
     padding: 10px 12px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: 4px;
     font-size: 11.5px;

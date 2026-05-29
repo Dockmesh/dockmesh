@@ -23,13 +23,7 @@ import (
 //
 // Auth via ?ticket= (§15.8). Optional ?cmd=/bin/bash, defaults to /bin/sh.
 func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
-	ticket := r.URL.Query().Get("ticket")
-	if ticket == "" {
-		http.Error(w, "ticket required", http.StatusUnauthorized)
-		return
-	}
-	if _, err := h.Auth.ValidateWSTicket(ticket); err != nil {
-		http.Error(w, "invalid ticket", http.StatusUnauthorized)
+	if !h.requireWSTicketPerm(w, r, rbac.PermContainersExec) {
 		return
 	}
 

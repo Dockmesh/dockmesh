@@ -15,6 +15,9 @@ type proxyRouteRequest struct {
 	Host     string `json:"host"`
 	Upstream string `json:"upstream"`
 	TLSMode  string `json:"tls_mode"`
+	// Enabled is *bool so PUT bodies that omit the field keep the
+	// existing state; only an explicit false disables the route.
+	Enabled  *bool  `json:"enabled,omitempty"`
 }
 
 func (h *Handlers) ProxyStatus(w http.ResponseWriter, r *http.Request) {
@@ -150,12 +153,107 @@ func (h *Handlers) UpdateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if err := h.Proxy.UpdateRoute(r.Context(), id, req.Upstream, req.TLSMode); err != nil {
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	if err := h.Proxy.UpdateRoute(r.Context(), id, req.Upstream, req.TLSMode, enabled); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	h.audit(r, "proxy.route_update", idStr, nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// SetProxyRouteEnabled flips just the enabled flag for one route. Used
+// by the row-level toggle in the routes table — saves the caller from
+// having to send back upstream + tls_mode unchanged just to disable a
+// host. Body: `{"enabled": true|false}`.
+//
+//	PATCH /api/v1/proxy/routes/{id}/enabled
+func (h *Handlers) SetProxyRouteEnabled(w http.ResponseWriter, r *http.Request) {
+	if h.Proxy == nil {
+		writeError(w, http.StatusServiceUnavailable, "proxy not configured")
+		return
+	}
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := h.Proxy.SetRouteEnabled(r.Context(), id, body.Enabled); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	state := "enabled"
+	if !body.Enabled {
+		state = "disabled"
+	}
+	h.audit(r, "proxy.route_"+state, idStr, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetProxyRouteMetrics returns the per-host slice of the current Caddy
+// metrics snapshot for one route. Cheaper than fetching the full
+// MetricsSnapshot when only one row needs to be refreshed (e.g. the
+// expanded-route panel polls this every 5s).
+//
+//	GET /api/v1/proxy/routes/{id}/metrics
+func (h *Handlers) GetProxyRouteMetrics(w http.ResponseWriter, r *http.Request) {
+	if h.Proxy == nil {
+		writeError(w, http.StatusServiceUnavailable, "proxy not configured")
+		return
+	}
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	routes, err := h.Proxy.ListRoutes(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var host string
+	for _, rt := range routes {
+		if rt.ID == id {
+			host = rt.Host
+			break
+		}
+	}
+	if host == "" {
+		writeError(w, http.StatusNotFound, "route not found")
+		return
+	}
+	snap, err := h.Proxy.Metrics(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, hm := range snap.PerHost {
+		if hm.Host == host {
+			writeJSON(w, http.StatusOK, hm)
+			return
+		}
+	}
+	// No metrics for this host yet — return an empty zero-value slice so
+	// the caller renders "0 req/s" instead of a 404.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"host":           host,
+		"requests":       0,
+		"requests_per_second": 0,
+		"status_buckets": map[string]uint64{},
+		"p95_latency_ms": 0,
+	})
 }
 
 func (h *Handlers) DeleteProxyRoute(w http.ResponseWriter, r *http.Request) {

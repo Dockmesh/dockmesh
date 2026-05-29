@@ -16,8 +16,9 @@
   } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { Skeleton, EmptyState } from '$lib/components/ui';
-  import { Eyebrow } from '$lib/components/editorial';
+  import { Eyebrow, EditorialModal } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import {
@@ -249,6 +250,15 @@
       toast.error('Upgrade failed', err instanceof ApiError ? err.message : undefined);
     } finally { upgradeBusy = false; }
   }
+  // Token-reissue modal state. Populated after a successful rotate so
+  // the operator can copy the new install command in the clear, and
+  // closed by clicking the X / "Done" button.
+  let tokenModal = $state<{
+    open: boolean;
+    token: string;
+    install: string;
+  }>({ open: false, token: '', install: '' });
+
   async function rotateToken() {
     if (isLocal) return;
     if (!(await confirm.ask({
@@ -258,21 +268,17 @@
       confirmLabel: 'Re-issue'
     }))) return;
     try {
-      // Reuse existing rotate-token endpoint.
-      const res = await fetch(`/api/v1/agents/${id}/rotate-token`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token') ?? ''}` }
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      toast.success('Token re-issued', 'New install command available — copy from the response details');
-      // Surface the new token via prompt fallback (real UI would need a dedicated modal)
-      if (typeof navigator !== 'undefined' && navigator.clipboard && data.token) {
-        try { await navigator.clipboard.writeText(data.install_hint ?? ''); toast.info('Install command copied to clipboard'); } catch {}
-      }
+      const data = await api.agents.rotateToken(id);
+      tokenModal = { open: true, token: data.token, install: data.install_hint };
+      toast.success('Token re-issued', 'New install command is shown below — paste on the agent host');
     } catch (err) {
-      toast.error('Re-issue failed', err instanceof Error ? err.message : undefined);
+      toast.error('Re-issue failed', err instanceof ApiError ? err.message : undefined);
     }
+  }
+
+  async function copyTokenInstall() {
+    if (!tokenModal.install) return;
+    await copyWithToast(tokenModal.install, 'Install command copied to clipboard');
   }
   async function revokeHost() {
     if (isLocal) return;
@@ -769,9 +775,91 @@
   </div>
 {/if}
 
+<EditorialModal
+  bind:open={tokenModal.open}
+  eyebrow="Enrollment token"
+  width={620}
+>
+  {#snippet title()}
+    New token for <em class="ed-accent">{hostName}</em>
+  {/snippet}
+
+  <p class="ed-host-token-blurb">
+    The old certificate stays valid until the agent presents the new one. Run this
+    command on the agent host to complete the rotation:
+  </p>
+  <div class="ed-host-token-cmd">
+    <code>{tokenModal.install}</code>
+  </div>
+  <p class="ed-host-token-warn">
+    The raw token is shown only once — copy now if you need it for an
+    external installer. After closing this modal it will not be retrievable.
+  </p>
+  <div class="ed-host-token-raw">
+    <span class="ed-host-token-label">token</span>
+    <code>{tokenModal.token}</code>
+  </div>
+
+  {#snippet actions()}
+    <button type="button" class="dm-btn dm-btn-secondary" onclick={copyTokenInstall}>
+      Copy install command
+    </button>
+    <button type="button" class="dm-btn dm-btn-primary" onclick={() => (tokenModal.open = false)}>
+      Done
+    </button>
+  {/snippet}
+</EditorialModal>
+
 <style>
   .ed-host-detail { display: flex; flex-direction: column; gap: 18px; }
   .ed-host-crumb { font-family: var(--font-mono); font-size: 11px; color: var(--fg-subtle); }
+  .ed-host-token-blurb { margin: 0 0 12px; font-size: 13px; color: var(--fg-muted); line-height: 1.6; }
+  .ed-host-token-cmd {
+    padding: 12px 14px;
+    background: var(--terminal, #06090f);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: #cbd5e1;
+  }
+  .ed-host-token-cmd code {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    word-break: break-all;
+    white-space: pre-wrap;
+  }
+  .ed-host-token-warn {
+    margin: 14px 0 8px;
+    padding: 8px 12px;
+    background: color-mix(in srgb, var(--color-warning-500) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-warning-500) 30%, transparent);
+    border-radius: 4px;
+    color: var(--color-warning-400);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .ed-host-token-raw {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px dashed var(--border-strong);
+    border-radius: 4px;
+    background: var(--surface-hover);
+  }
+  .ed-host-token-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--fg-subtle);
+  }
+  .ed-host-token-raw code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg);
+    word-break: break-all;
+  }
   .ed-host-crumb-link {
     display: inline-flex; align-items: center; gap: 4px;
     color: var(--fg-subtle); text-decoration: none;
@@ -899,7 +987,7 @@
     padding: 10px 12px;
     border: 1px solid var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--surface);
   }
   .ed-host-tile-label {
     font-size: 9.5px; color: var(--fg-subtle);
@@ -923,7 +1011,7 @@
     padding: 8px 10px;
     border: 1px solid var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--surface);
     text-decoration: none;
     color: var(--fg);
   }
@@ -941,7 +1029,7 @@
     padding: 6px 8px;
     border: 1px solid var(--border);
     border-radius: 4px;
-    background: var(--bg);
+    background: var(--surface);
     font-size: 11px;
   }
   .ed-host-mig-dir { color: var(--fg-subtle); }
@@ -999,7 +1087,7 @@
     padding: 10px 12px;
     border: 1px solid var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--surface);
     margin-top: 14px;
   }
   .ed-hosts-tag-chip {
@@ -1037,7 +1125,7 @@
     padding: 14px;
     border: 1px dashed var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--bg-elevated);
     margin-top: 12px;
   }
   :global(.ed-host-affinity-icon) { color: var(--fg-subtle); flex-shrink: 0; margin-top: 2px; }
@@ -1109,7 +1197,7 @@
     padding: 10px 12px;
     border: 1px solid var(--border);
     border-radius: 5px;
-    background: var(--bg);
+    background: var(--surface);
     font-size: 12px;
   }
   .ed-host-drain-arrow { color: var(--fg-subtle); }

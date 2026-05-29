@@ -140,15 +140,9 @@
 </script>
 
 <div class="login-shell">
-  <div class="login-watermark" aria-hidden="true">D</div>
-
-  <div class="login-chrome login-chrome-tl">
-    <span class="login-mark"><img src="/logo-mark.svg" alt="" width="22" height="22" /></span>
-    <span>Dockmesh</span>
-  </div>
   <button
     type="button"
-    class="theme-toggle login-chrome login-chrome-tr"
+    class="theme-toggle login-chrome-tr"
     onclick={() => (theme = theme === 'dark' ? 'light' : 'dark')}
     aria-label="Toggle theme"
     title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
@@ -160,16 +154,15 @@
     {/if}
   </button>
 
+  <div class="login-stack">
+    <div class="login-brand">
+      <img src="/logo-mark.svg" alt="" width="28" height="28" />
+      <span>Dockmesh</span>
+    </div>
+
   {#if !mfaToken}
-    <form class="login-form" onsubmit={submit}>
+    <form class="login-card" onsubmit={submit}>
       <Eyebrow active>Sign in</Eyebrow>
-      <h1 class="ed-title login-title">
-        Welcome <em>back</em>, operator.
-      </h1>
-      <p class="ed-subtitle login-subtitle">
-        Sign in to manage <em class="ed-accent">your fleet</em> and its connected
-        agents.
-      </p>
 
       <div class="login-fields">
         <Field label="Username">
@@ -245,13 +238,9 @@
           </div>
         {/if}
       </div>
-
-      <p class="login-footer">
-        Dockmesh · self-hosted · {new Date().getFullYear()} · AGPL-3.0
-      </p>
     </form>
   {:else}
-    <form class="login-form" onsubmit={submitMFA}>
+    <form class="login-card" onsubmit={submitMFA}>
       <Eyebrow active>Two-factor</Eyebrow>
       <h1 class="ed-title login-title">
         Enter the <em>code</em>.
@@ -298,56 +287,74 @@
           Cancel and go back
         </button>
       </div>
-
-      <p class="login-footer">
-        Dockmesh · self-hosted · {new Date().getFullYear()} · AGPL-3.0
-      </p>
     </form>
   {/if}
+
+    <p class="login-footer">
+      Dockmesh · self-hosted · {new Date().getFullYear()} · AGPL-3.0
+    </p>
+  </div>
 </div>
 
 <style>
-  .login-form {
+  .login-stack {
     position: relative;
     z-index: 2;
     width: 380px;
-    max-width: calc(100vw - 64px);
+    max-width: calc(100vw - 32px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
   }
 
-  .login-chrome {
+  .login-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--fg);
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+  }
+  .login-brand img {
+    color: var(--color-brand-400);
+    display: inline-block;
+  }
+
+  .login-card {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 28px 32px 32px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.12);
+  }
+
+  .login-chrome-tr {
     position: absolute;
     z-index: 4;
     top: 28px;
-    display: inline-flex;
-    align-items: center;
-    gap: 9px;
-    color: var(--fg);
-    font-size: 14px;
-    font-weight: 600;
-  }
-  .login-chrome-tl { left: 32px; }
-  .login-chrome-tr { right: 32px; }
-  .login-mark {
-    color: var(--color-brand-400);
-    display: inline-flex;
+    right: 32px;
   }
 
   .login-title {
-    font-size: 44px;
+    font-size: 22px;
     margin-top: 14px;
-    line-height: 1.1;
+    line-height: 1.2;
     max-width: 20ch;
   }
   .login-subtitle {
-    font-size: 14.5px;
-    margin-top: 14px;
+    font-size: 13.5px;
+    margin-top: 8px;
+    color: var(--fg-muted);
   }
 
   .login-fields {
-    margin-top: 36px;
+    margin-top: 20px;
     display: flex;
     flex-direction: column;
-    gap: 22px;
+    gap: 18px;
   }
 
   .login-aside {
@@ -446,11 +453,12 @@
   .login-cancel:hover { color: var(--fg); }
 
   .login-footer {
-    margin-top: 36px;
+    margin: 8px 0 0;
     font-family: var(--font-mono);
     font-size: 10.5px;
     color: var(--fg-subtle);
     letter-spacing: 0.14em;
     text-transform: uppercase;
+    text-align: center;
   }
 </style>

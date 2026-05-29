@@ -11,6 +11,7 @@
   import { Skeleton, EmptyState } from '$lib/components/ui';
   import { Eyebrow } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
+  import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import {
     Users as UsersIcon, Plus, Trash2, Search, MoreVertical,
@@ -153,6 +154,10 @@
   let inviteEnforce2fa = $state(true);
   let invitePassword = $state('');
   let inviteBusy = $state(false);
+  // After sendInvitations() runs, this holds the generated links so
+  // the admin can copy them out and share manually (no SMTP). Empty
+  // means "back on the input form".
+  let inviteLinks = $state<Array<{ email: string; url: string }>>([]);
   let allHostTags = $state<string[]>([]);
 
   const inviteEmailList = $derived(
@@ -248,42 +253,46 @@
   async function sendInvitations() {
     if (inviteEmailList.length === 0) return;
     inviteBusy = true;
-    let okCount = 0;
+    const links: Array<{ email: string; url: string }> = [];
     let failCount = 0;
+    const scopeTags = inviteScope.has('__all__') ? [] : [...inviteScope];
     for (const email of inviteEmailList) {
-      const username = email.split('@')[0].toLowerCase().replace(/[^a-z0-9]+/g, '-');
-      // Slice 2C will swap this to /users/invitations once SMTP+token-link
-      // landing page exist server-side. For now we direct-create with a
-      // generated initial password the admin can read off the toast.
-      const pw = invitePassword || genTempPassword();
       try {
-        await api.users.create(username, pw, inviteRole, email);
-        // Per-user scope_tags follows in a second call since /users POST
-        // doesn't accept them yet — keeps the admin-create path simple.
-        if (!inviteScope.has('__all__') && inviteScope.size > 0) {
-          const created = (await api.users.list()).find((x) => x.username === username);
-          if (created) {
-            await api.users.update(created.id, email, inviteRole, [...inviteScope]);
-          }
-        }
-        okCount++;
+        const res = await api.users.createInvite({
+          role: inviteRole,
+          scope_tags: scopeTags,
+          email_hint: email,
+        });
+        links.push({ email, url: res.accept_url });
       } catch (err) {
         failCount++;
-        toast.error(`Invite ${email} failed`, err instanceof ApiError ? err.message : undefined);
+        toast.error(`Invite for ${email} failed`, err instanceof ApiError ? err.message : undefined);
       }
     }
     inviteBusy = false;
-    if (okCount > 0) {
-      toast.success(`${okCount} user${okCount === 1 ? '' : 's'} created`,
-        invitePassword ? 'using shared password' : 'random initial password — reset on first login');
-      showInvite = false;
+    if (links.length > 0) {
+      // Switch the modal into "show me the links" mode. Admin
+      // copies + shares them manually; no SMTP involvement.
+      inviteLinks = links;
+      toast.success(
+        `${links.length} invite link${links.length === 1 ? '' : 's'} generated`,
+        'Copy each link and share it with the recipient',
+      );
       inviteEmails = '';
       invitePassword = '';
       await loadAll();
     }
-    if (failCount > 0 && okCount === 0) {
-      // toast already fired per failure
-    }
+  }
+
+  async function copyInviteLink(url: string) {
+    await copyWithToast(url, 'Link copied');
+  }
+
+  function closeInviteModal() {
+    showInvite = false;
+    inviteLinks = [];
+    inviteEmails = '';
+    invitePassword = '';
   }
 
   function toggleInviteScope(id: string) {
@@ -908,21 +917,54 @@
 
 <!-- ─── Invite User Modal ─── -->
 {#if showInvite}
-  <div class="ed-modal-backdrop" onmousedown={(e) => { if (e.target === e.currentTarget) showInvite = false; }}>
+  <div class="ed-modal-backdrop" onmousedown={(e) => { if (e.target === e.currentTarget) closeInviteModal(); }}>
     <div class="ed-modal ed-invite-modal" role="dialog" aria-modal="true">
       <header class="ed-modal-head">
         <div>
           <Eyebrow>Invite users</Eyebrow>
-          <h2 class="ed-modal-title">Send invitations</h2>
+          <h2 class="ed-modal-title">
+            {inviteLinks.length > 0 ? 'Share these links' : 'Generate invite links'}
+          </h2>
         </div>
-        <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => (showInvite = false)} aria-label="Close">
+        <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={closeInviteModal} aria-label="Close">
           <X size={13} strokeWidth={1.5} />
         </button>
       </header>
 
+      {#if inviteLinks.length > 0}
+        <div class="ed-modal-body">
+          <p class="ed-modal-hint">
+            Copy each link and share it with the recipient via your tool of choice
+            (Slack, signal, whatever). Links expire in 24 hours and are single-use.
+          </p>
+          <div class="ed-invite-links">
+            {#each inviteLinks as link (link.email)}
+              <div class="ed-invite-link-row">
+                <div class="ed-invite-link-email">{link.email}</div>
+                <input class="dm-input ed-invite-link-url" value={link.url} readonly />
+                <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm"
+                        onclick={() => copyInviteLink(link.url)}>
+                  Copy
+                </button>
+              </div>
+            {/each}
+          </div>
+        </div>
+        <footer class="ed-modal-foot">
+          <span class="ed-modal-foot-status">
+            {inviteLinks.length} link{inviteLinks.length === 1 ? '' : 's'} generated
+          </span>
+          <div class="ed-actions">
+            <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={closeInviteModal}>Done</button>
+          </div>
+        </footer>
+      {:else}
+
       <div class="ed-modal-body">
         <p class="ed-modal-hint">
-          Invitees get an account on this Dockmesh server. SMTP-driven email-link invitations land in the next slice — for now the admin sets a shared or random initial password the user changes on first login.
+          One-time invite links — no SMTP involved. You generate the links here and
+          share them with the recipients yourself (Slack, signal, etc.). Each link
+          provisions a new user with the role + scope you pick below.
         </p>
 
         <div class="ed-field">
@@ -1052,7 +1094,7 @@
           {inviteEmailList.length === 0 ? 'No emails yet' : `${inviteEmailList.length} ready`}
         </span>
         <div class="ed-actions">
-          <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (showInvite = false)}>Cancel</button>
+          <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={closeInviteModal}>Cancel</button>
           <button
             type="button"
             class="dm-btn dm-btn-primary dm-btn-sm"
@@ -1060,10 +1102,11 @@
             onclick={sendInvitations}
           >
             <Send size={12} strokeWidth={1.5} />
-            {inviteBusy ? 'Creating…' : `Create ${inviteEmailList.length || ''}`}
+            {inviteBusy ? 'Generating…' : `Generate ${inviteEmailList.length || ''} link${inviteEmailList.length === 1 ? '' : 's'}`}
           </button>
         </div>
       </footer>
+      {/if}
     </div>
   </div>
 {/if}
@@ -2152,6 +2195,34 @@
   }
 
   /* ─── Invite modal-specific ─── */
+  .ed-invite-links {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .ed-invite-link-row {
+    display: grid;
+    grid-template-columns: 160px 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface-hover);
+  }
+  .ed-invite-link-email {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ed-invite-link-url {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+  }
   .ed-invite-emails {
     font-family: var(--font-mono);
     font-size: 12.5px;

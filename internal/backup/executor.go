@@ -15,6 +15,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	dtypes "github.com/docker/docker/api/types"
@@ -31,6 +32,7 @@ type Executor struct {
 	stacks  *stacks.Manager
 	secrets *secrets.Service
 	paths   SystemPaths
+	notifs  *notifications.Service
 }
 
 // hostResolver lets the executor route to local vs remote hosts without
@@ -50,6 +52,19 @@ func newExecutor(s *store, db *sql.DB, dc *docker.Client, hosts hostResolver, sm
 	return &Executor{store: s, db: db, docker: dc, hosts: hosts, stacks: sm, secrets: sec, paths: paths}
 }
 
+// logf appends one captured line to the run-log. Best-effort: if the
+// DB insert fails we drop the line into slog instead of failing the
+// backup. The store is small + write-mostly so failures are rare.
+func (e *Executor) logf(ctx context.Context, runID int64, stream, format string, args ...any) {
+	line := format
+	if len(args) > 0 {
+		line = fmt.Sprintf(format, args...)
+	}
+	if err := e.store.appendRunLog(ctx, runID, stream, line); err != nil {
+		slog.Debug("backup runlog append failed", "run", runID, "err", err)
+	}
+}
+
 // Run executes one backup job, persisting a backup_runs row throughout.
 // Returns the final run record.
 func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
@@ -57,22 +72,26 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
+	e.logf(ctx, runID, "info", "start: job=%s host=%s sources=%d target=%s encrypt=%v",
+		job.Name, defaultStr(job.HostID, "local"), len(job.Sources), job.TargetType, job.Encrypt)
 
 	// Multi-host backup: resolve the target host once so the source
 	// extractors + pre-hooks go against the right Docker daemon.
 	hostTarget, err := e.resolveHost(job.HostID)
 	if err != nil {
+		e.logf(ctx, runID, "error", "resolve host: %s", err)
 		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", err)
 		return e.store.getRun(ctx, runID)
 	}
 
 	target, err := buildTarget(job.TargetType, job.TargetConfig)
 	if err != nil {
+		e.logf(ctx, runID, "error", "build target: %s", err)
 		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", err)
 		return e.store.getRun(ctx, runID)
 	}
 
-	if err := e.runHooks(ctx, hostTarget, job.PreHooks); err != nil {
+	if err := e.runHooks(ctx, runID, "pre", hostTarget, job.PreHooks); err != nil {
 		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", fmt.Errorf("pre-hooks: %w", err))
 		return e.store.getRun(ctx, runID)
 	}
@@ -80,6 +99,7 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 	relPath := relativePath(job, runID)
 	w, err := target.Open(ctx, relPath)
 	if err != nil {
+		e.logf(ctx, runID, "error", "open target %q: %s", relPath, err)
 		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", err)
 		return e.store.getRun(ctx, runID)
 	}
@@ -89,37 +109,87 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 
 	encWriter, err := wrapEncrypt(teeW, encryptionFor(job, e.secrets))
 	if err != nil {
+		e.logf(ctx, runID, "error", "wrap encrypt: %s", err)
 		_ = w.Close()
 		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", err)
 		return e.store.getRun(ctx, runID)
 	}
+	e.logf(ctx, runID, "info", "streaming %d source(s) → %s", len(job.Sources), relPath)
 
 	written, copyErr := e.streamSources(ctx, job.Sources, hostTarget, encWriter)
 	closeErr := encWriter.Close()
-	hookErr := e.runHooks(ctx, hostTarget, job.PostHooks)
+	if copyErr == nil && closeErr == nil {
+		e.logf(ctx, runID, "info", "wrote %d bytes", teeW.size)
+	}
+	hookErr := e.runHooks(ctx, runID, "post", hostTarget, job.PostHooks)
 
+	var finalStatus string
+	var finalErr error
 	switch {
 	case copyErr != nil:
+		e.logf(ctx, runID, "error", "stream sources: %s", copyErr)
 		_ = e.store.finishRun(ctx, runID, "failed", teeW.size, relPath, "", copyErr)
+		finalStatus, finalErr = "failed", copyErr
 	case closeErr != nil:
+		e.logf(ctx, runID, "error", "close encrypted writer: %s", closeErr)
 		_ = e.store.finishRun(ctx, runID, "failed", teeW.size, relPath, "", closeErr)
+		finalStatus, finalErr = "failed", closeErr
 	case hookErr != nil:
 		// Backup itself succeeded; surface hook failure but keep the file.
 		sum := hex.EncodeToString(hasher.Sum(nil))
-		_ = e.store.finishRun(ctx, runID, "failed", teeW.size, relPath, sum,
-			fmt.Errorf("post-hooks: %w", hookErr))
+		e.logf(ctx, runID, "warn", "post-hooks failed but backup file is intact: %s", hookErr)
+		wrapped := fmt.Errorf("post-hooks: %w", hookErr)
+		_ = e.store.finishRun(ctx, runID, "failed", teeW.size, relPath, sum, wrapped)
+		finalStatus, finalErr = "failed", wrapped
 	default:
 		sum := hex.EncodeToString(hasher.Sum(nil))
+		e.logf(ctx, runID, "info", "success: size=%d sha256=%s", teeW.size, sum[:12])
 		_ = e.store.finishRun(ctx, runID, "success", teeW.size, relPath, sum, nil)
 		if err := e.applyRetention(ctx, job, target); err != nil {
 			slog.Warn("backup retention", "job", job.Name, "err", err)
+			e.logf(ctx, runID, "warn", "retention pass: %s", err)
 		}
+		finalStatus = "success"
 	}
 	_ = written
 
 	now := time.Now()
 	_ = e.store.updateJobRunTimes(ctx, job.ID, &now, nil)
+
+	// Bell-icon notification — fan-out so every operator sees the run
+	// in their feed. Failures get error severity, success info.
+	if e.notifs != nil {
+		runLink := fmt.Sprintf("/backups/runs/%d", runID)
+		if finalStatus == "success" {
+			_, _ = e.notifs.Emit(ctx, notifications.EmitInput{
+				Kind:     notifications.KindBackupOK,
+				Severity: notifications.SevSuccess,
+				Title:    "Backup completed: " + job.Name,
+				Body:     fmt.Sprintf("Wrote %d bytes", teeW.size),
+				Link:     runLink,
+			})
+		} else {
+			body := "Run failed"
+			if finalErr != nil {
+				body = finalErr.Error()
+			}
+			_, _ = e.notifs.Emit(ctx, notifications.EmitInput{
+				Kind:     notifications.KindBackupFail,
+				Severity: notifications.SevError,
+				Title:    "Backup failed: " + job.Name,
+				Body:     body,
+				Link:     runLink,
+			})
+		}
+	}
 	return e.store.getRun(ctx, runID)
+}
+
+func defaultStr(v, fallback string) string {
+	if v == "" {
+		return fallback
+	}
+	return v
 }
 
 // streamSources writes the tar stream for the (single) source into w.
@@ -161,21 +231,46 @@ func (e *Executor) streamSources(ctx context.Context, sources []Source, hostTarg
 	}
 }
 
-func (e *Executor) runHooks(ctx context.Context, hostTarget hostBackupTarget, hooks []Hook) error {
+func (e *Executor) runHooks(ctx context.Context, runID int64, phase string, hostTarget hostBackupTarget, hooks []Hook) error {
 	if len(hooks) == 0 || hostTarget == nil {
 		return nil
 	}
+	e.logf(ctx, runID, "info", "%s-hooks: %d to run", phase, len(hooks))
 	for _, h := range hooks {
 		if h.Container == "" || len(h.Cmd) == 0 {
 			continue
 		}
+		e.logf(ctx, runID, "info", "%s-hook: container=%s cmd=%s",
+			phase, h.Container, strings.Join(h.Cmd, " "))
 		hookCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		_, exitCode, err := hostTarget.ContainerExec(hookCtx, h.Container, h.Cmd)
+		out, exitCode, err := hostTarget.ContainerExec(hookCtx, h.Container, h.Cmd)
 		cancel()
+		// Capture up to ~16KB of output across stream types so noisy
+		// hooks don't blow the run-log table. Split on lines so the UI
+		// can render them as ordered entries.
+		if len(out) > 0 {
+			snippet := out
+			if len(snippet) > 16*1024 {
+				snippet = snippet[:16*1024]
+				e.logf(ctx, runID, "info", "%s-hook output truncated at 16 KB", phase)
+			}
+			for _, line := range strings.Split(strings.TrimRight(string(snippet), "\n"), "\n") {
+				if line == "" {
+					continue
+				}
+				stream := "hook_stdout"
+				if exitCode != 0 || err != nil {
+					stream = "hook_stderr"
+				}
+				e.logf(ctx, runID, stream, "%s", line)
+			}
+		}
 		if err != nil {
+			e.logf(ctx, runID, "error", "%s-hook exec error: %s", phase, err)
 			return fmt.Errorf("exec %s: %w", h.Container, err)
 		}
 		if exitCode != 0 {
+			e.logf(ctx, runID, "error", "%s-hook exit code %d", phase, exitCode)
 			return fmt.Errorf("exec %s exit %d", h.Container, exitCode)
 		}
 	}
