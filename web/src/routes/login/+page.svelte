@@ -162,7 +162,7 @@
 
   {#if !mfaToken}
     <form class="login-card" onsubmit={submit}>
-      <Eyebrow active>Sign in</Eyebrow>
+      <Eyebrow>Sign in</Eyebrow>
 
       <div class="login-fields">
         <Field label="Username">
@@ -241,7 +241,7 @@
     </form>
   {:else}
     <form class="login-card" onsubmit={submitMFA}>
-      <Eyebrow active>Two-factor</Eyebrow>
+      <Eyebrow>Two-factor</Eyebrow>
       <h1 class="ed-title login-title">
         Enter the <em>code</em>.
       </h1>

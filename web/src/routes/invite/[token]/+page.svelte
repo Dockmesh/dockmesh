@@ -104,7 +104,7 @@
     </div>
 
     <div class="login-card">
-      <Eyebrow active>Accept invitation</Eyebrow>
+      <Eyebrow>Accept invitation</Eyebrow>
 
       {#if loading}
         <p class="invite-blurb">Loading invitation…</p>
