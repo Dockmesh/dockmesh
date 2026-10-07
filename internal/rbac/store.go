@@ -284,6 +284,9 @@ func (s *Store) listFromDB(ctx context.Context) ([]CustomRole, error) {
 			return nil, err
 		}
 		r.Builtin = builtin == 1
+		// A role with zero permission rows must serialise as [], not null —
+		// the Roles UI reads permissions.length unguarded.
+		r.Permissions = []Perm{}
 		roleMap[r.Name] = &r
 		order = append(order, r.Name)
 	}
