@@ -800,7 +800,7 @@
     <code>{tokenModal.token}</code>
   </div>
 
-  {#snippet actions()}
+  {#snippet footer()}
     <button type="button" class="dm-btn dm-btn-secondary" onclick={copyTokenInstall}>
       Copy install command
     </button>

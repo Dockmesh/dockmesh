@@ -45,18 +45,19 @@
   } from 'lucide-svelte';
 
   const id = $derived($page.params.id);
-  // Scope-aware perm gates: containers.update / .exec also require the
-  // caller's role-scope to cover this container's host + stack (if any).
-  const ctxStack = $derived(info?.Config?.Labels?.['com.docker.compose.project'] as string | undefined);
-  const ctxHost = $derived(targetHost);
-  const canControl = $derived(allowed('containers.update', { stack: ctxStack, host: ctxHost }));
-  const canExec = $derived(allowed('containers.exec', { stack: ctxStack, host: ctxHost }));
   // Resolve the host: prefer the URL ?host=… (set when the user navigated
   // here from a remote-host listing), otherwise the global selection.
   const targetHost = $derived($page.url.searchParams.get('host') || hosts.id);
   const isRemote = $derived(targetHost !== 'local');
 
   let info = $state<any>(null);
+
+  // Scope-aware perm gates: containers.update / .exec also require the
+  // caller's role-scope to cover this container's host + stack (if any).
+  const ctxStack = $derived(info?.Config?.Labels?.['com.docker.compose.project'] as string | undefined);
+  const ctxHost = $derived(targetHost);
+  const canControl = $derived(allowed('containers.update', { stack: ctxStack, host: ctxHost }));
+  const canExec = $derived(allowed('containers.exec', { stack: ctxStack, host: ctxHost }));
   let loading = $state(true);
   let tab = $state<'overview' | 'logs' | 'exec' | 'updates' | 'inspect' | 'network' | 'files'>('overview');
 

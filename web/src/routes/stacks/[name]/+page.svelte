@@ -18,12 +18,6 @@
 
   import { isAllHosts } from '$lib/stores/host.svelte';
 
-  // Scope-aware: stack-update / .deploy also require role-scope to cover
-  // this stack's name (and host if known). Unscoped roles short-circuit
-  // to "matches everything" in the scopeOK() helper.
-  const canWrite = $derived(allowed('stacks.update', { stack: name, host: stackHost }));
-  const canDeploy = $derived(allowed('stacks.deploy', { stack: name, host: stackHost }));
-
   // The stack detail page always operates on a specific host, never "all".
   // If the global picker is on "all", we resolve to the deployment's host
   // (from the list response) or fall back to "local".
@@ -32,6 +26,12 @@
   const isRemote = $derived(stackHost !== 'local');
 
   const name = $derived($page.params.name);
+
+  // Scope-aware: stack-update / .deploy also require role-scope to cover
+  // this stack's name (and host if known). Unscoped roles short-circuit
+  // to "matches everything" in the scopeOK() helper.
+  const canWrite = $derived(allowed('stacks.update', { stack: name, host: stackHost }));
+  const canDeploy = $derived(allowed('stacks.deploy', { stack: name, host: stackHost }));
 
   $effect(() => {
     pageContext.set(name);

@@ -23,7 +23,7 @@ func runStatusCmd() {
 	caPath := filepath.Join(dataDir, "ca.crt")
 	urlPath := filepath.Join(dataDir, "agent.url")
 
-	fmt.Printf("dockmesh-agent %s\n", agentVersion)
+	fmt.Printf("dockmesh-agent %s\n", agentVersion())
 	fmt.Printf("data dir: %s\n\n", dataDir)
 
 	enrolled := fileExists(certPath) && fileExists(keyPath) && fileExists(caPath)
