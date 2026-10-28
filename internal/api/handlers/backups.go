@@ -246,6 +246,9 @@ func (h *Handlers) DownloadBackupArchive(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if !h.requireArchiveAccess(w, r, run) {
+		return
+	}
 	if run.Status != "success" {
 		writeError(w, http.StatusConflict, "can only download from a successful run")
 		return
@@ -256,15 +259,15 @@ func (h *Handlers) DownloadBackupArchive(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer src.Close()
+	h.audit(r, audit.ActionBackupDownload, "backup-run:"+strconv.FormatInt(id, 10), map[string]any{
+		"job_id": run.JobID, "job_name": run.JobName,
+	})
 	filename := "backup-run-" + strconv.FormatInt(id, 10) + ".tar.gz"
 	w.Header().Set("Content-Type", "application/gzip")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
-	if _, err := io.Copy(w, src); err != nil {
-		// At this point headers are flushed — no way to surface a
-		// JSON error to the client.
-		return
-	}
-	h.audit(r, audit.ActionStackUpdate, "backup:download:"+strconv.FormatInt(id, 10), nil)
+	// Headers are flushed once copying starts; a failure can't become
+	// a JSON error anymore.
+	_, _ = io.Copy(w, src)
 }
 
 type restoreRequest struct {

@@ -699,10 +699,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/backups/runs", h.ListBackupRuns)
 				r.Get("/backups/runs/{id}", h.GetBackupRun)
 				r.Get("/backups/runs/{id}/log", h.GetBackupRunLog)
-				// Archive download is gated by backups.view: anyone
-				// who can list runs can also pull the bytes for one
-				// they own. Restore-grade access stays under
-				// backups.restore.
+			})
+			r.Group(func(r chi.Router) {
+				// Archives are decrypted server-side and carry secrets;
+				// the handler adds host scope and admin-only system archives.
+				r.Use(middleware.RequirePerm(rbac.PermBackupsDownload))
 				r.Get("/backups/runs/{id}/archive", h.DownloadBackupArchive)
 			})
 			r.Group(func(r chi.Router) {
@@ -733,8 +734,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				// the restore actually writes stack/<rel> + each volume
 				// instead of returning the legacy "not implemented" stub.
 				r.Post("/backups/runs/{id}/restore-stack", h.RestoreStackBackup)
-				// Backup-key export is sensitive material that lets you
-				// decrypt every backup blob — gate behind backups.restore.
+				// The key decrypts every backup and stored secret; the
+				// handler additionally requires an admin.
 				r.Get("/system/backup-key/export", h.ExportBackupKey)
 			})
 			r.Group(func(r chi.Router) {

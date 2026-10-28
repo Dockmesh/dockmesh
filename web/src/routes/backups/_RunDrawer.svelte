@@ -7,6 +7,7 @@
   // we have and notes the rest is a follow-up.
   import { api, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
   import { Eyebrow } from '$lib/components/editorial';
+  import { allowed } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
   import {
@@ -100,7 +101,7 @@
     { id: 'in-place', title: 'Restore in place', blurb: 'Replace current data on this dockmesh. Stops affected stacks first.', danger: true },
     { id: 'alongside', title: 'Restore alongside', blurb: 'Mount as new stacks with a -restored suffix. Original keeps running.' },
     { id: 'download', title: 'Download archive', blurb: 'Stream the encrypted .tar.age locally for offline inspection.' }
-  ];
+  ].filter((m) => m.id !== 'download' || allowed('backups.download'));
 
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape') onclose();

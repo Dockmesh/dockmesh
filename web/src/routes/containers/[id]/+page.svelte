@@ -1237,6 +1237,7 @@
         <span class="count">{Object.keys(info.NetworkSettings?.Networks ?? {}).length}</span>
       {/if}
     </button>
+    {#if canExec}
     <button
       role="tab"
       type="button"
@@ -1248,6 +1249,7 @@
       <FilesIcon size={13} strokeWidth={1.5} />
       Files
     </button>
+    {/if}
     {#if canControl && !isRemote}
       <button
         role="tab"
@@ -2056,7 +2058,7 @@
         </div>
       {/if}
     </div>
-  {:else if tab === 'files' && info}
+  {:else if tab === 'files' && info && canExec}
     <div class="ctn-files-pane">
       <div class="ctn-files-bar">
         <nav class="ctn-files-crumbs" aria-label="Path">
