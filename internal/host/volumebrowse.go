@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/safepath"
 )
 
 // VolumeEntry is one row in a directory listing. The size / modified
@@ -47,7 +49,8 @@ var (
 const MaxBrowsePathLen = 2048
 
 // SanitizeVolumePath joins mountpoint + sub and rejects any result
-// whose absolute path sits outside the mountpoint. The leading "/"
+// whose absolute path, after following symlinks, sits outside the
+// mountpoint. The leading "/"
 // on sub is stripped (absolute paths are treated as relative to the
 // volume root), but ".." segments are NOT collapsed before the join
 // — that lets filepath.Join evaluate them correctly and lets us
@@ -78,7 +81,21 @@ func SanitizeVolumePath(mountpoint, sub string) (string, error) {
 	if absFull != absMount && !strings.HasPrefix(absFull, absMount+string(filepath.Separator)) {
 		return "", ErrVolumePathEscape
 	}
-	return absFull, nil
+	// The lexical check above can't see symlinks: a link inside the volume
+	// may point at any host path, and this process reads as its own user
+	// (root on agents). Resolve them and require the result to stay inside.
+	inside, err := filepath.Rel(absMount, absFull)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := safepath.Resolve(absMount, filepath.ToSlash(inside))
+	if errors.Is(err, safepath.ErrEscape) {
+		return "", ErrVolumePathEscape
+	}
+	if err != nil {
+		return "", err
+	}
+	return resolved, nil
 }
 
 // BrowseDir lists a directory's direct children. Caller is responsible
@@ -133,12 +150,6 @@ func ReadFile(absPath string, maxBytes int64) (*VolumeFileResult, error) {
 	info, err := os.Lstat(absPath)
 	if err != nil {
 		return nil, err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		// Follow one level — many config files in volumes are symlinked.
-		if info, err = os.Stat(absPath); err != nil {
-			return nil, err
-		}
 	}
 	if !info.Mode().IsRegular() {
 		return nil, ErrVolumeNotFile

@@ -584,8 +584,8 @@ func sendStreamClose(conn *websocket.Conn, id, errMsg string) {
 // migration to transfer volumes from source to target.
 func runVolumeExportStream(ctx context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen) {
 	volumeName, _ := open.Params["volume"].(string)
-	if volumeName == "" {
-		sendStreamClose(conn, open.StreamID, "volume param required")
+	if err := dockerwrap.CheckVolumeName(volumeName); err != nil {
+		sendStreamClose(conn, open.StreamID, err.Error())
 		return
 	}
 
@@ -652,8 +652,8 @@ func runVolumeExportStream(ctx context.Context, conn *websocket.Conn, cli *clien
 // stream, we close stdin and wait for tar to finish.
 func runVolumeImportStream(ctx context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) {
 	volumeName, _ := open.Params["volume"].(string)
-	if volumeName == "" {
-		sendStreamClose(conn, open.StreamID, "volume param required")
+	if err := dockerwrap.CheckVolumeName(volumeName); err != nil {
+		sendStreamClose(conn, open.StreamID, err.Error())
 		return
 	}
 

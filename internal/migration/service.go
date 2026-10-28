@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -83,6 +85,13 @@ func (s *Service) Initiate(ctx context.Context, stackName, targetHostID, userID 
 	sourceHostID := dep.HostID
 	if sourceHostID == targetHostID {
 		return nil, fmt.Errorf("source and target are the same host")
+	}
+	vols, err := s.namedVolumes(ctx, stackName)
+	if err != nil {
+		return nil, err
+	}
+	if len(vols) > 0 {
+		return nil, fmt.Errorf("%w: %s", ErrNamedVolumes, strings.Join(vols, ", "))
 	}
 
 	// Single-concurrency per stack.
@@ -291,17 +300,48 @@ func (s *Service) phaseStopping(ctx context.Context, m *Migration) error {
 }
 
 func (s *Service) phaseSyncing(ctx context.Context, m *Migration) error {
-	detail, err := s.stacks.Get(m.StackName)
+	volumes, err := s.namedVolumes(ctx, m.StackName)
 	if err != nil {
 		return err
 	}
-	dir, _ := s.stacks.Dir(m.StackName)
-	proj, err := compose.LoadProject(ctx, dir, m.StackName, detail.Env)
+
+	if len(volumes) == 0 {
+		slog.Info("migration syncing: no volumes to transfer", "id", m.ID)
+		return nil
+	}
+	slog.Info("migration syncing volumes",
+		"id", m.ID, "count", len(volumes), "volumes", volumes)
+
+	p := &Progress{VolumesTotal: len(volumes)}
+	_ = s.store.UpdateProgress(ctx, m.ID, p)
+
+	// Transfer volumes sequentially (Decision 6: serial per-volume).
+	for i, vol := range volumes {
+		p.CurrentVolume = vol
+		p.VolumeIndex = i + 1
+		_ = s.store.UpdateProgress(ctx, m.ID, p)
+
+		if err := s.transferVolume(ctx, m, vol); err != nil {
+			return fmt.Errorf("volume %s: %w", vol, err)
+		}
+		slog.Info("migration volume transferred",
+			"id", m.ID, "volume", vol, "index", i+1, "total", len(volumes))
+	}
+	return nil
+}
+
+// namedVolumes returns the Docker volume names the stack's services use.
+func (s *Service) namedVolumes(ctx context.Context, stackName string) ([]string, error) {
+	detail, err := s.stacks.Get(stackName)
 	if err != nil {
-		return fmt.Errorf("parse compose: %w", err)
+		return nil, err
+	}
+	dir, _ := s.stacks.Dir(stackName)
+	proj, err := compose.LoadProject(ctx, dir, stackName, detail.Env)
+	if err != nil {
+		return nil, fmt.Errorf("parse compose: %w", err)
 	}
 
-	// Collect named volumes referenced by all services.
 	volumeSet := make(map[string]bool)
 	for _, svc := range proj.Services {
 		for _, v := range svc.Volumes {
@@ -324,31 +364,8 @@ func (s *Service) phaseSyncing(ctx context.Context, m *Migration) error {
 	for v := range volumeSet {
 		volumes = append(volumes, v)
 	}
-
-	if len(volumes) == 0 {
-		slog.Info("migration syncing: no volumes to transfer", "id", m.ID)
-		return nil
-	}
-
-	slog.Info("migration syncing volumes",
-		"id", m.ID, "count", len(volumes), "volumes", volumes)
-
-	p := &Progress{VolumesTotal: len(volumes)}
-	_ = s.store.UpdateProgress(ctx, m.ID, p)
-
-	// Transfer volumes sequentially (Decision 6: serial per-volume).
-	for i, vol := range volumes {
-		p.CurrentVolume = vol
-		p.VolumeIndex = i + 1
-		_ = s.store.UpdateProgress(ctx, m.ID, p)
-
-		if err := s.transferVolume(ctx, m, vol); err != nil {
-			return fmt.Errorf("volume %s: %w", vol, err)
-		}
-		slog.Info("migration volume transferred",
-			"id", m.ID, "volume", vol, "index", i+1, "total", len(volumes))
-	}
-	return nil
+	sort.Strings(volumes)
+	return volumes, nil
 }
 
 // transferVolume streams one volume from source to target via the

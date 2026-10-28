@@ -32,9 +32,9 @@ func (h *Handlers) ExportBackupKey(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(body))
 }
 
-// RotateSecretsKey generates a new age key, re-encrypts every stack
-// `.env.age` against it, atomically swaps the in-memory key for the
-// live server, and archives the old key to .../secrets.age-key.old.
+// RotateSecretsKey generates a new age key, records old and new key in
+// the key history, re-encrypts every stack `.env.age` against the new key,
+// then atomically replaces the key file and the in-memory key.
 // Equivalent to the `dockmesh secrets rotate` CLI — but runs in the
 // same process so no service restart is needed (FINDING-52: running
 // server kept using old key in RAM while CLI had already written the
@@ -63,6 +63,10 @@ func (h *Handlers) RotateSecretsKey(w http.ResponseWriter, r *http.Request) {
 	newSvc, err := h.Secrets.RotateInMemory()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("generate new key: %v", err))
+		return
+	}
+	if err := h.Secrets.PrepareRotation(newSvc); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	count, err := h.Stacks.ReencryptAllBetween(oldSnap, newSvc)

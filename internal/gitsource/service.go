@@ -17,13 +17,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/safepath"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-git/go-git/v5"
@@ -40,6 +43,7 @@ var (
 	ErrPollTooShort     = errors.New("poll_interval_sec must be >= 60")
 	ErrComposeMissing   = errors.New("repo did not contain compose.yaml at path_in_repo")
 	ErrStackNameInvalid = errors.New("stack name contains characters that cannot be used on disk")
+	ErrPathOutsideRepo  = errors.New("path_in_repo must be a relative path inside the repository")
 )
 
 // Source is the DB-backed row, returned to handlers with secrets
@@ -469,7 +473,13 @@ func (s *Service) cloneOrPull(ctx context.Context, src *Source, dir string, auth
 // UI can render a "drift detected" banner.
 func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string) (EnvDrift, error) {
 	var drift EnvDrift
-	src := filepath.Join(cloneDir, pathInRepo)
+	// The repo decides what its files are, including symlinks: everything
+	// read from the clone is resolved and must stay inside it, or a repo
+	// (or a crafted path_in_repo) could pull server files into the stack.
+	src, err := inClone(cloneDir, pathInRepo)
+	if err != nil {
+		return drift, err
+	}
 	composePath := src
 	isDir := false
 	if info, err := os.Stat(src); err == nil && info.IsDir() {
@@ -482,14 +492,18 @@ func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string) (EnvDrif
 			}
 		}
 	}
+	if composePath, err = inClone(cloneDir, composePath); err != nil {
+		return drift, err
+	}
 	compose, err := os.ReadFile(composePath)
 	if err != nil {
 		return drift, ErrComposeMissing
 	}
 	envFromRepo := ""
-	envPath := filepath.Join(filepath.Dir(composePath), ".env")
-	if b, err := os.ReadFile(envPath); err == nil {
-		envFromRepo = string(b)
+	if envPath, err := inClone(cloneDir, filepath.Join(filepath.Dir(composePath), ".env")); err == nil {
+		if b, err := os.ReadFile(envPath); err == nil {
+			envFromRepo = string(b)
+		}
 	}
 	if _, err := s.stacks.Get(stackName); err != nil {
 		// First sync — seed both compose + .env straight from the repo.
@@ -525,13 +539,36 @@ func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string) (EnvDrif
 	if err != nil {
 		return drift, nil // non-fatal — compose + env are already in place
 	}
-	return drift, copyTreeSiblings(filepath.Dir(composePath), dstDir)
+	return drift, copyTreeSiblings(cloneDir, filepath.Dir(composePath), dstDir)
+}
+
+// inClone resolves p (relative to cloneDir, or an absolute path below it)
+// and fails with ErrPathOutsideRepo if it ends up outside the clone.
+func inClone(cloneDir, p string) (string, error) {
+	rel := p
+	if filepath.IsAbs(p) {
+		r, err := filepath.Rel(cloneDir, p)
+		if err != nil {
+			return "", ErrPathOutsideRepo
+		}
+		rel = r
+	}
+	if slices.Contains(strings.Split(filepath.ToSlash(rel), "/"), "..") {
+		return "", ErrPathOutsideRepo
+	}
+	resolved, err := safepath.Resolve(cloneDir, filepath.ToSlash(rel))
+	if errors.Is(err, safepath.ErrEscape) {
+		return "", ErrPathOutsideRepo
+	}
+	return resolved, err
 }
 
 // copyTreeSiblings mirrors all non-dotfile entries under src into dst,
 // recursively, EXCEPT the compose / .env files the main copy already
 // handled. Tops out at 64 MiB per file to keep build-contexts sane.
-func copyTreeSiblings(src, dst string) error {
+// Symlinks are copied as the file they point to, and skipped when that
+// lies outside the clone.
+func copyTreeSiblings(cloneDir, src, dst string) error {
 	const maxFile = 64 << 20
 	skip := map[string]bool{
 		"compose.yaml":        true,
@@ -561,9 +598,23 @@ func copyTreeSiblings(src, dst string) error {
 		if d.IsDir() {
 			return os.MkdirAll(dstPath, 0o755)
 		}
-		info, ierr := d.Info()
+		if d.Type()&fs.ModeSymlink != 0 {
+			target, err := inClone(cloneDir, p)
+			if errors.Is(err, ErrPathOutsideRepo) {
+				slog.Warn("git sync: skipping symlink that leaves the repository", "path", rel)
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			p = target
+		}
+		info, ierr := os.Stat(p)
 		if ierr != nil {
 			return ierr
+		}
+		if !info.Mode().IsRegular() {
+			return nil
 		}
 		if info.Size() > maxFile {
 			return fmt.Errorf("file %s exceeds %d bytes — refusing to copy into stack dir", rel, maxFile)
@@ -754,6 +805,10 @@ func validateInput(in Input) error {
 	}
 	if in.PollIntervalSec != 0 && in.PollIntervalSec < 60 {
 		return ErrPollTooShort
+	}
+	p := filepath.ToSlash(in.PathInRepo)
+	if strings.HasPrefix(p, "/") || filepath.IsAbs(in.PathInRepo) || slices.Contains(strings.Split(p, "/"), "..") {
+		return ErrPathOutsideRepo
 	}
 	return nil
 }

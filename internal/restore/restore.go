@@ -22,6 +22,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/safepath"
 	_ "modernc.org/sqlite"
 )
 
@@ -29,6 +30,9 @@ import (
 type Counts struct {
 	Files int   `json:"files"`
 	Bytes int64 `json:"bytes"`
+	// SkippedLinks counts symlink/hardlink entries. Dockmesh's own
+	// backups never contain links, so they are dropped, not followed.
+	SkippedLinks int `json:"skipped_links,omitempty"`
 }
 
 // Options controls Extract behaviour.
@@ -254,6 +258,7 @@ func walkTarDryRun(tr *tar.Reader) (*Counts, error) {
 func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp string) (*Counts, error) {
 	c := &Counts{}
 	dataDir := filepath.Dir(cfg.DBPath)
+	liveDB := filepath.Base(cfg.DBPath)
 	for {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -269,18 +274,38 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 		if strings.Contains(clean, "..") {
 			return nil, fmt.Errorf("archive entry escapes root: %q", hdr.Name)
 		}
-		var targetPath string
+		if hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink {
+			c.SkippedLinks++
+			continue
+		}
+		var root, rel string
 		switch {
 		case clean == "dockmesh.db":
-			targetPath = dbTmp
 		case strings.HasPrefix(clean, "stacks/"):
-			targetPath = filepath.Join(cfg.StacksRoot, strings.TrimPrefix(clean, "stacks/"))
+			root, rel = cfg.StacksRoot, strings.TrimPrefix(clean, "stacks/")
 		case strings.HasPrefix(clean, "data/"):
-			targetPath = filepath.Join(dataDir, strings.TrimPrefix(clean, "data/"))
+			root, rel = dataDir, strings.TrimPrefix(clean, "data/")
+			// The live DB is never part of data/ (it is restored from the
+			// top-level snapshot via dbTmp); writing it here would bypass
+			// the safety check and the atomic swap.
+			if base := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(rel, "-wal"), "-shm"), "-journal"); base == liveDB {
+				continue
+			}
 		default:
 			// Unknown prefix — skip silently (future-version archive
 			// fields we don't understand).
 			continue
+		}
+		targetPath := dbTmp
+		if root != "" {
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				return nil, err
+			}
+			// Resolve follows links already on disk, so a pre-existing
+			// symlink under the root can't redirect a write elsewhere.
+			if targetPath, err = safepath.Resolve(root, rel); err != nil {
+				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
+			}
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
@@ -297,7 +322,7 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 			// 0400 file via O_TRUNC fails with EACCES — unlink-then-create
 			// makes this idempotent.
 			_ = os.Remove(targetPath)
-			out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&0o777)
+			out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_EXCL, os.FileMode(hdr.Mode&0o777)) //nolint:gosec // masked to permission bits
 			if err != nil {
 				return nil, fmt.Errorf("create %q: %w", targetPath, err)
 			}
@@ -309,13 +334,6 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 			_ = os.Chtimes(targetPath, hdr.ModTime, hdr.ModTime)
 			c.Files++
 			c.Bytes += n
-		case tar.TypeSymlink:
-			_ = os.MkdirAll(filepath.Dir(targetPath), 0o755)
-			_ = os.Remove(targetPath)
-			if err := os.Symlink(hdr.Linkname, targetPath); err != nil {
-				return nil, fmt.Errorf("symlink %q → %q: %w", targetPath, hdr.Linkname, err)
-			}
-			c.Files++
 		}
 	}
 	return c, nil

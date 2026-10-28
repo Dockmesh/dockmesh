@@ -4,6 +4,7 @@
 package migration
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
@@ -80,3 +81,7 @@ func (m *Migration) IsTerminal() bool {
 }
 
 var ErrNotCompleted = fmt.Errorf("migration not in completed state")
+
+// ErrNamedVolumes refuses migrating stacks with named volumes: volume data
+// isn't transferred yet, so the target would start with empty volumes.
+var ErrNamedVolumes = errors.New("stack uses named volumes, which can't be migrated yet; their data would not be copied")

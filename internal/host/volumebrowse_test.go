@@ -131,3 +131,42 @@ func TestReadFile_Text(t *testing.T) {
 		t.Errorf("content mismatch: %q", res.Content)
 	}
 }
+
+// A symlink inside a volume must not lead the browser onto the host
+// filesystem, whether it is the last path component or a directory on
+// the way.
+func TestSanitizeVolumePath_SymlinkEscape(t *testing.T) {
+	mount := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "shadow"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(mount, "conf"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mount, "conf", "app.yml"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for link, target := range map[string]string{
+		"hostfile": filepath.Join(outside, "shadow"),
+		"hostdir":  outside,
+		"rootlink": string(filepath.Separator),
+		"current":  "conf",
+	} {
+		if err := os.Symlink(target, filepath.Join(mount, link)); err != nil {
+			t.Skipf("symlinks not available: %v", err)
+		}
+	}
+	for _, sub := range []string{"hostfile", "hostdir", "hostdir/shadow", "rootlink/etc/passwd"} {
+		if _, err := SanitizeVolumePath(mount, sub); !errors.Is(err, ErrVolumePathEscape) {
+			t.Errorf("%s: err = %v, want ErrVolumePathEscape", sub, err)
+		}
+	}
+	got, err := SanitizeVolumePath(mount, "current/app.yml")
+	if err != nil {
+		t.Fatalf("in-volume symlink rejected: %v", err)
+	}
+	if res, err := ReadFile(got, 0); err != nil || string(res.Content) != "x" {
+		t.Errorf("read through in-volume symlink: %+v %v", res, err)
+	}
+}

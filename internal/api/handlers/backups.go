@@ -8,6 +8,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -284,6 +285,14 @@ func (h *Handlers) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 	var req restoreRequest
 	if err := decodeJSON(r, &req); err != nil || req.DestVolume == "" {
 		writeError(w, http.StatusBadRequest, "dest_volume required")
+		return
+	}
+	if err := h.Backups.CheckRestoreTarget(r.Context(), id, req.DestVolume); err != nil {
+		if errors.Is(err, docker.ErrInvalidVolumeName) {
+			writeError(w, http.StatusBadRequest, "dest_volume must be a Docker volume name, not a path")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if err := h.Backups.Restore(r.Context(), id, req.DestVolume); err != nil {

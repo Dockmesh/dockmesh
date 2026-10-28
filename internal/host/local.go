@@ -320,6 +320,9 @@ func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath strin
 		return nil, err
 	}
 	abs, err := SanitizeVolumePath(mp, subpath)
+	if errors.Is(err, fs.ErrPermission) {
+		return BrowseDirViaHelper(ctx, h.cli, name, subpath)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -343,6 +346,9 @@ func (h *LocalHost) VolumeReadFile(ctx context.Context, name, subpath string, ma
 		return nil, err
 	}
 	abs, err := SanitizeVolumePath(mp, subpath)
+	if errors.Is(err, fs.ErrPermission) {
+		return ReadFileViaHelper(ctx, h.cli, name, subpath, maxBytes)
+	}
 	if err != nil {
 		return nil, err
 	}
