@@ -57,6 +57,21 @@ func (f *fakeHost) RemoveContainer(context.Context, string, bool) error {
 func (f *fakeHost) PauseContainer(context.Context, string) error       { panic("no") }
 func (f *fakeHost) UnpauseContainer(context.Context, string) error     { panic("no") }
 func (f *fakeHost) KillContainer(context.Context, string, string) error { panic("no") }
+func (f *fakeHost) ContainerBrowseEntries(context.Context, string, string) ([]VolumeEntry, error) {
+	panic("no")
+}
+func (f *fakeHost) ContainerReadFile(context.Context, string, string, int64) (*VolumeFileResult, error) {
+	panic("no")
+}
+func (f *fakeHost) ContainerDownloadFile(context.Context, string, string) (io.ReadCloser, string, int64, error) {
+	panic("no")
+}
+func (f *fakeHost) ContainerWriteFile(context.Context, string, string, []byte, int64) error {
+	panic("no")
+}
+func (f *fakeHost) InspectImage(context.Context, string) (dtypes.ImageInspect, error) {
+	panic("no")
+}
 func (f *fakeHost) VolumeBrowseEntries(context.Context, string, string) ([]VolumeEntry, error) {
 	panic("no")
 }

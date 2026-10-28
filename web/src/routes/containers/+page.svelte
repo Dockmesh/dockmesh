@@ -42,6 +42,8 @@
     Labels?: Record<string, string>;
     host_id?: string;
     host_name?: string;
+    restart_count?: number;
+    image_update_available?: boolean;
   }
 
   let containers = $state<Container[]>([]);
