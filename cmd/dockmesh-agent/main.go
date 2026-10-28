@@ -1033,11 +1033,21 @@ func agentLoadStaged(ctx context.Context, dir, name, env string) (*composetypes.
 	if err != nil {
 		return nil, err
 	}
-	stackDir := stacksDir(name)
-	if err := os.MkdirAll(stackDir, 0o750); err != nil {
+	// Created through an os.Root on the stacks directory, so the name can
+	// only ever create a directory inside it.
+	stacksBase := filepath.Join(envOr("DOCKMESH_DATA_DIR", "/var/lib/dockmesh"), "stacks")
+	if err := os.MkdirAll(stacksBase, 0o750); err != nil {
 		return nil, err
 	}
-	compose.RebaseBindSources(proj, dir, stackDir)
+	root, err := os.OpenRoot(stacksBase)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	if err := root.MkdirAll(name, 0o750); err != nil {
+		return nil, err
+	}
+	compose.RebaseBindSources(proj, dir, filepath.Join(stacksBase, name))
 	return proj, nil
 }
 

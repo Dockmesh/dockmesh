@@ -32,8 +32,8 @@ var ErrLocalPathNotAllowed = errors.New("local backup path is outside the allowe
 
 var localRoots func() []string
 
-// SetLocalRoots installs the source of allowed roots. Without it, any path
-// is accepted.
+// SetLocalRoots installs the source of allowed roots. Without it, no local
+// target can be built.
 func SetLocalRoots(f func() []string) { localRoots = f }
 
 // ParseRoots splits the setting value into absolute, cleaned paths.
@@ -72,7 +72,7 @@ func locate(p string) (string, string, error) {
 		return "", "", err
 	}
 	if localRoots == nil {
-		return abs, ".", nil
+		return "", "", ErrLocalPathNotAllowed
 	}
 	for _, root := range localRoots() {
 		if Within(root, abs) {
