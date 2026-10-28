@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/metrics"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -53,6 +55,9 @@ func (h *Handlers) GetMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
+	if !h.requireContainerScope(w, r, rbac.PermContainersView, host.NewLocal(h.Docker), id) {
+		return
+	}
 	info, err := h.Docker.InspectContainer(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "container not found")

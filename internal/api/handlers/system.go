@@ -39,7 +39,12 @@ func (h *Handlers) SystemMetrics(w http.ResponseWriter, r *http.Request) {
 
 	// All-mode fan-out: collect one Metrics sample per online host.
 	if host.IsAll(hostID) && h.Hosts != nil {
-		targets := h.Hosts.PickAll(r.Context())
+		var targets []host.Host
+		for _, hh := range h.Hosts.PickAll(r.Context()) {
+			if h.inReadScope(r, hh.ID(), "") {
+				targets = append(targets, hh)
+			}
+		}
 		res := host.FanOut(r.Context(), targets, func(ctx context.Context, hh host.Host) ([]systemMetricsRow, error) {
 			m, err := hh.SystemMetrics(ctx)
 			if err != nil {
@@ -58,6 +63,10 @@ func (h *Handlers) SystemMetrics(w http.ResponseWriter, r *http.Request) {
 	// Single-host path. For local we call the system package directly
 	// to avoid the host.Host interface overhead; for remote we go
 	// through the agent protocol via pickHost.
+	if !h.inReadScope(r, hostIDFromRequest(r), "") {
+		writeError(w, http.StatusForbidden, "out of scope: your role does not include this host")
+		return
+	}
 	if hostID == "" || hostID == "local" {
 		writeJSON(w, http.StatusOK, system.Collect())
 		return

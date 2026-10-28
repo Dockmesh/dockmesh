@@ -62,7 +62,12 @@ func (h *Handlers) ListImages(w http.ResponseWriter, r *http.Request) {
 	// All-mode: fan out. Each online host contributes its image list,
 	// tagged with host metadata per row.
 	if host.IsAll(hostID) && h.Hosts != nil {
-		targets := h.Hosts.PickAll(r.Context())
+		var targets []host.Host
+		for _, hh := range h.Hosts.PickAll(r.Context()) {
+			if h.inReadScope(r, hh.ID(), "") {
+				targets = append(targets, hh)
+			}
+		}
 		res := host.FanOut(r.Context(), targets, func(ctx context.Context, hh host.Host) ([]imageRow, error) {
 			list, err := hh.ListImages(ctx, all)
 			if err != nil {
@@ -89,6 +94,10 @@ func (h *Handlers) ListImages(w http.ResponseWriter, r *http.Request) {
 	target, err := h.pickHost(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if !h.inReadScope(r, target.ID(), "") {
+		writeError(w, http.StatusForbidden, "out of scope: your role does not include this host")
 		return
 	}
 	images, err := target.ListImages(r.Context(), all)
@@ -176,6 +185,9 @@ func (h *Handlers) InspectImage(w http.ResponseWriter, r *http.Request) {
 	target, err := h.pickHost(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
 	scopeReq := h.hostScopeReq(r.Context(), target.ID())

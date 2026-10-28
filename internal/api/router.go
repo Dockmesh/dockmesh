@@ -127,6 +127,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.NewAuth(authSvc))
+			r.Use(h.StackScope)
 
 			// Self-service routes (any authenticated user)
 			r.Get("/me", h.Me)
@@ -189,20 +190,17 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/containers/{id}", h.InspectContainer)
 				// Historical metrics are read-only data, not a control action.
 				r.Get("/containers/{id}/metrics", h.GetMetrics)
-				// File browser (read-only) — list dir + read text preview +
-				// stream raw file bytes for download. Write goes through a
-				// separate group keyed on containers.exec because uploading
-				// a file is effectively code injection.
-				r.Get("/containers/{id}/files", h.BrowseContainerFiles)
-				r.Get("/containers/{id}/files/content", h.ReadContainerFile)
-				r.Get("/containers/{id}/files/download", h.DownloadContainerFile)
 				r.Get("/hosts/{id}/stats/containers", h.BatchContainerStats)
 			})
 
-			// File-write into a container is gated on containers.exec
-			// because the blast radius is the same as a shell session.
+			// Container file access, read and write, is gated on
+			// containers.exec: files hold the same secrets a shell
+			// reaches, and anyone with a shell can read them anyway.
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermContainersExec))
+				r.Get("/containers/{id}/files", h.BrowseContainerFiles)
+				r.Get("/containers/{id}/files/content", h.ReadContainerFile)
+				r.Get("/containers/{id}/files/download", h.DownloadContainerFile)
 				r.Post("/containers/{id}/files", h.WriteContainerFile)
 			})
 

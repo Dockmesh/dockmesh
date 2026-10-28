@@ -30,13 +30,13 @@ func (h *Handlers) ListNetworks(w http.ResponseWriter, r *http.Request) {
 	hostID := r.URL.Query().Get("host")
 
 	if host.IsAll(hostID) && h.Hosts != nil {
-		targets := h.Hosts.PickAll(r.Context())
+		targets := h.filterHostsByScope(r, h.Hosts.PickAll(r.Context()))
 		res := host.FanOut(r.Context(), targets, func(ctx context.Context, hh host.Host) ([]networkRow, error) {
 			list, err := hh.ListNetworks(ctx)
 			if err != nil {
 				return nil, err
 			}
-			list = enrichNetworkMembers(ctx, hh, list)
+			list = enrichNetworkMembers(ctx, hh, h.filterNetworksByScope(r, hh.ID(), list))
 			rows := make([]networkRow, len(list))
 			for i, n := range list {
 				rows[i] = networkRow{
@@ -58,13 +58,31 @@ func (h *Handlers) ListNetworks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	if !h.requireHostAccess(w, r, target.ID()) {
+		return
+	}
 	nets, err := target.ListNetworks(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	nets = enrichNetworkMembers(r.Context(), target, nets)
+	nets = enrichNetworkMembers(r.Context(), target, h.filterNetworksByScope(r, target.ID(), nets))
 	writeJSON(w, http.StatusOK, nets)
+}
+
+// filterNetworksByScope keeps the networks on hostID the caller may see;
+// compose networks count as part of their stack.
+func (h *Handlers) filterNetworksByScope(r *http.Request, hostID string, in []dtypes.NetworkResource) []dtypes.NetworkResource {
+	if h.callerUnscoped(r) {
+		return in
+	}
+	out := make([]dtypes.NetworkResource, 0, len(in))
+	for _, n := range in {
+		if h.inReadScope(r, hostID, n.Labels["com.docker.compose.project"]) {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // enrichNetworkMembers populates each network's Containers map by
@@ -147,6 +165,10 @@ func (h *Handlers) InspectNetwork(w http.ResponseWriter, r *http.Request) {
 	net, err := target.InspectNetwork(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if !h.inReadScope(r, target.ID(), net.Labels["com.docker.compose.project"]) {
+		writeError(w, http.StatusForbidden, "out of scope: your role does not include this network")
 		return
 	}
 	writeJSON(w, http.StatusOK, net)
