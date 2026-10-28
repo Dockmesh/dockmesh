@@ -473,38 +473,18 @@ func (s *Service) cloneOrPull(ctx context.Context, src *Source, dir string, auth
 // UI can render a "drift detected" banner.
 func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string) (EnvDrift, error) {
 	var drift EnvDrift
-	// The repo decides what its files are, including symlinks: everything
-	// read from the clone is resolved and must stay inside it, or a repo
-	// (or a crafted path_in_repo) could pull server files into the stack.
-	src, err := inClone(cloneDir, pathInRepo)
+	// The repo decides what its files are, including symlinks, so the clone
+	// is only read through an os.Root: nothing outside it can be reached.
+	repo, err := os.OpenRoot(cloneDir)
 	if err != nil {
 		return drift, err
 	}
-	composePath := src
-	isDir := false
-	if info, err := os.Stat(src); err == nil && info.IsDir() {
-		isDir = true
-		for _, name := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
-			p := filepath.Join(src, name)
-			if _, err := os.Stat(p); err == nil {
-				composePath = p
-				break
-			}
-		}
-	}
-	if composePath, err = inClone(cloneDir, composePath); err != nil {
+	defer repo.Close()
+	src, err := readCompose(repo, pathInRepo)
+	if err != nil {
 		return drift, err
 	}
-	compose, err := os.ReadFile(composePath)
-	if err != nil {
-		return drift, ErrComposeMissing
-	}
-	envFromRepo := ""
-	if envPath, err := inClone(cloneDir, filepath.Join(filepath.Dir(composePath), ".env")); err == nil {
-		if b, err := os.ReadFile(envPath); err == nil {
-			envFromRepo = string(b)
-		}
-	}
+	compose, envFromRepo := src.compose, src.env
 	if _, err := s.stacks.Get(stackName); err != nil {
 		// First sync — seed both compose + .env straight from the repo.
 		// The merger still runs to surface compose `${VAR}` that the
@@ -532,68 +512,69 @@ func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string) (EnvDrif
 		}
 	}
 	// Mirror sibling files when path_in_repo was a directory.
-	if !isDir {
+	if !src.isDir {
 		return drift, nil
 	}
 	dstDir, err := s.stacks.Dir(stackName)
 	if err != nil {
 		return drift, nil // non-fatal — compose + env are already in place
 	}
-	return drift, copyTreeSiblings(cloneDir, filepath.Dir(composePath), dstDir)
+	return drift, copyTreeSiblings(repo, src.dir, dstDir)
 }
 
-// inClone resolves p (relative to cloneDir, or an absolute path below it)
-// and fails with ErrPathOutsideRepo if it ends up outside the clone.
-func inClone(cloneDir, p string) (string, error) {
-	rel := p
-	if filepath.IsAbs(p) {
-		// Absolute paths come from earlier inClone results (below the
-		// resolved clone dir) or from walking it; the clone dir itself may
-		// be relative or sit under a symlink.
-		r, ok := relTo(cloneDir, p)
-		if !ok {
-			return "", ErrPathOutsideRepo
-		}
-		rel = r
-	}
-	if slices.Contains(strings.Split(filepath.ToSlash(rel), "/"), "..") {
-		return "", ErrPathOutsideRepo
-	}
-	resolved, err := safepath.Resolve(cloneDir, filepath.ToSlash(rel))
-	if errors.Is(err, safepath.ErrEscape) {
-		return "", ErrPathOutsideRepo
-	}
-	return resolved, err
+type repoCompose struct {
+	compose, env string
+	dir          string // directory of the compose file, relative to the clone
+	isDir        bool   // path_in_repo named a directory
 }
 
-// relTo returns p relative to dir, trying dir as given (made absolute) and
-// with its symlinks resolved.
-func relTo(dir, p string) (string, bool) {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return "", false
+// readCompose finds the compose file (and an optional .env next to it) at
+// pathInRepo inside the clone.
+func readCompose(repo *os.Root, pathInRepo string) (repoCompose, error) {
+	var out repoCompose
+	rel := filepath.Clean(filepath.FromSlash(pathInRepo))
+	composeRel := rel
+	info, err := repo.Stat(rel)
+	if safepath.IsRootEscape(err) {
+		return out, ErrPathOutsideRepo
 	}
-	bases := []string{abs}
-	if real, err := filepath.EvalSymlinks(abs); err == nil && real != abs {
-		bases = append(bases, real)
-	}
-	for _, b := range bases {
-		if safepath.Within(b, p) {
-			r, err := filepath.Rel(b, p)
+	if err == nil && info.IsDir() {
+		out.isDir = true
+		for _, name := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
+			p := filepath.Join(rel, name)
+			_, err := repo.Stat(p)
+			if safepath.IsRootEscape(err) {
+				return out, ErrPathOutsideRepo
+			}
 			if err == nil {
-				return r, true
+				composeRel = p
+				break
 			}
 		}
 	}
-	return "", false
+	b, err := repo.ReadFile(composeRel)
+	if safepath.IsRootEscape(err) {
+		return out, ErrPathOutsideRepo
+	}
+	if err != nil {
+		return out, ErrComposeMissing
+	}
+	out.compose = string(b)
+	out.dir = filepath.Dir(composeRel)
+	if env, err := repo.ReadFile(filepath.Join(out.dir, ".env")); err == nil {
+		out.env = string(env)
+	}
+	return out, nil
 }
 
-// copyTreeSiblings mirrors all non-dotfile entries under src into dst,
-// recursively, EXCEPT the compose / .env files the main copy already
-// handled. Tops out at 64 MiB per file to keep build-contexts sane.
-// Symlinks are copied as the file they point to, and skipped when that
-// lies outside the clone.
-func copyTreeSiblings(cloneDir, src, dst string) error {
+// copyTreeSiblings mirrors all non-dotfile entries under srcRel (relative
+// to the clone) into dst, recursively, EXCEPT the compose / .env files the
+// main copy already handled. Tops out at 64 MiB per file to keep
+// build-contexts sane. Symlinks are copied as the file they point to and
+// skipped when that lies outside the clone. dst is written through an
+// os.Root as well: containers bind-mount parts of the stack directory and
+// could leave symlinks there.
+func copyTreeSiblings(repo *os.Root, srcRel, dst string) error {
 	const maxFile = 64 << 20
 	skip := map[string]bool{
 		"compose.yaml":        true,
@@ -603,40 +584,43 @@ func copyTreeSiblings(cloneDir, src, dst string) error {
 		".env":                true,
 		".git":                true,
 	}
-	return filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+	out, err := os.OpenRoot(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	fsys := repo.FS()
+	start := filepath.ToSlash(srcRel)
+	return fs.WalkDir(fsys, start, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(src, p)
-		if rel == "." {
+		rel := strings.TrimPrefix(strings.TrimPrefix(p, start), "/")
+		if start == "." {
+			rel = p
+		}
+		if rel == "" || rel == "." {
 			return nil
 		}
 		// skip top-level compose / .env (already written) and anything
 		// git-adjacent.
 		if skip[rel] || strings.HasPrefix(rel, ".git") {
 			if d.IsDir() {
-				return filepath.SkipDir
+				return fs.SkipDir
 			}
 			return nil
 		}
-		dstPath := filepath.Join(dst, rel)
+		dstRel := filepath.FromSlash(rel)
 		if d.IsDir() {
-			return os.MkdirAll(dstPath, 0o755)
+			return out.MkdirAll(dstRel, 0o755)
 		}
-		if d.Type()&fs.ModeSymlink != 0 {
-			target, err := inClone(cloneDir, p)
-			if errors.Is(err, ErrPathOutsideRepo) {
-				slog.Warn("git sync: skipping symlink that leaves the repository", "path", rel)
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			p = target
+		info, err := fs.Stat(fsys, p)
+		if safepath.IsRootEscape(err) {
+			slog.Warn("git sync: skipping symlink that leaves the repository", "path", rel)
+			return nil
 		}
-		info, ierr := os.Stat(p)
-		if ierr != nil {
-			return ierr
+		if err != nil {
+			return err
 		}
 		if !info.Mode().IsRegular() {
 			return nil
@@ -644,14 +628,14 @@ func copyTreeSiblings(cloneDir, src, dst string) error {
 		if info.Size() > maxFile {
 			return fmt.Errorf("file %s exceeds %d bytes — refusing to copy into stack dir", rel, maxFile)
 		}
-		if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+		if err := out.MkdirAll(filepath.Dir(dstRel), 0o755); err != nil {
 			return err
 		}
-		b, err := os.ReadFile(p)
+		b, err := fs.ReadFile(fsys, p)
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(dstPath, b, info.Mode().Perm())
+		return out.WriteFile(dstRel, b, info.Mode().Perm())
 	})
 }
 

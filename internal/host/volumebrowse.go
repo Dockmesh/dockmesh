@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/safepath"
 )
 
 // VolumeEntry is one row in a directory listing. The size / modified
@@ -106,18 +108,12 @@ func openInVolume(mountpoint, sub string) (*os.Root, string, *os.File, error) {
 	f, err := root.Open(rel)
 	if err != nil {
 		root.Close()
-		if isRootEscape(err) {
+		if safepath.IsRootEscape(err) {
 			return nil, "", nil, ErrVolumePathEscape
 		}
 		return nil, "", nil, err
 	}
 	return root, rel, f, nil
-}
-
-// isRootEscape recognises os.Root refusing a path that leaves the root;
-// the os package doesn't export that error.
-func isRootEscape(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "escapes from parent")
 }
 
 // BrowseVolume lists the direct children of sub inside the volume.

@@ -67,24 +67,33 @@ func repo(t *testing.T) string {
 	return clone
 }
 
-func TestInClone(t *testing.T) {
-	clone := repo(t)
-	tests := []struct {
-		p  string
-		ok bool
-	}{
-		{"app", true},
-		{"app/conf/b.yml", true},
-		{filepath.Join(clone, "app", "compose.yaml"), true},
-		{"app/key", false},
-		{"data", false},
-		{"data/secrets.age-key", false},
-		{"../server", false},
+func openRepo(t *testing.T, dir string) *os.Root {
+	t.Helper()
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		_, err := inClone(clone, tt.p)
-		if (err == nil) != tt.ok {
-			t.Errorf("%q: err = %v, want ok=%v", tt.p, err, tt.ok)
+	t.Cleanup(func() { r.Close() })
+	return r
+}
+
+func TestReadCompose(t *testing.T) {
+	clone := repo(t)
+	server := filepath.Join(filepath.Dir(clone), "server")
+	if err := os.MkdirAll(filepath.Join(clone, "evil"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(server, "secrets.age-key"), filepath.Join(clone, "evil", "compose.yaml")); err != nil {
+		t.Skipf("symlinks not available: %v", err)
+	}
+	r := openRepo(t, clone)
+	got, err := readCompose(r, "app")
+	if err != nil || got.compose != "services: {}" || !got.isDir || got.dir != "app" {
+		t.Fatalf("app: %+v %v", got, err)
+	}
+	for _, p := range []string{"evil", "data", "data/secrets.age-key"} {
+		if _, err := readCompose(r, p); !errors.Is(err, ErrPathOutsideRepo) {
+			t.Errorf("%s: err = %v, want ErrPathOutsideRepo", p, err)
 		}
 	}
 }
@@ -92,7 +101,7 @@ func TestInClone(t *testing.T) {
 func TestCopyTreeSiblingsSkipsLinksOutOfRepo(t *testing.T) {
 	clone := repo(t)
 	dst := t.TempDir()
-	if err := copyTreeSiblings(clone, filepath.Join(clone, "app"), dst); err != nil {
+	if err := copyTreeSiblings(openRepo(t, clone), "app", dst); err != nil {
 		t.Fatal(err)
 	}
 	if b, err := os.ReadFile(filepath.Join(dst, "conf", "b.yml")); err != nil || string(b) != "a" {
@@ -101,22 +110,35 @@ func TestCopyTreeSiblingsSkipsLinksOutOfRepo(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(dst, "key")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("symlink to a server file was copied: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(dst, "compose.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("compose.yaml copied as a sibling: %v", err)
+	}
+}
+
+// A container with part of the stack dir bind-mounted can leave a symlink
+// there; a later git sync must not write through it.
+func TestCopyTreeSiblingsDoesNotFollowLinksInStackDir(t *testing.T) {
+	clone := repo(t)
+	dst := t.TempDir()
+	victim := t.TempDir()
+	if err := os.Symlink(victim, filepath.Join(dst, "conf")); err != nil {
+		t.Skip(err)
+	}
+	err := copyTreeSiblings(openRepo(t, clone), "app", dst)
+	if err == nil {
+		t.Error("sync wrote through a symlink in the stack dir")
+	}
+	if entries, _ := os.ReadDir(victim); len(entries) != 0 {
+		t.Errorf("files written outside the stack dir: %v", entries)
+	}
 }
 
 // The clone cache sits under the data dir, which defaults to a relative
-// path (./data); symlink resolution must not make every path look foreign.
-func TestInCloneWithRelativeCloneDir(t *testing.T) {
+// path (./data).
+func TestReadComposeWithRelativeCloneDir(t *testing.T) {
 	clone := repo(t)
 	t.Chdir(filepath.Dir(clone))
-	rel := filepath.Base(clone)
-	src, err := inClone(rel, "app")
-	if err != nil {
+	if _, err := readCompose(openRepo(t, filepath.Base(clone)), "app"); err != nil {
 		t.Fatalf("relative clone dir: %v", err)
-	}
-	if _, err := inClone(rel, filepath.Join(src, "compose.yaml")); err != nil {
-		t.Errorf("absolute path from an earlier inClone: %v", err)
-	}
-	if _, err := inClone(rel, "app/key"); !errors.Is(err, ErrPathOutsideRepo) {
-		t.Errorf("escape through a relative clone dir: %v", err)
 	}
 }
