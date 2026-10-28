@@ -1,6 +1,6 @@
 // Package setup tracks whether the server is in first-run setup mode.
 //
-// Setup mode is active when the database has zero admin users. While
+// Setup mode is active when no user can administer the install. While
 // active, the HTTP layer redirects all non-setup paths so an operator
 // who just installed dockmesh and visited the dashboard URL lands on
 // the install wizard rather than the login screen. After the wizard
@@ -20,6 +20,8 @@ import (
 	"database/sql"
 	"sync"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // SetupWindow is how long after server start the wizard accepts a
@@ -41,9 +43,10 @@ type Status struct {
 // server process. Built by main at boot from the DB, then consulted
 // by middleware on every request.
 type State struct {
-	mu        sync.RWMutex
-	active    bool
-	startedAt time.Time
+	mu         sync.RWMutex
+	active     bool
+	committing bool
+	startedAt  time.Time
 }
 
 // NewForced returns a State pinned to active. Used during development
@@ -54,19 +57,87 @@ func NewForced() *State {
 }
 
 // NewFromDB inspects the users table and decides whether setup mode
-// should be active. Setup is active when no admin users exist. The
-// returned State records "now" as the start of the wizard window.
+// should be active. Setup is active when no user holds the permissions to
+// administer the install, whatever their role is called. The returned
+// State records "now" as the start of the wizard window.
 func NewFromDB(ctx context.Context, db *sql.DB) (*State, error) {
 	if db == nil {
 		// No DB — treat as setup-mode-on so the wizard at least loads.
 		return &State{active: true, startedAt: time.Now()}, nil
 	}
-	var n int
-	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM users WHERE role = 'admin'`).Scan(&n); err != nil {
+	ok, err := adminExists(ctx, db)
+	if err != nil {
 		return nil, err
 	}
-	return &State{active: n == 0, startedAt: time.Now()}, nil
+	return &State{active: !ok, startedAt: time.Now()}, nil
+}
+
+// adminPerms are the permissions that make an account able to run the
+// install: change system settings and manage users.
+var adminPerms = []rbac.Perm{
+	rbac.PermSystemUpdate,
+	rbac.PermUsersView, rbac.PermUsersCreate, rbac.PermUsersUpdate, rbac.PermUsersDelete,
+}
+
+// adminExists reports whether any user's role grants every adminPerms
+// permission. A permission counts when the role has it in role_permissions
+// or as a built-in default, so a custom admin-equivalent role keeps setup
+// closed just like the built-in admin role.
+func adminExists(ctx context.Context, db *sql.DB) (bool, error) {
+	rows, err := db.QueryContext(ctx, `SELECT DISTINCT role FROM users`)
+	if err != nil {
+		return false, err
+	}
+	var roles []string
+	for rows.Next() {
+		var role string
+		if err := rows.Scan(&role); err != nil {
+			rows.Close()
+			return false, err
+		}
+		roles = append(roles, role)
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	for _, role := range roles {
+		ok, err := roleIsAdmin(ctx, db, role)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func roleIsAdmin(ctx context.Context, db *sql.DB, role string) (bool, error) {
+	rows, err := db.QueryContext(ctx, `SELECT permission FROM role_permissions WHERE role_name = ?`, role)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	granted := make(map[rbac.Perm]bool)
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return false, err
+		}
+		granted[rbac.Perm(p)] = true
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	for _, p := range adminPerms {
+		if !granted[p] && !rbac.Allowed(role, p) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // Active reports whether requests should be gated to /setup paths.
@@ -109,12 +180,27 @@ func (s *State) SnapshotStatus() Status {
 	}
 }
 
-// Complete flips the state to inactive. Called by the wizard's submit
-// handler after the admin user has been written to the DB. After this,
-// the gating middleware lets all routes through normally and a future
-// process restart will not re-enter setup mode (the DB has admins now).
-func (s *State) Complete() {
+// TryBeginCommit claims the single install slot. It returns false while
+// another commit is running or once setup has finished, so two concurrent
+// wizard submits can't both create an admin.
+func (s *State) TryBeginCommit() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.active = false
+	if s.committing || !s.active {
+		return false
+	}
+	s.committing = true
+	return true
+}
+
+// EndCommit releases the install slot. A successful install also ends
+// setup mode, in the same critical section, so no third commit can slip in
+// between the two.
+func (s *State) EndCommit(success bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.committing = false
+	if success {
+		s.active = false
+	}
 }

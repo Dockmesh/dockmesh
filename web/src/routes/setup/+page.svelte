@@ -345,7 +345,7 @@
               svcMode === 'recommended' ? RECOMMENDED_USER
               : svcMode === 'new' ? svcNewUser.trim()
               : svcExistingUser.trim(),
-            add_to_docker_group: svcMode !== 'recommended' && svcAddToDocker
+            add_to_docker_group: svcMode === 'new' && svcAddToDocker
           },
           admin: {
             username: adminUsername,
@@ -746,12 +746,11 @@
                         {svcCheck.text}
                       </div>
                     {/if}
-                    <label class="mt-3 flex items-start gap-2.5 cursor-pointer">
-                      <input type="checkbox" class="dm-check mt-0.5" bind:checked={svcAddToDocker} />
-                      <span class="text-xs" style="color: var(--fg);">
-                        Add to <span class="font-mono">docker</span> group if not already a member
-                      </span>
-                    </label>
+                    <div class="mt-3 text-xs" style="color: var(--fg-muted);">
+                      The wizard doesn't change the groups of an existing account. If it isn't in the
+                      <span class="font-mono">docker</span> group yet, add it yourself with
+                      <span class="font-mono">sudo usermod -aG docker {svcExistingUser.trim() || '<user>'}</span>.
+                    </div>
                   </div>
                 {/if}
               </div>
@@ -896,7 +895,7 @@
           <ul class="flex flex-col" style="border-top: 1px solid var(--border-subtle);">
             {#each [
               { label: 'Data directory', value: dataDir, jumpTo: 2 as Step, dim: false },
-              { label: 'Service user', value: svcMode === 'recommended' ? `${RECOMMENDED_USER} (recommended)` : svcMode === 'new' ? `${svcNewUser} (new${svcAddToDocker ? ', in docker group' : ''})` : (svcExistingUser ? `${svcExistingUser}${svcAddToDocker ? ' (in docker group)' : ''}` : '—'), jumpTo: 3 as Step, dim: false },
+              { label: 'Service user', value: svcMode === 'recommended' ? `${RECOMMENDED_USER} (recommended)` : svcMode === 'new' ? `${svcNewUser} (new${svcAddToDocker ? ', in docker group' : ''})` : (svcExistingUser || '—'), jumpTo: 3 as Step, dim: false },
               { label: 'Admin user', value: `${adminUsername} / ${'•'.repeat(Math.max(8, adminPassword.length || 8))}`, jumpTo: 4 as Step, dim: false },
               { label: 'Admin email', value: adminEmail || '—', jumpTo: 4 as Step, dim: !adminEmail },
               { label: 'Public URL', value: publicUrl, jumpTo: 5 as Step, dim: false }

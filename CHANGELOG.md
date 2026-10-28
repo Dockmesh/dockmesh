@@ -56,6 +56,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and exec sessions are now recorded in the audit log.
 - Signing in with an unknown username takes as long as with a wrong password, and invalid
   API tokens can no longer tie up the server with expensive hash checks.
+- The setup wizard's connection test only reaches public addresses and this server's own
+  addresses, so it can no longer be used to probe the internal network or cloud metadata.
+  The wizard runs one install at a time, its check endpoints stop answering when the setup
+  window closes, and it reopens only when no account can administer Dockmesh (custom roles
+  included). It no longer adds an existing system account to the `docker` group; only an
+  account the wizard creates itself is added.
 
 ### Upgrade notes
 - [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The
