@@ -30,18 +30,18 @@ func newTestService(t *testing.T) (*Service, *sql.DB) {
 	return NewService(database, testSecret), database
 }
 
-func mustUser(t *testing.T, s *Service, name, role string) *User {
+func mustUser(ctx context.Context, t *testing.T, s *Service, name, role string) *User {
 	t.Helper()
-	u, err := s.CreateUser(context.Background(), name, "", "correct horse battery", role)
+	u, err := s.CreateUser(ctx, name, "", "correct horse battery", role)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return u
 }
 
-func mustLogin(t *testing.T, s *Service, name string) *LoginResult {
+func mustLogin(ctx context.Context, t *testing.T, s *Service, name string) *LoginResult {
 	t.Helper()
-	res, err := s.Login(context.Background(), name, "correct horse battery", "test", "127.0.0.1")
+	res, err := s.Login(ctx, name, "correct horse battery", "test", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestParseRejectsMalformedTokens(t *testing.T) {
 func TestMFAPendingTokenIsNotAnAccessToken(t *testing.T) {
 	s, _ := newTestService(t)
 	ctx := context.Background()
-	mustUser(t, s, "alice", "admin")
+	mustUser(ctx, t, s, "alice", "admin")
 	mfa, err := s.issueMFAPending("whatever")
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestMFAPendingTokenIsNotAnAccessToken(t *testing.T) {
 	if _, err := s.Validate(ctx, mfa); err == nil {
 		t.Fatal("mfa-pending token accepted as access token")
 	}
-	res := mustLogin(t, s, "alice")
+	res := mustLogin(ctx, t, s, "alice")
 	for name, tok := range map[string]string{"access": res.AccessToken, "refresh": res.RefreshToken} {
 		if _, err := s.parseMFAPending(tok); err == nil {
 			t.Errorf("%s token accepted as mfa-pending", name)
@@ -151,7 +151,7 @@ func TestMFAPendingTokenIsNotAnAccessToken(t *testing.T) {
 func TestValidateFollowsSessionAndUser(t *testing.T) {
 	s, database := newTestService(t)
 	ctx := context.Background()
-	u := mustUser(t, s, "bob", "operator")
+	u := mustUser(ctx, t, s, "bob", "operator")
 
 	tests := []struct {
 		name   string
@@ -173,7 +173,7 @@ func TestValidateFollowsSessionAndUser(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res := mustLogin(t, s, "bob")
+			res := mustLogin(ctx, t, s, "bob")
 			c := &Claims{}
 			if err := s.keys.Parse(KindAccess, res.AccessToken, c); err != nil {
 				t.Fatal(err)
@@ -189,7 +189,7 @@ func TestValidateFollowsSessionAndUser(t *testing.T) {
 		})
 	}
 
-	res := mustLogin(t, s, "bob")
+	res := mustLogin(ctx, t, s, "bob")
 	if err := s.DeleteUser(ctx, u.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -218,8 +218,8 @@ func TestRefreshFlagsPreUpgradeTokens(t *testing.T) {
 func TestRevokeUserSessions(t *testing.T) {
 	s, _ := newTestService(t)
 	ctx := context.Background()
-	u := mustUser(t, s, "carol", "viewer")
-	a, b, c := mustLogin(t, s, "carol"), mustLogin(t, s, "carol"), mustLogin(t, s, "carol")
+	u := mustUser(ctx, t, s, "carol", "viewer")
+	a, b, c := mustLogin(ctx, t, s, "carol"), mustLogin(ctx, t, s, "carol"), mustLogin(ctx, t, s, "carol")
 	ca := &Claims{}
 	if err := s.keys.Parse(KindAccess, a.AccessToken, ca); err != nil {
 		t.Fatal(err)
@@ -266,11 +266,10 @@ func TestWSTicketSingleUse(t *testing.T) {
 		t.Errorf("replay: err = %v, want ErrTicketUsed", err)
 	}
 
-	res := func() string {
-		mustUser(t, s, "dave", "admin")
-		return mustLogin(t, s, "dave").AccessToken
-	}()
-	if _, err := s.ConsumeWSTicket(res); err == nil {
+	ctx := context.Background()
+	mustUser(ctx, t, s, "dave", "admin")
+	access := mustLogin(ctx, t, s, "dave").AccessToken
+	if _, err := s.ConsumeWSTicket(access); err == nil {
 		t.Error("access token accepted as WS ticket")
 	}
 }
@@ -278,7 +277,7 @@ func TestWSTicketSingleUse(t *testing.T) {
 func TestDisableTOTPNeedsCode(t *testing.T) {
 	s, database := newTestService(t)
 	ctx := context.Background()
-	u := mustUser(t, s, "erin", "viewer")
+	u := mustUser(ctx, t, s, "erin", "viewer")
 	enr, err := s.StartTOTPEnrollment(ctx, u.ID)
 	if err != nil {
 		t.Fatal(err)
