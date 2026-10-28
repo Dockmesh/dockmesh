@@ -278,7 +278,9 @@ func LocalMounts(ctx context.Context) []Mount {
 	}
 	if mountsDone == nil {
 		mountsDone = make(chan struct{})
-		go refreshMounts(mountsDone)
+		// Detached from ctx: one caller giving up must not cancel the refresh
+		// the next callers are waiting for.
+		go refreshMounts(mountsDone) //nolint:contextcheck
 	}
 	done := mountsDone
 	mountsMu.Unlock()
