@@ -5971,7 +5971,13 @@ paths:
     get:
       operationId: auth.signin_config_get
       tags: [auth]
-      summary: Read the sign-in policy (allow_local_password, TTLs, MFA gating)
+      summary: Read the sign-in policy (session TTLs and limits, SSO account creation)
+      description: |
+        `session_idle_ttl_min`, `session_absolute_ttl_hr` and
+        `session_max_per_user` are enforced. `allow_local_password`,
+        `require_tfa_for_admin`, `allow_self_register`,
+        `session_remember_me_days` and `password_forbid_reuse_count` are
+        stored and returned but not enforced yet; the UI hides them.
       responses:
         "200":
           description: Current sign-in policy.
@@ -6875,7 +6881,7 @@ components:
         rotation_days:
           type: integer
           minimum: 0
-          description: 0 = disabled. When > 0, logins after this many days since the last password change trigger a reminder on /me.
+          description: Stored but not enforced yet; the UI hides it until it is.
         lockout_max_attempts:
           type: integer
           minimum: 0
