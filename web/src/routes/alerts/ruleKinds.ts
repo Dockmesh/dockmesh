@@ -14,12 +14,14 @@ export type RuleKind =
   | 'backup_missed'
   | 'cert_expiry';
 
+const CONTAINER_HINT = '* matches all, or exact container name.';
+
 export const KINDS: { id: RuleKind; label: string; target: string; targetHint: string }[] = [
-  { id: 'metric', label: 'Container CPU / memory', target: 'Container filter', targetHint: '* matches all, or exact container name.' },
-  { id: 'restart_loop', label: 'Container restart loop', target: 'Container filter', targetHint: '* matches all, or exact container name.' },
-  { id: 'container_stopped', label: 'Container stopped unexpectedly', target: 'Container filter', targetHint: '* matches all, or exact container name.' },
-  { id: 'unhealthy', label: 'Container unhealthy', target: 'Container filter', targetHint: '* matches all, or exact container name.' },
-  { id: 'oom', label: 'Container killed by OOM', target: 'Container filter', targetHint: '* matches all, or exact container name.' },
+  { id: 'metric', label: 'Container CPU / memory', target: 'Container filter', targetHint: CONTAINER_HINT },
+  { id: 'restart_loop', label: 'Container restart loop', target: 'Container filter', targetHint: CONTAINER_HINT },
+  { id: 'container_stopped', label: 'Container stopped unexpectedly', target: 'Container filter', targetHint: CONTAINER_HINT },
+  { id: 'unhealthy', label: 'Container unhealthy', target: 'Container filter', targetHint: CONTAINER_HINT },
+  { id: 'oom', label: 'Container killed by OOM', target: 'Container filter', targetHint: CONTAINER_HINT },
   { id: 'host_offline', label: 'Host offline', target: 'Agent filter', targetHint: '* matches every agent, or an exact agent name.' },
   { id: 'disk_usage', label: 'Disk usage', target: 'Mount filter', targetHint: '* matches mounts holding Docker, containerd, stacks or Dockmesh data; or an exact mount point.' },
   { id: 'backup_failed', label: 'Backup run failed', target: 'Backup job filter', targetHint: '* matches all jobs, or an exact job name.' },
@@ -32,7 +34,7 @@ export function kindOf(r: { kind?: string }): RuleKind {
 }
 
 export function isContainerKind(k: RuleKind): boolean {
-  return k === 'metric' || k === 'restart_loop' || k === 'container_stopped' || k === 'unhealthy' || k === 'oom';
+  return k === 'restart_loop' || k === 'container_stopped' || k === 'unhealthy' || k === 'oom';
 }
 
 export function fmtDuration(secs: number): string {
@@ -59,7 +61,7 @@ export function describeRule(r: AlertRule): string {
     case 'backup_failed':
       return 'a backup run fails';
     case 'backup_missed':
-      return 'a backup job misses its schedule';
+      return 'a backup job has no successful run within its schedule';
     case 'cert_expiry':
       return `a proxy certificate expires within ${r.threshold} days`;
     default:

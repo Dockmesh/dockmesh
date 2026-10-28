@@ -292,8 +292,10 @@ func (s *Service) handleEvent(ctx context.Context, ev ContainerEvent) {
 			switch {
 			case ev.Action == "die" && ev.ExitCode != "0" && !userStop && !firing:
 				s.fireRule(ctx, &r, tgt, fmt.Sprintf("Container %s stopped unexpectedly (exit code %s)", where, ev.ExitCode), 0, ev.Time)
-			case (ev.Action == "start" || ev.Action == "destroy") && firing:
-				s.resolveRule(ctx, &r, tgt, fmt.Sprintf("Container %s is %s", where, map[string]string{"start": "running again", "destroy": "removed"}[ev.Action]), 0, ev.Time)
+			case ev.Action == "start" && firing:
+				s.resolveRule(ctx, &r, tgt, fmt.Sprintf("Container %s is running again", where), 0, ev.Time)
+			case ev.Action == "destroy" && firing:
+				s.resolveRule(ctx, &r, tgt, fmt.Sprintf("Container %s was removed", where), 0, ev.Time)
 			}
 		case KindRestartLoop:
 			window := time.Duration(r.DurationSeconds) * time.Second

@@ -284,11 +284,11 @@ func (h *RemoteHost) SystemMetrics(ctx context.Context) (system.Metrics, error) 
 	if err := json.Unmarshal(data, &out); err != nil {
 		return system.Metrics{}, fmt.Errorf("decode system metrics: %w", err)
 	}
-	if !h.agent.Hello.Has(agents.CapDiskMounts) {
+	mounts, err := h.DiskMounts(ctx)
+	if errors.Is(err, ErrMountsUnsupported) {
 		out.MountsUnsupported = true
 		return out, nil
 	}
-	mounts, err := h.DiskMounts(ctx)
 	if err != nil {
 		slog.Warn("agent disk mounts", "host", h.name, "err", err)
 		return out, nil

@@ -46,6 +46,10 @@ func ruleWhat(r alertRule) string {
 	return r.Kind
 }
 
+// oneShotKind mirrors the server's one-off rule kinds, whose "fired"
+// entries are never followed by a resolve.
+func oneShotKind(k string) bool { return k == "oom" || k == "backup_failed" }
+
 // alertListActiveCmd implements `dmctl alert list-active` from the spec.
 // "Active" = most recent `fired` history entries per rule and target. We pull the
 // history list and filter client-side since the server doesn't expose a
@@ -81,7 +85,7 @@ func alertListActiveCmd() *cobra.Command {
 			}
 			active := make([]alertHistory, 0)
 			for _, h := range latest {
-				if h.Status == "fired" && h.Kind != "oom" && h.Kind != "backup_failed" {
+				if h.Status == "fired" && !oneShotKind(h.Kind) {
 					active = append(active, h)
 				}
 			}

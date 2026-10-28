@@ -464,9 +464,9 @@ func (s *Service) evalAll(ctx context.Context, now time.Time) {
 	src := s.src()
 	var mounts []HostMounts
 	mountsLoaded := false
-	runs, err := s.newFailedRuns(ctx)
-	if err != nil {
-		slog.Warn("alerts: read backup runs", "err", err)
+	runs, runsErr := s.newFailedRuns(ctx)
+	if runsErr != nil {
+		slog.Warn("alerts: read backup runs", "err", runsErr)
 	}
 	for _, r := range rules {
 		if !r.Enabled {
@@ -888,7 +888,6 @@ func stateKey(ruleID int64, container string) string {
 	return b.String()
 }
 
-// nullIf returns nil when cond holds, else v.
 func nullIf(cond bool, v any) any {
 	if cond {
 		return nil

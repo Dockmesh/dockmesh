@@ -4,7 +4,7 @@
   // at least [60s]") with inline select/input controls. Same fields
   // underneath as the legacy form, just better wired for reading.
   import { api, ApiError, type AlertRule, type AlertRuleInput, type HostInfo, type NotificationChannel } from '$lib/api';
-  import { KINDS, isContainerKind, ruleToInput, type RuleKind } from './ruleKinds';
+  import { KINDS, describeRule, isContainerKind, ruleToInput, type RuleKind } from './ruleKinds';
   import { toast } from '$lib/stores/toast.svelte';
   import { EditorialModal, Eyebrow, Field } from '$lib/components/editorial';
   import { Check, Plus } from 'lucide-svelte';
@@ -55,6 +55,10 @@
   let hosts = $state<HostInfo[]>([]);
   const kind = $derived((form.kind || 'metric') as RuleKind);
   const kindMeta = $derived(KINDS.find((k) => k.id === kind) ?? KINDS[0]);
+
+  function setDuration(e: Event) {
+    form.duration_seconds = parseInt((e.target as HTMLSelectElement).value, 10) || 0;
+  }
 
   function setKind(k: RuleKind) {
     form = {
@@ -250,7 +254,7 @@
           <select
             class="rm-cond-select rm-cond-duration"
             value={form.duration_seconds}
-            onchange={(e) => (form.duration_seconds = parseInt((e.target as HTMLSelectElement).value, 10) || 0)}
+            onchange={setDuration}
           >
             {#each durationOptions as d (d.value)}
               <option value={d.value}>{d.label}</option>
@@ -263,7 +267,7 @@
           <select
             class="rm-cond-select rm-cond-duration"
             value={form.duration_seconds}
-            onchange={(e) => (form.duration_seconds = parseInt((e.target as HTMLSelectElement).value, 10) || 0)}
+            onchange={setDuration}
           >
             {#each durationOptions.filter((d) => d.value >= 60) as d (d.value)}
               <option value={d.value}>{d.label}</option>
@@ -274,7 +278,7 @@
           <select
             class="rm-cond-select rm-cond-duration"
             value={form.duration_seconds}
-            onchange={(e) => (form.duration_seconds = parseInt((e.target as HTMLSelectElement).value, 10) || 0)}
+            onchange={setDuration}
           >
             {#each durationOptions as d (d.value)}
               <option value={d.value}>{d.label}</option>
@@ -288,16 +292,8 @@
           <span class="rm-cond-word">a proxy certificate expires within</span>
           <input type="number" class="rm-cond-num" min="1" bind:value={form.threshold} />
           <span class="rm-cond-word">days</span>
-        {:else if kind === 'container_stopped'}
-          <span class="rm-cond-word">a container exits with an error without being stopped</span>
-        {:else if kind === 'unhealthy'}
-          <span class="rm-cond-word">a container health check reports unhealthy</span>
-        {:else if kind === 'oom'}
-          <span class="rm-cond-word">a container is killed for running out of memory</span>
-        {:else if kind === 'backup_failed'}
-          <span class="rm-cond-word">a backup run fails</span>
-        {:else if kind === 'backup_missed'}
-          <span class="rm-cond-word">a backup job has no successful run within its schedule</span>
+        {:else}
+          <span class="rm-cond-word">{describeRule(form as AlertRule)}</span>
         {/if}
       </div>
     </div>
