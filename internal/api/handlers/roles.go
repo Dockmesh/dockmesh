@@ -60,6 +60,10 @@ func (h *Handlers) CreateRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name and display required")
 		return
 	}
+	if err := h.checkRoleInput(r, in); err != nil {
+		writeGrantError(w, err)
+		return
+	}
 	if err := h.Roles.Create(r.Context(), in); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -85,6 +89,17 @@ func (h *Handlers) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !h.requireManageRole(w, r, name) {
+		return
+	}
+	if err := h.checkRoleInput(r, in); err != nil {
+		writeGrantError(w, err)
+		return
+	}
+	if err := h.checkRoleKeepsAdmin(r.Context(), name, permsGrantAdmin(in.Permissions)); err != nil {
+		writeLastAdminError(w, err)
+		return
+	}
 	if err := h.Roles.Update(r.Context(), name, in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -105,6 +120,13 @@ func (h *Handlers) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	if !h.requireManageRole(w, r, name) {
+		return
+	}
+	if err := h.checkRoleKeepsAdmin(r.Context(), name, false); err != nil {
+		writeLastAdminError(w, err)
+		return
+	}
 	if err := h.Roles.Delete(r.Context(), name); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

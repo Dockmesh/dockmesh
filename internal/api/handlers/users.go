@@ -59,10 +59,11 @@ type createUserRequest struct {
 }
 
 type updateUserRequest struct {
-	Email       string   `json:"email,omitempty"`
-	Role        string   `json:"role"`
-	DisplayName string   `json:"display_name,omitempty"`
-	ScopeTags   []string `json:"scope_tags"` // empty = all hosts
+	Email       string `json:"email,omitempty"`
+	Role        string `json:"role"` // empty = unchanged
+	DisplayName string `json:"display_name,omitempty"`
+	// ScopeTags: omitted = unchanged, [] = all hosts.
+	ScopeTags *[]string `json:"scope_tags"`
 }
 
 type changePasswordRequest struct {
@@ -72,19 +73,8 @@ type changePasswordRequest struct {
 	Password        string `json:"password"`
 }
 
-// builtinRoles are always available regardless of what's in the rbac
-// store. Custom roles created via POST /api/v1/roles are looked up
-// dynamically at validation time.
-var builtinRoles = map[string]bool{"admin": true, "operator": true, "viewer": true}
-
 func (h *Handlers) isValidRole(name string) bool {
-	if builtinRoles[name] {
-		return true
-	}
-	if h.Roles == nil {
-		return false
-	}
-	_, ok := h.Roles.Get(name)
+	_, ok := h.permsForRoleName(name)
 	return ok
 }
 
@@ -112,6 +102,12 @@ func (h *Handlers) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if !h.isValidRole(req.Role) {
 		writeError(w, http.StatusBadRequest, "invalid role")
+		return
+	}
+	// New accounts start without host scope, so a scoped caller can't
+	// create one; invites carry scope tags for that.
+	if err := h.checkGrant(r, req.Role, nil); err != nil {
+		writeGrantError(w, err)
 		return
 	}
 	u, err := h.Auth.CreateUser(r.Context(), req.Username, req.Email, req.Password, req.Role)
@@ -142,25 +138,40 @@ func (h *Handlers) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if req.Role != "" && !h.isValidRole(req.Role) {
+	curRole, curTags, ok := h.requireManageUser(w, r, id)
+	if !ok {
+		return
+	}
+	role, tags := curRole, curTags
+	if req.Role != "" {
+		role = req.Role
+	}
+	if req.ScopeTags != nil {
+		tags = *req.ScopeTags
+	}
+	if role != curRole && !h.isValidRole(role) {
 		writeError(w, http.StatusBadRequest, "invalid role")
 		return
 	}
-	u, err := h.Auth.UpdateUser(r.Context(), id, req.Email, req.Role, req.DisplayName)
+	if err := h.checkGrant(r, role, tags); err != nil {
+		writeGrantError(w, err)
+		return
+	}
+	if err := h.checkKeepsAdmin(r.Context(), id, curRole, role); err != nil {
+		writeLastAdminError(w, err)
+		return
+	}
+	u, err := h.Auth.UpdateUser(r.Context(), id, req.Email, role, req.DisplayName)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Scope update lives in the same request body so the UI can edit
-	// both in one save. Pass through nil vs [] distinction: nil means
-	// the client didn't send the field (omitted in JSON), [] means
-	// explicit clear. Simplest backend rule: always overwrite on
-	// update — if a caller wants to preserve scope they send it back
-	// unchanged.
-	u, err = h.Auth.UpdateUserScope(r.Context(), id, req.ScopeTags)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+	if req.ScopeTags != nil {
+		u, err = h.Auth.UpdateUserScope(r.Context(), id, tags)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	h.audit(r, audit.ActionUserUpdate, id, map[string]any{
 		"role":       u.Role,
@@ -173,6 +184,14 @@ func (h *Handlers) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == middleware.UserID(r.Context()) {
 		writeError(w, http.StatusBadRequest, "cannot delete yourself")
+		return
+	}
+	role, _, ok := h.requireManageUser(w, r, id)
+	if !ok {
+		return
+	}
+	if err := h.checkKeepsAdmin(r.Context(), id, role, ""); err != nil {
+		writeLastAdminError(w, err)
 		return
 	}
 	if err := h.Auth.DeleteUser(r.Context(), id); err != nil {
@@ -200,6 +219,11 @@ func (h *Handlers) ChangeUserPassword(w http.ResponseWriter, r *http.Request) {
 	if !isSelf && !isAdmin {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
+	}
+	if !isSelf {
+		if _, _, ok := h.requireManageUser(w, r, id); !ok {
+			return
+		}
 	}
 	var req changePasswordRequest
 	if err := decodeJSON(r, &req); err != nil || len(req.Password) < 8 {

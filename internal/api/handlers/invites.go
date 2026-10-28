@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -45,6 +46,14 @@ func (h *Handlers) CreateInvite(w http.ResponseWriter, r *http.Request) {
 	in.Role = strings.TrimSpace(in.Role)
 	if in.Role == "" {
 		writeError(w, http.StatusBadRequest, "role required")
+		return
+	}
+	if !h.isValidRole(in.Role) {
+		writeError(w, http.StatusBadRequest, "invalid role")
+		return
+	}
+	if err := h.checkGrant(r, in.Role, in.ScopeTags); err != nil {
+		writeGrantError(w, err)
 		return
 	}
 	ttl := time.Duration(in.TTLHours) * time.Hour
@@ -198,9 +207,22 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "username and password required")
 		return
 	}
+	if !h.isValidRole(inv.Role) {
+		writeError(w, http.StatusGone, "the role of this invite no longer exists")
+		return
+	}
+	// Claim the token before creating the account so two concurrent
+	// accepts can't both succeed; a failed create hands it back.
+	if err := h.Invites.MarkUsed(r.Context(), token); err != nil {
+		writeError(w, http.StatusGone, "invite already used")
+		return
+	}
 
 	user, err := h.Auth.CreateUser(r.Context(), in.Username, in.Email, in.Password, inv.Role)
 	if err != nil {
+		if rerr := h.Invites.Unclaim(r.Context(), token); rerr != nil {
+			slog.Warn("invite: release claim after failed accept", "err", rerr)
+		}
 		switch {
 		case errors.Is(err, auth.ErrUsernameTaken):
 			writeError(w, http.StatusConflict, "username taken")
@@ -212,20 +234,17 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply scope tags if the invite carries any.
+	// A scoped invite must never leave an unscoped account behind.
 	if len(inv.ScopeTags) > 0 {
 		if _, err := h.Auth.UpdateUserScope(r.Context(), user.ID, inv.ScopeTags); err != nil {
-			// User exists but scope failed to apply. Surface the
-			// error rather than silently leaving them unscoped.
-			writeError(w, http.StatusInternalServerError, "user created but scope failed: "+err.Error())
+			if derr := h.Auth.DeleteUser(r.Context(), user.ID); derr != nil {
+				slog.Error("invite: remove account after scope failure", "user", user.ID, "err", derr)
+			}
+			writeError(w, http.StatusInternalServerError, "could not apply the invite's scope: "+err.Error())
 			return
 		}
+		user.ScopeTags = inv.ScopeTags
 	}
-
-	// Burn the token after the user is fully provisioned. Race-loss
-	// here is OK: the token was bound to one role, two simultaneous
-	// accepts would conflict on the username UNIQUE constraint above.
-	_ = h.Invites.MarkUsed(r.Context(), token)
 
 	h.audit(r, audit.ActionUserCreate, user.Username, map[string]any{
 		"via":       "invite",
