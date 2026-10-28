@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Dockmesh is before 1.0. Security fixes go into the latest release only; there are no
+Dockmesh hasn't reached 1.0 yet. Security fixes go into the latest release only; there are no
 backports to older versions. Upgrading in place keeps your data and settings
 (`curl -fsSL https://get.dockmesh.dev | sudo bash`).
 
