@@ -168,11 +168,11 @@ func enroll(cfg agentConfig, certPath, keyPath, caPath, urlPath string) error {
 	if err := os.WriteFile(keyPath, []byte(er.ClientKey), 0o600); err != nil {
 		return err
 	}
-	if err := os.WriteFile(caPath, []byte(er.CACert), 0o644); err != nil {
+	if err := os.WriteFile(caPath, []byte(er.CACert), 0o600); err != nil {
 		return err
 	}
 	if er.AgentURL != "" {
-		_ = os.WriteFile(urlPath, []byte(er.AgentURL), 0o644)
+		_ = os.WriteFile(urlPath, []byte(er.AgentURL), 0o600)
 	}
 	slog.Info("cert persisted", "agent_id", er.AgentID, "cn", er.AgentName)
 	return nil
