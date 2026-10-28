@@ -40,6 +40,13 @@ changed and why, and how you tested it.
 
 CodeQL also scans each PR.
 
+### Changelog
+
+If users will notice your change, add a line under `## [Unreleased]` in
+`CHANGELOG.md`; the format is described at the top of that file. The
+`changelog` check fails otherwise. Changes users won't notice (CI,
+refactoring, tests) get the `no-changelog` label instead.
+
 ### Running the checks locally
 
 ```bash

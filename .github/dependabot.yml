@@ -1,9 +1,12 @@
 version: 2
 updates:
+  # Setting labels replaces Dependabot's defaults, so they are listed again
+  # next to no-changelog (which skips the changelog check).
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: monthly
+    labels: [dependencies, go, no-changelog]
     groups:
       go-modules:
         patterns: ['*']
@@ -12,6 +15,7 @@ updates:
     directory: /web
     schedule:
       interval: monthly
+    labels: [dependencies, javascript, no-changelog]
     groups:
       npm:
         patterns: ['*']
@@ -20,6 +24,7 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    labels: [dependencies, github_actions, no-changelog]
     groups:
       github-actions:
         patterns: ['*']
