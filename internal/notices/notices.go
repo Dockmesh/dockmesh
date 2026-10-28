@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 type Severity string
@@ -38,12 +40,17 @@ const (
 )
 
 // Audience selects who sees a notice. UserIDs is used with AudienceUsers,
-// Permission with AudiencePermission.
+// Permission with AudiencePermission. AudienceAdmins means "may change
+// system settings" (AdminPermission), so custom roles holding it count and
+// a role merely named "admin" without it doesn't.
 type Audience struct {
 	Kind       AudienceKind
 	UserIDs    []string
 	Permission string
 }
+
+// AdminPermission defines the admins audience.
+const AdminPermission = string(rbac.PermSystemUpdate)
 
 func All() Audience                    { return Audience{Kind: AudienceAll} }
 func Admins() Audience                 { return Audience{Kind: AudienceAdmins} }
@@ -265,7 +272,7 @@ func (a Audience) includes(v Viewer) bool {
 	case AudienceAll:
 		return true
 	case AudienceAdmins:
-		return v.Role == "admin"
+		return v.Allowed != nil && v.Allowed(AdminPermission)
 	case AudienceUsers:
 		for _, id := range a.UserIDs {
 			if id != "" && id == v.UserID {

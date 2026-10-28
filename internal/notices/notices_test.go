@@ -29,10 +29,14 @@ func newTestService(t *testing.T) (*Service, *sql.DB) {
 }
 
 var (
-	admin  = Viewer{UserID: "u-admin", Role: "admin", Allowed: func(string) bool { return true }}
-	op     = Viewer{UserID: "u-op", Role: "operator", Allowed: func(p string) bool { return p == "stacks.deploy" }}
-	viewer = Viewer{UserID: "u-view", Role: "viewer", Allowed: func(string) bool { return false }}
-	token  = Viewer{Role: "admin", Allowed: func(string) bool { return true }}
+	admin = Viewer{UserID: "u-admin", Role: "admin", Allowed: func(string) bool { return true }}
+	op    = Viewer{UserID: "u-op", Role: "operator", Allowed: func(p string) bool { return p == "stacks.deploy" }}
+	// Custom role that holds system.update without being called "admin".
+	opsLead = Viewer{UserID: "u-op", Role: "ops-lead", Allowed: func(p string) bool { return p == "system.update" }}
+	// A custom role reusing the name "admin" but stripped of system.update.
+	fakeAdmin = Viewer{UserID: "u-op", Role: "admin", Allowed: func(string) bool { return false }}
+	viewer    = Viewer{UserID: "u-view", Role: "viewer", Allowed: func(string) bool { return false }}
+	token     = Viewer{Role: "admin", Allowed: func(string) bool { return true }}
 )
 
 func keys(ns []Notice) []string {
@@ -63,6 +67,8 @@ func TestAudience(t *testing.T) {
 	}{
 		{"admin", admin, map[string]bool{"all": true, "admins": true, "perm": true}},
 		{"operator", op, map[string]bool{"all": true, "perm": true}},
+		{"custom role with system.update", opsLead, map[string]bool{"all": true, "admins": true}},
+		{"role named admin without system.update", fakeAdmin, map[string]bool{"all": true}},
 		{"viewer", viewer, map[string]bool{"all": true, "users": true}},
 		{"api token", token, map[string]bool{"all": true, "admins": true, "perm": true}},
 	}
