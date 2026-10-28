@@ -48,13 +48,12 @@ var (
 // a typo or an attempt to DOS fs syscalls.
 const MaxBrowsePathLen = 2048
 
-// SanitizeVolumePath joins mountpoint + sub and rejects any result
-// whose absolute path, after following symlinks, sits outside the
-// mountpoint. The leading "/"
-// on sub is stripped (absolute paths are treated as relative to the
-// volume root), but ".." segments are NOT collapsed before the join
-// — that lets filepath.Join evaluate them correctly and lets us
-// detect escape attempts. Use for BOTH list and read-file.
+// SanitizeVolumePath joins mountpoint + sub and rejects any result whose
+// absolute path, after following symlinks, sits outside the mountpoint.
+// The leading "/" on sub is stripped (absolute paths are treated as
+// relative to the volume root), but ".." segments are NOT collapsed
+// before the join — that lets filepath.Join evaluate them correctly and
+// lets us detect escape attempts. Use for BOTH list and read-file.
 func SanitizeVolumePath(mountpoint, sub string) (string, error) {
 	if mountpoint == "" {
 		return "", ErrVolumeMountpointMissing

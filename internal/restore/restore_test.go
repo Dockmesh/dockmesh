@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,4 +154,30 @@ func TestExtractRejectsDotDot(t *testing.T) {
 		t.Fatal("archive entry with .. accepted")
 	}
 	outsideIsEmpty(t, outside)
+}
+
+func TestExtractCaps(t *testing.T) {
+	big := entry{name: "stacks/web/blob", body: strings.Repeat("0", 4096)}
+	tests := []struct {
+		name string
+		opts Options
+		ok   bool
+	}{
+		{"no caps", Options{Force: true}, true},
+		{"bytes over", Options{Force: true, MaxBytes: 4000}, false},
+		{"bytes fit", Options{Force: true, MaxBytes: 1 << 20}, true},
+		{"entries over", Options{Force: true, MaxEntries: 1}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, _ := restoreEnv(t)
+			_, err := Extract(context.Background(), archive(t, entry{name: "dockmesh.db", body: "db"}, big), cfg, tt.opts)
+			if (err == nil) != tt.ok {
+				t.Fatalf("err = %v, want ok=%v", err, tt.ok)
+			}
+			if !tt.ok && !errors.Is(err, ErrTooLarge) {
+				t.Errorf("err = %v, want ErrTooLarge", err)
+			}
+		})
+	}
 }

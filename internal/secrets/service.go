@@ -1,5 +1,5 @@
 // Package secrets wraps filippo.io/age for at-rest encryption of stack
-// `.env` files (concept §15.2 Phase 2). The plaintext never touches disk
+// `.env` files. The plaintext never touches disk
 // when secrets are enabled: we decrypt to memory, hand the values to the
 // compose loader, and the DB/filesystem only ever hold the ciphertext.
 package secrets
@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,10 +75,9 @@ func (s *Service) Identities() ([]age.Identity, error) {
 }
 
 // ExportKeyFile returns the age-keygen-compatible key file contents so
-// operators can save the DR key out of band. Fixes FINDING-37: without
-// a way to retrieve this file the server's own encrypted backup can't
-// be decrypted after a total server loss (key lives inside the
-// encrypted archive — chicken-and-egg).
+// operators can save the DR key out of band: without it the server's own
+// encrypted backup can't be decrypted after a total server loss (the key
+// lives inside the encrypted archive).
 //
 // Format: age-keygen-compatible — dockmesh or `age` CLI can consume it.
 func (s *Service) ExportKeyFile() (string, error) {
@@ -86,7 +86,7 @@ func (s *Service) ExportKeyFile() (string, error) {
 	if s.identity == nil {
 		return "", errors.New("secrets service has no identity loaded")
 	}
-	// The current key first (it is what parseKeyFile picks up), then the
+	// The current key first (parseKeyFile takes it as current), then the
 	// previous ones so backups from before a rotation can be restored.
 	return formatKeys(append([]*age.X25519Identity{s.identity}, s.previous...)...), nil
 }
@@ -109,9 +109,9 @@ func (s *Service) Snapshot() *Service {
 
 // RotateInMemory generates a fresh key and returns a second Service
 // that wraps it without touching disk. Callers use this pair to
-// re-encrypt legacy ciphertexts (old=existing service, new=returned
-// value). Commit the rotation with AdoptAndPersist once the migration
-// succeeds; discard the returned Service to abort.
+// re-encrypt existing ciphertexts (old=existing service, new=returned
+// value): call PrepareRotation before re-encrypting and AdoptAndPersist
+// afterwards; discard the returned Service to abort.
 func (s *Service) RotateInMemory() (*Service, error) {
 	id, err := age.GenerateX25519Identity()
 	if err != nil {
@@ -141,6 +141,9 @@ func (s *Service) PrepareRotation(newSvc *Service) error {
 	if err := writeFileAtomic(s.historyPath(), []byte(formatKeys(keys...)), 0o400); err != nil {
 		return fmt.Errorf("write key history: %w", err)
 	}
+	// Stacks re-encrypted before a failure must stay readable without a
+	// restart, so the new key is known for decryption right away.
+	s.previous = append(s.previous, newSvc.identity)
 	return nil
 }
 
@@ -244,18 +247,27 @@ func (s *Service) loadOrCreateKey() error {
 // loadHistory reads previous keys from the history file and from the
 // ".old" file earlier versions left after a rotation.
 func (s *Service) loadHistory() error {
-	s.previous = nil
 	seen := map[string]bool{s.identity.String(): true}
+	for _, p := range s.previous {
+		seen[p.String()] = true
+	}
 	for _, path := range []string{s.historyPath(), s.keyPath + ".old"} {
+		legacy := path != s.historyPath()
 		b, err := os.ReadFile(path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
-		if err != nil {
-			return fmt.Errorf("read previous keys: %w", err)
+		var ids []*age.X25519Identity
+		if err == nil {
+			ids, err = parseIdentities(b)
 		}
-		ids, err := parseIdentities(b)
 		if err != nil {
+			// The .old file is a leftover of earlier versions; it must not
+			// keep the server from starting.
+			if legacy {
+				slog.Warn("ignoring unreadable previous key file", "file", filepath.Base(path), "err", err)
+				continue
+			}
 			return fmt.Errorf("%s: %w", filepath.Base(path), err)
 		}
 		for _, id := range ids {
@@ -283,6 +295,8 @@ func (s *Service) parseKeyFile(b []byte) error {
 	}
 	s.identity = ids[0]
 	s.recipients = []age.Recipient{ids[0].Recipient()}
+	// An exported key file lists earlier keys after the current one.
+	s.previous = ids[1:]
 	return nil
 }
 
@@ -305,9 +319,6 @@ func parseIdentities(b []byte) ([]*age.X25519Identity, error) {
 func (s *Service) generateKey() error {
 	id, err := age.GenerateX25519Identity()
 	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(s.keyPath), 0o700); err != nil {
 		return err
 	}
 	if err := writeFileAtomic(s.keyPath, []byte(formatKeys(id)), 0o400); err != nil {

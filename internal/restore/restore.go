@@ -1,7 +1,7 @@
 // Package restore extracts Dockmesh system-backup tarballs back onto
 // disk + runs post-restore sanity checks. Shared code path for the
 // `dockmesh restore` CLI (cmd_restore.go) and the
-// `POST /api/v1/restore/upload` HTTP handler (P.12.4). Kept package-
+// `POST /api/v1/restore/upload` HTTP handler. Kept package-
 // free of CLI concerns (flag parsing, stdout progress) so both
 // callers can plug their own presentation.
 package restore
@@ -39,6 +39,10 @@ type Counts struct {
 type Options struct {
 	Force    bool
 	DryRun   bool
+	// MaxBytes and MaxEntries cap what an archive may unpack to (0 = no
+	// limit). Set for verification, where the archive comes from outside.
+	MaxBytes   int64
+	MaxEntries int
 	TmpBase  string // where to stage the DB temp file; default: same dir as cfg.DBPath
 }
 
@@ -96,7 +100,7 @@ func Extract(ctx context.Context, r io.Reader, cfg *config.Config, opts Options)
 	dbTmp := filepath.Join(tmpBase, filepath.Base(cfg.DBPath)+".restore.tmp")
 	_ = os.Remove(dbTmp)
 
-	counts, err := extractAll(ctx, tr, cfg, dbTmp)
+	counts, err := extractAll(ctx, tr, cfg, dbTmp, opts)
 	if err != nil {
 		_ = os.Remove(dbTmp)
 		return nil, err
@@ -120,6 +124,17 @@ func Extract(ctx context.Context, r io.Reader, cfg *config.Config, opts Options)
 // tree instead of the live paths. Used by Verify — extract a backup
 // into /tmp/verify-<id>/ and run Sanity against those paths without
 // touching production. Caller must os.RemoveAll the returned dir.
+// Verification unpacks archives into the system temp dir; a small gzip
+// stream can expand to far more than it, so the result is capped.
+const (
+	verifyMaxBytes   = 8 << 30
+	verifyMaxEntries = 200_000
+)
+
+// ErrTooLarge is returned when an archive exceeds Options.MaxBytes or
+// Options.MaxEntries.
+var ErrTooLarge = errors.New("archive unpacks to more than the allowed size")
+
 func ExtractToTemp(ctx context.Context, r io.Reader, label string) (dir string, cfg *config.Config, _ *Counts, err error) {
 	dir, err = os.MkdirTemp("", "dockmesh-verify-"+label+"-")
 	if err != nil {
@@ -133,7 +148,7 @@ func ExtractToTemp(ctx context.Context, r io.Reader, label string) (dir string, 
 		SecretsKeyPath:   filepath.Join(dir, "secrets.age-key"),
 		AuditGenesisPath: filepath.Join(dir, "audit-genesis.sha256"),
 	}
-	counts, err := Extract(ctx, r, cfg, Options{Force: true})
+	counts, err := Extract(ctx, r, cfg, Options{Force: true, MaxBytes: verifyMaxBytes, MaxEntries: verifyMaxEntries})
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return "", nil, nil, err
@@ -255,10 +270,11 @@ func walkTarDryRun(tr *tar.Reader) (*Counts, error) {
 	return c, nil
 }
 
-func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp string) (*Counts, error) {
+func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp string, opts Options) (*Counts, error) {
 	c := &Counts{}
 	dataDir := filepath.Dir(cfg.DBPath)
 	liveDB := filepath.Base(cfg.DBPath)
+	entries := 0
 	for {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -269,6 +285,10 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 		}
 		if err != nil {
 			return nil, err
+		}
+		entries++
+		if opts.MaxEntries > 0 && entries > opts.MaxEntries {
+			return nil, ErrTooLarge
 		}
 		clean := filepath.ToSlash(filepath.Clean(hdr.Name))
 		if strings.Contains(clean, "..") {
@@ -288,7 +308,7 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 			// The live DB is never part of data/ (it is restored from the
 			// top-level snapshot via dbTmp); writing it here would bypass
 			// the safety check and the atomic swap.
-			if base := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(rel, "-wal"), "-shm"), "-journal"); base == liveDB {
+			if base := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(rel, "-wal"), "-shm"), "-journal"); base == liveDB || rel == filepath.Base(dbTmp) {
 				continue
 			}
 		default:
@@ -322,14 +342,21 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 			// 0400 file via O_TRUNC fails with EACCES — unlink-then-create
 			// makes this idempotent.
 			_ = os.Remove(targetPath)
-			out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_EXCL, os.FileMode(hdr.Mode&0o777)) //nolint:gosec // masked to permission bits
+			out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, os.FileMode(hdr.Mode&0o777)) //nolint:gosec // masked to permission bits
 			if err != nil {
 				return nil, fmt.Errorf("create %q: %w", targetPath, err)
 			}
-			n, err := io.Copy(out, tr)
+			src := io.Reader(tr)
+			if opts.MaxBytes > 0 {
+				src = io.LimitReader(tr, opts.MaxBytes-c.Bytes+1)
+			}
+			n, err := io.Copy(out, src)
 			out.Close()
 			if err != nil {
 				return nil, fmt.Errorf("write %q: %w", targetPath, err)
+			}
+			if opts.MaxBytes > 0 && c.Bytes+n > opts.MaxBytes {
+				return nil, ErrTooLarge
 			}
 			_ = os.Chtimes(targetPath, hdr.ModTime, hdr.ModTime)
 			c.Files++

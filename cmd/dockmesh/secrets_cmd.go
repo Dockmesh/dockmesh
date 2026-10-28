@@ -11,7 +11,7 @@ import (
 )
 
 // runSecretsCmd handles `dockmesh secrets <subcommand>`. Only `rotate` is
-// implemented in Phase 2 per concept §15.2.
+// implemented.
 func runSecretsCmd(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: dockmesh secrets rotate")

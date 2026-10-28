@@ -12,8 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dockmesh/dockmesh/internal/stacks"
 	dvolume "github.com/docker/docker/api/types/volume"
+	"github.com/dockmesh/dockmesh/internal/safepath"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
 // stackRestoreFileSizeCap protects against a malicious or corrupted
@@ -99,7 +100,13 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 				report.Warnings = append(report.Warnings, fmt.Sprintf("skipped path traversal attempt: %s", name))
 				continue
 			}
-			dst := filepath.Join(stackDir, rel)
+			// Resolve follows links already in the stack dir, so one can't
+			// redirect a restored file outside it.
+			dst, err := safepath.Resolve(stackDir, rel)
+			if err != nil {
+				report.Warnings = append(report.Warnings, fmt.Sprintf("skipped path outside the stack dir: %s", name))
+				continue
+			}
 			switch hdr.Typeflag {
 			case tar.TypeDir:
 				if err := os.MkdirAll(dst, 0o755); err != nil {

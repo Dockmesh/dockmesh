@@ -3370,7 +3370,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "413":
-          description: Upload larger than 1 GiB.
+          description: Upload larger than 1 GiB, or the archive unpacks to more than 8 GiB or 200,000 entries.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -4112,6 +4112,11 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Another key rotation is already running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "503":
           description: Secrets or stacks service not configured.
           content:

@@ -115,9 +115,9 @@ func TestRepeatedRotationsKeepAllKeys(t *testing.T) {
 	if imported.PublicRecipient() != restarted.PublicRecipient() {
 		t.Error("exported key file doesn't load the current key first")
 	}
-	ids, err := imported.Identities()
-	if err != nil || len(ids) != 1 {
-		t.Fatalf("an exported file loads its first key as current: %d ids, %v", len(ids), err)
+	// A DR rebuild from the export alone must still read old backups.
+	for i, ct := range cts {
+		mustDecrypt(t, imported, ct, string(rune('a'+i)))
 	}
 }
 
@@ -139,4 +139,34 @@ func TestLegacyOldKeyFileIsUsed(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustDecrypt(t, second, ct, "before")
+}
+
+// Stacks re-encrypted before a rotation failed must stay readable by the
+// running server, without a restart.
+func TestFailedRotationKeepsNewKeyUsable(t *testing.T) {
+	live, err := New(filepath.Join(t.TempDir(), "secrets.age-key"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := live.RotateInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := live.PrepareRotation(next); err != nil {
+		t.Fatal(err)
+	}
+	mustDecrypt(t, live, mustEncrypt(t, next, "re-encrypted"), "re-encrypted")
+}
+
+func TestUnreadableLegacyOldFileIsIgnored(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets.age-key")
+	if _, err := New(path, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".old", []byte("AGE-SECRET-KEY-1NOTAKEY\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(path, true); err != nil {
+		t.Errorf("a broken .old file blocked startup: %v", err)
+	}
 }

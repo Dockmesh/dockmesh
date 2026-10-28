@@ -102,3 +102,21 @@ func TestCopyTreeSiblingsSkipsLinksOutOfRepo(t *testing.T) {
 		t.Errorf("symlink to a server file was copied: %v", err)
 	}
 }
+
+// The clone cache sits under the data dir, which defaults to a relative
+// path (./data); symlink resolution must not make every path look foreign.
+func TestInCloneWithRelativeCloneDir(t *testing.T) {
+	clone := repo(t)
+	t.Chdir(filepath.Dir(clone))
+	rel := filepath.Base(clone)
+	src, err := inClone(rel, "app")
+	if err != nil {
+		t.Fatalf("relative clone dir: %v", err)
+	}
+	if _, err := inClone(rel, filepath.Join(src, "compose.yaml")); err != nil {
+		t.Errorf("absolute path from an earlier inClone: %v", err)
+	}
+	if _, err := inClone(rel, "app/key"); !errors.Is(err, ErrPathOutsideRepo) {
+		t.Errorf("escape through a relative clone dir: %v", err)
+	}
+}

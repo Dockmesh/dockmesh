@@ -547,8 +547,11 @@ func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string) (EnvDrif
 func inClone(cloneDir, p string) (string, error) {
 	rel := p
 	if filepath.IsAbs(p) {
-		r, err := filepath.Rel(cloneDir, p)
-		if err != nil {
+		// Absolute paths come from earlier inClone results (below the
+		// resolved clone dir) or from walking it; the clone dir itself may
+		// be relative or sit under a symlink.
+		r, ok := relTo(cloneDir, p)
+		if !ok {
 			return "", ErrPathOutsideRepo
 		}
 		rel = r
@@ -561,6 +564,28 @@ func inClone(cloneDir, p string) (string, error) {
 		return "", ErrPathOutsideRepo
 	}
 	return resolved, err
+}
+
+// relTo returns p relative to dir, trying dir as given (made absolute) and
+// with its symlinks resolved.
+func relTo(dir, p string) (string, bool) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", false
+	}
+	bases := []string{abs}
+	if real, err := filepath.EvalSymlinks(abs); err == nil && real != abs {
+		bases = append(bases, real)
+	}
+	for _, b := range bases {
+		if safepath.Within(b, p) {
+			r, err := filepath.Rel(b, p)
+			if err == nil {
+				return r, true
+			}
+		}
+	}
+	return "", false
 }
 
 // copyTreeSiblings mirrors all non-dotfile entries under src into dst,

@@ -300,32 +300,14 @@ func (s *Service) phaseStopping(ctx context.Context, m *Migration) error {
 }
 
 func (s *Service) phaseSyncing(ctx context.Context, m *Migration) error {
+	// Initiate refuses stacks with named volumes; checked again in case the
+	// compose file changed while the migration was queued.
 	volumes, err := s.namedVolumes(ctx, m.StackName)
 	if err != nil {
 		return err
 	}
-
-	if len(volumes) == 0 {
-		slog.Info("migration syncing: no volumes to transfer", "id", m.ID)
-		return nil
-	}
-	slog.Info("migration syncing volumes",
-		"id", m.ID, "count", len(volumes), "volumes", volumes)
-
-	p := &Progress{VolumesTotal: len(volumes)}
-	_ = s.store.UpdateProgress(ctx, m.ID, p)
-
-	// Transfer volumes sequentially (Decision 6: serial per-volume).
-	for i, vol := range volumes {
-		p.CurrentVolume = vol
-		p.VolumeIndex = i + 1
-		_ = s.store.UpdateProgress(ctx, m.ID, p)
-
-		if err := s.transferVolume(ctx, m, vol); err != nil {
-			return fmt.Errorf("volume %s: %w", vol, err)
-		}
-		slog.Info("migration volume transferred",
-			"id", m.ID, "volume", vol, "index", i+1, "total", len(volumes))
+	if len(volumes) > 0 {
+		return fmt.Errorf("%w: %s", ErrNamedVolumes, strings.Join(volumes, ", "))
 	}
 	return nil
 }
@@ -366,41 +348,6 @@ func (s *Service) namedVolumes(ctx context.Context, stackName string) ([]string,
 	}
 	sort.Strings(volumes)
 	return volumes, nil
-}
-
-// transferVolume streams one volume from source to target via the
-// server as relay. Source agent exports tar, server reads it, server
-// writes to target agent import stream.
-func (s *Service) transferVolume(ctx context.Context, m *Migration, volume string) error {
-	// For local-to-local transfers (shouldn't happen in production but
-	// covers dev/test), we can't use agent streams. For now, this
-	// implementation works for remote hosts where agents are connected.
-	// Local host volume transfer uses the backup package's tarVolume
-	// pattern directly — but that's a future optimization. For now,
-	// log and skip local transfers.
-	if m.SourceHostID == "local" && m.TargetHostID == "local" {
-		return fmt.Errorf("local-to-local volume transfer not supported — both hosts are local")
-	}
-
-	// The volume transfer uses agent stream multiplexing:
-	// 1. Open volume_export stream on source agent
-	// 2. Open volume_import stream on target agent
-	// 3. Relay bytes from source stream to target stream
-	// 4. Close both streams
-	//
-	// This is implemented via the existing ConnectedAgent.OpenStream()
-	// which returns an io.ReadCloser for the export side. For the
-	// import side we need to write to the stream — using the agent's
-	// WriteStream helper.
-	//
-	// For now, this phase is a stub that logs the intent. The full
-	// relay implementation requires extending the agent stream API
-	// to support writing (currently streams are read-only from the
-	// server perspective). This will be completed in a follow-up commit.
-	slog.Info("migration: volume transfer placeholder",
-		"id", m.ID, "volume", volume,
-		"source", m.SourceHostID, "target", m.TargetHostID)
-	return nil
 }
 
 func (s *Service) phaseStarting(ctx context.Context, m *Migration) error {

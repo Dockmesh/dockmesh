@@ -43,6 +43,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/system"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -580,8 +581,8 @@ func sendStreamClose(conn *websocket.Conn, id, errMsg string) {
 
 // runVolumeExportStream creates a temporary busybox container that mounts
 // the named volume read-only and runs `tar czf - -C /source .`, streaming
-// the gzipped archive to the server via stream.data frames. Used by P.9
-// migration to transfer volumes from source to target.
+// the gzipped archive to the server via stream.data frames. Used by
+// RemoteHost.VolumeTar for volume backups.
 func runVolumeExportStream(ctx context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen) {
 	volumeName, _ := open.Params["volume"].(string)
 	if err := dockerwrap.CheckVolumeName(volumeName); err != nil {
@@ -1115,6 +1116,9 @@ func stacksDir(name string) string {
 // stacks directory so the agent can survive a server loss. Called after
 // every successful deploy/update (P.7 compose-file mirroring).
 func agentSyncStack(req agents.StackSyncReq) error {
+	if err := stacks.ValidateName(req.Name); err != nil {
+		return err
+	}
 	dir := stacksDir(req.Name)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("sync mkdir: %w", err)
@@ -1141,6 +1145,9 @@ func agentSyncStack(req agents.StackSyncReq) error {
 // agentDeleteStack removes the agent's local copy of a stack's compose
 // files. Called when the server deletes a stack (P.7).
 func agentDeleteStack(name string) error {
+	if err := stacks.ValidateName(name); err != nil {
+		return err
+	}
 	dir := stacksDir(name)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return nil // already gone

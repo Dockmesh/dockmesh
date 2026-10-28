@@ -14,7 +14,7 @@ import (
 // VerifyUploadedBackup accepts a multipart-uploaded system-backup
 // tarball, extracts it to a scratch directory, runs the post-restore
 // sanity checks against the extracted files, and discards the scratch
-// dir. Never touches the live install. Admin-only. P.12.4.
+// dir. Never touches the live install. Admin-only.
 //
 // Use case: "before I run dockmesh restore against my prod server
 // for real, verify this tarball is even valid". Answers the
@@ -43,6 +43,10 @@ func (h *Handlers) VerifyUploadedBackup(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		if errors.Is(err, restore.ErrEncryptedBackup) {
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		if errors.Is(err, restore.ErrTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, err.Error())
 			return
 		}
 		writeError(w, http.StatusBadRequest, "extract: "+sanitizeExtractErr(err, dir))
