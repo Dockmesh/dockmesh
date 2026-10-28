@@ -2,8 +2,10 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
@@ -49,7 +51,8 @@ func TestSFTPHostKeyLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := handleHostKey(ctx, svc.store, n, job, targets.HostKeyEvent{Kind: "recorded", Key: "ssh-ed25519 AAAA1", Fingerprint: "SHA256:one"}); err != nil {
+	tofu := jobTOFU(svc.store, n, job)
+	if err := tofu.Handle(ctx, targets.HostKeyEvent{Kind: "recorded", Key: "ssh-ed25519 AAAA1", Fingerprint: "SHA256:one"}); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := svc.GetJob(ctx, job.ID)
@@ -67,13 +70,14 @@ func TestSFTPHostKeyLifecycle(t *testing.T) {
 
 	// A racing first connection with another key must not overwrite it.
 	var changed *targets.HostKeyChangedError
-	if err := handleHostKey(ctx, svc.store, n, job, targets.HostKeyEvent{Kind: "recorded", Key: "ssh-ed25519 EVIL", Fingerprint: "SHA256:evil"}); !errors.As(err, &changed) {
+	if err := tofu.Handle(ctx, targets.HostKeyEvent{Kind: "recorded", Key: "ssh-ed25519 EVIL", Fingerprint: "SHA256:evil"}); !errors.As(err, &changed) {
 		t.Fatalf("racing record: err = %v, want HostKeyChangedError", err)
 	}
 
-	_ = handleHostKey(ctx, svc.store, n, job, targets.HostKeyEvent{Kind: "changed", Key: "ssh-ed25519 AAAA2", Fingerprint: "SHA256:two", OldFingerprint: "SHA256:one"})
+	_ = tofu.Handle(ctx, targets.HostKeyEvent{Kind: "changed", Key: "ssh-ed25519 AAAA2", Fingerprint: "SHA256:two", OldFingerprint: "SHA256:one"})
 	open, _ := n.Open(ctx)
-	if !hasKey(open, hostKeyChangedKey(job.ID)) {
+	changedKey := targets.ChangedNoticeKey(strconv.FormatInt(job.ID, 10))
+	if !hasKey(open, changedKey) {
 		t.Fatal("changed key raised no notice")
 	}
 	if err := svc.AcceptHostKey(ctx, job.ID); err != nil {
@@ -85,7 +89,7 @@ func TestSFTPHostKeyLifecycle(t *testing.T) {
 		t.Errorf("after accept: %v", cfg)
 	}
 	open, _ = n.Open(ctx)
-	if hasKey(open, hostKeyChangedKey(job.ID)) {
+	if hasKey(open, changedKey) {
 		t.Error("changed-key notice still open after accept")
 	}
 }
@@ -120,6 +124,20 @@ func TestEncryptNeedsSecrets(t *testing.T) {
 	if err != nil || len(names) != 1 || names[0] != "offsite" {
 		t.Errorf("unencryptable = %v, %v", names, err)
 	}
+}
+
+func configMap(cfg any) (map[string]any, error) {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	m := map[string]any{}
+	if string(b) != "null" {
+		if err := json.Unmarshal(b, &m); err != nil {
+			return nil, err
+		}
+	}
+	return m, nil
 }
 
 func hasKey(ns []notices.Notice, key string) bool {

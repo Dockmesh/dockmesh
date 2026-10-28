@@ -722,6 +722,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Post("/backups/jobs/{id}/review/{mode}", h.AcknowledgeBackupJobReview)
 				r.Put("/backups/targets/{id}", h.UpdateBackupTarget)
 				r.Post("/backups/targets/{id}/test", h.TestBackupTarget)
+				r.Post("/backups/targets/{id}/accept-host-key", h.AcceptBackupTargetHostKey)
 				r.Put("/backups/system/enabled", h.SetBackupEnabled)
 			})
 			r.Group(func(r chi.Router) {

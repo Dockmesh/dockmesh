@@ -174,6 +174,7 @@ func (s *Service) CreateJob(ctx context.Context, in JobInput) (*Job, error) {
 	if err := s.checkJobInput(in); err != nil {
 		return nil, err
 	}
+	in.TargetConfig = targets.KeepHostKey("", nil, in.TargetType, in.TargetConfig)
 	id, err := s.store.createJob(ctx, in)
 	if err != nil {
 		return nil, err
@@ -193,6 +194,11 @@ func (s *Service) UpdateJob(ctx context.Context, id int64, in JobInput) (*Job, e
 	if err := s.checkJobInput(in); err != nil {
 		return nil, err
 	}
+	prev, err := s.store.getJob(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	in.TargetConfig = targets.KeepHostKey(prev.TargetType, prev.TargetConfig, in.TargetType, in.TargetConfig)
 	if err := s.store.updateJob(ctx, id, in); err != nil {
 		return nil, err
 	}

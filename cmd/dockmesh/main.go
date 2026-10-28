@@ -767,7 +767,7 @@ func main() {
 	// it on archive_target runs. Nil-safe if the backup-targets store
 	// is ever unavailable — archive_target mode then reports an error.
 	backupTargetStore := targets.NewTargetStore(database)
-	auditTargetWriter := &auditTargetsAdapter{store: backupTargetStore}
+	auditTargetWriter := &auditTargetsAdapter{store: backupTargetStore, notices: noticesSvc}
 	auditRetention := audit.NewRetention(database, auditSvc, settingsStore, auditTargetWriter)
 	auditRetention.Start(ctx)
 	defer auditRetention.Stop()
@@ -1093,10 +1093,11 @@ func main() {
 
 // auditTargetsAdapter bridges audit.Retention's TargetWriter interface
 // to the backup_targets store. Loads the target row, builds the live
-// target via targets.Build, opens a writer for the given name, and
-// streams the archive bytes through.
+// target with the SFTP host-key check, opens a writer for the given
+// name, and streams the archive bytes through.
 type auditTargetsAdapter struct {
-	store *targets.TargetStore
+	store   *targets.TargetStore
+	notices *notices.Service
 }
 
 func (a *auditTargetsAdapter) WriteFile(ctx context.Context, targetID int64, name string, body io.Reader) error {
@@ -1104,7 +1105,7 @@ func (a *auditTargetsAdapter) WriteFile(ctx context.Context, targetID int64, nam
 	if err != nil {
 		return err
 	}
-	t, err := targets.Build(stored.Type, stored.Config)
+	t, err := a.store.BuildChecked(ctx, stored, a.notices)
 	if err != nil {
 		return err
 	}

@@ -3494,16 +3494,47 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/BackupTargetTestResult" }
 
+  /backups/targets/{id}/accept-host-key:
+    post:
+      operationId: backups.accept_target_host_key
+      tags: [backups]
+      summary: Trust the changed SFTP host key a saved target last saw
+      description: |
+        Saved SFTP targets record the server's host key on their first
+        connection and refuse a different key later; the new key is kept
+        as `config.host_key_pending`. This moves it to `host_key`.
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "204": { description: Accepted; the next connection uses the new key. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: No changed host key is waiting for approval.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /backups/targets/test-config:
     post:
       operationId: backups.test_target_config
       tags: [backups]
       summary: Verify an unsaved target config (pre-create smoke test)
+      description: |
+        `host_key` fields in the config are ignored. With `target_id`
+        set to the saved target being edited, an SFTP server must present
+        that target's recorded host key.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/BackupTargetInput" }
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/BackupTargetInput"
+                - type: object
+                  properties:
+                    target_id: { type: integer, format: int64 }
       responses:
         "200":
           description: Connection OK.
