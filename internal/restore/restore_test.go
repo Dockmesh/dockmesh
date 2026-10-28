@@ -119,8 +119,10 @@ func TestExtractRefusesExistingSymlinkEscape(t *testing.T) {
 		entry{name: "dockmesh.db", body: "db"},
 		entry{name: "stacks/pre/cron", body: "* * * * * root id"},
 	)
-	if _, err := Extract(context.Background(), a, cfg, Options{Force: true}); err == nil || !strings.Contains(err.Error(), "escapes") {
-		t.Fatalf("err = %v, want an escape error", err)
+	// os.Root refuses the write; the exact error differs between Go
+	// releases ("escapes from parent" vs "file exists" from MkdirAll).
+	if _, err := Extract(context.Background(), a, cfg, Options{Force: true}); err == nil {
+		t.Fatal("write through a symlink out of the stacks root accepted")
 	}
 	outsideIsEmpty(t, outside)
 }
