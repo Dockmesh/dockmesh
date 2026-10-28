@@ -64,6 +64,8 @@ const (
 	// agent reads its local /proc and /var/lib/docker via the system
 	// package and returns the Metrics struct as JSON. Slice P.6.
 	FrameReqSystemMetrics = "req.system.metrics"
+	// Per-mount disk usage; only sent to agents advertising CapDiskMounts.
+	FrameReqSystemDisks = "req.system.disks"
 
 	// Stack operations (slice 3.1.3) — server ships compose YAML + .env
 	// content with the deploy request, agent runs the same compose
@@ -274,6 +276,22 @@ type HelloPayload struct {
 	Arch          string `json:"arch"`
 	Hostname      string `json:"hostname"`
 	DockerVersion string `json:"docker_version,omitempty"`
+	// Capabilities lists optional frames the agent understands, so the
+	// server can tell an old agent apart from a failing one.
+	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+// CapDiskMounts: the agent answers FrameReqSystemDisks.
+const CapDiskMounts = "disk_mounts"
+
+// Has reports whether the agent advertised capability c.
+func (h HelloPayload) Has(c string) bool {
+	for _, x := range h.Capabilities {
+		if x == c {
+			return true
+		}
+	}
+	return false
 }
 
 // WelcomePayload is the server's reply confirming the agent is registered.

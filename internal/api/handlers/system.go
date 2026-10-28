@@ -59,7 +59,7 @@ func (h *Handlers) SystemMetrics(w http.ResponseWriter, r *http.Request) {
 	// to avoid the host.Host interface overhead; for remote we go
 	// through the agent protocol via pickHost.
 	if hostID == "" || hostID == "local" {
-		writeJSON(w, http.StatusOK, system.Collect())
+		writeJSON(w, http.StatusOK, system.CollectWithMounts(r.Context()))
 		return
 	}
 	target, err := h.pickHost(r)
@@ -256,7 +256,7 @@ func (h *Handlers) SystemHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ---- disk: warn >80%, fail >95%, data directory is the critical one.
-	if m := system.Collect(); m.DiskTotal > 0 {
+	if m := system.CollectWithMounts(r.Context()); m.DiskTotal > 0 {
 		pct := m.DiskPercent
 		c := HealthCheck{Name: "disk", Label: "Disk", LinkTo: "/"}
 		c.Detail = fmt.Sprintf("%.0f%% used (%s)", pct, m.DiskPath)

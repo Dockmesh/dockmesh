@@ -379,6 +379,8 @@ func main() {
 		slog.Info("secrets encryption enabled", "recipient", secretsSvc.PublicRecipient())
 	}
 
+	system.SetRolePathsFn(serverRolePaths(database, dockerCli, cfg.StacksRoot, filepath.Dir(cfg.DBPath)))
+
 	stacksMgr, err := stacks.NewManager(cfg.StacksRoot, secretsSvc)
 	if err != nil {
 		slog.Error("stacks manager init failed", "err", err)

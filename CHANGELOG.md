@@ -44,6 +44,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   or with `dockmesh admin reset-password`) signs out all of the user's sessions.
 - A role or scope change now applies to a signed-in user's next request instead of after up
   to 15 minutes.
+- The dashboard and host page now list disk usage for every real filesystem of a host, with
+  the mounts holding Docker, containerd, stacks, Dockmesh data and local backups labelled.
+  The host's disk figure now shows the fullest of the Docker-related mounts instead of the
+  data directory only, so a full Docker or containerd mount no longer goes unnoticed. Hosts
+  with an older agent keep the single figure until the agent is updated.
 
 ### Fixed
 - Container CPU and memory alerts now fire once a breach has lasted for the rule's duration

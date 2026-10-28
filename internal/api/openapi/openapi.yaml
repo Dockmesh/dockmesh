@@ -3986,7 +3986,17 @@ paths:
                   disk_percent: { type: number }
                   disk_total: { type: integer, format: int64 }
                   disk_used: { type: integer, format: int64 }
+                  disk_path:
+                    type: string
+                    description: Mount the disk_* figures describe. With per-mount data this is the fullest mount holding Docker, containerd, stacks or Dockmesh data.
                   uptime_seconds: { type: integer, format: int64 }
+                  mounts:
+                    type: array
+                    description: Every real filesystem of the host, fullest first.
+                    items: { $ref: "#/components/schemas/DiskMount" }
+                  mounts_unsupported:
+                    type: boolean
+                    description: True when the host's agent is too old to report per-mount usage.
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /system/backup-status:
@@ -7589,6 +7599,23 @@ components:
           type: boolean
           description: False when the transition was recorded but channels were not notified (rule muted or inside its cooldown).
         occurred_at: { type: string, format: date-time }
+
+    DiskMount:
+      type: object
+      required: [mount_point, device, fs_type, total, used, percent]
+      properties:
+        mount_point: { type: string }
+        device: { type: string }
+        fs_type: { type: string }
+        total: { type: integer, format: int64 }
+        used: { type: integer, format: int64 }
+        percent: { type: number }
+        roles:
+          type: array
+          items:
+            type: string
+            enum: [docker_root, containerd_root, stacks, data, backup_target]
+        error: { type: string, description: Set when usage could not be read (for example a hung network mount). }
 
     NotificationChannel:
       type: object

@@ -21,6 +21,7 @@
   import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
+  import MountTable from '$lib/components/MountTable.svelte';
   import {
     ChevronLeft, RefreshCw, ArrowDownToLine, Trash2, Terminal,
     X, Check, AlertTriangle, Info
@@ -461,6 +462,13 @@
             </div>
           </div>
         </div>
+
+        {#if metrics && (metrics.mounts?.length || metrics.mounts_unsupported)}
+          <div class="ed-host-card ed-host-mounts">
+            <div class="ed-host-card-title">Disks</div>
+            <MountTable mounts={metrics.mounts} unsupported={metrics.mounts_unsupported} />
+          </div>
+        {/if}
 
         <!-- Stacks deployed here (Overview block) -->
         <div class="ed-host-card ed-host-stacks-block">
@@ -934,6 +942,7 @@
     padding: 16px 18px;
   }
   .ed-host-identity { grid-column: span 7; }
+  .ed-host-mounts { grid-column: 1 / -1; }
   .ed-host-snapshot { grid-column: span 5; display: flex; flex-direction: column; gap: 12px; }
   .ed-host-stacks-block { grid-column: span 7; }
   .ed-host-mig-block { grid-column: span 5; }

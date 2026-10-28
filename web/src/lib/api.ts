@@ -723,6 +723,11 @@ export interface SystemMetrics {
   disk_used: number;
   disk_path: string;
   uptime_seconds: number;
+  // Per-filesystem breakdown, fullest first; disk_* then describe the
+  // fullest mount holding Docker, containerd, stacks or Dockmesh data.
+  mounts?: DiskMount[];
+  // Set for agents too old to report per-mount usage.
+  mounts_unsupported?: boolean;
   // Present only when Docker's configured resource limits differ from
   // raw host hardware — most commonly on macOS / Windows where Docker
   // Desktop caps the VM at some fraction of the Mac's cores + RAM.
@@ -899,6 +904,17 @@ export interface BackupRun {
   encrypted: boolean;
   error?: string;
   sources: BackupSource[];
+}
+
+export interface DiskMount {
+  mount_point: string;
+  device: string;
+  fs_type: string;
+  total: number;
+  used: number;
+  percent: number;
+  roles?: string[];
+  error?: string;
 }
 
 export interface NotificationChannel {

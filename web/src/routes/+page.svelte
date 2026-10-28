@@ -5,6 +5,7 @@
   import { hosts } from '$lib/stores/host.svelte';
   import { autoRefresh } from '$lib/autorefresh';
   import { Skeleton } from '$lib/components/ui';
+  import MountTable from '$lib/components/MountTable.svelte';
   import {
     EdMetric,
     EdRow,
@@ -511,6 +512,13 @@
     {/if}
   </section>
 
+  {#if sysMetrics && (sysMetrics.mounts?.length || sysMetrics.mounts_unsupported)}
+    <section class="dash-mounts">
+      <Eyebrow>Disks · {sysMetrics.mounts?.length ?? 0}</Eyebrow>
+      <MountTable mounts={sysMetrics.mounts} unsupported={sysMetrics.mounts_unsupported} />
+    </section>
+  {/if}
+
   <!-- ────────────────────────────────────────────── Top row: Stacks | Activity
        Stacks list takes the wider column; Activity feed stretches to the
        same height as Stacks (matched via grid-row) so the right rail
@@ -848,6 +856,11 @@
     align-items: stretch;
     column-gap: 32px;
     row-gap: 12px;
+  }
+  .dash-mounts {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
   .dash-top > .dash-block {
     display: grid;
