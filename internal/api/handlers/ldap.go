@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/ldapauth"
 	"github.com/go-chi/chi/v5"
@@ -46,8 +47,14 @@ func (h *Handlers) LDAPLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	res, err := h.LDAP.Authenticate(r.Context(), slug, in.Username, in.Password, r.UserAgent(), clientIP(r))
+	ip := clientIP(r)
+	account := "ldap:" + slug + ":" + strings.ToLower(strings.TrimSpace(in.Username))
+	if !h.ldapLimits.allow(w, ip, account) {
+		return
+	}
+	res, err := h.LDAP.Authenticate(r.Context(), slug, in.Username, in.Password, r.UserAgent(), ip)
 	if errors.Is(err, ldapauth.ErrInvalidCredentials) {
+		h.ldapLimits.fail(ip, account)
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -59,6 +66,7 @@ func (h *Handlers) LDAPLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.ldapLimits.succeed(account)
 	if res.User != nil {
 		h.audit(r, "auth.sso_login", res.User.ID, map[string]string{"provider": slug, "kind": "ldap"})
 	}

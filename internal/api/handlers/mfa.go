@@ -27,10 +27,19 @@ func (h *Handlers) LoginMFA(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "mfa_token and code required")
 		return
 	}
-	res, err := h.Auth.VerifyLoginMFA(r.Context(), req.MFAToken, req.Code, r.UserAgent(), clientIP(r))
+	ip := clientIP(r)
+	account, _ := h.Auth.MFAPendingUserID(req.MFAToken)
+	if account != "" {
+		account = "user:" + account
+	}
+	if !h.mfaLimits.allow(w, ip, account) {
+		return
+	}
+	res, err := h.Auth.VerifyLoginMFA(r.Context(), req.MFAToken, req.Code, r.UserAgent(), ip)
 	if errors.Is(err, auth.ErrInvalidCredentials) {
+		h.mfaLimits.fail(ip, account)
 		if h.Audit != nil {
-			h.Audit.Write(r.Context(), "", audit.ActionLoginFailed, "mfa", map[string]string{"ip": clientIP(r)})
+			h.Audit.Write(r.Context(), "", audit.ActionLoginFailed, "mfa", map[string]string{"ip": ip})
 		}
 		writeError(w, http.StatusUnauthorized, "invalid code")
 		return
@@ -39,6 +48,7 @@ func (h *Handlers) LoginMFA(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "mfa failed")
 		return
 	}
+	h.mfaLimits.succeed(account)
 	if h.Audit != nil && res.User != nil {
 		h.Audit.Write(r.Context(), res.User.ID, audit.ActionLogin, res.User.Username, map[string]string{"mfa": "true"})
 	}

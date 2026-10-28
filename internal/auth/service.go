@@ -641,6 +641,16 @@ func (s *Service) issueMFAPending(userID string) (string, error) {
 	return s.keys.Sign(KindMFAPending, 5*time.Minute, &Claims{UserID: userID})
 }
 
+// MFAPendingUserID returns the user an MFA-pending token was issued for, so
+// callers can throttle code guesses per account before verifying.
+func (s *Service) MFAPendingUserID(token string) (string, error) {
+	c, err := s.parseMFAPending(token)
+	if err != nil {
+		return "", err
+	}
+	return c.UserID, nil
+}
+
 func (s *Service) parseMFAPending(token string) (*Claims, error) {
 	c := &Claims{}
 	if err := s.keys.Parse(KindMFAPending, token, c); err != nil {

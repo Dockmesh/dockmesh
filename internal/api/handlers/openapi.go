@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/api/openapi"
 )
 
@@ -35,6 +37,7 @@ func (h *Handlers) ServeOpenAPIYAML(w http.ResponseWriter, r *http.Request) {
 // that a determined reader couldn't find via the spec itself.
 func (h *Handlers) ServeSwaggerUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", swaggerUICSP)
 	_, _ = w.Write([]byte(swaggerUIHTML))
 }
 
@@ -42,6 +45,28 @@ func (h *Handlers) ServeSwaggerUI(w http.ResponseWriter, r *http.Request) {
 // so no extra static-asset plumbing is needed — the HTML pulls the
 // actual UI bundle from a pinned CDN URL. If CDN availability ever
 // matters, vendor the bundle under web/static/ and swap the src.
+var swaggerUICSP = strings.Join([]string{
+	"default-src 'self'",
+	"script-src 'self' https://cdn.jsdelivr.net " + middleware.ScriptHash(swaggerUIInitScript),
+	"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+	"img-src 'self' data: https:",
+	"connect-src 'self'",
+	"object-src 'none'",
+	"base-uri 'self'",
+	"frame-ancestors 'none'",
+}, "; ")
+
+const swaggerUIInitScript = `
+      window.ui = SwaggerUIBundle({
+        url: "/api/v1/openapi.json",
+        dom_id: "#swagger-ui",
+        deepLinking: true,
+        presets: [SwaggerUIBundle.presets.apis],
+        layout: "BaseLayout",
+        tryItOutEnabled: true
+      });
+    `
+
 const swaggerUIHTML = `<!doctype html>
 <html lang="en">
   <head>
@@ -57,16 +82,7 @@ const swaggerUIHTML = `<!doctype html>
   <body>
     <div id="swagger-ui"></div>
     <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"></script>
-    <script>
-      window.ui = SwaggerUIBundle({
-        url: "/api/v1/openapi.json",
-        dom_id: "#swagger-ui",
-        deepLinking: true,
-        presets: [SwaggerUIBundle.presets.apis],
-        layout: "BaseLayout",
-        tryItOutEnabled: true
-      });
-    </script>
+    <script>` + swaggerUIInitScript + `</script>
   </body>
 </html>
 `

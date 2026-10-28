@@ -433,7 +433,8 @@ paths:
       description: |
         Exchanges a refresh token for a fresh access+refresh pair. Refresh
         tokens are rotated on every use. Reusing a previously-rotated token
-        revokes the whole session family.
+        revokes the whole session family. Invalid tokens are rate-limited
+        per client IP.
       security: []
       requestBody:
         required: true
@@ -464,6 +465,15 @@ paths:
                 properties:
                   error: { type: string }
                   code: { type: string, enum: [session_outdated] }
+        "429":
+          description: Too many invalid refresh tokens from this IP (30 per 5 minutes).
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /auth/mfa:
     post:
@@ -472,7 +482,9 @@ paths:
       summary: Complete a two-factor login
       description: |
         Second step of the login flow when the user has MFA enabled.
-        Accepts a 6-digit TOTP code or a recovery code.
+        Accepts a 6-digit TOTP code or a recovery code. Each TOTP code is
+        accepted once. Wrong codes are rate-limited per account (5 per 15
+        minutes) and per client IP (20 per 15 minutes).
       security: []
       requestBody:
         required: true
@@ -498,6 +510,15 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401":
           description: Invalid or expired MFA token / code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: Too many wrong codes for this account or IP.
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until the lock expires.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -4282,6 +4303,15 @@ paths:
         "404": { description: invite not found }
         "409": { description: username or email already taken }
         "410": { description: expired or already used }
+        "429":
+          description: Too many failed attempts from this IP (10 per 15 minutes) or for this invite (5).
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /users:
     get:
@@ -4950,17 +4980,38 @@ paths:
       operationId: settings.update
       tags: [settings]
       summary: Update one or more settings
+      description: |
+        `trusted_proxies` is a comma-separated list of IPs or CIDRs whose
+        X-Forwarded-For / X-Real-IP / X-Forwarded-Proto headers are
+        believed (empty = loopback only); invalid entries are rejected with
+        400 and nothing is saved.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: { type: string }
+              type: array
+              items:
+                type: object
+                required: [key, value]
+                properties:
+                  key: { type: string }
+                  value: { type: string }
               example:
-                DOCKMESH_BASE_URL: "https://dockmesh.example.com"
+                - { key: base_url, value: "https://dockmesh.example.com" }
+                - { key: trusted_proxies, value: "10.0.0.5, 172.16.0.0/12" }
       responses:
-        "204": { description: Saved. }
+        "200":
+          description: Saved; all settings.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    key: { type: string }
+                    value: { type: string }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -6538,6 +6589,15 @@ paths:
               schema: { type: object, additionalProperties: true }
         "401":
           description: Bad credentials.
+        "429":
+          description: Too many failed logins from this IP or for this username (10 per 15 minutes each).
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /ldap/providers:
     get:

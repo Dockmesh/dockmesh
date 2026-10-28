@@ -290,8 +290,10 @@ func main() {
 			slog.Error("bootstrap failed", "err", err)
 			os.Exit(1)
 		} else if created {
-			slog.Warn("bootstrap admin created — store this password, it will not be shown again",
-				"username", username, "password", password)
+			// Straight to the console, not slog: structured logs get shipped
+			// to aggregators and kept, the password must not be.
+			slog.Warn("bootstrap admin created, the password was printed to the console once", "username", username)
+			fmt.Fprintf(os.Stderr, "\nBootstrap admin created. Store this password, it will not be shown again:\n  username: %s\n  password: %s\n\n", username, password)
 		}
 	}
 

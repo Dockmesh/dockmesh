@@ -4,6 +4,9 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/clientip"
+	"github.com/dockmesh/dockmesh/internal/settings"
 )
 
 // ListSettings returns all DB-backed settings for the System tab.
@@ -42,6 +45,14 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, e := range entries {
+		if e.Key == settings.KeyTrustedProxies {
+			if _, err := clientip.ParseList(e.Value); err != nil {
+				writeError(w, http.StatusBadRequest, "trusted proxies: "+err.Error())
+				return
+			}
+		}
+	}
+	for _, e := range entries {
 		prev := h.Settings.Get(e.Key, "")
 		if err := h.Settings.Set(r.Context(), e.Key, e.Value); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -62,6 +73,8 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 // Docker daemon.
 func (h *Handlers) applySettingSideEffect(r *http.Request, key, value string) {
 	switch key {
+	case settings.KeyTrustedProxies:
+		h.proxyNotice.reset(r.Context())
 	case "proxy_enabled":
 		if h.Proxy == nil {
 			return

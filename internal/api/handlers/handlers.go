@@ -21,6 +21,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/deploy"
 	"github.com/dockmesh/dockmesh/internal/docker"
@@ -62,6 +63,10 @@ type Handlers struct {
 	LoginLimiter *ratelimit.Limiter
 	// mfaDisableLimiter caps wrong codes on DELETE /mfa per user.
 	mfaDisableLimiter *ratelimit.Limiter
+	mfaLimits         authLimits
+	ldapLimits        authLimits
+	inviteLimits      authLimits
+	refreshLimits     authLimits
 	Scanner      scanner.Scanner
 	ScanStore    *scanner.Store
 	Proxy        *proxy.Service
@@ -101,6 +106,11 @@ type Handlers struct {
 	// RBACv2Enforce gates per-host + per-stack scope checks on typed-
 	// resource handlers. Wired from cfg.RBACv2Enforce.
 	RBACv2Enforce bool
+
+	// ClientIPs resolves client addresses behind trusted proxies; the
+	// router mounts its middleware.
+	ClientIPs   *clientip.Resolver
+	proxyNotice *proxyNotice
 }
 
 type Deps struct {
@@ -156,7 +166,7 @@ type Deps struct {
 }
 
 func New(d Deps) *Handlers {
-	return &Handlers{
+	h := &Handlers{
 		DB:          d.DB,
 		Auth:        d.Auth,
 		Audit:       d.Audit,
@@ -208,7 +218,20 @@ func New(d Deps) *Handlers {
 		RBACv2Enforce:  d.RBACv2Enforce,
 
 		mfaDisableLimiter: ratelimit.New(5, 15*time.Minute, 15*time.Minute),
+		mfaLimits:         newAuthLimits(20, 5, 15*time.Minute),
+		ldapLimits:        newAuthLimits(10, 10, 15*time.Minute),
+		inviteLimits:      newAuthLimits(10, 5, 15*time.Minute),
+		refreshLimits:     newAuthLimits(30, 0, 5*time.Minute),
+		proxyNotice:       &proxyNotice{notices: d.Notices},
 	}
+	h.ClientIPs = clientip.New(func() string {
+		if d.Settings == nil {
+			return ""
+		}
+		return d.Settings.Get(settings.KeyTrustedProxies, "")
+	})
+	h.ClientIPs.OnUntrustedForward = h.proxyNotice.observe
+	return h
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

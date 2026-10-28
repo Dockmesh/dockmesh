@@ -171,19 +171,30 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := chi.URLParam(r, "token")
+	ip := clientIP(r)
+	if !h.inviteLimits.allow(w, ip, "") {
+		return
+	}
 	inv, err := h.Invites.Get(r.Context(), token)
 	switch {
 	case errors.Is(err, invites.ErrNotFound):
+		h.inviteLimits.fail(ip, "")
 		writeError(w, http.StatusNotFound, "invite not found")
 		return
 	case errors.Is(err, invites.ErrExpired):
+		h.inviteLimits.fail(ip, "")
 		writeError(w, http.StatusGone, "invite expired")
 		return
 	case errors.Is(err, invites.ErrUsed):
+		h.inviteLimits.fail(ip, "")
 		writeError(w, http.StatusGone, "invite already used")
 		return
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	account := "invite:" + strconv.FormatInt(inv.ID, 10)
+	if !h.inviteLimits.allow(w, ip, account) {
 		return
 	}
 
@@ -201,6 +212,7 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.Auth.CreateUser(r.Context(), in.Username, in.Email, in.Password, inv.Role)
 	if err != nil {
+		h.inviteLimits.fail(ip, account)
 		switch {
 		case errors.Is(err, auth.ErrUsernameTaken):
 			writeError(w, http.StatusConflict, "username taken")
@@ -249,7 +261,7 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 	// Sign the new user in immediately so they land in the dashboard.
 	// StartSessionForSSO mints a fresh token pair without password /
 	// MFA — same shape we use after a verified SSO callback.
-	result, err := h.Auth.StartSessionForSSO(r.Context(), *user, r.UserAgent(), inviteClientIP(r))
+	result, err := h.Auth.StartSessionForSSO(r.Context(), *user, r.UserAgent(), ip)
 	if err != nil {
 		// User exists but session minting failed — they can log in
 		// manually. Return 201 + user so the UI can redirect to /login.
@@ -261,21 +273,4 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		"access_token":  result.AccessToken,
 		"refresh_token": result.RefreshToken,
 	})
-}
-
-// inviteClientIP extracts the caller's IP for the invite session.
-// Mirrors middleware.clientIP — duplicated here to avoid cross-package
-// dependency on an internal helper.
-func inviteClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i > 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
-	}
-	addr := r.RemoteAddr
-	if i := strings.LastIndexByte(addr, ':'); i > 0 {
-		return addr[:i]
-	}
-	return addr
 }

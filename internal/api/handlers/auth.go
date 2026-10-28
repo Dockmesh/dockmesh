@@ -10,6 +10,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
+	"github.com/dockmesh/dockmesh/internal/clientip"
 )
 
 func plural(n int) string {
@@ -120,7 +121,16 @@ func (h *Handlers) Refresh(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "refresh_token required")
 		return
 	}
+	// Only per IP: a refresh token that fails verification names no
+	// account we could trust.
+	ip := clientIP(r)
+	if !h.refreshLimits.allow(w, ip, "") {
+		return
+	}
 	res, err := h.Auth.Refresh(r.Context(), req.RefreshToken)
+	if errors.Is(err, auth.ErrInvalidToken) || errors.Is(err, auth.ErrTokenReused) {
+		h.refreshLimits.fail(ip, "")
+	}
 	switch {
 	case errors.Is(err, auth.ErrTokenReused):
 		writeError(w, http.StatusUnauthorized, "token reuse detected")
@@ -150,9 +160,4 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func clientIP(r *http.Request) string {
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		return fwd
-	}
-	return r.RemoteAddr
-}
+func clientIP(r *http.Request) string { return clientip.IP(r) }
