@@ -133,4 +133,8 @@ func TestSSOLinkingMigration(t *testing.T) {
 			t.Errorf("%s role_source = %q (%v), want %q", id, got, err, want)
 		}
 	}
+	var body string
+	if err := database.QueryRow(`SELECT body FROM notices WHERE key = 'sso-linked-accounts-review'`).Scan(&body); err != nil || !strings.Contains(body, "1 account(s) linked to SSO.") {
+		t.Errorf("review notice: %q (%v)", body, err)
+	}
 }
