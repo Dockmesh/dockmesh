@@ -97,11 +97,12 @@
   }
 
   const sp = $derived(statusPill(run.status));
-  const restoreModes: { id: 'in-place' | 'alongside' | 'download'; title: string; blurb: string; danger?: boolean }[] = [
+  const allRestoreModes: { id: 'in-place' | 'alongside' | 'download'; title: string; blurb: string; danger?: boolean }[] = [
     { id: 'in-place', title: 'Restore in place', blurb: 'Replace current data on this dockmesh. Stops affected stacks first.', danger: true },
     { id: 'alongside', title: 'Restore alongside', blurb: 'Mount as new stacks with a -restored suffix. Original keeps running.' },
     { id: 'download', title: 'Download archive', blurb: 'Stream the encrypted .tar.age locally for offline inspection.' }
-  ].filter((m) => m.id !== 'download' || allowed('backups.download'));
+  ];
+  const restoreModes = allRestoreModes.filter((m) => m.id !== 'download' || allowed('backups.download'));
 
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape') onclose();
