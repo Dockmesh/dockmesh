@@ -25,7 +25,7 @@ func (h *Handlers) BrowseContainerFiles(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if !h.requireContainerScope(w, r, rbac.PermContainersExec, target, id) {
+	if !h.requireContainerScope(w, r, rbac.PermContainersExec, target.ID(), id) {
 		return
 	}
 	p := r.URL.Query().Get("path")
@@ -57,7 +57,7 @@ func (h *Handlers) ReadContainerFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if !h.requireContainerScope(w, r, rbac.PermContainersExec, target, id) {
+	if !h.requireContainerScope(w, r, rbac.PermContainersExec, target.ID(), id) {
 		return
 	}
 	p := r.URL.Query().Get("path")
@@ -86,7 +86,7 @@ func (h *Handlers) DownloadContainerFile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if !h.requireContainerScope(w, r, rbac.PermContainersExec, target, id) {
+	if !h.requireContainerScope(w, r, rbac.PermContainersExec, target.ID(), id) {
 		return
 	}
 	p := r.URL.Query().Get("path")
@@ -132,7 +132,7 @@ func (h *Handlers) WriteContainerFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if !h.requireContainerScope(w, r, rbac.PermContainersExec, target, id) {
+	if !h.requireContainerScope(w, r, rbac.PermContainersExec, target.ID(), id) {
 		return
 	}
 	var req containerFileWriteRequest

@@ -38,7 +38,7 @@ func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
 	}
 
 	containerID := chi.URLParam(r, "id")
-	if !h.wsContainerAccess(w, r, rbac.PermContainersExec, target, containerID) {
+	if !h.wsContainerAccess(w, r, rbac.PermContainersExec, target.ID(), containerID) {
 		return
 	}
 	cmd := r.URL.Query().Get("cmd")

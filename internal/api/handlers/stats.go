@@ -30,7 +30,7 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	containerID := chi.URLParam(r, "id")
-	if !h.wsContainerAccess(w, r, rbac.PermContainersView, target, containerID) {
+	if !h.wsContainerAccess(w, r, rbac.PermContainersView, target.ID(), containerID) {
 		return
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)

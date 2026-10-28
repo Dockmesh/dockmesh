@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
-	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/updater"
 	"github.com/go-chi/chi/v5"
@@ -23,11 +22,7 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
-		return
-	}
-	if !h.requireContainerScope(w, r, rbac.PermContainersUpdate, host.NewLocal(h.Docker), id) {
+	if !h.requireContainerScope(w, r, rbac.PermContainersUpdate, "local", id) {
 		return
 	}
 	res, err := h.Updater.Update(r.Context(), id)
@@ -52,11 +47,7 @@ func (h *Handlers) RollbackContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if h.Docker == nil {
-		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
-		return
-	}
-	if !h.requireContainerScope(w, r, rbac.PermContainersUpdate, host.NewLocal(h.Docker), id) {
+	if !h.requireContainerScope(w, r, rbac.PermContainersUpdate, "local", id) {
 		return
 	}
 	var req rollbackRequest

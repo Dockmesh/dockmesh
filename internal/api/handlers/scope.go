@@ -162,29 +162,40 @@ func (h *Handlers) writeRoleScopeDenied(w http.ResponseWriter, r *http.Request, 
 }
 
 // containerScopeReq builds a ScopeRequest for a container-keyed handler.
-// The compose stack label is read by inspecting the container on target,
-// the host it actually runs on; if inspect fails the request stays
-// host-only, which a stack-scoped role does not match.
-func (h *Handlers) containerScopeReq(ctx context.Context, target host.Host, containerID string) rbac.ScopeRequest {
-	req := rbac.ScopeRequest{HostID: target.ID()}
-	if info, err := target.InspectContainer(ctx, containerID); err == nil {
-		if info.Config != nil && info.Config.Labels != nil {
+// The compose stack label is read by inspecting the container on hostID,
+// the host it actually runs on; if that fails the request stays host-only,
+// which a stack-scoped role does not match.
+func (h *Handlers) containerScopeReq(ctx context.Context, hostID, containerID string) rbac.ScopeRequest {
+	req := rbac.ScopeRequest{HostID: hostID}
+	if target, err := h.hostByID(hostID); err == nil {
+		if info, err := target.InspectContainer(ctx, containerID); err == nil && info.Config != nil {
 			req.StackName = info.Config.Labels["com.docker.compose.project"]
 		}
 	}
-	if h.HostTags != nil {
-		req.HostTags = h.HostTags.Tags(target.ID())
+	if h.HostTags != nil && hostID != "" {
+		req.HostTags = h.HostTags.Tags(hostID)
 	}
 	return req
 }
 
+// hostByID resolves a host id like pickHost does for ?host=.
+func (h *Handlers) hostByID(hostID string) (host.Host, error) {
+	if h.Hosts == nil {
+		if h.Docker == nil {
+			return nil, host.ErrNoDocker
+		}
+		return host.NewLocal(h.Docker), nil
+	}
+	return h.Hosts.Pick(hostID)
+}
+
 // requireContainerScope applies the caller's host scope and the role scope
-// of the container on target. Writes 403 and returns false when out of scope.
-func (h *Handlers) requireContainerScope(w http.ResponseWriter, r *http.Request, perm rbac.Perm, target host.Host, containerID string) bool {
-	if !h.requireHostAccess(w, r, target.ID()) {
+// of the container on hostID. Writes 403 and returns false when out of scope.
+func (h *Handlers) requireContainerScope(w http.ResponseWriter, r *http.Request, perm rbac.Perm, hostID, containerID string) bool {
+	if !h.requireHostAccess(w, r, hostID) {
 		return false
 	}
-	scopeReq := h.containerScopeReq(r.Context(), target, containerID)
+	scopeReq := h.containerScopeReq(r.Context(), hostID, containerID)
 	if !h.checkRoleScope(r, scopeReq) {
 		h.writeRoleScopeDenied(w, r, perm, scopeReq, "container "+containerID)
 		return false

@@ -13,7 +13,6 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/auth"
-	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
@@ -176,12 +175,12 @@ func (h *Handlers) wsWatch(r *http.Request, conn *websocket.Conn, perm rbac.Perm
 
 // wsContainerAccess applies the host scope of the caller and the role scope
 // for the container. Writes 403 and returns false when out of scope.
-func (h *Handlers) wsContainerAccess(w http.ResponseWriter, r *http.Request, perm rbac.Perm, target host.Host, containerID string) bool {
-	if !h.canAccessHost(r, target.ID()) {
+func (h *Handlers) wsContainerAccess(w http.ResponseWriter, r *http.Request, perm rbac.Perm, hostID, containerID string) bool {
+	if !h.canAccessHost(r, hostID) {
 		http.Error(w, "out of scope: your role does not include this host", http.StatusForbidden)
 		return false
 	}
-	scopeReq := h.containerScopeReq(r.Context(), target, containerID)
+	scopeReq := h.containerScopeReq(r.Context(), hostID, containerID)
 	if !h.checkRoleScope(r, scopeReq) {
 		h.writeRoleScopeDenied(w, r, perm, scopeReq, "container "+containerID)
 		return false
@@ -205,7 +204,7 @@ func (h *Handlers) WSLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	containerID := chi.URLParam(r, "id")
-	if !h.wsContainerAccess(w, r, rbac.PermContainersLogs, target, containerID) {
+	if !h.wsContainerAccess(w, r, rbac.PermContainersLogs, target.ID(), containerID) {
 		return
 	}
 	tail := r.URL.Query().Get("tail")
