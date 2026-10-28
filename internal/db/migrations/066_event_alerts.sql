@@ -6,6 +6,10 @@ ALTER TABLE alert_rules ADD COLUMN scope_host TEXT NOT NULL DEFAULT '';
 ALTER TABLE alert_rules ADD COLUMN scope_tag TEXT NOT NULL DEFAULT '';
 ALTER TABLE alert_rules ADD COLUMN scope_stack TEXT NOT NULL DEFAULT '';
 
+-- Host an entry came from, so host-scoped users only see their hosts.
+-- Empty for backup and certificate rules, which belong to no host.
+ALTER TABLE alert_history ADD COLUMN host_id TEXT NOT NULL DEFAULT 'local';
+
 INSERT INTO alert_rules
     (name, kind, container_filter, metric, operator, threshold, duration_seconds,
      channel_ids, enabled, severity, cooldown_seconds, builtin)

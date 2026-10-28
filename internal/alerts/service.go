@@ -75,6 +75,7 @@ type HistoryEntry struct {
 	RuleName      string  `json:"rule_name"`
 	Severity      string  `json:"severity,omitempty"` // enriched from alert_rules
 	Kind          string  `json:"kind,omitempty"`     // enriched from alert_rules
+	HostID        string  `json:"host_id"`
 	ContainerName string  `json:"container_name"`
 	Status        string  `json:"status"`
 	Message       string  `json:"message"`
@@ -142,6 +143,7 @@ type Service struct {
 	evMu        sync.Mutex
 	stopping    map[string]time.Time
 	dies        map[string][]time.Time
+	rate        map[string]eventBucket
 	watching    map[string]context.CancelFunc
 	unsupported string
 
@@ -169,6 +171,7 @@ func NewService(db *sql.DB, notifier *notify.Service) *Service {
 		lastNotified: make(map[string]time.Time),
 		stopping:     make(map[string]time.Time),
 		dies:         make(map[string][]time.Time),
+		rate:         make(map[string]eventBucket),
 		watching:     make(map[string]context.CancelFunc),
 		lastRunID:    -1,
 	}
@@ -371,7 +374,7 @@ func (s *Service) History(ctx context.Context, limit int) ([]HistoryEntry, error
 	// rule has been deleted (rule_id may dangle).
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT h.id, h.rule_id, h.rule_name, COALESCE(r.severity, ''), COALESCE(r.kind, ''),
-		       h.container_name, h.status, h.message,
+		       h.host_id, h.container_name, h.status, h.message,
 		       COALESCE(h.value, 0), COALESCE(h.threshold, 0), h.notified, h.occurred_at
 		  FROM alert_history h
 		  LEFT JOIN alert_rules r ON r.id = h.rule_id
@@ -385,7 +388,7 @@ func (s *Service) History(ctx context.Context, limit int) ([]HistoryEntry, error
 		var e HistoryEntry
 		var notified int
 		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Severity, &e.Kind,
-			&e.ContainerName, &e.Status, &e.Message, &e.Value, &e.Threshold,
+			&e.HostID, &e.ContainerName, &e.Status, &e.Message, &e.Value, &e.Threshold,
 			&notified, &e.OccurredAt); err != nil {
 			return nil, err
 		}
@@ -459,6 +462,7 @@ func (s *Service) evalAll(ctx context.Context, now time.Time) {
 		return
 	}
 	s.setRules(rules)
+	s.pruneState(now)
 	s.refreshCerts(ctx, now)
 
 	src := s.src()
@@ -567,7 +571,7 @@ func (s *Service) evalRule(ctx context.Context, r *Rule, now time.Time) error {
 		last := smp[len(smp)-1].Value
 		switch {
 		case firing && !wasFiring:
-			s.fireRule(ctx, r, name, fmt.Sprintf("%s on %s: %s = %.1f (threshold %s %.1f)",
+			s.fireRule(ctx, r, "local", name, fmt.Sprintf("%s on %s: %s = %.1f (threshold %s %.1f)",
 				r.Name, name, r.Metric, last, r.Operator, r.Threshold), last, now)
 		case !firing && wasFiring:
 			s.resolveRule(ctx, r, name, fmt.Sprintf("%s on %s resolved: %s = %.1f",
@@ -618,16 +622,16 @@ func (s *Service) inCooldown(r *Rule, key string, t time.Time) bool {
 // fireRule records a fire for target and notifies unless muted or in
 // cooldown. One-shot kinds (OOM, failed backup run) have nothing to
 // resolve, so they never enter the firing set.
-func (s *Service) fireRule(ctx context.Context, r *Rule, container, msg string, value float64, ts time.Time) {
+func (s *Service) fireRule(ctx context.Context, r *Rule, hostID, container, msg string, value float64, ts time.Time) {
 	key := stateKey(r.ID, container)
 	muted := r.mutedAt(ts)
 	cooling := s.inCooldown(r, key, ts)
 	notified := !muted && !cooling
 
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, value, threshold, notified)
-		VALUES (?, ?, ?, 'fired', ?, ?, ?, ?)`,
-		r.ID, r.Name, container, msg, value, r.Threshold, boolInt(notified)); err != nil {
+		INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, value, threshold, notified, host_id)
+		VALUES (?, ?, ?, 'fired', ?, ?, ?, ?, ?)`,
+		r.ID, r.Name, container, msg, value, r.Threshold, boolInt(notified), hostID); err != nil {
 		slog.Warn("alerts: record fire", "rule", r.Name, "err", err)
 	}
 	if _, err := s.db.ExecContext(ctx,
@@ -705,9 +709,12 @@ func (s *Service) resolveRule(ctx context.Context, r *Rule, container, msg strin
 	notified := fireNotified && !r.mutedAt(ts)
 
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, value, threshold, notified)
-		VALUES (?, ?, ?, 'resolved', ?, ?, ?, ?)`,
-		r.ID, r.Name, container, msg, value, r.Threshold, boolInt(notified)); err != nil {
+		INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, value, threshold, notified, host_id)
+		VALUES (?, ?, ?, 'resolved', ?, ?, ?, ?,
+		        COALESCE((SELECT host_id FROM alert_history
+		                   WHERE rule_id = ? AND container_name = ? AND status = 'fired'
+		                   ORDER BY id DESC LIMIT 1), ''))`,
+		r.ID, r.Name, container, msg, value, r.Threshold, boolInt(notified), r.ID, container); err != nil {
 		slog.Warn("alerts: record resolve", "rule", r.Name, "err", err)
 	}
 	if !s.ruleHasFiring(r.ID) {
@@ -755,6 +762,9 @@ func (s *Service) ruleHasFiring(ruleID int64) bool {
 // -----------------------------------------------------------------------------
 // helpers
 // -----------------------------------------------------------------------------
+
+// Rule returns one rule by id.
+func (s *Service) Rule(ctx context.Context, id int64) (*Rule, error) { return s.getRule(ctx, id) }
 
 func (s *Service) getRule(ctx context.Context, id int64) (*Rule, error) {
 	row := s.db.QueryRowContext(ctx, `
@@ -828,6 +838,22 @@ func normalizeOperator(op string) string {
 	return op
 }
 
+type eventBucket struct {
+	start time.Time
+	n     int
+}
+
+// maxRuleField bounds the free-text rule fields; they are only compared
+// for equality, so this is about size.
+const maxRuleField = 255
+
+// maxDuration per kind keeps lookback windows and die histories bounded.
+var maxDuration = map[string]int{
+	KindMetric:      24 * 3600,
+	KindRestartLoop: 7 * 24 * 3600,
+	KindHostOffline: 30 * 24 * 3600,
+}
+
 // normalizeInput folds operator aliases and defaults the kind and the
 // target filter.
 func normalizeInput(in RuleInput) RuleInput {
@@ -850,6 +876,14 @@ func validateInput(in RuleInput) error {
 	}
 	if in.ContainerFilter == "" {
 		return errors.New("container_filter required (use '*' for all)")
+	}
+	for _, f := range []string{in.Name, in.ContainerFilter, in.ScopeHost, in.ScopeTag, in.ScopeStack} {
+		if len(f) > maxRuleField {
+			return fmt.Errorf("name, filter and scope fields are limited to %d characters", maxRuleField)
+		}
+	}
+	if limit, ok := maxDuration[in.Kind]; ok && in.DurationSeconds > limit {
+		return fmt.Errorf("duration_seconds must be <= %d for this rule type", limit)
 	}
 	switch in.Kind {
 	case KindMetric:
@@ -880,6 +914,12 @@ func validateInput(in RuleInput) error {
 		return ErrInvalidKind
 	}
 	return nil
+}
+
+// HostBound reports whether rules of this kind watch one host's data.
+// Backup and certificate rules are global.
+func HostBound(kind string) bool {
+	return kind != KindBackupFailed && kind != KindBackupMissed && kind != KindCertExpiry
 }
 
 func stateKey(ruleID int64, container string) string {

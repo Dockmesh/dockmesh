@@ -51,10 +51,9 @@ func (a alertEventHost) ContainerEvents(ctx context.Context) (<-chan alerts.Cont
 				Stack:     attrs["com.docker.compose.project"],
 				Action:    string(m.Action),
 				ExitCode:  attrs["exitCode"],
-				Time:      time.Unix(0, m.TimeNano),
-			}
-			if m.TimeNano == 0 {
-				ev.Time = time.Now()
+				// Receive time, not the agent's clock: cooldown and the
+				// restart window compare it with the server's now.
+				Time: time.Now(),
 			}
 			select {
 			case out <- ev:

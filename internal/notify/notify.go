@@ -74,6 +74,7 @@ type Service struct {
 	db      *sql.DB
 	http    *http.Client
 	backoff []time.Duration // waits between delivery attempts; len+1 = attempts
+	sending chan struct{}   // bounds concurrent deliveries
 
 	mu    sync.RWMutex
 	cache map[int64]*Channel // id → row, kept in sync with DB on writes
@@ -84,6 +85,7 @@ func NewService(db *sql.DB) *Service {
 		db:      db,
 		http:    &http.Client{Timeout: 10 * time.Second},
 		backoff: []time.Duration{2 * time.Second, 10 * time.Second},
+		sending: make(chan struct{}, maxConcurrentSends),
 		cache:   make(map[int64]*Channel),
 	}
 }
@@ -141,7 +143,12 @@ func (s *Service) SendTo(ctx context.Context, id int64, n Notification) error {
 	return err
 }
 
+// maxConcurrentSends caps deliveries in flight; each can take ~45 s
+// against a slow endpoint (3 attempts plus backoff).
+const maxConcurrentSends = 64
+
 var (
+	errQueueFull       = errors.New("too many deliveries in flight; notification dropped")
 	errChannelNotFound = errors.New("channel not found")
 	errChannelDisabled = errors.New("channel disabled")
 )
@@ -170,7 +177,15 @@ func (s *Service) prepare(id int64) (channelImpl, error) {
 // fails silently.
 func (s *Service) SendToAll(ctx context.Context, ids []int64, n Notification) {
 	for _, id := range ids {
+		select {
+		case s.sending <- struct{}{}:
+		default:
+			slog.Warn("notify: too many deliveries in flight, dropping", "channel_id", id)
+			s.recordResult(ctx, id, errQueueFull)
+			continue
+		}
 		go func(id int64) {
+			defer func() { <-s.sending }()
 			if err := s.sendWithRetry(ctx, id, n); err != nil {
 				slog.Warn("notify send failed", "channel_id", id, "err", err)
 			}

@@ -7613,6 +7613,7 @@ components:
         value: { type: number }
         threshold: { type: number }
         kind: { type: string, description: Kind of the rule that produced the entry; empty if the rule was deleted. }
+        host_id: { type: string, description: 'Host the entry came from ("local" for the server); empty for backup and certificate rules. Host-scoped callers only see entries of their hosts.' }
         notified:
           type: boolean
           description: False when the transition was recorded but channels were not notified (rule muted or inside its cooldown).

@@ -357,3 +357,52 @@ func TestDefaultEventRules(t *testing.T) {
 		t.Errorf("fresh install got the upgrade notice")
 	}
 }
+
+func TestEventRateLimitPerHost(t *testing.T) {
+	s, database := newEvalService(t)
+	r := eventRule(t, s, RuleInput{Kind: KindOOM})
+	for i := 0; i < eventsPerSecond+20; i++ {
+		s.handleEvent(context.Background(), ContainerEvent{
+			HostID: "a1", HostName: "edge", Container: "c" + string(rune('a'+i%26)) + string(rune('a'+i/26)),
+			Action: "oom", Time: evalNow,
+		})
+	}
+	if got := len(statuses(t, database, r.ID)); got != eventsPerSecond {
+		t.Fatalf("recorded %d events in one second, want %d", got, eventsPerSecond)
+	}
+	s.handleEvent(context.Background(), ContainerEvent{HostID: "a1", HostName: "edge", Container: "late", Action: "oom", Time: evalNow.Add(time.Second)})
+	if got := len(statuses(t, database, r.ID)); got != eventsPerSecond+1 {
+		t.Fatalf("next window not accepted: %d", got)
+	}
+}
+
+func TestDieHistoryPrunedForQuietContainers(t *testing.T) {
+	s, _ := newEvalService(t)
+	r := eventRule(t, s, RuleInput{Kind: KindRestartLoop, Threshold: 3, DurationSeconds: 300})
+	s.handleEvent(context.Background(), ev("die", 0, "0"))
+	if len(s.dies) != 1 {
+		t.Fatalf("dies = %d, want 1", len(s.dies))
+	}
+	s.expireRestartLoops(context.Background(), r, evalNow.Add(10*time.Minute))
+	if len(s.dies) != 0 {
+		t.Fatalf("die history of a quiet container kept: %v", s.dies)
+	}
+}
+
+func TestValidateInputBounds(t *testing.T) {
+	long := string(make([]byte, maxRuleField+1))
+	tests := []struct {
+		name string
+		in   RuleInput
+	}{
+		{"restart window over a week", RuleInput{Name: "x", Kind: KindRestartLoop, ContainerFilter: "*", Threshold: 3, DurationSeconds: 8 * 24 * 3600}},
+		{"metric lookback over a day", RuleInput{Name: "x", Kind: KindMetric, ContainerFilter: "*", Metric: "cpu_percent", Operator: "gt", Threshold: 1, DurationSeconds: 2 * 24 * 3600}},
+		{"oversized scope", RuleInput{Name: "x", Kind: KindOOM, ContainerFilter: "*", ScopeTag: long}},
+		{"unknown kind", RuleInput{Name: "x", Kind: "nope", ContainerFilter: "*"}},
+	}
+	for _, tt := range tests {
+		if err := validateInput(tt.in); err == nil {
+			t.Errorf("%s: accepted", tt.name)
+		}
+	}
+}
