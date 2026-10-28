@@ -27,3 +27,7 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 ### Added
 - Each release now ships a `release-manifest.json` with its severity, advisories and
   required upgrade steps, and its release notes are taken from this changelog.
+- When something needs your attention after an upgrade, Dockmesh now shows it as a banner
+  and at the top of the notifications drawer, with a link to where you fix it. The notice
+  goes away on its own once the issue is fixed; non-critical ones can be hidden from the
+  banner.

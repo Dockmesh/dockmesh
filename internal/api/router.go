@@ -155,6 +155,10 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Post("/notifications/read-all", h.MarkAllNotificationsRead)
 			r.Delete("/notifications/{id}", h.DeleteNotification)
 
+			// Action-required notices; audience filtering happens in the handler.
+			r.Get("/notices", h.ListNotices)
+			r.Post("/notices/{id}/dismiss", h.DismissNotice)
+
 			// -------------------------- READ ROUTES --------------------------
 			// Per-resource *.view permissions (RBAC v2). Each group gates
 			// its own listing + inspect endpoints. Built-in viewer role

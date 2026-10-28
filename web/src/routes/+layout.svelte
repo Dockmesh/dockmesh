@@ -9,6 +9,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { Toaster, ConfirmDialog, UpdateBanner, HealthDot } from '$lib/components/ui';
   import NotificationCenter from '$lib/components/ui/NotificationCenter.svelte';
+  import NoticeBanner from '$lib/components/ui/NoticeBanner.svelte';
   import BackupHealthPill from '$lib/components/BackupHealthPill.svelte';
   import MigrationActivePill from '$lib/components/MigrationActivePill.svelte';
   import MigrationDrawer from '$lib/components/MigrationDrawer.svelte';
@@ -579,6 +580,7 @@
           </button>
         </div>
 
+        <NoticeBanner />
         <UpdateBanner />
 
         <div class="app-page dm-fade-in">
