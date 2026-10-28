@@ -20,7 +20,7 @@ func Map(cfg map[string]any, secrets []string) map[string]any {
 	if cfg == nil {
 		return nil
 	}
-	out := make(map[string]any, len(cfg)+len(secrets))
+	out := make(map[string]any, len(cfg))
 	for k, v := range cfg {
 		out[k] = v
 	}
