@@ -22,7 +22,6 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
-	"github.com/dockmesh/dockmesh/internal/safepath"
 	_ "modernc.org/sqlite"
 )
 
@@ -275,6 +274,8 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 	dataDir := filepath.Dir(cfg.DBPath)
 	liveDB := filepath.Base(cfg.DBPath)
 	entries := 0
+	roots := rootSet{}
+	defer roots.close()
 	for {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -316,35 +317,32 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 			// fields we don't understand).
 			continue
 		}
-		targetPath := dbTmp
+		fsys, name := hostFS(), dbTmp
 		if root != "" {
-			if err := os.MkdirAll(root, 0o755); err != nil {
+			r, err := roots.open(root)
+			if err != nil {
 				return nil, err
 			}
-			// Resolve follows links already on disk, so a pre-existing
-			// symlink under the root can't redirect a write elsewhere.
-			if targetPath, err = safepath.Resolve(root, rel); err != nil {
-				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
-			}
+			fsys, name = rootFS(r), filepath.FromSlash(rel)
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(targetPath, 0o755); err != nil {
-				return nil, fmt.Errorf("mkdir %q: %w", targetPath, err)
+			if err := fsys.mkdirAll(name, 0o755); err != nil {
+				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
 			}
 		case tar.TypeReg, tar.TypeRegA:
-			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-				return nil, err
+			if err := fsys.mkdirAll(filepath.Dir(name), 0o755); err != nil {
+				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
 			}
 			// DR bootstrap: the user has to pre-seed secrets.age-key (0400)
 			// before running restore so we can decrypt the tarball. The
 			// tarball also contains secrets.age-key, and overwriting a
 			// 0400 file via O_TRUNC fails with EACCES — unlink-then-create
 			// makes this idempotent.
-			_ = os.Remove(targetPath)
-			out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, os.FileMode(hdr.Mode&0o777)) //nolint:gosec // masked to permission bits
+			_ = fsys.remove(name)
+			out, err := fsys.openFile(name, os.O_CREATE|os.O_WRONLY|os.O_EXCL, os.FileMode(hdr.Mode&0o777)) //nolint:gosec // masked to permission bits
 			if err != nil {
-				return nil, fmt.Errorf("create %q: %w", targetPath, err)
+				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
 			}
 			src := io.Reader(tr)
 			if opts.MaxBytes > 0 {
@@ -353,15 +351,59 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 			n, err := io.Copy(out, src)
 			out.Close()
 			if err != nil {
-				return nil, fmt.Errorf("write %q: %w", targetPath, err)
+				return nil, fmt.Errorf("write %q: %w", hdr.Name, err)
 			}
 			if opts.MaxBytes > 0 && c.Bytes+n > opts.MaxBytes {
 				return nil, ErrTooLarge
 			}
-			_ = os.Chtimes(targetPath, hdr.ModTime, hdr.ModTime)
+			_ = fsys.chtimes(name, hdr.ModTime, hdr.ModTime)
 			c.Files++
 			c.Bytes += n
 		}
 	}
 	return c, nil
+}
+
+// rootSet opens one os.Root per destination directory. Writing through
+// it lets the kernel refuse any path, symlinks already on disk included,
+// that would leave the directory.
+type rootSet map[string]*os.Root
+
+func (rs rootSet) open(dir string) (*os.Root, error) {
+	if r, ok := rs[dir]; ok {
+		return r, nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	rs[dir] = r
+	return r, nil
+}
+
+func (rs rootSet) close() {
+	for _, r := range rs {
+		r.Close()
+	}
+}
+
+// entryFS is the subset of file operations extraction needs, either on
+// an os.Root or (for the DB temp file this package names itself) on the
+// host filesystem.
+type entryFS struct {
+	mkdirAll func(string, os.FileMode) error
+	remove   func(string) error
+	openFile func(string, int, os.FileMode) (*os.File, error)
+	chtimes  func(string, time.Time, time.Time) error
+}
+
+func rootFS(r *os.Root) entryFS {
+	return entryFS{r.MkdirAll, r.Remove, r.OpenFile, r.Chtimes}
+}
+
+func hostFS() entryFS {
+	return entryFS{os.MkdirAll, os.Remove, os.OpenFile, os.Chtimes}
 }

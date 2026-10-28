@@ -884,12 +884,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 			respond(conn, f.ID, nil, err)
 			return
 		}
-		abs, err := host.SanitizeVolumePath(mp, req.SubPath)
-		if err != nil {
-			respond(conn, f.ID, nil, err)
-			return
-		}
-		entries, err := host.BrowseDir(abs)
+		entries, err := host.BrowseVolume(mp, req.SubPath)
 		respond(conn, f.ID, entries, err)
 
 	case agents.FrameReqVolumeBrowseFile:
@@ -905,12 +900,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 			respond(conn, f.ID, nil, err)
 			return
 		}
-		abs, err := host.SanitizeVolumePath(mp, req.SubPath)
-		if err != nil {
-			respond(conn, f.ID, nil, err)
-			return
-		}
-		res, err := host.ReadFile(abs, req.MaxBytes)
+		res, err := host.ReadVolumeFile(mp, req.SubPath, req.MaxBytes)
 		respond(conn, f.ID, res, err)
 
 	case agents.FrameReqDaemonInfo:

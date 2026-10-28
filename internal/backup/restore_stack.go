@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	dvolume "github.com/docker/docker/api/types/volume"
-	"github.com/dockmesh/dockmesh/internal/safepath"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
@@ -62,6 +61,13 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 	if err := os.MkdirAll(stackDir, 0o755); err != nil {
 		return fmt.Errorf("create stack dir: %w", err)
 	}
+	// Writing through an os.Root lets the kernel refuse any path, links
+	// already in the stack dir included, that would leave it.
+	root, err := os.OpenRoot(stackDir)
+	if err != nil {
+		return fmt.Errorf("open stack dir: %w", err)
+	}
+	defer root.Close()
 
 	gz, err := gzip.NewReader(src)
 	if err != nil {
@@ -100,16 +106,10 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 				report.Warnings = append(report.Warnings, fmt.Sprintf("skipped path traversal attempt: %s", name))
 				continue
 			}
-			// Resolve follows links already in the stack dir, so one can't
-			// redirect a restored file outside it.
-			dst, err := safepath.Resolve(stackDir, rel)
-			if err != nil {
-				report.Warnings = append(report.Warnings, fmt.Sprintf("skipped path outside the stack dir: %s", name))
-				continue
-			}
+			dst := filepath.FromSlash(rel)
 			switch hdr.Typeflag {
 			case tar.TypeDir:
-				if err := os.MkdirAll(dst, 0o755); err != nil {
+				if err := root.MkdirAll(dst, 0o755); err != nil {
 					return fmt.Errorf("mkdir %s: %w", rel, err)
 				}
 			case tar.TypeReg, tar.TypeRegA:
@@ -117,7 +117,7 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 					report.Warnings = append(report.Warnings, fmt.Sprintf("skipped oversize file (%d bytes): %s", hdr.Size, rel))
 					continue
 				}
-				if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				if err := root.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 					return fmt.Errorf("mkdir parent for %s: %w", rel, err)
 				}
 				buf, err := io.ReadAll(io.LimitReader(tr, stackRestoreFileSizeCap+1))
@@ -128,7 +128,7 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 					report.Warnings = append(report.Warnings, fmt.Sprintf("skipped oversize file: %s", rel))
 					continue
 				}
-				if err := os.WriteFile(dst, buf, 0o644); err != nil {
+				if err := root.WriteFile(dst, buf, 0o644); err != nil {
 					return fmt.Errorf("write %s: %w", rel, err)
 				}
 				report.FilesRestored = append(report.FilesRestored, rel)

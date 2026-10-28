@@ -318,14 +318,10 @@ func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath strin
 	}
 	// The helper container resolves links inside its own mount of the
 	// volume, so absolute in-volume symlinks work there safely.
-	abs, err := SanitizeVolumePath(mp, subpath)
-	if errors.Is(err, fs.ErrPermission) || errors.Is(err, ErrVolumePathEscape) {
+	entries, err := BrowseVolume(mp, subpath)
+	if errors.Is(err, ErrVolumePathEscape) {
 		return BrowseDirViaHelper(ctx, h.cli, name, subpath)
 	}
-	if err != nil {
-		return nil, err
-	}
-	entries, err := BrowseDir(abs)
 	if err != nil && errors.Is(err, fs.ErrPermission) {
 		return BrowseDirViaHelper(ctx, h.cli, name, subpath)
 	}
@@ -344,14 +340,10 @@ func (h *LocalHost) VolumeReadFile(ctx context.Context, name, subpath string, ma
 	if err != nil {
 		return nil, err
 	}
-	abs, err := SanitizeVolumePath(mp, subpath)
-	if errors.Is(err, fs.ErrPermission) || errors.Is(err, ErrVolumePathEscape) {
+	res, err := ReadVolumeFile(mp, subpath, maxBytes)
+	if errors.Is(err, ErrVolumePathEscape) {
 		return ReadFileViaHelper(ctx, h.cli, name, subpath, maxBytes)
 	}
-	if err != nil {
-		return nil, err
-	}
-	res, err := ReadFile(abs, maxBytes)
 	if err != nil && errors.Is(err, fs.ErrPermission) {
 		return ReadFileViaHelper(ctx, h.cli, name, subpath, maxBytes)
 	}

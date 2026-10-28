@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/dockmesh/dockmesh/internal/safepath"
 )
 
 // VolumeEntry is one row in a directory listing. The size / modified
@@ -49,7 +47,8 @@ var (
 const MaxBrowsePathLen = 2048
 
 // SanitizeVolumePath joins mountpoint + sub and rejects any result whose
-// absolute path, after following symlinks, sits outside the mountpoint.
+// absolute path sits outside the mountpoint. It is a lexical check on the
+// request; BrowseVolume and ReadVolumeFile confine the actual access.
 // The leading "/" on sub is stripped (absolute paths are treated as
 // relative to the volume root), but ".." segments are NOT collapsed
 // before the join — that lets filepath.Join evaluate them correctly and
@@ -80,34 +79,63 @@ func SanitizeVolumePath(mountpoint, sub string) (string, error) {
 	if absFull != absMount && !strings.HasPrefix(absFull, absMount+string(filepath.Separator)) {
 		return "", ErrVolumePathEscape
 	}
-	// The lexical check above can't see symlinks: a link inside the volume
-	// may point at any host path, and this process reads as its own user
-	// (root on agents). Resolve them and require the result to stay inside.
-	inside, err := filepath.Rel(absMount, absFull)
-	if err != nil {
-		return "", err
-	}
-	resolved, err := safepath.Resolve(absMount, filepath.ToSlash(inside))
-	if errors.Is(err, safepath.ErrEscape) {
-		return "", ErrVolumePathEscape
-	}
-	if err != nil {
-		return "", err
-	}
-	return resolved, nil
+	return absFull, nil
 }
 
-// BrowseDir lists a directory's direct children. Caller is responsible
-// for sanitizing the path before calling.
-func BrowseDir(absPath string) ([]VolumeEntry, error) {
-	info, err := os.Lstat(absPath)
+// openInVolume opens sub below mountpoint through an os.Root, so the
+// kernel-level lookup refuses every path, symlinks included, that would
+// leave the volume — there is no window between a check and the open.
+// The agent reads volumes as root; this is what keeps it inside them.
+func openInVolume(mountpoint, sub string) (*os.Root, string, *os.File, error) {
+	abs, err := SanitizeVolumePath(mountpoint, sub)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	absMount, err := filepath.Abs(mountpoint)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	rel, err := filepath.Rel(absMount, abs)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	root, err := os.OpenRoot(absMount)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	f, err := root.Open(rel)
+	if err != nil {
+		root.Close()
+		if isRootEscape(err) {
+			return nil, "", nil, ErrVolumePathEscape
+		}
+		return nil, "", nil, err
+	}
+	return root, rel, f, nil
+}
+
+// isRootEscape recognises os.Root refusing a path that leaves the root;
+// the os package doesn't export that error.
+func isRootEscape(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "escapes from parent")
+}
+
+// BrowseVolume lists the direct children of sub inside the volume.
+func BrowseVolume(mountpoint, sub string) ([]VolumeEntry, error) {
+	root, rel, f, err := openInVolume(mountpoint, sub)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
 	if !info.IsDir() {
 		return nil, ErrVolumeNotDir
 	}
-	dirents, err := os.ReadDir(absPath)
+	dirents, err := f.ReadDir(-1)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +155,7 @@ func BrowseDir(absPath string) ([]VolumeEntry, error) {
 		switch {
 		case fi.Mode()&os.ModeSymlink != 0:
 			entry.Type = "symlink"
-			if dest, err := os.Readlink(filepath.Join(absPath, d.Name())); err == nil {
+			if dest, err := root.Readlink(filepath.Join(rel, d.Name())); err == nil {
 				entry.LinkDest = dest
 			}
 		case fi.IsDir():
@@ -140,24 +168,25 @@ func BrowseDir(absPath string) ([]VolumeEntry, error) {
 	return out, nil
 }
 
-// ReadFile opens a regular file, reads up to maxBytes, and reports
-// whether more data exists. A nil / zero maxBytes defaults to 1MiB.
-func ReadFile(absPath string, maxBytes int64) (*VolumeFileResult, error) {
+// ReadVolumeFile reads up to maxBytes of a regular file inside the volume
+// and reports whether more data exists. Zero maxBytes means 1 MiB.
+func ReadVolumeFile(mountpoint, sub string, maxBytes int64) (*VolumeFileResult, error) {
 	if maxBytes <= 0 {
 		maxBytes = 1 << 20
 	}
-	info, err := os.Lstat(absPath)
+	root, _, f, err := openInVolume(mountpoint, sub)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
 		return nil, ErrVolumeNotFile
 	}
-	f, err := os.Open(absPath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
 
 	buf := make([]byte, maxBytes+1) // +1 so we can detect "there's more"
 	n, err := io.ReadFull(f, buf)
