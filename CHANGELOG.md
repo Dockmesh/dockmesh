@@ -31,3 +31,35 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and at the top of the notifications drawer, with a link to where you fix it. The notice
   goes away on its own once the issue is fixed; non-critical ones can be hidden from the
   banner.
+
+### Changed
+- API tokens now belong to the user who created them. A token never grants more than its
+  role and its owner's current permissions and host scope allow, and it stops working when
+  the owner is deleted. A token created with another token expires no later than it, and a
+  token can only revoke itself.
+- Turning off two-factor authentication, or replacing the authenticator, now asks for a
+  current code or a recovery code; after five wrong codes it is blocked for 15 minutes. Admins
+  can no longer use the user-management reset on their own account.
+- Changing your password signs out your other sessions; an admin password reset (in the UI
+  or with `dockmesh admin reset-password`) signs out all of the user's sessions.
+- A role or scope change now applies to a signed-in user's next request instead of after up
+  to 15 minutes.
+
+### Security
+- Each kind of signed token (session, refresh, two-factor challenge, WebSocket ticket, single
+  sign-on state) now has its own key and is only accepted for its own purpose. Before, a
+  half-finished two-factor login could be used to turn two-factor authentication off.
+- WebSocket connections for container exec, logs, stats and events now run with the
+  permissions and host scope of the user who opened them, and each ticket works only once.
+  Before, a user restricted to some stacks or hosts could open a shell in any container.
+  Open connections close when the session is signed out or the permission is taken away,
+  and exec sessions are now recorded in the audit log.
+- Signing in with an unknown username takes as long as with a wrong password, and invalid
+  API tokens can no longer tie up the server with expensive hash checks.
+
+### Upgrade notes
+- [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The
+  sign-in page says why.
+- [legacy-api-tokens, admins] API tokens created before this version have no owner. They keep
+  working and are marked "legacy" under API tokens; recreate each one while signed in as the
+  user who should own it, then revoke the old one. A notice stays up until none are left.

@@ -147,18 +147,7 @@ func (h *Handlers) canManageUser(r *http.Request, targetID string) bool {
 	if uid != "" && uid == targetID {
 		return true
 	}
-	role := middleware.Role(r.Context())
-	if h.Roles != nil {
-		if rd, ok := h.Roles.Get(role); ok {
-			for _, p := range rd.Permissions {
-				if p == rbac.PermUsersUpdate {
-					return true
-				}
-			}
-			return false
-		}
-	}
-	return rbac.Allowed(role, rbac.PermUsersUpdate)
+	return middleware.Allowed(r.Context(), rbac.PermUsersUpdate)
 }
 
 func humanBytes(n int) string {

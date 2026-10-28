@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -22,6 +23,16 @@ func (h *Handlers) audit(r *http.Request, action, target string, details any) {
 	}
 	uid := middleware.UserID(r.Context())
 	h.Audit.Write(r.Context(), uid, action, target, details)
+}
+
+// auditDetached writes an audit entry that must survive the request being
+// cancelled, e.g. at the end of a WebSocket session.
+func (h *Handlers) auditDetached(r *http.Request, action, target string, details any) {
+	if h.Audit == nil {
+		return
+	}
+	ctx := context.WithoutCancel(r.Context())
+	h.Audit.Write(ctx, middleware.UserID(ctx), action, target, details)
 }
 
 func (h *Handlers) ListAudit(w http.ResponseWriter, r *http.Request) {

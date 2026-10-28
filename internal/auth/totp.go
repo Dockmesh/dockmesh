@@ -135,6 +135,27 @@ func (s *Service) DisableTOTP(ctx context.Context, userID string) error {
 	return err
 }
 
+// DisableTOTPWithCode turns MFA off after checking a current TOTP code or
+// an unused recovery code, so a stolen session alone can't remove the
+// second factor. An enrollment that was started but never verified is
+// cleared without a code.
+func (s *Service) DisableTOTPWithCode(ctx context.Context, userID, code string) error {
+	enabled, err := s.HasMFA(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if enabled {
+		ok, err := s.verifyMFACode(ctx, userID, strings.TrimSpace(code))
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrMFAInvalidCode
+		}
+	}
+	return s.DisableTOTP(ctx, userID)
+}
+
 // HasMFA reports whether the user has verified MFA.
 func (s *Service) HasMFA(ctx context.Context, userID string) (bool, error) {
 	var v int
@@ -168,10 +189,16 @@ func (s *Service) verifyMFACode(ctx context.Context, userID, code string) (bool,
 				if h == target {
 					remaining := append(hashes[:i], hashes[i+1:]...)
 					newJSON, _ := json.Marshal(remaining)
-					_, _ = s.db.ExecContext(ctx,
-						`UPDATE users SET totp_recovery = ? WHERE id = ?`,
-						string(newJSON), userID)
-					return true, nil
+					// Conditional on the old list: two requests racing with
+					// the same code can't both redeem it.
+					res, err := s.db.ExecContext(ctx,
+						`UPDATE users SET totp_recovery = ? WHERE id = ? AND totp_recovery = ?`,
+						string(newJSON), userID, recovery.String)
+					if err != nil {
+						return false, err
+					}
+					n, _ := res.RowsAffected()
+					return n == 1, nil
 				}
 			}
 		}

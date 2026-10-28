@@ -166,7 +166,11 @@ func adminResetPassword(args []string) error {
 	if err := authSvc.ChangePassword(context.Background(), userID, pw); err != nil {
 		return err
 	}
-	fmt.Printf("password reset for user %s (id=%s)\n", *userFlag, userID)
+	revoked, err := authSvc.RevokeUserSessions(context.Background(), userID, "")
+	if err != nil {
+		return fmt.Errorf("password changed, but signing out sessions failed: %w", err)
+	}
+	fmt.Printf("password reset for user %s (id=%s), %d session(s) signed out\n", *userFlag, userID, revoked)
 	return nil
 }
 
