@@ -602,6 +602,7 @@
         <span>Enabled — accept sign-ins via this provider</span>
       </label>
 
+      {#if kind === 'oidc' || kind === 'oauth2'}
       <label class="pm-enabled">
         <input
           type="checkbox"
@@ -614,8 +615,9 @@
             else if (kind === 'ldap') ldap.allow_email_link = v;
           }}
         />
-        <span>Link to existing accounts with the same email — only when the provider marks the email as verified (OIDC, OAuth2)</span>
+        <span>Link to existing accounts with the same verified email</span>
       </label>
+      {/if}
 
       {#if kind === 'oidc'}
         <OIDCFields

@@ -89,6 +89,17 @@ type SSOIdentity struct {
 	Role          string // role derived from the IdP's groups/defaults
 }
 
+// ClaimTrue reads a boolean IdP claim; some IdPs send "true" as a string.
+func ClaimTrue(claims map[string]any, key string) bool {
+	switch v := claims[key].(type) {
+	case bool:
+		return v
+	case string:
+		return v == "true"
+	}
+	return false
+}
+
 // SetEmailLinking stores a provider's opt-in to attach an IdP identity to
 // an existing account with the same, verified email.
 func (s *Service) SetEmailLinking(ctx context.Context, kind string, providerID int64, allow bool) error {

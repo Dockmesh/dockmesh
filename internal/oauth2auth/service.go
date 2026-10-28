@@ -48,7 +48,6 @@ type Provider struct {
 	EmailField    string         `json:"email_field"`
 	GroupsField   string         `json:"groups_field"`
 	DefaultRole   string         `json:"default_role"`
-	AllowEmailLink bool `json:"allow_email_link"`
 	GroupMappings []GroupMapping `json:"group_mappings"`
 	Enabled       bool           `json:"enabled"`
 	IsDefault     bool           `json:"is_default"`
@@ -57,6 +56,8 @@ type Provider struct {
 	LastTestError string         `json:"last_test_error,omitempty"`
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
+
+	AllowEmailLink bool `json:"allow_email_link"`
 }
 
 type ProviderInput struct {
@@ -72,10 +73,11 @@ type ProviderInput struct {
 	EmailField    string         `json:"email_field"`
 	GroupsField   string         `json:"groups_field"`
 	DefaultRole   string         `json:"default_role"`
-	AllowEmailLink bool `json:"allow_email_link"`
 	GroupMappings []GroupMapping `json:"group_mappings,omitempty"`
 	Enabled       bool           `json:"enabled"`
 	IsDefault     bool           `json:"is_default,omitempty"`
+
+	AllowEmailLink bool `json:"allow_email_link"`
 }
 
 type PublicProvider struct {
@@ -463,8 +465,7 @@ func (s *Service) HandleCallback(ctx context.Context, pending *Pending, code, st
 		}
 	}
 
-	verified, _ := claims["email_verified"].(bool)
-	user, err := s.jitProvision(ctx, p, subject, name, email, role, verified)
+	user, err := s.jitProvision(ctx, p, subject, name, email, role, auth.ClaimTrue(claims, "email_verified"))
 	if err != nil {
 		return nil, err
 	}

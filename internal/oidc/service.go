@@ -56,7 +56,6 @@ type Provider struct {
 	OperatorGroup string         `json:"operator_group,omitempty"` // deprecated — use GroupMappings
 	GroupMappings []GroupMapping `json:"group_mappings"`
 	DefaultRole   string         `json:"default_role"`
-	AllowEmailLink bool `json:"allow_email_link"`
 	Enabled       bool           `json:"enabled"`
 	IsDefault     bool           `json:"is_default"`
 	LastTestedAt  *time.Time     `json:"last_tested_at,omitempty"`
@@ -64,6 +63,8 @@ type Provider struct {
 	LastTestError string         `json:"last_test_error,omitempty"`
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
+
+	AllowEmailLink bool `json:"allow_email_link"`
 }
 
 // ProviderInput is what a caller sends on create/update.
@@ -79,9 +80,10 @@ type ProviderInput struct {
 	OperatorGroup string         `json:"operator_group"`
 	GroupMappings []GroupMapping `json:"group_mappings,omitempty"`
 	DefaultRole   string         `json:"default_role"`
-	AllowEmailLink bool `json:"allow_email_link"`
 	Enabled       bool           `json:"enabled"`
 	IsDefault     bool           `json:"is_default,omitempty"`
+
+	AllowEmailLink bool `json:"allow_email_link"`
 }
 
 // Service holds the DB + secrets service and caches discovered provider
@@ -534,7 +536,7 @@ func (s *Service) jitProvision(ctx context.Context, cfg *Provider, subject strin
 
 	return s.auth.ProvisionSSOUser(ctx, auth.SSOIdentity{
 		Kind: "oidc", Provider: cfg.Slug, Subject: subject,
-		Email: email, EmailVerified: claimTrue(claims, "email_verified"),
+		Email: email, EmailVerified: auth.ClaimTrue(claims, "email_verified"),
 		Username: name, Role: role,
 	})
 }
@@ -578,16 +580,6 @@ func (s *Service) decryptSecret(stored string) (string, error) {
 // Utility funcs
 // -----------------------------------------------------------------------------
 
-// claimTrue reads a boolean claim; some IdPs send "true" as a string.
-func claimTrue(claims map[string]any, key string) bool {
-	switch v := claims[key].(type) {
-	case bool:
-		return v
-	case string:
-		return v == "true"
-	}
-	return false
-}
 
 func splitScopes(s string) []string {
 	var out []string

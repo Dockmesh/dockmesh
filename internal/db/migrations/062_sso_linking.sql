@@ -1,8 +1,8 @@
 -- An SSO login may attach itself to an existing account by email only when
 -- the provider allows it (off by default) and the IdP verified the email.
 -- A role set by an admin stays put on SSO logins; roles that came from the
--- IdP keep following its group mapping, which is how every account that
--- already signed in through SSO behaves today.
+-- IdP keep following its group mapping. Existing SSO-linked accounts start
+-- as 'sso'.
 ALTER TABLE oidc_providers ADD COLUMN allow_email_link INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE saml_providers ADD COLUMN allow_email_link INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE oauth2_providers ADD COLUMN allow_email_link INTEGER NOT NULL DEFAULT 0;

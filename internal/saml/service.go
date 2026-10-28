@@ -60,7 +60,6 @@ type Provider struct {
 	EmailAttribute     string         `json:"email_attribute"`
 	GroupsAttribute    string         `json:"groups_attribute"`
 	DefaultRole     string         `json:"default_role"`
-	AllowEmailLink bool `json:"allow_email_link"`
 	GroupMappings   []GroupMapping `json:"group_mappings"`
 	Enabled         bool           `json:"enabled"`
 	IsDefault       bool           `json:"is_default"`
@@ -69,6 +68,8 @@ type Provider struct {
 	LastTestError   string         `json:"last_test_error,omitempty"`
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
+
+	AllowEmailLink bool `json:"allow_email_link"`
 }
 
 // ProviderInput is the create/update payload.
@@ -81,10 +82,11 @@ type ProviderInput struct {
 	EmailAttribute     string         `json:"email_attribute"`
 	GroupsAttribute    string         `json:"groups_attribute"`
 	DefaultRole    string         `json:"default_role"`
-	AllowEmailLink bool `json:"allow_email_link"`
 	GroupMappings  []GroupMapping `json:"group_mappings,omitempty"`
 	Enabled        bool           `json:"enabled"`
 	IsDefault      bool           `json:"is_default,omitempty"`
+
+	AllowEmailLink bool `json:"allow_email_link"`
 }
 
 // PublicProvider is what the unauthenticated login page sees.
