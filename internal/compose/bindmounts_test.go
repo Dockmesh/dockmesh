@@ -152,15 +152,40 @@ func TestRewriteBindTarRefusesClimbing(t *testing.T) {
 	}
 }
 
-func TestRebaseSkipsStackRootBind(t *testing.T) {
+func TestRebaseStackRootBind(t *testing.T) {
 	staging := filepath.FromSlash("/tmp/stage-x")
 	proj := &composetypes.Project{Services: composetypes.Services{
 		"a": {Name: "a", Volumes: []composetypes.ServiceVolumeConfig{
 			{Type: composetypes.VolumeTypeBind, Source: staging, Target: "/app"},
 		}},
 	}}
-	RebaseBindSources(proj, staging, filepath.FromSlash("/stacks/x"))
-	if got := proj.Services["a"].Volumes[0].Source; got != staging {
-		t.Errorf("stack root bind rebased to %q; the container could rewrite compose.yaml", got)
+	stackDir := filepath.FromSlash("/stacks/x")
+	RebaseBindSources(proj, staging, stackDir)
+	if got := proj.Services["a"].Volumes[0].Source; got != stackDir {
+		t.Errorf("stack root bind = %q, want %q", got, stackDir)
+	}
+}
+
+func TestMountsProjectDir(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		{"short", "services:\n  a:\n    volumes: [\".:/app\"]\n", true},
+		{"short slash", "services:\n  a:\n    volumes: [\"./:/app:rw\"]\n", true},
+		{"short read-only", "services:\n  a:\n    volumes: [\".:/app:ro\"]\n", false},
+		{"subdir", "services:\n  a:\n    volumes: [\"./data:/data\"]\n", false},
+		{"long", "services:\n  a:\n    volumes:\n      - {type: bind, source: ., target: /app}\n", true},
+		{"long read-only", "services:\n  a:\n    volumes:\n      - {type: bind, source: ., target: /app, read_only: true}\n", false},
+		{"named volume", "services:\n  a:\n    volumes: [\"data:/data\"]\n", false},
+		{"invalid", "services: [", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := MountsProjectDir(tc.yaml); got != tc.want {
+				t.Errorf("MountsProjectDir = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
+	"gopkg.in/yaml.v3"
 )
 
 // RebaseBindSources points bind mounts that compose resolved into the
@@ -25,9 +26,8 @@ import (
 // Compose resolves "./data" against the directory it was loaded from; the
 // staging copy is deleted after the deploy, so without this the container
 // would write into a directory that no longer exists.
-//
-// A bind of the staging directory itself (".:/app") is left alone: in the
-// stack directory it would let the container rewrite compose.yaml and .env.
+// A bind of the staging directory itself (".:/app") becomes a bind of the
+// stack directory, as docker compose would mount it.
 func RebaseBindSources(proj *composetypes.Project, stagingDir, stackDir string) {
 	stagingDir = filepath.Clean(stagingDir)
 	for name, svc := range proj.Services {
@@ -37,7 +37,7 @@ func RebaseBindSources(proj *composetypes.Project, stagingDir, stackDir string) 
 				continue
 			}
 			src := filepath.Clean(v.Source)
-			if !strings.HasPrefix(src, stagingDir+string(filepath.Separator)) {
+			if src != stagingDir && !strings.HasPrefix(src, stagingDir+string(filepath.Separator)) {
 				continue
 			}
 			rel, err := filepath.Rel(stagingDir, src)
@@ -51,6 +51,45 @@ func RebaseBindSources(proj *composetypes.Project, stagingDir, stackDir string) 
 			proj.Services[name] = svc
 		}
 	}
+}
+
+// MountsProjectDir reports whether a service bind-mounts the project
+// directory itself writable (".:/app"), which lets it rewrite compose.yaml
+// and .env.
+func MountsProjectDir(composeYAML string) bool {
+	var doc struct {
+		Services map[string]struct {
+			Volumes []any `yaml:"volumes"`
+		} `yaml:"services"`
+	}
+	if yaml.Unmarshal([]byte(composeYAML), &doc) != nil {
+		return false
+	}
+	for _, svc := range doc.Services {
+		for _, v := range svc.Volumes {
+			var src string
+			switch x := v.(type) {
+			case string:
+				parts := strings.Split(x, ":")
+				if len(parts) < 2 || (len(parts) > 2 && strings.Contains(","+parts[2]+",", ",ro,")) {
+					continue
+				}
+				src = parts[0]
+			case map[string]any:
+				if t, _ := x["type"].(string); t != "bind" {
+					continue
+				}
+				if ro, _ := x["read_only"].(bool); ro {
+					continue
+				}
+				src, _ = x["source"].(string)
+			}
+			if src != "" && path.Clean(filepath.ToSlash(src)) == "." {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // stagingPathPattern matches the staging directories earlier versions

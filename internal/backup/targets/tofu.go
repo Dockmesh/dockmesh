@@ -111,19 +111,54 @@ func (tf TOFU) raise(ctx context.Context, in notices.RaiseInput) error {
 	return tf.Notices.Raise(ctx, in)
 }
 
-// JSONColumnRecorder keeps the host key inside a JSON config column
-// (backup_jobs.target_config, backup_targets.config_json).
-type JSONColumnRecorder struct {
-	DB     *sql.DB
-	Table  string // trusted constant, not input
-	Column string // trusted constant, not input
-	ID     int64
+// keyQueries keep the host key inside a JSON config column.
+type keyQueries struct{ record, stored, pending, accept string }
+
+var jobKeyQueries = keyQueries{
+	record: `UPDATE backup_jobs SET target_config = json_set(target_config, '$.host_key', ?),
+		updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND COALESCE(json_extract(target_config, '$.host_key'), '') = ''`,
+	stored: `SELECT json_extract(target_config, '$.host_key') FROM backup_jobs WHERE id = ?`,
+	pending: `UPDATE backup_jobs SET target_config = json_set(target_config, '$.host_key_pending', ?),
+		updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+	accept: `UPDATE backup_jobs SET target_config = json_remove(
+		json_set(target_config, '$.host_key', json_extract(target_config, '$.host_key_pending')), '$.host_key_pending'),
+		updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND COALESCE(json_extract(target_config, '$.host_key_pending'), '') != ''`,
 }
 
-func (r JSONColumnRecorder) RecordHostKey(ctx context.Context, key string) (bool, string, error) {
-	res, err := r.DB.ExecContext(ctx, `UPDATE `+r.Table+` SET `+r.Column+` = json_set(`+r.Column+`, '$.host_key', ?),
+var targetKeyQueries = keyQueries{
+	record: `UPDATE backup_targets SET config_json = json_set(config_json, '$.host_key', ?),
 		updated_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND COALESCE(json_extract(`+r.Column+`, '$.host_key'), '') = ''`, key, r.ID) //nolint:gosec // table/column are package constants
+		WHERE id = ? AND COALESCE(json_extract(config_json, '$.host_key'), '') = ''`,
+	stored: `SELECT json_extract(config_json, '$.host_key') FROM backup_targets WHERE id = ?`,
+	pending: `UPDATE backup_targets SET config_json = json_set(config_json, '$.host_key_pending', ?),
+		updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+	accept: `UPDATE backup_targets SET config_json = json_remove(
+		json_set(config_json, '$.host_key', json_extract(config_json, '$.host_key_pending')), '$.host_key_pending'),
+		updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND COALESCE(json_extract(config_json, '$.host_key_pending'), '') != ''`,
+}
+
+// ColumnRecorder is the KeyRecorder of one backup job or saved target row.
+type ColumnRecorder struct {
+	db *sql.DB
+	q  keyQueries
+	id int64
+}
+
+// JobKeyRecorder records in backup_jobs.target_config.
+func JobKeyRecorder(db *sql.DB, jobID int64) ColumnRecorder {
+	return ColumnRecorder{db: db, q: jobKeyQueries, id: jobID}
+}
+
+// TargetKeyRecorder records in backup_targets.config_json.
+func TargetKeyRecorder(db *sql.DB, targetID int64) ColumnRecorder {
+	return ColumnRecorder{db: db, q: targetKeyQueries, id: targetID}
+}
+
+func (r ColumnRecorder) RecordHostKey(ctx context.Context, key string) (bool, string, error) {
+	res, err := r.db.ExecContext(ctx, r.q.record, key, r.id)
 	if err != nil {
 		return false, "", err
 	}
@@ -131,22 +166,18 @@ func (r JSONColumnRecorder) RecordHostKey(ctx context.Context, key string) (bool
 		return true, key, nil
 	}
 	var stored sql.NullString
-	err = r.DB.QueryRowContext(ctx, `SELECT json_extract(`+r.Column+`, '$.host_key') FROM `+r.Table+` WHERE id = ?`, r.ID).Scan(&stored) //nolint:gosec // table/column are package constants
+	err = r.db.QueryRowContext(ctx, r.q.stored, r.id).Scan(&stored)
 	return false, stored.String, err
 }
 
-func (r JSONColumnRecorder) SetPendingHostKey(ctx context.Context, key string) error {
-	_, err := r.DB.ExecContext(ctx, `UPDATE `+r.Table+` SET `+r.Column+` = json_set(`+r.Column+`, '$.host_key_pending', ?),
-		updated_at = CURRENT_TIMESTAMP WHERE id = ?`, key, r.ID) //nolint:gosec // table/column are package constants
+func (r ColumnRecorder) SetPendingHostKey(ctx context.Context, key string) error {
+	_, err := r.db.ExecContext(ctx, r.q.pending, key, r.id)
 	return err
 }
 
 // AcceptPendingHostKey makes the pending key the trusted one.
-func (r JSONColumnRecorder) AcceptPendingHostKey(ctx context.Context) error {
-	res, err := r.DB.ExecContext(ctx, `UPDATE `+r.Table+` SET `+r.Column+` = json_remove(
-		json_set(`+r.Column+`, '$.host_key', json_extract(`+r.Column+`, '$.host_key_pending')), '$.host_key_pending'),
-		updated_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND COALESCE(json_extract(`+r.Column+`, '$.host_key_pending'), '') != ''`, r.ID) //nolint:gosec // table/column are package constants
+func (r ColumnRecorder) AcceptPendingHostKey(ctx context.Context) error {
+	res, err := r.db.ExecContext(ctx, r.q.accept, r.id)
 	if err != nil {
 		return err
 	}
@@ -163,7 +194,7 @@ func (s *TargetStore) BuildChecked(ctx context.Context, t *StoredTarget, n *noti
 		return nil, err
 	}
 	TOFU{
-		Rec:     JSONColumnRecorder{DB: s.db, Table: "backup_targets", Column: "config_json", ID: t.ID},
+		Rec:     TargetKeyRecorder(s.db, t.ID),
 		Notices: n,
 		ID:      fmt.Sprintf("target:%d", t.ID),
 		Label:   "backup target " + t.Name,
@@ -174,7 +205,7 @@ func (s *TargetStore) BuildChecked(ctx context.Context, t *StoredTarget, n *noti
 
 // AcceptHostKey trusts the changed host key a stored target last saw.
 func (s *TargetStore) AcceptHostKey(ctx context.Context, id int64, n *notices.Service) error {
-	if err := (JSONColumnRecorder{DB: s.db, Table: "backup_targets", Column: "config_json", ID: id}).AcceptPendingHostKey(ctx); err != nil {
+	if err := TargetKeyRecorder(s.db, id).AcceptPendingHostKey(ctx); err != nil {
 		return err
 	}
 	if n != nil {

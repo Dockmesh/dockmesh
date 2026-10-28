@@ -12,13 +12,9 @@ import (
 // to accept.
 var ErrNoPendingHostKey = targets.ErrNoPendingHostKey
 
-func jobKeyRecorder(st *store, jobID int64) targets.JSONColumnRecorder {
-	return targets.JSONColumnRecorder{DB: st.db, Table: "backup_jobs", Column: "target_config", ID: jobID}
-}
-
 func jobTOFU(st *store, n *notices.Service, job *Job) targets.TOFU {
 	return targets.TOFU{
-		Rec:     jobKeyRecorder(st, job.ID),
+		Rec:     targets.JobKeyRecorder(st.db, job.ID),
 		Notices: n,
 		ID:      strconv.FormatInt(job.ID, 10),
 		Label:   "backup job " + job.Name,
@@ -44,7 +40,7 @@ func (s *Service) AcceptHostKey(ctx context.Context, jobID int64) error {
 	if _, err := s.store.getJob(ctx, jobID); err != nil {
 		return err
 	}
-	if err := jobKeyRecorder(s.store, jobID).AcceptPendingHostKey(ctx); err != nil {
+	if err := targets.JobKeyRecorder(s.store.db, jobID).AcceptPendingHostKey(ctx); err != nil {
 		return err
 	}
 	if s.notices != nil {

@@ -55,7 +55,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   `backups.local_roots`, which only admins can change). The directories existing local
   targets use were added automatically.
 - SFTP backup targets now check the server's host key: the first connection records it, and a
-  different key later stops the job until an admin accepts it. Existing jobs keep running.
+  different key later stops the job until an admin accepts it. Existing jobs keep running. The
+  same applies to saved SFTP targets, used for the audit log archive and the target test.
+- When a stack's `compose.yaml` or `.env` changes outside Dockmesh, for example through a
+  container that mounts the stack directory, the stack page says so and the next deploy or
+  rollback asks for confirmation.
 - A backup job set to encrypt no longer writes an unencrypted archive when secrets encryption
   is turned off; the run fails and admins get a notice.
 
@@ -65,7 +69,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   the container saw an empty folder and whatever it wrote there was lost. On the first redeploy
   of an affected stack, files the old container wrote are copied into the stack directory if
   it is still empty. On remote hosts the directory starts empty, because files next to
-  `compose.yaml` aren't copied to agents yet.
+  `compose.yaml` aren't copied to agents yet. A bind of the whole stack directory (`.:/app`)
+  mounts it read-write like docker compose does, and the stack page warns that the container
+  can change `compose.yaml` and `.env`.
 
 ### Upgrade notes
 - [redeploy-relative-bind-mounts, admins] Redeploy every stack that uses a relative bind mount

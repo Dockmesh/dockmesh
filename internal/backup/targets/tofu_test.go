@@ -56,7 +56,7 @@ func TestStoredTargetHostKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tf := TOFU{Rec: JSONColumnRecorder{DB: database, Table: "backup_targets", Column: "config_json", ID: tgt.ID}, Notices: n, ID: "target:1", Label: "t"}
+	tf := TOFU{Rec: TargetKeyRecorder(database, tgt.ID), Notices: n, ID: "target:1", Label: "t"}
 
 	if err := tf.Handle(ctx, HostKeyEvent{Kind: "recorded", Key: "ssh-ed25519 ONE"}); err != nil {
 		t.Fatal(err)

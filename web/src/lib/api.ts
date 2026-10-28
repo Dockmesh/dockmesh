@@ -1175,9 +1175,11 @@ export interface UpdateHistoryEntry {
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  body?: any;
+  constructor(message: string, status: number, body?: any) {
     super(message);
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -1203,11 +1205,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
+    let body: any;
     try {
-      const body = await res.json();
+      body = await res.json();
       if (body.error) msg = body.error;
     } catch { /* ignore */ }
-    throw new ApiError(msg, res.status);
+    throw new ApiError(msg, res.status, body);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -1284,7 +1287,7 @@ export const api = {
 
   stacks: {
     list: () => request<StackListEntry[]>('/stacks'),
-    get: (name: string) => request<{ name: string; compose: string; env: string; status?: 'ok' | 'needs_recovery' }>(`/stacks/${encodeURIComponent(name)}`),
+    get: (name: string) => request<{ name: string; compose: string; env: string; status?: 'ok' | 'needs_recovery'; modified_outside?: string[]; mounts_stack_dir?: boolean }>(`/stacks/${encodeURIComponent(name)}`),
     create: (name: string, compose: string, env?: string) =>
       request<{ name: string }>('/stacks', { method: 'POST', body: JSON.stringify({ name, compose, env }) }),
     createFromGit: (name: string, git: StackGitSourceInput) =>
@@ -1341,10 +1344,11 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input)
       }),
-    deploy: (name: string, host = 'local', environment?: string) => {
+    deploy: (name: string, host = 'local', environment?: string, confirmExternal = false) => {
       const params = new URLSearchParams();
       if (host && host !== 'local') params.set('host', host);
       if (environment) params.set('environment', environment);
+      if (confirmExternal) params.set('confirm_external', '1');
       const qs = params.toString() ? '?' + params.toString() : '';
       return request<{
         stack: string;
@@ -1409,8 +1413,11 @@ export const api = {
       request<DeployHistoryEntry[]>(`/stacks/${encodeURIComponent(name)}/deployments?limit=${limit}`),
     getDeployment: (name: string, id: number) =>
       request<DeployHistoryEntry>(`/stacks/${encodeURIComponent(name)}/deployments/${id}`),
-    rollback: (name: string, id: number, host = 'local') => {
-      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+    rollback: (name: string, id: number, host = 'local', confirmExternal = false) => {
+      const params = new URLSearchParams();
+      if (host && host !== 'local') params.set('host', host);
+      if (confirmExternal) params.set('confirm_external', '1');
+      const qs = params.toString() ? '?' + params.toString() : '';
       return request<RollbackResult>(
         `/stacks/${encodeURIComponent(name)}/deployments/${id}/rollback${qs}`,
         { method: 'POST' }

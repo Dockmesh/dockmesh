@@ -385,6 +385,8 @@ func main() {
 		os.Exit(1)
 	}
 	defer stacksMgr.Close()
+	stacksMgr.SetSumStore(stacks.NewSumStore(database))
+	stacksMgr.RecordUntrackedSums()
 
 	webFS, err := fs.Sub(webDist, "web_dist")
 	if err != nil {
@@ -660,6 +662,11 @@ func main() {
 	gitDeploy := func(ctx context.Context, stackName string) (any, error) {
 		if dockerCli == nil {
 			return nil, fmt.Errorf("docker unavailable")
+		}
+		if changed, err := stacksMgr.ModifiedOutside(stackName); err != nil {
+			return nil, err
+		} else if len(changed) > 0 {
+			return nil, fmt.Errorf("%w: %s", stacks.ErrModifiedOutside, strings.Join(changed, ", "))
 		}
 		detail, err := stacksMgr.Get(stackName)
 		if err != nil {
