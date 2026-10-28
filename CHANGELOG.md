@@ -57,7 +57,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - Signing in with an unknown username takes as long as with a wrong password, and invalid
   API tokens can no longer tie up the server with expensive hash checks.
 - The setup wizard's connection test only reaches public addresses and this server's own
-  addresses, so it can no longer be used to probe the internal network or cloud metadata.
+  address on its web port, 80 or 443, so it can no longer be used to probe the internal
+  network, local services or cloud metadata.
   The wizard runs one install at a time, its check endpoints stop answering when the setup
   window closes, and it reopens only when no account can administer Dockmesh (custom roles
   included). It no longer adds an existing system account to the `docker` group; only an

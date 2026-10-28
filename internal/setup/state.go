@@ -181,12 +181,12 @@ func (s *State) SnapshotStatus() Status {
 }
 
 // TryBeginCommit claims the single install slot. It returns false while
-// another commit is running or once setup has finished, so two concurrent
-// wizard submits can't both create an admin.
+// another commit is running or once setup has finished or expired, so two
+// concurrent wizard submits can't both create an admin.
 func (s *State) TryBeginCommit() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.committing || !s.active {
+	if s.committing || !s.active || time.Since(s.startedAt) > SetupWindow {
 		return false
 	}
 	s.committing = true

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/db"
 )
@@ -88,6 +89,12 @@ func TestCommitLock(t *testing.T) {
 	}
 	if st.TryBeginCommit() {
 		t.Fatal("commit accepted after setup finished")
+	}
+
+	expired := NewForced()
+	expired.startedAt = time.Now().Add(-SetupWindow - time.Second)
+	if expired.TryBeginCommit() {
+		t.Fatal("commit accepted after the setup window expired")
 	}
 }
 

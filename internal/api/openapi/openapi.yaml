@@ -235,11 +235,11 @@ paths:
       tags: [setup]
       summary: Reachability probe for Step 5's public URL
       description: |
-        Connects only to public addresses and to this server's own
-        addresses. Loopback, link-local, cloud metadata and other
-        machines' private addresses are refused after DNS resolution
-        and on every redirect hop; the result is then `status: fail`
-        with a "not tested" message.
+        Connects only to public addresses and to this server's own LAN
+        addresses on the port it is served on, 80 or 443. Loopback,
+        link-local, cloud metadata, NAT64 and other private addresses
+        are refused after DNS resolution and on every redirect hop; the
+        result is then `status: fail` with a "not tested" message.
       security: []
       requestBody:
         required: true

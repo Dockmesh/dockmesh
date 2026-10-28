@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -100,7 +102,7 @@ func (h *Handlers) SetupTestURL(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	writeJSON(w, http.StatusOK, setup.CheckURL(r.Context(), req.URL, req.ExpectHealth))
+	writeJSON(w, http.StatusOK, setup.CheckURL(r.Context(), req.URL, req.ExpectHealth, localPort(r)))
 }
 
 // SetupCommit kicks off the install. Returns 200 with a run_id; the
@@ -126,7 +128,7 @@ func (h *Handlers) SetupCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.SetupState.TryBeginCommit() {
-		writeError(w, http.StatusConflict, "an install is already running or setup has just finished")
+		writeError(w, http.StatusConflict, "an install is already running, or setup has finished or expired")
 		return
 	}
 
@@ -154,6 +156,19 @@ func (h *Handlers) SetupCommit(w http.ResponseWriter, r *http.Request) {
 		"run_id":     runID,
 		"stream_url": "/api/v1/setup/stream/" + runID,
 	})
+}
+
+// localPort is the port of the listener that accepted r, 0 if unknown.
+func localPort(r *http.Request) uint16 {
+	addr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if !ok {
+		return 0
+	}
+	ap, err := netip.ParseAddrPort(addr.String())
+	if err != nil {
+		return 0
+	}
+	return ap.Port()
 }
 
 // setupWindowOpen answers 410 once setup is over or its window expired.

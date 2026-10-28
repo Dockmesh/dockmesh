@@ -227,16 +227,19 @@ type URLCheck struct {
 	Message   string `json:"message"`
 }
 
-// CheckURL tests reachability of the supplied URL. Times out after 5s.
-// `expectHealth` true means we look for the /api/v1/health JSON shape
-// to confirm we hit a dockmesh server (not someone else's web).
-func CheckURL(ctx context.Context, rawURL string, expectHealth bool) URLCheck {
-	return checkURL(ctx, rawURL, expectHealth, defaultURLGuard())
-}
-
 // maxTestRedirects bounds the redirect chain; every hop is dialled through
 // the same guard.
 const maxTestRedirects = 3
+
+// CheckURL tests reachability of the supplied URL. Times out after 5s.
+// `expectHealth` true means we look for the /api/v1/health JSON shape
+// to confirm we hit a dockmesh server (not someone else's web).
+// listenPort is the port this server answered the request on; together
+// with 80 and 443 it is the only port allowed on this host's own private
+// addresses.
+func CheckURL(ctx context.Context, rawURL string, expectHealth bool, listenPort uint16) URLCheck {
+	return checkURL(ctx, rawURL, expectHealth, defaultURLGuard(listenPort))
+}
 
 func checkURL(ctx context.Context, rawURL string, expectHealth bool, guard urlGuard) URLCheck {
 	c := URLCheck{URL: rawURL}
@@ -298,8 +301,8 @@ func checkURL(ctx context.Context, rawURL string, expectHealth bool, guard urlGu
 
 func humanizeNetErr(err error) string {
 	if errors.Is(err, errBlockedTarget) {
-		return "not tested: the URL points to a loopback, link-local, metadata or other machine's private address. " +
-			"Only public addresses and this server's own addresses can be tested; you can still continue"
+		return "not tested: the URL points to a loopback, link-local, metadata or other private address. " +
+			"Only public addresses and this server's own address on its web port, 80 or 443 can be tested; you can still continue"
 	}
 	s := err.Error()
 	switch {
@@ -310,7 +313,7 @@ func humanizeNetErr(err error) string {
 	case strings.Contains(s, "i/o timeout"), strings.Contains(s, "deadline exceeded"):
 		return "timed out — host unreachable from the server"
 	case strings.Contains(s, "certificate"):
-		return "TLS error — " + s
+		return "TLS error — the server's certificate could not be verified"
 	}
-	return s
+	return "could not connect to the URL"
 }
