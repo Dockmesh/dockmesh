@@ -16,7 +16,7 @@ import (
 )
 
 // WSStats streams normalized container stats over a WebSocket.
-// Auth via ?ticket= query parameter (§15.8). Honours ?host= for remote agents.
+// Auth via ?ticket= query parameter. Honours ?host= for remote agents.
 func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 	r, ok := h.wsAuth(w, r, rbac.PermContainersView)
 	if !ok {
@@ -39,6 +39,7 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	h.wsWatch(r, conn, rbac.PermContainersView, target.ID())
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()

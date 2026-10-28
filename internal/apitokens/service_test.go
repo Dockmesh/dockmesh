@@ -230,8 +230,7 @@ func TestNewTokensAreStoredAsSHA256(t *testing.T) {
 	}
 }
 
-// Tokens from before the change are argon2id hashes; the first good check
-// rewrites them so later requests skip argon2 entirely.
+// Argon2id-hashed tokens are rewritten to SHA-256 on the first good check.
 func TestArgon2HashIsUpgradedOnUse(t *testing.T) {
 	svc := New(newTestDB(t))
 	ctx := context.Background()
@@ -372,5 +371,30 @@ func TestSyncLegacyNotice(t *testing.T) {
 	}
 	if err := svc.SyncLegacyNotice(ctx, n); err != nil || open() != 0 {
 		t.Fatalf("after revoke: open=%d err=%v", open(), err)
+	}
+}
+
+// Revoked and expired tokens are refused before hashing, so their prefixes
+// can't be used to keep the argon2 slots busy.
+func TestDeadTokensSkipArgon2(t *testing.T) {
+	svc := New(newTestDB(t))
+	ctx := context.Background()
+	plaintext, tok, err := svc.Create(ctx, CreateInput{CreatedByUserID: "owner", Name: "t", Role: "viewer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.db.Exec(`UPDATE api_tokens SET token_hash = '$argon2id$v=19$m=65536,t=3,p=4$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' WHERE id = ?`, tok.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Revoke(ctx, tok.ID); err != nil {
+		t.Fatal(err)
+	}
+	for range maxArgon2 {
+		svc.argon2Slots <- struct{}{}
+	}
+	cctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	if _, err := svc.Validate(cctx, plaintext); !errors.Is(err, ErrRevoked) {
+		t.Errorf("err = %v, want ErrRevoked without waiting for a slot", err)
 	}
 }

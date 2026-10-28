@@ -2,8 +2,11 @@ package handlers
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -59,11 +62,9 @@ func (h *Handlers) WSTicket(w http.ResponseWriter, r *http.Request) {
 
 	ticket, err := h.Auth.IssueWSTicket(auth.WSTicket{
 		UserID:     uid,
-		Role:       middleware.Role(ctx),
-		ScopeTags:  middleware.ScopeTags(ctx),
-		Perm:       string(requested),
+		SessionID:  middleware.SessionID(ctx),
 		APITokenID: tokID,
-		OwnerRole:  middleware.TokenOwnerRole(ctx),
+		Perm:       string(requested),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "ticket generation failed")
@@ -91,18 +92,85 @@ func (h *Handlers) wsAuth(w http.ResponseWriter, r *http.Request, want rbac.Perm
 		http.Error(w, "ticket not scoped for "+string(want), http.StatusForbidden)
 		return r, false
 	}
-	ctx := middleware.WithIdentity(r.Context(), middleware.Identity{
-		UserID:         t.UserID,
-		Role:           t.Role,
-		ScopeTags:      t.ScopeTags,
-		APITokenID:     t.APITokenID,
-		TokenOwnerRole: t.OwnerRole,
-	})
+	id, err := h.wsIdentity(r.Context(), t)
+	if err != nil {
+		http.Error(w, "invalid ticket", http.StatusUnauthorized)
+		return r, false
+	}
+	ctx := context.WithValue(middleware.WithIdentity(r.Context(), id), wsTicketKey{}, t)
 	if !middleware.Allowed(ctx, want) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return r, false
 	}
 	return r.WithContext(ctx), true
+}
+
+type wsTicketKey struct{}
+
+var errWSAccessGone = errors.New("session or token no longer valid")
+
+// wsIdentity derives the caller from the ticket's session or API token as
+// it is now, so a revoked session, a revoked token or a role change is
+// seen even though the ticket itself is still valid.
+func (h *Handlers) wsIdentity(ctx context.Context, t *auth.WSTicket) (middleware.Identity, error) {
+	if t.APITokenID != 0 {
+		if h.APITokens == nil {
+			return middleware.Identity{}, errWSAccessGone
+		}
+		tok, err := h.APITokens.Get(ctx, t.APITokenID)
+		if err != nil {
+			return middleware.Identity{}, err
+		}
+		if tok.RevokedAt != nil || (tok.ExpiresAt != nil && tok.ExpiresAt.Before(time.Now())) {
+			return middleware.Identity{}, errWSAccessGone
+		}
+		id, ok := middleware.TokenIdentity(ctx, h.Auth, tok)
+		if !ok {
+			return middleware.Identity{}, errWSAccessGone
+		}
+		return id, nil
+	}
+	role, scope, err := h.Auth.SessionIdentity(ctx, t.UserID, t.SessionID)
+	if err != nil {
+		return middleware.Identity{}, err
+	}
+	return middleware.Identity{UserID: t.UserID, Role: role, ScopeTags: scope, SessionID: t.SessionID}, nil
+}
+
+// wsRecheckInterval is how often an open WebSocket re-checks its caller.
+var wsRecheckInterval = 30 * time.Second
+
+// wsWatch closes conn once the caller's session or token is gone, perm is
+// lost or hostID left the caller's scope, so revoking a session also ends
+// its open shells and log streams. Stops when the handler returns.
+func (h *Handlers) wsWatch(r *http.Request, conn *websocket.Conn, perm rbac.Perm, hostID string) {
+	t, _ := r.Context().Value(wsTicketKey{}).(*auth.WSTicket)
+	if t == nil {
+		return
+	}
+	go func(ctx context.Context) {
+		tick := time.NewTicker(wsRecheckInterval)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+			}
+			id, err := h.wsIdentity(ctx, t)
+			if err == nil {
+				idCtx := middleware.WithIdentity(ctx, id)
+				if middleware.Allowed(idCtx, perm) && (hostID == "" || h.canAccessHost(r.WithContext(idCtx), hostID)) {
+					continue
+				}
+			}
+			_ = conn.WriteControl(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "access revoked"),
+				time.Now().Add(time.Second))
+			_ = conn.Close()
+			return
+		}
+	}(r.Context())
 }
 
 // wsContainerAccess applies the host scope of the caller and the role scope
@@ -150,17 +218,22 @@ func (h *Handlers) WSLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	h.wsWatch(r, conn, rbac.PermContainersLogs, target.ID())
 
-	// Discard incoming messages (client doesn't send meaningful data).
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	// Discard incoming messages; a read error means the socket is gone
+	// (client left or wsWatch closed it), which also ends the log stream.
 	go func() {
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
-				break
+				cancel()
+				return
 			}
 		}
 	}()
 
-	rc, err := target.ContainerLogs(r.Context(), containerID, tail, true)
+	rc, err := target.ContainerLogs(ctx, containerID, tail, true) //nolint:contextcheck // ctx derives from r.Context()
 	if err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
 		return

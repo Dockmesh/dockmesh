@@ -189,10 +189,16 @@ func (s *Service) verifyMFACode(ctx context.Context, userID, code string) (bool,
 				if h == target {
 					remaining := append(hashes[:i], hashes[i+1:]...)
 					newJSON, _ := json.Marshal(remaining)
-					_, _ = s.db.ExecContext(ctx,
-						`UPDATE users SET totp_recovery = ? WHERE id = ?`,
-						string(newJSON), userID)
-					return true, nil
+					// Conditional on the old list: two requests racing with
+					// the same code can't both redeem it.
+					res, err := s.db.ExecContext(ctx,
+						`UPDATE users SET totp_recovery = ? WHERE id = ? AND totp_recovery = ?`,
+						string(newJSON), userID, recovery.String)
+					if err != nil {
+						return false, err
+					}
+					n, _ := res.RowsAffected()
+					return n == 1, nil
 				}
 			}
 		}

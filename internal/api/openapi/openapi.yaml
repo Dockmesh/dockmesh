@@ -667,6 +667,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "429":
+          description: Too many wrong codes (5 per 15 minutes per user); see Retry-After.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   # -----------------------------------------------------------------------
   # sessions — list / revoke own login sessions (P.12.1)
@@ -4142,7 +4147,11 @@ paths:
       operationId: users.me
       tags: [users]
       summary: The authenticated user's own profile
-      description: Includes role, scope_tags, and MFA state — used by the UI to gate buttons.
+      description: |
+        Includes role, scope_tags, and MFA state — used by the UI to gate
+        buttons. For an API token, `permissions` lists only what both the
+        token's role and its owner's current role allow, and `scope_tags`
+        are the owner's.
       responses:
         "200":
           description: Profile.
@@ -4391,11 +4400,15 @@ paths:
       operationId: users.mfa_reset
       tags: [users]
       summary: "Admin: clear MFA for a user"
-      description: Used when a user has lost access to their TOTP device and recovery codes.
+      description: |
+        Used when a user has lost access to their TOTP device and recovery
+        codes. Not for the caller's own account (400): turning off your own
+        MFA goes through `DELETE /mfa` with a code.
       parameters:
         - $ref: "#/components/parameters/UserIDPath"
       responses:
         "204": { description: MFA cleared. }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -4743,7 +4756,8 @@ paths:
         The new token is owned by the signed-in user, or by the owner of
         the API token making the request. Legacy tokens (no owner) can't
         create tokens (403). The role may not grant more than the caller
-        holds unless the caller has `tokens.manage_others`.
+        effectively holds. A token created with an API token never expires
+        later than that token.
       requestBody:
         required: true
         content:
@@ -4782,6 +4796,10 @@ paths:
       operationId: api_tokens.revoke
       tags: [api-tokens]
       summary: Revoke an API token (soft delete — sets revoked_at)
+      description: |
+        Without `tokens.manage_others`, a signed-in user can revoke their
+        own tokens and an API token can revoke only itself; anything else
+        is 404.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       responses:

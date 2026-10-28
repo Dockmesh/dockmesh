@@ -17,13 +17,14 @@ import (
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrInvalidToken       = errors.New("invalid token")
-	// ErrSessionOutdated marks a refresh token from before per-kind token
-	// keys; the user has to sign in again and the UI says why.
-	ErrSessionOutdated = errors.New("session predates the current token format")
 	ErrTokenReused        = errors.New("refresh token reused")
 	ErrUserExists         = errors.New("user already exists")
 	ErrUsernameTaken      = errors.New("username already in use")
 	ErrEmailTaken         = errors.New("email already in use")
+
+	// ErrSessionOutdated marks a refresh token from before per-kind token
+	// keys; the user has to sign in again and the UI says why.
+	ErrSessionOutdated = errors.New("session predates the current token format")
 )
 
 type User struct {
@@ -32,7 +33,7 @@ type User struct {
 	DisplayName string  `json:"display_name,omitempty"`
 	Email      string   `json:"email,omitempty"`
 	Role       string   `json:"role"`
-	ScopeTags  []string `json:"scope_tags,omitempty"` // P.11.3: empty = all hosts
+	ScopeTags  []string `json:"scope_tags,omitempty"` // empty = all hosts
 	MFAEnabled bool     `json:"mfa_enabled"`
 	// Profile timestamps surfaced in the Account page.
 	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
@@ -740,8 +741,19 @@ func (s *Service) Validate(ctx context.Context, token string) (*Claims, error) {
 	if err := s.keys.Parse(KindAccess, token, c); err != nil {
 		return nil, err
 	}
-	if c.SessionID == "" {
-		return nil, ErrInvalidToken
+	role, scope, err := s.SessionIdentity(ctx, c.UserID, c.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	c.Role, c.ScopeTags = role, scope
+	return c, nil
+}
+
+// SessionIdentity returns the current role and scope of userID if
+// sessionID is one of their live sessions, ErrInvalidToken otherwise.
+func (s *Service) SessionIdentity(ctx context.Context, userID, sessionID string) (string, []string, error) {
+	if userID == "" || sessionID == "" {
+		return "", nil, ErrInvalidToken
 	}
 	var (
 		revokedAt sql.NullTime
@@ -752,20 +764,18 @@ func (s *Service) Validate(ctx context.Context, token string) (*Claims, error) {
 	err := s.db.QueryRowContext(ctx, `
 		SELECT s.revoked_at, s.expires_at, u.role, u.scope_tags
 		  FROM sessions s JOIN users u ON u.id = s.user_id
-		 WHERE s.family_id = ? AND s.user_id = ?`, c.SessionID, c.UserID).
+		 WHERE s.family_id = ? AND s.user_id = ?`, sessionID, userID).
 		Scan(&revokedAt, &expiresAt, &role, &scope)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrInvalidToken
+		return "", nil, ErrInvalidToken
 	}
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	if revokedAt.Valid || time.Now().After(expiresAt) {
-		return nil, ErrInvalidToken
+		return "", nil, ErrInvalidToken
 	}
-	c.Role = role
-	c.ScopeTags = parseScopeTags(scope)
-	return c, nil
+	return role, parseScopeTags(scope), nil
 }
 
 // RevokeUserSessions ends every live session of userID except
@@ -788,9 +798,7 @@ type refreshClaims struct {
 }
 
 func (s *Service) mintPair(u User, familyID string, seq int, expiresAt time.Time) (*LoginResult, error) {
-	access, err := s.keys.Sign(KindAccess, accessTTL, &Claims{
-		UserID: u.ID, Role: u.Role, ScopeTags: u.ScopeTags, SessionID: familyID,
-	})
+	access, err := s.keys.Sign(KindAccess, accessTTL, &Claims{UserID: u.ID, SessionID: familyID})
 	if err != nil {
 		return nil, err
 	}

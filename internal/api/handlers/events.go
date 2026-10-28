@@ -12,7 +12,7 @@ import (
 )
 
 // WSEvents streams Docker events AND stack filesystem events as JSON messages
-// over a WebSocket. Auth via ?ticket= query parameter (§15.8).
+// over a WebSocket. Auth via ?ticket= query parameter.
 //
 // Message shape:
 //   Docker:  {"source":"docker", "type":"container", "action":"start", "id":"...", "name":"..."}
@@ -29,6 +29,7 @@ func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	h.wsWatch(r, conn, rbac.PermSystemView, "")
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()

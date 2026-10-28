@@ -24,7 +24,7 @@ import (
 //   - BinaryMessage to client   ← stdout/stderr bytes (TTY merged)
 //   - TextMessage (JSON)        ← resize control: {"type":"resize","cols":N,"rows":M}
 //
-// Auth via ?ticket= (§15.8). Optional ?cmd=/bin/bash, defaults to /bin/sh.
+// Auth via ?ticket=. Optional ?cmd=/bin/bash, defaults to /bin/sh.
 func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
 	r, ok := h.wsAuth(w, r, rbac.PermContainersExec)
 	if !ok {
@@ -52,6 +52,7 @@ func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	h.wsWatch(r, conn, rbac.PermContainersExec, target.ID())
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()

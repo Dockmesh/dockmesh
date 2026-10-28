@@ -184,9 +184,6 @@ func (h *Handlers) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, audit.ActionUserDelete, id, nil)
-	// The user's API tokens stop working with the owner gone; their
-	// sessions are deleted with the user row.
-	h.syncLegacyTokenNotice(r)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -263,6 +260,14 @@ func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 			Role:     tokRole,
 		}
 		enrichUserWithRBAC(h.Roles, fake)
+		// An owned token only gets what its owner's role also allows.
+		effective := make([]string, 0, len(fake.Permissions))
+		for _, p := range fake.Permissions {
+			if middleware.Allowed(r.Context(), rbac.Perm(p)) {
+				effective = append(effective, p)
+			}
+		}
+		fake.Permissions = effective
 		writeJSON(w, http.StatusOK, map[string]any{
 			"kind":         "api_token",
 			"username":     fake.Username,
@@ -271,6 +276,7 @@ func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 			"mfa_enabled":  false,
 			"permissions":  fake.Permissions,
 			"scopes":       fake.Scopes,
+			"scope_tags":   middleware.ScopeTags(r.Context()),
 		})
 		return
 	}

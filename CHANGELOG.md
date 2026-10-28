@@ -35,9 +35,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 ### Changed
 - API tokens now belong to the user who created them. A token never grants more than its
   role and its owner's current permissions and host scope allow, and it stops working when
-  the owner is deleted.
+  the owner is deleted. A token created with another token expires no later than it, and a
+  token can only revoke itself.
 - Turning off two-factor authentication, or replacing the authenticator, now asks for a
-  current code or a recovery code.
+  current code or a recovery code; after five wrong codes it is blocked for 15 minutes. Admins
+  can no longer use the user-management reset on their own account.
 - Changing your password signs out your other sessions; an admin password reset (in the UI
   or with `dockmesh admin reset-password`) signs out all of the user's sessions.
 - A role or scope change now applies to a signed-in user's next request instead of after up
@@ -50,7 +52,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - WebSocket connections for container exec, logs, stats and events now run with the
   permissions and host scope of the user who opened them, and each ticket works only once.
   Before, a user restricted to some stacks or hosts could open a shell in any container.
-  Exec sessions are now recorded in the audit log.
+  Open connections close when the session is signed out or the permission is taken away,
+  and exec sessions are now recorded in the audit log.
 - Signing in with an unknown username takes as long as with a wrong password, and invalid
   API tokens can no longer tie up the server with expensive hash checks.
 

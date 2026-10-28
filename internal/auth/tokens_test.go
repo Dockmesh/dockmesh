@@ -121,8 +121,6 @@ func TestParseRejectsMalformedTokens(t *testing.T) {
 	}
 }
 
-// The MFA bypass: the half-finished-login token used to work as a Bearer
-// token on every authenticated route.
 func TestMFAPendingTokenIsNotAnAccessToken(t *testing.T) {
 	s, _ := newTestService(t)
 	ctx := context.Background()
@@ -251,7 +249,7 @@ func TestRevokeUserSessions(t *testing.T) {
 
 func TestWSTicketSingleUse(t *testing.T) {
 	s, _ := newTestService(t)
-	tok, err := s.IssueWSTicket(WSTicket{UserID: "u", Role: "operator", Perm: "containers.exec", ScopeTags: []string{"prod"}})
+	tok, err := s.IssueWSTicket(WSTicket{UserID: "u", SessionID: "sid", Perm: "containers.exec"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +257,7 @@ func TestWSTicketSingleUse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.UserID != "u" || got.Role != "operator" || got.Perm != "containers.exec" || len(got.ScopeTags) != 1 {
+	if got.UserID != "u" || got.SessionID != "sid" || got.Perm != "containers.exec" {
 		t.Errorf("identity lost: %+v", got)
 	}
 	if _, err := s.ConsumeWSTicket(tok); !errors.Is(err, ErrTicketUsed) {

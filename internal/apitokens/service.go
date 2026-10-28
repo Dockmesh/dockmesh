@@ -137,8 +137,9 @@ func scanRowListing(row interface {
 type CreateInput struct {
 	Name            string
 	Role            string
-	ExpiresInDays   int    // 0 = no expiry
-	CreatedByUserID string // owner; required
+	ExpiresInDays   int        // 0 = no expiry
+	NotAfter        *time.Time // caps the expiry (tokens minted by tokens)
+	CreatedByUserID string     // owner; required
 }
 
 // Service persists tokens and provides middleware-friendly lookup.
@@ -214,6 +215,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (plaintext string,
 		t := time.Now().Add(time.Duration(in.ExpiresInDays) * 24 * time.Hour)
 		expiresAt = &t
 	}
+	if in.NotAfter != nil && (expiresAt == nil || expiresAt.After(*in.NotAfter)) {
+		t := *in.NotAfter
+		expiresAt = &t
+	}
 
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO api_tokens (token_prefix, token_hash, name, role,
@@ -265,18 +270,20 @@ func (s *Service) Validate(ctx context.Context, plaintext string) (*Token, error
 	}
 	t.Prefix = prefix
 
+	// Dead tokens are refused before hashing, so their known prefixes can't
+	// be used to keep the argon2 slots busy.
+	if t.RevokedAt != nil {
+		return nil, ErrRevoked
+	}
+	if t.ExpiresAt != nil && t.ExpiresAt.Before(time.Now()) {
+		return nil, ErrExpired
+	}
 	ok, err := s.verify(ctx, t.ID, plaintext, hash)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
 		return nil, ErrNotFound
-	}
-	if t.RevokedAt != nil {
-		return nil, ErrRevoked
-	}
-	if t.ExpiresAt != nil && t.ExpiresAt.Before(time.Now()) {
-		return nil, ErrExpired
 	}
 	return t, nil
 }

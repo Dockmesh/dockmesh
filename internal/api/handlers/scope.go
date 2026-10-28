@@ -89,7 +89,7 @@ func (h *Handlers) filterHostsByScope(r *http.Request, hosts []host.Host) []host
 }
 
 // ============================================================================
-// RBAC v2 — role-level scope helpers (slice R-3)
+// RBAC v2 — role-level scope helpers
 // ============================================================================
 //
 // The existing canAccessHost / filterHostsByScope above implement the
@@ -103,9 +103,9 @@ func (h *Handlers) filterHostsByScope(r *http.Request, hosts []host.Host) []host
 // AND role-level scope.
 
 // checkRoleScope is the role-level (RBAC v2) counterpart to
-// canAccessHost. Returns true if the request is allowed by the caller's
-// role-scope rows. Default-true short-circuits when feature flag is
-// off, store is nil, role is unscoped, or role couldn't be resolved.
+// canAccessHost. Returns true if the request is allowed by the role-scope
+// rows of every role the caller acts under. Default-true when the feature
+// flag is off or the store is nil.
 //
 // Handlers call this AFTER any existing perm + user-scope check.
 func (h *Handlers) checkRoleScope(r *http.Request, req rbac.ScopeRequest) bool {
@@ -118,9 +118,8 @@ func (h *Handlers) checkRoleScope(r *http.Request, req rbac.ScopeRequest) bool {
 	return h.inRoleScope(r, req)
 }
 
-// inRoleScope requires req to be in scope for every role the caller acts
-// under (see middleware.Roles). An empty role is the unauthenticated or
-// legacy case and keeps the previous default-allow.
+// inRoleScope requires req to be in scope for every role in
+// middleware.Roles; an empty role (unauthenticated) is allowed.
 func (h *Handlers) inRoleScope(r *http.Request, req rbac.ScopeRequest) bool {
 	for _, role := range middleware.Roles(r.Context()) {
 		if role != "" && !h.Roles.InScope(role, req) {
@@ -196,8 +195,8 @@ func (h *Handlers) hostScopeReq(ctx context.Context, hostID string) rbac.ScopeRe
 	return req
 }
 
-// roleIsUnscoped reports whether the caller's role has no role_scope
-// rows — admins + freshly-created roles. List handlers can short-circuit
+// roleIsUnscoped reports whether none of the roles the caller acts under
+// has role_scope rows — admins + freshly-created roles. List handlers can short-circuit
 // the filter for these.
 func (h *Handlers) roleIsUnscoped(r *http.Request) bool {
 	if !h.RBACv2Enforce || h.Roles == nil {

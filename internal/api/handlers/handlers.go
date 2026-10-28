@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/alerts"
@@ -59,6 +60,8 @@ type Handlers struct {
 	Dependencies  *stacks.DependencyStore
 	Compose      *compose.Service
 	LoginLimiter *ratelimit.Limiter
+	// mfaDisableLimiter caps wrong codes on DELETE /mfa per user.
+	mfaDisableLimiter *ratelimit.Limiter
 	Scanner      scanner.Scanner
 	ScanStore    *scanner.Store
 	Proxy        *proxy.Service
@@ -96,8 +99,7 @@ type Handlers struct {
 	SetupCommit_   setup.CommitFunc // wizard's commit-runner — wired by main; nil = wizard cannot commit
 	setupRuns      sync.Map        // runID → *setup.Runner; populated when SetupCommit fires
 	// RBACv2Enforce gates per-host + per-stack scope checks on typed-
-	// resource handlers. Wired from cfg.RBACv2Enforce. Default false
-	// during the v0.3.0 cutover; flipped to true in slice R-5.
+	// resource handlers. Wired from cfg.RBACv2Enforce.
 	RBACv2Enforce bool
 }
 
@@ -204,6 +206,8 @@ func New(d Deps) *Handlers {
 		SetupState:     d.SetupState,
 		SetupCommit_:   d.SetupCommit_,
 		RBACv2Enforce:  d.RBACv2Enforce,
+
+		mfaDisableLimiter: ratelimit.New(5, 15*time.Minute, 15*time.Minute),
 	}
 }
 

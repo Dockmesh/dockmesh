@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/argon2"
@@ -57,11 +58,31 @@ func VerifyPassword(password, encoded string) (bool, error) {
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
 
-// Claims is the payload of an access token.
+var (
+	dummyOnce sync.Once
+	dummy     string
+)
+
+// dummyHash is a valid argon2id hash of a random password, used to spend
+// the same time on unknown usernames as on real ones.
+func dummyHash() string {
+	dummyOnce.Do(func() {
+		b := make([]byte, 16)
+		_, _ = rand.Read(b)
+		h, err := HashPassword(string(b))
+		if err == nil {
+			dummy = h
+		}
+	})
+	return dummy
+}
+
+// Claims is the payload of an access token. Role and ScopeTags are not
+// signed in; Validate fills them from the user row.
 type Claims struct {
 	UserID    string   `json:"uid"`
-	Role      string   `json:"role,omitempty"`
-	ScopeTags []string `json:"scope,omitempty"` // host-tag scope; empty = all hosts
+	Role      string   `json:"-"`
+	ScopeTags []string `json:"-"` // host-tag scope; empty = all hosts
 	// SessionID is the session family the token was minted for, so a
 	// revoked or deleted session stops the access token too.
 	SessionID string `json:"sid"`

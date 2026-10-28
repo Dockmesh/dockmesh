@@ -97,8 +97,8 @@ func Allowed(ctx context.Context, perm rbac.Perm) bool {
 
 // UserID extracts the authenticated user ID from the request context.
 // For API-token-authenticated requests, returns empty string (no user
-// session) — callers that need an actor identifier should prefer the
-// role combined with APITokenID.
+// session) — callers that need an actor identifier should use
+// TokenOwnerID (owned tokens) or APITokenID.
 func UserID(ctx context.Context) string {
 	v, _ := ctx.Value(userIDKey).(string)
 	return v
@@ -136,11 +136,11 @@ func ScopeTags(ctx context.Context) []string {
 // JWTs are accepted.
 var APITokensStore *apitokens.Service
 
-// tokenIdentity resolves an API token to the caller identity. An owned
+// TokenIdentity resolves an API token to the caller identity. An owned
 // token gets its owner's current scope and is checked against the owner's
 // current role as well; a token whose owner is gone stops working. Legacy
 // tokens (no owner on record) keep their pinned role and no scope.
-func tokenIdentity(ctx context.Context, svc *auth.Service, tok *apitokens.Token) (Identity, bool) {
+func TokenIdentity(ctx context.Context, svc *auth.Service, tok *apitokens.Token) (Identity, bool) {
 	id := Identity{Role: tok.Role, APITokenID: tok.ID}
 	if tok.Legacy {
 		return id, true
@@ -192,7 +192,7 @@ func NewAuth(svc *auth.Service) func(http.Handler) http.Handler {
 					http.Error(w, "unauthorized", http.StatusUnauthorized)
 					return
 				}
-				id, ok := tokenIdentity(r.Context(), svc, tok)
+				id, ok := TokenIdentity(r.Context(), svc, tok)
 				if !ok {
 					http.Error(w, "unauthorized", http.StatusUnauthorized)
 					return
@@ -243,8 +243,8 @@ func RequireRole(allowed ...string) func(http.Handler) http.Handler {
 // DB-backed custom roles. If nil, falls back to hardcoded builtins.
 var RBACStore *rbac.Store
 
-// RequirePerm returns middleware that rejects requests whose user role
-// is not granted the given permission. Must be chained after NewAuth.
+// RequirePerm returns middleware that rejects requests unless Allowed
+// grants perm (every role in Roles). Must be chained after NewAuth.
 func RequirePerm(perm rbac.Perm) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -10,8 +10,6 @@
   let password = $state('');
   let remember = $state(true);
   let error = $state('');
-  // Shown when the previous session was ended by the server rather than
-  // by the user, so the sign-in screen isn't an unexplained bounce.
   let notice = $state('');
   let loading = $state(false);
 

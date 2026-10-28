@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
@@ -96,9 +97,8 @@ func (h *Handlers) MFAEnrollVerify(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes})
 }
 
-// MFADisable clears MFA for the current user. Needs a current TOTP code
-// or a recovery code: proving the second factor, not the password, is
-// what makes removing it safe, and the recovery code covers a lost device.
+// MFADisable clears MFA for the current user after checking a TOTP or
+// recovery code.
 //
 //	DELETE /api/v1/mfa  {"code": "123456"}
 func (h *Handlers) MFADisable(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +107,14 @@ func (h *Handlers) MFADisable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	limitKey := "mfa-disable:" + uid
+	if h.mfaDisableLimiter != nil {
+		if ok, retry := h.mfaDisableLimiter.Check(limitKey); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
+			writeError(w, http.StatusTooManyRequests, "too many wrong codes, try again later")
+			return
+		}
+	}
 	var req struct {
 		Code string `json:"code"`
 	}
@@ -114,6 +122,9 @@ func (h *Handlers) MFADisable(w http.ResponseWriter, r *http.Request) {
 	err := h.Auth.DisableTOTPWithCode(r.Context(), uid, req.Code)
 	switch {
 	case errors.Is(err, auth.ErrMFAInvalidCode):
+		if h.mfaDisableLimiter != nil {
+			h.mfaDisableLimiter.Fail(limitKey)
+		}
 		h.audit(r, "user.mfa_disable_failed", uid, nil)
 		// 400, not 401: the session is fine, and a 401 makes clients
 		// refresh and resend the same wrong code.
@@ -130,6 +141,10 @@ func (h *Handlers) MFADisable(w http.ResponseWriter, r *http.Request) {
 // MFAReset (admin only) clears MFA for any user.
 func (h *Handlers) MFAReset(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if id == middleware.UserID(r.Context()) {
+		writeError(w, http.StatusBadRequest, "use DELETE /api/v1/mfa with a code to turn off your own 2FA")
+		return
+	}
 	if err := h.Auth.DisableTOTP(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

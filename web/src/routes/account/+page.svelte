@@ -16,8 +16,8 @@
   //     (/users, /authentication, /tokens, /audit, /settings) per the
   //     sidebar IA refactor. A second tab strip would be duplicate nav.
   //   - No persistent recovery-codes card. Codes are shown once at
-  //     enrollment (existing flow). Recovery on lost authenticator goes
-  //     through admin → /users → reset 2FA, which already exists.
+  //     enrollment (existing flow). A recovery code disables 2FA;
+  //     otherwise admin → /users → reset 2FA.
   //   - No .txt download for codes; clipboard copy is enough.
   import { api, ApiError, type Session, type PasswordPolicy } from '$lib/api';
   import { Skeleton } from '$lib/components/ui';
@@ -196,8 +196,6 @@
     }
   }
 
-  // Turning 2FA off (or replacing the device) needs a current code or a
-  // recovery code, so a stolen session alone can't strip the second factor.
   let mfaOffOpen = $state(false);
   let mfaOffMode = $state<'disable' | 'reenroll'>('disable');
   let mfaOffCode = $state('');

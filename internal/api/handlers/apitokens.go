@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/apitokens"
@@ -61,8 +62,8 @@ func (h *Handlers) syncLegacyTokenNotice(r *http.Request) {
 	}
 }
 
-// permsForRole returns the permission set for a role name — built-in or
-// custom. Used by the privilege-escalation guard to check role-subset.
+// permsForRoleName returns the permission set for a role name — built-in
+// or custom.
 func (h *Handlers) permsForRoleName(name string) (map[rbac.Perm]bool, bool) {
 	out := map[rbac.Perm]bool{}
 	if h.Roles != nil {
@@ -150,17 +151,15 @@ func (h *Handlers) CreateAPIToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Privilege-escalation guard (RBAC v2.1): caller may only mint a
-	// token whose role grants a subset of the caller's own permissions.
-	// Bypassed for callers with tokens.manage_others (typically admin).
-	if !h.callerCanManageOthers(r) {
-		callerPerms := h.callerPermSet(r)
-		for p := range requestedPerms {
-			if !callerPerms[p] {
-				writeError(w, http.StatusForbidden,
-					"cannot mint a token with permissions you don't have")
-				return
-			}
+	// The new token's role may not grant more than the caller effectively
+	// holds. No exception for tokens.manage_others: a token holding it
+	// would otherwise mint one with its owner's full role.
+	callerPerms := h.callerPermSet(r)
+	for p := range requestedPerms {
+		if !callerPerms[p] {
+			writeError(w, http.StatusForbidden,
+				"cannot mint a token with permissions you don't have")
+			return
 		}
 	}
 
@@ -173,10 +172,23 @@ func (h *Handlers) CreateAPIToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A token minted by a token can't outlive it, or revoking a leaked
+	// token wouldn't end the access it handed out.
+	var notAfter *time.Time
+	if parentID := middleware.APITokenID(r.Context()); parentID != 0 {
+		parent, err := h.APITokens.Get(r.Context(), parentID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		notAfter = parent.ExpiresAt
+	}
+
 	plaintext, token, err := h.APITokens.Create(r.Context(), apitokens.CreateInput{
 		Name:            in.Name,
 		Role:            in.Role,
 		ExpiresInDays:   in.ExpiresInDays,
+		NotAfter:        notAfter,
 		CreatedByUserID: creator,
 	})
 	if err != nil {
@@ -233,11 +245,13 @@ func (h *Handlers) RevokeAPIToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Ownership check: callers without manage_others can only revoke
-	// their own tokens. 404 (not 403) hides the existence of other
-	// users' tokens from probing.
+	// their own tokens, and an API token only itself, so a weak token
+	// can't take down its owner's other tokens. 404 (not 403) hides the
+	// existence of other tokens from probing.
 	if !h.callerCanManageOthers(r) {
 		uid := callerTokenOwner(r)
-		if uid == "" || existing.CreatedBy == nil || *existing.CreatedBy != uid {
+		self := middleware.APITokenID(r.Context())
+		if uid == "" || existing.CreatedBy == nil || *existing.CreatedBy != uid || (self != 0 && self != id) {
 			writeError(w, http.StatusNotFound, "token not found")
 			return
 		}
