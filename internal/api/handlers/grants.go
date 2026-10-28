@@ -7,12 +7,36 @@ import (
 	"net/http"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // errGrantExceedsCaller is returned when an assignment would reach beyond
 // what the caller holds; handlers turn it into 403.
 var errGrantExceedsCaller = errors.New("grant exceeds caller")
+
+var errLastAdmin = errors.New("this is the last account that can administer Dockmesh; give another account an admin role first")
+
+// adminPerms make a role able to administer the install; the last account
+// holding all of them must survive any change.
+var adminPerms = []rbac.Perm{rbac.PermSystemUpdate, rbac.PermUsersView, rbac.PermUsersCreate, rbac.PermUsersUpdate, rbac.PermUsersDelete}
+
+func permSet(ps []rbac.Perm) map[rbac.Perm]bool {
+	out := make(map[rbac.Perm]bool, len(ps))
+	for _, p := range ps {
+		out[p] = true
+	}
+	return out
+}
+
+func hasAdminPerms(perms map[rbac.Perm]bool) bool {
+	for _, p := range adminPerms {
+		if !perms[p] {
+			return false
+		}
+	}
+	return true
+}
 
 // checkGrant reports whether the caller may hand out role together with
 // the user-level scope tags: every permission of the role must be one the
@@ -95,11 +119,7 @@ func (h *Handlers) checkPermsGrant(r *http.Request, perms map[rbac.Perm]bool, sc
 
 // checkRoleInput validates a role definition against the caller's rights.
 func (h *Handlers) checkRoleInput(r *http.Request, in rbac.RoleInput) error {
-	perms := make(map[rbac.Perm]bool, len(in.Permissions))
-	for _, p := range in.Permissions {
-		perms[p] = true
-	}
-	return h.checkPermsGrant(r, perms, in.Scopes)
+	return h.checkPermsGrant(r, permSet(in.Permissions), in.Scopes)
 }
 
 // requireManageRole checks that the caller holds everything the existing
@@ -110,27 +130,9 @@ func (h *Handlers) requireManageRole(w http.ResponseWriter, r *http.Request, nam
 		writeError(w, http.StatusNotFound, "role not found")
 		return false
 	}
-	perms := make(map[rbac.Perm]bool, len(rd.Permissions))
-	for _, p := range rd.Permissions {
-		perms[p] = true
-	}
-	if err := h.checkPermsGrant(r, perms, rd.Scopes); err != nil {
+	if err := h.checkPermsGrant(r, permSet(rd.Permissions), rd.Scopes); err != nil {
 		writeError(w, http.StatusForbidden, "you can't manage this role: "+err.Error())
 		return false
-	}
-	return true
-}
-
-// permsGrantAdmin is isAdminRole for a permission list.
-func permsGrantAdmin(perms []rbac.Perm) bool {
-	have := make(map[rbac.Perm]bool, len(perms))
-	for _, p := range perms {
-		have[p] = true
-	}
-	for _, p := range adminPerms {
-		if !have[p] {
-			return false
-		}
 	}
 	return true
 }
@@ -153,25 +155,26 @@ func writeGrantError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusBadRequest, err.Error())
 }
 
-var adminPerms = []rbac.Perm{rbac.PermSystemUpdate, rbac.PermUsersView, rbac.PermUsersCreate, rbac.PermUsersUpdate, rbac.PermUsersDelete}
-
-// isAdminRole reports whether role can administer the install: it holds
-// system.update and every users.* permission. The last such account must
-// survive any change.
+// isAdminRole reports whether role holds every adminPerms permission.
 func (h *Handlers) isAdminRole(role string) bool {
 	perms, ok := h.permsForRoleName(role)
-	if !ok {
-		return false
-	}
-	for _, p := range adminPerms {
-		if !perms[p] {
-			return false
-		}
-	}
-	return true
+	return ok && hasAdminPerms(perms)
 }
 
-var errLastAdmin = errors.New("this is the last account that can administer Dockmesh; give another account an admin role first")
+// otherAdminExists reports whether an account not matched by skip holds an
+// admin role.
+func (h *Handlers) otherAdminExists(ctx context.Context, skip func(u auth.User) bool) (bool, error) {
+	users, err := h.Auth.ListUsers(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, u := range users {
+		if !skip(u) && h.isAdminRole(u.Role) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 // checkKeepsAdmin fails with errLastAdmin when userID currently holds an
 // admin role, would lose it (newRole == "" means the account is removed),
@@ -180,14 +183,9 @@ func (h *Handlers) checkKeepsAdmin(ctx context.Context, userID, currentRole, new
 	if !h.isAdminRole(currentRole) || (newRole != "" && h.isAdminRole(newRole)) {
 		return nil
 	}
-	users, err := h.Auth.ListUsers(ctx)
-	if err != nil {
+	ok, err := h.otherAdminExists(ctx, func(u auth.User) bool { return u.ID == userID })
+	if err != nil || ok {
 		return err
-	}
-	for _, u := range users {
-		if u.ID != userID && h.isAdminRole(u.Role) {
-			return nil
-		}
 	}
 	return errLastAdmin
 }
@@ -199,14 +197,9 @@ func (h *Handlers) checkRoleKeepsAdmin(ctx context.Context, role string, stillAd
 	if stillAdmin || !h.isAdminRole(role) {
 		return nil
 	}
-	users, err := h.Auth.ListUsers(ctx)
-	if err != nil {
+	ok, err := h.otherAdminExists(ctx, func(u auth.User) bool { return u.Role == role })
+	if err != nil || ok {
 		return err
-	}
-	for _, u := range users {
-		if u.Role != role && h.isAdminRole(u.Role) {
-			return nil
-		}
 	}
 	return errLastAdmin
 }

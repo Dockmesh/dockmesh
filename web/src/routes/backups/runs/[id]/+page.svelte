@@ -160,7 +160,7 @@
   const allRestoreModes: { id: 'in-place' | 'alongside' | 'download'; title: string; blurb: string; danger?: boolean }[] = [
     { id: 'in-place', title: 'Restore in place', blurb: 'Replace current data on this dockmesh. Stops affected stacks first.', danger: true },
     { id: 'alongside', title: 'Restore alongside', blurb: 'Mount as new stacks with a -restored suffix. Original keeps running.' },
-    { id: 'download', title: 'Download archive', blurb: 'Stream the encrypted .tar.age locally for offline inspection.' }
+    { id: 'download', title: 'Download archive', blurb: 'Download the decrypted .tar.gz for offline inspection.' }
   ];
   const restoreModes = allRestoreModes.filter((m) => m.id !== 'download' || allowed('backups.download'));
 </script>

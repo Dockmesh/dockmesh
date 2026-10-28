@@ -230,6 +230,17 @@ func (h *Handlers) inReadScope(r *http.Request, hostID, stack string) bool {
 	return h.inRoleScope(r, h.stackScopeReq(r.Context(), hostID, stack))
 }
 
+// hostsInReadScope keeps the hosts whose host-level data the caller sees.
+func (h *Handlers) hostsInReadScope(r *http.Request, hosts []host.Host) []host.Host {
+	out := make([]host.Host, 0, len(hosts))
+	for _, hh := range hosts {
+		if h.inReadScope(r, hh.ID(), "") {
+			out = append(out, hh)
+		}
+	}
+	return out
+}
+
 // callerUnscoped reports whether the caller has neither a host scope nor
 // a role scope, i.e. sees every host and stack.
 func (h *Handlers) callerUnscoped(r *http.Request) bool {

@@ -62,12 +62,7 @@ func (h *Handlers) ListImages(w http.ResponseWriter, r *http.Request) {
 	// All-mode: fan out. Each online host contributes its image list,
 	// tagged with host metadata per row.
 	if host.IsAll(hostID) && h.Hosts != nil {
-		var targets []host.Host
-		for _, hh := range h.Hosts.PickAll(r.Context()) {
-			if h.inReadScope(r, hh.ID(), "") {
-				targets = append(targets, hh)
-			}
-		}
+		targets := h.hostsInReadScope(r, h.Hosts.PickAll(r.Context()))
 		res := host.FanOut(r.Context(), targets, func(ctx context.Context, hh host.Host) ([]imageRow, error) {
 			list, err := hh.ListImages(ctx, all)
 			if err != nil {

@@ -730,9 +730,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermBackupsRestore))
 				r.Post("/backups/runs/{id}/restore", h.RestoreBackup)
-				// P.13.3: stack-typed runs need their own entry point so
-				// the restore actually writes stack/<rel> + each volume
-				// instead of returning the legacy "not implemented" stub.
+				// Stack-typed runs need their own entry point that writes
+				// stack/<rel> plus each volume.
 				r.Post("/backups/runs/{id}/restore-stack", h.RestoreStackBackup)
 				// The key decrypts every backup and stored secret; the
 				// handler additionally requires an admin.

@@ -9,7 +9,6 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/notify"
-	"github.com/dockmesh/dockmesh/internal/redact"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -70,14 +69,13 @@ func (h *Handlers) UpdateNotificationChannel(w http.ResponseWriter, r *http.Requ
 	}
 	for _, prev := range h.Notify.Channels() {
 		if prev.ID == id && prev.Type == in.Type {
-			if m := redact.ToMap(in.Config); m != nil {
-				kept, err := json.Marshal(redact.Keep(m, redact.ToMap(prev.Config), notifySecrets(in.Type)))
-				if err != nil {
-					writeError(w, http.StatusBadRequest, "invalid config")
-					return
-				}
-				in.Config = kept
+			kept, err := json.Marshal(keepConfig(in.Config, prev.Config, notifySecrets(in.Type)))
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid config")
+				return
 			}
+			in.Config = kept
+			break
 		}
 	}
 	c, err := h.Notify.Update(r.Context(), id, in)

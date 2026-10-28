@@ -2934,9 +2934,8 @@ paths:
     get:
       operationId: volumes.browse_file
       tags: [volumes]
-      summary: Read a single file inside a volume, capped at 1 MiB (P.11.8)
+      summary: Read a single file inside a volume, capped at 1 MiB
       description: |
-        Requires `containers.exec`; audited.
         Returns up to 1 MiB of content. `truncated: true` signals the file
         is larger — the UI then offers a download link instead of an inline
         preview. `binary: true` is set when a NUL byte is found in the
@@ -5939,6 +5938,7 @@ paths:
       tags: [containers]
       summary: Read a file inside the container as a text/binary preview
       description: |
+        Requires `containers.exec`; audited.
         Returns up to 1 MiB of content. `truncated: true` signals the
         file is larger — the UI then offers a download link. `binary:
         true` is set when a NUL byte appears in the first 8 KiB (same

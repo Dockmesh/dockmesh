@@ -2,9 +2,7 @@
   // Run drawer — right-side aside per backup-wizards.jsx::RunDrawer.
   // Shows status / size / duration / phase summary, the run error if
   // any, and the restore-flow with three modes (in-place / alongside /
-  // download). Per-run log streaming isn't backed yet (BackupRun has
-  // status + error but no log array) — placeholder block surfaces what
-  // we have and notes the rest is a follow-up.
+  // download).
   import { api, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
   import { Eyebrow } from '$lib/components/editorial';
   import { allowed } from '$lib/rbac.svelte';
@@ -100,7 +98,7 @@
   const allRestoreModes: { id: 'in-place' | 'alongside' | 'download'; title: string; blurb: string; danger?: boolean }[] = [
     { id: 'in-place', title: 'Restore in place', blurb: 'Replace current data on this dockmesh. Stops affected stacks first.', danger: true },
     { id: 'alongside', title: 'Restore alongside', blurb: 'Mount as new stacks with a -restored suffix. Original keeps running.' },
-    { id: 'download', title: 'Download archive', blurb: 'Stream the encrypted .tar.age locally for offline inspection.' }
+    { id: 'download', title: 'Download archive', blurb: 'Download the decrypted .tar.gz for offline inspection.' }
   ];
   const restoreModes = allRestoreModes.filter((m) => m.id !== 'download' || allowed('backups.download'));
 

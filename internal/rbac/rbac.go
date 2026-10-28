@@ -90,9 +90,7 @@ const (
 	PermBackupsUpdate  Perm = "backups.update"  // edit existing jobs / targets
 	PermBackupsDelete  Perm = "backups.delete"
 	PermBackupsRestore Perm = "backups.restore" // sensitive — overwrites data
-	// PermBackupsDownload streams a decrypted archive; stack archives carry
-	// the stack's .env secrets. System archives also need admin.
-	PermBackupsDownload Perm = "backups.download"
+	PermBackupsDownload Perm = "backups.download" // decrypted archive incl. stack .env; system archives need admin
 
 	// ─── Reverse proxy ───
 	PermProxyView   Perm = "proxy.view"

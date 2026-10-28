@@ -96,7 +96,7 @@ func (h *Handlers) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		writeGrantError(w, err)
 		return
 	}
-	if err := h.checkRoleKeepsAdmin(r.Context(), name, permsGrantAdmin(in.Permissions)); err != nil {
+	if err := h.checkRoleKeepsAdmin(r.Context(), name, hasAdminPerms(permSet(in.Permissions))); err != nil {
 		writeLastAdminError(w, err)
 		return
 	}
