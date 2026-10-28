@@ -5971,13 +5971,13 @@ paths:
     get:
       operationId: auth.signin_config_get
       tags: [auth]
-      summary: Read the sign-in policy (session TTLs and limits, SSO account creation)
+      summary: Read the sign-in policy (session TTLs and limits)
       description: |
         `session_idle_ttl_min`, `session_absolute_ttl_hr` and
         `session_max_per_user` are enforced. `allow_local_password`,
         `require_tfa_for_admin`, `allow_self_register`,
         `session_remember_me_days` and `password_forbid_reuse_count` are
-        stored and returned but not enforced yet; the UI hides them.
+        stored and returned, not enforced.
       responses:
         "200":
           description: Current sign-in policy.
@@ -6881,7 +6881,7 @@ components:
         rotation_days:
           type: integer
           minimum: 0
-          description: Stored but not enforced yet; the UI hides it until it is.
+          description: Stored and returned, not enforced.
         lockout_max_attempts:
           type: integer
           minimum: 0
