@@ -262,5 +262,6 @@ func LocalMounts(ctx context.Context) []Mount {
 
 // CollectWithMounts is Collect plus the per-mount breakdown.
 func CollectWithMounts(ctx context.Context) Metrics {
-	return ApplyMounts(Collect(), LocalMounts(ctx))
+	// Collect reads the sampler snapshot and bounds its own Docker call.
+	return ApplyMounts(Collect(), LocalMounts(ctx)) //nolint:contextcheck
 }
