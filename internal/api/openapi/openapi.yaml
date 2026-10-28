@@ -2498,10 +2498,11 @@ paths:
         * **GitHub** / **Gitea** — `X-Hub-Signature-256` / `X-Gitea-Signature` (`sha256=<hex>`)
         * **GitLab** — plain shared secret on `X-Gitlab-Token`
 
-        Without a secret the webhook is disabled (403); polling and manual
-        sync keep working. Returns 202 on success; the sync runs in the
+        Without a secret the webhook is disabled; polling and manual sync
+        keep working. Returns 202 on success; the sync runs in the
         background, detached from the request, so providers don't time out
-        on slow clones.
+        on slow clones. Syncs of one stack run one at a time, and deliveries
+        arriving during a sync are merged into a single follow-up sync.
       security: []
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
@@ -2523,17 +2524,7 @@ paths:
                   status: { type: string, example: "sync queued" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401":
-          description: Signature mismatch.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "403":
-          description: Webhook disabled — no webhook secret is set on the git source.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "404":
-          description: No git source configured.
+          description: Webhook rejected — unknown stack or no git source, no webhook secret set, or signature mismatch. The reasons share one response.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -7832,7 +7823,7 @@ components:
           minimum: 60
         webhook_secret:
           type: string
-          description: Shared secret for HMAC verification of incoming webhook pushes. Empty keeps the stored secret. Webhooks are rejected while no secret is set.
+          description: Shared secret for HMAC verification of incoming webhook pushes. At least 16 characters when set or changed (shorter secrets stored earlier keep working). Empty keeps the stored secret. Webhooks are rejected while no secret is set.
         clear_webhook_secret: { type: boolean, description: "Removes the secret, which disables the webhook." }
 
     StackGitSyncResult:

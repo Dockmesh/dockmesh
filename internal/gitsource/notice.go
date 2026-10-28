@@ -9,9 +9,9 @@ import (
 
 const webhookNoticeKey = "git-webhook.no-secret"
 
-// StacksWithoutWebhookSecret lists the stacks whose git source has no
+// stacksWithoutWebhookSecret lists the stacks whose git source has no
 // webhook secret, so incoming webhooks for them are rejected.
-func (s *Service) StacksWithoutWebhookSecret(ctx context.Context) ([]string, error) {
+func (s *Service) stacksWithoutWebhookSecret(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT stack_name FROM stack_git_sources
 		 WHERE COALESCE(webhook_secret, '') = ''
@@ -38,7 +38,7 @@ func (s *Service) SyncWebhookNotice(ctx context.Context, n *notices.Service) err
 	if n == nil {
 		return nil
 	}
-	names, err := s.StacksWithoutWebhookSecret(ctx)
+	names, err := s.stacksWithoutWebhookSecret(ctx)
 	if err != nil {
 		return err
 	}

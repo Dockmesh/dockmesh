@@ -42,6 +42,8 @@ var (
 	ErrStackNameInvalid = errors.New("stack name contains characters that cannot be used on disk")
 )
 
+var ErrWebhookSecretShort = fmt.Errorf("webhook_secret must be at least %d characters", minWebhookSecretLen)
+
 // Source is the DB-backed row, returned to handlers with secrets
 // redacted via the Has* flags instead of raw values.
 type Source struct {
@@ -108,16 +110,25 @@ type Service struct {
 
 	stop chan struct{}
 	wg   sync.WaitGroup
+
+	syncMu    sync.Mutex
+	stackMu   map[string]*sync.Mutex
+	triggered map[string]bool // stack -> another sync was requested while one ran
+
+	// syncFn replaces the clone/copy/deploy body in tests.
+	syncFn func(ctx context.Context, stackName string) (*SyncResult, error)
 }
 
 func New(db *sql.DB, secretsSvc *secrets.Service, stacksMgr *stacks.Manager, cacheDir string, deploy DeployFunc) *Service {
 	return &Service{
-		db:       db,
-		secrets:  secretsSvc,
-		stacks:   stacksMgr,
-		cacheDir: cacheDir,
-		deploy:   deploy,
-		stop:     make(chan struct{}),
+		db:        db,
+		secrets:   secretsSvc,
+		stacks:    stacksMgr,
+		cacheDir:  cacheDir,
+		deploy:    deploy,
+		stop:      make(chan struct{}),
+		stackMu:   make(map[string]*sync.Mutex),
+		triggered: make(map[string]bool),
 	}
 }
 
@@ -315,7 +326,70 @@ func (s *Service) WebhookSecret(ctx context.Context, stackName string) (string, 
 // Sync — clone/pull + copy into the stack's FS location
 // -----------------------------------------------------------------------------
 
+// webhookSyncTimeout bounds a webhook-triggered sync, which outlives the
+// request that queued it.
+const webhookSyncTimeout = 10 * time.Minute
+
+// Sync pulls the stack's repo and copies it into the stack. Syncs of the
+// same stack (poller, manual, webhook) run one at a time, since they share
+// the clone dir and the stack files.
 func (s *Service) Sync(ctx context.Context, stackName string) (*SyncResult, error) {
+	mu := s.stackLock(stackName)
+	mu.Lock()
+	defer mu.Unlock()
+	if s.syncFn != nil {
+		return s.syncFn(ctx, stackName)
+	}
+	return s.sync(ctx, stackName)
+}
+
+func (s *Service) stackLock(stackName string) *sync.Mutex {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	mu, ok := s.stackMu[stackName]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.stackMu[stackName] = mu
+	}
+	return mu
+}
+
+// TriggerSync starts a background sync for a webhook delivery and returns
+// at once. Deliveries arriving while one runs collapse into a single
+// follow-up sync, so replaying a delivery can't pile up syncs or deploys.
+func (s *Service) TriggerSync(ctx context.Context, stackName string) {
+	s.syncMu.Lock()
+	if _, running := s.triggered[stackName]; running {
+		s.triggered[stackName] = true
+		s.syncMu.Unlock()
+		return
+	}
+	s.triggered[stackName] = false
+	s.syncMu.Unlock()
+
+	base := context.WithoutCancel(ctx)
+	go func() {
+		for {
+			runCtx, cancel := context.WithTimeout(base, webhookSyncTimeout)
+			if _, err := s.Sync(runCtx, stackName); err != nil {
+				slog.Warn("git webhook sync failed", "stack", stackName, "err", err)
+			}
+			cancel()
+
+			s.syncMu.Lock()
+			again := s.triggered[stackName]
+			if !again {
+				delete(s.triggered, stackName)
+				s.syncMu.Unlock()
+				return
+			}
+			s.triggered[stackName] = false
+			s.syncMu.Unlock()
+		}
+	}()
+}
+
+func (s *Service) sync(ctx context.Context, stackName string) (*SyncResult, error) {
 	src, err := s.Get(ctx, stackName)
 	if err != nil {
 		return nil, err
@@ -755,8 +829,15 @@ func validateInput(in Input) error {
 	if in.PollIntervalSec != 0 && in.PollIntervalSec < 60 {
 		return ErrPollTooShort
 	}
+	// Only new secrets are checked; shorter ones stored earlier keep working.
+	if in.WebhookSecret != "" && len(in.WebhookSecret) < minWebhookSecretLen {
+		return ErrWebhookSecretShort
+	}
 	return nil
 }
+
+// minWebhookSecretLen keeps webhook secrets out of guessing range.
+const minWebhookSecretLen = 16
 
 func safeStackName(s string) bool {
 	if s == "" || strings.ContainsAny(s, `/\:*?"<>|`) {

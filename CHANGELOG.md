@@ -57,7 +57,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - Signing in with an unknown username takes as long as with a wrong password, and invalid
   API tokens can no longer tie up the server with expensive hash checks.
 - Git webhooks now need a webhook secret and a valid signature. Before, anyone who knew a
-  stack name could trigger a sync, and with auto-deploy a deploy, without any secret.
+  stack name could trigger a sync, and with auto-deploy a deploy, without any secret. New
+  webhook secrets must be at least 16 characters, and repeated deliveries no longer start
+  overlapping syncs of the same stack.
 
 ### Upgrade notes
 - [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The

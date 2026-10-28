@@ -89,8 +89,6 @@ type Handlers struct {
 	APITokens      *apitokens.Service
 	Registries     *registries.Service
 	GitSource      *gitsource.Service
-	// gitWebhookSync replaces GitSource.Sync for webhook-triggered syncs in tests.
-	gitWebhookSync func(ctx context.Context, stackName string) error
 	Templates      *templates.Service
 	Invites        *invites.Service
 	AuditRetention *audit.Retention
@@ -104,6 +102,9 @@ type Handlers struct {
 	// RBACv2Enforce gates per-host + per-stack scope checks on typed-
 	// resource handlers. Wired from cfg.RBACv2Enforce.
 	RBACv2Enforce bool
+
+	// gitWebhookTrigger replaces GitSource.TriggerSync in tests.
+	gitWebhookTrigger func(ctx context.Context, stackName string)
 }
 
 type Deps struct {
