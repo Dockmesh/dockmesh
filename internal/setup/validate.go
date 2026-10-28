@@ -160,7 +160,7 @@ func CheckSystemUser(username string) SystemUserCheck {
 	c.InDockerGroup = userInGroup(u, "docker")
 	if !c.InDockerGroup {
 		c.Status = "warn"
-		c.Message = "user exists but not in 'docker' group — install will add them"
+		c.Message = "user exists but is not in the 'docker' group — add it yourself: sudo usermod -aG docker " + username
 	} else {
 		c.Status = "ok"
 		c.Message = "user exists and already in 'docker' group"
@@ -231,6 +231,14 @@ type URLCheck struct {
 // `expectHealth` true means we look for the /api/v1/health JSON shape
 // to confirm we hit a dockmesh server (not someone else's web).
 func CheckURL(ctx context.Context, rawURL string, expectHealth bool) URLCheck {
+	return checkURL(ctx, rawURL, expectHealth, defaultURLGuard())
+}
+
+// maxTestRedirects bounds the redirect chain; every hop is dialled through
+// the same guard.
+const maxTestRedirects = 3
+
+func checkURL(ctx context.Context, rawURL string, expectHealth bool, guard urlGuard) URLCheck {
 	c := URLCheck{URL: rawURL}
 	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
 		c.Status = "fail"
@@ -243,11 +251,23 @@ func CheckURL(ctx context.Context, rawURL string, expectHealth bool) URLCheck {
 	}
 	httpCli := &http.Client{
 		Timeout: 5 * time.Second,
+		// Proxy stays nil: through a proxy the guard would only see the
+		// proxy's address, not the target's.
 		Transport: &http.Transport{
-			DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext,
-			// We may be testing the LAN URL of this very server with a
-			// self-signed cert — for the wizard test we tolerate it.
+			DialContext: (&net.Dialer{
+				Timeout: 3 * time.Second,
+				Control: guard.control,
+			}).DialContext,
 			TLSHandshakeTimeout: 3 * time.Second,
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxTestRedirects {
+				return errors.New("too many redirects")
+			}
+			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+				return fmt.Errorf("%w: redirect to %s", errBlockedTarget, req.URL.Scheme)
+			}
+			return nil
 		},
 	}
 	start := time.Now()
@@ -277,6 +297,10 @@ func CheckURL(ctx context.Context, rawURL string, expectHealth bool) URLCheck {
 }
 
 func humanizeNetErr(err error) string {
+	if errors.Is(err, errBlockedTarget) {
+		return "not tested: the URL points to a loopback, link-local, metadata or other machine's private address. " +
+			"Only public addresses and this server's own addresses can be tested; you can still continue"
+	}
 	s := err.Error()
 	switch {
 	case strings.Contains(s, "no such host"):
