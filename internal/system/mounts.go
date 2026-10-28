@@ -31,14 +31,15 @@ var dockerRelevant = map[string]bool{
 
 // Mount is the usage of one real filesystem.
 type Mount struct {
-	MountPoint string   `json:"mount_point"`
-	Device     string   `json:"device"`
-	FSType     string   `json:"fs_type"`
-	Total      uint64   `json:"total"`
-	Used       uint64   `json:"used"`
-	Percent    float64  `json:"percent"`
-	Roles      []string `json:"roles,omitempty"`
-	Error      string   `json:"error,omitempty"`
+	MountPoint string `json:"mount_point"`
+	// Device can name file servers and share paths; it stays server-side.
+	Device  string   `json:"-"`
+	FSType  string   `json:"fs_type"`
+	Total   uint64   `json:"total"`
+	Used    uint64   `json:"used"`
+	Percent float64  `json:"percent"`
+	Roles   []string `json:"roles,omitempty"`
+	Error   string   `json:"error,omitempty"`
 }
 
 // DockerRelevant reports whether m holds Docker or Dockmesh data.
@@ -74,33 +75,44 @@ var virtualFS = map[string]bool{
 	"nullfs": true, "aufs": true,
 }
 
-// statTimeout bounds statfs on a hung network mount. A mount whose
-// previous statfs is still blocked is reported with an error instead of
-// starting another blocked call.
+// statTimeout bounds each stat/statfs call: on a hung network mount
+// they block in the kernel. A key whose previous call is still blocked
+// fails fast instead of piling up another stuck goroutine.
 const statTimeout = 2 * time.Second
 
 var inflight sync.Map
 
-func usageWithTimeout(point string) (total, used uint64, percent float64, errMsg string) {
-	if _, busy := inflight.LoadOrStore(point, struct{}{}); busy {
-		return 0, 0, 0, "statfs still pending"
+func boundedFS[T any](key string, fn func() T) (T, bool) {
+	var zero T
+	if _, busy := inflight.LoadOrStore(key, struct{}{}); busy {
+		return zero, false
 	}
+	ch := make(chan T, 1)
+	go func() {
+		defer inflight.Delete(key)
+		ch <- fn()
+	}()
+	select {
+	case v := <-ch:
+		return v, true
+	case <-time.After(statTimeout):
+		return zero, false
+	}
+}
+
+func usageWithTimeout(point string) (total, used uint64, percent float64, errMsg string) {
 	type res struct {
 		total, used uint64
 		pct         float64
 	}
-	ch := make(chan res, 1)
-	go func() {
-		defer inflight.Delete(point)
+	r, ok := boundedFS("statfs:"+point, func() res {
 		t, u, p := readDisk(point)
-		ch <- res{t, u, p}
-	}()
-	select {
-	case r := <-ch:
-		return r.total, r.used, r.pct, ""
-	case <-time.After(statTimeout):
+		return res{t, u, p}
+	})
+	if !ok {
 		return 0, 0, 0, "statfs timed out"
 	}
+	return r.total, r.used, r.pct, ""
 }
 
 // CollectMounts lists every real filesystem with its usage, labels the
@@ -110,13 +122,22 @@ func CollectMounts(paths []RolePath) []Mount {
 }
 
 func resolvedDeviceKey(p string) (string, bool) {
-	if abs, err := filepath.Abs(p); err == nil {
-		p = abs
+	type res struct {
+		key string
+		ok  bool
 	}
-	if real, err := filepath.EvalSymlinks(p); err == nil {
-		p = real
-	}
-	return deviceKey(p)
+	r, done := boundedFS("stat:"+p, func() res {
+		q := p
+		if abs, err := filepath.Abs(q); err == nil {
+			q = abs
+		}
+		if real, err := filepath.EvalSymlinks(q); err == nil {
+			q = real
+		}
+		k, ok := deviceKey(q)
+		return res{k, ok}
+	})
+	return r.key, done && r.ok
 }
 
 func buildMounts(entries []mountEntry, paths []RolePath,
@@ -241,23 +262,53 @@ var (
 	mountsMu    sync.Mutex
 	mountsCache []Mount
 	mountsAt    time.Time
+	mountsDone  chan struct{} // non-nil while a refresh runs
 )
 
 // LocalMounts returns CollectMounts for this host, cached briefly since
-// the dashboard polls it and role lookup asks the Docker daemon.
+// the dashboard polls it and role lookup asks the Docker daemon. The
+// refresh runs in the background; callers get the previous result while
+// it is in flight, so a slow mount never blocks a request for long.
 func LocalMounts(ctx context.Context) []Mount {
 	mountsMu.Lock()
-	defer mountsMu.Unlock()
-	if mountsCache != nil && time.Since(mountsAt) < mountsCacheTTL {
-		return mountsCache
+	cached := mountsCache
+	if cached != nil && time.Since(mountsAt) < mountsCacheTTL {
+		mountsMu.Unlock()
+		return cached
 	}
+	if mountsDone == nil {
+		mountsDone = make(chan struct{})
+		go refreshMounts(mountsDone)
+	}
+	done := mountsDone
+	mountsMu.Unlock()
+	if cached != nil {
+		return cached
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+	}
+	mountsMu.Lock()
+	defer mountsMu.Unlock()
+	return mountsCache
+}
+
+func refreshMounts(done chan struct{}) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	var paths []RolePath
 	if fn := rolePathsFn.Load(); fn != nil {
 		paths = (*fn)(ctx)
 	}
-	mountsCache = CollectMounts(paths)
+	mounts := CollectMounts(paths)
+	mountsMu.Lock()
+	mountsCache = mounts
 	mountsAt = time.Now()
-	return mountsCache
+	mountsDone = nil
+	mountsMu.Unlock()
+	close(done)
 }
 
 // CollectWithMounts is Collect plus the per-mount breakdown.
