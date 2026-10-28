@@ -7620,10 +7620,9 @@ components:
 
     DiskMount:
       type: object
-      required: [mount_point, device, fs_type, total, used, percent]
+      required: [mount_point, fs_type, total, used, percent]
       properties:
         mount_point: { type: string }
-        device: { type: string }
         fs_type: { type: string }
         total: { type: integer, format: int64 }
         used: { type: integer, format: int64 }

@@ -3,6 +3,7 @@ package system
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestBuildMounts(t *testing.T) {
@@ -102,5 +103,26 @@ func TestParseContainerdRoot(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBoundedFSHungCallFailsFast(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	hung := func() int { <-release; return 1 }
+
+	start := time.Now()
+	if _, ok := boundedFS("test:hung", hung); ok {
+		t.Fatal("hung call reported success")
+	}
+	if d := time.Since(start); d < statTimeout || d > statTimeout+time.Second {
+		t.Fatalf("first call took %s, want about %s", d, statTimeout)
+	}
+	start = time.Now()
+	if _, ok := boundedFS("test:hung", hung); ok || time.Since(start) > 100*time.Millisecond {
+		t.Fatal("second call on a still-blocked key must fail immediately")
+	}
+	if v, ok := boundedFS("test:fast", func() int { return 7 }); !ok || v != 7 {
+		t.Fatalf("fast call = %d,%v", v, ok)
 	}
 }

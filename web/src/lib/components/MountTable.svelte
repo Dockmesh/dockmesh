@@ -48,7 +48,7 @@
     <tbody>
       {#each mounts as m (m.mount_point)}
         <tr>
-          <td class="mt-path font-mono" title="{m.device} ({m.fs_type})">{m.mount_point}</td>
+          <td class="mt-path font-mono" title={m.fs_type}>{m.mount_point}</td>
           <td>
             {#if m.error}
               <span class="mt-err">{m.error}</span>

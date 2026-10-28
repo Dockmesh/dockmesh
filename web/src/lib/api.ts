@@ -908,7 +908,6 @@ export interface BackupRun {
 
 export interface DiskMount {
   mount_point: string;
-  device: string;
   fs_type: string;
   total: number;
   used: number;
