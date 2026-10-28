@@ -97,6 +97,9 @@ type ConnectedAgent struct {
 	Hello    HelloPayload
 	JoinedAt time.Time
 	send     chan Frame
+	// closeConn closes the underlying socket; the read loop then exits
+	// and markOffline removes the agent from the registry.
+	closeConn func()
 
 	pendingMu sync.Mutex
 	pending   map[string]chan Frame
@@ -280,6 +283,68 @@ func (s *Service) RotateEnrollToken(ctx context.Context, id string) (*CreateResu
 	return s.createResult(a, token, expires), nil
 }
 
+// ReissueAllEnrollTokens gives every non-revoked agent a fresh
+// enrollment token and drops its client cert, in one transaction. Used
+// after a CA rotation, when every agent has to enroll again.
+func (s *Service) ReissueAllEnrollTokens(ctx context.Context) ([]CreateResult, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM agents WHERE status != 'revoked' ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	expires := s.now().Add(s.enrollTTL)
+	tokens := make(map[string]string, len(ids))
+	for _, id := range ids {
+		token, err := newToken()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE agents
+			   SET enrollment_token_hash = ?,
+			       enrollment_token_expires_at = ?,
+			       cert_fingerprint = NULL,
+			       status = 'pending',
+			       updated_at = CURRENT_TIMESTAMP
+			 WHERE id = ?`, hashToken(token), sqliteTime(expires), id); err != nil {
+			return nil, err
+		}
+		tokens[id] = token
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	out := make([]CreateResult, 0, len(ids))
+	for _, id := range ids {
+		a, err := s.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *s.createResult(a, tokens[id], expires))
+	}
+	return out, nil
+}
+
 func (s *Service) createResult(a *Agent, token string, expires time.Time) *CreateResult {
 	fp := s.pki.CAFingerprint()
 	// The installer runs as root on the remote host: it creates a
@@ -422,6 +487,9 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 	if n, _ := res.RowsAffected(); n != 1 {
 		return nil, ErrInvalidToken
 	}
+	// A re-enrolled host replaces its credential; a session still open
+	// with the old cert must not outlive it or block the new agent.
+	s.sever(id)
 
 	return &EnrollResponse{
 		AgentID:    id,
@@ -512,6 +580,17 @@ func (s *Service) disconnect(id string) {
 	s.mu.Unlock()
 	if ag != nil {
 		close(ag.send)
+	}
+}
+
+// sever closes the live socket of agent id, if any, without touching
+// the send channel that in-flight requests may still write to.
+func (s *Service) sever(id string) {
+	s.mu.RLock()
+	ag := s.connected[id]
+	s.mu.RUnlock()
+	if ag != nil && ag.closeConn != nil {
+		ag.closeConn()
 	}
 }
 

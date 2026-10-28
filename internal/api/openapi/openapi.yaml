@@ -1036,8 +1036,9 @@ paths:
         Generates a new enrollment token (the previous one stops working)
         with the configured lifetime. Running the returned install command
         re-enrolls the host under the same ID: stacks, tags and backup jobs
-        stay attached and the old client cert stops working once the new
-        enrollment completes. Until then the connected agent keeps its cert.
+        stay attached; when the new enrollment completes the old client
+        cert stops working and its live session is closed. Rotating the
+        token of an already enrolled host also requires `hosts.create`.
         Revoked hosts return 404.
       parameters:
         - name: id

@@ -68,8 +68,9 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ag := &ConnectedAgent{
 		ID:       agent.ID,
 		Name:     agent.Name,
-		JoinedAt: time.Now(),
-		send:     make(chan Frame, 32),
+		JoinedAt:  time.Now(),
+		send:      make(chan Frame, 32),
+		closeConn: func() { _ = conn.Close() },
 	}
 
 	// Wait for the hello frame before marking the agent online so the DB

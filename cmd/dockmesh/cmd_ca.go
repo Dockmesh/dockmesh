@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/pki"
 )
 
@@ -137,52 +138,14 @@ func caRotate(args []string) error {
 		return fmt.Errorf("pki regen: %w", err)
 	}
 
-	// Mark all agents pending with fresh tokens. We do it in a single
-	// transaction so a partial failure doesn't leave half the fleet
-	// re-tokenised.
-	tx, err := database.BeginTx(context.Background(), nil)
+	agentPublic := cfg.AgentPublicURL
+	if agentPublic == "" {
+		agentPublic = deriveAgentURL(cfg.BaseURL, cfg.AgentListen)
+	}
+	svc := agents.NewService(database, mgr, cfg.BaseURL, agentPublic)
+	svc.SetEnrollTokenTTL(cfg.AgentEnrollTokenTTL)
+	touched, err := svc.ReissueAllEnrollTokens(context.Background())
 	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	rows, err := tx.Query(`SELECT id, name FROM agents`)
-	if err != nil {
-		return err
-	}
-	type entry struct {
-		id, name, token string
-	}
-	var touched []entry
-	for rows.Next() {
-		var id, name string
-		if err := rows.Scan(&id, &name); err != nil {
-			rows.Close()
-			return err
-		}
-		tok, err := newCATOken()
-		if err != nil {
-			rows.Close()
-			return err
-		}
-		touched = append(touched, entry{id: id, name: name, token: tok})
-	}
-	rows.Close()
-
-	for _, e := range touched {
-		hash := hashCAToken(e.token)
-		if _, err := tx.Exec(`
-			UPDATE agents
-			   SET enrollment_token_hash = ?,
-			       cert_fingerprint = NULL,
-			       status = 'pending',
-			       updated_at = CURRENT_TIMESTAMP
-			 WHERE id = ?`, hash, e.id); err != nil {
-			return err
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
 		return err
 	}
 
@@ -190,9 +153,7 @@ func caRotate(args []string) error {
 	fmt.Printf("old material archived with .old suffix\n\n")
 	fmt.Printf("%d agent(s) now pending. Re-enrol each with its fresh token:\n\n", len(touched))
 	for _, e := range touched {
-		fmt.Printf("  %-30s curl -fsSL %s/install/agent.sh?token=%s | sudo bash\n",
-			e.name, cfg.BaseURL, e.token)
+		fmt.Printf("  %-30s %s\n", e.Agent.Name, e.InstallHint)
 	}
-	_ = mgr
 	return nil
 }

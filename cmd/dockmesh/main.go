@@ -1008,6 +1008,7 @@ func main() {
 				Handler:           agentMux,
 				TLSConfig:         tlsCfg,
 				ReadHeaderTimeout: 10 * time.Second,
+				IdleTimeout:       2 * time.Minute,
 			}
 			go func() {
 				slog.Info("agent mtls listening", "addr", cfg.AgentListen, "public_url", agentPublic)

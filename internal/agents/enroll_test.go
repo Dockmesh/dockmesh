@@ -315,3 +315,68 @@ func TestServerTLSConfigKeepsEnrolledAgents(t *testing.T) {
 		t.Fatal("client cert from a foreign CA was accepted")
 	}
 }
+
+func TestReenrollSeversOldSession(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	res, err := svc.Create(ctx, "edge-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Enroll(ctx, enrollReq(res.Token)); err != nil {
+		t.Fatal(err)
+	}
+	closed := false
+	svc.connected[res.Agent.ID] = &ConnectedAgent{ID: res.Agent.ID, closeConn: func() { closed = true }}
+
+	rot, err := svc.RotateEnrollToken(ctx, res.Agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closed {
+		t.Fatal("rotating the token alone closed the live session")
+	}
+	if _, err := svc.Enroll(ctx, enrollReq(rot.Token)); err != nil {
+		t.Fatal(err)
+	}
+	if !closed {
+		t.Fatal("re-enrollment left the old session open")
+	}
+}
+
+func TestReissueAllEnrollTokens(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	enrolled, err := svc.Create(ctx, "enrolled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Enroll(ctx, enrollReq(enrolled.Token)); err != nil {
+		t.Fatal(err)
+	}
+	revoked, err := svc.Create(ctx, "revoked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.db.Exec(`UPDATE agents SET status = 'revoked' WHERE id = ?`, revoked.Agent.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := svc.ReissueAllEnrollTokens(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Agent.ID != enrolled.Agent.ID {
+		t.Fatalf("reissued %+v, want only the enrolled host", out)
+	}
+	if a, _ := svc.Get(ctx, revoked.Agent.ID); a.Status != "revoked" {
+		t.Fatalf("revoked host became %q", a.Status)
+	}
+	again, err := svc.Enroll(ctx, enrollReq(out[0].Token))
+	if err != nil {
+		t.Fatalf("reissued token not redeemable: %v", err)
+	}
+	if again.AgentID != enrolled.Agent.ID {
+		t.Fatalf("reissue changed the host id")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 // EnrollPath is where the agent listener accepts enrollment requests.
@@ -14,7 +15,10 @@ import (
 // installer pins by fingerprint.
 const EnrollPath = "/enroll"
 
-const maxEnrollBody = 64 << 10
+const (
+	maxEnrollBody     = 64 << 10
+	enrollReadTimeout = 15 * time.Second
+)
 
 // EnrollURL is the https URL of the enrollment endpoint on the agent
 // listener, derived from the public wss:// agent URL.
@@ -52,6 +56,9 @@ func EnrollHandler(svc *Service) http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		// The listener accepts unauthenticated clients here, so a slow
+		// body must not hold a connection open indefinitely.
+		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(enrollReadTimeout))
 		var req EnrollRequest
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxEnrollBody)).Decode(&req); err != nil {
 			http.Error(w, "invalid body", http.StatusBadRequest)
