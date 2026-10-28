@@ -56,6 +56,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and exec sessions are now recorded in the audit log.
 - Signing in with an unknown username takes as long as with a wrong password, and invalid
   API tokens can no longer tie up the server with expensive hash checks.
+- Git webhooks now need a webhook secret and a valid signature. Before, anyone who knew a
+  stack name could trigger a sync, and with auto-deploy a deploy, without any secret.
 
 ### Upgrade notes
 - [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The
@@ -63,3 +65,7 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - [legacy-api-tokens, admins] API tokens created before this version have no owner. They keep
   working and are marked "legacy" under API tokens; recreate each one while signed in as the
   user who should own it, then revoke the old one. A notice stays up until none are left.
+- [git-webhook-secret, admins] Git webhooks for stacks without a webhook secret are disabled;
+  polling and manual sync keep working. A notice lists the affected stacks. To keep using a
+  webhook, edit the stack's git source, set a webhook secret and enter the same secret in the
+  webhook settings of your git provider.
