@@ -19,6 +19,7 @@ type alertHistory struct {
 	ID            int64   `json:"id"`
 	RuleID        int64   `json:"rule_id"`
 	RuleName      string  `json:"rule_name"`
+	Kind          string  `json:"kind"`
 	ContainerName string  `json:"container_name"`
 	Status        string  `json:"status"`
 	Message       string  `json:"message"`
@@ -30,14 +31,23 @@ type alertHistory struct {
 type alertRule struct {
 	ID        int64  `json:"id"`
 	Name      string `json:"name"`
+	Kind      string `json:"kind"`
 	Metric    string `json:"metric"`
 	Threshold float64 `json:"threshold"`
 	Duration  int    `json:"duration_seconds"`
 	Enabled   bool   `json:"enabled"`
 }
 
+// ruleWhat is the metric of a metric rule, else the rule kind.
+func ruleWhat(r alertRule) string {
+	if r.Kind == "" || r.Kind == "metric" {
+		return r.Metric
+	}
+	return r.Kind
+}
+
 // alertListActiveCmd implements `dmctl alert list-active` from the spec.
-// "Active" = most recent `firing` history entries per rule. We pull the
+// "Active" = most recent `fired` history entries per rule and target. We pull the
 // history list and filter client-side since the server doesn't expose a
 // dedicated active-alerts endpoint.
 func alertListActiveCmd() *cobra.Command {
@@ -55,18 +65,23 @@ func alertListActiveCmd() *cobra.Command {
 			if err := c.request("GET", "/api/v1/alerts/history", q, nil, &hist); err != nil {
 				return err
 			}
-			// Keep the newest status per rule; a rule whose latest entry is
-			// "firing" is active, everything else is resolved / never fired.
-			latest := map[int64]alertHistory{}
+			// Keep the newest status per rule and target; "fired" is active
+			// unless the rule reports one-off events (OOM, failed backup).
+			type key struct {
+				rule   int64
+				target string
+			}
+			latest := map[key]alertHistory{}
 			for _, h := range hist {
-				prev, seen := latest[h.RuleID]
+				k := key{h.RuleID, h.ContainerName}
+				prev, seen := latest[k]
 				if !seen || h.OccurredAt > prev.OccurredAt {
-					latest[h.RuleID] = h
+					latest[k] = h
 				}
 			}
 			active := make([]alertHistory, 0)
 			for _, h := range latest {
-				if h.Status == "firing" {
+				if h.Status == "fired" && h.Kind != "oom" && h.Kind != "backup_failed" {
 					active = append(active, h)
 				}
 			}
@@ -140,13 +155,13 @@ func alertRulesCmd() *cobra.Command {
 						en = "yes"
 					}
 					rows = append(rows, []string{
-						fmt.Sprint(r.ID), r.Name, r.Metric,
+						fmt.Sprint(r.ID), r.Name, ruleWhat(r),
 						fmt.Sprintf("%.2f", r.Threshold),
 						fmt.Sprint(r.Duration) + "s",
 						en,
 					})
 				}
-				return []string{"ID", "NAME", "METRIC", "THRESHOLD", "DURATION", "ENABLED"}, rows
+				return []string{"ID", "NAME", "WATCHES", "THRESHOLD", "DURATION", "ENABLED"}, rows
 			})
 		},
 	}

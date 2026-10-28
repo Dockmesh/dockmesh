@@ -3,7 +3,8 @@
   // language sentence ("fire when [CPU %] is [greater than] [80] for
   // at least [60s]") with inline select/input controls. Same fields
   // underneath as the legacy form, just better wired for reading.
-  import { api, ApiError, type AlertRule, type AlertRuleInput, type NotificationChannel } from '$lib/api';
+  import { api, ApiError, type AlertRule, type AlertRuleInput, type HostInfo, type NotificationChannel } from '$lib/api';
+  import { KINDS, isContainerKind, ruleToInput, type RuleKind } from './ruleKinds';
   import { toast } from '$lib/stores/toast.svelte';
   import { EditorialModal, Eyebrow, Field } from '$lib/components/editorial';
   import { Check, Plus } from 'lucide-svelte';
@@ -24,7 +25,11 @@
 
   const DEFAULT: AlertRuleInput = {
     name: '',
+    kind: 'metric',
     container_filter: '*',
+    scope_host: '',
+    scope_tag: '',
+    scope_stack: '',
     metric: 'cpu_percent',
     operator: 'gt',
     threshold: 80,
@@ -34,9 +39,34 @@
     severity: 'warning',
     cooldown_seconds: 300,
     muted_until: '',
+    mute_schedule: '',
+  };
+
+  // Defaults applied when switching kind on a new rule.
+  const KIND_DEFAULTS: Partial<Record<RuleKind, Partial<AlertRuleInput>>> = {
+    metric: { metric: 'cpu_percent', operator: 'gt', threshold: 80, duration_seconds: 60 },
+    restart_loop: { threshold: 3, duration_seconds: 600 },
+    host_offline: { duration_seconds: 300 },
+    disk_usage: { threshold: 90 },
+    cert_expiry: { threshold: 14 },
   };
 
   let form = $state<AlertRuleInput>({ ...DEFAULT });
+  let hosts = $state<HostInfo[]>([]);
+  const kind = $derived((form.kind || 'metric') as RuleKind);
+  const kindMeta = $derived(KINDS.find((k) => k.id === kind) ?? KINDS[0]);
+
+  function setKind(k: RuleKind) {
+    form = {
+      ...form,
+      kind: k,
+      metric: '',
+      operator: '',
+      threshold: 0,
+      duration_seconds: 0,
+      ...(KIND_DEFAULTS[k] ?? {}),
+    };
+  }
   let saving = $state(false);
   let err = $state<string | null>(null);
 
@@ -46,24 +76,13 @@
   $effect(() => {
     if (open && (!lastOpen || lastEditingId !== (editing?.id ?? null))) {
       if (editing) {
-        form = {
-          name: editing.name,
-          container_filter: editing.container_filter,
-          metric: editing.metric,
-          operator: editing.operator,
-          threshold: editing.threshold,
-          duration_seconds: editing.duration_seconds,
-          channel_ids: editing.channel_ids ?? [],
-          enabled: editing.enabled,
-          severity: editing.severity || 'warning',
-          cooldown_seconds: editing.cooldown_seconds || 300,
-          muted_until: editing.muted_until ?? '',
-        };
+        form = ruleToInput(editing);
       } else {
         form = { ...DEFAULT };
       }
       err = null;
       lastEditingId = editing?.id ?? null;
+      api.hosts.list().then((h) => (hosts = h)).catch(() => (hosts = []));
     }
     lastOpen = open;
   });
@@ -167,6 +186,19 @@
       />
     </Field>
 
+    <Field label="Type" hint={editing ? 'The type of an existing rule cannot be changed.' : undefined}>
+      <select
+        class="dm-input rm-input"
+        value={kind}
+        disabled={!!editing}
+        onchange={(e) => setKind((e.target as HTMLSelectElement).value as RuleKind)}
+      >
+        {#each KINDS as k (k.id)}
+          <option value={k.id}>{k.label}</option>
+        {/each}
+      </select>
+    </Field>
+
     <Field label="Severity">
       <div class="rm-severity">
         {#each [
@@ -197,37 +229,81 @@
       </div>
       <div class="rm-condition-sentence">
         <span class="rm-cond-word">fire when</span>
-        <select class="rm-cond-select" bind:value={form.metric}>
-          <option value="cpu_percent">CPU %</option>
-          <option value="mem_percent">Memory %</option>
-        </select>
-        <select class="rm-cond-select rm-cond-op" bind:value={form.operator}>
-          <option value="gt">is greater than</option>
-          <option value="lt">is less than</option>
-        </select>
-        <input
-          type="number"
-          class="rm-cond-num"
-          min="0"
-          max="100"
-          bind:value={form.threshold}
-        />
-        <span class="rm-cond-unit">%</span>
-        <span class="rm-cond-word">for at least</span>
-        <select
-          class="rm-cond-select rm-cond-duration"
-          value={form.duration_seconds}
-          onchange={(e) => (form.duration_seconds = parseInt((e.target as HTMLSelectElement).value, 10) || 0)}
-        >
-          {#each durationOptions as d (d.value)}
-            <option value={d.value}>{d.label}</option>
-          {/each}
-        </select>
+        {#if kind === 'metric'}
+          <select class="rm-cond-select" bind:value={form.metric}>
+            <option value="cpu_percent">CPU %</option>
+            <option value="mem_percent">Memory %</option>
+          </select>
+          <select class="rm-cond-select rm-cond-op" bind:value={form.operator}>
+            <option value="gt">is greater than</option>
+            <option value="lt">is less than</option>
+          </select>
+          <input
+            type="number"
+            class="rm-cond-num"
+            min="0"
+            max="100"
+            bind:value={form.threshold}
+          />
+          <span class="rm-cond-unit">%</span>
+          <span class="rm-cond-word">for at least</span>
+          <select
+            class="rm-cond-select rm-cond-duration"
+            value={form.duration_seconds}
+            onchange={(e) => (form.duration_seconds = parseInt((e.target as HTMLSelectElement).value, 10) || 0)}
+          >
+            {#each durationOptions as d (d.value)}
+              <option value={d.value}>{d.label}</option>
+            {/each}
+          </select>
+        {:else if kind === 'restart_loop'}
+          <span class="rm-cond-word">a container restarts</span>
+          <input type="number" class="rm-cond-num" min="2" bind:value={form.threshold} />
+          <span class="rm-cond-word">times within</span>
+          <select
+            class="rm-cond-select rm-cond-duration"
+            value={form.duration_seconds}
+            onchange={(e) => (form.duration_seconds = parseInt((e.target as HTMLSelectElement).value, 10) || 0)}
+          >
+            {#each durationOptions.filter((d) => d.value >= 60) as d (d.value)}
+              <option value={d.value}>{d.label}</option>
+            {/each}
+          </select>
+        {:else if kind === 'host_offline'}
+          <span class="rm-cond-word">an agent is offline for</span>
+          <select
+            class="rm-cond-select rm-cond-duration"
+            value={form.duration_seconds}
+            onchange={(e) => (form.duration_seconds = parseInt((e.target as HTMLSelectElement).value, 10) || 0)}
+          >
+            {#each durationOptions as d (d.value)}
+              <option value={d.value}>{d.label}</option>
+            {/each}
+          </select>
+        {:else if kind === 'disk_usage'}
+          <span class="rm-cond-word">a disk is at least</span>
+          <input type="number" class="rm-cond-num" min="1" max="100" bind:value={form.threshold} />
+          <span class="rm-cond-unit">% full</span>
+        {:else if kind === 'cert_expiry'}
+          <span class="rm-cond-word">a proxy certificate expires within</span>
+          <input type="number" class="rm-cond-num" min="1" bind:value={form.threshold} />
+          <span class="rm-cond-word">days</span>
+        {:else if kind === 'container_stopped'}
+          <span class="rm-cond-word">a container exits with an error without being stopped</span>
+        {:else if kind === 'unhealthy'}
+          <span class="rm-cond-word">a container health check reports unhealthy</span>
+        {:else if kind === 'oom'}
+          <span class="rm-cond-word">a container is killed for running out of memory</span>
+        {:else if kind === 'backup_failed'}
+          <span class="rm-cond-word">a backup run fails</span>
+        {:else if kind === 'backup_missed'}
+          <span class="rm-cond-word">a backup job has no successful run within its schedule</span>
+        {/if}
       </div>
     </div>
 
     <div class="rm-grid-2">
-      <Field label="Container filter" hint="* matches all, or exact container name.">
+      <Field label={kindMeta.target} hint={kindMeta.targetHint}>
         <input
           class="dm-input rm-input"
           bind:value={form.container_filter}
@@ -246,6 +322,27 @@
         </select>
       </Field>
     </div>
+
+    {#if kind !== 'metric' && kind !== 'backup_failed' && kind !== 'backup_missed' && kind !== 'cert_expiry'}
+      <div class="rm-grid-2">
+        <Field label="Host" hint="Limit the rule to one host.">
+          <select class="dm-input rm-input" bind:value={form.scope_host}>
+            <option value="">All hosts</option>
+            {#each hosts as h (h.id)}
+              <option value={h.id}>{h.name}</option>
+            {/each}
+          </select>
+        </Field>
+        <Field label="Host tag" hint="Only hosts carrying this tag.">
+          <input class="dm-input rm-input" bind:value={form.scope_tag} placeholder="any" />
+        </Field>
+      </div>
+      {#if isContainerKind(kind)}
+        <Field label="Stack" hint="Only containers of this compose stack.">
+          <input class="dm-input rm-input" bind:value={form.scope_stack} placeholder="any" />
+        </Field>
+      {/if}
+    {/if}
 
     <Field label="Notify these channels" hint={channels.length === 0 ? 'No channels yet — create one in the Channels tab.' : 'Pick one or more channels — every matching channel gets the alert.'}>
       {#if channels.length === 0}

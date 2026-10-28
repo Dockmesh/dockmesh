@@ -298,6 +298,12 @@ func (h *RemoteHost) SystemMetrics(ctx context.Context) (system.Metrics, error) 
 
 // DiskMounts returns the agent's per-mount disk usage.
 func (h *RemoteHost) DiskMounts(ctx context.Context) ([]system.Mount, error) {
+	if h.agent == nil {
+		return nil, ErrAgentOffline
+	}
+	if !h.agent.Hello.Has(agents.CapDiskMounts) {
+		return nil, ErrMountsUnsupported
+	}
 	data, err := h.request(ctx, agents.FrameReqSystemDisks, nil)
 	if err != nil {
 		return nil, err

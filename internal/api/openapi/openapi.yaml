@@ -7542,13 +7542,21 @@ components:
 
     AlertRule:
       type: object
-      required: [id, name, metric, operator, threshold, enabled]
+      required: [id, name, kind, metric, operator, threshold, enabled]
       properties:
         id: { type: integer, format: int64 }
         name: { type: string }
-        container_filter: { type: string, description: Glob pattern matched against container names. }
-        metric: { type: string, enum: [cpu_percent, mem_percent] }
-        operator: { type: string, enum: [gt, lt] }
+        kind:
+          type: string
+          enum: [metric, restart_loop, container_stopped, unhealthy, oom, host_offline, disk_usage, backup_failed, backup_missed, cert_expiry]
+          description: Evaluator. Event kinds use container_filter as their target filter (container, agent, mount point, backup job or domain; "*" for all, which for disk_usage means mounts holding Docker data), threshold as restarts, percent or days, and duration_seconds as the restart window or offline time.
+        container_filter: { type: string, description: '"*" or the exact name of the target the rule watches.' }
+        scope_host: { type: string, description: Host id the rule is limited to; empty means every host. }
+        scope_tag: { type: string, description: Host tag the rule is limited to; empty means any. }
+        scope_stack: { type: string, description: Compose stack the rule is limited to (container kinds); empty means any. }
+        mute_schedule: { type: string, description: JSON weekly quiet-hours schedule; empty means never muted. }
+        metric: { type: string, enum: [cpu_percent, mem_percent, ""], description: Metric kind only. }
+        operator: { type: string, enum: [gt, lt, ""], description: Metric kind only. }
         threshold: { type: number }
         duration_seconds: { type: integer, minimum: 0 }
         cooldown_seconds: { type: integer, minimum: 0 }
@@ -7567,10 +7575,19 @@ components:
 
     AlertRuleInput:
       type: object
-      required: [name, metric, operator, threshold]
+      required: [name]
+      description: metric, operator and a non-zero threshold are required for the metric kind (the default).
       properties:
         name: { type: string }
+        kind:
+          type: string
+          enum: [metric, restart_loop, container_stopped, unhealthy, oom, host_offline, disk_usage, backup_failed, backup_missed, cert_expiry]
+          description: Evaluator. Event kinds use container_filter as their target filter (container, agent, mount point, backup job or domain; "*" for all, which for disk_usage means mounts holding Docker data), threshold as restarts, percent or days, and duration_seconds as the restart window or offline time.
         container_filter: { type: string }
+        scope_host: { type: string, description: Host id the rule is limited to; empty means every host. }
+        scope_tag: { type: string, description: Host tag the rule is limited to; empty means any. }
+        scope_stack: { type: string, description: Compose stack the rule is limited to (container kinds); empty means any. }
+        mute_schedule: { type: string, description: JSON weekly quiet-hours schedule; empty means never muted. }
         metric: { type: string, enum: [cpu_percent, mem_percent] }
         operator: { type: string, enum: [gt, lt] }
         threshold: { type: number }
@@ -7595,6 +7612,7 @@ components:
         message: { type: string }
         value: { type: number }
         threshold: { type: number }
+        kind: { type: string, description: Kind of the rule that produced the entry; empty if the rule was deleted. }
         notified:
           type: boolean
           description: False when the transition was recorded but channels were not notified (rule muted or inside its cooldown).

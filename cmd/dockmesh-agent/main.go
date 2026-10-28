@@ -46,6 +46,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/system"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
@@ -203,7 +204,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 		Arch:          runtime.GOARCH,
 		Hostname:      hostname,
 		DockerVersion: dockerVersion,
-		Capabilities:  []string{agents.CapDiskMounts},
+		Capabilities:  []string{agents.CapDiskMounts, agents.CapDockerEvents},
 	}
 	helloBytes, _ := json.Marshal(hello)
 	if err := writeFrame(conn, agents.Frame{Type: agents.FrameAgentHello, Payload: helloBytes}); err != nil {
@@ -434,8 +435,41 @@ func startStream(parent context.Context, conn *websocket.Conn, cli *client.Clien
 		runVolumeExportStream(ctx, conn, cli, open)
 	case "volume_import":
 		runVolumeImportStream(ctx, conn, cli, open, reg)
+	case "events":
+		runEventsStream(ctx, conn, cli, open)
 	default:
 		sendStreamClose(conn, open.StreamID, "unknown stream kind: "+open.Kind)
+	}
+}
+
+// runEventsStream forwards Docker container events, one JSON object per
+// chunk, for the server's event alerts.
+func runEventsStream(ctx context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen) {
+	msgs, errs := cli.Events(ctx, dtypes.EventsOptions{
+		Filters: filters.NewArgs(filters.Arg("type", string(events.ContainerEventType))),
+	})
+	for {
+		select {
+		case <-ctx.Done():
+			sendStreamClose(conn, open.StreamID, "")
+			return
+		case err := <-errs:
+			msg := ""
+			if err != nil && ctx.Err() == nil {
+				msg = err.Error()
+			}
+			sendStreamClose(conn, open.StreamID, msg)
+			return
+		case m := <-msgs:
+			data, err := json.Marshal(m)
+			if err != nil {
+				continue
+			}
+			payload, _ := json.Marshal(agents.StreamData{StreamID: open.StreamID, Data: data})
+			if werr := safeWriteFrame(conn, agents.Frame{Type: agents.FrameStreamData, Payload: payload}); werr != nil {
+				return
+			}
+		}
 	}
 }
 

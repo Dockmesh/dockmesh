@@ -788,6 +788,8 @@ func main() {
 	// constructed. Producers tolerate nil — if we forgot to wire one,
 	// it just stays silent instead of crashing.
 	alertsSvc.SetNotifier(notifSvc)
+	alertsSvc.SetNotices(noticesSvc)
+	alertsSvc.SetSources(alertSources(hostRegistry, hostTagsSvc, proxySvc))
 	backupSvc.SetNotifier(notifSvc)
 	updateWatcher.SetNotifier(notifSvc)
 	agentsSvc.SetNotifier(notifSvc)

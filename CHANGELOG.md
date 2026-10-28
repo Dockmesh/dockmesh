@@ -31,6 +31,13 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and at the top of the notifications drawer, with a link to where you fix it. The notice
   goes away on its own once the issue is fixed; non-critical ones can be hidden from the
   banner.
+- Alert rules for events: container restart loops, OOM kills, unhealthy containers and
+  unexpected stops (on the server and on agents), offline hosts, disk usage per mount,
+  failed or overdue backups and proxy TLS certificates close to expiry. Rules can be limited
+  to a host, a host tag or a stack and use the existing notification channels. New built-in
+  rules are on for restart loops, OOM kills, offline hosts, disks above 90%, backups and
+  certificates expiring within 14 days; admins of existing installs get a notice listing
+  them. Agents that are too old for container events are listed in a notice too.
 
 ### Changed
 - API tokens now belong to the user who created them. A token never grants more than its

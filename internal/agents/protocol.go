@@ -281,8 +281,13 @@ type HelloPayload struct {
 	Capabilities []string `json:"capabilities,omitempty"`
 }
 
-// CapDiskMounts: the agent answers FrameReqSystemDisks.
-const CapDiskMounts = "disk_mounts"
+// Optional agent capabilities.
+const (
+	// CapDiskMounts: the agent answers FrameReqSystemDisks.
+	CapDiskMounts = "disk_mounts"
+	// CapDockerEvents: the agent serves the "events" stream kind.
+	CapDockerEvents = "docker_events"
+)
 
 // Has reports whether the agent advertised capability c.
 func (h HelloPayload) Has(c string) bool {
