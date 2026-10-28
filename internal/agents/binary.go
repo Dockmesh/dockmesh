@@ -109,14 +109,16 @@ func BinaryHandler(svc *Service) http.Handler {
 			http.Error(w, "agent not registered", http.StatusUnauthorized)
 			return
 		}
-		name := strings.TrimPrefix(r.URL.Path, BinaryPath)
-		known := false
+		// The file name is taken from AgentBinaryName, never from the
+		// request path, so only the bundled agent binaries can be served.
+		requested := strings.TrimPrefix(r.URL.Path, BinaryPath)
+		var name string
 		for _, arch := range []string{"amd64", "arm64"} {
-			if n, _ := AgentBinaryName(arch); n == name {
-				known = true
+			if n, _ := AgentBinaryName(arch); n == requested {
+				name = n
 			}
 		}
-		if !known {
+		if name == "" {
 			http.NotFound(w, r)
 			return
 		}
