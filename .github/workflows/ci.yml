@@ -1,0 +1,139 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # The prebuilt v1 binaries are built with an older Go than go.mod
+      # requires, so build golangci-lint with the job's toolchain instead.
+      - uses: golangci/golangci-lint-action@55c2c1448f86e01eaae002a5a3a9624417608d84 # v6.5.2
+        with:
+          version: v1.64.8
+          install-mode: goinstall
+          only-new-issues: true
+
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {goos: linux,  goarch: amd64, runner: ubuntu-latest,    smoke: true}
+          - {goos: linux,  goarch: arm64, runner: ubuntu-24.04-arm, smoke: true}
+          - {goos: darwin, goarch: arm64, runner: macos-latest,     smoke: true}
+          - {goos: darwin, goarch: amd64, runner: ubuntu-latest,    smoke: false}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: build frontend
+        run: |
+          cd web
+          npm ci
+          npm run build
+          mkdir -p ../cmd/dockmesh/web_dist
+          cp -r build/* ../cmd/dockmesh/web_dist/
+      - name: build binaries
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="ci-${GITHUB_SHA::7}"
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          LDFLAGS="-s -w -X github.com/dockmesh/dockmesh/pkg/version.Version=${VERSION} \
+                   -X github.com/dockmesh/dockmesh/pkg/version.Commit=${COMMIT} \
+                   -X github.com/dockmesh/dockmesh/pkg/version.Date=${DATE}"
+          mkdir -p dist
+          go build -trimpath -ldflags "$LDFLAGS" -o dist/dockmesh       ./cmd/dockmesh
+          go build -trimpath -ldflags "$LDFLAGS" -o dist/dockmesh-agent ./cmd/dockmesh-agent
+          go build -trimpath -ldflags "$LDFLAGS" -o dist/dmctl          ./cmd/dmctl
+      - name: smoke test
+        if: matrix.smoke
+        run: |
+          ./dist/dockmesh version
+          ./dist/dockmesh-agent --version
+          ./dist/dmctl --version
+
+  licenses:
+    name: licenses
+    runs-on: ubuntu-latest
+    env:
+      # AGPL-3.0 compatible SPDX identifiers. OFL-1.1 covers the bundled
+      # web fonts only (data, not linked code).
+      ALLOWED: MIT;MIT-0;BSD-2-Clause;BSD-3-Clause;Apache-2.0;ISC;MPL-2.0;0BSD;Unlicense;CC0-1.0;BlueOak-1.0.0;Python-2.0;OFL-1.1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: go dependencies
+        run: |
+          go install github.com/google/go-licenses/v2@v2.0.1
+          go-licenses check ./cmd/dockmesh ./cmd/dockmesh-agent ./cmd/dmctl \
+            --ignore github.com/dockmesh/dockmesh \
+            --allowed_licenses="${ALLOWED//;/,}"
+      - name: npm production dependencies
+        run: |
+          cd web
+          npm ci
+          npx --yes license-checker-rseidelsohn@4.4.2 --production \
+            --excludePrivatePackages --onlyAllow "$ALLOWED" --summary
