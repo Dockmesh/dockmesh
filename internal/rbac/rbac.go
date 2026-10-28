@@ -198,7 +198,7 @@ var rolePerms = map[Role]map[Perm]bool{
 		PermAlertsView: true, PermAlertsCreate: true, PermAlertsUpdate: true, PermAlertsDelete: true,
 		PermTemplatesView: true, PermTemplatesCreate: true, PermTemplatesUpdate: true, PermTemplatesDelete: true,
 		PermAuditView: true, PermAuditExport: true,
-		PermSystemView: true,
+		PermSystemView:  true,
 		PermMetricsView: true,
 	},
 	RoleDeployer: {

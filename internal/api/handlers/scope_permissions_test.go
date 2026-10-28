@@ -210,7 +210,6 @@ func TestFilterHostsByScopeFailsClosed(t *testing.T) {
 
 func TestArchiveAccess(t *testing.T) {
 	e := newScopeEnv(t)
-	ctx := context.Background()
 	for _, stmt := range []string{
 		`INSERT INTO backup_jobs (id, name, target_type, host_id) VALUES (1, 'stack-job', 'local', 'local')`,
 		`INSERT INTO backup_jobs (id, name, target_type, host_id) VALUES (2, 'remote-job', 'local', 'agent-1')`,
@@ -243,11 +242,11 @@ func TestArchiveAccess(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.user, func(t *testing.T) {
-			claims, err := e.h.Auth.Validate(ctx, e.login(tt.user).AccessToken)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			claims, err := e.h.Auth.Validate(req.Context(), e.login(tt.user).AccessToken)
 			if err != nil {
 				t.Fatal(err)
 			}
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
 			req = req.WithContext(middleware.WithIdentity(req.Context(), middleware.Identity{UserID: claims.UserID, Role: claims.Role, ScopeTags: claims.ScopeTags}))
 			rr := httptest.NewRecorder()
 			if got := e.h.requireArchiveAccess(rr, req, tt.run); got != tt.want {
