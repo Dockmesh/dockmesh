@@ -5,15 +5,19 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/hosttags"
 	"github.com/dockmesh/dockmesh/internal/invites"
+	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
@@ -252,5 +256,53 @@ func TestArchiveAccess(t *testing.T) {
 				t.Errorf("allowed=%v, want %v (%v)", got, tt.want, body)
 			}
 		})
+	}
+}
+
+func TestCredentialsAreWriteOnly(t *testing.T) {
+	e := newScopeEnv(t)
+	ctx := context.Background()
+	e.h.BackupTargets = targets.NewTargetStore(e.db)
+	e.router.Group(func(r chi.Router) {
+		r.Use(middleware.NewAuth(e.h.Auth))
+		r.With(middleware.RequirePerm(rbac.PermBackupsView)).Get("/backups/targets", e.h.ListBackupTargets)
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Put("/backups/targets/{id}", e.h.UpdateBackupTarget)
+	})
+	stored, err := e.h.BackupTargets.Create(ctx, targets.TargetInput{Name: "nas", Type: "sftp", Config: map[string]any{"host": "nas", "password": "hunter2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.user("viewer1", "viewer")
+	e.user("boss", "admin")
+
+	rr := e.do(http.MethodGet, "/backups/targets", e.login("viewer1").AccessToken, nil)
+	if rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), "hunter2") || !strings.Contains(rr.Body.String(), `"password_set":true`) {
+		t.Fatalf("list: %d %s", rr.Code, rr.Body)
+	}
+	var listed []targets.StoredTarget
+	if err := json.Unmarshal(rr.Body.Bytes(), &listed); err != nil || len(listed) != 1 {
+		t.Fatalf("decode list: %v %s", err, rr.Body)
+	}
+	// Sending the redacted config back must not wipe the stored password.
+	rr = e.do(http.MethodPut, "/backups/targets/"+strconv.FormatInt(stored.ID, 10), e.login("boss").AccessToken,
+		map[string]any{"name": "nas", "type": "sftp", "config": listed[0].Config})
+	if rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), "hunter2") {
+		t.Fatalf("update: %d %s", rr.Code, rr.Body)
+	}
+	after, err := e.h.BackupTargets.Get(ctx, stored.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _ := after.Config.(map[string]any); cfg["password"] != "hunter2" || cfg["password_set"] != nil {
+		t.Errorf("stored config after round trip = %v", after.Config)
+	}
+
+	job := redactJob(&backup.Job{TargetType: "s3", TargetConfig: map[string]any{"access_key": "AK", "secret_key": "SK"}})
+	if cfg := job.TargetConfig.(map[string]any); cfg["secret_key"] != "" || cfg["access_key"] != "AK" {
+		t.Errorf("job config = %v", cfg)
+	}
+	ch := redactChannel(&notify.Channel{Type: "slack", Config: json.RawMessage(`{"url":"https://hooks.slack.com/services/T/B/x"}`)})
+	if strings.Contains(string(ch.Config), "hooks.slack.com") {
+		t.Errorf("slack webhook url leaked: %s", ch.Config)
 	}
 }

@@ -21,7 +21,11 @@ func (h *Handlers) ListBackupJobs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, jobs)
+	out := make([]*backup.Job, len(jobs))
+	for i := range jobs {
+		out[i] = redactJob(&jobs[i])
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *Handlers) GetBackupJob(w http.ResponseWriter, r *http.Request) {
@@ -43,7 +47,7 @@ func (h *Handlers) GetBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, job)
+	writeJSON(w, http.StatusOK, redactJob(job))
 }
 
 func (h *Handlers) CreateBackupJob(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +66,7 @@ func (h *Handlers) CreateBackupJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, audit.ActionStackCreate, "backup:"+job.Name, nil)
-	writeJSON(w, http.StatusCreated, job)
+	writeJSON(w, http.StatusCreated, redactJob(job))
 }
 
 func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +84,9 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if prev, err := h.Backups.GetJob(r.Context(), id); err == nil && prev.TargetType == in.TargetType {
+		in.TargetConfig = keepConfig(in.TargetConfig, prev.TargetConfig, backupTargetSecrets)
+	}
 	job, err := h.Backups.UpdateJob(r.Context(), id, in)
 	if errors.Is(err, backup.ErrJobNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
@@ -90,7 +97,7 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, audit.ActionStackUpdate, "backup:"+job.Name, nil)
-	writeJSON(w, http.StatusOK, job)
+	writeJSON(w, http.StatusOK, redactJob(job))
 }
 
 func (h *Handlers) DeleteBackupJob(w http.ResponseWriter, r *http.Request) {

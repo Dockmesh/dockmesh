@@ -21,10 +21,11 @@ func (h *Handlers) ListBackupTargets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if list == nil {
-		list = []targets.StoredTarget{}
+	out := make([]*targets.StoredTarget, len(list))
+	for i := range list {
+		out[i] = redactTarget(&list[i])
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *Handlers) CreateBackupTarget(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +43,7 @@ func (h *Handlers) CreateBackupTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, t)
+	writeJSON(w, http.StatusCreated, redactTarget(t))
 }
 
 func (h *Handlers) UpdateBackupTarget(w http.ResponseWriter, r *http.Request) {
@@ -60,12 +61,15 @@ func (h *Handlers) UpdateBackupTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if prev, err := h.BackupTargets.Get(r.Context(), id); err == nil && prev.Type == in.Type {
+		in.Config = keepConfig(in.Config, prev.Config, backupTargetSecrets)
+	}
 	t, err := h.BackupTargets.Update(r.Context(), id, in)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, t)
+	writeJSON(w, http.StatusOK, redactTarget(t))
 }
 
 func (h *Handlers) DeleteBackupTarget(w http.ResponseWriter, r *http.Request) {
