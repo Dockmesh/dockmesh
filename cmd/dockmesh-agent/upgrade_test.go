@@ -25,20 +25,18 @@ func TestUpgradeBinary(t *testing.T) {
 		_, _ = w.Write(newBin)
 	}))
 	defer srv.Close()
-	url := srv.URL + "/install/dockmesh-agent-linux-amd64"
 
 	cases := []struct {
 		name     string
 		current  []byte
-		req      agents.AgentUpgradeReq
+		wantSHA  string
 		wantErr  string
 		wantExec []byte
 	}{
-		{"verified replace", []byte("old"), agents.AgentUpgradeReq{BinaryURL: url, SHA256: sha(newBin)}, "", newBin},
-		{"checksum mismatch", []byte("old"), agents.AgentUpgradeReq{BinaryURL: url, SHA256: sha([]byte("other"))}, "checksum mismatch", []byte("old")},
-		{"missing checksum", []byte("old"), agents.AgentUpgradeReq{BinaryURL: url}, "no valid sha256", []byte("old")},
-		{"already current", newBin, agents.AgentUpgradeReq{BinaryURL: url, SHA256: sha(newBin)}, errSameBinary.Error(), newBin},
-		{"wrong arch", []byte("old"), agents.AgentUpgradeReq{BinaryURL: srv.URL + "/install/dockmesh-agent-linux-arm64", SHA256: sha(newBin)}, "expected dockmesh-agent-linux-amd64", []byte("old")},
+		{"verified replace", []byte("old"), sha(newBin), "", newBin},
+		{"checksum mismatch", []byte("old"), sha([]byte("other")), "checksum mismatch", []byte("old")},
+		{"missing checksum", []byte("old"), "", "no valid sha256", []byte("old")},
+		{"already current", newBin, sha(newBin), errSameBinary.Error(), newBin},
 	}
 	for _, c := range cases {
 		dir := t.TempDir()
@@ -46,7 +44,7 @@ func TestUpgradeBinary(t *testing.T) {
 		if err := os.WriteFile(exe, c.current, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		err := upgradeBinary(srv.Client(), c.req, exe, "amd64")
+		err := upgradeBinary(srv.Client(), srv.URL+"/agent-binary/dockmesh-agent-linux-amd64", c.wantSHA, exe)
 		if c.wantErr == "" && err != nil {
 			t.Errorf("%s: %v", c.name, err)
 		}
@@ -72,21 +70,19 @@ func TestAgentSelfUpgradeRejectsConcurrent(t *testing.T) {
 	}
 }
 
-func TestCheckUpgradeURL(t *testing.T) {
+func TestBinaryURL(t *testing.T) {
 	cases := []struct {
-		url string
-		ok  bool
+		dial, want string
 	}{
-		{"https://srv/install/dockmesh-agent-linux-amd64", true},
-		{"http://10.0.0.1:8080/install/dockmesh-agent-linux-amd64", true},
-		{"file:///install/dockmesh-agent-linux-amd64", false},
-		{"https://srv/install/dmctl-linux-amd64", false},
-		{"https://user:pw@srv/install/dockmesh-agent-linux-amd64", false},
-		{"https:///install/dockmesh-agent-linux-amd64", false},
+		{"wss://srv:8443/connect", "https://srv:8443/agent-binary/dockmesh-agent-linux-arm64"},
+		{"ws://10.0.0.1:8443/connect?x=1", "http://10.0.0.1:8443/agent-binary/dockmesh-agent-linux-arm64"},
+		{"https://srv/connect", ""},
+		{"", ""},
 	}
 	for _, c := range cases {
-		if err := checkUpgradeURL(c.url, "amd64"); (err == nil) != c.ok {
-			t.Errorf("checkUpgradeURL(%q) err = %v, want ok=%v", c.url, err, c.ok)
+		got, err := binaryURL(c.dial, "arm64")
+		if (err == nil) != (c.want != "") || got != c.want {
+			t.Errorf("binaryURL(%q) = %q, %v; want %q", c.dial, got, err, c.want)
 		}
 	}
 }

@@ -157,6 +157,8 @@ func main() {
 		slog.Error("tls config", "err", err)
 		os.Exit(1)
 	}
+	upgradeOrigin.dialURL = dialURL
+	upgradeOrigin.tls = tlsCfg
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

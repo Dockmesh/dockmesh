@@ -66,8 +66,8 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	ag := &ConnectedAgent{
-		ID:       agent.ID,
-		Name:     agent.Name,
+		ID:        agent.ID,
+		Name:      agent.Name,
 		JoinedAt:  time.Now(),
 		send:      make(chan Frame, 32),
 		closeConn: func() { _ = conn.Close() },

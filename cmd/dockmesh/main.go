@@ -1003,6 +1003,7 @@ func main() {
 			agentMux := http.NewServeMux()
 			agentMux.Handle("/connect", agents.NewWSHandler(agentsSvc, pkiMgr))
 			agentMux.Handle(agents.EnrollPath, agents.EnrollHandler(agentsSvc))
+			agentMux.Handle(agents.BinaryPath, agents.BinaryHandler(agentsSvc))
 			agentSrv := &http.Server{
 				Addr:              cfg.AgentListen,
 				Handler:           agentMux,

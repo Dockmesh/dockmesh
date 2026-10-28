@@ -6,10 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/pki"
 )
 
 // ErrNoAgentBinary means the server has no bundled agent binary for the
@@ -81,4 +85,57 @@ func AgentBinarySHA256(arch string) (string, error) {
 	sum := hex.EncodeToString(h.Sum(nil))
 	binarySumCache[path] = binarySum{size: st.Size(), modTime: st.ModTime(), sum: sum}
 	return sum, nil
+}
+
+// BinaryPath is the prefix under which the agent listener serves agent
+// binaries to enrolled agents.
+const BinaryPath = "/agent-binary/"
+
+// BinaryHandler serves bundled agent binaries on the agent listener to
+// clients holding a valid, non-revoked agent cert, so upgrades travel
+// over the same pinned mTLS channel as everything else.
+func BinaryHandler(svc *Service) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+			http.Error(w, "client certificate required", http.StatusUnauthorized)
+			return
+		}
+		ag, err := svc.LookupByFingerprint(r.Context(), pki.FingerprintFromCert(r.TLS.PeerCertificates[0]))
+		if err != nil || ag.Status == "revoked" {
+			http.Error(w, "agent not registered", http.StatusUnauthorized)
+			return
+		}
+		name := strings.TrimPrefix(r.URL.Path, BinaryPath)
+		known := false
+		for _, arch := range []string{"amd64", "arm64"} {
+			if n, _ := AgentBinaryName(arch); n == name {
+				known = true
+			}
+		}
+		if !known {
+			http.NotFound(w, r)
+			return
+		}
+		f, err := os.Open(filepath.Join(BinaryDir(), name))
+		if errors.Is(err, os.ErrNotExist) {
+			http.Error(w, ErrNoAgentBinary.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		if err != nil {
+			http.Error(w, "open binary", http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+		st, err := f.Stat()
+		if err != nil {
+			http.Error(w, "stat binary", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		http.ServeContent(w, r, name, st.ModTime(), f)
+	})
 }

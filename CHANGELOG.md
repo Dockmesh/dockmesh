@@ -66,8 +66,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   Dockmesh agent CA, whose fingerprint is part of the install command. Before, an agent
   trusted any server during enrollment, so someone on the network path could take it over.
   Enrolling over plain HTTP now needs the agent's `--insecure-enroll` flag.
-- Agent self-upgrades are checked against a SHA-256 the server sends over the agent's
-  authenticated connection before the binary is replaced. Automatic upgrades stop after
+- Agents now download self-upgrades from the agent port over their authenticated
+  connection and check them against a SHA-256 the server sends before replacing the binary. Automatic upgrades stop after
   three failed attempts for the same build instead of retrying every minute, and two
   upgrades can no longer write the new binary at the same time.
 - Agents check every stack and volume name the server sends with the server's own rules

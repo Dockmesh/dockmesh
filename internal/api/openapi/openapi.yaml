@@ -994,7 +994,8 @@ paths:
       summary: Trigger a self-upgrade on a connected agent
       description: |
         The agent downloads a fresh `dockmesh-agent-linux-<arch>` binary
-        from the server's `/install/` path, verifies it against the SHA-256
+        from the agent listener over mTLS (agents older than this release
+        use the server's `/install/` path), verifies it against the SHA-256
         sent over the mTLS channel and restarts its systemd unit. Agent
         must be currently connected. Automatic upgrades back off after
         three attempts per target binary; this endpoint always dispatches.
