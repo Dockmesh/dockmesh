@@ -33,6 +33,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   banner.
 
 ### Changed
+- Host enrollment tokens now expire after 24 hours (`DOCKMESH_AGENT_ENROLL_TOKEN_TTL` changes
+  this) and work exactly once. "Re-issue token" on a host now re-enrolls that host under the
+  same ID, so its stacks, tags and backup jobs stay attached; it needs host scope for the host.
+- The agent installer picks the binary for the host's CPU architecture and checks its
+  SHA-256. If the server has no binary for that architecture, the installer stops with a
+  clear message instead of installing the wrong one.
 - API tokens now belong to the user who created them. A token never grants more than its
   role and its owner's current permissions and host scope allow, and it stops working when
   the owner is deleted. A token created with another token expires no later than it, and a
@@ -56,8 +62,22 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and exec sessions are now recorded in the audit log.
 - Signing in with an unknown username takes as long as with a wrong password, and invalid
   API tokens can no longer tie up the server with expensive hash checks.
+- New agents enroll over the agent port and check the server's certificate against the
+  Dockmesh agent CA, whose fingerprint is part of the install command. Before, an agent
+  trusted any server during enrollment, so someone on the network path could take it over.
+  Enrolling over plain HTTP now needs the agent's `--insecure-enroll` flag.
+- Agent self-upgrades are checked against a SHA-256 the server sends over the agent's
+  authenticated connection before the binary is replaced. Automatic upgrades stop after
+  three failed attempts for the same build instead of retrying every minute, and two
+  upgrades can no longer write the new binary at the same time.
+- Agents check every stack and volume name the server sends with the server's own rules
+  before touching files or mounting a volume.
 
 ### Upgrade notes
+- [agent-upgrade, admins] Hosts that are already enrolled keep working and do not need to be
+  re-enrolled. Upgrade each agent once from its host page (or use automatic upgrades) so it
+  verifies future upgrades; the upgrade from an older agent is still downloaded the old,
+  unverified way.
 - [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The
   sign-in page says why.
 - [legacy-api-tokens, admins] API tokens created before this version have no owner. They keep

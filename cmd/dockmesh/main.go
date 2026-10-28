@@ -527,6 +527,7 @@ func main() {
 		agentPublic = deriveAgentURL(cfg.BaseURL, cfg.AgentListen)
 	}
 	agentsSvc := agents.NewService(database, pkiMgr, cfg.BaseURL, agentPublic)
+	agentsSvc.SetEnrollTokenTTL(cfg.AgentEnrollTokenTTL)
 	hostRegistry := host.NewRegistry(dockerCli, agentsSvc)
 
 	// Wire host routing into the backup executor so jobs with host_id
@@ -1001,6 +1002,7 @@ func main() {
 		} else {
 			agentMux := http.NewServeMux()
 			agentMux.Handle("/connect", agents.NewWSHandler(agentsSvc, pkiMgr))
+			agentMux.Handle(agents.EnrollPath, agents.EnrollHandler(agentsSvc))
 			agentSrv := &http.Server{
 				Addr:              cfg.AgentListen,
 				Handler:           agentMux,

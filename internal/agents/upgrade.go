@@ -63,10 +63,32 @@ type UpgradeController struct {
 	mu         sync.Mutex
 	lastRunAt  time.Time
 	stageQueue []string  // agent ids left to upgrade in the current staged wave
+	attempts   map[string]upgradeAttempt
+	now        func() time.Time
+}
+
+// Automatic upgrades stop for an agent after maxAutoUpgradeAttempts
+// dispatches of the same target binary that didn't leave it up to date,
+// and are spaced at least autoUpgradeRetryGap apart. A new target binary
+// resets the count; the per-host upgrade button always goes through.
+const (
+	maxAutoUpgradeAttempts = 3
+	autoUpgradeRetryGap    = 5 * time.Minute
+)
+
+type upgradeAttempt struct {
+	target string
+	count  int
+	last   time.Time
 }
 
 func NewUpgradeController(svc *Service, settings SettingsStore) *UpgradeController {
-	return &UpgradeController{agents: svc, settings: settings}
+	return &UpgradeController{
+		agents:   svc,
+		settings: settings,
+		attempts: map[string]upgradeAttempt{},
+		now:      time.Now,
+	}
 }
 
 // Start launches the evaluator goroutine. Evaluates every 60s.
@@ -173,7 +195,7 @@ func (c *UpgradeController) Evaluate(ctx context.Context) {
 	case UpgradeModeAuto:
 		// Push upgrade frames to all pending agents in parallel.
 		for _, a := range pending {
-			go c.upgradeOne(ctx, a)
+			go func() { _, _ = c.upgradeOne(ctx, a, false) }()
 		}
 	case UpgradeModeStaged:
 		c.stagedWave(ctx, pending)
@@ -217,7 +239,7 @@ func (c *UpgradeController) stagedWave(ctx context.Context, pending []*Connected
 		if ag == nil {
 			continue
 		}
-		go c.upgradeOne(ctx, ag)
+		go func() { _, _ = c.upgradeOne(ctx, ag, false) }()
 	}
 	// Note: we don't sleep here for `gap` seconds — the outer 60s
 	// tick already provides a natural gap. Operators tuning for
@@ -229,35 +251,91 @@ func (c *UpgradeController) stagedWave(ctx context.Context, pending []*Connected
 }
 
 // UpgradeOne is the handler-facing wrapper — sends the upgrade frame
-// to a single agent by id.
-func (c *UpgradeController) UpgradeOne(ctx context.Context, id string) error {
+// to a single agent by id, bypassing the automatic back-off.
+func (c *UpgradeController) UpgradeOne(ctx context.Context, id string) (*AgentUpgradeReq, error) {
 	ag := c.agents.GetConnected(id)
 	if ag == nil {
-		return errors.New("agent not connected")
+		return nil, ErrAgentNotConnected
 	}
-	return c.upgradeOne(ctx, ag)
+	return c.upgradeOne(ctx, ag, true)
 }
 
-func (c *UpgradeController) upgradeOne(ctx context.Context, ag *ConnectedAgent) error {
+// ErrAgentNotConnected is returned when an upgrade targets an agent
+// without a live connection.
+var ErrAgentNotConnected = errors.New("agent not connected")
+
+// errUpgradeBackoff marks an automatic attempt skipped by the back-off.
+var errUpgradeBackoff = errors.New("automatic upgrade backed off")
+
+// buildUpgradeReq picks the bundled binary for the agent's architecture
+// and attaches its SHA-256, which the agent verifies before replacing
+// itself.
+func (c *UpgradeController) buildUpgradeReq(ag *ConnectedAgent) (*AgentUpgradeReq, error) {
 	arch := ag.Hello.Arch
 	if arch == "" {
 		arch = runtime.GOARCH
 	}
-	binaryName := "dockmesh-agent-linux-" + arch
-	binaryURL := c.agents.publicURL + "/install/" + binaryName
-	req := AgentUpgradeReq{BinaryURL: binaryURL, Version: version.Version}
+	name, err := AgentBinaryName(arch)
+	if err != nil {
+		return nil, err
+	}
+	sum, err := AgentBinarySHA256(arch)
+	if err != nil {
+		return nil, err
+	}
+	return &AgentUpgradeReq{
+		BinaryURL: c.agents.publicURL + "/install/" + name,
+		Version:   version.Version,
+		SHA256:    sum,
+	}, nil
+}
+
+// allowAttempt records an upgrade dispatch for the agent and reports
+// whether it may proceed. Manual attempts are always allowed but still
+// counted, so the automatic loop doesn't immediately retry behind them.
+func (c *UpgradeController) allowAttempt(agentID, target string, manual bool) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.now()
+	a := c.attempts[agentID]
+	if a.target != target {
+		a = upgradeAttempt{target: target}
+	}
+	if !manual {
+		if a.count >= maxAutoUpgradeAttempts {
+			return false
+		}
+		if !a.last.IsZero() && now.Sub(a.last) < autoUpgradeRetryGap {
+			return false
+		}
+	}
+	a.count++
+	a.last = now
+	c.attempts[agentID] = a
+	return true
+}
+
+func (c *UpgradeController) upgradeOne(ctx context.Context, ag *ConnectedAgent, manual bool) (*AgentUpgradeReq, error) {
+	req, err := c.buildUpgradeReq(ag)
+	if err != nil {
+		slog.Warn("agent upgrade: no binary to offer", "agent", ag.ID, "arch", ag.Hello.Arch, "err", err)
+		return nil, err
+	}
+	if !c.allowAttempt(ag.ID, req.SHA256, manual) {
+		return nil, errUpgradeBackoff
+	}
 	payload, _ := json.Marshal(req)
 	resp, err := ag.Request(ctx, Frame{Type: FrameReqAgentUpgrade, Payload: payload})
 	if err != nil {
 		slog.Warn("agent upgrade push failed", "agent", ag.ID, "err", err)
-		return err
+		return req, err
 	}
 	if !resp.OK {
 		slog.Warn("agent upgrade rejected", "agent", ag.ID, "err", resp.Error)
-		return errors.New(resp.Error)
+		return req, errors.New(resp.Error)
 	}
 	slog.Info("agent upgrade dispatched", "agent", ag.ID, "version", version.Version)
-	return nil
+	return req, nil
 }
 
 func (c *UpgradeController) pendingAgents() []*ConnectedAgent {

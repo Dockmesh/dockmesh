@@ -209,6 +209,7 @@
             <p class="ed-add-host-blurb">
               Open a shell on <span class="ed-accent-mono">{createResult.agent.name}</span> and paste the command below.
               <span class="ed-accent-mono">Save the token now</span> — it won't be shown again.
+              It expires {new Date(createResult.token_expires_at).toLocaleString()}.
             </p>
             <div class="ed-add-host-cmd-wrap">
               <pre class="ed-add-host-cmd">{createResult.install_hint}</pre>

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -25,6 +26,9 @@ type Config struct {
 	AgentListen       string
 	AgentPublicURL    string
 	AgentSANs         string
+	// AgentEnrollTokenTTL is how long a host enrollment token stays
+	// valid (DOCKMESH_AGENT_ENROLL_TOKEN_TTL, Go duration, default 24h).
+	AgentEnrollTokenTTL time.Duration
 	// MetricsAuth gates the /metrics endpoint. Default true (require
 	// metrics.read perm, so API-token scraping is needed). Set
 	// DOCKMESH_METRICS_AUTH=false on trusted networks where the
@@ -85,12 +89,28 @@ func Load() (*Config, error) {
 		SetupForce:     envOr("DOCKMESH_SETUP_FORCE", "false") == "true",
 		RBACv2Enforce:  envOr("DOCKMESH_RBAC_V2_ENFORCE", "true") != "false",
 	}
+	ttl, err := parseEnrollTokenTTL(os.Getenv("DOCKMESH_AGENT_ENROLL_TOKEN_TTL"))
+	if err != nil {
+		return nil, err
+	}
+	cfg.AgentEnrollTokenTTL = ttl
 	secret, err := loadOrCreateJWTSecret(cfg.SecretsPath)
 	if err != nil {
 		return nil, fmt.Errorf("jwt secret: %w", err)
 	}
 	cfg.JWTSecret = secret
 	return cfg, nil
+}
+
+func parseEnrollTokenTTL(v string) (time.Duration, error) {
+	if v == "" {
+		return 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d < time.Minute || d > 30*24*time.Hour {
+		return 0, fmt.Errorf("DOCKMESH_AGENT_ENROLL_TOKEN_TTL: want a duration between 1m and 720h, got %q", v)
+	}
+	return d, nil
 }
 
 func envOr(key, def string) string {

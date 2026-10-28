@@ -1,17 +1,15 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
-	"runtime"
+	"path"
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/rbac"
-	"github.com/dockmesh/dockmesh/pkg/version"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -115,6 +113,13 @@ func (h *Handlers) RotateAgentEnrollToken(w http.ResponseWriter, r *http.Request
 		return
 	}
 	id := chi.URLParam(r, "id")
+	// A rotated token re-enrolls the host under the same ID, so it is
+	// as sensitive as replacing the host and needs the same scope.
+	scopeReq := h.hostScopeReq(r.Context(), id)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+id)
+		return
+	}
 	res, err := h.Agents.RotateEnrollToken(r.Context(), id)
 	if errors.Is(err, agents.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
@@ -144,38 +149,19 @@ func (h *Handlers) UpgradeAgent(w http.ResponseWriter, r *http.Request) {
 		h.writeRoleScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+id)
 		return
 	}
-	ag := h.Agents.GetConnected(id)
-	if ag == nil {
+	if h.AgentUpgrade == nil {
+		writeError(w, http.StatusServiceUnavailable, "agent upgrade controller not configured")
+		return
+	}
+	req, err := h.AgentUpgrade.UpgradeOne(r.Context(), id)
+	if errors.Is(err, agents.ErrAgentNotConnected) {
 		writeError(w, http.StatusServiceUnavailable, "agent not connected")
 		return
 	}
-
-	// Determine the correct binary for the agent's architecture.
-	// The agent's arch comes from the hello payload.
-	agent, err := h.Agents.Get(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+	if errors.Is(err, agents.ErrNoAgentBinary) {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	arch := agent.Arch
-	if arch == "" {
-		arch = runtime.GOARCH
-	}
-	binaryName := "dockmesh-agent-linux-" + arch
-
-	// Build the download URL from the server's base URL.
-	baseURL := h.Agents.PublicURL()
-	binaryURL := baseURL + "/install/" + binaryName
-
-	req := agents.AgentUpgradeReq{
-		BinaryURL: binaryURL,
-		Version:   version.Version,
-	}
-	payload, _ := json.Marshal(req)
-	resp, err := ag.Request(r.Context(), agents.Frame{
-		Type:    agents.FrameReqAgentUpgrade,
-		Payload: payload,
-	})
 	if err != nil {
 		// An agent too old to know the upgrade frame returns
 		// "unknown request type: req.agent.upgrade" — surface this as
@@ -185,24 +171,21 @@ func (h *Handlers) UpgradeAgent(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(msg, "unknown request type") && strings.Contains(msg, "req.agent.upgrade") {
 			writeError(w, http.StatusUnprocessableEntity,
 				"agent version too old to self-upgrade — run the install script on the host once ("+
-					baseURL+"/install/agent.sh with a fresh enrollment token), then future upgrades will work from the UI")
+					h.Agents.PublicURL()+"/install/agent.sh with a fresh enrollment token), then future upgrades will work from the UI")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, msg)
 		return
 	}
-	if !resp.OK {
-		writeError(w, http.StatusInternalServerError, resp.Error)
-		return
-	}
 	h.audit(r, audit.ActionStackDeploy, id, map[string]any{
 		"action":  "agent-upgrade",
-		"version": version.Version,
-		"binary":  binaryName,
+		"version": req.Version,
+		"binary":  path.Base(req.BinaryURL),
+		"sha256":  req.SHA256,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "upgrading",
-		"version": version.Version,
+		"version": req.Version,
 	})
 }
 

@@ -782,8 +782,10 @@ export interface Agent {
 export interface AgentCreateResult {
   agent: Agent;
   token: string;
+  token_expires_at: string;
   enroll_url: string;
   agent_url: string;
+  ca_fingerprint: string;
   install_hint: string;
 }
 
@@ -2192,7 +2194,7 @@ export const api = {
     // token + the curl-bash install command the operator pastes on
     // the agent host.
     rotateToken: (id: string) =>
-      request<{ token: string; install_hint: string }>(`/agents/${id}/rotate-token`, { method: 'POST' }),
+      request<AgentCreateResult>(`/agents/${id}/rotate-token`, { method: 'POST' }),
     // P.11.16 upgrade policy
     getUpgradePolicy: () => request<AgentUpgradePolicy>('/agents/upgrade-policy'),
     setUpgradePolicy: (input: AgentUpgradeInput) =>

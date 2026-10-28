@@ -994,8 +994,10 @@ paths:
       summary: Trigger a self-upgrade on a connected agent
       description: |
         The agent downloads a fresh `dockmesh-agent-linux-<arch>` binary
-        from the server's `/install/` path and restarts its systemd unit.
-        Agent must be currently connected.
+        from the server's `/install/` path, verifies it against the SHA-256
+        sent over the mTLS channel and restarts its systemd unit. Agent
+        must be currently connected. Automatic upgrades back off after
+        three attempts per target binary; this endpoint always dispatches.
       parameters:
         - name: id
           in: path
@@ -1014,8 +1016,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: Agent is too old to self-upgrade; re-run the installer once.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "503":
-          description: Agent is not currently connected.
+          description: Agent is not currently connected, or no agent binary for its architecture is bundled.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1026,9 +1033,12 @@ paths:
       tags: [agents]
       summary: Rotate the enrollment token of an existing agent
       description: |
-        Generates a new bootstrap token so the old one (which may have
-        leaked or been committed to git) cannot re-enroll. The connected
-        agent keeps its mTLS cert — only future fresh enrollments change.
+        Generates a new enrollment token (the previous one stops working)
+        with the configured lifetime. Running the returned install command
+        re-enrolls the host under the same ID: stacks, tags and backup jobs
+        stay attached and the old client cert stops working once the new
+        enrollment completes. Until then the connected agent keeps its cert.
+        Revoked hosts return 404.
       parameters:
         - name: id
           in: path
@@ -1036,14 +1046,10 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
-          description: New enrollment token.
+          description: New enrollment token and install command.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  enroll_token: { type: string }
-                  enroll_url:   { type: string }
+              schema: { $ref: "#/components/schemas/AgentCreateResult" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -1104,10 +1110,13 @@ paths:
     post:
       operationId: agents.enroll
       tags: [agents]
-      summary: "Public: swap a one-time token for an agent client cert"
+      summary: "Public: swap a one-time token for an agent client cert (legacy)"
       description: |
-        Called by the agent binary on first boot. There is NO Bearer auth
-        on this route — the one-time token IS the authentication.
+        Kept for agents installed by older installers. Current agents enroll
+        at `/enroll` on the agent listener (the `enroll_url` of
+        `AgentCreateResult`), where the TLS chain is signed by the pinned
+        agents CA. There is NO Bearer auth on this route — the one-time
+        token IS the authentication. Tokens are single-use and expire.
       security: []
       requestBody:
         required: true
@@ -1122,7 +1131,7 @@ paths:
               schema: { $ref: "#/components/schemas/AgentEnrollResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401":
-          description: Invalid or already-used token.
+          description: Invalid, expired or already-used token.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -8050,21 +8059,31 @@ components:
 
     AgentCreateResult:
       type: object
-      required: [agent, token, install_hint]
+      required: [agent, token, token_expires_at, enroll_url, agent_url, ca_fingerprint, install_hint]
       description: |
-        Returned ONCE on agent creation. `token` is shown only here —
-        losing it means you have to delete and recreate the agent.
+        Returned on agent creation and token rotation. `token` is shown
+        only here; a lost or expired token is replaced via
+        `POST /agents/{id}/rotate-token`.
       properties:
         agent: { $ref: "#/components/schemas/Agent" }
         token:
           type: string
           description: One-time enrollment token. Paste into the install command on the agent host.
+        token_expires_at:
+          type: string
+          format: date-time
+          description: When the token stops working (DOCKMESH_AGENT_ENROLL_TOKEN_TTL, default 24h).
         enroll_url:
           type: string
           format: uri
+          description: https URL of the enrollment endpoint on the agent listener.
         agent_url:
           type: string
           description: wss:// URL the agent will dial after enrollment.
+        ca_fingerprint:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: SHA-256 of the agents CA certificate; the agent refuses to enroll with any other CA.
         install_hint:
           type: string
           description: Single-line install command to run on the agent host as root.
