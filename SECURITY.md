@@ -1,77 +1,70 @@
 # Security Policy
 
-dockmesh takes security seriously. This document describes how to report security issues and what to expect in response.
+## Supported versions
 
-## Supported Versions
+Dockmesh is before 1.0. Security fixes go into the latest release only; there are no
+backports to older versions. Upgrading in place keeps your data and settings
+(`curl -fsSL https://get.dockmesh.dev | sudo bash`).
 
-Only the most recent minor release receives security updates.
+| Version              | Supported |
+|----------------------|-----------|
+| latest 0.x release   | yes       |
+| older releases       | no        |
 
-| Version | Supported |
-|---------|-----------|
-| 1.0.x   | ✅        |
-| < 1.0   | ❌        |
+Releases that fix a security issue are marked `security` in their release notes and in the
+`release-manifest.json` attached to the release, and the issue is published as a GitHub
+security advisory.
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-**Do not open a public GitHub Issue for security vulnerabilities.**
+Please do not open a public issue, discussion or pull request for a security problem.
 
-Send reports to **security@dockmesh.dev** with:
+Report it privately through GitHub:
+**[Report a vulnerability](https://github.com/Dockmesh/dockmesh/security/advisories/new)**
+(the "Security" tab of the repository → "Report a vulnerability"). This keeps the report,
+the discussion and the fix in one private advisory, and lets us credit you when it is
+published.
 
-- A description of the vulnerability
-- Steps to reproduce or a minimal proof of concept
-- The dockmesh version affected
-- Your contact information (optional — you may report anonymously)
-- Whether you want credit in the release notes
+If you can't use GitHub, email **security@dockmesh.dev** instead.
 
-If the issue affects the agent protocol, mTLS certificate handling, RBAC enforcement, SSO/OIDC validation, or session management, please flag that clearly in the subject line.
+Helpful details:
 
-## What to Expect
+- the affected version (`dockmesh version`) and how Dockmesh is installed
+- what an attacker needs (network access, an account, which permissions)
+- steps to reproduce or a small proof of concept
+- the impact you see
+- whether and how you want to be credited
 
-- **Acknowledgement:** within 72 hours of your report
-- **Initial assessment:** within 7 days — severity classification and whether a fix is needed
-- **Fix timeline:** depends on severity, typically 2–30 days for critical/high severity
-- **Disclosure:** coordinated with you before any public announcement
-- **Credit:** we'll credit you in release notes (by name, handle, or anonymously — your choice)
+## What to expect
 
-dockmesh is a community-maintained project. Maintainers work on this in their spare time, and there is no commercial support SLA. We do our best to respond quickly to security reports, but response times depend on volunteer availability.
+- **Acknowledgement** within 3 days.
+- **Assessment** within 7 days: whether we can reproduce it and how severe we think it is.
+- **Fix:** critical and high issues are usually fixed within 30 days, lower severities in a
+  regular release. We keep you updated in the advisory or by email.
+- **Disclosure:** we publish the advisory when the fixed release is out, and agree the date
+  with you. The default window is 90 days from your report.
+- **Credit** in the advisory and release notes, by name, handle or anonymously.
+
+Dockmesh is maintained by a small team without a paid support contract, so these are
+targets, not guarantees.
 
 ## Scope
 
-**In scope:**
+In scope: the `dockmesh` server, the `dockmesh-agent`, the `dmctl` CLI, the web UI, the
+REST and WebSocket APIs, the agent protocol, the install scripts, and default
+configurations.
 
-- The dockmesh server binary
-- The agent binary
-- The embedded SvelteKit UI
-- Documented APIs and protocols (REST, agent mTLS WebSocket)
-- Default configurations
+Out of scope: vulnerabilities in dependencies that Dockmesh doesn't expose (please report
+them upstream), social engineering, physical access, volumetric denial of service, and
+modified builds.
 
-**Out of scope:**
+Dockmesh manages Docker, so anyone with full admin rights in Dockmesh can effectively run
+code on the managed hosts. Reports are most useful when they show a user or an
+unauthenticated client getting more than their role and scope allow.
 
-- Issues in third-party dependencies that don't affect dockmesh's use of them (report those upstream)
-- Social engineering of users or maintainers
-- Physical access attacks
-- Denial-of-service via resource exhaustion without a specific exploit (these are operational limits, not vulnerabilities)
-- Vulnerabilities in self-compiled forks or modifications
+## Safe harbor
 
-## Safe Harbor
-
-We consider security research performed in good faith and in accordance with this policy to be authorized. We will not pursue legal action against researchers who:
-
-- Follow the responsible disclosure process above
-- Do not access, modify, or destroy data beyond what's necessary to demonstrate the issue
-- Do not attempt to exploit vulnerabilities against production dockmesh installations that aren't their own
-- Give us reasonable time to fix the issue before public disclosure
-
-## Disclosure Timeline
-
-Our default disclosure window is **90 days** from the initial report. If a fix takes longer, we'll coordinate with you on a revised timeline. We will not publicly disclose details of an unfixed vulnerability without your consent.
-
-## Hall of Fame
-
-Security researchers who have responsibly disclosed issues (with their permission):
-
-_The project is new — no disclosures yet. Your name could be here._
-
----
-
-Thank you for helping keep dockmesh and its users safe.
+We will not take legal action against good-faith research that follows this policy: test
+only against installations you own or are allowed to test, don't access or change other
+people's data beyond what is needed to show the issue, and give us reasonable time to fix
+it before going public.
