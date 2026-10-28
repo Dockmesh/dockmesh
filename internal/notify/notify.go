@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sort"
 	"sync"
 	"time"
@@ -44,18 +45,23 @@ type Notification struct {
 // notification_channels). Each row is rendered into one of the channel
 // implementations below by buildChannel().
 type Channel struct {
-	ID        int64           `json:"id"`
-	Type      string          `json:"type"`
-	Name      string          `json:"name"`
-	Config    json.RawMessage `json:"config"`
-	Enabled   bool            `json:"enabled"`
+	ID      int64           `json:"id"`
+	Type    string          `json:"type"`
+	Name    string          `json:"name"`
+	Config  json.RawMessage `json:"config"`
+	Enabled bool            `json:"enabled"`
 	// MuteSchedule is a JSON-encoded recurring-quiet-hours blob in the
 	// same shape as alert_rules.mute_schedule (see internal/alerts/
 	// schedule.go). When non-empty and the current time falls inside a
 	// range, Send/SendToAll skip the channel silently.
 	MuteSchedule string `json:"mute_schedule"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	// Outcome of the most recent delivery attempt, so a broken channel
+	// is visible in the UI instead of only in the server log.
+	LastSentAt  *time.Time `json:"last_sent_at,omitempty"`
+	LastError   string     `json:"last_error,omitempty"`
+	LastErrorAt *time.Time `json:"last_error_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // channelImpl is the runtime interface satisfied by webhook.go / ntfy.go / …
@@ -65,8 +71,9 @@ type channelImpl interface {
 
 // Service persists channels in the DB and dispatches Notifications.
 type Service struct {
-	db   *sql.DB
-	http *http.Client
+	db      *sql.DB
+	http    *http.Client
+	backoff []time.Duration // waits between delivery attempts; len+1 = attempts
 
 	mu    sync.RWMutex
 	cache map[int64]*Channel // id → row, kept in sync with DB on writes
@@ -74,9 +81,10 @@ type Service struct {
 
 func NewService(db *sql.DB) *Service {
 	return &Service{
-		db:    db,
-		http:  &http.Client{Timeout: 10 * time.Second},
-		cache: make(map[int64]*Channel),
+		db:      db,
+		http:    &http.Client{Timeout: 10 * time.Second},
+		backoff: []time.Duration{2 * time.Second, 10 * time.Second},
+		cache:   make(map[int64]*Channel),
 	}
 }
 
@@ -84,7 +92,9 @@ func NewService(db *sql.DB) *Service {
 // at startup and after every CRUD mutation.
 func (s *Service) Reload(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, type, name, config, enabled, mute_schedule, created_at, updated_at FROM notification_channels`)
+		`SELECT id, type, name, config, enabled, mute_schedule,
+		        last_sent_at, last_error, last_error_at, created_at, updated_at
+		   FROM notification_channels`)
 	if err != nil {
 		return err
 	}
@@ -94,8 +104,18 @@ func (s *Service) Reload(ctx context.Context) error {
 		var c Channel
 		var enabled int
 		var cfg, muteSched string
-		if err := rows.Scan(&c.ID, &c.Type, &c.Name, &cfg, &enabled, &muteSched, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		var lastSent, lastErrAt sql.NullTime
+		if err := rows.Scan(&c.ID, &c.Type, &c.Name, &cfg, &enabled, &muteSched,
+			&lastSent, &c.LastError, &lastErrAt, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return err
+		}
+		if lastSent.Valid {
+			t := lastSent.Time
+			c.LastSentAt = &t
+		}
+		if lastErrAt.Valid {
+			t := lastErrAt.Time
+			c.LastErrorAt = &t
 		}
 		c.Enabled = enabled == 1
 		c.Config = json.RawMessage(cfg)
@@ -108,44 +128,124 @@ func (s *Service) Reload(ctx context.Context) error {
 	return rows.Err()
 }
 
-// SendTo dispatches n to a single channel by id. Returns the channel
-// implementation's error (if any) so handlers can surface it via the
-// "Test" button in the UI. Honours the channel's mute_schedule unless
-// the caller is the explicit test path (handler-level "test" actions
-// should bypass mute by calling buildChannel + Send directly).
+// SendTo dispatches n to a single channel by id, once. Returns the
+// channel's error so the "Test" button can surface it. Honours the
+// channel's mute_schedule.
 func (s *Service) SendTo(ctx context.Context, id int64, n Notification) error {
+	impl, err := s.prepare(id)
+	if err != nil || impl == nil {
+		return err
+	}
+	err = impl.Send(ctx, n)
+	s.recordResult(ctx, id, err)
+	return err
+}
+
+var (
+	errChannelNotFound = errors.New("channel not found")
+	errChannelDisabled = errors.New("channel disabled")
+)
+
+// prepare resolves an enabled channel to its implementation. A nil impl
+// with nil error means the channel is muted right now.
+func (s *Service) prepare(id int64) (channelImpl, error) {
 	s.mu.RLock()
 	c, ok := s.cache[id]
 	s.mu.RUnlock()
 	if !ok {
-		return errors.New("channel not found")
+		return nil, errChannelNotFound
 	}
 	if !c.Enabled {
-		return errors.New("channel disabled")
+		return nil, errChannelDisabled
 	}
 	if isMutedNow(c.MuteSchedule, time.Now()) {
-		// Silently skip — not an error from the caller's perspective.
-		// The rule-level audit / history already records the firing.
-		return nil
+		return nil, nil
 	}
-	impl, err := buildChannel(c, s.http)
-	if err != nil {
-		return err
-	}
-	return impl.Send(ctx, n)
+	return buildChannel(c, s.http)
 }
 
-// SendToAll fans n out to multiple channels in parallel, swallowing
-// individual failures (logged) so one broken channel can't block alerts.
+// SendToAll fans n out to multiple channels in parallel. Each channel
+// gets len(backoff)+1 attempts; the final outcome is stored on the
+// channel so one broken destination neither blocks the others nor
+// fails silently.
 func (s *Service) SendToAll(ctx context.Context, ids []int64, n Notification) {
 	for _, id := range ids {
-		id := id
-		go func() {
-			if err := s.SendTo(ctx, id, n); err != nil {
+		go func(id int64) {
+			if err := s.sendWithRetry(ctx, id, n); err != nil {
 				slog.Warn("notify send failed", "channel_id", id, "err", err)
 			}
-		}()
+		}(id)
 	}
+}
+
+func (s *Service) sendWithRetry(ctx context.Context, id int64, n Notification) error {
+	impl, err := s.prepare(id)
+	if errors.Is(err, errChannelNotFound) || errors.Is(err, errChannelDisabled) {
+		return err
+	}
+	if err != nil {
+		s.recordResult(ctx, id, err)
+		return err
+	}
+	if impl == nil {
+		return nil
+	}
+	for attempt := 0; ; attempt++ {
+		err = impl.Send(ctx, n)
+		if err == nil || attempt >= len(s.backoff) {
+			break
+		}
+		t := time.NewTimer(s.backoff[attempt])
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			s.recordResult(context.WithoutCancel(ctx), id, err)
+			return err
+		case <-t.C:
+		}
+	}
+	s.recordResult(ctx, id, err)
+	return err
+}
+
+// maxErrorLen bounds the stored error; response bodies can be large.
+const maxErrorLen = 300
+
+// recordResult persists the delivery outcome. URL errors are reduced to
+// their cause because the URL itself may carry a webhook token.
+func (s *Service) recordResult(ctx context.Context, id int64, sendErr error) {
+	now := time.Now().UTC()
+	var dbErr error
+	msg := ""
+	if sendErr == nil {
+		_, dbErr = s.db.ExecContext(ctx,
+			`UPDATE notification_channels SET last_sent_at = ? WHERE id = ?`, now, id)
+	} else {
+		var uerr *url.Error
+		if errors.As(sendErr, &uerr) {
+			msg = uerr.Op + ": " + uerr.Err.Error()
+		} else {
+			msg = sendErr.Error()
+		}
+		if len(msg) > maxErrorLen {
+			msg = msg[:maxErrorLen]
+		}
+		_, dbErr = s.db.ExecContext(ctx,
+			`UPDATE notification_channels SET last_error = ?, last_error_at = ? WHERE id = ?`, msg, now, id)
+	}
+	if dbErr != nil {
+		slog.Warn("notify: record delivery result", "channel_id", id, "err", dbErr)
+	}
+	s.mu.Lock()
+	if c, ok := s.cache[id]; ok {
+		if sendErr == nil {
+			c.LastSentAt = &now
+		} else {
+			c.LastError = msg
+			c.LastErrorAt = &now
+		}
+	}
+	s.mu.Unlock()
 }
 
 // Channels returns the in-memory snapshot sorted by id ASC. Stable

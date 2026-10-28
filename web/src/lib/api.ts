@@ -907,6 +907,10 @@ export interface NotificationChannel {
   name: string;
   config: any;
   enabled: boolean;
+  mute_schedule?: string;
+  last_sent_at?: string;
+  last_error?: string;
+  last_error_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -958,6 +962,7 @@ export interface AlertHistoryEntry {
   message: string;
   value: number;
   threshold: number;
+  notified: boolean;
   occurred_at: string;
 }
 
@@ -2057,7 +2062,7 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ ...input, config: typeof input.config === 'string' ? JSON.parse(input.config) : input.config })
       }),
-    updateChannel: (id: number, input: { type: string; name: string; config: any; enabled: boolean }) =>
+    updateChannel: (id: number, input: { type: string; name: string; config: any; enabled: boolean; mute_schedule?: string }) =>
       request<NotificationChannel>(`/notifications/channels/${id}`, {
         method: 'PUT',
         body: JSON.stringify({ ...input, config: typeof input.config === 'string' ? JSON.parse(input.config) : input.config })

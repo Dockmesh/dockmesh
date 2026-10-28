@@ -45,6 +45,16 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - A role or scope change now applies to a signed-in user's next request instead of after up
   to 15 minutes.
 
+### Fixed
+- Container CPU and memory alerts now fire once a breach has lasted for the rule's duration
+  (allowing for one missed sample) and resolve only after the value has been back to normal
+  for a full sampling interval, so they no longer stay silent or flap. Cooldown and "muted
+  until" are honoured, muted rules no longer send "resolved" messages, and the rule
+  statistics count fires correctly.
+- Notification channels retry a failed delivery twice before giving up, and the last
+  delivery error is shown on the channel card. Toggling a channel on or off no longer clears
+  its quiet hours.
+
 ### Security
 - Each kind of signed token (session, refresh, two-factor challenge, WebSocket ticket, single
   sign-on state) now has its own key and is only accepted for its own purpose. Before, a

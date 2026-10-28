@@ -7585,6 +7585,9 @@ components:
         message: { type: string }
         value: { type: number }
         threshold: { type: number }
+        notified:
+          type: boolean
+          description: False when the transition was recorded but channels were not notified (rule muted or inside its cooldown).
         occurred_at: { type: string, format: date-time }
 
     NotificationChannel:
@@ -7599,6 +7602,11 @@ components:
         config:
           type: object
           description: Channel-type-specific. Secrets redacted.
+        enabled: { type: boolean }
+        mute_schedule: { type: string, description: JSON weekly quiet-hours schedule; empty means never muted. }
+        last_sent_at: { type: string, format: date-time, description: Last successful delivery. }
+        last_error: { type: string, description: Error of the last failed delivery after all retries. }
+        last_error_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
