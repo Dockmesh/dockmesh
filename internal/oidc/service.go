@@ -580,7 +580,6 @@ func (s *Service) decryptSecret(stored string) (string, error) {
 // Utility funcs
 // -----------------------------------------------------------------------------
 
-
 func splitScopes(s string) []string {
 	var out []string
 	for _, p := range strings.Split(s, ",") {

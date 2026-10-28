@@ -157,9 +157,24 @@ func (s *Service) ProvisionSSOUser(ctx context.Context, id SSOIdentity) (*User, 
 		return nil, err
 	}
 	if userID == "" && id.Email != "" {
+		// Only plain local accounts can be linked: one already bound to an
+		// IdP would be taken from it, and an account with 2FA or the admin
+		// role would be entered without its own factors.
 		emailUser, err := s.lookupUserID(ctx, `SELECT id FROM users WHERE email = ? COLLATE NOCASE LIMIT 1`, id.Email)
 		if err != nil {
 			return nil, err
+		}
+		if emailUser != "" {
+			linkable, err := s.lookupUserID(ctx, `
+				SELECT id FROM users WHERE id = ? AND totp_verified = 0 AND role <> 'admin'
+				   AND oidc_provider IS NULL AND saml_provider IS NULL
+				   AND oauth2_provider IS NULL AND ldap_provider IS NULL`, emailUser)
+			if err != nil {
+				return nil, err
+			}
+			if linkable == "" {
+				return nil, ErrSSOEmailInUse
+			}
 		}
 		if emailUser != "" {
 			var allow int

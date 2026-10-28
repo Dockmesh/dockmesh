@@ -103,6 +103,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - [sso-email-linking, admins] Someone who has a local account and signs in through SSO for the
   first time now gets "an account with this email already exists". Turn on "link to existing
   accounts" for that provider (OIDC/OAuth2 with verified emails), or remove the local account.
-  Accounts that already signed in through SSO are not affected.
+  Accounts with two-factor authentication or the Admin role are never linked this way. Accounts
+  that already signed in through SSO keep working as long as the provider sends the same
+  subject; users whose LDAP DN, SAML NameID or OAuth2 login changed need their old account
+  removed or relinked by an admin.
+- [sso-linked-accounts-review, admins] Earlier versions linked SSO logins to accounts by email
+  alone. A notice lists how many accounts are linked to SSO and which of them are admins; check
+  that each belongs to the right person.
 - [host-admin-system-settings, admins] Host Admins no longer change system settings, SSO or
   global environment variables. Give the Admin role to anyone who still needs that.

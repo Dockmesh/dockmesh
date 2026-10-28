@@ -465,7 +465,8 @@ func (s *Service) HandleCallback(ctx context.Context, pending *Pending, code, st
 		}
 	}
 
-	user, err := s.jitProvision(ctx, p, subject, name, email, role, auth.ClaimTrue(claims, "email_verified"))
+	// email_verified only speaks for the standard email field.
+	user, err := s.jitProvision(ctx, p, subject, name, email, role, p.EmailField == "email" && auth.ClaimTrue(claims, "email_verified"))
 	if err != nil {
 		return nil, err
 	}

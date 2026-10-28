@@ -29,8 +29,11 @@ func TestProvisionSSOUser(t *testing.T) {
 		VALUES (1, 'idp', 'IdP', 'https://idp.test', 'c', 's', 'viewer')`); err != nil {
 		t.Fatal(err)
 	}
-	local, err := s.CreateUser(ctx, "alice", "alice@example.com", "correct horse battery", "admin")
+	local, err := s.CreateUser(ctx, "alice", "alice@example.com", "correct horse battery", "operator")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateUser(ctx, "root", "root@example.com", "correct horse battery", "admin"); err != nil {
 		t.Fatal(err)
 	}
 	login := func(subject, email string, verified bool, role string) (*User, error) {
@@ -38,7 +41,7 @@ func TestProvisionSSOUser(t *testing.T) {
 			Email: email, EmailVerified: verified, Username: "x", Role: role})
 	}
 
-	// An attacker's IdP account with the admin's email doesn't take it over.
+	// An attacker's IdP account with someone's email doesn't take it over.
 	if _, err := login("evil", "alice@example.com", false, "viewer"); !errors.Is(err, ErrSSOEmailInUse) {
 		t.Fatalf("unverified email: %v, want ErrSSOEmailInUse", err)
 	}
@@ -55,11 +58,19 @@ func TestProvisionSSOUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.ID != local.ID || u.Role != "admin" {
-		t.Fatalf("linked user = %s/%s, want %s/admin", u.ID, u.Role, local.ID)
+	if u.ID != local.ID || u.Role != "operator" {
+		t.Fatalf("linked user = %s/%s, want %s/operator", u.ID, u.Role, local.ID)
 	}
-	if u, err = login("alice-sub", "", false, "viewer"); err != nil || u.Role != "admin" {
+	if u, err = login("alice-sub", "", false, "viewer"); err != nil || u.Role != "operator" {
 		t.Fatalf("later login: %v role %v", err, u)
+	}
+	// A second identity can't take over the now-linked account, and admin
+	// accounts are never linked by email.
+	if _, err := login("other-sub", "alice@example.com", true, "viewer"); !errors.Is(err, ErrSSOEmailInUse) {
+		t.Fatalf("relink of a linked account: %v", err)
+	}
+	if _, err := login("root-sub", "root@example.com", true, "viewer"); !errors.Is(err, ErrSSOEmailInUse) {
+		t.Fatalf("link into admin: %v", err)
 	}
 
 	// New SSO accounts follow the IdP role until an admin sets one.
