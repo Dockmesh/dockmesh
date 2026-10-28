@@ -64,7 +64,7 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   address into sessions and the audit log.
 - Two-factor codes, LDAP sign-in, invite links and session refresh are now rate-limited per
   client address and, where there is one, per account. Each two-factor code works only once.
-- The web UI is served with a Content Security Policy that allows no inline or third-party
+- The web UI is served with a Content Security Policy that only allows Dockmesh's own
   scripts, and with headers against clickjacking and MIME sniffing. HSTS is sent when
   Dockmesh is reached over HTTPS.
 - Single sign-on state cookies are marked `Secure` when Dockmesh is reached over HTTPS, and an

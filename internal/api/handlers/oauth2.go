@@ -62,7 +62,7 @@ func (h *Handlers) OAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errStr := r.URL.Query().Get("error"); errStr != "" {
-		http.Redirect(w, r, "/login?sso_error="+encodeQuery(truncate(errStr, 200)), http.StatusFound)
+		ssoErrorRedirect(w, r, errStr)
 		return
 	}
 	c, err := r.Cookie(oauth2StateCookie)

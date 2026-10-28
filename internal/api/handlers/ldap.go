@@ -42,9 +42,14 @@ func (h *Handlers) LDAPLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slug := chi.URLParam(r, "slug")
+	limitBody(w, r)
 	var in ldapLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if len(in.Username) > 256 {
+		writeError(w, http.StatusBadRequest, "username too long")
 		return
 	}
 	ip := clientIP(r)

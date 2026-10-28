@@ -35,10 +35,12 @@ func (h *Handlers) setStateCookie(w http.ResponseWriter, r *http.Request, name, 
 	})
 }
 
-// truncate shortens s to at most n runes.
-func truncate(s string, n int) string {
-	if r := []rune(s); len(r) > n {
-		return string(r[:n])
+// ssoErrorRedirect sends the browser to the sign-in page with an error an
+// identity provider passed back. The value is attacker-controllable (any
+// link to the callback), so it is shortened and fully escaped.
+func ssoErrorRedirect(w http.ResponseWriter, r *http.Request, msg string) {
+	if runes := []rune(msg); len(runes) > 200 {
+		msg = string(runes[:200])
 	}
-	return s
+	http.Redirect(w, r, "/login?sso_error="+encodeQuery(msg), http.StatusFound)
 }

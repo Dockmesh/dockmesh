@@ -466,7 +466,7 @@ paths:
                   error: { type: string }
                   code: { type: string, enum: [session_outdated] }
         "429":
-          description: Too many invalid refresh tokens from this IP (30 per 5 minutes).
+          description: Too many invalid refresh tokens from this IP (300 per 5 minutes).
           headers:
             Retry-After:
               schema: { type: integer }

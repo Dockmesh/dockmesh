@@ -22,6 +22,7 @@ type mfaCodeRequest struct {
 
 // LoginMFA completes a two-step login by verifying a TOTP/recovery code.
 func (h *Handlers) LoginMFA(w http.ResponseWriter, r *http.Request) {
+	limitBody(w, r)
 	var req mfaVerifyRequest
 	if err := decodeJSON(r, &req); err != nil || req.MFAToken == "" || req.Code == "" {
 		writeError(w, http.StatusBadRequest, "mfa_token and code required")

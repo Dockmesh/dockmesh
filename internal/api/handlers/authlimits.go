@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
 )
 
@@ -28,6 +29,7 @@ func newAuthLimits(ipMax, accountMax int, window time.Duration) authLimits {
 // allow writes 429 with Retry-After and returns false while the IP or the
 // account is locked. An empty account skips the account check.
 func (l authLimits) allow(w http.ResponseWriter, ip, account string) bool {
+	ip = clientip.LimitKey(ip)
 	retry := time.Duration(0)
 	if l.byIP != nil {
 		if ok, d := l.byIP.Check(ip); !ok {
@@ -49,11 +51,17 @@ func (l authLimits) allow(w http.ResponseWriter, ip, account string) bool {
 
 func (l authLimits) fail(ip, account string) {
 	if l.byIP != nil {
-		l.byIP.Fail(ip)
+		l.byIP.Fail(clientip.LimitKey(ip))
 	}
 	if l.byAccount != nil && account != "" {
 		l.byAccount.Fail(account)
 	}
+}
+
+// limitBody caps request bodies on the unauthenticated sign-in endpoints;
+// their keys and payloads come straight from the client.
+func limitBody(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 }
 
 // succeed clears the account bucket only: a success on one account must not

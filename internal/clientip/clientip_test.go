@@ -39,6 +39,12 @@ func TestResolve(t *testing.T) {
 		{name: "trusted peer without headers", trusted: "10.0.0.2", remote: "10.0.0.2:80", wantIP: "10.0.0.2"},
 		{name: "invalid setting falls back to default", trusted: "not-a-cidr", remote: "127.0.0.1:1",
 			headers: map[string]string{"X-Forwarded-For": "198.51.100.9"}, wantIP: "198.51.100.9"},
+		{name: "nginx real-ip with client xff fails closed", remote: "127.0.0.1:1",
+			headers: map[string]string{"X-Real-IP": "198.51.100.9", "X-Forwarded-For": "6.6.6.6"}, wantIP: "127.0.0.1"},
+		{name: "caddy xff with client real-ip fails closed", remote: "127.0.0.1:1",
+			headers: map[string]string{"X-Real-IP": "6.6.6.6", "X-Forwarded-For": "198.51.100.9"}, wantIP: "127.0.0.1"},
+		{name: "both headers agree", remote: "127.0.0.1:1",
+			headers: map[string]string{"X-Real-IP": "198.51.100.9", "X-Forwarded-For": "6.6.6.6, 198.51.100.9"}, wantIP: "198.51.100.9"},
 		{name: "ipv4-mapped peer", trusted: "10.0.0.2", remote: "[::ffff:10.0.0.2]:80",
 			headers: map[string]string{"X-Forwarded-For": "198.51.100.9"}, wantIP: "198.51.100.9"},
 	}
@@ -102,6 +108,21 @@ func TestParseList(t *testing.T) {
 		}
 		if len(got) != tt.want {
 			t.Errorf("ParseList(%q) = %d entries, want %d", tt.in, len(got), tt.want)
+		}
+	}
+}
+
+func TestLimitKey(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"198.51.100.7", "198.51.100.7"},
+		{"::ffff:198.51.100.7", "198.51.100.7"},
+		{"2001:db8:1:2:aaaa::1", "2001:db8:1:2::/64"},
+		{"2001:db8:1:2:bbbb::9", "2001:db8:1:2::/64"},
+		{"not-an-ip", "not-an-ip"},
+	}
+	for _, tt := range tests {
+		if got := LimitKey(tt.in); got != tt.want {
+			t.Errorf("LimitKey(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }

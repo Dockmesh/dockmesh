@@ -46,8 +46,8 @@ func New(source func() string) *Resolver {
 	return &Resolver{source: source}
 }
 
-// ParseList parses a comma- or whitespace-separated list of CIDRs or single
-// addresses.
+// ParseList parses a comma-, semicolon- or whitespace-separated list of
+// CIDRs or single addresses.
 func ParseList(s string) ([]netip.Prefix, error) {
 	var out []netip.Prefix
 	for _, f := range strings.FieldsFunc(s, func(r rune) bool {
@@ -85,7 +85,7 @@ func (r *Resolver) trusted() []netip.Prefix {
 		nets, err := ParseList(raw)
 		if err != nil {
 			// The setting is validated on save; a bad env value falls
-			// back to the safe default instead of trusting nothing known.
+			// back to DefaultTrusted.
 			nets, _ = ParseList(DefaultTrusted)
 		}
 		r.raw, r.nets = raw, nets
@@ -116,7 +116,7 @@ func peerAddr(remote string) (netip.Addr, bool) {
 }
 
 func hasForwardHeaders(r *http.Request) bool {
-	return r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("X-Real-IP") != "" || r.Header.Get("Forwarded") != ""
+	return r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("X-Real-IP") != ""
 }
 
 // resolve returns the client address and whether the original request used
@@ -138,30 +138,66 @@ func (r *Resolver) resolve(req *http.Request) info {
 	if strings.EqualFold(strings.TrimSpace(firstValue(req.Header.Get("X-Forwarded-Proto"))), "https") {
 		out.secure = true
 	}
-	// Walk X-Forwarded-For right to left: the rightmost entries were
-	// appended by our own proxies, the first untrusted one is the client.
-	// Anything left of it is client-supplied and not believed.
-	if xff := req.Header.Values("X-Forwarded-For"); len(xff) > 0 {
-		hops := strings.Split(strings.Join(xff, ","), ",")
-		for i := len(hops) - 1; i >= 0; i-- {
-			a, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
-			if err != nil {
-				break
-			}
-			a = a.Unmap()
-			out.ip = a.String()
-			if !contains(nets, a) {
-				break
-			}
-		}
-		return out
-	}
-	if real := strings.TrimSpace(req.Header.Get("X-Real-IP")); real != "" {
-		if a, err := netip.ParseAddr(real); err == nil {
-			out.ip = a.Unmap().String()
-		}
+	fwd, haveFwd := fromForwardedFor(req, nets)
+	real, haveReal := fromRealIP(req)
+	switch {
+	case haveFwd && haveReal && fwd != real:
+		// Proxies differ in which header they overwrite: nginx often sets
+		// only X-Real-IP and passes a client's X-Forwarded-For through,
+		// Caddy and Traefik do the opposite. When the two disagree one of
+		// them came from the client, so neither is believed.
+	case haveFwd:
+		out.ip = fwd
+	case haveReal:
+		out.ip = real
 	}
 	return out
+}
+
+// fromForwardedFor walks X-Forwarded-For right to left: the rightmost
+// entries were appended by our own proxies, the first untrusted one is the
+// client. Anything left of it is client-supplied and not believed.
+func fromForwardedFor(req *http.Request, nets []netip.Prefix) (string, bool) {
+	xff := req.Header.Values("X-Forwarded-For")
+	if len(xff) == 0 {
+		return "", false
+	}
+	ip := ""
+	hops := strings.Split(strings.Join(xff, ","), ",")
+	for i := len(hops) - 1; i >= 0; i-- {
+		a, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
+		if err != nil {
+			break
+		}
+		a = a.Unmap()
+		ip = a.String()
+		if !contains(nets, a) {
+			break
+		}
+	}
+	return ip, ip != ""
+}
+
+func fromRealIP(req *http.Request) (string, bool) {
+	a, err := netip.ParseAddr(strings.TrimSpace(req.Header.Get("X-Real-IP")))
+	if err != nil {
+		return "", false
+	}
+	return a.Unmap().String(), true
+}
+
+// LimitKey groups addresses for rate limiting. IPv6 clients usually hold a
+// whole /64, so per-address buckets would be trivial to rotate around.
+func LimitKey(ip string) string {
+	a, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	a = a.Unmap()
+	if a.Is4() {
+		return a.String()
+	}
+	return netip.PrefixFrom(a, 64).Masked().String()
 }
 
 func firstValue(v string) string {

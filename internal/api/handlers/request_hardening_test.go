@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -74,21 +75,19 @@ func TestTOTPCodeAcceptedOnce(t *testing.T) {
 
 func TestLoginMFARateLimits(t *testing.T) {
 	tests := []struct {
-		name string
-		// remote returns the client address of attempt i.
-		remote func(i int) string
+		name              string
+		ipMax, accountMax int
+		remote            func(i int) string
 	}{
-		{name: "per account across IPs", remote: func(i int) string { return "198.51.100." + string(rune('1'+i)) + ":1000" }},
-		{name: "per IP", remote: func(int) string { return "198.51.100.1:1000" }},
+		{name: "per account across IPs", ipMax: 100, accountMax: 3,
+			remote: func(i int) string { return "198.51.100." + strconv.Itoa(i+1) + ":1000" }},
+		{name: "per IP", ipMax: 3, accountMax: 100,
+			remote: func(int) string { return "198.51.100.1:1000" }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newAuthzEnv(t)
-			if tt.name == "per IP" {
-				e.h.mfaLimits = newAuthLimits(3, 100, time.Minute)
-			} else {
-				e.h.mfaLimits = newAuthLimits(100, 3, time.Minute)
-			}
+			e.h.mfaLimits = newAuthLimits(tt.ipMax, tt.accountMax, time.Minute)
 			u := e.user("dave", "viewer")
 			secret := enrollTOTP(t, e, u.ID)
 			pending := e.login("dave").MFAToken
@@ -145,7 +144,7 @@ func TestInviteAcceptRateLimited(t *testing.T) {
 		return rr.Code
 	}
 	for i := range 3 {
-		if code := send("guess"+string(rune('a'+i)), "198.51.100.9:1"); code != http.StatusNotFound {
+		if code := send("guess"+strconv.Itoa(i), "198.51.100.9:1"); code != http.StatusNotFound {
 			t.Fatalf("guess %d: %d, want 404", i+1, code)
 		}
 	}

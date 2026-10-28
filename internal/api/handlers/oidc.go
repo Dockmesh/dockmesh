@@ -75,7 +75,7 @@ func (h *Handlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 
 	// Handle provider-side error (user clicked "Deny" etc.).
 	if errStr := r.URL.Query().Get("error"); errStr != "" {
-		http.Redirect(w, r, "/login?sso_error="+encodeQuery(truncate(errStr, 200)), http.StatusFound)
+		ssoErrorRedirect(w, r, errStr)
 		return
 	}
 

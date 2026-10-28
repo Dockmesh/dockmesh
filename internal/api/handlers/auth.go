@@ -30,6 +30,7 @@ type refreshRequest struct {
 }
 
 func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
+	limitBody(w, r)
 	ip := clientIP(r)
 	key := limitKey(ip)
 
@@ -108,27 +109,28 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 // limitKey normalises the IP so that different TCP source ports collapse
 // to the same bucket.
 func limitKey(ip string) string {
-	host, _, err := net.SplitHostPort(ip)
-	if err == nil {
-		return host
+	if host, _, err := net.SplitHostPort(ip); err == nil {
+		ip = host
 	}
-	return ip
+	return clientip.LimitKey(ip)
 }
 
 func (h *Handlers) Refresh(w http.ResponseWriter, r *http.Request) {
+	limitBody(w, r)
 	var req refreshRequest
 	if err := decodeJSON(r, &req); err != nil || req.RefreshToken == "" {
 		writeError(w, http.StatusBadRequest, "refresh_token required")
 		return
 	}
-	// Only per IP: a refresh token that fails verification names no
-	// account we could trust.
+	// Only per IP and loose: refresh tokens can't be guessed, the limit just
+	// keeps a client from hammering the endpoint. A token that fails
+	// verification names no account we could trust.
 	ip := clientIP(r)
 	if !h.refreshLimits.allow(w, ip, "") {
 		return
 	}
 	res, err := h.Auth.Refresh(r.Context(), req.RefreshToken)
-	if errors.Is(err, auth.ErrInvalidToken) || errors.Is(err, auth.ErrTokenReused) {
+	if errors.Is(err, auth.ErrInvalidToken) {
 		h.refreshLimits.fail(ip, "")
 	}
 	switch {

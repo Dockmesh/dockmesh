@@ -170,6 +170,7 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "invites not configured")
 		return
 	}
+	limitBody(w, r)
 	token := chi.URLParam(r, "token")
 	ip := clientIP(r)
 	if !h.inviteLimits.allow(w, ip, "") {

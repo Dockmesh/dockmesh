@@ -71,7 +71,7 @@
     const p = new URLSearchParams(window.location.search);
     const e = p.get('sso_error');
     if (e) {
-      error = 'SSO failed: ' + decodeURIComponent(e);
+      error = 'SSO failed: ' + e;
       history.replaceState(null, '', window.location.pathname);
     }
   }

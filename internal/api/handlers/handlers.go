@@ -221,7 +221,7 @@ func New(d Deps) *Handlers {
 		mfaLimits:         newAuthLimits(20, 5, 15*time.Minute),
 		ldapLimits:        newAuthLimits(10, 10, 15*time.Minute),
 		inviteLimits:      newAuthLimits(10, 5, 15*time.Minute),
-		refreshLimits:     newAuthLimits(30, 0, 5*time.Minute),
+		refreshLimits:     newAuthLimits(300, 0, 5*time.Minute),
 		proxyNotice:       &proxyNotice{notices: d.Notices},
 	}
 	h.ClientIPs = clientip.New(func() string {

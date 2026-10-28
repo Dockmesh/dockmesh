@@ -366,7 +366,7 @@
 
         <Field
           label="Trusted proxies"
-          hint="Comma-separated IPs or CIDRs of reverse proxies in front of Dockmesh. Only these may set X-Forwarded-For. Empty = localhost only."
+          hint="Comma-separated IPs or CIDRs of reverse proxies in front of Dockmesh. Only these may set the client address and HTTPS headers (X-Forwarded-For, X-Real-IP, X-Forwarded-Proto). Empty = localhost only."
         >
           <input
             type="text"
