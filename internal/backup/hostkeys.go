@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/notices"
+	"golang.org/x/crypto/ssh"
 )
 
 // ErrNoPendingHostKey is returned by AcceptHostKey when there is nothing
@@ -34,30 +36,34 @@ func jobTarget(ctx context.Context, st *store, n *notices.Service, job *Job) (ta
 		return nil, err
 	}
 	if sf, ok := t.(*targets.SFTP); ok {
-		sf.OnHostKey(func(ev targets.HostKeyEvent) {
-			handleHostKey(context.WithoutCancel(ctx), st, n, job, ev)
+		sf.OnHostKey(func(ev targets.HostKeyEvent) error {
+			return handleHostKey(context.WithoutCancel(ctx), st, n, job, ev)
 		})
 	}
 	return t, nil
 }
 
-func handleHostKey(ctx context.Context, st *store, n *notices.Service, job *Job, ev targets.HostKeyEvent) {
-	var err error
+// handleHostKey stores and announces a host key event. Recording the first
+// key is conditional: when two connections race on a job without a key,
+// only one key wins and the other connection is treated as a changed key.
+func handleHostKey(ctx context.Context, st *store, n *notices.Service, job *Job, ev targets.HostKeyEvent) error {
+	if ev.Kind == "recorded" {
+		won, stored, err := st.recordHostKey(ctx, job.ID, ev.Key)
+		if err != nil {
+			return err
+		}
+		if !won && stored != ev.Key {
+			ev.Kind = "changed"
+			ev.OldFingerprint = stored
+			if old, _, _, _, perr := ssh.ParseAuthorizedKey([]byte(stored)); perr == nil {
+				ev.OldFingerprint = ssh.FingerprintSHA256(old)
+			}
+		}
+	}
+	var notice error
 	switch ev.Kind {
 	case "recorded":
-		err = st.setTargetConfigField(ctx, job.ID, "host_key", ev.Key)
-	case "changed":
-		err = st.setTargetConfigField(ctx, job.ID, "host_key_pending", ev.Key)
-	}
-	if err != nil {
-		slog.Warn("store sftp host key", "job", job.Name, "err", err)
-	}
-	if n == nil {
-		return
-	}
-	switch ev.Kind {
-	case "recorded":
-		err = n.Raise(ctx, notices.RaiseInput{
+		notice = raise(ctx, n, notices.RaiseInput{
 			Key:      hostKeyRecordedKey(job.ID),
 			Audience: notices.Admins(),
 			Severity: notices.SevInfo,
@@ -67,9 +73,14 @@ func handleHostKey(ctx context.Context, st *store, n *notices.Service, job *Job,
 			Link: "/backups",
 		})
 	case "matched":
-		err = n.Resolve(ctx, hostKeyRecordedKey(job.ID))
+		if n != nil {
+			notice = n.Resolve(ctx, hostKeyRecordedKey(job.ID))
+		}
 	case "changed":
-		err = n.Raise(ctx, notices.RaiseInput{
+		if err := st.setTargetConfigField(ctx, job.ID, "host_key_pending", ev.Key); err != nil {
+			return err
+		}
+		notice = raise(ctx, n, notices.RaiseInput{
 			Key:      hostKeyChangedKey(job.ID),
 			Audience: notices.Admins(),
 			Severity: notices.SevCritical,
@@ -81,9 +92,20 @@ func handleHostKey(ctx context.Context, st *store, n *notices.Service, job *Job,
 			Link: "/backups",
 		})
 	}
-	if err != nil {
-		slog.Warn("sftp host key notice", "job", job.Name, "err", err)
+	if notice != nil {
+		slog.Warn("sftp host key notice", "job", job.Name, "err", notice)
 	}
+	if ev.Kind == "changed" {
+		return &targets.HostKeyChangedError{Old: ev.OldFingerprint, New: ev.Fingerprint}
+	}
+	return nil
+}
+
+func raise(ctx context.Context, n *notices.Service, in notices.RaiseInput) error {
+	if n == nil {
+		return nil
+	}
+	return n.Raise(ctx, in)
 }
 
 // AcceptHostKey trusts the changed host key an SFTP job last saw.
@@ -123,6 +145,25 @@ func configMap(cfg any) (map[string]any, error) {
 		}
 	}
 	return m, nil
+}
+
+// recordHostKey stores key as the job's host key unless one is already
+// set. It reports whether this call set it and the key now stored.
+func (s *store) recordHostKey(ctx context.Context, jobID int64, key string) (bool, string, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE backup_jobs SET target_config = json_set(target_config, '$.host_key', ?),
+		       updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND COALESCE(json_extract(target_config, '$.host_key'), '') = ''`, key, jobID)
+	if err != nil {
+		return false, "", err
+	}
+	if n, _ := res.RowsAffected(); n == 1 {
+		return true, key, nil
+	}
+	var stored sql.NullString
+	err = s.db.QueryRowContext(ctx,
+		`SELECT json_extract(target_config, '$.host_key') FROM backup_jobs WHERE id = ?`, jobID).Scan(&stored)
+	return false, stored.String, err
 }
 
 func (s *store) setTargetConfigField(ctx context.Context, jobID int64, field, value string) error {

@@ -145,22 +145,34 @@ func (s *Service) UnencryptableJobs(ctx context.Context) ([]string, error) {
 	}
 	return out, nil
 }
+
 func (s *Service) GetJob(ctx context.Context, id int64) (*Job, error) {
 	return s.store.getJob(ctx, id)
 }
 
-// ErrEncryptUnavailable refuses encrypted backups while the secrets
-// service is disabled: the archive would be written in plaintext.
-var ErrEncryptUnavailable = errors.New("encryption needs secrets encryption enabled on the server (DOCKMESH_SECRETS_ENCRYPT_ENV)")
+func (s *Service) canEncrypt() bool { return canEncrypt(s.secrets) }
 
-func (s *Service) canEncrypt() bool { return s.secrets != nil && s.secrets.Enabled() }
+func canEncrypt(sec *secrets.Service) bool { return sec != nil && sec.Enabled() }
+
+// checkJobInput applies the save-time rules that depend on the server:
+// encryption needs secrets (a disabled job may keep the flag, so it can
+// still be switched off), and local paths must be inside the allowed roots.
+func (s *Service) checkJobInput(in JobInput) error {
+	if in.Encrypt && in.Enabled && !s.canEncrypt() {
+		return ErrEncryptUnavailable
+	}
+	if in.TargetType == "local" {
+		return targets.CheckLocalConfig(in.TargetConfig)
+	}
+	return nil
+}
 
 func (s *Service) CreateJob(ctx context.Context, in JobInput) (*Job, error) {
 	if err := validateJob(in); err != nil {
 		return nil, err
 	}
-	if in.Encrypt && !s.canEncrypt() {
-		return nil, ErrEncryptUnavailable
+	if err := s.checkJobInput(in); err != nil {
+		return nil, err
 	}
 	id, err := s.store.createJob(ctx, in)
 	if err != nil {
@@ -178,8 +190,8 @@ func (s *Service) UpdateJob(ctx context.Context, id int64, in JobInput) (*Job, e
 	if err := validateJob(in); err != nil {
 		return nil, err
 	}
-	if in.Encrypt && !s.canEncrypt() {
-		return nil, ErrEncryptUnavailable
+	if err := s.checkJobInput(in); err != nil {
+		return nil, err
 	}
 	if err := s.store.updateJob(ctx, id, in); err != nil {
 		return nil, err

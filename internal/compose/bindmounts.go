@@ -8,14 +8,16 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
+	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
-
-	"github.com/dockmesh/dockmesh/internal/safepath"
+	"github.com/docker/docker/client"
 )
 
 // RebaseBindSources points bind mounts that compose resolved into the
@@ -23,6 +25,9 @@ import (
 // Compose resolves "./data" against the directory it was loaded from; the
 // staging copy is deleted after the deploy, so without this the container
 // would write into a directory that no longer exists.
+//
+// A bind of the staging directory itself (".:/app") is left alone: in the
+// stack directory it would let the container rewrite compose.yaml and .env.
 func RebaseBindSources(proj *composetypes.Project, stagingDir, stackDir string) {
 	stagingDir = filepath.Clean(stagingDir)
 	for name, svc := range proj.Services {
@@ -32,7 +37,7 @@ func RebaseBindSources(proj *composetypes.Project, stagingDir, stackDir string) 
 				continue
 			}
 			src := filepath.Clean(v.Source)
-			if src != stagingDir && !strings.HasPrefix(src, stagingDir+string(filepath.Separator)) {
+			if !strings.HasPrefix(src, stagingDir+string(filepath.Separator)) {
 				continue
 			}
 			rel, err := filepath.Rel(stagingDir, src)
@@ -48,13 +53,21 @@ func RebaseBindSources(proj *composetypes.Project, stagingDir, stackDir string) 
 	}
 }
 
-// IsStagingPath reports whether a bind source points into a deploy
-// staging directory of an earlier version: the server used
-// <tmp>/dockmesh-deploy-<stack>-*, agents <data>/staging/<stack>-*.
+// stagingPathPattern matches the staging directories earlier versions
+// deployed from: <tmp>/dockmesh-deploy-<stack>-<n> on the server and
+// <data dir>/staging/<stack>-<n> on agents (os.MkdirTemp appends digits).
+var stagingPathPattern = regexp.MustCompile(`/dockmesh-deploy-[^/]+|/staging/[a-z0-9][a-z0-9-]*-[0-9]+(/|$)`)
+
+// IsStagingPath reports whether a bind source points into such a
+// staging directory.
 func IsStagingPath(src string) bool {
-	s := filepath.ToSlash(src)
-	return strings.Contains(s, "/dockmesh-deploy-") || strings.Contains(s, "/dockmesh/staging/")
+	return stagingPathPattern.MatchString(filepath.ToSlash(src))
 }
+
+// ErrStagedMounts refuses scale and rolling updates while the stack still
+// runs with bind mounts into a deleted staging directory: replacing those
+// containers would drop the data only they still hold.
+var ErrStagedMounts = errors.New("this stack still uses a bind mount from a temporary directory; redeploy it first so its data is moved to the stack directory")
 
 // BindCopy reports what happened to data left in an old staging mount.
 type BindCopy struct {
@@ -65,57 +78,112 @@ type BindCopy struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// adoptStagedBindData copies what a running container wrote into a bind
-// mount whose source was a (now deleted) staging directory into the
-// persistent source the new container will use. The data only exists
-// inside the old container, so it is read through the Docker archive API.
-// Nothing is copied when the new source already has content.
-func (s *Service) adoptStagedBindData(ctx context.Context, proj *composetypes.Project) []BindCopy {
-	cli := s.docker.Raw()
+type stagedMount struct {
+	containerID, running, service, target, dest string
+}
+
+// stagedMounts lists bind mounts of the project's managed containers that
+// point into an old staging directory, with the source the project now
+// uses for the same target.
+func (s *Service) stagedMounts(ctx context.Context, cli *client.Client, proj *composetypes.Project) ([]stagedMount, error) {
 	list, err := cli.ContainerList(ctx, container.ListOptions{
-		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", "com.docker.compose.project="+proj.Name)),
+		All: true,
+		Filters: filters.NewArgs(
+			filters.Arg("label", LabelManaged+"=true"),
+			filters.Arg("label", "com.docker.compose.project="+proj.Name),
+		),
 	})
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	var out []BindCopy
+	var out []stagedMount
 	for _, c := range list {
-		svcName := c.Labels["com.docker.compose.service"]
-		svc, ok := proj.Services[svcName]
-		if !ok {
+		if c.Labels["com.docker.compose.project"] != proj.Name {
 			continue
 		}
+		svcName := c.Labels["com.docker.compose.service"]
+		svc := proj.Services[svcName]
 		for _, m := range c.Mounts {
 			if m.Type != "bind" || !IsStagingPath(m.Source) {
 				continue
 			}
-			dest := ""
+			sm := stagedMount{containerID: c.ID, running: c.State, service: svcName, target: m.Destination}
 			for _, v := range svc.Volumes {
-				if v.Type == composetypes.VolumeTypeBind && v.Target == m.Destination {
-					dest = v.Source
+				if v.Type == composetypes.VolumeTypeBind && v.Target == m.Destination && !IsStagingPath(v.Source) {
+					sm.dest = v.Source
 				}
 			}
-			if dest == "" || IsStagingPath(dest) {
-				continue
-			}
-			bc := BindCopy{Service: svcName, Target: m.Destination, Dest: dest}
-			if !emptyOrMissing(dest) {
-				continue
-			}
-			n, err := copyFromContainer(ctx, s, c.ID, m.Destination, dest)
-			bc.Files = n
-			if err != nil {
-				bc.Error = err.Error()
-				slog.Warn("bind mount data copy failed", "stack", proj.Name, "service", svcName, "target", m.Destination, "err", err)
-			} else {
-				slog.Info("copied data from old staging bind mount", "stack", proj.Name, "service", svcName,
-					"target", m.Destination, "dest", dest, "files", n)
-			}
-			out = append(out, bc)
+			out = append(out, sm)
 		}
 	}
-	return out
+	return out, nil
+}
+
+func (s *Service) refuseStagedMounts(ctx context.Context, proj *composetypes.Project) error {
+	staged, err := s.stagedMounts(ctx, s.docker.Raw(), proj)
+	if err != nil {
+		return err
+	}
+	if len(staged) > 0 {
+		return ErrStagedMounts
+	}
+	return nil
+}
+
+// adoptStagedBindData moves what running containers wrote into a bind
+// mount whose source was a (now deleted) staging directory into the
+// persistent source the new containers will use. That data only exists
+// inside the old container, so each one is stopped for a consistent copy
+// and read through the Docker archive API. Nothing is copied when the new
+// source already has content. On any failure the stopped containers are
+// started again and the deploy must not continue.
+func (s *Service) adoptStagedBindData(ctx context.Context, cli *client.Client, proj *composetypes.Project) ([]BindCopy, error) {
+	staged, err := s.stagedMounts(ctx, cli, proj)
+	if err != nil {
+		return nil, err
+	}
+	var (
+		out     []BindCopy
+		stopped []string
+	)
+	restart := func() {
+		for _, id := range stopped {
+			_ = cli.ContainerStart(context.WithoutCancel(ctx), id, container.StartOptions{})
+		}
+	}
+	for _, m := range staged {
+		if m.dest == "" || !emptyOrMissing(m.dest) {
+			continue
+		}
+		if m.running == "running" && !contains(stopped, m.containerID) {
+			if err := cli.ContainerStop(ctx, m.containerID, container.StopOptions{}); err != nil {
+				restart()
+				return out, fmt.Errorf("stop %s before copying its data: %w", m.service, err)
+			}
+			stopped = append(stopped, m.containerID)
+		}
+		bc := BindCopy{Service: m.service, Target: m.target, Dest: m.dest}
+		bc.Files, err = copyBindData(ctx, cli, m.containerID, m.target, m.dest)
+		if err != nil {
+			bc.Error = err.Error()
+			out = append(out, bc)
+			restart()
+			return out, fmt.Errorf("copy data of %s:%s to %s: %w", m.service, m.target, m.dest, err)
+		}
+		slog.Info("copied data from old staging bind mount", "stack", proj.Name, "service", m.service,
+			"target", m.target, "dest", m.dest, "files", bc.Files)
+		out = append(out, bc)
+	}
+	return out, nil
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 func emptyOrMissing(dir string) bool {
@@ -126,62 +194,90 @@ func emptyOrMissing(dir string) bool {
 	return err == nil && len(entries) == 0
 }
 
-// copyFromContainer extracts path from the container into dest. Only
-// directories and regular files are written, each through safepath so the
-// archive can't place anything outside dest.
-func copyFromContainer(ctx context.Context, s *Service, containerID, path, dest string) (int, error) {
-	rc, _, err := s.docker.Raw().CopyFromContainer(ctx, containerID, path)
+const bindCopyHelperImage = "busybox:1.36"
+
+// copyBindData streams path out of the old container into a helper
+// container that has dest bind-mounted. The Docker daemon extracts as root
+// and keeps the files' owners and modes, which a database directory needs;
+// the helper's mount namespace keeps the archive inside dest.
+func copyBindData(ctx context.Context, cli *client.Client, containerID, srcPath, dest string) (int, error) {
+	if _, _, err := cli.ImageInspectWithRaw(ctx, bindCopyHelperImage); err != nil {
+		rc, err := cli.ImagePull(ctx, bindCopyHelperImage, dtypes.ImagePullOptions{})
+		if err != nil {
+			return 0, fmt.Errorf("pull helper image: %w", err)
+		}
+		_, _ = io.Copy(io.Discard, rc)
+		rc.Close()
+	}
+	helper, err := cli.ContainerCreate(ctx, &container.Config{
+		Image:  bindCopyHelperImage,
+		Cmd:    []string{"true"},
+		Labels: map[string]string{LabelManaged: "true", "dockmesh.component": "bind-copy-helper"},
+	}, &container.HostConfig{Binds: []string{dest + ":/dest"}}, nil, nil, "")
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		_ = cli.ContainerRemove(context.WithoutCancel(ctx), helper.ID, container.RemoveOptions{Force: true})
+	}()
+
+	rc, _, err := cli.CopyFromContainer(ctx, containerID, srcPath)
 	if err != nil {
 		return 0, err
 	}
 	defer rc.Close()
-	// The archive's top entry is the directory itself (base name of path).
-	return extractInto(tar.NewReader(rc), filepath.Base(path), dest)
+	pr, pw := io.Pipe()
+	files := 0
+	go func() {
+		n, err := rewriteBindTar(tar.NewReader(rc), tar.NewWriter(pw), path.Base(srcPath))
+		files = n
+		pw.CloseWithError(err)
+	}()
+	if err := cli.CopyToContainer(ctx, helper.ID, "/dest", pr, dtypes.CopyToContainerOptions{CopyUIDGID: true}); err != nil {
+		pr.CloseWithError(err)
+		return files, err
+	}
+	return files, nil
 }
 
-// extractInto writes the archive's directories and regular files below
-// dest, dropping the leading prefix directory.
-func extractInto(tr *tar.Reader, prefix, dest string) (int, error) {
-	if err := os.MkdirAll(dest, 0o755); err != nil {
-		return 0, err
-	}
+// rewriteBindTar copies directories and regular files from tr to tw with
+// the leading prefix directory removed. Links and special files are left
+// out, and names that would climb with ".." are refused.
+func rewriteBindTar(tr *tar.Reader, tw *tar.Writer, prefix string) (int, error) {
 	files := 0
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return files, nil
+			return files, tw.Close()
 		}
 		if err != nil {
 			return files, err
 		}
 		rel := strings.TrimPrefix(strings.TrimPrefix(filepath.ToSlash(hdr.Name), prefix), "/")
-		if rel == "" {
+		if rel == "" || rel == "." {
 			continue
 		}
-		target, err := safepath.Resolve(dest, rel)
-		if err != nil {
-			return files, fmt.Errorf("%s: %w", hdr.Name, err)
+		clean := path.Clean(rel)
+		if clean == ".." || strings.HasPrefix(clean, "../") || path.IsAbs(clean) {
+			return files, fmt.Errorf("archive entry %q leaves the mount", hdr.Name)
 		}
 		switch hdr.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o755); err != nil {
+		case tar.TypeDir, tar.TypeReg:
+		default:
+			continue
+		}
+		out := *hdr
+		out.Name = clean
+		if hdr.Typeflag == tar.TypeDir {
+			out.Name += "/"
+		}
+		out.Mode = hdr.Mode & 0o777
+		if err := tw.WriteHeader(&out); err != nil {
+			return files, err
+		}
+		if hdr.Typeflag == tar.TypeReg {
+			if _, err := io.Copy(tw, tr); err != nil { //nolint:gosec // size bounded by the container's own data
 				return files, err
-			}
-		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return files, err
-			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_EXCL, os.FileMode(hdr.Mode&0o777)) //nolint:gosec // masked to permission bits
-			if err != nil {
-				return files, err
-			}
-			_, err = io.Copy(f, tr) //nolint:gosec // size bounded by the container's own data
-			f.Close()
-			if err != nil {
-				return files, err
-			}
-			if hdr.Uid != 0 || hdr.Gid != 0 {
-				_ = os.Lchown(target, hdr.Uid, hdr.Gid)
 			}
 			files++
 		}

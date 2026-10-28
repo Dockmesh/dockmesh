@@ -537,15 +537,15 @@ func main() {
 
 	// DB-backed system settings — reads from DB, falls back to env vars.
 	settingsStore := settings.NewStore(database)
+	if err := settingsStore.Load(ctx); err != nil {
+		slog.Warn("settings store load", "err", err)
+	}
 	if err := seedLocalBackupRoots(ctx, settingsStore, database, backupSvc, filepath.Dir(cfg.DBPath)); err != nil {
 		slog.Warn("seed local backup roots", "err", err)
 	}
 	targets.SetLocalRoots(func() []string {
 		return targets.ParseRoots(settingsStore.Get(targets.LocalRootsSetting, ""))
 	})
-	if err := settingsStore.Load(ctx); err != nil {
-		slog.Warn("settings store load", "err", err)
-	}
 	// P.12.1 — hand the settings store to auth.Service so password
 	// policy + per-user lockout thresholds + rotation-day setting
 	// are live-editable via the UI without a restart.
@@ -611,6 +611,9 @@ func main() {
 	// Action-required notices. Packages register startup checks on
 	// noticesSvc; they run once every service below is wired.
 	noticesSvc := notices.NewService(database)
+	noticesSvc.Register("backups.local-roots-review", func(ctx context.Context, n *notices.Service) error {
+		return syncSeededRootsNotice(ctx, n, settingsStore)
+	})
 	noticesSvc.Register("backups.encrypt-unavailable", func(ctx context.Context, n *notices.Service) error {
 		return syncUnencryptableNotice(ctx, n, backupSvc)
 	})
@@ -618,7 +621,7 @@ func main() {
 		return syncStagedMountNotices(ctx, n, hostRegistry)
 	})
 	hostRegistry.SetAfterDeploy(func(ctx context.Context, hostID, stack string, res *compose.DeployResult) {
-		reportBindCopies(ctx, noticesSvc, stack, res)
+		reportBindCopies(ctx, noticesSvc, hostID, stack, res)
 		if err := syncStagedMountNotices(ctx, noticesSvc, hostRegistry); err != nil {
 			slog.Warn("staged bind mount notices", "err", err)
 		}

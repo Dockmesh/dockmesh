@@ -1817,7 +1817,7 @@ export const api = {
     runJob: (id: number) => request<BackupRun>(`/backups/jobs/${id}/run`, { method: 'POST' }),
     acceptHostKey: (id: number) =>
       request<void>(`/backups/jobs/${id}/accept-host-key`, { method: 'POST' }),
-    // P.13.2 — clear the needs_review flag on a legacy auto-created
+    // Clear the needs_review flag on a legacy auto-created
     // job. mode "keep" preserves enabled state; "disable" also flips
     // enabled=0 so the scheduler stops firing it.
     acknowledgeReview: (id: number, mode: 'keep' | 'disable') =>

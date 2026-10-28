@@ -13,14 +13,16 @@ import (
 	"github.com/dockmesh/dockmesh/internal/settings"
 )
 
-// seedLocalBackupRoots creates the allowed-roots setting on the first start
-// that has it: the defaults plus every path existing local targets already
-// use, so no configured backup stops working with the upgrade.
+// seedLocalBackupRoots creates the allowed-roots setting once: the
+// defaults plus every path existing local targets already use, so no
+// configured backup stops working with the upgrade. The extra paths are
+// remembered so admins are asked to review them.
 func seedLocalBackupRoots(ctx context.Context, st *settings.Store, db *sql.DB, svc *backup.Service, dataDir string) error {
-	if st.Get(targets.LocalRootsSetting, "") != "" {
+	if st.Get(targets.LocalRootsSeededSetting, "") != "" {
 		return nil
 	}
-	roots := []string{"/srv/backups", filepath.Join(dataDir, "backups")}
+	defaults := []string{"/srv/backups", filepath.Join(dataDir, "backups")}
+	var used []string
 	add := func(cfg any) {
 		var lc targets.LocalConfig
 		b, err := json.Marshal(cfg)
@@ -28,11 +30,9 @@ func seedLocalBackupRoots(ctx context.Context, st *settings.Store, db *sql.DB, s
 			return
 		}
 		if lc.Path == "" {
-			lc.Path = "./data/backups"
+			lc.Path = targets.DefaultLocalPath
 		}
-		if abs, err := filepath.Abs(lc.Path); err == nil {
-			roots = append(roots, abs)
-		}
+		used = append(used, lc.Path)
 	}
 	jobs, err := svc.ListJobs(ctx)
 	if err != nil {
@@ -52,15 +52,56 @@ func seedLocalBackupRoots(ctx context.Context, st *settings.Store, db *sql.DB, s
 			add(t.Config)
 		}
 	}
-	seen := map[string]bool{}
-	var uniq []string
-	for _, r := range roots {
-		if abs, err := filepath.Abs(r); err == nil && !seen[abs] {
-			seen[abs] = true
-			uniq = append(uniq, abs)
+	roots := uniqueAbs(defaults)
+	var extras []string
+	for _, p := range uniqueAbs(used) {
+		covered := false
+		for _, r := range roots {
+			if targets.Within(r, p) {
+				covered = true
+			}
+		}
+		if !covered {
+			extras = append(extras, p)
 		}
 	}
-	return st.Set(ctx, targets.LocalRootsSetting, strings.Join(uniq, "\n"))
+	if err := st.Set(ctx, targets.LocalRootsSetting, strings.Join(append(roots, extras...), "\n")); err != nil {
+		return err
+	}
+	return st.Set(ctx, targets.LocalRootsSeededSetting, strings.Join(append([]string{"seeded"}, extras...), "\n"))
+}
+
+func uniqueAbs(paths []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range paths {
+		if abs, err := filepath.Abs(p); err == nil && !seen[abs] {
+			seen[abs] = true
+			out = append(out, abs)
+		}
+	}
+	return out
+}
+
+// syncSeededRootsNotice asks admins to review backup directories the
+// upgrade allowed only because existing jobs used them, until the setting
+// is edited.
+func syncSeededRootsNotice(ctx context.Context, n *notices.Service, st *settings.Store) error {
+	lines := strings.Split(st.Get(targets.LocalRootsSeededSetting, ""), "\n")
+	extras := []string{}
+	if len(lines) > 1 && lines[0] == "seeded" {
+		extras = lines[1:]
+	}
+	return n.Set(ctx, len(extras) > 0, notices.RaiseInput{
+		Key:      "backups.local-roots-review",
+		Audience: notices.Admins(),
+		Severity: notices.SevInfo,
+		Title:    "Review allowed local backup directories",
+		Body: "Local backup targets may now only write below allowed directories. These were " +
+			"added because existing jobs use them: " + strings.Join(extras, ", ") + ". Keep or " +
+			"remove them in the " + targets.LocalRootsSetting + " setting.",
+		Link: "/settings",
+	})
 }
 
 // syncUnencryptableNotice tells admins about jobs set to encrypt while

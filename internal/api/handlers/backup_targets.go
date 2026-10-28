@@ -37,6 +37,12 @@ func (h *Handlers) CreateBackupTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if in.Type == "local" {
+		if err := targets.CheckLocalConfig(in.Config); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	t, err := h.BackupTargets.Create(r.Context(), in)
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
@@ -59,6 +65,12 @@ func (h *Handlers) UpdateBackupTarget(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
+	}
+	if in.Type == "local" {
+		if err := targets.CheckLocalConfig(in.Config); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	t, err := h.BackupTargets.Update(r.Context(), id, in)
 	if err != nil {

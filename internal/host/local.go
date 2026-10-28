@@ -230,10 +230,8 @@ func (h *LocalHost) CleanupPreview(ctx context.Context, name string) (*compose.C
 	return h.newComposeSvc().CleanupPreview(ctx, name)
 }
 
-// writeStagingDir creates a tmp directory containing compose.yaml and an
-// optional .env file. Used both by LocalHost.DeployStack on the central
-// server (so we go through the same parse path as the agent) and by the
-// agent's own deploy handler.
+// writeStagingDir creates a temp directory holding compose.yaml and an
+// optional .env.
 func writeStagingDir(name, composeYAML, envContent string) (string, func(), error) {
 	base, err := os.MkdirTemp("", "dockmesh-deploy-"+name+"-")
 	if err != nil {
@@ -253,8 +251,8 @@ func writeStagingDir(name, composeYAML, envContent string) (string, func(), erro
 	return base, cleanup, nil
 }
 
-// WriteStagingDir is the exported helper the agent uses to materialise
-// the same compose+env layout into its own /var/lib/dockmesh/staging.
+// WriteStagingDir is exported for the agent's scale and scale-check
+// handlers.
 func WriteStagingDir(name, composeYAML, envContent string) (string, func(), error) {
 	return writeStagingDir(name, composeYAML, envContent)
 }
@@ -346,14 +344,10 @@ func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath strin
 	}
 	// The helper container resolves links inside its own mount of the
 	// volume, so absolute in-volume symlinks work there safely.
-	abs, err := SanitizeVolumePath(mp, subpath)
-	if errors.Is(err, fs.ErrPermission) || errors.Is(err, ErrVolumePathEscape) {
+	entries, err := BrowseVolume(mp, subpath)
+	if errors.Is(err, ErrVolumePathEscape) {
 		return BrowseDirViaHelper(ctx, h.cli, name, subpath)
 	}
-	if err != nil {
-		return nil, err
-	}
-	entries, err := BrowseDir(abs)
 	if err != nil && errors.Is(err, fs.ErrPermission) {
 		return BrowseDirViaHelper(ctx, h.cli, name, subpath)
 	}
@@ -372,14 +366,10 @@ func (h *LocalHost) VolumeReadFile(ctx context.Context, name, subpath string, ma
 	if err != nil {
 		return nil, err
 	}
-	abs, err := SanitizeVolumePath(mp, subpath)
-	if errors.Is(err, fs.ErrPermission) || errors.Is(err, ErrVolumePathEscape) {
+	res, err := ReadVolumeFile(mp, subpath, maxBytes)
+	if errors.Is(err, ErrVolumePathEscape) {
 		return ReadFileViaHelper(ctx, h.cli, name, subpath, maxBytes)
 	}
-	if err != nil {
-		return nil, err
-	}
-	res, err := ReadFile(abs, maxBytes)
 	if err != nil && errors.Is(err, fs.ErrPermission) {
 		return ReadFileViaHelper(ctx, h.cli, name, subpath, maxBytes)
 	}

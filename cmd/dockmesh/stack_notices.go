@@ -58,7 +58,7 @@ func syncStagedMountNotices(ctx context.Context, n *notices.Service, reg *host.R
 // reportBindCopies raises a notice when data couldn't be moved out of an
 // old staging mount during a deploy, and resolves it once a deploy of the
 // stack has nothing left to report.
-func reportBindCopies(ctx context.Context, n *notices.Service, stack string, res *compose.DeployResult) {
+func reportBindCopies(ctx context.Context, n *notices.Service, hostID, stack string, res *compose.DeployResult) {
 	var failed []string
 	for _, c := range res.BindCopies {
 		if c.Error != "" {
@@ -66,7 +66,7 @@ func reportBindCopies(ctx context.Context, n *notices.Service, stack string, res
 		}
 	}
 	err := n.Set(ctx, len(failed) > 0, notices.RaiseInput{
-		Key:      bindCopyNoticePrefix + stack,
+		Key:      bindCopyNoticePrefix + hostID + "/" + stack,
 		Audience: notices.Admins(),
 		Severity: notices.SevCritical,
 		Title:    "Data from an old bind mount of " + stack + " was not copied",

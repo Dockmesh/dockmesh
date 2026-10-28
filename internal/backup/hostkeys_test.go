@@ -49,7 +49,9 @@ func TestSFTPHostKeyLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handleHostKey(ctx, svc.store, n, job, targets.HostKeyEvent{Kind: "recorded", Key: "ssh-ed25519 AAAA1", Fingerprint: "SHA256:one"})
+	if err := handleHostKey(ctx, svc.store, n, job, targets.HostKeyEvent{Kind: "recorded", Key: "ssh-ed25519 AAAA1", Fingerprint: "SHA256:one"}); err != nil {
+		t.Fatal(err)
+	}
 	got, _ := svc.GetJob(ctx, job.ID)
 	cfg, _ := configMap(got.TargetConfig)
 	if cfg["host_key"] != "ssh-ed25519 AAAA1" {
@@ -63,7 +65,13 @@ func TestSFTPHostKeyLifecycle(t *testing.T) {
 		t.Errorf("accept without a pending key: %v", err)
 	}
 
-	handleHostKey(ctx, svc.store, n, job, targets.HostKeyEvent{Kind: "changed", Key: "ssh-ed25519 AAAA2", Fingerprint: "SHA256:two", OldFingerprint: "SHA256:one"})
+	// A racing first connection with another key must not overwrite it.
+	var changed *targets.HostKeyChangedError
+	if err := handleHostKey(ctx, svc.store, n, job, targets.HostKeyEvent{Kind: "recorded", Key: "ssh-ed25519 EVIL", Fingerprint: "SHA256:evil"}); !errors.As(err, &changed) {
+		t.Fatalf("racing record: err = %v, want HostKeyChangedError", err)
+	}
+
+	_ = handleHostKey(ctx, svc.store, n, job, targets.HostKeyEvent{Kind: "changed", Key: "ssh-ed25519 AAAA2", Fingerprint: "SHA256:two", OldFingerprint: "SHA256:one"})
 	open, _ := n.Open(ctx)
 	if !hasKey(open, hostKeyChangedKey(job.ID)) {
 		t.Fatal("changed key raised no notice")
@@ -87,11 +95,11 @@ func TestEncryptNeedsSecrets(t *testing.T) {
 	ctx := context.Background()
 	in := sftpJob()
 	in.Encrypt = true
+	in.Enabled = true
 	if _, err := svc.CreateJob(ctx, in); !errors.Is(err, ErrEncryptUnavailable) {
 		t.Fatalf("create: err = %v, want ErrEncryptUnavailable", err)
 	}
 	in.Encrypt = false
-	in.Enabled = true
 	job, err := svc.CreateJob(ctx, in)
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +108,12 @@ func TestEncryptNeedsSecrets(t *testing.T) {
 	if _, err := svc.UpdateJob(ctx, job.ID, in); !errors.Is(err, ErrEncryptUnavailable) {
 		t.Fatalf("update: err = %v, want ErrEncryptUnavailable", err)
 	}
-	if _, err := svc.store.db.Exec(`UPDATE backup_jobs SET encrypt = 1 WHERE id = ?`, job.ID); err != nil {
+	in.Enabled = false
+	if _, err := svc.UpdateJob(ctx, job.ID, in); err != nil {
+		t.Errorf("disabling an encrypting job must stay possible: %v", err)
+	}
+	in.Enabled = true
+	if _, err := svc.store.db.Exec(`UPDATE backup_jobs SET encrypt = 1, enabled = 1 WHERE id = ?`, job.ID); err != nil {
 		t.Fatal(err)
 	}
 	names, err := svc.UnencryptableJobs(ctx)

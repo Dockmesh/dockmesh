@@ -885,12 +885,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 			respond(conn, f.ID, nil, err)
 			return
 		}
-		abs, err := host.SanitizeVolumePath(mp, req.SubPath)
-		if err != nil {
-			respond(conn, f.ID, nil, err)
-			return
-		}
-		entries, err := host.BrowseDir(abs)
+		entries, err := host.BrowseVolume(mp, req.SubPath)
 		respond(conn, f.ID, entries, err)
 
 	case agents.FrameReqVolumeBrowseFile:
@@ -906,12 +901,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 			respond(conn, f.ID, nil, err)
 			return
 		}
-		abs, err := host.SanitizeVolumePath(mp, req.SubPath)
-		if err != nil {
-			respond(conn, f.ID, nil, err)
-			return
-		}
-		res, err := host.ReadFile(abs, req.MaxBytes)
+		res, err := host.ReadVolumeFile(mp, req.SubPath, req.MaxBytes)
 		respond(conn, f.ID, res, err)
 
 	case agents.FrameReqDaemonInfo:
@@ -1005,9 +995,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 }
 
 // agentDeployStack stages compose+env into a tmpdir, parses, and runs the
-// shared executor against the local docker daemon. Same code path the
-// central server uses for a local deploy — code from internal/compose is
-// fully reusable thanks to the Service.DeployProject extraction.
+// shared executor against the local docker daemon.
 func agentDeployStack(ctx context.Context, cli *client.Client, req agents.StackDeployReq) (*compose.DeployResult, error) {
 	stagingBase := filepath.Join(envOr("DOCKMESH_DATA_DIR", "/var/lib/dockmesh"), "staging")
 	if err := os.MkdirAll(stagingBase, 0o700); err != nil {

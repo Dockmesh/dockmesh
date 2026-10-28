@@ -47,11 +47,12 @@ func (e *HostKeyChangedError) Error() string {
 
 type SFTP struct {
 	cfg       SFTPConfig
-	onHostKey func(HostKeyEvent)
+	onHostKey func(HostKeyEvent) error
 }
 
 // OnHostKey installs a callback for host key events (trust on first use).
-func (s *SFTP) OnHostKey(f func(HostKeyEvent)) { s.onHostKey = f }
+// An error from it refuses the connection.
+func (s *SFTP) OnHostKey(f func(HostKeyEvent) error) { s.onHostKey = f }
 
 // checkHostKey trusts the first key it sees and afterwards only that key.
 func (s *SFTP) checkHostKey(_ string, _ net.Addr, key ssh.PublicKey) error {
@@ -72,7 +73,9 @@ func (s *SFTP) checkHostKey(_ string, _ net.Addr, key ssh.PublicKey) error {
 		}
 	}
 	if s.onHostKey != nil {
-		s.onHostKey(ev)
+		if err := s.onHostKey(ev); err != nil {
+			return err
+		}
 	}
 	if ev.Kind == "changed" {
 		return &HostKeyChangedError{Old: ev.OldFingerprint, New: fp}

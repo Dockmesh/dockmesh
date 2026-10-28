@@ -4,8 +4,10 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
@@ -74,6 +76,8 @@ func TestIsStagingPath(t *testing.T) {
 		{"/tmp/dockmesh-deploy-web-123456/html", true},
 		{"/tmp/systemd-private-x/tmp/dockmesh-deploy-web-1/data", true},
 		{"/var/lib/dockmesh/staging/web-998/html", true},
+		{"/opt/dm/staging/web-998", true},
+		{"/srv/staging/data", false},
 		{"/var/lib/dockmesh/stacks/web/html", false},
 		{"/srv/data", false},
 	}
@@ -84,11 +88,11 @@ func TestIsStagingPath(t *testing.T) {
 	}
 }
 
-func TestExtractIntoStaysInDest(t *testing.T) {
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
+func TestRewriteBindTar(t *testing.T) {
+	var in bytes.Buffer
+	tw := tar.NewWriter(&in)
 	add := func(name string, typ byte, body string) {
-		hdr := &tar.Header{Name: name, Typeflag: typ, Mode: 0o644, Size: int64(len(body))}
+		hdr := &tar.Header{Name: name, Typeflag: typ, Mode: 0o4755, Size: int64(len(body)), Uid: 999, Gid: 999}
 		if typ == tar.TypeSymlink {
 			hdr.Linkname, hdr.Size = "/etc/passwd", 0
 		}
@@ -103,30 +107,60 @@ func TestExtractIntoStaysInDest(t *testing.T) {
 	}
 	add("html/", tar.TypeDir, "")
 	add("html/index.html", tar.TypeReg, "hello")
-	add("html/sub/", tar.TypeDir, "")
 	add("html/sub/a.txt", tar.TypeReg, "a")
 	add("html/link", tar.TypeSymlink, "")
-	add("html/../../escape.txt", tar.TypeReg, "x")
 	if err := tw.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	base := t.TempDir()
-	dest := filepath.Join(base, "stack", "html")
-	n, err := extractInto(tar.NewReader(&buf), "html", dest)
+	var out bytes.Buffer
+	n, err := rewriteBindTar(tar.NewReader(&in), tar.NewWriter(&out), "html")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 3 {
-		t.Errorf("files = %d, want 3", n)
+	if n != 2 {
+		t.Errorf("files = %d, want 2", n)
 	}
-	if b, err := os.ReadFile(filepath.Join(dest, "index.html")); err != nil || string(b) != "hello" {
-		t.Errorf("index.html: %q %v", b, err)
+	tr := tar.NewReader(&out)
+	var names []string
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			break
+		}
+		names = append(names, hdr.Name)
+		if hdr.Uid != 999 || hdr.Mode&0o7000 != 0 {
+			t.Errorf("%s: uid %d mode %o — owner must be kept, setuid bits dropped", hdr.Name, hdr.Uid, hdr.Mode)
+		}
 	}
-	if _, err := os.Lstat(filepath.Join(dest, "link")); !os.IsNotExist(err) {
-		t.Errorf("symlink entry extracted: %v", err)
+	if got := strings.Join(names, ","); got != "index.html,sub/a.txt" {
+		t.Errorf("entries = %s", got)
 	}
-	if _, err := os.Stat(filepath.Join(base, "escape.txt")); !os.IsNotExist(err) {
-		t.Errorf("entry with .. escaped dest: %v", err)
+}
+
+func TestRewriteBindTarRefusesClimbing(t *testing.T) {
+	var in bytes.Buffer
+	tw := tar.NewWriter(&in)
+	if err := tw.WriteHeader(&tar.Header{Name: "html/../../escape", Typeflag: tar.TypeReg, Mode: 0o644}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rewriteBindTar(tar.NewReader(&in), tar.NewWriter(io.Discard), "html"); err == nil {
+		t.Fatal("entry climbing out of the mount accepted")
+	}
+}
+
+func TestRebaseSkipsStackRootBind(t *testing.T) {
+	staging := filepath.FromSlash("/tmp/stage-x")
+	proj := &composetypes.Project{Services: composetypes.Services{
+		"a": {Name: "a", Volumes: []composetypes.ServiceVolumeConfig{
+			{Type: composetypes.VolumeTypeBind, Source: staging, Target: "/app"},
+		}},
+	}}
+	RebaseBindSources(proj, staging, filepath.FromSlash("/stacks/x"))
+	if got := proj.Services["a"].Volumes[0].Source; got != staging {
+		t.Errorf("stack root bind rebased to %q; the container could rewrite compose.yaml", got)
 	}
 }

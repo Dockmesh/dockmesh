@@ -32,7 +32,7 @@ func TestSFTPHostKeyTrustOnFirstUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	var events []HostKeyEvent
-	s.OnHostKey(func(ev HostKeyEvent) { events = append(events, ev) })
+	s.OnHostKey(func(ev HostKeyEvent) error { events = append(events, ev); return nil })
 
 	if err := s.checkHostKey("", nil, first); err != nil {
 		t.Fatalf("first contact refused: %v", err)

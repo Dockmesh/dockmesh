@@ -86,7 +86,7 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 		return e.store.getRun(ctx, runID)
 	}
 
-	if job.Encrypt && (e.secrets == nil || !e.secrets.Enabled()) {
+	if job.Encrypt && !canEncrypt(e.secrets) {
 		e.logf(ctx, runID, "error", "%s", ErrEncryptUnavailable)
 		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", ErrEncryptUnavailable)
 		return e.store.getRun(ctx, runID)

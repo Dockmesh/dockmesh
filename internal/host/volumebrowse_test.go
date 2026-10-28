@@ -69,7 +69,7 @@ func TestBrowseDir(t *testing.T) {
 	}
 	_ = os.Symlink("hello.txt", filepath.Join(mount, "link"))
 
-	entries, err := BrowseDir(mount)
+	entries, err := BrowseVolume(mount, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestReadFile_TruncateAndBinary(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(mount, "bin"), big, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	res, err := ReadFile(filepath.Join(mount, "bin"), 1024)
+	res, err := ReadVolumeFile(mount, "bin", 1024)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestReadFile_Text(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(mount, "conf.yaml"), []byte("foo: bar\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	res, err := ReadFile(filepath.Join(mount, "conf.yaml"), 1<<20)
+	res, err := ReadVolumeFile(mount, "conf.yaml", 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,10 +135,10 @@ func TestReadFile_Text(t *testing.T) {
 // A symlink inside a volume must not lead the browser onto the host
 // filesystem, whether it is the last path component or a directory on
 // the way.
-func TestSanitizeVolumePath_SymlinkEscape(t *testing.T) {
+func TestVolumeAccessStaysInside(t *testing.T) {
 	mount := t.TempDir()
 	outside := t.TempDir()
-	if err := os.WriteFile(filepath.Join(outside, "shadow"), []byte("x"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(outside, "shadow"), []byte("secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(mount, "conf"), 0o755); err != nil {
@@ -157,16 +157,26 @@ func TestSanitizeVolumePath_SymlinkEscape(t *testing.T) {
 			t.Skipf("symlinks not available: %v", err)
 		}
 	}
-	for _, sub := range []string{"hostfile", "hostdir", "hostdir/shadow", "rootlink/etc/passwd"} {
-		if _, err := SanitizeVolumePath(mount, sub); !errors.Is(err, ErrVolumePathEscape) {
-			t.Errorf("%s: err = %v, want ErrVolumePathEscape", sub, err)
+	for _, sub := range []string{"hostfile", "hostdir/shadow", "rootlink/etc/passwd"} {
+		if res, err := ReadVolumeFile(mount, sub, 0); !errors.Is(err, ErrVolumePathEscape) {
+			t.Errorf("read %s: res=%v err=%v, want ErrVolumePathEscape", sub, res, err)
 		}
 	}
-	got, err := SanitizeVolumePath(mount, "current/app.yml")
-	if err != nil {
-		t.Fatalf("in-volume symlink rejected: %v", err)
+	for _, sub := range []string{"hostdir", "rootlink"} {
+		if _, err := BrowseVolume(mount, sub); !errors.Is(err, ErrVolumePathEscape) {
+			t.Errorf("browse %s: err=%v, want ErrVolumePathEscape", sub, err)
+		}
 	}
-	if res, err := ReadFile(got, 0); err != nil || string(res.Content) != "x" {
+	if res, err := ReadVolumeFile(mount, "current/app.yml", 0); err != nil || string(res.Content) != "x" {
 		t.Errorf("read through in-volume symlink: %+v %v", res, err)
+	}
+	entries, err := BrowseVolume(mount, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name == "hostdir" && (e.Type != "symlink" || e.LinkDest != outside) {
+			t.Errorf("listing shows link as %+v", e)
+		}
 	}
 }

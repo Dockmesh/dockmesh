@@ -222,7 +222,6 @@ func (s *Service) DeployProject(ctx context.Context, proj *composetypes.Project)
 
 	cli := s.docker.Raw()
 	result := &DeployResult{Stack: proj.Name}
-	result.BindCopies = s.adoptStagedBindData(ctx, proj)
 
 	// Live progress for the UI — Begin once, Finish after the loop or
 	// on early-exit error. The tracker is nil-safe.
@@ -267,6 +266,15 @@ func (s *Service) DeployProject(ctx context.Context, proj *composetypes.Project)
 		span.RecordError(err)
 		deployErr = err
 		return nil, deployErr
+	}
+
+	// Only after the pull: a failed pull must leave the old containers
+	// and their data untouched.
+	copies, err := s.adoptStagedBindData(ctx, cli, proj)
+	result.BindCopies = copies
+	if err != nil {
+		deployErr = err
+		return result, deployErr
 	}
 
 	// Phase 2 — tear down + recreate per service. Pulls already happened
