@@ -10,8 +10,11 @@
 #   dockmesh_linux_arm64.tar.gz    — same, ARM64
 #   dockmesh_darwin_amd64.tar.gz   — macOS Intel
 #   dockmesh_darwin_arm64.tar.gz   — macOS Apple Silicon (M1/M2/M3…)
-#   checksums.txt                  — SHA-256 of every tarball (BSD-style
-#                                    so `shasum -a 256 -c` also works)
+#   install.sh, uninstall.sh       — served by get.dockmesh.dev from
+#                                    releases/latest/download/
+#   checksums.txt                  — SHA-256 of every tarball and script
+#                                    (BSD-style so `shasum -a 256 -c` also
+#                                    works)
 #
 # The install.sh served from get.dockmesh.dev expects the asset names
 # exactly as above — don't rename without updating the installer.
@@ -126,6 +129,8 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: set VERSION
         id: v
@@ -145,9 +150,10 @@ jobs:
         run: |
           mkdir -p release
           find artifacts -name '*.tar.gz' -exec mv {} release/ \;
+          cp scripts/install.sh scripts/uninstall.sh release/
           # Combined checksums.txt — one sha256 line per asset.
           cd release
-          sha256sum *.tar.gz > checksums.txt
+          sha256sum *.tar.gz install.sh uninstall.sh > checksums.txt
           cat checksums.txt
 
       - name: publish GitHub Release
@@ -160,6 +166,8 @@ jobs:
           generate_release_notes: true
           files: |
             release/*.tar.gz
+            release/install.sh
+            release/uninstall.sh
             release/checksums.txt
 
       # Drop Cloudflare's edge cache for the install / uninstall scripts
