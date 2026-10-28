@@ -15,6 +15,7 @@ export interface ProviderBase {
   display_name: string;
   enabled: boolean;
   default_role: string;
+  allow_email_link: boolean;
   group_mappings: GroupMapping[];
 }
 
@@ -238,6 +239,7 @@ export function newOIDCConfig(): OIDCConfig {
     scopes: 'openid profile email',
     group_claim: 'groups',
     default_role: 'viewer',
+    allow_email_link: false,
     group_mappings: [],
   };
 }
@@ -258,6 +260,7 @@ export function newOAuth2Config(): OAuth2Config {
     email_field: 'email',
     groups_field: 'groups',
     default_role: 'viewer',
+    allow_email_link: false,
     group_mappings: [],
   };
 }
@@ -278,6 +281,7 @@ export function newSAMLConfig(): SAMLConfig {
     email_attribute: 'email',
     groups_attribute: 'groups',
     default_role: 'viewer',
+    allow_email_link: false,
     group_mappings: [],
   };
 }
@@ -302,6 +306,7 @@ export function newLDAPConfig(): LDAPConfig {
     group_search_base: '',
     group_membership_attribute: 'memberOf',
     default_role: 'viewer',
+    allow_email_link: false,
     group_mappings: [],
   };
 }

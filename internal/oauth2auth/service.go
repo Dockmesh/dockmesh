@@ -48,6 +48,7 @@ type Provider struct {
 	EmailField    string         `json:"email_field"`
 	GroupsField   string         `json:"groups_field"`
 	DefaultRole   string         `json:"default_role"`
+	AllowEmailLink bool `json:"allow_email_link"`
 	GroupMappings []GroupMapping `json:"group_mappings"`
 	Enabled       bool           `json:"enabled"`
 	IsDefault     bool           `json:"is_default"`
@@ -71,6 +72,7 @@ type ProviderInput struct {
 	EmailField    string         `json:"email_field"`
 	GroupsField   string         `json:"groups_field"`
 	DefaultRole   string         `json:"default_role"`
+	AllowEmailLink bool `json:"allow_email_link"`
 	GroupMappings []GroupMapping `json:"group_mappings,omitempty"`
 	Enabled       bool           `json:"enabled"`
 	IsDefault     bool           `json:"is_default,omitempty"`
@@ -130,6 +132,13 @@ func (s *Service) ListProviders(ctx context.Context) ([]Provider, error) {
 			return nil, err
 		}
 	}
+	links, err := s.auth.EmailLinkingByID(ctx, "oauth2")
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].AllowEmailLink = links[out[i].ID]
+	}
 	return out, nil
 }
 
@@ -169,6 +178,11 @@ func (s *Service) GetProvider(ctx context.Context, id int64) (*Provider, error) 
 	if err := s.loadGroupMappings(ctx, p); err != nil {
 		return nil, err
 	}
+	links, err := s.auth.EmailLinkingByID(ctx, "oauth2")
+	if err != nil {
+		return nil, err
+	}
+	p.AllowEmailLink = links[p.ID]
 	return p, nil
 }
 
@@ -255,6 +269,9 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 			return nil, err
 		}
 	}
+	if err := s.auth.SetEmailLinking(ctx, "oauth2", id, in.AllowEmailLink); err != nil {
+		return nil, err
+	}
 	return s.GetProvider(ctx, id)
 }
 
@@ -301,6 +318,9 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 		if err := s.SetGroupMappings(ctx, id, in.GroupMappings); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.auth.SetEmailLinking(ctx, "oauth2", id, in.AllowEmailLink); err != nil {
+		return nil, err
 	}
 	return s.GetProvider(ctx, id)
 }
@@ -443,7 +463,8 @@ func (s *Service) HandleCallback(ctx context.Context, pending *Pending, code, st
 		}
 	}
 
-	user, err := s.jitProvision(ctx, p, subject, name, email, role)
+	verified, _ := claims["email_verified"].(bool)
+	user, err := s.jitProvision(ctx, p, subject, name, email, role, verified)
 	if err != nil {
 		return nil, err
 	}
@@ -486,40 +507,12 @@ func (s *Service) fetchUserinfo(ctx context.Context, p *Provider, tok *oauth2.To
 	return out, nil
 }
 
-func (s *Service) jitProvision(ctx context.Context, p *Provider, subject, name, email, role string) (*auth.User, error) {
-	var userID, username string
-	err := s.db.QueryRowContext(ctx, `
-		SELECT id, username FROM users
-		 WHERE (oauth2_provider = ? AND oauth2_subject = ?)
-		    OR email = ?
-		 LIMIT 1`, p.Slug, subject, email).Scan(&userID, &username)
-	if err != nil {
-		u, cerr := s.auth.CreateSSOUser(ctx, name, email, role, p.Slug, subject)
-		if cerr != nil {
-			for i := 2; i < 100; i++ {
-				u, cerr = s.auth.CreateSSOUser(ctx, fmt.Sprintf("%s%d", name, i), email, role, p.Slug, subject)
-				if cerr == nil {
-					break
-				}
-			}
-			if cerr != nil {
-				return nil, fmt.Errorf("create sso user: %w", cerr)
-			}
-		}
-		_, _ = s.db.ExecContext(ctx,
-			`UPDATE users SET oauth2_provider = ?, oauth2_subject = ?,
-			                  oidc_provider = NULL, oidc_subject = NULL
-			   WHERE id = ?`, p.Slug, subject, u.ID)
-		return u, nil
-	}
-	_, err = s.db.ExecContext(ctx, `
-		UPDATE users SET oauth2_provider = ?, oauth2_subject = ?, role = ?,
-		                 updated_at = CURRENT_TIMESTAMP
-		   WHERE id = ?`, p.Slug, subject, role, userID)
-	if err != nil {
-		return nil, err
-	}
-	return &auth.User{ID: userID, Username: username, Email: email, Role: role}, nil
+func (s *Service) jitProvision(ctx context.Context, p *Provider, subject, name, email, role string, emailVerified bool) (*auth.User, error) {
+	return s.auth.ProvisionSSOUser(ctx, auth.SSOIdentity{
+		Kind: "oauth2", Provider: p.Slug, Subject: subject,
+		Email: email, EmailVerified: emailVerified,
+		Username: name, Role: role,
+	})
 }
 
 // -----------------------------------------------------------------------------

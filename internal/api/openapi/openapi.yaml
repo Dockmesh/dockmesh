@@ -7183,6 +7183,13 @@ components:
         admin_group: { type: string }
         operator_group: { type: string }
         default_role: { type: string }
+        allow_email_link:
+          type: boolean
+          description: >-
+            Let a login attach to an existing account with the same email when
+            the IdP marks the email verified. Off by default. SAML, LDAP and
+            OAuth2 providers take the same field; SAML and LDAP never assert
+            verification, so they don't link.
         default_scope_tags:
           type: array
           items: { type: string }
@@ -7207,6 +7214,13 @@ components:
         admin_group: { type: string }
         operator_group: { type: string }
         default_role: { type: string }
+        allow_email_link:
+          type: boolean
+          description: >-
+            Let a login attach to an existing account with the same email when
+            the IdP marks the email verified. Off by default. SAML, LDAP and
+            OAuth2 providers take the same field; SAML and LDAP never assert
+            verification, so they don't link.
         enabled: { type: boolean }
 
     ApiToken:

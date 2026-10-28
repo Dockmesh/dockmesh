@@ -150,6 +150,7 @@
             admin_group: p.admin_group,
             operator_group: p.operator_group,
             default_role: p.default_role,
+            allow_email_link: !!p.allow_email_link,
             enabled: !p.enabled,
           };
           await api.oidc.update(p.id, payload);
@@ -169,6 +170,7 @@
             email_field: p.email_field,
             groups_field: p.groups_field,
             default_role: p.default_role,
+            allow_email_link: !!p.allow_email_link,
             group_mappings: p.group_mappings,
             enabled: !p.enabled,
           });
@@ -183,6 +185,7 @@
             email_attribute: p.email_attribute,
             groups_attribute: p.groups_attribute,
             default_role: p.default_role,
+            allow_email_link: !!p.allow_email_link,
             group_mappings: p.group_mappings,
             enabled: !p.enabled,
           });
@@ -204,6 +207,7 @@
             group_search_base: p.group_search_base ?? '',
             group_membership_attribute: p.group_membership_attribute,
             default_role: p.default_role,
+            allow_email_link: !!p.allow_email_link,
             group_mappings: p.group_mappings,
             enabled: !p.enabled,
           });

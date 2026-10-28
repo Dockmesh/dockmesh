@@ -79,6 +79,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - Backup archives could be downloaded by every role, including Viewer, and a system backup
   contains every secret of the installation. Downloads now need their own permission and are
   recorded in the audit log.
+- Single sign-on no longer attaches a login to an existing account just because the email
+  matches. Linking needs the provider's new "link to existing accounts" option and an email the
+  provider marks as verified (OIDC and OAuth2). A role an admin set by hand is no longer
+  overwritten by the provider's group mapping on the next login, and turning off "create
+  accounts on first SSO login" now really stops new accounts.
 - Passwords, keys and tokens of backup targets and notification channels, and webhook URLs
   that act as credentials, are no longer returned by the API. Forms show them as set; leaving
   a field empty keeps the stored value, unless the server, URL or user changes, in which
@@ -95,5 +100,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   archives; other custom roles lose archive downloads and container file access, and lose
   system backups and the backup key unless they are admins. A notice lists the affected
   roles; grant "Download backups" or "Shell into container" under Users → Roles where intended.
+- [sso-email-linking, admins] Someone who has a local account and signs in through SSO for the
+  first time now gets "an account with this email already exists". Turn on "link to existing
+  accounts" for that provider (OIDC/OAuth2 with verified emails), or remove the local account.
+  Accounts that already signed in through SSO are not affected.
 - [host-admin-system-settings, admins] Host Admins no longer change system settings, SSO or
   global environment variables. Give the Admin role to anyone who still needs that.

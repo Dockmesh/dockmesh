@@ -117,6 +117,7 @@ func (s *Service) policy() PolicyConfig {
 func (s *Service) signInConfig() SignInConfig {
 	if s.settings == nil {
 		return SignInConfig{
+			AutoCreateOnSSO:       true,
 			SessionIdleTTLMin:     60,
 			SessionAbsoluteTTLHr:  24,
 			SessionRememberMeDays: 14,
@@ -200,33 +201,6 @@ func (s *Service) CreateUser(ctx context.Context, username, email, password, rol
 			return nil, ErrEmailTaken
 		}
 		return nil, fmt.Errorf("insert user: %w", err)
-	}
-	return &User{ID: id, Username: username, Email: email, Role: role}, nil
-}
-
-// CreateSSOUser inserts a user without a local password. The password
-// column holds a random unguessable value so local login can never
-// succeed for SSO-only accounts.
-func (s *Service) CreateSSOUser(ctx context.Context, username, email, role, provider, subject string) (*User, error) {
-	randomPw, err := generatePassword(40)
-	if err != nil {
-		return nil, err
-	}
-	hash, err := HashPassword(randomPw)
-	if err != nil {
-		return nil, err
-	}
-	id := uuid.NewString()
-	var emailNullable any
-	if email != "" {
-		emailNullable = email
-	}
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO users (id, username, email, password, role, oidc_provider, oidc_subject)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, username, emailNullable, hash, role, provider, subject)
-	if err != nil {
-		return nil, fmt.Errorf("insert sso user: %w", err)
 	}
 	return &User{ID: id, Username: username, Email: email, Role: role}, nil
 }
@@ -390,17 +364,19 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 
 // UpdateUser edits email, role, and (optionally) display name. Scope
 // changes go through UpdateUserScope so callers don't need to pass
-// scope on every role change.
+// scope on every role change. A role changed here counts as set by an
+// admin, so SSO logins no longer overwrite it.
 func (s *Service) UpdateUser(ctx context.Context, id, email, role, displayName string) (*User, error) {
 	var emailNullable any
 	if email != "" {
 		emailNullable = email
 	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE users SET email = ?, role = ?, display_name = ?,
-		                  updated_at = CURRENT_TIMESTAMP
+		`UPDATE users SET email = ?, display_name = ?,
+		                  role_source = CASE WHEN role = ? THEN role_source ELSE ? END,
+		                  role = ?, updated_at = CURRENT_TIMESTAMP
 		   WHERE id = ?`,
-		emailNullable, role, displayName, id)
+		emailNullable, displayName, role, RoleSourceManual, role, id)
 	if err != nil {
 		return nil, err
 	}

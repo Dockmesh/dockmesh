@@ -121,6 +121,7 @@
       scopes: p.scopes,
       group_claim: p.group_claim ?? 'groups',
       default_role: p.default_role,
+      allow_email_link: !!p.allow_email_link,
       group_mappings: mappings,
     };
   }
@@ -141,6 +142,7 @@
       email_field: p.email_field,
       groups_field: p.groups_field,
       default_role: p.default_role,
+      allow_email_link: !!p.allow_email_link,
       group_mappings: p.group_mappings,
     };
   }
@@ -161,6 +163,7 @@
       email_attribute: p.email_attribute,
       groups_attribute: p.groups_attribute,
       default_role: p.default_role,
+      allow_email_link: !!p.allow_email_link,
       group_mappings: p.group_mappings,
     };
   }
@@ -185,6 +188,7 @@
       group_search_base: p.group_search_base ?? '',
       group_membership_attribute: p.group_membership_attribute,
       default_role: p.default_role,
+      allow_email_link: !!p.allow_email_link,
       group_mappings: p.group_mappings,
     };
   }
@@ -336,6 +340,7 @@
       admin_group: adminGroup || undefined,
       operator_group: operatorGroup || undefined,
       default_role: oidc.default_role,
+      allow_email_link: oidc.allow_email_link,
       enabled: oidc.enabled,
     };
     if (editing && editing.kind === 'oidc') {
@@ -361,6 +366,7 @@
       email_field: oauth2.email_field.trim() || 'email',
       groups_field: oauth2.groups_field.trim(),
       default_role: oauth2.default_role,
+      allow_email_link: oauth2.allow_email_link,
       group_mappings: oauth2.group_mappings.filter((m) => m.group && m.role),
       enabled: oauth2.enabled,
     };
@@ -383,6 +389,7 @@
       email_attribute: saml.email_attribute.trim() || 'email',
       groups_attribute: saml.groups_attribute.trim() || 'groups',
       default_role: saml.default_role,
+      allow_email_link: saml.allow_email_link,
       group_mappings: saml.group_mappings.filter((m) => m.group && m.role),
       enabled: saml.enabled,
     };
@@ -412,6 +419,7 @@
       group_search_base: ldap.group_search_base.trim(),
       group_membership_attribute: ldap.group_membership_attribute.trim() || 'memberOf',
       default_role: ldap.default_role,
+      allow_email_link: ldap.allow_email_link,
       group_mappings: ldap.group_mappings.filter((m) => m.group && m.role),
       enabled: ldap.enabled,
     };
@@ -592,6 +600,21 @@
           }}
         />
         <span>Enabled — accept sign-ins via this provider</span>
+      </label>
+
+      <label class="pm-enabled">
+        <input
+          type="checkbox"
+          checked={activeConfig().allow_email_link}
+          onchange={(e) => {
+            const v = (e.target as HTMLInputElement).checked;
+            if (kind === 'oidc') oidc.allow_email_link = v;
+            else if (kind === 'oauth2') oauth2.allow_email_link = v;
+            else if (kind === 'saml') saml.allow_email_link = v;
+            else if (kind === 'ldap') ldap.allow_email_link = v;
+          }}
+        />
+        <span>Link to existing accounts with the same email — only when the provider marks the email as verified (OIDC, OAuth2)</span>
       </label>
 
       {#if kind === 'oidc'}

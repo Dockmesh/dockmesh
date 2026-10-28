@@ -56,6 +56,7 @@ type Provider struct {
 	OperatorGroup string         `json:"operator_group,omitempty"` // deprecated — use GroupMappings
 	GroupMappings []GroupMapping `json:"group_mappings"`
 	DefaultRole   string         `json:"default_role"`
+	AllowEmailLink bool `json:"allow_email_link"`
 	Enabled       bool           `json:"enabled"`
 	IsDefault     bool           `json:"is_default"`
 	LastTestedAt  *time.Time     `json:"last_tested_at,omitempty"`
@@ -78,6 +79,7 @@ type ProviderInput struct {
 	OperatorGroup string         `json:"operator_group"`
 	GroupMappings []GroupMapping `json:"group_mappings,omitempty"`
 	DefaultRole   string         `json:"default_role"`
+	AllowEmailLink bool `json:"allow_email_link"`
 	Enabled       bool           `json:"enabled"`
 	IsDefault     bool           `json:"is_default,omitempty"`
 }
@@ -144,6 +146,13 @@ func (s *Service) ListProviders(ctx context.Context) ([]Provider, error) {
 			return nil, err
 		}
 	}
+	links, err := s.auth.EmailLinkingByID(ctx, "oidc")
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].AllowEmailLink = links[out[i].ID]
+	}
 	return out, nil
 }
 
@@ -203,6 +212,9 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 			return nil, err
 		}
 	}
+	if err := s.auth.SetEmailLinking(ctx, "oidc", id, in.AllowEmailLink); err != nil {
+		return nil, err
+	}
 	return s.getProvider(ctx, id)
 }
 
@@ -250,6 +262,9 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 	s.mu.Lock()
 	delete(s.cache, id)
 	s.mu.Unlock()
+	if err := s.auth.SetEmailLinking(ctx, "oidc", id, in.AllowEmailLink); err != nil {
+		return nil, err
+	}
 	return s.getProvider(ctx, id)
 }
 
@@ -328,6 +343,11 @@ func (s *Service) getProvider(ctx context.Context, id int64) (*Provider, error) 
 	if err := s.loadGroupMappings(ctx, p); err != nil {
 		return nil, err
 	}
+	links, err := s.auth.EmailLinkingByID(ctx, "oidc")
+	if err != nil {
+		return nil, err
+	}
+	p.AllowEmailLink = links[p.ID]
 	return p, nil
 }
 
@@ -512,47 +532,11 @@ func (s *Service) jitProvision(ctx context.Context, cfg *Provider, subject strin
 		}
 	}
 
-	// Try to find existing user by (provider, subject) or by email.
-	var userID, username, currentRole string
-	var existingEmail sql.NullString
-	err := s.db.QueryRowContext(ctx, `
-		SELECT id, username, email, role FROM users
-		WHERE (oidc_provider = ? AND oidc_subject = ?)
-		   OR email = ?
-		LIMIT 1`, cfg.Slug, subject, email).
-		Scan(&userID, &username, &existingEmail, &currentRole)
-	if errors.Is(err, sql.ErrNoRows) {
-		// Create new.
-		u, err := s.auth.CreateSSOUser(ctx, name, email, role, cfg.Slug, subject)
-		if err != nil {
-			// Retry with a suffix if the chosen username collides.
-			for i := 2; i < 100; i++ {
-				u, err = s.auth.CreateSSOUser(ctx, fmt.Sprintf("%s%d", name, i), email, role, cfg.Slug, subject)
-				if err == nil {
-					break
-				}
-			}
-			if err != nil {
-				return nil, fmt.Errorf("create sso user: %w", err)
-			}
-		}
-		return u, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	// Update role + link provider/subject on every login so group changes apply.
-	_, err = s.db.ExecContext(ctx, `
-		UPDATE users SET
-			oidc_provider = ?, oidc_subject = ?, role = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?`,
-		cfg.Slug, subject, role, userID)
-	if err != nil {
-		return nil, err
-	}
-	u := &auth.User{ID: userID, Username: username, Email: email, Role: role}
-	return u, nil
+	return s.auth.ProvisionSSOUser(ctx, auth.SSOIdentity{
+		Kind: "oidc", Provider: cfg.Slug, Subject: subject,
+		Email: email, EmailVerified: claimTrue(claims, "email_verified"),
+		Username: name, Role: role,
+	})
 }
 
 func (s *Service) redirectURL(slug string) string {
@@ -593,6 +577,17 @@ func (s *Service) decryptSecret(stored string) (string, error) {
 // -----------------------------------------------------------------------------
 // Utility funcs
 // -----------------------------------------------------------------------------
+
+// claimTrue reads a boolean claim; some IdPs send "true" as a string.
+func claimTrue(claims map[string]any, key string) bool {
+	switch v := claims[key].(type) {
+	case bool:
+		return v
+	case string:
+		return v == "true"
+	}
+	return false
+}
 
 func splitScopes(s string) []string {
 	var out []string
