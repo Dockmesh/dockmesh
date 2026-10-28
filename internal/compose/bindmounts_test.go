@@ -1,0 +1,132 @@
+package compose
+
+import (
+	"archive/tar"
+	"bytes"
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+
+	composetypes "github.com/compose-spec/compose-go/v2/types"
+)
+
+// A relative bind mount must end up in the persistent stack directory, not
+// in the staging copy compose was loaded from (which is deleted after the
+// deploy and left containers writing into a vanished directory).
+func TestRebaseBindSourcesWithRealLoader(t *testing.T) {
+	staging := t.TempDir()
+	stackDir := t.TempDir()
+	composeYAML := `services:
+  site:
+    image: nginx
+    volumes:
+      - ./html:/usr/share/nginx/html
+      - ./conf/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /srv/shared:/shared
+      - data:/data
+volumes:
+  data: {}
+`
+	if err := os.WriteFile(filepath.Join(staging, "compose.yaml"), []byte(composeYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	proj, err := LoadProject(context.Background(), staging, "fx-bindmount", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	RebaseBindSources(proj, staging, stackDir)
+
+	got := map[string]string{}
+	for _, v := range proj.Services["site"].Volumes {
+		got[v.Target] = v.Source
+	}
+	want := map[string]string{
+		"/usr/share/nginx/html": filepath.Join(stackDir, "html"),
+		"/etc/nginx/nginx.conf": filepath.Join(stackDir, "conf", "nginx.conf"),
+		"/shared":               "/srv/shared",
+		"/data":                 "data",
+	}
+	for target, src := range want {
+		if got[target] != src {
+			t.Errorf("%s: source %q, want %q", target, got[target], src)
+		}
+	}
+}
+
+func TestRebaseLeavesSiblingDirsAlone(t *testing.T) {
+	proj := &composetypes.Project{Services: composetypes.Services{
+		"a": {Name: "a", Volumes: []composetypes.ServiceVolumeConfig{
+			{Type: composetypes.VolumeTypeBind, Source: filepath.FromSlash("/tmp/stage-x-other/data"), Target: "/d"},
+		}},
+	}}
+	RebaseBindSources(proj, filepath.FromSlash("/tmp/stage-x"), filepath.FromSlash("/stacks/x"))
+	if got := proj.Services["a"].Volumes[0].Source; got != filepath.FromSlash("/tmp/stage-x-other/data") {
+		t.Errorf("prefix-sharing sibling rewritten to %q", got)
+	}
+}
+
+func TestIsStagingPath(t *testing.T) {
+	tests := []struct {
+		src  string
+		want bool
+	}{
+		{"/tmp/dockmesh-deploy-web-123456/html", true},
+		{"/tmp/systemd-private-x/tmp/dockmesh-deploy-web-1/data", true},
+		{"/var/lib/dockmesh/staging/web-998/html", true},
+		{"/var/lib/dockmesh/stacks/web/html", false},
+		{"/srv/data", false},
+	}
+	for _, tt := range tests {
+		if got := IsStagingPath(tt.src); got != tt.want {
+			t.Errorf("IsStagingPath(%q) = %v, want %v", tt.src, got, tt.want)
+		}
+	}
+}
+
+func TestExtractIntoStaysInDest(t *testing.T) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	add := func(name string, typ byte, body string) {
+		hdr := &tar.Header{Name: name, Typeflag: typ, Mode: 0o644, Size: int64(len(body))}
+		if typ == tar.TypeSymlink {
+			hdr.Linkname, hdr.Size = "/etc/passwd", 0
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+		if typ == tar.TypeReg {
+			if _, err := tw.Write([]byte(body)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	add("html/", tar.TypeDir, "")
+	add("html/index.html", tar.TypeReg, "hello")
+	add("html/sub/", tar.TypeDir, "")
+	add("html/sub/a.txt", tar.TypeReg, "a")
+	add("html/link", tar.TypeSymlink, "")
+	add("html/../../escape.txt", tar.TypeReg, "x")
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	base := t.TempDir()
+	dest := filepath.Join(base, "stack", "html")
+	n, err := extractInto(tar.NewReader(&buf), "html", dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Errorf("files = %d, want 3", n)
+	}
+	if b, err := os.ReadFile(filepath.Join(dest, "index.html")); err != nil || string(b) != "hello" {
+		t.Errorf("index.html: %q %v", b, err)
+	}
+	if _, err := os.Lstat(filepath.Join(dest, "link")); !os.IsNotExist(err) {
+		t.Errorf("symlink entry extracted: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "escape.txt")); !os.IsNotExist(err) {
+		t.Errorf("entry with .. escaped dest: %v", err)
+	}
+}

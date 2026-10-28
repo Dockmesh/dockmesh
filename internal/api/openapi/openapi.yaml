@@ -3174,6 +3174,28 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /backups/jobs/{id}/accept-host-key:
+    post:
+      operationId: backups.accept_host_key
+      tags: [backups]
+      summary: Trust the changed SFTP host key a job last saw
+      description: |
+        SFTP jobs record the server's host key on their first connection
+        and fail when it later changes; the new key is kept as
+        `target_config.host_key_pending`. This moves it to `host_key`.
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "204": { description: Accepted; the next run uses the new key. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: No changed host key is waiting for approval.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /backups/jobs/{id}/run:
     post:
       operationId: backups.run_job

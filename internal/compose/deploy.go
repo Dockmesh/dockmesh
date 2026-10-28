@@ -153,6 +153,8 @@ type DeployResult struct {
 	Services []ServiceResult  `json:"services"`
 	Networks []ResourceResult `json:"networks,omitempty"`
 	Volumes  []ResourceResult `json:"volumes,omitempty"`
+	// BindCopies lists data moved out of old staging bind mounts.
+	BindCopies []BindCopy `json:"bind_copies,omitempty"`
 }
 
 type ServiceResult struct {
@@ -220,6 +222,7 @@ func (s *Service) DeployProject(ctx context.Context, proj *composetypes.Project)
 
 	cli := s.docker.Raw()
 	result := &DeployResult{Stack: proj.Name}
+	result.BindCopies = s.adoptStagedBindData(ctx, proj)
 
 	// Live progress for the UI — Begin once, Finish after the loop or
 	// on early-exit error. The tracker is nil-safe.

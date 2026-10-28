@@ -9,6 +9,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -29,6 +30,14 @@ type Service struct {
 	cron     *cron.Cron
 	mu       sync.Mutex
 	entryIDs map[int64]cron.EntryID
+
+	notices *notices.Service
+}
+
+// SetNotices wires action-required notices (SFTP host keys).
+func (s *Service) SetNotices(n *notices.Service) {
+	s.notices = n
+	s.exec.notices = n
 }
 
 func NewService(db *sql.DB, dc *docker.Client, sm *stacks.Manager, sec *secrets.Service, paths SystemPaths) *Service {
@@ -117,13 +126,41 @@ func (s *Service) schedule(j *Job) error {
 // -----------------------------------------------------------------------------
 
 func (s *Service) ListJobs(ctx context.Context) ([]Job, error) { return s.store.listJobs(ctx) }
+
+// UnencryptableJobs lists enabled jobs set to encrypt while secrets
+// encryption is off; their runs fail instead of writing plaintext.
+func (s *Service) UnencryptableJobs(ctx context.Context) ([]string, error) {
+	if s.canEncrypt() {
+		return nil, nil
+	}
+	jobs, err := s.store.listJobs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, j := range jobs {
+		if j.Enabled && j.Encrypt {
+			out = append(out, j.Name)
+		}
+	}
+	return out, nil
+}
 func (s *Service) GetJob(ctx context.Context, id int64) (*Job, error) {
 	return s.store.getJob(ctx, id)
 }
 
+// ErrEncryptUnavailable refuses encrypted backups while the secrets
+// service is disabled: the archive would be written in plaintext.
+var ErrEncryptUnavailable = errors.New("encryption needs secrets encryption enabled on the server (DOCKMESH_SECRETS_ENCRYPT_ENV)")
+
+func (s *Service) canEncrypt() bool { return s.secrets != nil && s.secrets.Enabled() }
+
 func (s *Service) CreateJob(ctx context.Context, in JobInput) (*Job, error) {
 	if err := validateJob(in); err != nil {
 		return nil, err
+	}
+	if in.Encrypt && !s.canEncrypt() {
+		return nil, ErrEncryptUnavailable
 	}
 	id, err := s.store.createJob(ctx, in)
 	if err != nil {
@@ -140,6 +177,9 @@ func (s *Service) CreateJob(ctx context.Context, in JobInput) (*Job, error) {
 func (s *Service) UpdateJob(ctx context.Context, id int64, in JobInput) (*Job, error) {
 	if err := validateJob(in); err != nil {
 		return nil, err
+	}
+	if in.Encrypt && !s.canEncrypt() {
+		return nil, ErrEncryptUnavailable
 	}
 	if err := s.store.updateJob(ctx, id, in); err != nil {
 		return nil, err
@@ -219,7 +259,7 @@ func (s *Service) ReadRun(ctx context.Context, runID int64) (io.ReadCloser, erro
 	if err != nil {
 		return nil, err
 	}
-	target, err := buildTarget(job.TargetType, job.TargetConfig)
+	target, err := jobTarget(ctx, s.store, s.notices, job)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +308,7 @@ func (s *Service) Restore(ctx context.Context, runID int64, destVolume string) e
 	if err != nil {
 		return err
 	}
-	target, err := buildTarget(job.TargetType, job.TargetConfig)
+	target, err := jobTarget(ctx, s.store, s.notices, job)
 	if err != nil {
 		return err
 	}
@@ -351,7 +391,7 @@ func (s *Service) RestoreStack(ctx context.Context, runID int64, targetStack str
 	if err != nil {
 		return nil, err
 	}
-	target, err := buildTarget(job.TargetType, job.TargetConfig)
+	target, err := jobTarget(ctx, s.store, s.notices, job)
 	if err != nil {
 		return nil, err
 	}

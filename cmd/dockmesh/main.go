@@ -537,6 +537,12 @@ func main() {
 
 	// DB-backed system settings — reads from DB, falls back to env vars.
 	settingsStore := settings.NewStore(database)
+	if err := seedLocalBackupRoots(ctx, settingsStore, database, backupSvc, filepath.Dir(cfg.DBPath)); err != nil {
+		slog.Warn("seed local backup roots", "err", err)
+	}
+	targets.SetLocalRoots(func() []string {
+		return targets.ParseRoots(settingsStore.Get(targets.LocalRootsSetting, ""))
+	})
 	if err := settingsStore.Load(ctx); err != nil {
 		slog.Warn("settings store load", "err", err)
 	}
@@ -605,6 +611,18 @@ func main() {
 	// Action-required notices. Packages register startup checks on
 	// noticesSvc; they run once every service below is wired.
 	noticesSvc := notices.NewService(database)
+	noticesSvc.Register("backups.encrypt-unavailable", func(ctx context.Context, n *notices.Service) error {
+		return syncUnencryptableNotice(ctx, n, backupSvc)
+	})
+	noticesSvc.Register("stacks.staged-bind-mounts", func(ctx context.Context, n *notices.Service) error {
+		return syncStagedMountNotices(ctx, n, hostRegistry)
+	})
+	hostRegistry.SetAfterDeploy(func(ctx context.Context, hostID, stack string, res *compose.DeployResult) {
+		reportBindCopies(ctx, noticesSvc, stack, res)
+		if err := syncStagedMountNotices(ctx, noticesSvc, hostRegistry); err != nil {
+			slog.Warn("staged bind mount notices", "err", err)
+		}
+	})
 
 	// Wire the registries service into every code path that pulls an
 	// image. Without this, compose deploys + the "update image" button
@@ -613,6 +631,7 @@ func main() {
 	composeSvc.SetAuthResolver(registriesSvc)
 	updaterSvc.SetAuthResolver(registriesSvc)
 	hostRegistry.Local().SetAuthResolver(registriesSvc)
+	hostRegistry.Local().SetStackDirResolver(stacksMgr.Dir)
 
 	// Deploy progress tracker — same propagation pattern as the auth
 	// resolver. Frontend polls /stacks/{name}/deploy/progress for the
@@ -786,6 +805,7 @@ func main() {
 	// it just stays silent instead of crashing.
 	alertsSvc.SetNotifier(notifSvc)
 	backupSvc.SetNotifier(notifSvc)
+	backupSvc.SetNotices(noticesSvc)
 	updateWatcher.SetNotifier(notifSvc)
 	agentsSvc.SetNotifier(notifSvc)
 	selfUpdateChk.SetNotifier(notifSvc)
@@ -911,6 +931,8 @@ func main() {
 	}
 
 	noticesSvc.RunChecks(ctx)
+	// Agents reconnect after the server started; look at their stacks too.
+	time.AfterFunc(2*time.Minute, func() { noticesSvc.RunChecks(ctx) })
 
 	// Wizard top-bar shows the same version `dockmesh --version` does.
 	handlers.SetSetupVersionString(version.Version)

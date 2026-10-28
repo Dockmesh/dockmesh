@@ -45,6 +45,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/system"
+	composetypes "github.com/compose-spec/compose-go/v2/types"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -1027,11 +1028,29 @@ func agentDeployStack(ctx context.Context, cli *client.Client, req agents.StackD
 		}
 	}
 
-	proj, err := compose.LoadProject(ctx, dir, req.Name, req.Env)
+	proj, err := agentLoadStaged(ctx, dir, req.Name, req.Env)
 	if err != nil {
 		return nil, err
 	}
 	return compose.NewService(dockerwrap.Wrap(cli), nil).DeployProject(ctx, proj)
+}
+
+// agentLoadStaged parses the staged compose file and points relative bind
+// mounts at the agent's persistent copy of the stack directory.
+func agentLoadStaged(ctx context.Context, dir, name, env string) (*composetypes.Project, error) {
+	if err := stacks.ValidateName(name); err != nil {
+		return nil, err
+	}
+	proj, err := compose.LoadProject(ctx, dir, name, env)
+	if err != nil {
+		return nil, err
+	}
+	stackDir := stacksDir(name)
+	if err := os.MkdirAll(stackDir, 0o750); err != nil {
+		return nil, err
+	}
+	compose.RebaseBindSources(proj, dir, stackDir)
+	return proj, nil
 }
 
 func agentScaleService(ctx context.Context, cli *client.Client, req agents.StackScaleReq) (*compose.ScaleResult, error) {
@@ -1040,7 +1059,7 @@ func agentScaleService(ctx context.Context, cli *client.Client, req agents.Stack
 		return nil, err
 	}
 	defer cleanup()
-	proj, err := compose.LoadProject(ctx, dir, req.Name, req.Env)
+	proj, err := agentLoadStaged(ctx, dir, req.Name, req.Env)
 	if err != nil {
 		return nil, err
 	}
@@ -1053,7 +1072,7 @@ func agentCheckScale(ctx context.Context, cli *client.Client, req agents.StackCh
 		return nil, err
 	}
 	defer cleanup()
-	proj, err := compose.LoadProject(ctx, dir, req.Name, req.Env)
+	proj, err := agentLoadStaged(ctx, dir, req.Name, req.Env)
 	if err != nil {
 		return nil, err
 	}

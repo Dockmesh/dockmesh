@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -21,10 +22,62 @@ type SFTPConfig struct {
 	Password   string `json:"password,omitempty"`
 	PrivateKey string `json:"private_key,omitempty"`
 	Path       string `json:"path"`
+	// HostKey is the server key accepted on first contact, in
+	// authorized_keys format. HostKeyPending holds a different key the
+	// server presented later, until an admin accepts it.
+	HostKey        string `json:"host_key,omitempty"`
+	HostKeyPending string `json:"host_key_pending,omitempty"`
+}
+
+// HostKeyEvent reports what the server's host key looked like on connect.
+type HostKeyEvent struct {
+	Kind           string // "recorded" (first contact), "matched" or "changed"
+	Key            string
+	Fingerprint    string
+	OldFingerprint string
+}
+
+// HostKeyChangedError fails a connection whose host key differs from the
+// recorded one.
+type HostKeyChangedError struct{ Old, New string }
+
+func (e *HostKeyChangedError) Error() string {
+	return fmt.Sprintf("sftp: host key changed (recorded %s, server now presents %s); accept the new key only if you know why it changed", e.Old, e.New)
 }
 
 type SFTP struct {
-	cfg SFTPConfig
+	cfg       SFTPConfig
+	onHostKey func(HostKeyEvent)
+}
+
+// OnHostKey installs a callback for host key events (trust on first use).
+func (s *SFTP) OnHostKey(f func(HostKeyEvent)) { s.onHostKey = f }
+
+// checkHostKey trusts the first key it sees and afterwards only that key.
+func (s *SFTP) checkHostKey(_ string, _ net.Addr, key ssh.PublicKey) error {
+	got := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
+	fp := ssh.FingerprintSHA256(key)
+	ev := HostKeyEvent{Key: got, Fingerprint: fp}
+	switch {
+	case s.cfg.HostKey == "":
+		ev.Kind = "recorded"
+		s.cfg.HostKey = got
+	case s.cfg.HostKey == got:
+		ev.Kind = "matched"
+	default:
+		ev.Kind = "changed"
+		ev.OldFingerprint = s.cfg.HostKey
+		if old, _, _, _, err := ssh.ParseAuthorizedKey([]byte(s.cfg.HostKey)); err == nil {
+			ev.OldFingerprint = ssh.FingerprintSHA256(old)
+		}
+	}
+	if s.onHostKey != nil {
+		s.onHostKey(ev)
+	}
+	if ev.Kind == "changed" {
+		return &HostKeyChangedError{Old: ev.OldFingerprint, New: fp}
+	}
+	return nil
 }
 
 func NewSFTP(raw any) (*SFTP, error) {
@@ -60,7 +113,7 @@ func (s *SFTP) connect() (*sftp.Client, *ssh.Client, error) {
 	sshCfg := &ssh.ClientConfig{
 		User:            s.cfg.Username,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: s.checkHostKey,
 		Timeout:         10 * time.Second,
 	}
 

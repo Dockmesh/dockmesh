@@ -4,6 +4,10 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // ListSettings returns all DB-backed settings for the System tab.
@@ -42,6 +46,13 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, e := range entries {
+		// Where local backups may be written is as powerful as replacing the
+		// server binary, so it needs that permission rather than settings
+		// access.
+		if e.Key == targets.LocalRootsSetting && !roleAllows(r, rbac.PermSystemUpgrade) {
+			writeError(w, http.StatusForbidden, "changing "+targets.LocalRootsSetting+" needs the system.upgrade permission")
+			return
+		}
 		prev := h.Settings.Get(e.Key, "")
 		if err := h.Settings.Set(r.Context(), e.Key, e.Value); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -81,4 +92,12 @@ func (h *Handlers) applySettingSideEffect(r *http.Request, key, value string) {
 			h.audit(r, "proxy.disable", "", nil)
 		}
 	}
+}
+
+func roleAllows(r *http.Request, perm rbac.Perm) bool {
+	role := middleware.Role(r.Context())
+	if middleware.RBACStore != nil {
+		return middleware.RBACStore.AllowedDB(role, perm)
+	}
+	return rbac.Allowed(role, perm)
 }

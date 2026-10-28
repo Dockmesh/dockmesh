@@ -48,3 +48,25 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - Restoring a volume backup only accepts a Docker volume name as the target; a path such as
   `/etc` was mounted from the host and overwritten.
 - Uploads to the backup verification endpoint are limited to 1 GiB.
+- Backup hooks run commands inside containers, so creating or changing a job with hooks now
+  needs the permission to exec into containers, and every hook container must be within your
+  host and stack scope.
+- Local backup targets can only write below allowed directories (setting
+  `backups.local_roots`, which only admins can change). The directories existing local
+  targets use were added automatically.
+- SFTP backup targets now check the server's host key: the first connection records it, and a
+  different key later stops the job until an admin accepts it. Existing jobs keep running.
+- A backup job set to encrypt no longer writes an unencrypted archive when secrets encryption
+  is turned off; the run fails and admins get a notice.
+
+### Fixed
+- Relative bind mounts such as `./html:/usr/share/nginx/html` now point at the stack's own
+  directory. They used to point at a temporary directory that was deleted after the deploy, so
+  the container saw an empty folder and whatever it wrote there was lost. On the first redeploy
+  of an affected stack, files the old container wrote are copied into the stack directory if
+  it is still empty. On remote hosts the directory starts empty, because files next to
+  `compose.yaml` aren't copied to agents yet.
+
+### Upgrade notes
+- [redeploy-relative-bind-mounts, admins] Redeploy every stack that uses a relative bind mount
+  (`./path:/...`). Dockmesh lists the affected stacks in a notice until each one is redeployed.
