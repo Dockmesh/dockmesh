@@ -25,6 +25,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 ## [Unreleased]
 
 ### Added
+- Settings → System → Trusted proxies (or `DOCKMESH_TRUSTED_PROXIES`) lists the reverse
+  proxies in front of Dockmesh. Only these may tell Dockmesh the client address or that the
+  connection was HTTPS.
 - Each release now ships a `release-manifest.json` with its severity, advisories and
   required upgrade steps, and its release notes are taken from this changelog.
 - When something needs your attention after an upgrade, Dockmesh now shows it as a banner
@@ -56,6 +59,19 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and exec sessions are now recorded in the audit log.
 - Signing in with an unknown username takes as long as with a wrong password, and invalid
   API tokens can no longer tie up the server with expensive hash checks.
+- `X-Forwarded-For` and `X-Real-IP` are only believed from a trusted proxy (localhost unless
+  configured). Before, anyone could set them to dodge the login rate limit and put a fake
+  address into sessions and the audit log.
+- Two-factor codes, LDAP sign-in, invite links and session refresh are now rate-limited per
+  client address and, where there is one, per account. Each two-factor code works only once.
+- The web UI is served with a Content Security Policy that allows no inline or third-party
+  scripts, and with headers against clickjacking and MIME sniffing. HSTS is sent when
+  Dockmesh is reached over HTTPS.
+- Single sign-on state cookies are marked `Secure` when Dockmesh is reached over HTTPS, and an
+  error passed back by an identity provider can no longer inject parameters into the
+  redirect to the sign-in page.
+- The password of the first admin account is printed once to the console instead of being
+  written to the structured log.
 
 ### Upgrade notes
 - [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The
@@ -63,3 +79,7 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - [legacy-api-tokens, admins] API tokens created before this version have no owner. They keep
   working and are marked "legacy" under API tokens; recreate each one while signed in as the
   user who should own it, then revoke the old one. A notice stays up until none are left.
+- [trusted-proxies, admins] If Dockmesh runs behind a reverse proxy on another machine or in
+  a container, add the proxy's address under Settings → System → Trusted proxies. Until
+  then every user appears with the proxy's address in sessions and the audit log, and they
+  share one login rate limit. Dockmesh shows a notice when it sees such a proxy.
