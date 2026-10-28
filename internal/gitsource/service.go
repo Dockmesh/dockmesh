@@ -147,7 +147,7 @@ func (s *Service) Get(ctx context.Context, stackName string) (*Source, error) {
 		       password_encrypted IS NOT NULL AS has_password,
 		       ssh_key_encrypted IS NOT NULL AS has_ssh_key,
 		       auto_deploy, poll_interval_sec,
-		       webhook_secret IS NOT NULL AS has_webhook_secret,
+		       COALESCE(webhook_secret, '') <> '' AS has_webhook_secret,
 		       COALESCE(last_sync_sha, ''),
 		       last_sync_at,
 		       COALESCE(last_sync_error, ''),

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log/slog"
@@ -88,6 +89,8 @@ type Handlers struct {
 	APITokens      *apitokens.Service
 	Registries     *registries.Service
 	GitSource      *gitsource.Service
+	// gitWebhookSync replaces GitSource.Sync for webhook-triggered syncs in tests.
+	gitWebhookSync func(ctx context.Context, stackName string) error
 	Templates      *templates.Service
 	Invites        *invites.Service
 	AuditRetention *audit.Retention
