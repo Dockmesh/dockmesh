@@ -1010,6 +1010,22 @@ export interface NotificationItem {
   created_at: string;
 }
 
+// Action-required notices: open conditions someone has to act on, shown
+// as a banner and pinned in the bell drawer until the server resolves them.
+export type NoticeSeverity = 'info' | 'warning' | 'critical';
+
+export interface Notice {
+  id: number;
+  key: string;
+  severity: NoticeSeverity;
+  title: string;
+  body?: string;
+  link?: string;
+  created_at: string;
+  dismissible: boolean;
+  dismissed: boolean;
+}
+
 // SAML / LDAP / OAuth2 — Tier C SSO. Field names match
 // internal/saml/ldapauth/oauth2auth packages exactly so we don't have
 // a translation layer in api.ts. The {group, role} shape is shared
@@ -2072,6 +2088,12 @@ export const api = {
       request<void>('/notifications/read-all', { method: 'POST' }),
     delete: (id: number) =>
       request<void>(`/notifications/${id}`, { method: 'DELETE' })
+  },
+
+  notices: {
+    list: () => request<Notice[]>('/notices'),
+    dismiss: (id: number) =>
+      request<void>(`/notices/${id}/dismiss`, { method: 'POST' })
   },
 
   oidc: {

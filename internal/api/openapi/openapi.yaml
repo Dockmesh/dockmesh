@@ -6112,6 +6112,46 @@ paths:
         "403": { description: Not your notification. }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /notices:
+    get:
+      operationId: notices.list
+      tags: [settings]
+      summary: Open action-required notices for the caller
+      description: |
+        Notices that need someone to act, typically after an upgrade (for
+        example "webhook disabled, secret missing"). Only notices whose
+        audience includes the caller are returned; they disappear once the
+        server resolves the condition. `dismissed` reflects the caller's own
+        banner dismissal.
+      responses:
+        "200":
+          description: Open notices, critical first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Notice" }
+
+  /notices/{id}/dismiss:
+    post:
+      operationId: notices.dismiss
+      tags: [settings]
+      summary: Hide a non-critical notice from the caller's banner
+      description: |
+        Per user. The notice stays listed until it is resolved, and is shown
+        again if the condition is resolved and comes back. Requires a user
+        session; API tokens get 404.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Dismissed (idempotent). }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   /alerts/rules/{id}/stats:
     get:
       operationId: alerts.rule_stats
@@ -6733,6 +6773,20 @@ components:
         error:
           type: string
           example: invalid credentials
+
+    Notice:
+      type: object
+      required: [id, key, severity, title, created_at, dismissible, dismissed]
+      properties:
+        id: { type: integer, format: int64 }
+        key: { type: string, description: Stable identifier of the condition. }
+        severity: { type: string, enum: [info, warning, critical] }
+        title: { type: string }
+        body: { type: string, description: Plain text instructions. }
+        link: { type: string, description: In-app path where the action is taken, e.g. /stacks/web. }
+        created_at: { type: string, format: date-time }
+        dismissible: { type: boolean, description: False for critical notices. }
+        dismissed: { type: boolean }
 
     Empty:
       type: object

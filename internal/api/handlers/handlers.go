@@ -26,6 +26,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
 	"github.com/dockmesh/dockmesh/internal/metrics"
+	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/oauth2auth"
@@ -54,6 +55,7 @@ type Handlers struct {
 	DeployHistory *stacks.HistoryStore
 	DeployTracker *deploy.Tracker
 	Notifications *notifications.Service
+	Notices       *notices.Service
 	Dependencies  *stacks.DependencyStore
 	Compose      *compose.Service
 	LoginLimiter *ratelimit.Limiter
@@ -110,6 +112,7 @@ type Deps struct {
 	DeployHistory *stacks.HistoryStore
 	DeployTracker *deploy.Tracker
 	Notifications *notifications.Service
+	Notices       *notices.Service
 	Dependencies  *stacks.DependencyStore
 	Compose      *compose.Service
 	LoginLimiter *ratelimit.Limiter
@@ -163,6 +166,7 @@ func New(d Deps) *Handlers {
 		DeployHistory: d.DeployHistory,
 		DeployTracker: d.DeployTracker,
 		Notifications: d.Notifications,
+		Notices:       d.Notices,
 		Dependencies: d.Dependencies,
 		Compose:     d.Compose,
 		LoginLimiter: d.LoginLimiter,

@@ -42,6 +42,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/ldapauth"
 	"github.com/dockmesh/dockmesh/internal/metrics"
 	"github.com/dockmesh/dockmesh/internal/migration"
+	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/oauth2auth"
@@ -601,6 +602,10 @@ func main() {
 	notifSvc := notifications.NewService(database)
 	notifSvc.SetUserDirectory(authSvc)
 
+	// Action-required notices. Packages register startup checks on
+	// noticesSvc; they run once every service below is wired.
+	noticesSvc := notices.NewService(database)
+
 	// Wire the registries service into every code path that pulls an
 	// image. Without this, compose deploys + the "update image" button
 	// + git-source auto-deploys all hit the daemon API anonymously and
@@ -905,6 +910,8 @@ func main() {
 		return nil
 	}
 
+	noticesSvc.RunChecks(ctx)
+
 	// Wizard top-bar shows the same version `dockmesh --version` does.
 	handlers.SetSetupVersionString(version.Version)
 
@@ -918,6 +925,7 @@ func main() {
 		DeployHistory: deployHistoryStore,
 		DeployTracker: deployTracker,
 		Notifications: notifSvc,
+		Notices:       noticesSvc,
 		Dependencies: depStore,
 		Compose:      composeSvc,
 		LoginLimiter: loginLimiter,

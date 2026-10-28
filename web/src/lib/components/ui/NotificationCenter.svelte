@@ -12,9 +12,10 @@
     type NotificationItem,
   } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
+  import { notices } from '$lib/stores/notices.svelte';
   import { goto } from '$app/navigation';
   import {
-    Bell, X, CheckCheck, CheckCircle2, XCircle, AlertTriangle, Info, Trash2,
+    Bell, X, CheckCheck, CheckCircle2, XCircle, AlertTriangle, Info, Trash2, ArrowRight,
   } from 'lucide-svelte';
 
   type Filter = 'all' | 'unread';
@@ -24,6 +25,9 @@
   let items = $state<NotificationItem[]>([]);
   let loading = $state(false);
   let filter = $state<Filter>('all');
+  // Open notices count towards the badge: they stay until resolved, so
+  // they can't be "read" away like feed entries.
+  const badge = $derived(unread + notices.items.length);
 
   $effect(() => {
     let cancelled = false;
@@ -99,12 +103,19 @@
     open = true;
     filter = 'all';
     loadList();
+    notices.refresh();
+  }
+
+  async function openNotice(link?: string) {
+    if (!link) return;
+    open = false;
+    await goto(link);
   }
 
   function severityColor(s: string): string {
     if (s === 'success') return '#16a34a';
     if (s === 'warning') return '#d97706';
-    if (s === 'error')   return '#dc2626';
+    if (s === 'error' || s === 'critical') return '#dc2626';
     return '#64748b';
   }
 
@@ -156,14 +167,14 @@
 <button
   type="button"
   onclick={openDrawer}
-  aria-label="Notifications · {unread} unread"
+  aria-label="Notifications · {badge} need attention"
   title="Notifications"
   style="position: relative; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--fg-muted, #94a3b8); cursor: pointer;"
 >
   <Bell size={13} strokeWidth={1.5} />
-  {#if unread > 0}
+  {#if badge > 0}
     <span style="position: absolute; top: -3px; right: -3px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: #dc2626; color: #ffffff; font-size: 9px; font-weight: 600; line-height: 14px; text-align: center;">
-      {unread > 99 ? '99+' : unread}
+      {badge > 99 ? '99+' : badge}
     </span>
   {/if}
 </button>
@@ -238,6 +249,37 @@
 
       <!-- Body -->
       <div style="flex: 1 1 auto; overflow-y: auto; min-height: 0; background-color: {dark};">
+        {#if notices.items.length > 0}
+          <div style="padding: 8px 18px 6px; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: {fgMuted}; font-family: var(--font-mono, monospace);">Action required</div>
+          {#each notices.items as n (n.id)}
+            {@const sev = severityColor(n.severity)}
+            <div style="display: flex; align-items: stretch; border-bottom: 1px solid {border}; background-color: {unreadTint};">
+              <div style="width: 3px; flex-shrink: 0; background-color: {sev};"></div>
+              <button
+                type="button"
+                onclick={() => openNotice(n.link)}
+                style="flex: 1; display: flex; align-items: flex-start; gap: 10px; padding: 12px 18px 12px 14px; background-color: transparent; border: 0; text-align: left; color: {fg}; cursor: {n.link ? 'pointer' : 'default'}; min-width: 0;"
+              >
+                <div style="flex-shrink: 0; margin-top: 1px; color: {sev};">
+                  <AlertTriangle size={16} strokeWidth={1.6} />
+                </div>
+                <div style="flex: 1; min-width: 0;">
+                  <div style="font-size: 13px; line-height: 1.4; color: {fg}; font-weight: 600;">{n.title}</div>
+                  {#if n.body}
+                    <div style="margin-top: 3px; font-size: 11.5px; color: {fgMuted}; line-height: 1.45; word-break: break-word;">{n.body}</div>
+                  {/if}
+                  <div style="margin-top: 5px; display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: {fgMuted};">
+                    <span>{relTime(n.created_at)}</span>
+                    {#if n.link}
+                      <span style="display: inline-flex; align-items: center; gap: 3px; color: {fg};">Fix it <ArrowRight size={10} strokeWidth={1.6} /></span>
+                    {/if}
+                  </div>
+                </div>
+              </button>
+            </div>
+          {/each}
+          <div style="padding: 10px 18px 6px; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: {fgMuted}; font-family: var(--font-mono, monospace);">Notifications</div>
+        {/if}
         {#if loading && items.length === 0}
           <div style="padding: 64px 24px; text-align: center; color: {fgMuted}; font-size: 13px;">Loading…</div>
         {:else if items.length === 0}
