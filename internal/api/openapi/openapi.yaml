@@ -1210,6 +1210,7 @@ paths:
       operationId: containers.inspect
       tags: [containers]
       summary: Inspect one container
+      description: The container must be within the caller's host scope and role scope (403 otherwise).
       responses:
         "200":
           description: Full ContainerJSON from the Docker daemon.
@@ -1217,6 +1218,7 @@ paths:
             application/json:
               schema: { type: object, description: Passthrough of the Docker SDK ContainerJSON. }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: containers.remove
@@ -2934,6 +2936,7 @@ paths:
       tags: [volumes]
       summary: Read a single file inside a volume, capped at 1 MiB (P.11.8)
       description: |
+        Requires `containers.exec`; audited.
         Returns up to 1 MiB of content. `truncated: true` signals the file
         is larger — the UI then offers a download link instead of an inline
         preview. `binary: true` is set when a NUL byte is found in the
@@ -4089,7 +4092,8 @@ paths:
         Returns the age private key used to encrypt system backups, so the
         admin can store it offline for disaster recovery. Without this
         key, an encrypted system backup cannot be restored on a fresh
-        host. Admin-only.
+        host. Requires `backups.restore` plus admin (`system.update` with
+        no host or role scope); every export is audited.
       responses:
         "200":
           description: age key file (text/plain).
@@ -4185,6 +4189,9 @@ paths:
       tags: [users]
       summary: Mint a one-time invite link
       description: |
+        The role must exist (400) and may not exceed the caller's rights;
+        a caller with host scope tags must give the invite tags within
+        its own (403).
         Returns the raw token + accept URL exactly once. The admin
         copies the URL out and shares it manually. No SMTP dependency.
       requestBody:
@@ -4208,6 +4215,7 @@ paths:
             application/json:
               schema: { type: object, additionalProperties: true }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /invites/{id}:
     parameters:
@@ -4302,6 +4310,7 @@ paths:
       operationId: users.create
       tags: [users]
       summary: Create a new local user
+      description: The role may not exceed the caller's rights, and callers with host scope tags create users through scoped invites instead (403).
       requestBody:
         required: true
         content:
@@ -4338,6 +4347,11 @@ paths:
       operationId: users.update
       tags: [users]
       summary: Update user email, role, and scope tags
+      description: |
+        The caller must hold every permission of both the user's current
+        role and the new one, and a scoped caller can only assign scope
+        tags within its own (403). Demoting the last account that holds
+        `system.update` and all `users.*` permissions returns 409.
       requestBody:
         required: true
         content:
@@ -4346,11 +4360,12 @@ paths:
               type: object
               properties:
                 email: { type: string, format: email }
-                role: { type: string }
+                role: { type: string, description: Omitted or empty keeps the current role. }
+                display_name: { type: string }
                 scope_tags:
                   type: array
                   items: { type: string }
-                  description: Host tag scope. Empty = access to all hosts.
+                  description: Host tag scope. Omitted keeps the current tags; empty = access to all hosts.
       responses:
         "200":
           description: Updated.
@@ -4361,15 +4376,18 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
     delete:
       operationId: users.delete
       tags: [users]
       summary: Delete a local user
+      description: Same rules as update; deleting the last admin-capable account returns 409.
       responses:
         "204": { description: Deleted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /users/{id}/password:
     put:
@@ -4434,6 +4452,7 @@ paths:
       operationId: roles.create
       tags: [roles]
       summary: Create a custom role
+      description: Permissions and scopes may not exceed the caller's own (403).
       requestBody:
         required: true
         content:
@@ -4524,6 +4543,11 @@ paths:
       operationId: roles.update
       tags: [roles]
       summary: Update a custom role's display name + permissions
+      description: |
+        The caller must hold every permission of the role before and after
+        the change, and a caller with a scoped role can only define scopes
+        within its own (403). Taking admin rights from a role whose holders
+        are the last admins returns 409.
       requestBody:
         required: true
         content:
@@ -4548,7 +4572,10 @@ paths:
       operationId: roles.delete
       tags: [roles]
       summary: Delete a custom role
-      description: Built-in roles cannot be deleted — returns 409.
+      description: |
+        Built-in roles cannot be deleted — returns 409, as does deleting
+        the role of the last admins. The caller must hold every permission
+        of the role (403).
       responses:
         "204": { description: Deleted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -5836,8 +5863,9 @@ paths:
       summary: List one directory level inside a container's filesystem
       description: |
         Tar-streams the requested path out of the container and walks
-        the archive at depth 1. Path must be absolute. Audited on every
-        call because reading container files is a sensitive operation.
+        the archive at depth 1. Path must be absolute. Requires
+        `containers.exec`, like every container file endpoint, and is
+        audited on every call.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
         - $ref: "#/components/parameters/HostQuery"
@@ -5941,7 +5969,8 @@ paths:
       description: |
         Streams `application/octet-stream` with `Content-Disposition:
         attachment` so the browser triggers a file save. Used for binary
-        files and files larger than the preview cap.
+        files and files larger than the preview cap. Requires
+        `containers.exec`; audited.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
         - $ref: "#/components/parameters/HostQuery"
@@ -6314,6 +6343,11 @@ paths:
       operationId: backups.run_archive
       tags: [backups]
       summary: Download the archive for a successful run (tar.gz stream, transparent decryption)
+      description: |
+        Requires `backups.download` and the job's host within the caller's
+        scope. System archives, and runs whose job was deleted, are
+        admin-only (`system.update` with no host or role scope). Every
+        download is audited as `backup.download`.
       parameters:
         - in: path
           name: id
@@ -6325,6 +6359,8 @@ paths:
           content:
             application/gzip:
               schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "409":
           description: Run not in success state.
         "404": { $ref: "#/components/responses/NotFound" }
@@ -7318,7 +7354,8 @@ components:
         target_type: { type: string, enum: [local, sftp, smb, webdav, s3] }
         target_config:
           type: object
-          description: Target-specific credentials/paths. Secrets redacted in responses.
+          description: >-
+            Target-specific credentials/paths. Secret fields (`password`, `secret_key`, `private_key`) are returned as `""` with a sibling `<field>_set: true` when a value is stored. On update an empty or omitted secret keeps the stored value.
         sources:
           type: array
           items: { $ref: "#/components/schemas/BackupSource" }
@@ -7494,7 +7531,8 @@ components:
         type: { type: string, enum: [local, sftp, smb, webdav, s3] }
         config:
           type: object
-          description: Credentials redacted.
+          description: >-
+            Target-specific settings. Secret fields (`password`, `secret_key`, `private_key`) are returned as `""` with a sibling `<field>_set: true` when a value is stored. On update an empty or omitted secret keeps the stored value.
         status: { type: string, enum: [unknown, ok, degraded, unreachable] }
         total_bytes: { type: integer, format: int64 }
         used_bytes: { type: integer, format: int64 }
@@ -7598,7 +7636,12 @@ components:
           enum: [webhook, email, slack, discord, ntfy, gotify, teams, pagerduty, pushover]
         config:
           type: object
-          description: Channel-type-specific. Secrets redacted.
+          description: >-
+            Channel-type-specific. Secret fields (`password`, `token`,
+            `integration_key`, `app_token`, `user_key`, and `url` for slack,
+            discord and teams) are returned as `""` with a sibling
+            `<field>_set: true` when stored; an empty or omitted secret on
+            update keeps the stored value.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 

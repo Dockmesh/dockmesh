@@ -44,6 +44,15 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   or with `dockmesh admin reset-password`) signs out all of the user's sessions.
 - A role or scope change now applies to a signed-in user's next request instead of after up
   to 15 minutes.
+- Downloading a backup archive needs the new "Download backups" permission, which the
+  built-in Admin and Host Admin roles have; Host Admins only for jobs on their own hosts.
+  System backups and the backup key export are admin-only. Viewer, Operator and Deployer
+  can still see backup status but no longer download archives.
+- Browsing, reading and downloading files inside a container now needs "Shell into
+  container", the same permission as uploading files or opening a terminal.
+- The built-in Host Admin role no longer edits system settings, global environment
+  variables, password and sign-in policy or single sign-on providers.
+- Saving a user without `scope_tags` keeps the user's host scope instead of clearing it.
 
 ### Security
 - Each kind of signed token (session, refresh, two-factor challenge, WebSocket ticket, single
@@ -56,6 +65,20 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and exec sessions are now recorded in the audit log.
 - Signing in with an unknown username takes as long as with a wrong password, and invalid
   API tokens can no longer tie up the server with expensive hash checks.
+- Creating or editing users, invites and roles can no longer grant permissions or host scope
+  the editor doesn't have, and nobody can change or remove a user or role with more rights
+  than their own. Before, anyone allowed to edit users could make themselves admin. The last
+  account that can administer Dockmesh can no longer be demoted or deleted, and an invite
+  can no longer be accepted twice.
+- Users restricted to some hosts or stacks no longer see other hosts' or stacks' data:
+  container details (including environment variables), compose files, stack status, volumes,
+  networks, images, host metrics and the live event stream are now filtered by scope, and
+  container checks look at the host the container actually runs on.
+- Backup archives could be downloaded by every role, including Viewer, and a system backup
+  contains every secret of the installation. Downloads now need their own permission and are
+  recorded in the audit log.
+- Passwords, keys and tokens of backup targets and notification channels are no longer
+  returned by the API. Forms show them as set; leaving a field empty keeps the stored value.
 
 ### Upgrade notes
 - [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The
@@ -63,3 +86,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - [legacy-api-tokens, admins] API tokens created before this version have no owner. They keep
   working and are marked "legacy" under API tokens; recreate each one while signed in as the
   user who should own it, then revoke the old one. A notice stays up until none are left.
+- [custom-role-permissions, admins] Custom roles that could restore backups keep downloading
+  archives; other custom roles lose archive downloads and container file access, and lose
+  system backups and the backup key unless they are admins. A notice lists the affected
+  roles; grant "Download backups" or "Shell into container" under Users → Roles where intended.
+- [host-admin-system-settings, admins] Host Admins no longer change system settings, SSO or
+  global environment variables. Give the Admin role to anyone who still needs that.
