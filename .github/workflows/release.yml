@@ -12,9 +12,15 @@
 #   dockmesh_darwin_arm64.tar.gz   — macOS Apple Silicon (M1/M2/M3…)
 #   install.sh, uninstall.sh       — served by get.dockmesh.dev from
 #                                    releases/latest/download/
-#   checksums.txt                  — SHA-256 of every tarball and script
-#                                    (BSD-style so `shasum -a 256 -c` also
-#                                    works)
+#   release-manifest.json          — machine-readable severity, changes,
+#                                    advisories and upgrade actions
+#   checksums.txt                  — SHA-256 of every tarball, script and
+#                                    the manifest (BSD-style so
+#                                    `shasum -a 256 -c` also works)
+#
+# Release notes and the manifest come from the tag's section in
+# CHANGELOG.md; the release fails before building if that section is
+# missing.
 #
 # The install.sh served from get.dockmesh.dev expects the asset names
 # exactly as above — don't rename without updating the installer.
@@ -36,8 +42,39 @@ permissions:
   contents: write  # needed to create the release + attach assets
 
 jobs:
+  notes:
+    name: release notes
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: render notes + manifest from CHANGELOG.md
+        env:
+          VERSION: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          go run ./scripts/relmanifest release -version "$VERSION" \
+            -notes release-notes.md -manifest release-manifest.json
+          cat release-notes.md release-manifest.json
+
+      - name: upload notes
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: |
+            release-notes.md
+            release-manifest.json
+
   build:
     name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: notes
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -151,9 +188,10 @@ jobs:
           mkdir -p release
           find artifacts -name '*.tar.gz' -exec mv {} release/ \;
           cp scripts/install.sh scripts/uninstall.sh release/
+          cp artifacts/release-notes/release-manifest.json release/
           # Combined checksums.txt — one sha256 line per asset.
           cd release
-          sha256sum *.tar.gz install.sh uninstall.sh > checksums.txt
+          sha256sum *.tar.gz install.sh uninstall.sh release-manifest.json > checksums.txt
           cat checksums.txt
 
       - name: publish GitHub Release
@@ -163,11 +201,12 @@ jobs:
           name: Dockmesh ${{ steps.v.outputs.version }}
           draft: false
           prerelease: ${{ contains(steps.v.outputs.version, '-') }}
-          generate_release_notes: true
+          body_path: artifacts/release-notes/release-notes.md
           files: |
             release/*.tar.gz
             release/install.sh
             release/uninstall.sh
+            release/release-manifest.json
             release/checksums.txt
 
       # Drop Cloudflare's edge cache for the install / uninstall scripts
