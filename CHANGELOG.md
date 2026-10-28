@@ -38,6 +38,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   rules are on for restart loops, OOM kills, offline hosts, disks above 90%, backups and
   certificates expiring within 14 days; admins of existing installs get a notice listing
   them. Agents that are too old for container events are listed in a notice too.
+  Users limited to certain hosts can only manage rules restricted to one of their hosts
+  and only see alert history from those hosts.
 
 ### Changed
 - API tokens now belong to the user who created them. A token never grants more than its
