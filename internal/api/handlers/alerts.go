@@ -69,7 +69,12 @@ func (h *Handlers) UpdateNotificationChannel(w http.ResponseWriter, r *http.Requ
 	}
 	for _, prev := range h.Notify.Channels() {
 		if prev.ID == id && prev.Type == in.Type {
-			kept, err := json.Marshal(keepConfig(in.Config, prev.Config, notifySecrets(in.Type)))
+			cfg, err := keepConfig(in.Config, prev.Config, notifySecrets(in.Type))
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			kept, err := json.Marshal(cfg)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "invalid config")
 				return

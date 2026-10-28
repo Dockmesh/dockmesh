@@ -62,7 +62,10 @@ func (h *Handlers) UpdateBackupTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if prev, err := h.BackupTargets.Get(r.Context(), id); err == nil && prev.Type == in.Type {
-		in.Config = keepConfig(in.Config, prev.Config, backupTargetSecrets)
+		if in.Config, err = keepConfig(in.Config, prev.Config, backupTargetSecrets); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	t, err := h.BackupTargets.Update(r.Context(), id, in)
 	if err != nil {

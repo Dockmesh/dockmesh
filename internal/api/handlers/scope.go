@@ -285,8 +285,9 @@ func (h *Handlers) roleIsUnscoped(r *http.Request) bool {
 
 // StackScope guards every /stacks/{name}/... route: once a stack is
 // deployed, only callers whose host scope and role scope include it on its
-// deployment host reach the handler. Undeployed stacks are left to the
-// handler's own checks against the host it is asked to act on.
+// deployment host reach the handler. For an undeployed stack only roles
+// scoped to stacks are checked here; host scope is up to the handler,
+// which knows the host it is asked to act on.
 func (h *Handlers) StackScope(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
@@ -301,11 +302,42 @@ func (h *Handlers) StackScope(next http.Handler) http.Handler {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if d != nil && d.HostID != "" && !h.requireStackScope(w, r, rbac.PermStacksView, d.HostID, name) {
+		if d != nil && d.HostID != "" {
+			if !h.requireStackScope(w, r, rbac.PermStacksView, d.HostID, name) {
+				return
+			}
+		} else if !h.stackRolesAllow(r, name) {
+			h.writeRoleScopeDenied(w, r, rbac.PermStacksView, rbac.ScopeRequest{StackName: name}, "")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// stackRolesAllow reports whether every role of the caller that is scoped
+// to stacks lists name. Roles scoped only to hosts are left to the
+// handlers, which check the host a request acts on.
+func (h *Handlers) stackRolesAllow(r *http.Request, name string) bool {
+	if !h.RBACv2Enforce || h.Roles == nil {
+		return true
+	}
+	for _, role := range middleware.Roles(r.Context()) {
+		rd, ok := h.Roles.Get(role)
+		if !ok {
+			continue
+		}
+		stackScoped, listed := false, false
+		for _, sc := range rd.Scopes {
+			if sc.ScopeType == "stack" {
+				stackScoped = true
+				listed = listed || sc.ScopeValue == name
+			}
+		}
+		if stackScoped && !listed {
+			return false
+		}
+	}
+	return true
 }
 
 // filterStackListByScope returns the subset of stacks the caller's host

@@ -2,6 +2,7 @@ package redact
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 )
@@ -25,15 +26,23 @@ func TestMapAndKeepRoundTrip(t *testing.T) {
 		want map[string]any
 	}{
 		{"sent back unchanged", shown, map[string]any{"host": "nas", "password": "hunter2", "token": ""}},
-		{"field omitted", map[string]any{"host": "nas2"}, map[string]any{"host": "nas2", "password": "hunter2", "token": ""}},
+		{"field omitted", map[string]any{"host": "nas"}, map[string]any{"host": "nas", "password": "hunter2", "token": ""}},
 		{"new value", map[string]any{"host": "nas", "password": "new"}, map[string]any{"host": "nas", "password": "new", "token": ""}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := Keep(tt.next, stored, secrets); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Keep = %v, want %v", got, tt.want)
+			got, err := Keep(tt.next, stored, secrets)
+			if err != nil || !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Keep = %v, %v, want %v", got, err, tt.want)
 			}
 		})
+	}
+	// Reusing the stored password against another server would hand it over.
+	if _, err := Keep(map[string]any{"host": "attacker"}, stored, secrets); !errors.Is(err, ErrReenter) {
+		t.Errorf("changed host with kept password: err = %v, want ErrReenter", err)
+	}
+	if _, err := Keep(map[string]any{"host": "attacker", "password": "typed"}, stored, secrets); err != nil {
+		t.Errorf("changed host with a new password: %v", err)
 	}
 }
 

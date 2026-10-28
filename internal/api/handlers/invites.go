@@ -211,6 +211,19 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusGone, "the role of this invite no longer exists")
 		return
 	}
+	// The creator must still be allowed to grant what the invite carries.
+	creator, err := h.Auth.GetUser(r.Context(), inv.CreatedBy)
+	if err != nil {
+		writeError(w, http.StatusGone, "the user who created this invite can no longer grant it")
+		return
+	}
+	asCreator := r.WithContext(middleware.WithIdentity(r.Context(), middleware.Identity{
+		UserID: creator.ID, Role: creator.Role, ScopeTags: creator.ScopeTags,
+	}))
+	if err := h.checkGrant(asCreator, inv.Role, inv.ScopeTags); err != nil {
+		writeError(w, http.StatusGone, "the user who created this invite can no longer grant it")
+		return
+	}
 	// Claim the token before creating the account so two concurrent
 	// accepts can't both succeed; a failed create hands it back.
 	if err := h.Invites.MarkUsed(r.Context(), token); err != nil {

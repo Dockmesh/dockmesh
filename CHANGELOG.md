@@ -47,7 +47,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - Downloading a backup archive needs the new "Download backups" permission, which the
   built-in Admin and Host Admin roles have; Host Admins only for jobs on their own hosts.
   System backups and the backup key export are admin-only. Viewer, Operator and Deployer
-  can still see backup status but no longer download archives.
+  can still see backup status but no longer download archives. Creating, editing or running
+  a backup job that includes the server itself is admin-only too, and other jobs need their
+  host within your scope.
 - Browsing, reading and downloading files inside a container now needs "Shell into
   container", the same permission as uploading files or opening a terminal.
 - The built-in Host Admin role no longer edits system settings, global environment
@@ -77,8 +79,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - Backup archives could be downloaded by every role, including Viewer, and a system backup
   contains every secret of the installation. Downloads now need their own permission and are
   recorded in the audit log.
-- Passwords, keys and tokens of backup targets and notification channels are no longer
-  returned by the API. Forms show them as set; leaving a field empty keeps the stored value.
+- Passwords, keys and tokens of backup targets and notification channels, and webhook URLs
+  that act as credentials, are no longer returned by the API. Forms show them as set; leaving
+  a field empty keeps the stored value, unless the server, URL or user changes, in which
+  case the secret has to be entered again. Only unscoped users can change or delete roles,
+  and an invite stops working once its creator could no longer grant it.
 
 ### Upgrade notes
 - [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The

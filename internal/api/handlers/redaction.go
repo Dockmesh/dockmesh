@@ -12,12 +12,13 @@ import (
 // Credential fields in backup target configs (also embedded in jobs).
 var backupTargetSecrets = []string{"password", "secret_key", "private_key"}
 
-// notifySecrets lists the credential fields of a channel type. For chat
-// webhooks the URL itself is the credential.
+// notifySecrets lists the credential fields of a channel type. For
+// webhook-style channels the URL itself can be the credential (tokens in
+// the path or query, topic names that grant access).
 func notifySecrets(channelType string) []string {
 	s := []string{"password", "token", "integration_key", "app_token", "user_key"}
 	switch channelType {
-	case "discord", "slack", "teams":
+	case "discord", "slack", "teams", "webhook", "ntfy", "gotify":
 		s = append(s, "url")
 	}
 	return s
@@ -33,10 +34,10 @@ func redactConfig(cfg any, secrets []string) any {
 }
 
 // keepConfig fills secrets the client left empty from the stored config.
-func keepConfig(next, stored any, secrets []string) any {
+func keepConfig(next, stored any, secrets []string) (any, error) {
 	n := redact.ToMap(next)
 	if n == nil {
-		return next
+		return next, nil
 	}
 	return redact.Keep(n, redact.ToMap(stored), secrets)
 }

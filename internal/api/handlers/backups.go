@@ -60,6 +60,9 @@ func (h *Handlers) CreateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !h.requireJobAccess(w, r, nil, &in) {
+		return
+	}
 	job, err := h.Backups.CreateJob(r.Context(), in)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -84,8 +87,23 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if prev, err := h.Backups.GetJob(r.Context(), id); err == nil && prev.TargetType == in.TargetType {
-		in.TargetConfig = keepConfig(in.TargetConfig, prev.TargetConfig, backupTargetSecrets)
+	prev, err := h.Backups.GetJob(r.Context(), id)
+	if errors.Is(err, backup.ErrJobNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !h.requireJobAccess(w, r, prev, &in) {
+		return
+	}
+	if prev.TargetType == in.TargetType {
+		if in.TargetConfig, err = keepConfig(in.TargetConfig, prev.TargetConfig, backupTargetSecrets); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	job, err := h.Backups.UpdateJob(r.Context(), id, in)
 	if errors.Is(err, backup.ErrJobNotFound) {
@@ -152,6 +170,18 @@ func (h *Handlers) RunBackupJob(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	job, err := h.Backups.GetJob(r.Context(), id)
+	if errors.Is(err, backup.ErrJobNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !h.requireJobAccess(w, r, job, nil) {
 		return
 	}
 	run, err := h.Backups.RunNow(r.Context(), id)

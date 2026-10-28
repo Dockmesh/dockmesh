@@ -3111,6 +3111,10 @@ paths:
       operationId: backups.create_job
       tags: [backups]
       summary: Create a new backup job
+      description: >-
+        Jobs with a `system` source are admin-only (`system.update` with no
+        host or role scope); other jobs need their host, before and after
+        the change, in the caller's scope (403).
       requestBody:
         required: true
         content:
@@ -3145,6 +3149,10 @@ paths:
       operationId: backups.update_job
       tags: [backups]
       summary: Update a backup job
+      description: >-
+        Same access rules as create. Target secrets sent empty keep the
+        stored value; changing the server, URL or user while keeping a
+        stored secret returns 400.
       requestBody:
         required: true
         content:
@@ -3201,6 +3209,10 @@ paths:
       operationId: backups.run_job
       tags: [backups]
       summary: Trigger a job to run immediately
+      description: >-
+        Jobs with a `system` source are admin-only (`system.update` with no
+        host or role scope); other jobs need their host, before and after
+        the change, in the caller's scope (403).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       responses:
@@ -3443,6 +3455,9 @@ paths:
       operationId: backups.update_target
       tags: [backups]
       summary: Update a backup target
+      description: >-
+        Secrets sent empty keep the stored value; changing the server, URL
+        or user while keeping a stored secret returns 400 (re-enter it).
       requestBody:
         required: true
         content:
@@ -3709,6 +3724,9 @@ paths:
       operationId: notifications.update_channel
       tags: [alerts]
       summary: Update a notification channel
+      description: >-
+        Secrets sent empty keep the stored value; changing the server, URL
+        or user while keeping a stored secret returns 400 (re-enter it).
       requestBody:
         required: true
         content:
@@ -4263,6 +4281,9 @@ paths:
       operationId: invites.accept
       tags: [auth]
       summary: Redeem an invite — create the user + return a session
+      description: >-
+        Returns 410 when the invite is used or expired, its role no longer
+        exists, or its creator can no longer grant its role and scope.
       security: []
       requestBody:
         required: true
@@ -4543,9 +4564,8 @@ paths:
       tags: [roles]
       summary: Update a custom role's display name + permissions
       description: |
-        The caller must hold every permission of the role before and after
-        the change, and a caller with a scoped role can only define scopes
-        within its own (403). Taking admin rights from a role whose holders
+        The caller must be unscoped (no host scope tags, no role scope) and
+        hold every permission of the role before and after the change (403). Taking admin rights from a role whose holders
         are the last admins returns 409.
       requestBody:
         required: true
@@ -4573,8 +4593,8 @@ paths:
       summary: Delete a custom role
       description: |
         Built-in roles cannot be deleted — returns 409, as does deleting
-        the role of the last admins. The caller must hold every permission
-        of the role (403).
+        the role of the last admins. The caller must be unscoped and hold
+        every permission of the role (403).
       responses:
         "204": { description: Deleted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -7639,7 +7659,7 @@ components:
           description: >-
             Channel-type-specific. Secret fields (`password`, `token`,
             `integration_key`, `app_token`, `user_key`, and `url` for slack,
-            discord and teams) are returned as `""` with a sibling
+            discord, teams, webhook, ntfy and gotify) are returned as `""` with a sibling
             `<field>_set: true` when stored; an empty or omitted secret on
             update keeps the stored value.
         created_at: { type: string, format: date-time }

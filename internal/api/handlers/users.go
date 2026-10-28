@@ -157,7 +157,7 @@ func (h *Handlers) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeGrantError(w, err)
 		return
 	}
-	if err := h.checkKeepsAdmin(r.Context(), id, curRole, role); err != nil {
+	if err := h.checkKeepsAdmin(r.Context(), id, curRole, curTags, role, tags, false); err != nil {
 		writeLastAdminError(w, err)
 		return
 	}
@@ -186,11 +186,11 @@ func (h *Handlers) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "cannot delete yourself")
 		return
 	}
-	role, _, ok := h.requireManageUser(w, r, id)
+	role, tags, ok := h.requireManageUser(w, r, id)
 	if !ok {
 		return
 	}
-	if err := h.checkKeepsAdmin(r.Context(), id, role, ""); err != nil {
+	if err := h.checkKeepsAdmin(r.Context(), id, role, tags, "", nil, true); err != nil {
 		writeLastAdminError(w, err)
 		return
 	}

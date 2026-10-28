@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -303,5 +304,70 @@ func TestCredentialsAreWriteOnly(t *testing.T) {
 	ch := redactChannel(&notify.Channel{Type: "slack", Config: json.RawMessage(`{"url":"https://hooks.slack.com/services/T/B/x"}`)})
 	if strings.Contains(string(ch.Config), "hooks.slack.com") {
 		t.Errorf("slack webhook url leaked: %s", ch.Config)
+	}
+}
+
+func TestReviewFollowUps(t *testing.T) {
+	e := newScopeEnv(t)
+	ctx := context.Background()
+	e.router.Group(func(r chi.Router) {
+		r.Use(middleware.NewAuth(e.h.Auth))
+		r.Use(e.h.StackScope)
+		r.With(middleware.RequirePerm(rbac.PermBackupsCreate)).Post("/backups/jobs", e.h.CreateBackupJob)
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Post("/backups/jobs/{id}/run", e.h.RunBackupJob)
+		r.With(middleware.RequirePerm(rbac.PermRolesDelete)).Delete("/roles/{name}", e.h.DeleteRole)
+		r.With(middleware.RequirePerm(rbac.PermStacksView)).Get("/api/v1/stacks/{name}", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+	})
+	e.router.Post("/invite/{token}/accept", e.h.AcceptInvite)
+	if _, err := e.db.Exec(`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (7, 'sys', 'local', 'local', '[{"type":"system","name":"system"}]')`); err != nil {
+		t.Fatal(err)
+	}
+	boss := e.user("boss", "admin")
+	e.user("hadmin", "host-admin")
+	e.role("stack-only", []rbac.Perm{rbac.PermStacksView}, rbac.Scope{ScopeType: "stack", ScopeValue: "web"})
+	e.user("stacky", "stack-only")
+	e.role("tagged-roles", []rbac.Perm{rbac.PermRolesUpdate, rbac.PermRolesDelete, rbac.PermStacksView})
+	tagged := e.user("rolemgr", "tagged-roles")
+	e.scopeUser(tagged.ID, "prod")
+	e.role("victim-role", []rbac.Perm{rbac.PermStacksView})
+	hadmin := e.login("hadmin").AccessToken
+	bossTok := e.login("boss").AccessToken
+
+	tests := []struct {
+		name, method, path, bearer string
+		body                       any
+		want                       int
+	}{
+		{"host-admin creates system job", http.MethodPost, "/backups/jobs", hadmin,
+			map[string]any{"name": "x", "target_type": "local", "sources": []map[string]string{{"type": "system", "name": "system"}}}, http.StatusForbidden},
+		{"host-admin runs system job", http.MethodPost, "/backups/jobs/7/run", hadmin, nil, http.StatusForbidden},
+		{"scoped caller deletes a role", http.MethodDelete, "/roles/victim-role", e.login("rolemgr").AccessToken, nil, http.StatusForbidden},
+		{"stack role reads an undeployed other stack", http.MethodGet, "/api/v1/stacks/bar", e.login("stacky").AccessToken, nil, http.StatusForbidden},
+		{"stack role reads its undeployed stack", http.MethodGet, "/api/v1/stacks/web", e.login("stacky").AccessToken, nil, http.StatusNoContent},
+		{"only admin scopes itself", http.MethodPut, "/users/" + boss.ID, bossTok, map[string]any{"scope_tags": []string{"x"}}, http.StatusConflict},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr := e.do(tt.method, tt.path, tt.bearer, tt.body)
+			if rr.Code != tt.want {
+				t.Errorf("%d, want %d: %s", rr.Code, tt.want, rr.Body)
+			}
+		})
+	}
+
+	// An invite stops working once its creator may no longer grant it.
+	inviter := e.user("inviter", "admin")
+	inv, err := e.h.Invites.Create(ctx, invites.CreateInput{Role: "admin", TTL: time.Hour, CreatedBy: inviter.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.h.Auth.UpdateUser(ctx, inviter.ID, "", "viewer", ""); err != nil {
+		t.Fatal(err)
+	}
+	rr := e.do(http.MethodPost, "/invite/"+inv.Token+"/accept", "", map[string]any{"username": "mole", "password": testPassword})
+	if rr.Code != http.StatusGone {
+		t.Errorf("accept after creator demotion: %d %s", rr.Code, rr.Body)
 	}
 }

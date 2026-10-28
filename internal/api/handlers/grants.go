@@ -122,9 +122,15 @@ func (h *Handlers) checkRoleInput(r *http.Request, in rbac.RoleInput) error {
 	return h.checkPermsGrant(r, permSet(in.Permissions), in.Scopes)
 }
 
-// requireManageRole checks that the caller holds everything the existing
-// role grants before it is changed or deleted.
+// requireManageRole checks that the caller is unscoped and holds
+// everything the existing role grants before it is changed or deleted.
 func (h *Handlers) requireManageRole(w http.ResponseWriter, r *http.Request, name string) bool {
+	// A role reaches every holder, wherever they are; a caller limited to
+	// some hosts or stacks would act beyond its scope.
+	if !h.callerUnscoped(r) {
+		writeError(w, http.StatusForbidden, "callers limited to some hosts or stacks can't change or delete roles")
+		return false
+	}
 	rd, ok := h.Roles.Get(name)
 	if !ok {
 		writeError(w, http.StatusNotFound, "role not found")
@@ -155,10 +161,24 @@ func writeGrantError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusBadRequest, err.Error())
 }
 
-// isAdminRole reports whether role holds every adminPerms permission.
+// isAdminRole reports whether role holds every adminPerms permission and
+// has no role scope.
 func (h *Handlers) isAdminRole(role string) bool {
 	perms, ok := h.permsForRoleName(role)
-	return ok && hasAdminPerms(perms)
+	if !ok || !hasAdminPerms(perms) {
+		return false
+	}
+	if h.Roles != nil {
+		if rd, found := h.Roles.Get(role); found && len(rd.Scopes) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// isAdminAccount is isAdminRole for an account without host scope tags.
+func (h *Handlers) isAdminAccount(role string, scopeTags []string) bool {
+	return len(scopeTags) == 0 && h.isAdminRole(role)
 }
 
 // otherAdminExists reports whether an account not matched by skip holds an
@@ -169,18 +189,18 @@ func (h *Handlers) otherAdminExists(ctx context.Context, skip func(u auth.User) 
 		return false, err
 	}
 	for _, u := range users {
-		if !skip(u) && h.isAdminRole(u.Role) {
+		if !skip(u) && h.isAdminAccount(u.Role, u.ScopeTags) {
 			return true, nil
 		}
 	}
 	return false, nil
 }
 
-// checkKeepsAdmin fails with errLastAdmin when userID currently holds an
-// admin role, would lose it (newRole == "" means the account is removed),
-// and no other account holds one.
-func (h *Handlers) checkKeepsAdmin(ctx context.Context, userID, currentRole, newRole string) error {
-	if !h.isAdminRole(currentRole) || (newRole != "" && h.isAdminRole(newRole)) {
+// checkKeepsAdmin fails with errLastAdmin when userID is an admin account
+// today, wouldn't be afterwards (removed == true means it is deleted), and
+// no other admin account exists.
+func (h *Handlers) checkKeepsAdmin(ctx context.Context, userID, curRole string, curTags []string, newRole string, newTags []string, removed bool) error {
+	if !h.isAdminAccount(curRole, curTags) || (!removed && h.isAdminAccount(newRole, newTags)) {
 		return nil
 	}
 	ok, err := h.otherAdminExists(ctx, func(u auth.User) bool { return u.ID == userID })
