@@ -27,7 +27,8 @@ type Config struct {
 	AgentPublicURL    string
 	AgentSANs         string
 	// AgentEnrollTokenTTL is how long a host enrollment token stays
-	// valid (DOCKMESH_AGENT_ENROLL_TOKEN_TTL, Go duration, default 24h).
+	// valid (DOCKMESH_AGENT_ENROLL_TOKEN_TTL, Go duration). Zero keeps
+	// the agents package default.
 	AgentEnrollTokenTTL time.Duration
 	// MetricsAuth gates the /metrics endpoint. Default true (require
 	// metrics.read perm, so API-token scraping is needed). Set
@@ -104,7 +105,7 @@ func Load() (*Config, error) {
 
 func parseEnrollTokenTTL(v string) (time.Duration, error) {
 	if v == "" {
-		return 24 * time.Hour, nil
+		return 0, nil
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil || d < time.Minute || d > 30*24*time.Hour {

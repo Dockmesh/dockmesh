@@ -259,8 +259,7 @@ log "installed: $($AGENT_BIN --version 2>&1 | head -1 || echo dockmesh-agent)"
 # Agents CA (pinned by fingerprint for enrollment)
 # -----------------------------------------------------------------------------
 ENROLL_CA_FILE="$DATA_DIR/enroll-ca.pem"
-printf '%s
-' "$CA_CERT_PEM" > "$ENROLL_CA_FILE"
+printf '%s\n' "$CA_CERT_PEM" > "$ENROLL_CA_FILE"
 chown "$RUN_USER":"$RUN_GROUP" "$ENROLL_CA_FILE"
 chmod 0644 "$ENROLL_CA_FILE"
 

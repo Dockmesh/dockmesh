@@ -214,13 +214,13 @@ func (s *Service) SetEnrollTokenTTL(d time.Duration) {
 }
 
 func (s *Service) PublicURL() string { return s.publicURL }
+func (s *Service) AgentURL() string  { return s.agentURL }
 
 // CAFingerprint is the SHA-256 of the agents CA the installer pins.
 func (s *Service) CAFingerprint() string { return s.pki.CAFingerprint() }
 
 // CACertPEM is the agents CA certificate handed to the installer.
 func (s *Service) CACertPEM() []byte { return s.pki.CACertPEM() }
-func (s *Service) AgentURL() string  { return s.agentURL }
 
 // -----------------------------------------------------------------------------
 // CRUD
@@ -284,8 +284,8 @@ func (s *Service) createResult(a *Agent, token string, expires time.Time) *Creat
 	fp := s.pki.CAFingerprint()
 	// The installer runs as root on the remote host: it creates a
 	// dedicated service user, installs Docker if missing and drops a
-	// hardened systemd unit. The CA fingerprint in the URL lets the
-	// installer refuse a script rendered for a different CA.
+	// hardened systemd unit. The ca= fingerprint lets the server refuse
+	// to render the script once the agents CA has rotated.
 	installHint := fmt.Sprintf(
 		"curl -fsSL '%s/install/agent.sh?token=%s&ca=%s' | sudo bash",
 		s.publicURL, token, fp)

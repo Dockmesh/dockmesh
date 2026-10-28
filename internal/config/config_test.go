@@ -11,7 +11,7 @@ func TestParseEnrollTokenTTL(t *testing.T) {
 		want time.Duration
 		ok   bool
 	}{
-		{"", 24 * time.Hour, true},
+		{"", 0, true},
 		{"2h", 2 * time.Hour, true},
 		{"720h", 720 * time.Hour, true},
 		{"30s", 0, false},

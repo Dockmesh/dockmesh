@@ -76,6 +76,14 @@ const (
 	autoUpgradeRetryGap    = 5 * time.Minute
 )
 
+var (
+	// ErrAgentNotConnected is returned when an upgrade targets an agent
+	// without a live connection.
+	ErrAgentNotConnected = errors.New("agent not connected")
+	// errUpgradeBackoff marks an automatic attempt skipped by the back-off.
+	errUpgradeBackoff = errors.New("automatic upgrade backed off")
+)
+
 type upgradeAttempt struct {
 	target string
 	count  int
@@ -259,13 +267,6 @@ func (c *UpgradeController) UpgradeOne(ctx context.Context, id string) (*AgentUp
 	}
 	return c.upgradeOne(ctx, ag, true)
 }
-
-// ErrAgentNotConnected is returned when an upgrade targets an agent
-// without a live connection.
-var ErrAgentNotConnected = errors.New("agent not connected")
-
-// errUpgradeBackoff marks an automatic attempt skipped by the back-off.
-var errUpgradeBackoff = errors.New("automatic upgrade backed off")
 
 // buildUpgradeReq picks the bundled binary for the agent's architecture
 // and attaches its SHA-256, which the agent verifies before replacing
