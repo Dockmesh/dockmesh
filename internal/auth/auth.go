@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -58,49 +57,18 @@ func VerifyPassword(password, encoded string) (bool, error) {
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
 
+// Claims is the payload of an access token.
 type Claims struct {
 	UserID    string   `json:"uid"`
 	Role      string   `json:"role,omitempty"`
-	ScopeTags []string `json:"scope,omitempty"` // P.11.3: host-tag scope; empty = all hosts
-	// Perm binds a WS ticket to one specific permission (e.g.
-	// "containers.exec"). Absent on access tokens. The WS handler
-	// verifies Perm matches the endpoint's required permission so a
-	// logs-ticket can't be reused on /ws/exec.
-	Perm string `json:"perm,omitempty"`
-	jwt.RegisteredClaims
+	ScopeTags []string `json:"scope,omitempty"` // host-tag scope; empty = all hosts
+	// SessionID is the session family the token was minted for, so a
+	// revoked or deleted session stops the access token too.
+	SessionID string `json:"sid"`
+	TypedClaims
 }
 
-// IssueAccessToken mints a short-lived (15 min) access token.
-func IssueAccessToken(secret []byte, userID, role string, scopeTags []string) (string, error) {
-	c := Claims{
-		UserID:    userID,
-		Role:      role,
-		ScopeTags: scopeTags,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "dockmesh",
-		},
-	}
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString(secret)
-}
-
-func ParseAccessToken(secret []byte, token string) (*Claims, error) {
-	t, err := jwt.ParseWithClaims(token, &Claims{}, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
-		return secret, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	c, ok := t.Claims.(*Claims)
-	if !ok || !t.Valid {
-		return nil, errors.New("invalid token")
-	}
-	return c, nil
-}
+const accessTTL = 15 * time.Minute
 
 // NewRefreshToken returns a 32-byte random token, base64-encoded.
 // Refresh tokens are rotated on every use — store only the hash in the DB.

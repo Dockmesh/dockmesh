@@ -47,7 +47,11 @@ func Open(path string) (*sql.DB, error) {
 	return db, nil
 }
 
-func Migrate(db *sql.DB) error {
+func Migrate(db *sql.DB) error { return migrateUpTo(db, "") }
+
+// migrateUpTo applies migrations up to and including last ("" = all), so
+// tests can seed data in an older schema before running the rest.
+func migrateUpTo(db *sql.DB, last string) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); err != nil {
 		return err
 	}
@@ -62,6 +66,9 @@ func Migrate(db *sql.DB) error {
 	sort.Strings(names)
 
 	for _, name := range names {
+		if last != "" && name > last {
+			break
+		}
 		var exists int
 		if err := db.QueryRow(`SELECT COUNT(1) FROM schema_migrations WHERE version = ?`, name).Scan(&exists); err != nil {
 			return err

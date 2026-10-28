@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/oidc"
 	"github.com/go-chi/chi/v5"
-	"github.com/golang-jwt/jwt/v5"
 )
 
 const oidcStateCookie = "dockmesh_oidc"
@@ -20,7 +20,7 @@ const oidcStateCookie = "dockmesh_oidc"
 // round-trip it via an httpOnly cookie.
 type oidcStateClaims struct {
 	Pending *oidc.Pending `json:"p"`
-	jwt.RegisteredClaims
+	auth.TypedClaims
 }
 
 // -----------------------------------------------------------------------------
@@ -55,16 +55,7 @@ func (h *Handlers) OIDCLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Persist the pending state as a signed short-lived cookie.
-	claims := oidcStateClaims{
-		Pending: pending,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "dockmesh",
-			Subject:   "oidc-pending",
-		},
-	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(h.JWTSecret)
+	token, err := h.Auth.TokenKeys().Sign(auth.KindOIDCState, 5*time.Minute, &oidcStateClaims{Pending: pending})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -105,15 +96,12 @@ func (h *Handlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		Name: oidcStateCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
 	})
 
-	parsed, err := jwt.ParseWithClaims(c.Value, &oidcStateClaims{}, func(t *jwt.Token) (any, error) {
-		return h.JWTSecret, nil
-	})
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid state cookie: "+err.Error())
+	claims := &oidcStateClaims{}
+	if err := h.Auth.TokenKeys().Parse(auth.KindOIDCState, c.Value, claims); err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid state cookie")
 		return
 	}
-	claims, ok := parsed.Claims.(*oidcStateClaims)
-	if !ok || !parsed.Valid || claims.Pending == nil {
+	if claims.Pending == nil {
 		writeError(w, http.StatusUnauthorized, "invalid state cookie")
 		return
 	}

@@ -184,6 +184,9 @@ func (h *Handlers) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, audit.ActionUserDelete, id, nil)
+	// The user's API tokens stop working with the owner gone; their
+	// sessions are deleted with the user row.
+	h.syncLegacyTokenNotice(r)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -191,7 +194,10 @@ func (h *Handlers) ChangeUserPassword(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	callerID := middleware.UserID(r.Context())
 	isSelf := id == callerID
-	isAdmin := middleware.Role(r.Context()) == "admin"
+	isAdmin := true
+	for _, role := range middleware.Roles(r.Context()) {
+		isAdmin = isAdmin && role == "admin"
+	}
 	// Self or admin can change password. Admin-for-other is allowed
 	// without current password; admin-for-self still needs it.
 	if !isSelf && !isAdmin {
@@ -222,7 +228,18 @@ func (h *Handlers) ChangeUserPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	meta := map[string]any{}
+	// A changed password must lock out whoever else holds a session: on a
+	// self-change every other session ends, on an admin reset all of them.
+	keep := ""
+	if isSelf {
+		keep = middleware.SessionID(r.Context())
+	}
+	revoked, err := h.Auth.RevokeUserSessions(r.Context(), id, keep)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	meta := map[string]any{"sessions_revoked": revoked}
 	if !isSelf {
 		meta["admin_reset"] = true
 		meta["target_user"] = id

@@ -6,10 +6,13 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
@@ -23,7 +26,8 @@ import (
 //
 // Auth via ?ticket= (§15.8). Optional ?cmd=/bin/bash, defaults to /bin/sh.
 func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
-	if !h.requireWSTicketPerm(w, r, rbac.PermContainersExec) {
+	r, ok := h.wsAuth(w, r, rbac.PermContainersExec)
+	if !ok {
 		return
 	}
 
@@ -34,9 +38,7 @@ func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
 	}
 
 	containerID := chi.URLParam(r, "id")
-	scopeReq := h.containerScopeReq(r.Context(), target.ID(), containerID)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermContainersExec, scopeReq, "container "+containerID)
+	if !h.wsContainerAccess(w, r, rbac.PermContainersExec, target.ID(), containerID) {
 		return
 	}
 	cmd := r.URL.Query().Get("cmd")
@@ -54,12 +56,27 @@ func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
+	details := map[string]any{"host_id": target.ID(), "cmd": cmd}
+	if tok := middleware.APITokenID(r.Context()); tok != 0 {
+		details["api_token_id"] = tok
+	}
 	session, err := target.StartExec(ctx, containerID, []string{cmd})
 	if err != nil {
+		details["error"] = err.Error()
+		h.auditDetached(r, audit.ActionContainerExecStart, containerID, details)
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"`+err.Error()+`"}`))
 		return
 	}
 	defer session.Close()
+	h.auditDetached(r, audit.ActionContainerExecStart, containerID, details)
+	started := time.Now()
+	defer func() {
+		end := map[string]any{"host_id": target.ID(), "duration_s": int(time.Since(started).Seconds())}
+		if tok, ok := details["api_token_id"]; ok {
+			end["api_token_id"] = tok
+		}
+		h.auditDetached(r, audit.ActionContainerExecEnd, containerID, end)
+	}()
 
 	// Goroutine 1: container → WebSocket (binary frames).
 	go func() {

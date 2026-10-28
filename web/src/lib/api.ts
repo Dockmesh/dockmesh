@@ -428,7 +428,11 @@ export interface ApiToken {
   prefix: string;            // e.g. "dmt_A7f3X9c4"
   name: string;
   role: string;
-  created_by?: number;
+  created_by?: string;       // owning user id
+  // Created before tokens were tied to a user: no owner, pinned role.
+  legacy: boolean;
+  // Owner was deleted; the token no longer authenticates.
+  owner_missing?: boolean;
   created_at: string;
   expires_at?: string;
   last_used_at?: string;
@@ -1278,7 +1282,8 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ code })
       }),
-    disable: () => request<void>('/mfa', { method: 'DELETE' }),
+    disable: (code: string) =>
+      request<void>('/mfa', { method: 'DELETE', body: JSON.stringify({ code }) }),
     reset: (userId: string) => request<void>(`/users/${userId}/mfa`, { method: 'DELETE' })
   },
 

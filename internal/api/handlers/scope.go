@@ -115,11 +115,19 @@ func (h *Handlers) checkRoleScope(r *http.Request, req rbac.ScopeRequest) bool {
 	if h.Roles == nil {
 		return true
 	}
-	role := middleware.Role(r.Context())
-	if role == "" {
-		return true
+	return h.inRoleScope(r, req)
+}
+
+// inRoleScope requires req to be in scope for every role the caller acts
+// under (see middleware.Roles). An empty role is the unauthenticated or
+// legacy case and keeps the previous default-allow.
+func (h *Handlers) inRoleScope(r *http.Request, req rbac.ScopeRequest) bool {
+	for _, role := range middleware.Roles(r.Context()) {
+		if role != "" && !h.Roles.InScope(role, req) {
+			return false
+		}
 	}
-	return h.Roles.InScope(role, req)
+	return true
 }
 
 // writeRoleScopeDenied writes a 403 + emits an auth.scope_denied audit
@@ -195,15 +203,15 @@ func (h *Handlers) roleIsUnscoped(r *http.Request) bool {
 	if !h.RBACv2Enforce || h.Roles == nil {
 		return true
 	}
-	role := middleware.Role(r.Context())
-	if role == "" {
-		return true
+	for _, role := range middleware.Roles(r.Context()) {
+		if role == "" {
+			continue
+		}
+		if rd, ok := h.Roles.Get(role); ok && len(rd.Scopes) > 0 {
+			return false
+		}
 	}
-	rd, ok := h.Roles.Get(role)
-	if !ok {
-		return true
-	}
-	return len(rd.Scopes) == 0
+	return true
 }
 
 // filterStackListByScope returns the subset of stacks the caller's
@@ -214,7 +222,6 @@ func (h *Handlers) filterStackListByScope(r *http.Request, in []stackListEntry) 
 	if h.roleIsUnscoped(r) {
 		return in
 	}
-	role := middleware.Role(r.Context())
 	out := make([]stackListEntry, 0, len(in))
 	for _, e := range in {
 		req := rbac.ScopeRequest{StackName: e.Stack.Name}
@@ -224,7 +231,7 @@ func (h *Handlers) filterStackListByScope(r *http.Request, in []stackListEntry) 
 				req.HostTags = h.HostTags.Tags(req.HostID)
 			}
 		}
-		if h.Roles.InScope(role, req) {
+		if h.inRoleScope(r, req) {
 			out = append(out, e)
 		}
 	}
@@ -240,7 +247,6 @@ func (h *Handlers) filterContainersByRoleScope(r *http.Request, hostID string, i
 	if h.roleIsUnscoped(r) {
 		return in
 	}
-	role := middleware.Role(r.Context())
 	out := make([]dtypes.Container, 0, len(in))
 	var hostTags []string
 	if h.HostTags != nil && hostID != "" {
@@ -251,7 +257,7 @@ func (h *Handlers) filterContainersByRoleScope(r *http.Request, hostID string, i
 		if c.Labels != nil {
 			req.StackName = c.Labels["com.docker.compose.project"]
 		}
-		if h.Roles.InScope(role, req) {
+		if h.inRoleScope(r, req) {
 			out = append(out, c)
 		}
 	}
@@ -265,11 +271,10 @@ func (h *Handlers) filterHostsByRoleScope(r *http.Request, in []host.Info) []hos
 	if h.roleIsUnscoped(r) {
 		return in
 	}
-	role := middleware.Role(r.Context())
 	out := make([]host.Info, 0, len(in))
 	for _, hh := range in {
 		req := rbac.ScopeRequest{HostID: hh.ID, HostTags: hh.Tags}
-		if h.Roles.InScope(role, req) {
+		if h.inRoleScope(r, req) {
 			out = append(out, hh)
 		}
 	}
@@ -282,7 +287,6 @@ func (h *Handlers) filterContainerRowsByRoleScope(r *http.Request, in []containe
 	if h.roleIsUnscoped(r) {
 		return in
 	}
-	role := middleware.Role(r.Context())
 	out := make([]containerRow, 0, len(in))
 	tagCache := map[string][]string{}
 	for _, row := range in {
@@ -295,7 +299,7 @@ func (h *Handlers) filterContainerRowsByRoleScope(r *http.Request, in []containe
 		if row.Labels != nil {
 			req.StackName = row.Labels["com.docker.compose.project"]
 		}
-		if h.Roles.InScope(role, req) {
+		if h.inRoleScope(r, req) {
 			out = append(out, row)
 		}
 	}

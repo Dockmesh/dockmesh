@@ -4,12 +4,12 @@ import (
 	"bufio"
 	"log/slog"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
@@ -28,24 +28,17 @@ var allowedWSTicketPerms = map[rbac.Perm]bool{
 	rbac.PermSystemView:     true, // /ws/events
 }
 
-// WSTicket issues a short-lived ticket for WebSocket auth (§15.8).
+// WSTicket issues a short-lived, single-use ticket for WebSocket auth.
 // Client POSTs here with a Bearer token and a ?for=<perm> query (e.g.
-// containers.exec). Server verifies the caller's role has that perm,
-// then issues a 30s JWT bound to it. WS endpoints later compare the
-// ticket's Perm against their required perm and reject on mismatch.
+// containers.exec). The ticket carries the caller's full identity (user,
+// role, scope, API token and its owner's role) so the WS handler runs the
+// same permission and scope checks as a REST request. Clients mint a new
+// ticket for every connect and reconnect.
 func (h *Handlers) WSTicket(w http.ResponseWriter, r *http.Request) {
-	uid := middleware.UserID(r.Context())
-	role := middleware.Role(r.Context())
-	// API-token auth produces no user id but does carry a role. dmctl
-	// needs WS tickets for logs/exec. Fall back to a synthetic subject
-	// derived from the token id so the ticket JWT stays unique + the
-	// server knows it's a token-backed session.
-	if uid == "" {
-		if tokID := middleware.APITokenID(r.Context()); tokID != 0 {
-			uid = "api-token:" + strconv.FormatInt(tokID, 10)
-		}
-	}
-	if uid == "" {
+	ctx := r.Context()
+	uid := middleware.UserID(ctx)
+	tokID := middleware.APITokenID(ctx)
+	if uid == "" && tokID == 0 {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -59,22 +52,19 @@ func (h *Handlers) WSTicket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "permission "+string(requested)+" is not a valid WS ticket scope")
 		return
 	}
-
-	// Verify the caller actually has the requested permission before
-	// minting a ticket for it. Mirrors RequirePerm middleware: prefer
-	// DB-backed store (custom roles) and fall back to built-ins.
-	allowed := false
-	if middleware.RBACStore != nil {
-		allowed = middleware.RBACStore.AllowedDB(role, requested)
-	} else {
-		allowed = rbac.Allowed(role, requested)
-	}
-	if !allowed {
+	if !middleware.Allowed(ctx, requested) {
 		writeError(w, http.StatusForbidden, "your role is not allowed to "+string(requested))
 		return
 	}
 
-	ticket, err := h.Auth.IssueWSTicket(uid, role, string(requested))
+	ticket, err := h.Auth.IssueWSTicket(auth.WSTicket{
+		UserID:     uid,
+		Role:       middleware.Role(ctx),
+		ScopeTags:  middleware.ScopeTags(ctx),
+		Perm:       string(requested),
+		APITokenID: tokID,
+		OwnerRole:  middleware.TokenOwnerRole(ctx),
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "ticket generation failed")
 		return
@@ -82,22 +72,49 @@ func (h *Handlers) WSTicket(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ticket": ticket})
 }
 
-// requireWSTicketPerm validates the query-param ticket and asserts its
-// embedded permission matches the endpoint's required permission. Writes
-// the appropriate 401/403 and returns false on failure.
-func (h *Handlers) requireWSTicketPerm(w http.ResponseWriter, r *http.Request, want rbac.Perm) bool {
+// wsAuth consumes the ?ticket= query parameter, checks that it was minted
+// for want and that the caller still holds want, and returns r with the
+// ticket's identity in its context so the usual user- and role-scope
+// checks apply. Writes 401/403 and returns ok=false on failure.
+func (h *Handlers) wsAuth(w http.ResponseWriter, r *http.Request, want rbac.Perm) (*http.Request, bool) {
 	ticket := r.URL.Query().Get("ticket")
 	if ticket == "" {
 		http.Error(w, "ticket required", http.StatusUnauthorized)
-		return false
+		return r, false
 	}
-	claims, err := h.Auth.ValidateWSTicket(ticket)
+	t, err := h.Auth.ConsumeWSTicket(ticket)
 	if err != nil {
 		http.Error(w, "invalid ticket", http.StatusUnauthorized)
+		return r, false
+	}
+	if rbac.Perm(t.Perm) != want {
+		http.Error(w, "ticket not scoped for "+string(want), http.StatusForbidden)
+		return r, false
+	}
+	ctx := middleware.WithIdentity(r.Context(), middleware.Identity{
+		UserID:         t.UserID,
+		Role:           t.Role,
+		ScopeTags:      t.ScopeTags,
+		APITokenID:     t.APITokenID,
+		TokenOwnerRole: t.OwnerRole,
+	})
+	if !middleware.Allowed(ctx, want) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return r, false
+	}
+	return r.WithContext(ctx), true
+}
+
+// wsContainerAccess applies the host scope of the caller and the role scope
+// for the container. Writes 403 and returns false when out of scope.
+func (h *Handlers) wsContainerAccess(w http.ResponseWriter, r *http.Request, perm rbac.Perm, hostID, containerID string) bool {
+	if !h.canAccessHost(r, hostID) {
+		http.Error(w, "out of scope: your role does not include this host", http.StatusForbidden)
 		return false
 	}
-	if rbac.Perm(claims.Perm) != want {
-		http.Error(w, "ticket not scoped for "+string(want), http.StatusForbidden)
+	scopeReq := h.containerScopeReq(r.Context(), hostID, containerID)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, perm, scopeReq, "container "+containerID)
 		return false
 	}
 	return true
@@ -107,7 +124,8 @@ func (h *Handlers) requireWSTicketPerm(w http.ResponseWriter, r *http.Request, w
 // Auth via ?ticket= query parameter (short-lived JWT from WSTicket).
 // Reads ?host=<id> to pick a remote agent — falls back to local docker.
 func (h *Handlers) WSLogs(w http.ResponseWriter, r *http.Request) {
-	if !h.requireWSTicketPerm(w, r, rbac.PermContainersLogs) {
+	r, ok := h.wsAuth(w, r, rbac.PermContainersLogs)
+	if !ok {
 		return
 	}
 
@@ -118,9 +136,7 @@ func (h *Handlers) WSLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	containerID := chi.URLParam(r, "id")
-	scopeReq := h.containerScopeReq(r.Context(), target.ID(), containerID)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermContainersLogs, scopeReq, "container "+containerID)
+	if !h.wsContainerAccess(w, r, rbac.PermContainersLogs, target.ID(), containerID) {
 		return
 	}
 	tail := r.URL.Query().Get("tail")

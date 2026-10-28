@@ -95,7 +95,6 @@ type Handlers struct {
 	SetupState     *setup.State    // first-run wizard state; nil = setup never active
 	SetupCommit_   setup.CommitFunc // wizard's commit-runner — wired by main; nil = wizard cannot commit
 	setupRuns      sync.Map        // runID → *setup.Runner; populated when SetupCommit fires
-	JWTSecret      []byte // raw secret used to sign the short-lived OIDC + SAML state cookies
 	// RBACv2Enforce gates per-host + per-stack scope checks on typed-
 	// resource handlers. Wired from cfg.RBACv2Enforce. Default false
 	// during the v0.3.0 cutover; flipped to true in slice R-5.
@@ -151,7 +150,6 @@ type Deps struct {
 	SelfUpdate     *selfupdate.Checker
 	SetupState     *setup.State
 	SetupCommit_   setup.CommitFunc
-	JWTSecret      []byte
 	RBACv2Enforce  bool
 }
 
@@ -205,7 +203,6 @@ func New(d Deps) *Handlers {
 		SelfUpdate:     d.SelfUpdate,
 		SetupState:     d.SetupState,
 		SetupCommit_:   d.SetupCommit_,
-		JWTSecret:      d.JWTSecret,
 		RBACv2Enforce:  d.RBACv2Enforce,
 	}
 }

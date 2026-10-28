@@ -96,14 +96,30 @@ func (h *Handlers) MFAEnrollVerify(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes})
 }
 
-// MFADisable clears MFA for the current user.
+// MFADisable clears MFA for the current user. Needs a current TOTP code
+// or a recovery code: proving the second factor, not the password, is
+// what makes removing it safe, and the recovery code covers a lost device.
+//
+//	DELETE /api/v1/mfa  {"code": "123456"}
 func (h *Handlers) MFADisable(w http.ResponseWriter, r *http.Request) {
 	uid := middleware.UserID(r.Context())
 	if uid == "" {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	if err := h.Auth.DisableTOTP(r.Context(), uid); err != nil {
+	var req struct {
+		Code string `json:"code"`
+	}
+	_ = decodeJSON(r, &req)
+	err := h.Auth.DisableTOTPWithCode(r.Context(), uid, req.Code)
+	switch {
+	case errors.Is(err, auth.ErrMFAInvalidCode):
+		h.audit(r, "user.mfa_disable_failed", uid, nil)
+		// 400, not 401: the session is fine, and a 401 makes clients
+		// refresh and resend the same wrong code.
+		writeError(w, http.StatusBadRequest, "invalid code")
+		return
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

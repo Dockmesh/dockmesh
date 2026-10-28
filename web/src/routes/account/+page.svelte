@@ -196,34 +196,44 @@
     }
   }
 
-  async function disableMFA() {
-    if (!(await confirm.ask({
-      title: 'Disable 2FA',
-      message: 'Disable two-factor authentication?',
-      body: "Your account is only protected by the password again. You can re-enable 2FA any time.",
-      confirmLabel: 'Disable', danger: true,
-    }))) return;
-    try {
-      await api.mfa.disable();
-      toast.success('2FA disabled');
-      await loadMe();
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    }
+  // Turning 2FA off (or replacing the device) needs a current code or a
+  // recovery code, so a stolen session alone can't strip the second factor.
+  let mfaOffOpen = $state(false);
+  let mfaOffMode = $state<'disable' | 'reenroll'>('disable');
+  let mfaOffCode = $state('');
+  let mfaOffBusy = $state(false);
+
+  function disableMFA() {
+    mfaOffMode = 'disable';
+    mfaOffCode = '';
+    mfaOffOpen = true;
   }
 
-  async function reEnrollMFA() {
-    if (!(await confirm.ask({
-      title: 'Re-enroll 2FA device',
-      message: 'Replace your current authenticator?',
-      body: 'Your existing TOTP and recovery codes will be invalidated. You will be shown a new QR code and fresh recovery codes.',
-      confirmLabel: 'Re-enroll', danger: false,
-    }))) return;
+  function reEnrollMFA() {
+    mfaOffMode = 'reenroll';
+    mfaOffCode = '';
+    mfaOffOpen = true;
+  }
+
+  async function submitMFAOff(e: Event) {
+    e.preventDefault();
+    mfaOffBusy = true;
     try {
-      await api.mfa.disable();
-      await startMFAEnroll();
+      await api.mfa.disable(mfaOffCode.trim());
+      mfaOffOpen = false;
+      if (mfaOffMode === 'reenroll') {
+        await startMFAEnroll();
+      } else {
+        toast.success('2FA disabled');
+        await loadMe();
+      }
     } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+      toast.error(
+        err instanceof ApiError && err.status === 400 ? 'Invalid code' : 'Failed',
+        err instanceof ApiError && err.status !== 400 ? err.message : undefined
+      );
+    } finally {
+      mfaOffBusy = false;
     }
   }
 
@@ -766,6 +776,47 @@
       </div>
     </div>
   {/if}
+</EditorialModal>
+
+<!-- ─────────────────── 2FA disable / re-enroll confirmation ─────────────────── -->
+<EditorialModal
+  bind:open={mfaOffOpen}
+  eyebrow="Two-factor"
+  title={mfaOffMode === 'disable' ? 'Disable 2FA' : 'Replace your authenticator'}
+  width={440}
+  onclose={() => (mfaOffOpen = false)}
+>
+  <form class="acc-mfa-body" onsubmit={submitMFAOff}>
+    <p class="ed-subtitle">
+      {#if mfaOffMode === 'disable'}
+        Your account will be protected by the password only. Enter a code from your authenticator,
+        or one of your recovery codes, to confirm.
+      {:else}
+        Your current authenticator and recovery codes stop working. Enter a code from it, or a
+        recovery code, to continue to the new QR code.
+      {/if}
+    </p>
+    <Field label="Code or recovery code">
+      <input
+        class="dm-input acc-input-mono"
+        bind:value={mfaOffCode}
+        placeholder="000000"
+        autocomplete="one-time-code"
+      />
+    </Field>
+    <div class="acc-mfa-actions">
+      <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (mfaOffOpen = false)}>
+        Cancel
+      </button>
+      <button
+        type="submit"
+        class="dm-btn dm-btn-sm {mfaOffMode === 'disable' ? 'dm-btn-danger' : 'dm-btn-primary'}"
+        disabled={mfaOffCode.trim().length < 6 || mfaOffBusy}
+      >
+        {mfaOffBusy ? 'Checking…' : mfaOffMode === 'disable' ? 'Disable 2FA' : 'Continue'}
+      </button>
+    </div>
+  </form>
 </EditorialModal>
 
 <style>

@@ -18,7 +18,8 @@ import (
 //   Docker:  {"source":"docker", "type":"container", "action":"start", "id":"...", "name":"..."}
 //   Stacks:  {"source":"stacks", "type":"modified|created|removed", "name":"...", "file":"compose.yaml"}
 func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
-	if !h.requireWSTicketPerm(w, r, rbac.PermSystemView) {
+	r, ok := h.wsAuth(w, r, rbac.PermSystemView)
+	if !ok {
 		return
 	}
 

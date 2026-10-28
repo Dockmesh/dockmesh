@@ -18,7 +18,8 @@ import (
 // WSStats streams normalized container stats over a WebSocket.
 // Auth via ?ticket= query parameter (§15.8). Honours ?host= for remote agents.
 func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
-	if !h.requireWSTicketPerm(w, r, rbac.PermContainersView) {
+	r, ok := h.wsAuth(w, r, rbac.PermContainersView)
+	if !ok {
 		return
 	}
 
@@ -29,9 +30,7 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	containerID := chi.URLParam(r, "id")
-	scopeReq := h.containerScopeReq(r.Context(), target.ID(), containerID)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermContainersLogs, scopeReq, "container "+containerID)
+	if !h.wsContainerAccess(w, r, rbac.PermContainersView, target.ID(), containerID) {
 		return
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
