@@ -54,6 +54,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ### Fixed
 
+- The backup wizards now prefill the data directory's `backups` folder (or the first allowed
+  local directory) for local targets instead of `./data/backups`, which the allowed-directory
+  check rejected.
 - The users list now marks locked accounts and offers an Unlock action, so an admin no longer
   needs the API or `dockmesh admin unlock` to release someone locked out by failed sign-ins.
 - The installer now detects an existing Dockmesh service reliably on upgrade, always restarts

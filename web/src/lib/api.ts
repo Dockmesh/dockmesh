@@ -1829,6 +1829,7 @@ export const api = {
       request<BackupTarget>('/backups/targets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
     updateTarget: (id: number, input: { name: string; type: string; config: any }) =>
       request<BackupTarget>(`/backups/targets/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+    localPath: () => request<{ path: string }>('/backups/local-path').then((r) => r.path).catch(() => ''),
     deleteTarget: (id: number) => request<void>(`/backups/targets/${id}`, { method: 'DELETE' }),
     testTarget: (id: number) => request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string }>(`/backups/targets/${id}/test`, { method: 'POST' }),
     testTargetConfig: (type: string, config: any, targetId?: number) =>

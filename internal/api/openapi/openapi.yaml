@@ -3641,6 +3641,28 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/BackupVerifyResult" }
 
+  /backups/local-path:
+    get:
+      operationId: backups.local_path
+      tags: [backups]
+      summary: Suggested directory for a new local backup target
+      description: |
+        The data directory's `backups` folder when it lies inside an allowed
+        local root, otherwise the first allowed root. Empty when none is
+        configured.
+      responses:
+        "200":
+          description: Suggested path.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [path]
+                properties:
+                  path: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /backups/targets:
     get:
       operationId: backups.list_targets

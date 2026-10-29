@@ -23,7 +23,9 @@ type LocalConfig struct {
 const (
 	LocalRootsSetting       = "backups.local_roots"
 	LocalRootsSeededSetting = "backups.local_roots_seeded"
-	DefaultLocalPath        = "./data/backups"
+	// DefaultLocalPath is where an unset path pointed before allowed roots
+	// existed; new targets get DefaultLocalDir instead.
+	DefaultLocalPath = "./data/backups"
 )
 
 // ErrLocalPathNotAllowed is returned for a local target outside every
@@ -47,6 +49,31 @@ func ParseRoots(v string) []string {
 		}
 	}
 	return out
+}
+
+// DefaultLocalDir is the directory to suggest for a new local target:
+// <dataDir>/backups when an allowed root covers it, else the first allowed
+// root.
+func DefaultLocalDir(dataDir string) string {
+	var roots []string
+	if localRoots != nil {
+		roots = localRoots()
+	}
+	var preferred string
+	if dataDir != "" {
+		if abs, err := filepath.Abs(filepath.Join(dataDir, "backups")); err == nil {
+			preferred = abs
+		}
+	}
+	for _, r := range roots {
+		if preferred != "" && Within(r, preferred) {
+			return preferred
+		}
+	}
+	if len(roots) > 0 {
+		return roots[0]
+	}
+	return preferred
 }
 
 // CheckLocalConfig rejects a local target config whose path is outside

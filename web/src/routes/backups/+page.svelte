@@ -5,6 +5,7 @@
   // grids per the mockup, runs as a cleaner editorial table. Wizards
   // and the restore modal stay on the legacy `Modal` component for now —
   // they're functional and the editorial rebuild of those is a follow-up.
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { api, ApiError } from '$lib/api';
@@ -162,7 +163,14 @@
   // Structured form fields
   let jName = $state('');
   let jTargetType = $state<'local' | 's3'>('local');
-  let jLocalPath = $state('./data/backups');
+  let jLocalPath = $state('');
+  let defaultLocalPath = $state('');
+  onMount(() => {
+    void api.backups.localPath().then((p) => {
+      defaultLocalPath = p;
+      if (!jLocalPath) jLocalPath = p;
+    });
+  });
   let jS3Endpoint = $state('');
   let jS3Bucket = $state('');
   let jS3AccessKey = $state('');
@@ -224,7 +232,7 @@
   let tSaving = $state(false);
 
   const targetTypes = [
-    { value: 'local', label: 'Local Directory', icon: '💾', fields: [{ key: 'path', label: 'Path', placeholder: './data/backups' }] },
+    { value: 'local', label: 'Local Directory', icon: '💾', fields: [{ key: 'path', label: 'Path', placeholder: '/srv/backups' }] },
     { value: 'sftp', label: 'SFTP (SSH)', icon: '🔐', fields: [{ key: 'host', label: 'Host', placeholder: 'nas.local' }, { key: 'port', label: 'Port', placeholder: '22' }, { key: 'username', label: 'Username', placeholder: '' }, { key: 'password', label: 'Password', placeholder: '' }, { key: 'path', label: 'Remote path', placeholder: '/backups' }] },
     { value: 'smb', label: 'SMB / NAS', icon: '📁', fields: [{ key: 'host', label: 'Server', placeholder: '192.168.1.100' }, { key: 'port', label: 'Port', placeholder: '445' }, { key: 'share', label: 'Share name', placeholder: 'backups' }, { key: 'username', label: 'Username', placeholder: '' }, { key: 'password', label: 'Password', placeholder: '' }, { key: 'path', label: 'Path within share', placeholder: 'dockmesh' }] },
     { value: 'webdav', label: 'WebDAV (Nextcloud)', icon: '☁️', fields: [{ key: 'url', label: 'WebDAV URL', placeholder: 'https://nextcloud.example.com/remote.php/dav/files/user/' }, { key: 'username', label: 'Username', placeholder: '' }, { key: 'password', label: 'Password', placeholder: '' }, { key: 'path', label: 'Path', placeholder: '/backups' }] },
@@ -505,7 +513,7 @@
 
   // Job CRUD
   function resetForm() {
-    jName = ''; jTargetType = 'local'; jLocalPath = './data/backups';
+    jName = ''; jTargetType = 'local'; jLocalPath = defaultLocalPath;
     jS3Endpoint = ''; jS3Bucket = ''; jS3AccessKey = ''; jS3SecretKey = ''; jS3Region = ''; jS3SSL = true;
     jSources = []; jSchedule = '0 3 * * *';
     jRetentionCount = 7; jRetentionDays = 0; jEncrypt = false; jEnabled = true;
@@ -580,7 +588,7 @@
       jS3AccessKey = cfg.access_key ?? ''; jS3SecretKey = cfg.secret_key ?? '';
       jS3Region = cfg.region ?? ''; jS3SSL = cfg.use_ssl !== false;
     } else {
-      jLocalPath = cfg.path ?? './data/backups';
+      jLocalPath = cfg.path ?? defaultLocalPath;
     }
     // P.13.5: keep at most one source on edit. Older multi-source
     // jobs that pre-date the validation are reduced to their first
@@ -1489,7 +1497,7 @@
           </select>
         </div>
         {#if jTargetType === 'local'}
-          <Input label="Path" bind:value={jLocalPath} placeholder="./data/backups" />
+          <Input label="Path" bind:value={jLocalPath} placeholder={defaultLocalPath || '/srv/backups'} />
         {:else if jTargetType === 's3'}
           <div class="grid grid-cols-2 gap-3">
             <Input label="Endpoint" bind:value={jS3Endpoint} placeholder="s3.amazonaws.com" />

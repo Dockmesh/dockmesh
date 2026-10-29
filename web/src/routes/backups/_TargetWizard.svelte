@@ -28,7 +28,8 @@
   type TargetType = 'local' | 'sftp' | 'smb' | 'webdav' | 's3';
   let type = $state<TargetType>('local');
   let name = $state('new-target');
-  let cfg = $state<Record<string, any>>({ path: './data/backups' });
+  let cfg = $state<Record<string, any>>({ path: '' });
+  let defaultPath = $state('');
 
   // Test state. We start in 'idle' on each step-3 entry — the operator
   // explicitly clicks "Run test" to fire the probe. That avoids burning
@@ -64,7 +65,11 @@
     } else {
       type = 'local';
       name = 'new-target';
-      cfg = { path: './data/backups' };
+      cfg = { path: defaultPath };
+      void api.backups.localPath().then((p) => {
+        defaultPath = p;
+        if (!editing && !cfg.path) cfg = { ...cfg, path: p };
+      });
     }
   });
 
@@ -217,7 +222,7 @@
         <div class="wiz-field">
           <label class="wiz-field-label" for="t-path">Path</label>
           <span class="wiz-field-hint">Absolute path. Must be writable by the dockmesh service user.</span>
-          <input id="t-path" class="wiz-input wiz-input-mono" placeholder="./data/backups" value={cfg.path ?? ''} oninput={(e) => (cfg = { ...cfg, path: (e.currentTarget as HTMLInputElement).value })} />
+          <input id="t-path" class="wiz-input wiz-input-mono" placeholder={defaultPath || '/srv/backups'} value={cfg.path ?? ''} oninput={(e) => (cfg = { ...cfg, path: (e.currentTarget as HTMLInputElement).value })} />
         </div>
       {:else if type === 'sftp'}
         <div class="wiz-grid-2">

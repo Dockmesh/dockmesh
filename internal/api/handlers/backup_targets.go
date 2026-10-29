@@ -29,6 +29,16 @@ func (h *Handlers) ListBackupTargets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// BackupLocalPath tells the backup wizards which directory to prefill for
+// a local target.
+func (h *Handlers) BackupLocalPath(w http.ResponseWriter, r *http.Request) {
+	path := ""
+	if h.Backups != nil {
+		path = h.Backups.DefaultLocalPath()
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"path": path})
+}
+
 func (h *Handlers) CreateBackupTarget(w http.ResponseWriter, r *http.Request) {
 	if h.BackupTargets == nil {
 		writeError(w, http.StatusServiceUnavailable, "backup targets unavailable")

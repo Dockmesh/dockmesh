@@ -699,6 +699,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/backups/jobs", h.ListBackupJobs)
 				r.Get("/backups/jobs/{id}", h.GetBackupJob)
 				r.Get("/backups/targets", h.ListBackupTargets)
+				r.Get("/backups/local-path", h.BackupLocalPath)
 				r.Get("/backups/runs", h.ListBackupRuns)
 				r.Get("/backups/runs/{id}", h.GetBackupRun)
 				r.Get("/backups/runs/{id}/log", h.GetBackupRunLog)
