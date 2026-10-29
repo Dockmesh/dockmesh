@@ -33,10 +33,8 @@ func syncStagedMountNotices(ctx context.Context, n *notices.Service, reg *host.R
 			Audience: notices.Admins(),
 			Severity: notices.SevWarning,
 			Title:    fmt.Sprintf("Redeploy stack %s on %s", m.Stack, m.HostName),
-			Body: "This stack uses a relative bind mount (./path) and was deployed by an earlier " +
-				"version that pointed it at a temporary directory. Redeploy it: the mount then uses " +
-				"the stack directory, and files the container wrote are copied there if it is empty.",
-			Link: "/stacks/" + m.Stack,
+			Body:     stagedMountBody(m),
+			Link:     "/stacks/" + m.Stack,
 		}); err != nil {
 			return err
 		}
@@ -53,6 +51,21 @@ func syncStagedMountNotices(ctx context.Context, n *notices.Service, reg *host.R
 		}
 	}
 	return nil
+}
+
+// stagedMountBody puts the agent upgrade first on agent hosts: an older
+// agent stages the redeploy in a temporary directory again.
+func stagedMountBody(m host.StagedMount) string {
+	body := "This stack uses a relative bind mount (./path) and was deployed by an earlier " +
+		"version that pointed it at a temporary directory. "
+	if m.HostID != "" && m.HostID != "local" {
+		body += fmt.Sprintf("Upgrade the agent first (Hosts → %s → Upgrade agent) and redeploy "+
+			"the stack afterwards: ", m.HostName)
+	} else {
+		body += "Redeploy it: "
+	}
+	return body + "the mount then uses the stack directory, and files the container wrote are " +
+		"copied there if it is empty."
 }
 
 // reportBindCopies raises a notice when data couldn't be moved out of an
