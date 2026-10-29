@@ -82,9 +82,9 @@ func (s *SMB) Open(ctx context.Context, path string) (io.WriteCloser, error) {
 	// comes from the slash form.
 	dir := strings.ReplaceAll(pathpkg.Dir(filepath.ToSlash(filepath.Join(s.cfg.Path, path))), "/", "\\")
 	if err := share.MkdirAll(dir, 0o755); err != nil {
-		share.Umount()
-		session.Logoff()
-		conn.Close()
+		_ = share.Umount()
+		_ = session.Logoff()
+		_ = conn.Close()
 		return nil, fmt.Errorf("smb: create %s: %w", dir, err)
 	}
 	f, err := share.Create(full)
