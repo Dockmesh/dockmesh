@@ -7308,6 +7308,9 @@ components:
         admin_group: { type: string }
         operator_group: { type: string }
         default_role: { type: string }
+        allow_email_link:
+          type: boolean
+          description: Attach a login to an existing account with the same email when the IdP marks the email verified. Off by default.
         default_scope_tags:
           type: array
           items: { type: string }
@@ -7332,6 +7335,9 @@ components:
         admin_group: { type: string }
         operator_group: { type: string }
         default_role: { type: string }
+        allow_email_link:
+          type: boolean
+          description: Attach a login to an existing account with the same email when the IdP marks the email verified. Off by default.
         enabled: { type: boolean }
 
     ApiToken:

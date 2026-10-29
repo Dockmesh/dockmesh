@@ -108,3 +108,33 @@ func TestBackupDownloadPermissionMigrationQuietOnFreshInstall(t *testing.T) {
 		t.Fatalf("fresh install raised %d notices", n)
 	}
 }
+
+// Accounts that already signed in through SSO keep following the IdP's
+// role; local accounts count as manually managed.
+func TestSSOLinkingMigration(t *testing.T) {
+	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := migrateUpTo(database, "061_backup_download_permission.sql"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO users (id, username, password, role, ldap_provider, ldap_subject) VALUES
+		('u1', 'local', 'x', 'admin', NULL, NULL), ('u2', 'dir', 'x', 'viewer', 'corp', 'cn=dir')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{"u1": "manual", "u2": "sso"} {
+		var got string
+		if err := database.QueryRow(`SELECT role_source FROM users WHERE id = ?`, id).Scan(&got); err != nil || got != want {
+			t.Errorf("%s role_source = %q (%v), want %q", id, got, err, want)
+		}
+	}
+	var body string
+	if err := database.QueryRow(`SELECT body FROM notices WHERE key = 'sso-linked-accounts-review'`).Scan(&body); err != nil || !strings.Contains(body, "1 account(s) linked to SSO.") {
+		t.Errorf("review notice: %q (%v)", body, err)
+	}
+}
