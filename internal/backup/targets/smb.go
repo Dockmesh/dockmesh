@@ -2,6 +2,7 @@ package targets
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -226,11 +227,17 @@ type smbWriter struct {
 }
 
 func (w *smbWriter) Write(p []byte) (int, error) { return w.f.Write(p) }
+
+// Close reports the file's close (the last write reaching the share).
+// Logoff already closes the connection.
 func (w *smbWriter) Close() error {
-	w.f.Close()
-	w.share.Umount()
-	w.session.Logoff()
-	return w.conn.Close()
+	err := w.f.Close()
+	_ = w.share.Umount()
+	_ = w.session.Logoff()
+	if cerr := w.conn.Close(); err == nil && !errors.Is(cerr, net.ErrClosed) {
+		err = cerr
+	}
+	return err
 }
 
 type smbReader struct {
@@ -242,8 +249,11 @@ type smbReader struct {
 
 func (r *smbReader) Read(p []byte) (int, error) { return r.f.Read(p) }
 func (r *smbReader) Close() error {
-	r.f.Close()
-	r.share.Umount()
-	r.session.Logoff()
-	return r.conn.Close()
+	err := r.f.Close()
+	_ = r.share.Umount()
+	_ = r.session.Logoff()
+	if cerr := r.conn.Close(); err == nil && !errors.Is(cerr, net.ErrClosed) {
+		err = cerr
+	}
+	return err
 }
