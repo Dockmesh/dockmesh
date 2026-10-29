@@ -1778,6 +1778,7 @@ paths:
           required: false
           schema: { type: string }
           description: Optional overlay name — overrides the stack's default `active_environment`.
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
       responses:
         "200":
           description: Deploy result with created/updated/unchanged services.
@@ -1787,6 +1788,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/StackModifiedOutside" }
         "422":
           description: Compose validation failed — see message.
           content:
@@ -1854,6 +1856,8 @@ paths:
         row and re-runs Deploy. Env is deliberately kept as-is so current
         secrets aren't clobbered. The rollback itself becomes a new
         history row tagged "rollback to #ID".
+      parameters:
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
       responses:
         "200":
           description: Rollback completed.
@@ -1869,6 +1873,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/StackModifiedOutside" }
         "500":
           description: Redeploy failed — the compose.yaml has already been swapped, inspect and retry or roll forward.
           content:
@@ -3203,6 +3208,28 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /backups/jobs/{id}/accept-host-key:
+    post:
+      operationId: backups.accept_host_key
+      tags: [backups]
+      summary: Trust the changed SFTP host key a job last saw
+      description: |
+        SFTP jobs record the server's host key on their first connection
+        and fail when it later changes; the new key is kept as
+        `target_config.host_key_pending`. This moves it to `host_key`.
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "204": { description: Accepted; the next run uses the new key. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: No changed host key is waiting for approval.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /backups/jobs/{id}/run:
     post:
       operationId: backups.run_job
@@ -3501,16 +3528,47 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/BackupTargetTestResult" }
 
+  /backups/targets/{id}/accept-host-key:
+    post:
+      operationId: backups.accept_target_host_key
+      tags: [backups]
+      summary: Trust the changed SFTP host key a saved target last saw
+      description: |
+        Saved SFTP targets record the server's host key on their first
+        connection and refuse a different key later; the new key is kept
+        as `config.host_key_pending`. This moves it to `host_key`.
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "204": { description: Accepted; the next connection uses the new key. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: No changed host key is waiting for approval.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /backups/targets/test-config:
     post:
       operationId: backups.test_target_config
       tags: [backups]
       summary: Verify an unsaved target config (pre-create smoke test)
+      description: |
+        `host_key` fields in the config are ignored. With `target_id`
+        set to the saved target being edited, an SFTP server must present
+        that target's recorded host key.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/BackupTargetInput" }
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/BackupTargetInput"
+                - type: object
+                  properties:
+                    target_id: { type: integer, format: int64 }
       responses:
         "200":
           description: Connection OK.
@@ -6938,6 +6996,13 @@ components:
         name: { type: string }
         compose: { type: string }
         env: { type: string }
+        modified_outside:
+          type: array
+          items: { type: string }
+          description: Stack files changed outside Dockmesh since it last wrote them; the next deploy needs `confirm_external=1`.
+        mounts_stack_dir:
+          type: boolean
+          description: A service bind-mounts the stack directory writable and can change compose.yaml and .env.
 
     StackDeployment:
       type: object
@@ -8226,6 +8291,12 @@ components:
         type: string
         format: uuid
       description: User id (UUID).
+    ConfirmExternalQuery:
+      name: confirm_external
+      in: query
+      required: false
+      schema: { type: string, enum: ["1"] }
+      description: Deploy stack files changed outside Dockmesh as they are and record them as reviewed.
     DrainIDPath:
       name: drain_id
       in: path
@@ -8236,6 +8307,20 @@ components:
       description: Drain run id.
 
   responses:
+    StackModifiedOutside:
+      description: compose.yaml or .env changed outside Dockmesh; repeat with `confirm_external=1` after reviewing them.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error, code, files]
+            properties:
+              error: { type: string }
+              code: { type: string, enum: [modified_outside] }
+              stack: { type: string }
+              files:
+                type: array
+                items: { type: string }
     Unauthorized:
       description: Missing or invalid bearer token.
       content:

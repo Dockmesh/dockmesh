@@ -8,11 +8,12 @@ import (
 	"os"
 	"path/filepath"
 
+	composetypes "github.com/compose-spec/compose-go/v2/types"
+	dtypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/system"
-	dtypes "github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/volume"
 )
 
 // authResolver matches the interface compose.Service expects so the
@@ -34,9 +35,12 @@ type progressTracker interface {
 // LocalHost wraps the embedded docker.Client. It's identified by the
 // fixed id "local".
 type LocalHost struct {
-	cli     *docker.Client
-	auth    authResolver
-	tracker progressTracker
+	cli      *docker.Client
+	auth     authResolver
+	tracker  progressTracker
+	stackDir func(name string) (string, error)
+
+	afterDeploy DeployHook
 }
 
 func NewLocal(cli *docker.Client) *LocalHost { return &LocalHost{cli: cli} }
@@ -46,6 +50,27 @@ func NewLocal(cli *docker.Client) *LocalHost { return &LocalHost{cli: cli} }
 // the central registries store back authenticated pulls without
 // touching every compose.NewService call site.
 func (h *LocalHost) SetAuthResolver(r authResolver) { h.auth = r }
+
+// SetStackDirResolver tells the host where a stack's persistent directory
+// is, so relative bind mounts resolve there and not in the staging copy.
+func (h *LocalHost) SetStackDirResolver(f func(name string) (string, error)) { h.stackDir = f }
+
+// loadStaged parses a compose file staged in dir and points relative bind
+// mounts at the persistent stack directory.
+func (h *LocalHost) loadStaged(ctx context.Context, dir, name, envContent string) (*composetypes.Project, error) {
+	proj, err := compose.LoadProject(ctx, dir, name, envContent)
+	if err != nil {
+		return nil, err
+	}
+	if h.stackDir != nil {
+		stackDir, err := h.stackDir(name)
+		if err != nil {
+			return nil, err
+		}
+		compose.RebaseBindSources(proj, dir, stackDir)
+	}
+	return proj, nil
+}
 
 // SetProgressTracker propagates deploy-progress reporting into every
 // fresh compose.Service this host constructs, so the UI's live
@@ -155,8 +180,8 @@ func (h *LocalHost) StartExec(ctx context.Context, id string, cmd []string) (Exe
 }
 
 // DeployStack writes compose+env to a temp dir, parses, and runs the
-// shared compose executor against the local docker daemon. Same code
-// path as the agent's deploy handler — proves the seam works.
+// shared compose executor against the local docker daemon. Relative bind
+// mounts are rebased onto the persistent stack directory.
 func (h *LocalHost) DeployStack(ctx context.Context, name, composeYAML, envContent string) (*compose.DeployResult, error) {
 	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
@@ -166,12 +191,15 @@ func (h *LocalHost) DeployStack(ctx context.Context, name, composeYAML, envConte
 		return nil, err
 	}
 	defer cleanup()
-	proj, err := compose.LoadProject(ctx, dir, name, envContent)
+	proj, err := h.loadStaged(ctx, dir, name, envContent)
 	if err != nil {
 		return nil, err
 	}
-	svc := h.newComposeSvc()
-	return svc.DeployProject(ctx, proj)
+	res, err := h.newComposeSvc().DeployProject(ctx, proj)
+	if err == nil && h.afterDeploy != nil {
+		h.afterDeploy(ctx, h.ID(), name, res)
+	}
+	return res, err
 }
 
 func (h *LocalHost) StopStack(ctx context.Context, name string) error {
@@ -202,10 +230,8 @@ func (h *LocalHost) CleanupPreview(ctx context.Context, name string) (*compose.C
 	return h.newComposeSvc().CleanupPreview(ctx, name)
 }
 
-// writeStagingDir creates a tmp directory containing compose.yaml and an
-// optional .env file. Used both by LocalHost.DeployStack on the central
-// server (so we go through the same parse path as the agent) and by the
-// agent's own deploy handler.
+// writeStagingDir creates a temp directory holding compose.yaml and an
+// optional .env.
 func writeStagingDir(name, composeYAML, envContent string) (string, func(), error) {
 	base, err := os.MkdirTemp("", "dockmesh-deploy-"+name+"-")
 	if err != nil {
@@ -225,8 +251,8 @@ func writeStagingDir(name, composeYAML, envContent string) (string, func(), erro
 	return base, cleanup, nil
 }
 
-// WriteStagingDir is the exported helper the agent uses to materialise
-// the same compose+env layout into its own /var/lib/dockmesh/staging.
+// WriteStagingDir is exported for the agent's scale and scale-check
+// handlers.
 func WriteStagingDir(name, composeYAML, envContent string) (string, func(), error) {
 	return writeStagingDir(name, composeYAML, envContent)
 }
@@ -424,7 +450,7 @@ func (h *LocalHost) ScaleService(ctx context.Context, name, composeYAML, envCont
 		return nil, err
 	}
 	defer cleanup()
-	proj, err := compose.LoadProject(ctx, dir, name, envContent)
+	proj, err := h.loadStaged(ctx, dir, name, envContent)
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +466,7 @@ func (h *LocalHost) CheckScale(ctx context.Context, name, composeYAML, envConten
 		return nil, err
 	}
 	defer cleanup()
-	proj, err := compose.LoadProject(ctx, dir, name, envContent)
+	proj, err := h.loadStaged(ctx, dir, name, envContent)
 	if err != nil {
 		return nil, err
 	}
@@ -460,7 +486,7 @@ func (h *LocalHost) RollingReplace(ctx context.Context, name, composeYAML, envCo
 		return nil, err
 	}
 	defer cleanup()
-	proj, err := compose.LoadProject(ctx, dir, name, envContent)
+	proj, err := h.loadStaged(ctx, dir, name, envContent)
 	if err != nil {
 		return nil, err
 	}

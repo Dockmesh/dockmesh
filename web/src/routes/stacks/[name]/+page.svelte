@@ -119,6 +119,20 @@
   }
 
   let externalChange = $state<{ file: string; type: string } | null>(null);
+  let modifiedOutside = $state<string[]>([]);
+  let mountsStackDir = $state(false);
+
+  // A deploy of stack files changed outside Dockmesh needs an explicit OK.
+  async function confirmExternalChanges(err: unknown): Promise<boolean> {
+    if (!(err instanceof ApiError) || err.status !== 409 || err.body?.code !== 'modified_outside') return false;
+    const files: string = (err.body.files as string[] | undefined)?.join(', ') || 'compose.yaml or .env';
+    return confirm.ask({
+      title: 'Stack files changed outside Dockmesh',
+      message: `${files} of "${err.body.stack ?? name}" changed since Dockmesh last wrote them.`,
+      body: 'Something other than Dockmesh changed these files, for example a container that mounts the stack directory. Review them in the editor before you deploy them as they are.',
+      confirmLabel: 'Deploy anyway', danger: true,
+    });
+  }
   let dirty = $state(false);
 
   // Tab state. P.12.6 introduced overview+history; the editorial detail
@@ -735,7 +749,14 @@
     if (!rollbackEntry) return;
     rollbackBusy = true;
     try {
-      const res = await api.stacks.rollback(name, rollbackEntry.id, stackHost);
+      const entryId = rollbackEntry.id;
+      let res;
+      try {
+        res = await api.stacks.rollback(name, entryId, stackHost);
+      } catch (err) {
+        if (!(await confirmExternalChanges(err))) throw err;
+        res = await api.stacks.rollback(name, entryId, stackHost, true);
+      }
       toast.success(
         `Rolled back to #${res.rolled_back_to}`,
         `${res.result.services.length} service(s) redeployed`
@@ -1225,6 +1246,8 @@
       const detail = await api.stacks.get(name);
       compose = detail.compose;
       env = detail.env ?? '';
+      modifiedOutside = detail.modified_outside ?? [];
+      mountsStackDir = !!detail.mounts_stack_dir;
       stackStatus = detail.status === 'needs_recovery' ? 'needs_recovery' : 'ok';
       if (stackStatus === 'needs_recovery') {
         latestBackupRun = undefined;
@@ -1287,7 +1310,15 @@
     if (anyBusy) return;
     busy = true;
     try {
-      const res = await stackOps.run(stackHost, name, () => api.stacks.deploy(name, stackHost));
+      const res = await stackOps.run(stackHost, name, async () => {
+        try {
+          return await api.stacks.deploy(name, stackHost);
+        } catch (err) {
+          if (!(await confirmExternalChanges(err))) throw err;
+          return api.stacks.deploy(name, stackHost, undefined, true);
+        }
+      });
+      modifiedOutside = [];
       toast.success('Deployed', `${res.services.length} service(s) on ${hosts.selected?.name ?? 'local'}`);
       await refreshStatus();
       // If the user has opened History at least once, freshen it so
@@ -1637,6 +1668,33 @@
           Reload
         </Button>
         <Button size="sm" variant="ghost" onclick={() => (externalChange = null)}>Ignore</Button>
+      </div>
+    </div>
+  {/if}
+
+  {#if modifiedOutside.length > 0}
+    <div class="dm-card p-4 border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] flex items-start gap-3">
+      <AlertTriangle class="w-5 h-5 text-[var(--color-warning-400)] shrink-0 mt-0.5" />
+      <div class="flex-1 text-sm">
+        <div class="font-medium text-[var(--color-warning-400)]">
+          Modified outside Dockmesh: {modifiedOutside.join(', ')}
+        </div>
+        <div class="text-xs text-[var(--fg-muted)] mt-1">
+          These files changed since Dockmesh last wrote them. Review them before deploying; the next deploy asks for confirmation.
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if mountsStackDir}
+    <div class="dm-card p-4 border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] flex items-start gap-3">
+      <AlertTriangle class="w-5 h-5 text-[var(--color-warning-400)] shrink-0 mt-0.5" />
+      <div class="flex-1 text-sm">
+        <div class="font-medium text-[var(--color-warning-400)]">A service mounts the stack directory</div>
+        <div class="text-xs text-[var(--fg-muted)] mt-1">
+          Its containers can change compose.yaml and .env. Dockmesh flags such changes and asks before the next deploy.
+          Mount a subdirectory (<code>./data:/app/data</code>) or add <code>:ro</code> to avoid this.
+        </div>
       </div>
     </div>
   {/if}

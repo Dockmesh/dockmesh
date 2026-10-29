@@ -287,7 +287,7 @@
     const config: Record<string, any> = { ...tConfig };
     if (config.port) config.port = parseInt(config.port) || 0;
     try {
-      testResult = await api.backups.testTargetConfig(tType, config);
+      testResult = await api.backups.testTargetConfig(tType, config, editingTarget?.id);
     } catch (err) {
       testResult = { status: 'error', error: err instanceof ApiError ? err.message : String(err) };
     } finally { testBusy = false; }
@@ -640,6 +640,46 @@
     try { await api.backups.deleteJob(j.id); toast.success('Deleted'); await loadJobs(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
   }
 
+  function pendingHostKey(j: BackupJob): boolean {
+    return j.target_type === 'sftp' && !!(j.target_config as { host_key_pending?: string } | null)?.host_key_pending;
+  }
+
+  function targetPendingHostKey(t: BackupTarget): boolean {
+    return t.type === 'sftp' && !!(t.config as { host_key_pending?: string } | null)?.host_key_pending;
+  }
+
+  async function acceptTargetHostKey(t: BackupTarget) {
+    if (!(await confirm.ask({
+      title: 'Accept new SFTP host key',
+      message: `Trust the new host key for target "${t.name}"?`,
+      body: 'Only do this if you know why the server key changed (server reinstalled, key rotated). Otherwise someone may be intercepting the connection.',
+      confirmLabel: 'Accept key', danger: true,
+    }))) return;
+    try {
+      await api.backups.acceptTargetHostKey(t.id);
+      toast.success('Host key accepted');
+      await loadTargets();
+    } catch (err) {
+      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
+  async function acceptHostKey(j: BackupJob) {
+    if (!(await confirm.ask({
+      title: 'Accept new SFTP host key',
+      message: `Trust the new host key for "${j.name}"?`,
+      body: 'Only do this if you know why the server key changed (server reinstalled, key rotated). Otherwise someone may be intercepting the connection.',
+      confirmLabel: 'Accept key', danger: true,
+    }))) return;
+    try {
+      await api.backups.acceptHostKey(j.id);
+      toast.success('Host key accepted');
+      await loadJobs();
+    } catch (err) {
+      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
   async function runJob(j: BackupJob) {
     if (!(await confirm.ask({ title: 'Run backup now', message: `Run "${j.name}" now?`, body: 'The backup starts in the background. Progress appears under the Runs tab.', confirmLabel: 'Run' }))) return;
     try { await api.backups.runJob(j.id); toast.success('Backup started'); await loadJobs(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
@@ -839,6 +879,11 @@
               </button>
               <div class="bk-job-card-actions">
                 {#if !j.enabled}<span class="dm-pill dm-pill-neutral bk-mini-pill">disabled</span>{/if}
+                {#if pendingHostKey(j)}
+                  <button type="button" class="dm-btn dm-btn-danger dm-btn-xs" onclick={(e) => { e.stopPropagation(); acceptHostKey(j); }} title="The SFTP server presented a different host key">
+                    Accept new host key
+                  </button>
+                {/if}
                 <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs bk-icon-btn" onclick={(e) => { e.stopPropagation(); runJob(j); }} title="Run now" disabled={!j.enabled}>
                   <Play size={11} strokeWidth={1.5} />
                 </button>
@@ -1141,6 +1186,11 @@
                 tested {fmtTime(t.last_checked_at)}
               </span>
               <span class="bk-target-card-foot-spacer"></span>
+              {#if targetPendingHostKey(t)}
+                <button type="button" class="dm-btn dm-btn-danger dm-btn-xs" onclick={() => acceptTargetHostKey(t)} title="The SFTP server presented a different host key">
+                  Accept new host key
+                </button>
+              {/if}
               <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => openTargetDrawer(t)} title="Open detail">
                 Detail
               </button>

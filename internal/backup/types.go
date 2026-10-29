@@ -105,5 +105,8 @@ var (
 	ErrUnknownTargetType = errors.New("unknown target type")
 	ErrUnknownSourceType = errors.New("unknown source type")
 	ErrJobNotFound       = errors.New("job not found")
+	// ErrEncryptUnavailable refuses encrypted backups while the secrets
+	// service is disabled: the archive would be written in plaintext.
+	ErrEncryptUnavailable = errors.New("encryption needs secrets encryption enabled on the server (DOCKMESH_SECRETS_ENCRYPT_ENV)")
 	ErrRunNotFound       = errors.New("run not found")
 )

@@ -45,6 +45,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/system"
+	composetypes "github.com/compose-spec/compose-go/v2/types"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -994,9 +995,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 }
 
 // agentDeployStack stages compose+env into a tmpdir, parses, and runs the
-// shared executor against the local docker daemon. Same code path the
-// central server uses for a local deploy — code from internal/compose is
-// fully reusable thanks to the Service.DeployProject extraction.
+// shared executor against the local docker daemon.
 func agentDeployStack(ctx context.Context, cli *client.Client, req agents.StackDeployReq) (*compose.DeployResult, error) {
 	stagingBase := filepath.Join(envOr("DOCKMESH_DATA_DIR", "/var/lib/dockmesh"), "staging")
 	if err := os.MkdirAll(stagingBase, 0o700); err != nil {
@@ -1017,11 +1016,39 @@ func agentDeployStack(ctx context.Context, cli *client.Client, req agents.StackD
 		}
 	}
 
-	proj, err := compose.LoadProject(ctx, dir, req.Name, req.Env)
+	proj, err := agentLoadStaged(ctx, dir, req.Name, req.Env)
 	if err != nil {
 		return nil, err
 	}
 	return compose.NewService(dockerwrap.Wrap(cli), nil).DeployProject(ctx, proj)
+}
+
+// agentLoadStaged parses the staged compose file and points relative bind
+// mounts at the agent's persistent copy of the stack directory.
+func agentLoadStaged(ctx context.Context, dir, name, env string) (*composetypes.Project, error) {
+	if err := stacks.ValidateName(name); err != nil {
+		return nil, err
+	}
+	proj, err := compose.LoadProject(ctx, dir, name, env)
+	if err != nil {
+		return nil, err
+	}
+	// Created through an os.Root on the stacks directory, so the name can
+	// only ever create a directory inside it.
+	stacksBase := filepath.Join(envOr("DOCKMESH_DATA_DIR", "/var/lib/dockmesh"), "stacks")
+	if err := os.MkdirAll(stacksBase, 0o750); err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(stacksBase)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	if err := root.MkdirAll(name, 0o750); err != nil {
+		return nil, err
+	}
+	compose.RebaseBindSources(proj, dir, filepath.Join(stacksBase, name))
+	return proj, nil
 }
 
 func agentScaleService(ctx context.Context, cli *client.Client, req agents.StackScaleReq) (*compose.ScaleResult, error) {
@@ -1030,7 +1057,7 @@ func agentScaleService(ctx context.Context, cli *client.Client, req agents.Stack
 		return nil, err
 	}
 	defer cleanup()
-	proj, err := compose.LoadProject(ctx, dir, req.Name, req.Env)
+	proj, err := agentLoadStaged(ctx, dir, req.Name, req.Env)
 	if err != nil {
 		return nil, err
 	}
@@ -1043,7 +1070,7 @@ func agentCheckScale(ctx context.Context, cli *client.Client, req agents.StackCh
 		return nil, err
 	}
 	defer cleanup()
-	proj, err := compose.LoadProject(ctx, dir, req.Name, req.Env)
+	proj, err := agentLoadStaged(ctx, dir, req.Name, req.Env)
 	if err != nil {
 		return nil, err
 	}

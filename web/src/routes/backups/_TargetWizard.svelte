@@ -90,7 +90,7 @@
     const cfgPayload: Record<string, any> = { ...cfg };
     if (cfgPayload.port) cfgPayload.port = parseInt(cfgPayload.port) || 0;
     try {
-      const r = await api.backups.testTargetConfig(type, cfgPayload);
+      const r = await api.backups.testTargetConfig(type, cfgPayload, editing?.id);
       testResult = r;
       testDurationMs = Date.now() - testStartedAt;
       if (r.status === 'connected' || r.status === 'ok') {

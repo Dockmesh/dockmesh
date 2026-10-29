@@ -58,6 +58,7 @@ func rotateSecrets() error {
 		return fmt.Errorf("stacks manager: %w", err)
 	}
 	defer stacksMgr.Close()
+	defer attachSumStore(stacksMgr, cfg.DBPath)()
 	count, err := stacksMgr.ReencryptAll(oldSvc)
 	if err != nil {
 		return fmt.Errorf("reencrypt: %w", err)

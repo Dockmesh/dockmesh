@@ -9,6 +9,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -57,6 +58,9 @@ func (h *Handlers) CreateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !h.checkBackupJobScope(w, r, in) {
+		return
+	}
 	job, err := h.Backups.CreateJob(r.Context(), in)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -76,9 +80,15 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if !h.requireStoredJobAccess(w, r, id) {
+		return
+	}
 	var in backup.JobInput
 	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if !h.checkBackupJobScope(w, r, in) {
 		return
 	}
 	job, err := h.Backups.UpdateJob(r.Context(), id, in)
@@ -104,6 +114,9 @@ func (h *Handlers) DeleteBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if !h.requireStoredJobAccess(w, r, id) {
+		return
+	}
 	if err := h.Backups.DeleteJob(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -125,6 +138,9 @@ func (h *Handlers) AcknowledgeBackupJobReview(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if !h.requireStoredJobAccess(w, r, id) {
+		return
+	}
 	mode := chi.URLParam(r, "mode")
 	if mode != "keep" && mode != "disable" {
 		writeError(w, http.StatusBadRequest, "mode must be 'keep' or 'disable'")
@@ -138,6 +154,38 @@ func (h *Handlers) AcknowledgeBackupJobReview(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// AcceptBackupHostKey trusts the changed SFTP host key a job last saw.
+//
+//	POST /api/v1/backups/jobs/{id}/accept-host-key
+func (h *Handlers) AcceptBackupHostKey(w http.ResponseWriter, r *http.Request) {
+	if h.Backups == nil {
+		writeError(w, http.StatusServiceUnavailable, "backups not configured")
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if !h.requireStoredJobAccess(w, r, id) {
+		return
+	}
+	err = h.Backups.AcceptHostKey(r.Context(), id)
+	switch {
+	case errors.Is(err, backup.ErrJobNotFound):
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	case errors.Is(err, backup.ErrNoPendingHostKey):
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, "backup.accept_host_key", "backup-job:"+strconv.FormatInt(id, 10), nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handlers) RunBackupJob(w http.ResponseWriter, r *http.Request) {
 	if h.Backups == nil {
 		writeError(w, http.StatusServiceUnavailable, "backups not configured")
@@ -146,6 +194,9 @@ func (h *Handlers) RunBackupJob(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if !h.requireStoredJobAccess(w, r, id) {
 		return
 	}
 	run, err := h.Backups.RunNow(r.Context(), id)
@@ -329,4 +380,81 @@ func (h *Handlers) RestoreStackBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(r, audit.ActionContainerRollback, "backup:restore-stack:"+strconv.FormatInt(id, 10), map[string]string{"target": report.StackName})
 	writeJSON(w, http.StatusOK, report)
+}
+
+// checkBackupJobScope requires the job's host to be in the caller's scope.
+// Hooks run commands inside containers, so they also need containers.exec
+// and every hook container must be in the caller's host and role scope.
+func (h *Handlers) checkBackupJobScope(w http.ResponseWriter, r *http.Request, in backup.JobInput) bool {
+	hostID := in.HostID
+	if hostID == "" {
+		hostID = "local"
+	}
+	if !h.requireHostAccess(w, r, hostID) {
+		return false
+	}
+	hooks := append(append([]backup.Hook{}, in.PreHooks...), in.PostHooks...)
+	if len(hooks) == 0 {
+		return true
+	}
+	if !roleAllows(r, rbac.PermContainersExec) {
+		writeError(w, http.StatusForbidden, "backup hooks run commands in containers and need the containers.exec permission")
+		return false
+	}
+	for _, hk := range hooks {
+		if hk.Container == "" {
+			writeError(w, http.StatusBadRequest, "hook container required")
+			return false
+		}
+		// Inspect on the job's host: the hook runs there, and a container with
+		// the same name elsewhere says nothing about it.
+		req, ok := h.hookScopeReq(r, hostID, hk.Container)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "hook container "+hk.Container+" not found on the job's host")
+			return false
+		}
+		if !h.checkRoleScope(r, req) {
+			h.writeRoleScopeDenied(w, r, rbac.PermContainersExec, req, "container "+hk.Container)
+			return false
+		}
+	}
+	return true
+}
+
+func (h *Handlers) hookScopeReq(r *http.Request, hostID, container string) (rbac.ScopeRequest, bool) {
+	if h.Hosts == nil {
+		return rbac.ScopeRequest{}, false
+	}
+	target, err := h.Hosts.Pick(hostID)
+	if err != nil {
+		return rbac.ScopeRequest{}, false
+	}
+	info, err := target.InspectContainer(r.Context(), container)
+	if err != nil {
+		return rbac.ScopeRequest{}, false
+	}
+	req := h.hostScopeReq(r.Context(), hostID)
+	if info.Config != nil {
+		req.StackName = info.Config.Labels["com.docker.compose.project"]
+	}
+	return req, true
+}
+
+// requireStoredJobAccess checks the stored job's host against the caller's
+// scope before anything acts on it.
+func (h *Handlers) requireStoredJobAccess(w http.ResponseWriter, r *http.Request, id int64) bool {
+	job, err := h.Backups.GetJob(r.Context(), id)
+	if errors.Is(err, backup.ErrJobNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	hostID := job.HostID
+	if hostID == "" {
+		hostID = "local"
+	}
+	return h.requireHostAccess(w, r, hostID)
 }
