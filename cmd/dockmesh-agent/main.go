@@ -197,7 +197,7 @@ func main() {
 	// reports a smoothed value.
 	system.StartSampler(ctx)
 
-	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(os.Getpid())))
+	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(os.Getpid()))) //nolint:gosec // reconnect jitter, not a secret
 	attempt := 0
 	for ctx.Err() == nil {
 		started := time.Now()
@@ -311,7 +311,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 	}
 	var cs *compose.Service
 	if dockerCli != nil {
-		wrapped := dockerwrap.Wrap(dockerCli)
+		wrapped := dockerwrap.Wrap(dockerCli) //nolint:contextcheck // the monitor stops on Close, deferred below
 		defer wrapped.Close()
 		cs = compose.NewService(wrapped, nil)
 	}
@@ -345,7 +345,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 			// Registered before the goroutine starts so input that
 			// follows the open frame finds the stream.
 			reg := registerStream(ctxConn, open)
-			go startStream(conn, dockerCli, open, reg)
+			go startStream(conn, dockerCli, open, reg) //nolint:contextcheck // reg.ctx derives from ctxConn
 
 		case agents.FrameStreamData:
 			// Server → agent data on an existing stream (exec stdin).

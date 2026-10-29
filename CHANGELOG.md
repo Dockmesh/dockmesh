@@ -31,6 +31,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and at the top of the notifications drawer, with a link to where you fix it. The notice
   goes away on its own once the issue is fixed; non-critical ones can be hidden from the
   banner.
+- Agents renew their client certificate over their existing connection when it has less
+  than 30 days left; the host keeps its ID. Admins get a notice for any agent whose
+  certificate is within 14 days of expiry, and a critical one for an offline agent whose
+  certificate has expired, with the steps to re-enroll it under the same ID.
+- The hosts list and host page show "update recommended" for agents that speak an older
+  protocol than the server, and the host page shows when the agent's certificate expires.
 
 ### Changed
 - Host enrollment tokens now expire after 24 hours (`DOCKMESH_AGENT_ENROLL_TOKEN_TTL` changes
@@ -50,6 +56,23 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   or with `dockmesh admin reset-password`) signs out all of the user's sessions.
 - A role or scope change now applies to a signed-in user's next request instead of after up
   to 15 minutes.
+
+### Fixed
+- Deleting a host while one of its shells, log views or requests was open no longer crashes
+  the server, and the deleted host's connection is closed right away.
+- Remote deploys, scale-ups and backup pre-hooks on agents are no longer cut off after 30
+  seconds; they get time for image pulls and database dumps, and a cancelled request now
+  also stops on the agent.
+- Requests to a host that just reconnected go to the new connection instead of hanging on
+  the old one.
+- Remote volume exports (used by multi-host backups) slow the agent down instead of
+  silently dropping data when the server reads slower than the agent sends, and report a
+  failing `tar` as an error. Closing a remote shell no longer leaks a goroutine.
+- Agents notice a vanished server within 90 seconds, reconnect immediately and then back off
+  with jitter, and no longer leak a goroutine on every stack request.
+- Re-issuing the agent listener certificate (for example after adding `DOCKMESH_AGENT_SANS`)
+  works when the server runs as a non-root user, and a mismatched certificate and key from an
+  earlier failed attempt are replaced on the next start.
 
 ### Security
 - Each kind of signed token (session, refresh, two-factor challenge, WebSocket ticket, single

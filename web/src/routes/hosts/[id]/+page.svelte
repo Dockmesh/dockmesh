@@ -407,9 +407,11 @@
               <dt>agent version</dt>
               <dd class="font-mono">
                 {agent.version || '—'}
-                {#if needsUpgrade}<span class="ed-host-kv-warn">· server is on v{upgradePolicyVersion}</span>{/if}
+                {#if needsUpgrade}<span class="ed-host-kv-warn">· server is on v{upgradePolicyVersion}</span>
+                {:else if agent.update_recommended}<span class="ed-host-kv-warn">· agent update recommended</span>{/if}
               </dd>
               <dt>cert fingerprint</dt><dd class="font-mono ed-host-kv-fingerprint">{agent.cert_fingerprint || '—'}</dd>
+              <dt>cert expires</dt><dd class="font-mono">{agent.cert_expires_at ? fmtDate(agent.cert_expires_at) : '—'}</dd>
               <dt>last seen</dt><dd class="font-mono">{fmtAgo(agent.last_seen_at)}</dd>
               <dt>online since</dt><dd class="font-mono">{agent.online_since ? `${fmtAgo(agent.online_since)} (${fmtUptime(agent.online_since)} up)` : '—'}</dd>
               <dt>enrolled</dt><dd class="font-mono">{fmtDate(agent.created_at)}</dd>

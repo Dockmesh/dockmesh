@@ -44,10 +44,11 @@ func wsPair(t *testing.T) (*websocket.Conn, <-chan agents.Frame) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	conn, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	_ = resp.Body.Close()
 	t.Cleanup(func() { conn.Close() })
 	return conn, frames
 }

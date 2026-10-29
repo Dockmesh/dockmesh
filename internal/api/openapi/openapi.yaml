@@ -8056,6 +8056,17 @@ components:
         docker_version: { type: string }
         cert_fingerprint: { type: string }
         last_seen_at: { type: string, format: date-time }
+        online_since: { type: string, format: date-time }
+        cert_expires_at:
+          type: string
+          format: date-time
+          description: Expiry of the client cert the agent last connected with. Agents renew it automatically within 30 days of expiry.
+        protocol_version:
+          type: integer
+          description: Agent protocol version of the live session; only set while online.
+        update_recommended:
+          type: boolean
+          description: True while online if the agent speaks an older protocol than the server and lacks some features.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
