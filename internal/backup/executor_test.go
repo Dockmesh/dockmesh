@@ -30,7 +30,7 @@ type fakeHost struct {
 func (f *fakeHost) Pick(string) (hostBackupTarget, error) { return f, nil }
 
 func (f *fakeHost) VolumeTar(_ context.Context, name string) (io.ReadCloser, error) {
-	if tarErr := f.failVol[name]; tarErr != nil {
+	if tarErr, failing := f.failVol[name]; failing {
 		// Half an archive, then the error a dying tar would produce.
 		data := f.volumes[name]
 		return io.NopCloser(io.MultiReader(bytes.NewReader(data[:len(data)/2]), errReader{tarErr})), nil
