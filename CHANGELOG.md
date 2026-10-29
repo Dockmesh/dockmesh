@@ -84,6 +84,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   a field empty keeps the stored value, unless the server, URL or user changes, in which
   case the secret has to be entered again. Only unscoped users can change or delete roles,
   and an invite stops working once its creator could no longer grant it.
+- A user allowed to restore backups could restore a system backup into a volume and read the
+  database and secrets from it. Restoring a system backup into a volume or stack is no longer
+  possible; system backups are restored only with `dockmesh restore` on the server. Verifying
+  system backups, reading their run log, and turning on, editing, running or deleting the
+  system backup job are admin-only. Restoring, verifying and reading the log of other backups
+  needs the job's host within your scope.
 
 ### Upgrade notes
 - [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The

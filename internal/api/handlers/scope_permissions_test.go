@@ -250,7 +250,7 @@ func TestArchiveAccess(t *testing.T) {
 			}
 			req = req.WithContext(middleware.WithIdentity(req.Context(), middleware.Identity{UserID: claims.UserID, Role: claims.Role, ScopeTags: claims.ScopeTags}))
 			rr := httptest.NewRecorder()
-			if got := e.h.requireArchiveAccess(rr, req, tt.run); got != tt.want {
+			if got := e.h.requireRunAccess(rr, req, tt.run, rbac.PermBackupsDownload); got != tt.want {
 				var body map[string]any
 				_ = json.Unmarshal(rr.Body.Bytes(), &body)
 				t.Errorf("allowed=%v, want %v (%v)", got, tt.want, body)
@@ -369,5 +369,86 @@ func TestReviewFollowUps(t *testing.T) {
 	rr := e.do(http.MethodPost, "/invite/"+inv.Token+"/accept", "", map[string]any{"username": "mole", "password": testPassword})
 	if rr.Code != http.StatusGone {
 		t.Errorf("accept after creator demotion: %d %s", rr.Code, rr.Body)
+	}
+}
+
+func TestSystemBackupsStayAdminOnly(t *testing.T) {
+	e := newScopeEnv(t)
+	e.router.Group(func(r chi.Router) {
+		r.Use(middleware.NewAuth(e.h.Auth))
+		r.Use(e.h.StackScope)
+		r.With(middleware.RequirePerm(rbac.PermBackupsView)).Get("/backups/runs/{id}/log", e.h.GetBackupRunLog)
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Put("/backups/jobs/{id}", e.h.UpdateBackupJob)
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Post("/backups/jobs/{id}/run", e.h.RunBackupJob)
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Post("/backups/jobs/{id}/review/{mode}", e.h.AcknowledgeBackupJobReview)
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Put("/backups/system/enabled", e.h.SetBackupEnabled)
+		r.With(middleware.RequirePerm(rbac.PermBackupsDelete)).Delete("/backups/jobs/{id}", e.h.DeleteBackupJob)
+		r.With(middleware.RequirePerm(rbac.PermBackupsRestore)).Post("/backups/runs/{id}/restore", e.h.RestoreBackup)
+		r.With(middleware.RequirePerm(rbac.PermBackupsRestore)).Post("/backups/runs/{id}/restore-stack", e.h.RestoreStackBackup)
+		r.With(middleware.RequirePerm(rbac.PermBackupsRestore)).Post("/backups/runs/{id}/verify", e.h.VerifyBackupRun)
+		r.With(middleware.RequirePerm(rbac.PermBackupsRestore)).Post("/restore/verify", e.h.VerifyUploadedBackup)
+	})
+	for _, stmt := range []string{
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (7, 'sys', 'local', 'local', '[{"type":"system","name":"system"}]')`,
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (1, 'web', 'local', 'local', '[{"type":"stack","name":"web"}]')`,
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (2, 'remote', 'local', 'agent-1', '[{"type":"stack","name":"web"}]')`,
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (3, 'spare', 'local', 'local', '[{"type":"volume","name":"v"}]')`,
+		`INSERT INTO backup_runs (id, job_id, job_name, status, sources_json) VALUES (10, 7, 'sys', 'success', '[{"type":"system","name":"system"}]')`,
+		`INSERT INTO backup_runs (id, job_id, job_name, status, sources_json) VALUES (11, 2, 'remote', 'success', '[{"type":"stack","name":"web"}]')`,
+		`INSERT INTO backup_runs (id, job_id, job_name, status, sources_json) VALUES (12, 1, 'web', 'success', '[{"type":"stack","name":"web"}]')`,
+		`INSERT INTO backup_runs (id, job_id, job_name, status, sources_json) VALUES (13, 1, 'web', 'success', '[{"type":"stack","name":"web"},{"type":"system","name":"system"}]')`,
+	} {
+		if _, err := e.db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.user("boss", "admin")
+	e.user("hadmin", "host-admin")
+	tagged := e.user("thadmin", "host-admin")
+	e.scopeUser(tagged.ID, "prod")
+	e.user("look", "viewer")
+	boss := e.login("boss").AccessToken
+	hadmin := e.login("hadmin").AccessToken
+	thadmin := e.login("thadmin").AccessToken
+	look := e.login("look").AccessToken
+	vol := map[string]string{"dest_volume": "loot"}
+	plainJob := map[string]any{"name": "sys", "target_type": "local", "host_id": "local", "sources": []map[string]string{{"type": "volume", "name": "v"}}}
+
+	tests := []struct {
+		name, method, path, bearer string
+		body                       any
+		want                       int
+	}{
+		{"host-admin restores system run", http.MethodPost, "/backups/runs/10/restore", hadmin, vol, http.StatusForbidden},
+		{"host-admin stack-restores system run", http.MethodPost, "/backups/runs/10/restore-stack", hadmin, nil, http.StatusForbidden},
+		{"admin restores system run into a volume", http.MethodPost, "/backups/runs/10/restore", boss, vol, http.StatusConflict},
+		{"admin stack-restores system run", http.MethodPost, "/backups/runs/10/restore-stack", boss, nil, http.StatusConflict},
+		{"system source behind a stack source", http.MethodPost, "/backups/runs/13/restore", boss, vol, http.StatusConflict},
+		{"out-of-scope stack restore", http.MethodPost, "/backups/runs/11/restore-stack", thadmin, nil, http.StatusForbidden},
+		{"host-admin toggles system backup", http.MethodPut, "/backups/system/enabled", hadmin, map[string]bool{"enabled": true}, http.StatusForbidden},
+		{"admin toggles system backup", http.MethodPut, "/backups/system/enabled", boss, map[string]bool{"enabled": false}, http.StatusOK},
+		{"host-admin rewrites system job", http.MethodPut, "/backups/jobs/7", hadmin, plainJob, http.StatusForbidden},
+		{"host-admin runs system job", http.MethodPost, "/backups/jobs/7/run", hadmin, nil, http.StatusForbidden},
+		{"host-admin reviews system job", http.MethodPost, "/backups/jobs/7/review/disable", hadmin, nil, http.StatusForbidden},
+		{"host-admin deletes system job", http.MethodDelete, "/backups/jobs/7", hadmin, nil, http.StatusForbidden},
+		{"host-admin deletes own job", http.MethodDelete, "/backups/jobs/3", hadmin, nil, http.StatusNoContent},
+		{"viewer reads system run log", http.MethodGet, "/backups/runs/10/log", look, nil, http.StatusForbidden},
+		{"admin reads system run log", http.MethodGet, "/backups/runs/10/log", boss, nil, http.StatusOK},
+		{"host-admin reads in-scope log", http.MethodGet, "/backups/runs/12/log", hadmin, nil, http.StatusOK},
+		{"scoped host-admin reads remote log", http.MethodGet, "/backups/runs/11/log", thadmin, nil, http.StatusForbidden},
+		{"host-admin verifies system run", http.MethodPost, "/backups/runs/10/verify", hadmin, nil, http.StatusForbidden},
+		{"host-admin verifies an upload", http.MethodPost, "/restore/verify", hadmin, nil, http.StatusForbidden},
+		{"admin verifies an empty upload", http.MethodPost, "/restore/verify", boss, nil, http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr := e.do(tt.method, tt.path, tt.bearer, tt.body)
+			if rr.Code != tt.want {
+				t.Errorf("%d, want %d: %s", rr.Code, tt.want, rr.Body)
+			}
+		})
+	}
+	if _, err := e.h.Backups.GetJob(context.Background(), 7); err != nil {
+		t.Errorf("system job after host-admin delete: %v", err)
 	}
 }

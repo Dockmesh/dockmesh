@@ -3172,6 +3172,10 @@ paths:
       operationId: backups.delete_job
       tags: [backups]
       summary: Delete a backup job (does not delete existing runs)
+      description: >-
+        Jobs with a `system` source are admin-only (`system.update` with no
+        host or role scope); other jobs need their host in the caller's
+        scope (403).
       responses:
         "204": { description: Deleted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -3189,6 +3193,8 @@ paths:
         preserves the job's current enabled state; mode `disable`
         also flips `enabled = false` so the scheduler stops firing
         it. Idempotent: clearing an already-cleared flag is a no-op.
+        Jobs with a `system` source are admin-only; other jobs need
+        their host in the caller's scope (403).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
         - in: path
@@ -3211,8 +3217,8 @@ paths:
       summary: Trigger a job to run immediately
       description: >-
         Jobs with a `system` source are admin-only (`system.update` with no
-        host or role scope); other jobs need their host, before and after
-        the change, in the caller's scope (403).
+        host or role scope); other jobs need their host in the caller's
+        scope (403).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       responses:
@@ -3271,6 +3277,11 @@ paths:
         original — useful for "restore as a copy". Defaults to the
         archive's source stack name. Existing files at the destination
         are overwritten; existing volumes have their contents replaced.
+
+        Requires the job's host within the caller's scope (403). System
+        runs, and runs whose job was deleted, are admin-only
+        (`system.update` with no host or role scope). System runs are
+        never restored here (409); use `dockmesh restore` on the server.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       requestBody:
@@ -3299,6 +3310,11 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Run is a system backup.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: Archive corrupt / decryption failed / disk write error.
           content:
@@ -3309,11 +3325,16 @@ paths:
     post:
       operationId: backups.restore_run
       tags: [backups]
-      summary: Restore a specific backup run onto a target
+      summary: Restore a volume or stack backup run
       description: |
-        For volume/stack backups this extracts the tar into a fresh volume
-        or stack directory; for system backups it writes the snapshot DB
-        + stacks tree to a specified path for the operator to swap in.
+        Extracts a volume backup into `dest_volume`; for a stack backup
+        `dest_volume` names the destination stack.
+
+        Requires the job's host within the caller's scope (403). System
+        runs, and runs whose job was deleted, are admin-only
+        (`system.update` with no host or role scope).
+        System backups are never restored here (409); they are restored
+        with `dockmesh restore` on the server.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       requestBody:
@@ -3322,39 +3343,35 @@ paths:
           application/json:
             schema:
               type: object
+              required: [dest_volume]
               properties:
-                target_host_id: { type: string }
-                target_volume: { type: string }
-                target_stack: { type: string }
-                target_path: { type: string, description: "For system backups — filesystem destination." }
+                dest_volume: { type: string }
       responses:
-        "200":
-          description: Restore started.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status: { type: string }
-                  extracted_paths:
-                    type: array
-                    items: { type: string }
+        "204": { description: Restored. }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Run is a system backup.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /backups/runs/{id}/verify:
     post:
       operationId: backups.verify_run
       tags: [backups]
-      summary: Verify that a saved system-backup run is restorable (P.12.4)
+      summary: Verify that a saved backup run is restorable
       description: |
-        Streams the run's archive into a temp directory, applies the
-        same post-restore sanity checks as `dockmesh restore`, then
-        throws the temp dir away. Never touches the live install.
-        Only system-backup runs are supported; volume / stack runs
-        need ephemeral-stack verification (future slice).
+        System runs are streamed into a temp directory and checked with
+        the same post-restore sanity checks as `dockmesh restore`; stack
+        and volume runs get a structural check of the archive. Never
+        touches the live install.
+
+        Requires the job's host within the caller's scope (403). System
+        runs, and runs whose job was deleted, are admin-only
+        (`system.update` with no host or role scope).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       responses:
@@ -3376,7 +3393,7 @@ paths:
     post:
       operationId: restore.verify_upload
       tags: [backups]
-      summary: Upload a backup tarball and verify it's restorable (P.12.4)
+      summary: Upload a system backup tarball and verify it's restorable
       description: |
         Multipart upload with a single `file` part containing a gzipped
         tar produced by the `dockmesh-system` backup job. Server
@@ -3388,6 +3405,8 @@ paths:
         Rejects age-encrypted tarballs — the server's own age key is
         inside the tarball, so self-encrypted system backups can't
         self-verify.
+
+        Admin-only (`system.update` with no host or role scope; 403).
       requestBody:
         required: true
         content:
@@ -3572,7 +3591,9 @@ paths:
     put:
       operationId: backups.toggle_system
       tags: [backups]
-      summary: Enable / disable the default daily system backup (P.6.5)
+      summary: Enable / disable the default daily system backup
+      description: >-
+        Admin-only (`system.update` with no host or role scope; 403).
       requestBody:
         required: true
         content:
@@ -6335,6 +6356,10 @@ paths:
         `info` / `warn` / `error` / `hook_stdout` / `hook_stderr`. Hook
         output is verbatim and capped at 16 KB per hook to keep the
         table from growing without bound on noisy hooks.
+
+        Requires the job's host within the caller's scope (403). System
+        runs, and runs whose job was deleted, are admin-only
+        (`system.update` with no host or role scope).
       parameters:
         - in: path
           name: id
@@ -6357,6 +6382,9 @@ paths:
                       type: string
                       enum: [info, warn, error, hook_stdout, hook_stderr]
                     line: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /backups/runs/{id}/archive:
     get:

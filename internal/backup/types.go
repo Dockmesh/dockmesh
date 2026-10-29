@@ -106,4 +106,17 @@ var (
 	ErrUnknownSourceType = errors.New("unknown source type")
 	ErrJobNotFound       = errors.New("job not found")
 	ErrRunNotFound       = errors.New("run not found")
+	// ErrSystemRestore refuses to unpack a system backup anywhere a
+	// container could read it; system backups go through `dockmesh restore`.
+	ErrSystemRestore = errors.New("system backups can only be restored with `dockmesh restore` on the server")
 )
+
+// HasSystemSource reports whether sources include the server itself.
+func HasSystemSource(sources []Source) bool {
+	for _, src := range sources {
+		if src.Type == "system" {
+			return true
+		}
+	}
+	return false
+}

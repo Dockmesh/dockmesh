@@ -8,6 +8,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -123,16 +124,15 @@ func (h *Handlers) DeleteBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "backups not configured")
 		return
 	}
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	job, ok := h.jobForAccess(w, r)
+	if !ok {
 		return
 	}
-	if err := h.Backups.DeleteJob(r.Context(), id); err != nil {
+	if err := h.Backups.DeleteJob(r.Context(), job.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionStackDelete, "backup:"+strconv.FormatInt(id, 10), nil)
+	h.audit(r, audit.ActionStackDelete, "backup:"+strconv.FormatInt(job.ID, 10), nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -144,21 +144,20 @@ func (h *Handlers) AcknowledgeBackupJobReview(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusServiceUnavailable, "backups not configured")
 		return
 	}
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
-		return
-	}
 	mode := chi.URLParam(r, "mode")
 	if mode != "keep" && mode != "disable" {
 		writeError(w, http.StatusBadRequest, "mode must be 'keep' or 'disable'")
 		return
 	}
-	if err := h.Backups.AcknowledgeReview(r.Context(), id, mode); err != nil {
+	job, ok := h.jobForAccess(w, r)
+	if !ok {
+		return
+	}
+	if err := h.Backups.AcknowledgeReview(r.Context(), job.ID, mode); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionStackUpdate, "backup:"+strconv.FormatInt(id, 10), map[string]string{"review": mode})
+	h.audit(r, audit.ActionStackUpdate, "backup:"+strconv.FormatInt(job.ID, 10), map[string]string{"review": mode})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -167,29 +166,16 @@ func (h *Handlers) RunBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "backups not configured")
 		return
 	}
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	job, ok := h.jobForAccess(w, r)
+	if !ok {
 		return
 	}
-	job, err := h.Backups.GetJob(r.Context(), id)
-	if errors.Is(err, backup.ErrJobNotFound) {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
+	run, err := h.Backups.RunNow(r.Context(), job.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !h.requireJobAccess(w, r, job, nil) {
-		return
-	}
-	run, err := h.Backups.RunNow(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	h.audit(r, audit.ActionStackDeploy, "backup:run:"+strconv.FormatInt(id, 10), nil)
+	h.audit(r, audit.ActionStackDeploy, "backup:run:"+strconv.FormatInt(job.ID, 10), nil)
 	writeJSON(w, http.StatusOK, run)
 }
 
@@ -240,6 +226,7 @@ func (h *Handlers) GetBackupRun(w http.ResponseWriter, r *http.Request) {
 // chronological order. Includes info/warn/error narration emitted by
 // the executor at phase boundaries plus verbatim hook stdout/stderr
 // (capped at 16 KB per hook so noisy hooks can't blow the table).
+// Hook output can carry secrets, so the log is guarded like the archive.
 //
 //	GET /api/v1/backups/runs/{id}/log
 func (h *Handlers) GetBackupRunLog(w http.ResponseWriter, r *http.Request) {
@@ -247,12 +234,11 @@ func (h *Handlers) GetBackupRunLog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "backups not configured")
 		return
 	}
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	run, ok := h.runForAccess(w, r, rbac.PermBackupsView)
+	if !ok {
 		return
 	}
-	entries, err := h.Backups.RunLog(r.Context(), id)
+	entries, err := h.Backups.RunLog(r.Context(), run.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -269,23 +255,11 @@ func (h *Handlers) DownloadBackupArchive(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, "backups not configured")
 		return
 	}
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	run, ok := h.runForAccess(w, r, rbac.PermBackupsDownload)
+	if !ok {
 		return
 	}
-	run, err := h.Backups.GetRun(r.Context(), id)
-	if errors.Is(err, backup.ErrRunNotFound) {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if !h.requireArchiveAccess(w, r, run) {
-		return
-	}
+	id := run.ID
 	if run.Status != "success" {
 		writeError(w, http.StatusConflict, "can only download from a successful run")
 		return
@@ -316,18 +290,18 @@ func (h *Handlers) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "backups not configured")
 		return
 	}
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	run, ok := h.runForAccess(w, r, rbac.PermBackupsRestore)
+	if !ok {
 		return
 	}
+	id := run.ID
 	var req restoreRequest
 	if err := decodeJSON(r, &req); err != nil || req.DestVolume == "" {
 		writeError(w, http.StatusBadRequest, "dest_volume required")
 		return
 	}
 	if err := h.Backups.Restore(r.Context(), id, req.DestVolume); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeRestoreError(w, err)
 		return
 	}
 	h.audit(r, audit.ActionContainerRollback, "backup:restore:"+strconv.FormatInt(id, 10), map[string]string{"dest": req.DestVolume})
@@ -344,20 +318,28 @@ func (h *Handlers) RestoreStackBackup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "backups not configured")
 		return
 	}
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	run, ok := h.runForAccess(w, r, rbac.PermBackupsRestore)
+	if !ok {
 		return
 	}
+	id := run.ID
 	var req struct {
 		TargetStack string `json:"target_stack,omitempty"`
 	}
 	_ = decodeJSON(r, &req) // body is optional — empty means "same name as source"
 	report, err := h.Backups.RestoreStack(r.Context(), id, req.TargetStack)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeRestoreError(w, err)
 		return
 	}
 	h.audit(r, audit.ActionContainerRollback, "backup:restore-stack:"+strconv.FormatInt(id, 10), map[string]string{"target": report.StackName})
 	writeJSON(w, http.StatusOK, report)
+}
+
+func writeRestoreError(w http.ResponseWriter, err error) {
+	if errors.Is(err, backup.ErrSystemRestore) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeError(w, http.StatusInternalServerError, err.Error())
 }

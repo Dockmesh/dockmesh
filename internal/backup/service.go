@@ -189,20 +189,6 @@ func (s *Service) RunLog(ctx context.Context, id int64) ([]RunLogEntry, error) {
 	return s.store.listRunLogs(ctx, id)
 }
 
-// RunSourceType returns the source type ("system" | "stack" | "volume")
-// of the run's first source. Used by the verify handler to dispatch
-// to the right verifier without reading the archive twice.
-func (s *Service) RunSourceType(ctx context.Context, runID int64) (string, error) {
-	run, err := s.store.getRun(ctx, runID)
-	if err != nil {
-		return "", err
-	}
-	if len(run.Sources) == 0 {
-		return "", errors.New("run has no sources")
-	}
-	return run.Sources[0].Type, nil
-}
-
 // ReadRun opens the archive for a saved run and returns a reader.
 // Caller must Close() it. If the run was encrypted, the reader is
 // wrapped so the consumer sees plaintext. Used by the verify-by-run
@@ -260,6 +246,9 @@ func (s *Service) Restore(ctx context.Context, runID int64, destVolume string) e
 	run, err := s.store.getRun(ctx, runID)
 	if err != nil {
 		return err
+	}
+	if HasSystemSource(run.Sources) {
+		return ErrSystemRestore
 	}
 	if run.Status != "success" {
 		return errors.New("can only restore from a successful run")
@@ -324,6 +313,9 @@ func (s *Service) RestoreStack(ctx context.Context, runID int64, targetStack str
 	run, err := s.store.getRun(ctx, runID)
 	if err != nil {
 		return nil, err
+	}
+	if HasSystemSource(run.Sources) {
+		return nil, ErrSystemRestore
 	}
 	if run.Status != "success" {
 		return nil, errors.New("can only restore from a successful run")
