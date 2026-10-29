@@ -18,6 +18,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/db"
+	"github.com/dockmesh/dockmesh/internal/notices"
 )
 
 func newTestDB(t *testing.T) *sql.DB {
@@ -346,5 +347,64 @@ func TestStartLoginRequestsConfiguredNameID(t *testing.T) {
 				t.Error("request ID was not recorded")
 			}
 		})
+	}
+}
+
+func TestRekeyNotice(t *testing.T) {
+	database := newTestDB(t)
+	if _, err := database.Exec(`INSERT INTO users (id, username, email, password, saml_provider, saml_subject, saml_rekey_until) VALUES
+		('u1', 'ann', 'ann@example.com', 'x', 'corp', 'G-1', datetime('now','+30 days')),
+		('u2', 'bob', 'bob@example.com', 'x', 'corp', 'G-2', datetime('now','+30 days')),
+		('u3', 'cid', 'cid@example.com', 'x', 'corp', 'G-3', datetime('now','-1 day'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO users (id, username, email, password, role, saml_provider, saml_subject, saml_rekey_until)
+		VALUES ('u4', 'dora', 'dora@example.com', 'x', 'admin', 'corp', 'G-4', datetime('now','+30 days'))`); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	s := &Service{db: database}
+	n := notices.NewService(database)
+	openNotice := func() *notices.Notice {
+		t.Helper()
+		open, err := n.Open(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range open {
+			if open[i].Key == RekeyNoticeKey {
+				return &open[i]
+			}
+		}
+		return nil
+	}
+
+	if err := s.SyncRekeyNotice(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	got := openNotice()
+	if got == nil || !strings.Contains(got.Body, "These 2 accounts") || !strings.Contains(got.Body, "- ann\n- bob\n") || strings.Contains(got.Body, "cid") || strings.Contains(got.Body, "dora") {
+		t.Fatalf("notice = %+v", got)
+	}
+
+	if _, err := s.rekey(ctx, "corp", "persist-1", "ann@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SyncRekeyNotice(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	if got := openNotice(); got == nil || !strings.HasPrefix(got.Body, "This account was") || strings.Contains(got.Body, "ann") {
+		t.Fatalf("notice after one re-key = %+v", got)
+	}
+
+	ended, err := s.EndRekey(ctx)
+	if err != nil || ended != 1 {
+		t.Fatalf("EndRekey = %d, %v; want 1", ended, err)
+	}
+	if err := s.SyncRekeyNotice(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	if got := openNotice(); got != nil {
+		t.Fatalf("notice still open after ending re-keying: %+v", got)
 	}
 }

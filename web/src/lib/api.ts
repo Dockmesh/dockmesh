@@ -2161,6 +2161,8 @@ export const api = {
     update: (id: number, input: SAMLProviderInput) =>
       request<SAMLProvider>(`/saml/providers/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
     delete: (id: number) => request<void>(`/saml/providers/${id}`, { method: 'DELETE' }),
+    rekeyPending: () => request<{ accounts: string[]; until?: string }>('/saml/rekey'),
+    endRekey: () => request<{ ended: number }>('/saml/rekey/end', { method: 'POST' }),
     test: (id: number) =>
       request<{ ok: boolean; error?: string; entity_id?: string; sso_url?: string }>(
         `/saml/providers/${id}/test`,

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -103,6 +104,7 @@ func (h *Handlers) SAMLACS(w http.ResponseWriter, r *http.Request) {
 	}
 	if res.RekeyedUser != "" {
 		h.audit(r, audit.ActionSAMLRekey, res.RekeyedUser, map[string]string{"provider": claims.Pending.Slug})
+		h.syncSAMLRekeyNotice(r.Context())
 	}
 	if res.Login.User != nil {
 		h.audit(r, "auth.sso_login", res.Login.User.ID, map[string]string{"provider": claims.Pending.Slug, "kind": "saml"})
@@ -230,6 +232,48 @@ func (h *Handlers) DeleteSAMLProvider(w http.ResponseWriter, r *http.Request) {
 // and persists the outcome on the row. The frontend renders a
 // green/red dot from last_test_ok and surfaces last_test_error in a
 // tooltip.
+// GetSAMLRekey lists the accounts still waiting for their one-time re-key.
+func (h *Handlers) GetSAMLRekey(w http.ResponseWriter, r *http.Request) {
+	if h.SAML == nil {
+		writeError(w, http.StatusServiceUnavailable, "saml not configured")
+		return
+	}
+	p, err := h.SAML.PendingRekeys(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+// EndSAMLRekey closes the one-time re-key for every account that is still
+// waiting for it.
+func (h *Handlers) EndSAMLRekey(w http.ResponseWriter, r *http.Request) {
+	if h.SAML == nil {
+		writeError(w, http.StatusServiceUnavailable, "saml not configured")
+		return
+	}
+	n, err := h.SAML.EndRekey(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, audit.ActionSAMLRekeyEnd, "", map[string]string{"accounts": strconv.FormatInt(n, 10)})
+	h.syncSAMLRekeyNotice(r.Context())
+	writeJSON(w, http.StatusOK, map[string]int64{"ended": n})
+}
+
+// syncSAMLRekeyNotice updates the pending re-key notice. A failure only
+// delays it until the next change or restart.
+func (h *Handlers) syncSAMLRekeyNotice(ctx context.Context) {
+	if h.SAML == nil || h.Notices == nil {
+		return
+	}
+	if err := h.SAML.SyncRekeyNotice(ctx, h.Notices); err != nil {
+		slog.Warn("saml re-key notice update failed", "err", err)
+	}
+}
+
 func (h *Handlers) TestSAMLProvider(w http.ResponseWriter, r *http.Request) {
 	if h.SAML == nil {
 		writeError(w, http.StatusServiceUnavailable, "saml not configured")

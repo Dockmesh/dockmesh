@@ -139,7 +139,7 @@ func TestSSOLinkingMigration(t *testing.T) {
 	}
 }
 
-// Existing SAML accounts are marked for one re-key within 90 days; local
+// Existing SAML accounts are marked for one re-key within 30 days; local
 // accounts are not.
 func TestSAMLRekeyMarkerMigration(t *testing.T) {
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
@@ -162,12 +162,12 @@ func TestSAMLRekeyMarkerMigration(t *testing.T) {
 		marked bool
 	}{{"s1", true}, {"l1", false}} {
 		var inWindow sql.NullBool
-		if err := database.QueryRow(`SELECT saml_rekey_until BETWEEN datetime('now', '+89 days') AND datetime('now', '+91 days')
+		if err := database.QueryRow(`SELECT saml_rekey_until BETWEEN datetime('now', '+29 days') AND datetime('now', '+31 days')
 			FROM users WHERE id = ?`, tc.id).Scan(&inWindow); err != nil {
 			t.Fatal(err)
 		}
 		if inWindow.Valid != tc.marked || (tc.marked && !inWindow.Bool) {
-			t.Errorf("%s: marker in 90-day window = %+v, want marked %v", tc.id, inWindow, tc.marked)
+			t.Errorf("%s: marker in 30-day window = %+v, want marked %v", tc.id, inWindow, tc.marked)
 		}
 	}
 }
