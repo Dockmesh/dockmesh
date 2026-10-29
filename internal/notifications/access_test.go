@@ -110,6 +110,8 @@ func TestEmitFanOutHonoursPermissionAndScope(t *testing.T) {
 		{"stack y on host b", EmitInput{Kind: KindDeployOK, Title: "t3", Perm: rbac.PermStacksView, HostID: "b", StackName: "y"}, []string{"admin", "viewer", "stackY"}},
 		{"stack on host a", EmitInput{Kind: KindDeployOK, Title: "t4", Perm: rbac.PermStacksView, HostID: "a", StackName: "x"}, []string{"admin", "viewer", "hostA"}},
 		{"hostless event", EmitInput{Kind: KindAlertFire, Title: "t5", Perm: rbac.PermStacksView}, []string{"admin", "viewer", "hostA", "stackY", "tagged"}},
+		{"unscoped only", EmitInput{Kind: KindBackupFail, Title: "t6", Perm: rbac.PermStacksView, HostID: "a", Unscoped: true}, []string{"admin", "viewer"}},
+		{"unscoped needs the permission", EmitInput{Kind: KindBackupFail, Title: "t7", Perm: rbac.PermSystemUpdate, Unscoped: true}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

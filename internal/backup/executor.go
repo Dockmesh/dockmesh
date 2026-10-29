@@ -165,35 +165,41 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 	now := time.Now()
 	_ = e.store.updateJobRunTimes(ctx, job.ID, &now, nil)
 
-	// Bell-icon notification — fan-out so every operator sees the run
-	// in their feed. Failures get error severity, success info.
 	if e.notifs != nil {
-		runLink := fmt.Sprintf("/backups/runs/%d", runID)
+		in := runNotification(job, runID)
 		if finalStatus == "success" {
-			_, _ = e.notifs.Emit(ctx, notifications.EmitInput{
-				Kind:     notifications.KindBackupOK,
-				Severity: notifications.SevSuccess,
-				Title:    "Backup completed: " + job.Name,
-				Body:     fmt.Sprintf("Wrote %d bytes", teeW.size),
-				Link:     runLink,
-				Perm:     rbac.PermBackupsView,
-			})
+			in.Kind = notifications.KindBackupOK
+			in.Severity = notifications.SevSuccess
+			in.Title = "Backup completed: " + job.Name
+			in.Body = fmt.Sprintf("Wrote %d bytes", teeW.size)
 		} else {
-			body := "Run failed"
+			in.Kind = notifications.KindBackupFail
+			in.Severity = notifications.SevError
+			in.Title = "Backup failed: " + job.Name
+			in.Body = "Run failed"
 			if finalErr != nil {
-				body = finalErr.Error()
+				in.Body = finalErr.Error()
 			}
-			_, _ = e.notifs.Emit(ctx, notifications.EmitInput{
-				Kind:     notifications.KindBackupFail,
-				Severity: notifications.SevError,
-				Title:    "Backup failed: " + job.Name,
-				Body:     body,
-				Link:     runLink,
-				Perm:     rbac.PermBackupsView,
-			})
 		}
+		_, _ = e.notifs.Emit(ctx, in)
 	}
 	return e.store.getRun(ctx, runID)
+}
+
+// runNotification addresses a run notification to the users who may open
+// the run: unscoped admins for system jobs, otherwise backup viewers whose
+// scope covers the job's host.
+func runNotification(job *Job, runID int64) notifications.EmitInput {
+	in := notifications.EmitInput{
+		Link:   fmt.Sprintf("/backups/runs/%d", runID),
+		Perm:   rbac.PermBackupsView,
+		HostID: defaultStr(job.HostID, "local"),
+	}
+	if HasSystemSource(job.Sources) {
+		in.Perm = rbac.PermSystemUpdate
+		in.Unscoped = true
+	}
+	return in
 }
 
 func defaultStr(v, fallback string) string {

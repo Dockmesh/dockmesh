@@ -90,6 +90,9 @@ type EmitInput struct {
 	Perm      rbac.Perm
 	HostID    string
 	StackName string
+	// Unscoped further limits fan-out to users bound to no host tag and
+	// whose role has no scope, the rule the API applies to admin-only data.
+	Unscoped bool
 }
 
 var ErrNotFound = errors.New("notification not found")

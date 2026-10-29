@@ -592,20 +592,28 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, container string, value
 	// in the UI. Mute schedule still suppresses (consistent with the
 	// channel path).
 	if s.notifs != nil && !muted {
-		sev := notifications.SevWarning
-		if r.Severity == "critical" {
-			sev = notifications.SevError
-		} else if r.Severity == "info" {
-			sev = notifications.SevInfo
-		}
-		_, _ = s.notifs.Emit(ctx, notifications.EmitInput{
-			Kind:     notifications.KindAlertFire,
-			Severity: sev,
-			Title:    "Alert firing: " + r.Name,
-			Body:     msg,
-			Link:     "/alerts",
-			Perm:     rbac.PermAlertsView,
-		})
+		_, _ = s.notifs.Emit(ctx, alertNotification(r, msg))
+	}
+}
+
+// alertNotification addresses a firing alert to alert viewers whose scope
+// covers the local host: rules are evaluated against the server's own
+// container metrics only.
+func alertNotification(r *Rule, msg string) notifications.EmitInput {
+	sev := notifications.SevWarning
+	if r.Severity == "critical" {
+		sev = notifications.SevError
+	} else if r.Severity == "info" {
+		sev = notifications.SevInfo
+	}
+	return notifications.EmitInput{
+		Kind:     notifications.KindAlertFire,
+		Severity: sev,
+		Title:    "Alert firing: " + r.Name,
+		Body:     msg,
+		Link:     "/alerts",
+		Perm:     rbac.PermAlertsView,
+		HostID:   "local",
 	}
 }
 

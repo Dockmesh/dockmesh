@@ -43,6 +43,10 @@ func (a *RBACAccess) CanReceive(ctx context.Context, userID string, in EmitInput
 	if err != nil || !a.Roles.AllowedDB(role, in.Perm) {
 		return false
 	}
+	if in.Unscoped {
+		// An empty request matches only a role without scope rows.
+		return len(scopeTags) == 0 && a.Roles.InScope(role, rbac.ScopeRequest{})
+	}
 	if in.HostID == "" && in.StackName == "" {
 		return true
 	}

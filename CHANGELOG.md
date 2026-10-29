@@ -53,7 +53,9 @@ earlier, makes the installers more reliable on upgrade, and repairs volume brows
   succeed; only the first one rotates the session.
 - Notifications sent to everyone (alerts, backups, agent offline, deploys, image and version
   updates, migrations) now reach only users whose role has the matching permission and whose
-  host and stack scope covers the event, instead of every user.
+  host and stack scope covers the event, instead of every user. Backup notifications follow the
+  job's host, those of system backups reach only unrestricted admins, and alert notifications
+  count as events of the server's own host.
 - Git webhook secrets are now stored encrypted in the database, like the git password and SSH
   key. Secrets saved by earlier versions are encrypted automatically on the next start and
   existing webhooks keep working without changes.
