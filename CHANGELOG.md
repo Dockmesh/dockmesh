@@ -24,6 +24,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-29 [security]
+
+Security release. It fixes authorization, sign-in, agent enrollment and backup problems found
+in a review of the 0.3 code. Update soon; several changes need an admin's attention afterwards,
+see Upgrade notes.
+
 ### Added
 - Settings → System → Trusted proxies (or `DOCKMESH_TRUSTED_PROXIES`) lists the reverse
   proxies in front of Dockmesh. Only these may tell Dockmesh the client address or that the
@@ -241,7 +247,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - [agent-upgrade, admins] Hosts that are already enrolled keep working and do not need to be
   re-enrolled. Upgrade each agent once from its host page (or use automatic upgrades) so it
   verifies future upgrades; the upgrade from an older agent is still downloaded the old,
-  unverified way.
+  unverified way. For a fully verified path, re-issue the host's token on its host page and run
+  the new install command on the host: the installer checks the binary's SHA-256, pins the
+  agent CA, and the host keeps its ID, stacks and backup jobs.
 - [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The
   sign-in page says why.
 - [legacy-api-tokens, admins] API tokens created before this version have no owner. They keep
@@ -281,7 +289,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   alone. A notice lists how many accounts are linked to SSO and which of them are admins; check
   that each belongs to the right person.
 - [host-admin-system-settings, admins] Host Admins no longer change system settings, SSO or
-  global environment variables. Give the Admin role to anyone who still needs that.
+  global environment variables, and no longer see or download system backups. Give the Admin
+  role to anyone who still needs that.
 - [backup-job-name-collision, admins] Backup jobs whose names differ only in case or
   punctuation, or a non-system job named like `dockmesh-system`, share an archive folder and
   their retention can delete each other's backups. A notice lists the affected jobs; rename
@@ -300,6 +309,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   polling and manual sync keep working. A notice lists the affected stacks. To keep using a
   webhook, edit the stack's git source, set a webhook secret and enter the same secret in the
   webhook settings of your git provider.
+- [stack-files-outside-changes, admins] Dockmesh now remembers the `compose.yaml` and `.env`
+  it last wrote for each stack, taking the files as they are at a stack's first deploy or
+  check after the upgrade. If you edit stack files on the server by hand, or a container
+  changes them, the stack page says "modified outside Dockmesh" and the next deploy asks you
+  to confirm the new content. Git syncs of such a stack wait until you confirm.
 - [setup-force-flag, admins] If a notice says the setup flag was ignored, delete the
   `DOCKMESH_SETUP_FORCE=true` line from the env file it names (by default
   `/var/lib/dockmesh/dockmesh.env`) and restart Dockmesh. The notice goes away after the restart.
