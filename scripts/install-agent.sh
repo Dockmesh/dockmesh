@@ -3,9 +3,9 @@
 # Dockmesh agent installer — concept §3.1.
 #
 # This script is templated by the dockmesh server at request time. The
-# {{ }} tokens are replaced with the real token, URLs and binary location
-# before being served, so the user only ever sees a single one-line curl
-# command in the UI.
+# {{ }} tokens are replaced with the real token, URLs, the agents CA and
+# the agent binary checksums before being served, so the user only ever
+# sees a single one-line curl command in the UI.
 #
 # Default mode creates a dedicated `dockmesh-agent` system user, locks it,
 # adds it to the `docker` group, and runs the agent under systemd with
@@ -23,7 +23,12 @@ TOKEN="{{TOKEN}}"
 SERVER_URL="{{SERVER_URL}}"
 ENROLL_URL="{{ENROLL_URL}}"
 AGENT_URL="{{AGENT_URL}}"
-BINARY_URL="{{BINARY_URL}}"
+CA_FINGERPRINT="{{CA_FINGERPRINT}}"
+BINARY_SHA256_AMD64="{{BINARY_SHA256_AMD64}}"
+BINARY_SHA256_ARM64="{{BINARY_SHA256_ARM64}}"
+read -r -d '' CA_CERT_PEM <<'CAPEM' || true
+{{CA_CERT_PEM}}
+CAPEM
 
 # -----------------------------------------------------------------------------
 # Flags
@@ -120,6 +125,18 @@ ARCH="$(detect_arch)"
 log "host: $(uname -s)/$ARCH  systemd: yes"
 log "server: $SERVER_URL"
 
+BINARY_URL="$SERVER_URL/install/dockmesh-agent-linux-$ARCH"
+case "$ARCH" in
+  amd64) BINARY_SHA256="$BINARY_SHA256_AMD64" ;;
+  arm64) BINARY_SHA256="$BINARY_SHA256_ARM64" ;;
+esac
+if [[ -z "$BINARY_SHA256" ]]; then
+  die "the server has no dockmesh-agent binary for linux/$ARCH bundled."
+fi
+if ! command -v sha256sum >/dev/null 2>&1; then
+  die "sha256sum is required to verify the agent binary (install coreutils)."
+fi
+
 # -----------------------------------------------------------------------------
 # Install missing tools
 # -----------------------------------------------------------------------------
@@ -197,7 +214,7 @@ fi
 if [[ -f "$DATA_DIR/agent.crt" ]] || [[ -f "$DATA_DIR/agent.key" ]] || [[ -d "$DATA_DIR/certs" ]]; then
   systemctl stop dockmesh-agent 2>/dev/null || true
   log "detected existing enrollment in $DATA_DIR — removing certs so the new token takes effect"
-  rm -f "$DATA_DIR/agent.crt" "$DATA_DIR/agent.key" "$DATA_DIR/agent.url" "$DATA_DIR/ca.crt"
+  rm -f "$DATA_DIR/agent.crt" "$DATA_DIR/agent.key" "$DATA_DIR/agent.url" "$DATA_DIR/ca.crt" "$DATA_DIR/enroll-ca.pem"
   rm -rf "$DATA_DIR/certs" "$DATA_DIR/staging"
 fi
 
@@ -222,6 +239,11 @@ install -d -m 0750 -o "$RUN_USER" -g "$RUN_GROUP" "$BIN_DIR"
 TMP_BIN="$(mktemp)"
 log "downloading agent binary from $BINARY_URL"
 http_get "$BINARY_URL" "$TMP_BIN"
+GOT_SHA256="$(sha256sum "$TMP_BIN" | cut -d' ' -f1)"
+if [[ "$GOT_SHA256" != "$BINARY_SHA256" ]]; then
+  rm -f "$TMP_BIN"
+  die "agent binary checksum mismatch (expected $BINARY_SHA256, got $GOT_SHA256)"
+fi
 chmod 0755 "$TMP_BIN"
 install -m 0755 -o "$RUN_USER" -g "$RUN_GROUP" "$TMP_BIN" "$AGENT_BIN"
 rm -f "$TMP_BIN"
@@ -234,6 +256,14 @@ ln -sf "$AGENT_BIN" /usr/local/bin/dockmesh-agent
 log "installed: $($AGENT_BIN --version 2>&1 | head -1 || echo dockmesh-agent)"
 
 # -----------------------------------------------------------------------------
+# Agents CA (pinned by fingerprint for enrollment)
+# -----------------------------------------------------------------------------
+ENROLL_CA_FILE="$DATA_DIR/enroll-ca.pem"
+printf '%s\n' "$CA_CERT_PEM" > "$ENROLL_CA_FILE"
+chown "$RUN_USER":"$RUN_GROUP" "$ENROLL_CA_FILE"
+chmod 0644 "$ENROLL_CA_FILE"
+
+# -----------------------------------------------------------------------------
 # Environment file (holds the secret token + URLs)
 # -----------------------------------------------------------------------------
 ENV_FILE="$ENV_DIR/agent.env"
@@ -243,6 +273,8 @@ DOCKMESH_DATA_DIR=$DATA_DIR
 DOCKMESH_ENROLL_URL=$ENROLL_URL
 DOCKMESH_AGENT_URL=$AGENT_URL
 DOCKMESH_TOKEN=$TOKEN
+DOCKMESH_CA_FINGERPRINT=$CA_FINGERPRINT
+DOCKMESH_ENROLL_CA_FILE=$ENROLL_CA_FILE
 EOF
 chown root:"$RUN_GROUP" "$ENV_FILE"
 chmod 0640 "$ENV_FILE"

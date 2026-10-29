@@ -551,6 +551,7 @@ func main() {
 		agentPublic = deriveAgentURL(cfg.BaseURL, cfg.AgentListen)
 	}
 	agentsSvc := agents.NewService(database, pkiMgr, cfg.BaseURL, agentPublic)
+	agentsSvc.SetEnrollTokenTTL(cfg.AgentEnrollTokenTTL)
 	hostRegistry := host.NewRegistry(dockerCli, agentsSvc)
 
 	// Wire host routing into the backup executor so jobs with host_id
@@ -1048,11 +1049,14 @@ func main() {
 		} else {
 			agentMux := http.NewServeMux()
 			agentMux.Handle("/connect", agents.NewWSHandler(agentsSvc, pkiMgr))
+			agentMux.Handle(agents.EnrollPath, agents.EnrollHandler(agentsSvc))
+			agentMux.Handle(agents.BinaryPath, agents.BinaryHandler(agentsSvc))
 			agentSrv := &http.Server{
 				Addr:              cfg.AgentListen,
 				Handler:           agentMux,
 				TLSConfig:         tlsCfg,
 				ReadHeaderTimeout: 10 * time.Second,
+				IdleTimeout:       2 * time.Minute,
 			}
 			go func() {
 				slog.Info("agent mtls listening", "addr", cfg.AgentListen, "public_url", agentPublic)

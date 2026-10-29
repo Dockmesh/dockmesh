@@ -7,14 +7,18 @@
 //	docker run -d --name dockmesh-agent --restart unless-stopped \
 //	  -v /var/run/docker.sock:/var/run/docker.sock \
 //	  -v dockmesh-agent:/var/lib/dockmesh \
-//	  -e DOCKMESH_ENROLL_URL=https://main:8080/api/v1/agents/enroll \
+//	  -v ./agents-ca.crt:/etc/dockmesh/enroll-ca.pem:ro \
+//	  -e DOCKMESH_ENROLL_URL=https://main:8443/enroll \
 //	  -e DOCKMESH_AGENT_URL=wss://main:8443/connect \
 //	  -e DOCKMESH_TOKEN=<token-from-admin-ui> \
+//	  -e DOCKMESH_CA_FINGERPRINT=<ca-fingerprint-from-admin-ui> \
+//	  -e DOCKMESH_ENROLL_CA_FILE=/etc/dockmesh/enroll-ca.pem \
 //	  ghcr.io/dockmesh/agent:latest
 //
-// On first start the agent calls the enroll URL with its token, persists
-// the returned cert + key under DATA_DIR, and then dials the agent URL
-// over mTLS. On reboot it skips the enroll and goes straight to dial.
+// On first start the agent calls the enroll URL with its token, verifying
+// the server against the pinned agents CA, persists the returned cert +
+// key under DATA_DIR, and then dials the agent URL over mTLS. On reboot
+// it skips the enroll and goes straight to dial.
 package main
 
 import (
@@ -27,7 +31,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"os/exec"
 	"net/url"
 	"os"
@@ -69,10 +72,13 @@ func agentVersion() string {
 }
 
 type agentConfig struct {
-	dataDir   string
-	enrollURL string
-	agentURL  string
-	token     string
+	dataDir        string
+	enrollURL      string
+	agentURL       string
+	token          string
+	caFingerprint  string
+	enrollCAFile   string
+	insecureEnroll bool
 }
 
 func main() {
@@ -87,15 +93,28 @@ func main() {
 			return
 		}
 	}
+	insecureEnroll := os.Getenv("DOCKMESH_INSECURE_ENROLL") == "true"
+	for _, arg := range os.Args[1:] {
+		switch arg {
+		case "--insecure-enroll":
+			insecureEnroll = true
+		default:
+			fmt.Fprintf(os.Stderr, "unknown argument: %s\n", arg)
+			os.Exit(2)
+		}
+	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
 	cfg := agentConfig{
-		dataDir:   envOr("DOCKMESH_DATA_DIR", "/var/lib/dockmesh"),
-		enrollURL: os.Getenv("DOCKMESH_ENROLL_URL"),
-		agentURL:  os.Getenv("DOCKMESH_AGENT_URL"),
-		token:     os.Getenv("DOCKMESH_TOKEN"),
+		dataDir:        dataDir(),
+		enrollURL:      os.Getenv("DOCKMESH_ENROLL_URL"),
+		agentURL:       os.Getenv("DOCKMESH_AGENT_URL"),
+		token:          os.Getenv("DOCKMESH_TOKEN"),
+		caFingerprint:  os.Getenv("DOCKMESH_CA_FINGERPRINT"),
+		enrollCAFile:   os.Getenv("DOCKMESH_ENROLL_CA_FILE"),
+		insecureEnroll: insecureEnroll,
 	}
 
 	if err := os.MkdirAll(cfg.dataDir, 0o700); err != nil {
@@ -139,6 +158,8 @@ func main() {
 		slog.Error("tls config", "err", err)
 		os.Exit(1)
 	}
+	upgradeOrigin.dialURL = dialURL
+	upgradeOrigin.tls = tlsCfg
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -875,6 +896,10 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		// the agent can't drift from the server's validation rules.
 		var req agents.VolumeBrowseReq
 		_ = json.Unmarshal(f.Payload, &req)
+		if err := dockerwrap.CheckVolumeName(req.Volume); err != nil {
+			respond(conn, f.ID, nil, err)
+			return
+		}
 		vol, err := cli.VolumeInspect(ctx, req.Volume)
 		if err != nil {
 			respond(conn, f.ID, nil, err)
@@ -891,6 +916,10 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 	case agents.FrameReqVolumeBrowseFile:
 		var req agents.VolumeBrowseReq
 		_ = json.Unmarshal(f.Payload, &req)
+		if err := dockerwrap.CheckVolumeName(req.Volume); err != nil {
+			respond(conn, f.ID, nil, err)
+			return
+		}
 		vol, err := cli.VolumeInspect(ctx, req.Volume)
 		if err != nil {
 			respond(conn, f.ID, nil, err)
@@ -924,12 +953,20 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 	case agents.FrameReqStackStop:
 		var req agents.StackNameReq
 		_ = json.Unmarshal(f.Payload, &req)
+		if err := stacks.ValidateName(req.Name); err != nil {
+			respond(conn, f.ID, nil, err)
+			return
+		}
 		err := compose.NewService(dockerwrap.Wrap(cli), nil).Stop(ctx, req.Name)
 		respond(conn, f.ID, struct{}{}, err)
 
 	case agents.FrameReqStackStatus:
 		var req agents.StackNameReq
 		_ = json.Unmarshal(f.Payload, &req)
+		if err := stacks.ValidateName(req.Name); err != nil {
+			respond(conn, f.ID, nil, err)
+			return
+		}
 		out, err := compose.NewService(dockerwrap.Wrap(cli), nil).Status(ctx, req.Name)
 		respond(conn, f.ID, out, err)
 
@@ -980,13 +1017,13 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 	case agents.FrameReqStackSync:
 		var req agents.StackSyncReq
 		_ = json.Unmarshal(f.Payload, &req)
-		err := agentSyncStack(req)
+		err := syncStack(dataDir(), req)
 		respond(conn, f.ID, struct{}{}, err)
 
 	case agents.FrameReqStackDelete:
 		var req agents.StackNameReq
 		_ = json.Unmarshal(f.Payload, &req)
-		err := agentDeleteStack(req.Name)
+		err := deleteStack(dataDir(), req.Name)
 		respond(conn, f.ID, struct{}{}, err)
 
 	default:
@@ -997,7 +1034,10 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 // agentDeployStack stages compose+env into a tmpdir, parses, and runs the
 // shared executor against the local docker daemon.
 func agentDeployStack(ctx context.Context, cli *client.Client, req agents.StackDeployReq) (*compose.DeployResult, error) {
-	stagingBase := filepath.Join(envOr("DOCKMESH_DATA_DIR", "/var/lib/dockmesh"), "staging")
+	if err := stacks.ValidateName(req.Name); err != nil {
+		return nil, err
+	}
+	stagingBase := filepath.Join(dataDir(), "staging")
 	if err := os.MkdirAll(stagingBase, 0o700); err != nil {
 		return nil, err
 	}
@@ -1035,11 +1075,7 @@ func agentLoadStaged(ctx context.Context, dir, name, env string) (*composetypes.
 	}
 	// Created through an os.Root on the stacks directory, so the name can
 	// only ever create a directory inside it.
-	stacksBase := filepath.Join(envOr("DOCKMESH_DATA_DIR", "/var/lib/dockmesh"), "stacks")
-	if err := os.MkdirAll(stacksBase, 0o750); err != nil {
-		return nil, err
-	}
-	root, err := os.OpenRoot(stacksBase)
+	root, err := openStacksRoot(dataDir())
 	if err != nil {
 		return nil, err
 	}
@@ -1047,11 +1083,14 @@ func agentLoadStaged(ctx context.Context, dir, name, env string) (*composetypes.
 	if err := root.MkdirAll(name, 0o750); err != nil {
 		return nil, err
 	}
-	compose.RebaseBindSources(proj, dir, filepath.Join(stacksBase, name))
+	compose.RebaseBindSources(proj, dir, filepath.Join(root.Name(), name))
 	return proj, nil
 }
 
 func agentScaleService(ctx context.Context, cli *client.Client, req agents.StackScaleReq) (*compose.ScaleResult, error) {
+	if err := stacks.ValidateName(req.Name); err != nil {
+		return nil, err
+	}
 	dir, cleanup, err := host.WriteStagingDir(req.Name, req.Compose, req.Env)
 	if err != nil {
 		return nil, err
@@ -1065,6 +1104,9 @@ func agentScaleService(ctx context.Context, cli *client.Client, req agents.Stack
 }
 
 func agentCheckScale(ctx context.Context, cli *client.Client, req agents.StackCheckScaleReq) (*compose.ScaleCheck, error) {
+	if err := stacks.ValidateName(req.Name); err != nil {
+		return nil, err
+	}
 	dir, cleanup, err := host.WriteStagingDir(req.Name, req.Compose, req.Env)
 	if err != nil {
 		return nil, err
@@ -1075,101 +1117,6 @@ func agentCheckScale(ctx context.Context, cli *client.Client, req agents.StackCh
 		return nil, err
 	}
 	return compose.NewService(dockerwrap.Wrap(cli), nil).CheckScale(ctx, proj, req.Service)
-}
-
-// agentSelfUpgrade downloads a new binary from the server and replaces
-// the running executable. The agent should restart afterwards.
-func agentSelfUpgrade(req agents.AgentUpgradeReq) error {
-	if req.BinaryURL == "" {
-		return fmt.Errorf("binary_url required")
-	}
-	slog.Info("agent upgrade: downloading", "url", req.BinaryURL, "version", req.Version)
-
-	// Download to a temp file next to the current binary.
-	exePath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("resolve executable: %w", err)
-	}
-	exePath, _ = filepath.EvalSymlinks(exePath)
-
-	tmpPath := exePath + ".new"
-	resp, err := http.Get(req.BinaryURL)
-	if err != nil {
-		return fmt.Errorf("download: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("download: HTTP %d", resp.StatusCode)
-	}
-
-	out, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
-	if err != nil {
-		return fmt.Errorf("create tmp: %w", err)
-	}
-	if _, err := io.Copy(out, resp.Body); err != nil {
-		out.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("write: %w", err)
-	}
-	out.Close()
-
-	// Atomic replace: rename new over old.
-	if err := os.Rename(tmpPath, exePath); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("replace: %w", err)
-	}
-	slog.Info("agent upgrade: binary replaced", "path", exePath)
-	return nil
-}
-
-// stacksDir returns the persistent directory where the agent stores
-// mirrored compose files — <dataDir>/stacks/<name>/. Created with 0750
-// so the dockmesh-agent user can read/write and docker group can read.
-func stacksDir(name string) string {
-	return filepath.Join(envOr("DOCKMESH_DATA_DIR", "/var/lib/dockmesh"), "stacks", name)
-}
-
-// agentSyncStack writes the compose+env+meta files to the agent's local
-// stacks directory so the agent can survive a server loss. Called after
-// every successful deploy/update (P.7 compose-file mirroring).
-func agentSyncStack(req agents.StackSyncReq) error {
-	if err := stacks.ValidateName(req.Name); err != nil {
-		return err
-	}
-	dir := stacksDir(req.Name)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return fmt.Errorf("sync mkdir: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(req.Compose), 0o640); err != nil {
-		return fmt.Errorf("sync compose.yaml: %w", err)
-	}
-	if req.Env != "" {
-		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(req.Env), 0o640); err != nil {
-			return fmt.Errorf("sync .env: %w", err)
-		}
-	} else {
-		// Remove stale .env if the stack no longer has one.
-		_ = os.Remove(filepath.Join(dir, ".env"))
-	}
-	if req.Meta != "" {
-		if err := os.WriteFile(filepath.Join(dir, ".dockmesh.meta.json"), []byte(req.Meta), 0o640); err != nil {
-			return fmt.Errorf("sync meta: %w", err)
-		}
-	}
-	return nil
-}
-
-// agentDeleteStack removes the agent's local copy of a stack's compose
-// files. Called when the server deletes a stack (P.7).
-func agentDeleteStack(name string) error {
-	if err := stacks.ValidateName(name); err != nil {
-		return err
-	}
-	dir := stacksDir(name)
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		return nil // already gone
-	}
-	return os.RemoveAll(dir)
 }
 
 func respond(conn *websocket.Conn, id string, data any, err error) {
@@ -1191,70 +1138,8 @@ func sendResponse(conn *websocket.Conn, id string, env agents.ResponseEnvelope) 
 }
 
 // -----------------------------------------------------------------------------
-// Enrollment
+// TLS
 // -----------------------------------------------------------------------------
-
-func enroll(cfg agentConfig, certPath, keyPath, caPath, urlPath string) error {
-	hostname, _ := os.Hostname()
-	body := agents.EnrollRequest{
-		Token:         cfg.token,
-		Hostname:      hostname,
-		OS:            runtime.GOOS,
-		Arch:          runtime.GOARCH,
-		Version:       version.Version,
-		DockerVersion: dockerDaemonVersion(context.Background()),
-	}
-	buf, _ := json.Marshal(body)
-
-	// During enrollment we trust the server's TLS chain whatever it is —
-	// either it's a public-CA-signed cert (HTTPS BaseURL) or the user has
-	// pointed us at a private CA. In dev we accept self-signed with
-	// InsecureSkipVerify because the BaseURL is typically http://, which
-	// means the request goes plain anyway. Once enrolled, the agent
-	// connection itself is mTLS pinned to OUR CA.
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-		},
-	}
-
-	req, err := http.NewRequest(http.MethodPost, cfg.enrollURL, bytes.NewReader(buf))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("enroll http %d: %s", resp.StatusCode, string(b))
-	}
-	var er agents.EnrollResponse
-	if err := json.NewDecoder(resp.Body).Decode(&er); err != nil {
-		return err
-	}
-	if er.ClientCert == "" || er.ClientKey == "" || er.CACert == "" {
-		return errors.New("server returned empty cert payload")
-	}
-	if err := os.WriteFile(certPath, []byte(er.ClientCert), 0o600); err != nil {
-		return err
-	}
-	if err := os.WriteFile(keyPath, []byte(er.ClientKey), 0o600); err != nil {
-		return err
-	}
-	if err := os.WriteFile(caPath, []byte(er.CACert), 0o644); err != nil {
-		return err
-	}
-	if er.AgentURL != "" {
-		_ = os.WriteFile(urlPath, []byte(er.AgentURL), 0o644)
-	}
-	slog.Info("cert persisted", "agent_id", er.AgentID, "cn", er.AgentName)
-	return nil
-}
 
 func loadTLS(certPath, keyPath, caPath string) (*tls.Config, error) {
 	cert, err := tls.LoadX509KeyPair(certPath, keyPath)

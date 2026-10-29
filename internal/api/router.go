@@ -663,15 +663,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 
 			// -------------------------- AGENTS (admin) -----------------------
 			// "Agents" is the technical name for the binary that runs on
-			// remote hosts; the user-facing concept is "host". hosts.update
-			// gates lifecycle (drain/upgrade/rotate); hosts.delete gates
-			// revoke; ListAgents is admin-shaped for now (acts like a
-			// hosts admin view), so all routes ride on hosts.update.
-			// "Agents" is the technical name for the binary that runs on
 			// remote hosts; the user-facing concept is "host". POST /agents
-			// = enroll a new host (hosts.create); upgrade/rotate/drain
-			// touch existing hosts (hosts.update); DELETE = revoke
-			// (hosts.delete); GETs = hosts.view.
+			// and rotate-token mint enrollment tokens (hosts.create), since
+			// a rotated token re-enrolls the host; upgrade touches existing
+			// hosts (hosts.update); DELETE = revoke (hosts.delete);
+			// GETs = hosts.view.
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermHostsView))
 				r.Get("/agents", h.ListAgents)
@@ -681,11 +677,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermHostsCreate))
 				r.Post("/agents", h.CreateAgent)
+				r.Post("/agents/{id}/rotate-token", h.RotateAgentEnrollToken)
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermHostsUpdate))
 				r.Post("/agents/{id}/upgrade", h.UpgradeAgent)
-				r.Post("/agents/{id}/rotate-token", h.RotateAgentEnrollToken)
 				r.Put("/agents/upgrade-policy", h.UpdateAgentUpgradePolicy)
 				r.Post("/agents/upgrade-policy/run", h.RunAgentUpgradeEvaluation)
 			})

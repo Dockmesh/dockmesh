@@ -38,6 +38,13 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   to it and keeps the newest three.
 
 ### Changed
+- Host enrollment tokens now expire after 24 hours (`DOCKMESH_AGENT_ENROLL_TOKEN_TTL` changes
+  this) and work exactly once. "Re-issue token" on a host now re-enrolls that host under the
+  same ID, so its stacks, tags and backup jobs stay attached. It now needs the `hosts.create`
+  permission instead of `hosts.update`, plus host scope for the host.
+- The agent installer picks the binary for the host's CPU architecture and checks its
+  SHA-256. If the server has no binary for that architecture, the installer stops with a
+  clear message instead of installing the wrong one.
 - The Authentication page no longer shows sign-in settings Dockmesh doesn't enforce yet:
   password rotation and reuse, remember-me, requiring 2FA for admins, turning off local
   passwords and self-registration. Saved values are kept.
@@ -81,6 +88,17 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and exec sessions are now recorded in the audit log.
 - Signing in with an unknown username takes as long as with a wrong password, and invalid
   API tokens can no longer tie up the server with expensive hash checks.
+- New agents enroll over the agent port and check the server's certificate against the
+  Dockmesh agent CA, whose fingerprint is part of the install command. Before, an agent
+  trusted any server during enrollment, so someone on the network path could take it over.
+  Enrolling over plain HTTP now needs the agent's `--insecure-enroll` flag.
+- Agents now download self-upgrades from the agent port over their authenticated
+  connection and check them against a SHA-256 the server sends before replacing the binary.
+  Automatic upgrades stop after three failed attempts for the same build instead of retrying
+  every minute, and two
+  upgrades can no longer write the new binary at the same time.
+- Agents check every stack and volume name the server sends with the server's own rules
+  before touching files or mounting a volume.
 - `X-Forwarded-For` and `X-Real-IP` are only believed from a trusted proxy (localhost unless
   configured). Before, anyone could set them to dodge the login rate limit and put a fake
   address into sessions and the audit log.
@@ -191,6 +209,10 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   through symlinks in the data directory.
 
 ### Upgrade notes
+- [agent-upgrade, admins] Hosts that are already enrolled keep working and do not need to be
+  re-enrolled. Upgrade each agent once from its host page (or use automatic upgrades) so it
+  verifies future upgrades; the upgrade from an older agent is still downloaded the old,
+  unverified way.
 - [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The
   sign-in page says why.
 - [legacy-api-tokens, admins] API tokens created before this version have no owner. They keep

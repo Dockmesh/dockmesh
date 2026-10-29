@@ -61,6 +61,10 @@ func New(dir string, hosts []string) (*Manager, error) {
 // so they can verify the server.
 func (m *Manager) CACertPEM() []byte { return m.caCertPEM }
 
+// CAFingerprint returns the SHA-256 (hex) of the CA cert's DER encoding.
+// The agent installer pins it so enrollment only talks to this server.
+func (m *Manager) CAFingerprint() string { return certFingerprint(m.caCert.Raw) }
+
 // ServerCertPEM / ServerKeyPEM return the listener's identity. Used to
 // build a tls.Config in the caller (so we don't import net/http here).
 func (m *Manager) ServerCertPEM() []byte { return m.serverCert }

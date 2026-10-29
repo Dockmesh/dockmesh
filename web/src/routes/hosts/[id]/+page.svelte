@@ -257,19 +257,20 @@
     open: boolean;
     token: string;
     install: string;
-  }>({ open: false, token: '', install: '' });
+    expiresAt: string;
+  }>({ open: false, token: '', install: '', expiresAt: '' });
 
   async function rotateToken() {
     if (isLocal) return;
     if (!(await confirm.ask({
       title: `Re-issue token for ${hostName}`,
       message: 'Generate a new enrollment token?',
-      body: 'The old certificate stays valid until the new one is presented. Use this if the agent’s mTLS cert is suspect.',
+      body: 'Running the new install command re-enrolls this host under the same ID. The old certificate stays valid until then. Use this if the agent’s certificate is suspect or the host needs a reinstall.',
       confirmLabel: 'Re-issue'
     }))) return;
     try {
       const data = await api.agents.rotateToken(id);
-      tokenModal = { open: true, token: data.token, install: data.install_hint };
+      tokenModal = { open: true, token: data.token, install: data.install_hint, expiresAt: data.token_expires_at };
       toast.success('Token re-issued', 'New install command is shown below — paste on the agent host');
     } catch (err) {
       toast.error('Re-issue failed', err instanceof ApiError ? err.message : undefined);
@@ -694,15 +695,17 @@
           </button>
         </div>
 
-        <div class="ed-host-card" style="grid-column: span 6;">
-          <div class="ed-host-card-title">Re-issue token</div>
-          <p class="ed-host-empty" style="margin-top: 0;">
-            If the agent's mTLS cert is suspect — leaked from CI logs, host wiped, etc. — generate a new enrollment token. The old cert is revoked the moment the new one is presented.
-          </p>
-          <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={isLocal} onclick={rotateToken}>
-            <RefreshCw size={11} strokeWidth={1.5} /> Re-issue
-          </button>
-        </div>
+        {#if allowed('hosts.create')}
+          <div class="ed-host-card" style="grid-column: span 6;">
+            <div class="ed-host-card-title">Re-issue token</div>
+            <p class="ed-host-empty" style="margin-top: 0;">
+              If the agent's mTLS cert is suspect — leaked from CI logs, host wiped, etc. — generate a new enrollment token. The old cert is revoked the moment the new one is presented.
+            </p>
+            <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={isLocal} onclick={rotateToken}>
+              <RefreshCw size={11} strokeWidth={1.5} /> Re-issue
+            </button>
+          </div>
+        {/if}
 
         <div class="ed-host-card ed-host-card-danger" style="grid-column: span 6;">
           <div class="ed-host-card-title ed-host-card-danger-title">Revoke</div>
@@ -794,6 +797,7 @@
   <p class="ed-host-token-warn">
     The raw token is shown only once — copy now if you need it for an
     external installer. After closing this modal it will not be retrievable.
+    It expires {tokenModal.expiresAt ? new Date(tokenModal.expiresAt).toLocaleString() : '—'}.
   </p>
   <div class="ed-host-token-raw">
     <span class="ed-host-token-label">token</span>
