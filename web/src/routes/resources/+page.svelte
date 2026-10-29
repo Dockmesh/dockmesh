@@ -11,6 +11,7 @@
   // is now a single "Resources". Topology preview footer in Networks
   // links to the existing /networks?topology=1 graph until that gets
   // its own slice.
+  import { untrack } from 'svelte';
   import { page } from '$app/stores';
   import {
     api, ApiError, isFanOut,
@@ -19,6 +20,7 @@
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
   import { autoRefresh } from '$lib/autorefresh';
+  import { latest } from '$lib/latest';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import {
@@ -80,13 +82,16 @@
     return img.RepoTags?.[0] && img.RepoTags[0] !== '<none>:<none>' ? img.RepoTags[0] : img.Id;
   }
 
+  const nextImages = latest();
   async function loadImages() {
+    const current = nextImages();
     imagesLoading = true;
     try {
       const [imgRes, ctrRes] = await Promise.all([
         api.images.list(false, hosts.id),
         api.containers.list(true, hosts.id).catch(() => [])
       ]);
+      if (!current()) return;
       if (isFanOut(imgRes)) {
         images = imgRes.items as ImageSummary[];
         imagesUnreachable = imgRes.unreachable_hosts;
@@ -103,9 +108,9 @@
       // permission errors that aren't actionable.
       if (canImageScan) void backfillScanCache();
     } catch (err) {
-      toast.error('Failed to load images', err instanceof ApiError ? err.message : undefined);
+      if (current()) toast.error('Failed to load images', err instanceof ApiError ? err.message : undefined);
     } finally {
-      imagesLoading = false;
+      if (current()) imagesLoading = false;
     }
   }
   // Backend marshals an empty []ScanVuln as JSON null (Go nil-slice
@@ -372,13 +377,16 @@
   let volumeUsage = $state<Map<string, number>>(new Map());
   function vKey(v: VolumeRow): string { return `${v.host_id ?? 'local'}/${v.Name}`; }
 
+  const nextVolumes = latest();
   async function loadVolumes() {
+    const current = nextVolumes();
     volumesLoading = true;
     try {
       const [volRes, ctrRes] = await Promise.all([
         api.volumes.list(hosts.id),
         api.containers.list(true, hosts.id).catch(() => [])
       ]);
+      if (!current()) return;
       if (isFanOut(volRes)) {
         volumes = volRes.items as VolumeRow[];
         volumesUnreachable = volRes.unreachable_hosts;
@@ -399,9 +407,9 @@
       }
       volumeUsage = usage;
     } catch (err) {
-      toast.error('Failed to load volumes', err instanceof ApiError ? err.message : undefined);
+      if (current()) toast.error('Failed to load volumes', err instanceof ApiError ? err.message : undefined);
     } finally {
-      volumesLoading = false;
+      if (current()) volumesLoading = false;
     }
   }
 
@@ -554,10 +562,13 @@
   let showSystemNetworks = $state(false);
   const SYSTEM_NETWORKS = new Set(['bridge', 'host', 'none']);
 
+  const nextNetworks = latest();
   async function loadNetworks() {
+    const current = nextNetworks();
     networksLoading = true;
     try {
       const r = await api.networks.list(hosts.id);
+      if (!current()) return;
       if (isFanOut(r)) {
         networks = r.items as NetworkRow[];
         networksUnreachable = r.unreachable_hosts;
@@ -566,9 +577,9 @@
         networksUnreachable = [];
       }
     } catch (err) {
-      toast.error('Failed to load networks', err instanceof ApiError ? err.message : undefined);
+      if (current()) toast.error('Failed to load networks', err instanceof ApiError ? err.message : undefined);
     } finally {
-      networksLoading = false;
+      if (current()) networksLoading = false;
     }
   }
   function networkContainerCount(n: NetworkRow): number {
@@ -681,7 +692,7 @@
   async function loadAll() {
     await Promise.all([loadImages(), loadVolumes(), loadNetworks()]);
   }
-  $effect(() => { hosts.id; loadAll(); });
+  $effect(() => { hosts.id; untrack(loadAll); });
   $effect(() => autoRefresh(loadAll, 10_000));
 
   // ===================================================================

@@ -6,6 +6,7 @@
   // and file read is recorded server-side. Read-only on purpose; no
   // rename / write / delete in here. Operators who need that have a
   // shell-into-container path.
+  import { untrack } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { api, ApiError, isFanOut, type VolumeEntry, type VolumeFileResult } from '$lib/api';
@@ -36,14 +37,22 @@
   // ───────── Inspect
   let inspect = $state<any>(null);
   let inspectLoading = $state(true);
+  let inspectError = $state<string | null>(null);
+  let inspectSeq = 0;
   async function loadInspect() {
+    const seq = ++inspectSeq;
     inspectLoading = true;
     try {
-      inspect = await api.volumes.inspect(name, hostId);
+      const r = await api.volumes.inspect(name, hostId);
+      if (seq !== inspectSeq) return;
+      inspect = r;
+      inspectError = null;
     } catch (err) {
-      toast.error('Failed to load volume', err instanceof ApiError ? err.message : undefined);
+      if (seq !== inspectSeq) return;
+      inspectError = err instanceof ApiError ? err.message : 'failed to load volume';
+      toast.error('Failed to load volume', inspectError);
     } finally {
-      inspectLoading = false;
+      if (seq === inspectSeq) inspectLoading = false;
     }
   }
 
@@ -215,15 +224,19 @@
 
   // Tab orchestrator. Containers list comes from /containers + filtering
   // by Mounts; loaded lazily so the Overview tab doesn't pay for it.
+  // Inspect feeds the header on every tab, so it loads once per volume
+  // rather than per tab.
   $effect(() => {
-    name; hostId; tab;
-    if (tab === 'overview') loadInspect();
-    else if (tab === 'files') loadDir('/');
-    else if (tab === 'containers') loadAttached();
+    name; hostId;
+    inspect = null;
+    inspectError = null;
+    untrack(() => loadInspect());
   });
-  // Load Inspect once on mount so the header shows driver + mountpoint
-  // before the operator switches tabs.
-  $effect(() => { if (!inspect && !inspectLoading) loadInspect(); });
+  $effect(() => {
+    name; hostId;
+    if (tab === 'files') untrack(() => loadDir('/'));
+    else if (tab === 'containers') untrack(() => loadAttached());
+  });
 
   const canWrite = $derived(allowed('volumes.delete'));
   const canBrowse = $derived(allowed('volumes.browse'));
@@ -301,6 +314,10 @@
   {#if tab === 'overview'}
     {#if inspectLoading && !inspect}
       <div class="dm-card vol-detail-card-pad"><Skeleton width="80%" height="6rem" /></div>
+    {:else if inspectError && !inspect}
+      <div class="dm-card vol-detail-card-pad">
+        <EmptyState icon={AlertTriangle} title="Volume not available" description={inspectError} />
+      </div>
     {:else if inspect}
       <div class="dm-card vol-detail-overview">
         <dl class="vol-detail-dl">

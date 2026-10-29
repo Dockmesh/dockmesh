@@ -21,9 +21,20 @@
 // The returned function is called when the effect re-runs or the
 // component unmounts.
 
+// A tick is skipped while the previous call is still pending, so slow
+// fan-out requests never pile up.
 export function autoRefresh(fn: () => void | Promise<void>, intervalMs: number): () => void {
-	const id = setInterval(() => {
-		void fn();
+	let pending = false;
+	const id = setInterval(async () => {
+		if (pending) return;
+		pending = true;
+		try {
+			await fn();
+		} catch {
+			/* the page's own load reports errors */
+		} finally {
+			pending = false;
+		}
 	}, intervalMs);
 	return () => clearInterval(id);
 }

@@ -45,6 +45,22 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - A role or scope change now applies to a signed-in user's next request instead of after up
   to 15 minutes.
 
+### Fixed
+- Coming back to an idle browser, or having Dockmesh open in several tabs, no longer signs
+  you out. Tabs now share one session renewal, and a short network outage while renewing
+  keeps you signed in and retries instead of returning you to the sign-in page. Container
+  file downloads now renew an expired session like every other request.
+- The volume detail page no longer reloads endlessly when the volume does not exist; it
+  shows an error instead.
+- Leaving a stack page during a migration stops its status polling.
+- The host detail page now loads the new host when you switch between hosts.
+- Starting and stopping stack operations updates the busy state of every open stack page.
+- Switching hosts no longer loads the dashboard, containers, stacks and resources pages
+  twice, and a slow response for the previously selected host can no longer overwrite the
+  new one. Auto-refresh skips a cycle while the previous one is still loading.
+- Leaving a container or stack page while its logs, stats or terminal are connecting no
+  longer leaves a socket open in the background.
+
 ### Security
 - Each kind of signed token (session, refresh, two-factor challenge, WebSocket ticket, single
   sign-on state) now has its own key and is only accepted for its own purpose. Before, a
