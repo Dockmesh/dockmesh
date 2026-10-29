@@ -420,6 +420,7 @@ func (h *Handlers) CreateStackFromGit(w http.ResponseWriter, r *http.Request) {
 	}
 	syncRes, syncErr := h.GitSource.Sync(r.Context(), req.Name)
 	h.audit(r, audit.ActionStackCreate, req.Name, map[string]any{"git": req.Git.RepoURL, "from_git": true})
+	h.syncGitWebhookNotice(r.Context())
 
 	res := map[string]any{
 		"source":  src,

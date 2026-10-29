@@ -135,6 +135,10 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   confirms the changes and the notice goes away.
 - A backup job set to encrypt no longer writes an unencrypted archive when secrets encryption
   is turned off; the run fails and admins get a notice.
+- Git webhooks now need a webhook secret and a valid signature. Before, anyone who knew a
+  stack name could trigger a sync, and with auto-deploy a deploy, without any secret. New
+  webhook secrets must be at least 16 characters, and repeated deliveries no longer start
+  overlapping syncs of the same stack.
 
 ### Fixed
 - Relative bind mounts such as `./html:/usr/share/nginx/html` now point at the stack's own
@@ -181,3 +185,7 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   `-wal` and `-shm` files if present, and start the previous version.
 - [redeploy-relative-bind-mounts, admins] Redeploy every stack that uses a relative bind mount
   (`./path:/...`). Dockmesh lists the affected stacks in a notice until each one is redeployed.
+- [git-webhook-secret, admins] Git webhooks for stacks without a webhook secret are disabled;
+  polling and manual sync keep working. A notice lists the affected stacks. To keep using a
+  webhook, edit the stack's git source, set a webhook secret and enter the same secret in the
+  webhook settings of your git provider.

@@ -1184,6 +1184,11 @@
     showGitDialog = true;
   }
 
+  function generateWebhookSecret() {
+    const bytes = crypto.getRandomValues(new Uint8Array(24));
+    gitForm.webhook_secret = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
   async function saveGitSource(e: Event) {
     e.preventDefault();
     if (!gitForm.repo_url.trim()) return;
@@ -1778,6 +1783,18 @@
               </div>
             {/if}
           </div>
+          {#if !gitSource.has_webhook_secret}
+            <div class="gs-drift">
+              <div class="gs-drift-title">
+                <AlertTriangle size={12} strokeWidth={1.5} />
+                Webhook disabled — set a secret
+              </div>
+              <div class="gs-drift-hint">
+                Pushes to the repository only reach this stack through polling or <em>Sync now</em>.
+                Set a webhook secret under <em>Edit</em> and enter the same secret in your git provider's webhook settings.
+              </div>
+            </div>
+          {/if}
           {#if gitSource.last_env_drift && ((gitSource.last_env_drift.new_from_repo?.length ?? 0) + (gitSource.last_env_drift.new_from_compose?.length ?? 0) > 0)}
             <div class="gs-drift">
               <div class="gs-drift-title">
@@ -3107,19 +3124,26 @@
       <div>
         <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-webhook">
           Webhook secret (HMAC)
-          {#if gitSource?.has_webhook_secret}<span class="font-normal normal-case">— set to keep</span>{/if}
+          {#if gitSource?.has_webhook_secret}<span class="font-normal normal-case">— leave blank to keep existing</span>{/if}
         </label>
-        <input id="git-webhook" type="password" class="dm-input" bind:value={gitForm.webhook_secret as any} />
+        <div class="flex gap-2">
+          <input id="git-webhook" type="text" autocomplete="off" class="dm-input font-mono text-xs" bind:value={gitForm.webhook_secret as any} />
+          <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={generateWebhookSecret}>Generate</button>
+        </div>
+        <p class="text-xs text-[var(--fg-muted)] mt-1">Required for webhooks. Copy it into your git provider; it is not shown again.</p>
       </div>
     </div>
     <label class="flex items-center gap-2 text-sm">
       <input type="checkbox" bind:checked={gitForm.auto_deploy as any} />
       Auto-deploy on new commits
     </label>
-    {#if gitSource?.has_webhook_secret || (gitSource && !gitSource.has_webhook_secret)}
+    {#if gitSource}
       <div class="text-xs text-[var(--fg-muted)] bg-[var(--bg-muted)] rounded p-2 border border-[var(--border)]">
         <p class="font-medium text-[var(--fg)] mb-1">Webhook URL</p>
-        <code class="text-[11px] font-mono break-all">POST /api/v1/stacks/{name}/git/webhook</code>
+        <code class="text-[11px] font-mono break-all">POST {location.origin}/api/v1/stacks/{name}/git/webhook</code>
+        {#if !gitSource.has_webhook_secret && !gitForm.webhook_secret}
+          <p class="mt-1 text-[var(--color-warning-400)]">Disabled until a webhook secret is set.</p>
+        {/if}
       </div>
     {/if}
   </form>

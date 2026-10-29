@@ -2508,16 +2508,17 @@ paths:
       summary: "Public: provider-triggered sync (GitHub / GitLab / Gitea)"
       description: |
         Public endpoint — no Bearer auth, since GitHub / GitLab / Gitea
-        can't send Authorization headers. When `webhook_secret` is set
-        on the source, the handler verifies the HMAC signature:
+        can't send Authorization headers. The source must have a
+        `webhook_secret`, and the request must carry a matching signature:
 
         * **GitHub** / **Gitea** — `X-Hub-Signature-256` / `X-Gitea-Signature` (`sha256=<hex>`)
         * **GitLab** — plain shared secret on `X-Gitlab-Token`
 
-        When no secret is configured the endpoint accepts any body — the
-        caller just has to know the stack name. Always returns 202 on
-        success; the actual sync runs in the background so providers don't
-        time out on slow clones.
+        Without a secret the webhook is disabled; polling and manual sync
+        keep working. Returns 202 on success; the sync runs in the
+        background, detached from the request, so providers don't time out
+        on slow clones. Syncs of one stack run one at a time, and deliveries
+        arriving during a sync are merged into a single follow-up sync.
       security: []
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
@@ -2539,12 +2540,7 @@ paths:
                   status: { type: string, example: "sync queued" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401":
-          description: Signature mismatch.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "404":
-          description: No git source configured.
+          description: Webhook rejected — unknown stack or no git source, no webhook secret set, or signature mismatch. The reasons share one response.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -7991,7 +7987,9 @@ components:
           type: integer
           minimum: 60
           description: 0 = do not poll (webhook / manual sync only).
-        has_webhook_secret: { type: boolean }
+        has_webhook_secret:
+          type: boolean
+          description: Whether a webhook secret is set. Without one, `POST /stacks/{name}/git/webhook` is rejected.
         last_sync_sha: { type: string }
         last_sync_at: { type: string, format: date-time }
         last_sync_error: { type: string }
@@ -8029,8 +8027,8 @@ components:
           minimum: 60
         webhook_secret:
           type: string
-          description: Shared secret for HMAC verification of incoming webhook pushes.
-        clear_webhook_secret: { type: boolean }
+          description: Shared secret for HMAC verification of incoming webhook pushes. At least 16 characters when set or changed (shorter secrets stored earlier keep working). Empty keeps the stored secret. Webhooks are rejected while no secret is set.
+        clear_webhook_secret: { type: boolean, description: "Removes the secret, which disables the webhook." }
 
     StackGitSyncResult:
       type: object
