@@ -1347,6 +1347,8 @@ paths:
         the old one is restored and the old image stays tagged as the
         rollback target. Older rollback tags beyond the configured count
         (`DOCKMESH_UPDATE_ROLLBACK_KEEP`, default 3) are pruned.
+        Because a stack container is rebuilt from compose.yaml, updating
+        one also needs `stacks.deploy`.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
       responses:
@@ -1358,6 +1360,11 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: An update of this container or its stack is already running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: Pull or swap failed; the previous container is kept.
           content:
@@ -1371,7 +1378,7 @@ paths:
       summary: Roll a container back to its previous image
       description: |
         Recreates the container from the rollback tag stored in the given
-        update-history entry, with the same swap and volume handling as
+        update-history entry of this container, with the same swap and volume handling as
         `/containers/{id}/update`. Stack containers keep their compose.yaml
         config; the stack's deploy history notes that the next deploy uses
         the image compose.yaml names again.
@@ -1397,7 +1404,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: Already rolled back, or the rollback image was pruned or removed.
+          description: Already rolled back, the rollback image was pruned or removed, or an update of this container or its stack is running.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

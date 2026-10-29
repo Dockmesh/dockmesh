@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/dockmesh/dockmesh/internal/db"
 )
 
 func TestCarryVolumes(t *testing.T) {
@@ -180,4 +180,30 @@ func TestWatcherPersistsChecks(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("stored rows after expire = %d, want 1", n)
 	}
+}
+
+func TestAcquireSerialisesPerStack(t *testing.T) {
+	s := NewService(nil, nil)
+	web := &dtypes.ContainerJSON{ContainerJSONBase: &dtypes.ContainerJSONBase{Name: "/app-web-1"}}
+	db := &dtypes.ContainerJSON{ContainerJSONBase: &dtypes.ContainerJSONBase{Name: "/app-db-1"}}
+	st := &stackTarget{stack: "app"}
+
+	release, err := s.acquire(web, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.acquire(db, st); err != ErrBusy {
+		t.Fatalf("second swap in the same stack: err = %v, want ErrBusy", err)
+	}
+	other, err := s.acquire(db, nil)
+	if err != nil {
+		t.Fatalf("standalone container blocked by a stack swap: %v", err)
+	}
+	other()
+	release()
+	again, err := s.acquire(db, st)
+	if err != nil {
+		t.Fatalf("after release: %v", err)
+	}
+	again()
 }

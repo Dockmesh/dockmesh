@@ -46,7 +46,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   to 15 minutes.
 - Updating the image of a container that belongs to a stack now rebuilds it from the
   stack's compose.yaml, together with the other replicas of its service, and records the
-  new image in the stack's deploy history.
+  new image in the stack's deploy history. Because that applies the stack's current
+  compose.yaml, it also needs the `stacks.deploy` permission.
 - Only the newest three rollback images per image tag are kept after an update
   (`DOCKMESH_UPDATE_ROLLBACK_KEEP` changes the number).
 - Update checks for private images use the credentials saved under Registries, and an
@@ -61,6 +62,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - Locally built images no longer always show "update available".
 
 ### Security
+- A rollback now only accepts update-history entries of the container it is called for, and
+  the update history is limited to containers in the caller's scope. Before, a user scoped to
+  one stack could roll back containers of other stacks.
 - Each kind of signed token (session, refresh, two-factor challenge, WebSocket ticket, single
   sign-on state) now has its own key and is only accepted for its own purpose. Before, a
   half-finished two-factor login could be used to turn two-factor authentication off.

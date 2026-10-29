@@ -89,6 +89,7 @@ func Load() (*Config, error) {
 		SetupForce:     envOr("DOCKMESH_SETUP_FORCE", "false") == "true",
 		RBACv2Enforce:  envOr("DOCKMESH_RBAC_V2_ENFORCE", "true") != "false",
 	}
+	// Mirrors updater.DefaultRollbackKeep; config can't import updater.
 	cfg.UpdateRollbackKeep = 3
 	if v := os.Getenv("DOCKMESH_UPDATE_ROLLBACK_KEEP"); v != "" {
 		n, err := strconv.Atoi(v)

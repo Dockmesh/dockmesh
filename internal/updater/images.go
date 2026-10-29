@@ -11,9 +11,10 @@ import (
 	"github.com/distribution/reference"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 )
 
-var rollbackSuffix = regexp.MustCompile(`-?rollback-(\d+)$`)
+var rollbackSuffix = regexp.MustCompile(`-?rollback-\d+$`)
 
 // baseRef maps a rollback tag back to the ref it was taken from, so a
 // container that was rolled back updates from its original tag again.
@@ -97,20 +98,33 @@ func rollbackTagsToPrune(ref string, tags []string, keep int) []string {
 }
 
 // pruneRollbackTags removes rollback tags of ref beyond the newest
-// rollbackKeep. Removing a tag only untags; an image a container still
-// runs is refused by the daemon and kept.
+// rollbackKeep. Only tags the updater recorded are candidates, so a
+// user's own `-rollback-` tag is never touched. Removing a tag only
+// untags; an image a container still runs is refused by the daemon and
+// kept.
 func (s *Service) pruneRollbackTags(ctx context.Context, cli *client.Client, ref string) {
-	imgs, err := cli.ImageList(ctx, dtypes.ImageListOptions{})
+	rows, err := s.db.QueryContext(ctx, `SELECT rollback_tag FROM update_history WHERE image_ref = ?`, ref)
 	if err != nil {
-		slog.Warn("updater: list images for rollback prune failed", "err", err)
+		slog.Warn("updater: list rollback tags failed", "err", err)
 		return
 	}
 	var tags []string
-	for _, img := range imgs {
-		tags = append(tags, img.RepoTags...)
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			rows.Close()
+			slog.Warn("updater: list rollback tags failed", "err", err)
+			return
+		}
+		tags = append(tags, t)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		slog.Warn("updater: list rollback tags failed", "err", err)
+		return
 	}
 	for _, t := range rollbackTagsToPrune(ref, tags, s.rollbackKeep) {
-		if _, err := cli.ImageRemove(ctx, t, dtypes.ImageRemoveOptions{}); err != nil {
+		if _, err := cli.ImageRemove(ctx, t, dtypes.ImageRemoveOptions{}); err != nil && !errdefs.IsNotFound(err) {
 			slog.Info("updater: rollback tag kept", "tag", t, "err", err)
 			continue
 		}

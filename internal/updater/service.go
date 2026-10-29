@@ -23,6 +23,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
@@ -42,6 +43,7 @@ var (
 	ErrAlreadyRolledBack = errors.New("already rolled back")
 	ErrHistoryNotFound   = errors.New("history entry not found")
 	ErrRollbackImageGone = errors.New("rollback image no longer exists (pruned or removed)")
+	ErrBusy              = errors.New("an update of this container or stack is already running")
 )
 
 // DefaultRollbackKeep is how many rollback tags per image ref survive
@@ -65,10 +67,51 @@ type Service struct {
 	stacks       *stacks.Manager
 	history      deployRecorder
 	rollbackKeep int
+
+	mu   sync.Mutex
+	busy map[string]bool
 }
 
 func NewService(dockerCli *docker.Client, db *sql.DB) *Service {
-	return &Service{docker: dockerCli, db: db, rollbackKeep: DefaultRollbackKeep}
+	return &Service{docker: dockerCli, db: db, rollbackKeep: DefaultRollbackKeep, busy: make(map[string]bool)}
+}
+
+// acquire serialises swaps per stack (or per standalone container), so
+// two updates never rename and recreate the same replicas at once.
+func (s *Service) acquire(info *dtypes.ContainerJSON, st *stackTarget) (func(), error) {
+	key := "container:" + strings.TrimPrefix(info.Name, "/")
+	if st != nil {
+		key = "stack:" + st.stack
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.busy[key] {
+		return nil, ErrBusy
+	}
+	s.busy[key] = true
+	return func() {
+		s.mu.Lock()
+		delete(s.busy, key)
+		s.mu.Unlock()
+	}, nil
+}
+
+// ManagedStack returns the stack a container belongs to when that stack
+// is managed here (and an update would rebuild it from compose.yaml),
+// or "" otherwise.
+func (s *Service) ManagedStack(ctx context.Context, containerID string) string {
+	if s.docker == nil || s.stacks == nil {
+		return ""
+	}
+	info, err := s.docker.Raw().ContainerInspect(ctx, containerID)
+	if err != nil || info.Config == nil {
+		return ""
+	}
+	stack := info.Config.Labels[compose.LabelProject]
+	if stack == "" || info.Config.Labels[compose.LabelService] == "" || !s.stacks.Has(stack) {
+		return ""
+	}
+	return stack
 }
 
 // SetAuthResolver wires in registry-credential resolution so the
@@ -153,6 +196,11 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 	ref := normalizeImageRef(image)
 	containerName := strings.TrimPrefix(info.Name, "/")
 	oldImageID := info.Image
+	release, err := s.acquire(&info, st)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	authBlob := s.resolveImageAuth(ctx, ref)
 	rc, err := cli.ImagePull(ctx, ref, dtypes.ImagePullOptions{RegistryAuth: authBlob})
@@ -229,17 +277,23 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 }
 
 // Rollback reverts the container to the image stored in the given history
-// entry. Stack containers are rebuilt from compose.yaml with only the
-// image swapped for the rollback tag.
-func (s *Service) Rollback(ctx context.Context, historyID int64, userID string) (*Result, error) {
+// entry, which must belong to that container. Stack containers are
+// rebuilt from compose.yaml with only the image swapped for the rollback
+// tag.
+func (s *Service) Rollback(ctx context.Context, containerID string, historyID int64, userID string) (*Result, error) {
 	if s.docker == nil {
 		return nil, ErrDockerUnavailable
 	}
+	cli := s.docker.Raw()
+	info, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return nil, fmt.Errorf("inspect: %w", err)
+	}
 	var e Entry
 	var rolledAt sql.NullTime
-	err := s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, `
 		SELECT id, container_name, image_ref, old_digest, new_digest, rollback_tag, applied_at, rolled_back_at
-		FROM update_history WHERE id = ?`, historyID).
+		FROM update_history WHERE id = ? AND container_name = ?`, historyID, strings.TrimPrefix(info.Name, "/")).
 		Scan(&e.ID, &e.ContainerName, &e.ImageRef, &e.OldDigest, &e.NewDigest, &e.RollbackTag, &e.AppliedAt, &rolledAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrHistoryNotFound
@@ -251,7 +305,6 @@ func (s *Service) Rollback(ctx context.Context, historyID int64, userID string) 
 		return nil, ErrAlreadyRolledBack
 	}
 
-	cli := s.docker.Raw()
 	if _, _, err := cli.ImageInspectWithRaw(ctx, e.RollbackTag); err != nil {
 		if errdefs.IsNotFound(err) {
 			return nil, ErrRollbackImageGone
@@ -259,14 +312,15 @@ func (s *Service) Rollback(ctx context.Context, historyID int64, userID string) 
 		return nil, fmt.Errorf("inspect rollback image: %w", err)
 	}
 
-	info, err := cli.ContainerInspect(ctx, e.ContainerName)
-	if err != nil {
-		return nil, fmt.Errorf("inspect %s: %w", e.ContainerName, err)
-	}
 	st, err := s.stackTarget(ctx, &info)
 	if err != nil {
 		return nil, err
 	}
+	release, err := s.acquire(&info, st)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	var newID string
 	if st != nil {
@@ -382,6 +436,11 @@ func (s *Service) swapService(ctx context.Context, cli *client.Client, st *stack
 	var done []string
 	var picked string
 	for _, c := range cs {
+		// A container parked by an earlier swap that could not be
+		// removed still carries the service labels.
+		if strings.Contains(containerNameOf(c), "-dmold-") {
+			continue
+		}
 		id, err := s.swapReplica(ctx, cli, st, c.ID, image)
 		if err != nil {
 			for _, d := range done {

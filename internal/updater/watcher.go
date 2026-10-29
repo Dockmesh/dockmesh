@@ -55,8 +55,8 @@ type Watcher struct {
 }
 
 // SetNotifier wires in the bell-icon notification center so each
-// newly-detected available image update emits one entry (per image,
-// not per container — deduped by the cache).
+// newly-detected available image update emits one entry per image and
+// remote digest.
 func (w *Watcher) SetNotifier(n *notifications.Service) { w.notifs = n }
 
 // SetAuthResolver lets the watcher check private images with the
@@ -206,10 +206,9 @@ func (w *Watcher) poll(ctx context.Context) {
 		// ref's repository. An image without one was built or loaded
 		// locally and has nothing upstream to compare with.
 		img, _, lerr := cli.ImageInspectWithRaw(ctx, c.ImageID)
-		switch {
-		case lerr != nil:
+		if lerr != nil {
 			info.Error = trimErr(lerr.Error())
-		default:
+		} else {
 			info.LocalDigest = repoDigestFor(ref, img.RepoDigests)
 			if info.LocalDigest == "" {
 				info.Error = "no registry digest (image built or loaded locally)"
