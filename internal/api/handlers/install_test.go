@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -12,11 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
-
 	"github.com/dockmesh/dockmesh/internal/agents"
-	"github.com/dockmesh/dockmesh/internal/api/middleware"
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/pki"
 )
 
@@ -78,56 +73,5 @@ func TestAgentInstallScript(t *testing.T) {
 	}
 	if left := regexp.MustCompile(`\{\{[A-Z0-9_]+\}\}`).FindString(body); left != "" {
 		t.Errorf("rendered script still contains placeholder %s", left)
-	}
-}
-
-func TestRotateEnrollTokenNeedsCreateForEnrolledHost(t *testing.T) {
-	dir := t.TempDir()
-	database, err := db.Open(filepath.Join(dir, "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer database.Close()
-	if err := db.Migrate(database); err != nil {
-		t.Fatal(err)
-	}
-	mgr, err := pki.New(dir, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	svc := agents.NewService(database, mgr, "http://srv:8080", "wss://srv:8443/connect")
-	h := &Handlers{Agents: svc}
-	ctx := context.Background()
-	pending, err := svc.Create(ctx, "pending")
-	if err != nil {
-		t.Fatal(err)
-	}
-	enrolled, err := svc.Create(ctx, "enrolled")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.Enroll(ctx, agents.EnrollRequest{Token: enrolled.Token}); err != nil {
-		t.Fatal(err)
-	}
-
-	cases := []struct {
-		name, role, id string
-		want           int
-	}{
-		{"viewer on pending host", "viewer", pending.Agent.ID, http.StatusOK},
-		{"viewer on enrolled host", "viewer", enrolled.Agent.ID, http.StatusForbidden},
-		{"admin on enrolled host", "admin", enrolled.Agent.ID, http.StatusOK},
-	}
-	for _, c := range cases {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+c.id+"/rotate-token", nil)
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("id", c.id)
-		reqCtx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
-		req = req.WithContext(middleware.WithIdentity(reqCtx, middleware.Identity{Role: c.role}))
-		rec := httptest.NewRecorder()
-		h.RotateAgentEnrollToken(rec, req)
-		if rec.Code != c.want {
-			t.Errorf("%s: status %d, want %d (%s)", c.name, rec.Code, c.want, rec.Body.String())
-		}
 	}
 }

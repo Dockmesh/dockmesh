@@ -35,7 +35,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 ### Changed
 - Host enrollment tokens now expire after 24 hours (`DOCKMESH_AGENT_ENROLL_TOKEN_TTL` changes
   this) and work exactly once. "Re-issue token" on a host now re-enrolls that host under the
-  same ID, so its stacks, tags and backup jobs stay attached; it needs host scope for the host.
+  same ID, so its stacks, tags and backup jobs stay attached. It now needs the `hosts.create`
+  permission instead of `hosts.update`, plus host scope for the host.
 - The agent installer picks the binary for the host's CPU architecture and checks its
   SHA-256. If the server has no binary for that architecture, the installer stops with a
   clear message instead of installing the wrong one.

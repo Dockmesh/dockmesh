@@ -1038,9 +1038,9 @@ paths:
         with the configured lifetime. Running the returned install command
         re-enrolls the host under the same ID: stacks, tags and backup jobs
         stay attached; when the new enrollment completes the old client
-        cert stops working and its live session is closed. Rotating the
-        token of an already enrolled host also requires `hosts.create`.
-        Revoked hosts return 404.
+        cert stops working and its live session is closed. Requires
+        `hosts.create` and host scope for the host, for pending and enrolled
+        hosts alike. Revoked hosts return 404.
       parameters:
         - name: id
           in: path
@@ -1053,7 +1053,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AgentCreateResult" }
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "403": { $ref: "#/components/responses/Forbidden" }
+        "403":
+          description: Caller lacks `hosts.create` or the host is outside the caller's scope.
         "404": { $ref: "#/components/responses/NotFound" }
 
   /agents/upgrade-policy:
