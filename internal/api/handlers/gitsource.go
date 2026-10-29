@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/gitsource"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -114,6 +115,16 @@ func (h *Handlers) SyncGitSource(w http.ResponseWriter, r *http.Request) {
 	res, err := h.GitSource.Sync(r.Context(), name)
 	if errors.Is(err, gitsource.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "no git source configured")
+		return
+	}
+	if errors.Is(err, stacks.ErrModifiedOutside) {
+		changed, _ := h.Stacks.ModifiedOutside(name)
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": stacks.ErrModifiedOutside.Error(),
+			"code":  "modified_outside",
+			"stack": name,
+			"files": changed,
+		})
 		return
 	}
 	if err != nil {

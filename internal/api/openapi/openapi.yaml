@@ -2576,6 +2576,10 @@ paths:
         Pulls the configured branch, copies compose.yaml (+ optional .env)
         into the stack FS, and if the source has `auto_deploy: true` AND
         the SHA changed, kicks off a deploy of the stack as well.
+
+        If the stack's compose.yaml or .env changed outside Dockmesh, the
+        new commit is not copied (409) until a deploy with
+        `confirm_external=1` accepts the changes.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
       responses:
@@ -2591,6 +2595,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "409": { $ref: "#/components/responses/StackModifiedOutside" }
         "502":
           description: "Sync failed — see message (auth rejected, branch not found, compose missing in repo, …)."
           content:
