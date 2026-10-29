@@ -54,6 +54,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ### Fixed
 
+- Opening an image that was never scanned no longer logs a 404 error in the browser console;
+  `GET /images/{id}/scan` now answers 200 with `{"scanned": false}`.
 - The agent logs the verified SHA-256 of a downloaded upgrade binary before replacing itself.
 - The backup wizards now prefill the data directory's `backups` folder (or the first allowed
   local directory) for local targets instead of `./data/backups`, which the allowed-directory

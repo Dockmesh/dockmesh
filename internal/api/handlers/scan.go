@@ -74,7 +74,8 @@ func (h *Handlers) ScanImage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rep)
 }
 
-// GetScan returns the cached scan result for an image, or 404.
+// GetScan returns the cached scan result for an image, or {"scanned":false}
+// when it has never been scanned.
 func (h *Handlers) GetScan(w http.ResponseWriter, r *http.Request) {
 	if h.ScanStore == nil {
 		writeError(w, http.StatusServiceUnavailable, "scanner not configured")
@@ -96,7 +97,7 @@ func (h *Handlers) GetScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rep == nil {
-		writeError(w, http.StatusNotFound, "no scan cached")
+		writeJSON(w, http.StatusOK, map[string]bool{"scanned": false})
 		return
 	}
 	writeJSON(w, http.StatusOK, rep)

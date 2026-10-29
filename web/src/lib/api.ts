@@ -15,6 +15,7 @@ export interface ScanVuln {
 }
 
 export interface ScanReport {
+  scanned?: boolean;
   image: string;
   scanner: string;
   scanner_version?: string;

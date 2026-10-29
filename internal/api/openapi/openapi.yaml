@@ -2919,12 +2919,13 @@ paths:
       summary: Fetch the latest scan result for an image
       responses:
         "200":
-          description: Scan summary.
+          description: "Scan summary, or just {\"scanned\": false} when the image has not been scanned yet."
           content:
             application/json:
               schema:
                 type: object
                 properties:
+                  scanned: { type: boolean, description: Present and false only when no scan exists. }
                   image: { type: string }
                   scanned_at: { type: string, format: date-time }
                   critical: { type: integer }
@@ -2936,11 +2937,6 @@ paths:
                     type: array
                     items: { type: object }
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "404":
-          description: No scan has been run for this image.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
 
   # -----------------------------------------------------------------------
   # volumes — CRUD + prune + content browse (P.11.8)
