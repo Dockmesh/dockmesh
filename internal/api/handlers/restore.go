@@ -76,7 +76,7 @@ func (h *Handlers) VerifyUploadedBackup(w http.ResponseWriter, r *http.Request) 
 // VerifyBackupRun reads a saved backup run from its target and runs
 // the type-appropriate verifier:
 //
-//   - system runs: stream-extract to temp + run sanity (existing flow);
+//   - system runs: stream-extract to temp + run sanity;
 //     the temp dir is deleted as soon as sanity is done.
 //   - stack runs:  walk the outer tar, validate every volumes/<v>.tar.gz
 //     decompresses cleanly, confirm stack/compose.yaml is present, hash
@@ -125,10 +125,7 @@ func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// verifySystemRun keeps the existing system-backup verify flow:
-// stream the run through ExtractToTemp + Sanity, return the result.
-// Pulled into its own helper so the type-dispatch in VerifyBackupRun
-// stays readable.
+// verifySystemRun streams a system run through ExtractToTemp + Sanity.
 func (h *Handlers) verifySystemRun(w http.ResponseWriter, r *http.Request, id int64) {
 	src, err := h.Backups.ReadRun(r.Context(), id)
 	if err != nil {

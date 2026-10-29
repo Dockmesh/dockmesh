@@ -317,16 +317,22 @@
 
       <!-- Right column — restore flow -->
       <div class="bk-detail-col">
-        {#if run.status === 'success' && systemRun}
+        {#if run.status === 'success'}
           <section class="bk-detail-section dm-card">
             <Eyebrow>Restore</Eyebrow>
             <p class="bk-detail-block-body">
-              System backups are restored on the server with <code>dockmesh restore</code>.
+              {#if systemRun}
+                System backups are restored on the server with <code>dockmesh restore</code>.
+              {:else}
+                Pick how to restore this run. <strong>In-place</strong> replaces the current data;
+                <strong>alongside</strong> mounts as a copy with a <code>-restored</code> suffix;
+                <strong>download</strong> streams the archive for offline inspection.
+              {/if}
             </p>
             {#if restoreModes.length > 0}
               <div class="bk-detail-restore-list">
                 {#each restoreModes as m (m.id)}
-                  <button type="button" class="bk-detail-restore-row" onclick={() => doRestore(m.id)}>
+                  <button type="button" class="bk-detail-restore-row" class:danger={m.danger} onclick={() => doRestore(m.id)}>
                     <div class="bk-detail-restore-text">
                       <span class="bk-detail-restore-title">{m.title}</span>
                       <span class="bk-detail-restore-blurb">{m.blurb}</span>
@@ -336,26 +342,6 @@
                 {/each}
               </div>
             {/if}
-          </section>
-        {:else if run.status === 'success'}
-          <section class="bk-detail-section dm-card">
-            <Eyebrow>Restore</Eyebrow>
-            <p class="bk-detail-block-body">
-              Pick how to restore this run. <strong>In-place</strong> replaces the current data;
-              <strong>alongside</strong> mounts as a copy with a <code>-restored</code> suffix;
-              <strong>download</strong> streams the archive for offline inspection.
-            </p>
-            <div class="bk-detail-restore-list">
-              {#each restoreModes as m (m.id)}
-                <button type="button" class="bk-detail-restore-row" class:danger={m.danger} onclick={() => doRestore(m.id)}>
-                  <div class="bk-detail-restore-text">
-                    <span class="bk-detail-restore-title">{m.title}</span>
-                    <span class="bk-detail-restore-blurb">{m.blurb}</span>
-                  </div>
-                  <ArrowRight size={12} strokeWidth={1.5} class="bk-detail-restore-arrow" />
-                </button>
-              {/each}
-            </div>
           </section>
         {:else if run.status === 'failed'}
           <section class="bk-detail-section dm-card">

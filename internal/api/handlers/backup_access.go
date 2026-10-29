@@ -19,7 +19,7 @@ func (h *Handlers) callerIsAdmin(r *http.Request) bool {
 	return middleware.Allowed(r.Context(), rbac.PermSystemUpdate) && h.callerUnscoped(r)
 }
 
-// requireJobAccess guards changing, running and deleting backup jobs. A
+// requireJobAccess guards every write to a backup job. A
 // system source puts the whole install (database, secrets, backup key)
 // into the archive and wherever its target points, so such jobs are
 // admin-only; any other job needs its host, before and after the change,

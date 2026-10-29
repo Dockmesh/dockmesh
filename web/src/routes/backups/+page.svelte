@@ -41,7 +41,7 @@
     return `${s.type}: ${s.name}`;
   }
   function jobSourceIcon(j: BackupJob) {
-    const t = (j.sources[0]?.type as string | undefined) ?? '';
+    const t = j.sources[0]?.type;
     if (t === 'stack') return Layers;
     if (t === 'volume') return HardDrive;
     if (t === 'system') return LayoutDashboard;
