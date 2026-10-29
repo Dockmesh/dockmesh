@@ -37,16 +37,11 @@
   function jobSourceLabel(j: BackupJob): string {
     if (j.sources.length === 0) return 'no source';
     const s = j.sources[0];
-    // Backend additionally accepts a 'system' source type for the
-    // dockmesh-system meta-bundle (DB + stacks + CA). The TS interface
-    // pre-dates that addition and only lists volume / stack — cast at
-    // the call site rather than widening the public type.
-    const t = s.type as string;
-    if (t === 'system') return 'dockmesh-system';
-    return `${t}: ${s.name}`;
+    if (s.type === 'system') return 'dockmesh-system';
+    return `${s.type}: ${s.name}`;
   }
   function jobSourceIcon(j: BackupJob) {
-    const t = (j.sources[0]?.type as string | undefined) ?? '';
+    const t = j.sources[0]?.type;
     if (t === 'stack') return Layers;
     if (t === 'volume') return HardDrive;
     if (t === 'system') return LayoutDashboard;
@@ -687,7 +682,7 @@
 
   async function toggleJob(j: BackupJob) {
     try {
-      const input: BackupJobInput = { name: j.name, target_type: j.target_type, target_config: j.target_config, sources: j.sources, schedule: j.schedule, retention_count: j.retention_count, retention_days: j.retention_days, encrypt: j.encrypt, pre_hooks: j.pre_hooks, post_hooks: j.post_hooks, enabled: !j.enabled };
+      const input: BackupJobInput = { name: j.name, host_id: j.host_id, target_type: j.target_type, target_config: j.target_config, sources: j.sources, schedule: j.schedule, retention_count: j.retention_count, retention_days: j.retention_days, encrypt: j.encrypt, pre_hooks: j.pre_hooks, post_hooks: j.post_hooks, enabled: !j.enabled };
       await api.backups.updateJob(j.id, input);
       await loadJobs();
     } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
@@ -1092,7 +1087,7 @@
             <span class="font-mono bk-runs-cell right">{fmtDuration(r.started_at, r.finished_at)}</span>
             <span class="font-mono bk-runs-cell right">{fmtBytes(r.size_bytes)}</span>
             <span class="bk-runs-actions">
-              {#if r.status === 'success'}
+              {#if r.status === 'success' && !r.sources?.some((s) => s.type === 'system')}
                 <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" title="Restore" onclick={(e) => { e.stopPropagation(); openRestore(r); }}>
                   <Undo2 size={11} strokeWidth={1.5} />
                 </button>

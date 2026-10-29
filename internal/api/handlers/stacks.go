@@ -625,6 +625,9 @@ func (h *Handlers) CleanupPreview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "no host available")
 		return
 	}
+	if !h.requireStackScope(w, r, rbac.PermStacksDelete, target.ID(), name) {
+		return
+	}
 	plan, err := target.CleanupPreview(r.Context(), name)
 	if err != nil {
 		writeError(w, http.StatusNotImplemented, err.Error())
@@ -1071,6 +1074,9 @@ func (h *Handlers) StackStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	if !h.requireStackScope(w, r, rbac.PermStacksView, target.ID(), name) {
+		return
+	}
 	status, err := target.StackStatus(r.Context(), name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

@@ -49,6 +49,17 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   or with `dockmesh admin reset-password`) signs out all of the user's sessions.
 - A role or scope change now applies to a signed-in user's next request instead of after up
   to 15 minutes.
+- Downloading a backup archive needs the new "Download backups" permission, which the
+  built-in Admin and Host Admin roles have; Host Admins only for jobs on their own hosts.
+  System backups and the backup key export are admin-only. Viewer, Operator and Deployer
+  can still see backup status but no longer download archives. Creating, editing or running
+  a backup job that includes the server itself is admin-only too, and other jobs need their
+  host within your scope.
+- Browsing, reading and downloading files inside a container now needs "Shell into
+  container", the same permission as uploading files or opening a terminal.
+- The built-in Host Admin role no longer edits system settings, global environment
+  variables, password and sign-in policy or single sign-on providers.
+- Saving a user without `scope_tags` keeps the user's host scope instead of clearing it.
 - Migrating a stack that uses named volumes to another host is refused with an explanation,
   including in the pre-flight checks. Volume data isn't copied yet, so such a migration used
   to finish with empty volumes on the new host.
@@ -67,12 +78,41 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and exec sessions are now recorded in the audit log.
 - Signing in with an unknown username takes as long as with a wrong password, and invalid
   API tokens can no longer tie up the server with expensive hash checks.
+- Creating or editing users, invites and roles can no longer grant permissions or host scope
+  the editor doesn't have, and nobody can change or remove a user or role with more rights
+  than their own. Before, anyone allowed to edit users could make themselves admin. The last
+  account that can administer Dockmesh can no longer be demoted or deleted, and an invite
+  can no longer be accepted twice.
+- Users restricted to some hosts or stacks no longer see other hosts' or stacks' data:
+  container details (including environment variables), compose files, stack status, volumes,
+  networks, images, host metrics and the live event stream are now filtered by scope, and
+  container checks look at the host the container actually runs on.
+- Backup archives could be downloaded by every role, including Viewer, and a system backup
+  contains every secret of the installation. Downloads now need their own permission and are
+  recorded in the audit log.
+- Passwords, keys and tokens of backup targets and notification channels, and webhook URLs
+  that act as credentials, are no longer returned by the API. Forms show them as set; leaving
+  a field empty keeps the stored value, unless the server, URL or user changes, in which
+  case the secret has to be entered again. Only unscoped users can change or delete roles,
+  and an invite stops working once its creator could no longer grant it.
+- A user allowed to restore backups could restore a system backup into a volume and read the
+  database and secrets from it. Restoring a system backup into a volume or stack is no longer
+  possible; system backups are restored only with `dockmesh restore` on the server. Verifying
+  system backups, reading their run log, and turning on, editing, running or deleting the
+  system backup job are admin-only. Restoring, verifying and reading the log of other backups
+  needs the job's host within your scope.
+- Backup jobs whose names differ only in case or punctuation stored their archives in the
+  same folder, so the retention of one job could delete another job's backups, including the
+  system backups. Such names are now rejected, and the name `dockmesh-system` is kept for
+  the system backup job. On S3, retention no longer touches jobs whose name merely starts
+  with the same text.
 - Volume browsing, system restore and Git-synced stacks no longer follow symlinks out of the
   volume, the data directory or the repository. Before, a symlink in a volume or repository,
   or a crafted backup archive, could read or overwrite files on the host.
 - A Git source's `path_in_repo` must stay inside the repository.
 - Restoring a volume backup only accepts a Docker volume name as the target; a path such as
-  `/etc` was mounted from the host and overwritten.
+  `/etc` was mounted from the host and overwritten. Saving a backup job whose volume source
+  is a path instead of a volume name is refused as well.
 - Uploads to the backup verification endpoint are limited to 1 GiB.
 - Backup hooks run commands inside containers, so creating or changing a job with hooks now
   needs the permission to exec into containers, and every hook container must be within your
@@ -107,6 +147,16 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - [legacy-api-tokens, admins] API tokens created before this version have no owner. They keep
   working and are marked "legacy" under API tokens; recreate each one while signed in as the
   user who should own it, then revoke the old one. A notice stays up until none are left.
+- [custom-role-permissions, admins] Custom roles that could restore backups keep downloading
+  archives; other custom roles lose archive downloads and container file access, and lose
+  system backups and the backup key unless they are admins. A notice lists the affected
+  roles; grant "Download backups" or "Shell into container" under Users → Roles where intended.
+- [host-admin-system-settings, admins] Host Admins no longer change system settings, SSO or
+  global environment variables. Give the Admin role to anyone who still needs that.
+- [backup-job-name-collision, admins] Backup jobs whose names differ only in case or
+  punctuation, or a non-system job named like `dockmesh-system`, share an archive folder and
+  their retention can delete each other's backups. A notice lists the affected jobs; rename
+  one job of each group under Backups. The notice goes away once no names collide.
 - [premigrate-snapshot, admins] Make sure the database directory has room for a full copy
   of the database. Before schema changes Dockmesh writes `<db>.pre-migrate-<timestamp>.bak`
   next to the database (`dockmesh.db.pre-migrate-20261029T101500.000Z.bak`, UTC) and keeps

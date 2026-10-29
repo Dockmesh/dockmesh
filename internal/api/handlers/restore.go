@@ -7,20 +7,26 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/restore"
-	"github.com/go-chi/chi/v5"
 )
 
 // VerifyUploadedBackup accepts a multipart-uploaded system-backup
 // tarball, extracts it to a scratch directory, runs the post-restore
 // sanity checks against the extracted files, and discards the scratch
-// dir. Never touches the live install. Admin-only.
+// dir. Never touches the live install. Admin-only: the report describes
+// the install's database and secrets.
 //
 // Use case: "before I run dockmesh restore against my prod server
 // for real, verify this tarball is even valid". Answers the
 // enterprise-evaluator question "are our backups actually restorable?"
 // without needing a spare host.
 func (h *Handlers) VerifyUploadedBackup(w http.ResponseWriter, r *http.Request) {
+	if !h.callerIsAdmin(r) {
+		writeError(w, http.StatusForbidden, "only an admin can verify system backups")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, uploadLimit+(1<<20))
 	// Up to 32 MiB in memory, the rest spills to a temp file.
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
@@ -77,40 +83,28 @@ func (h *Handlers) VerifyUploadedBackup(w http.ResponseWriter, r *http.Request) 
 }
 
 // VerifyBackupRun reads a saved backup run from its target and runs
-// the type-appropriate verifier. P.13.4: previously fell through to
-// the system-only sanity flow regardless of source type, which gave
-// confusing 422s for stack/volume runs ("db could not be opened" on
-// archives that have no DB by design). Now:
+// the type-appropriate verifier:
 //
-//   - system runs: stream-extract to temp + run sanity (existing flow);
+//   - system runs: stream-extract to temp + run sanity;
 //     the temp dir is deleted as soon as sanity is done.
 //   - stack runs:  walk the outer tar, validate every volumes/<v>.tar.gz
 //     decompresses cleanly, confirm stack/compose.yaml is present, hash
 //     the plaintext stream against run.SHA256.
 //   - volume runs: gunzip-walk the archive; sha256 match.
 //
-// Admin-only.
+// System runs are admin-only; other runs need the job's host in scope.
 func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 	if h.Backups == nil {
 		writeError(w, http.StatusServiceUnavailable, "backup service not configured")
 		return
 	}
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	run, ok := h.runForAccess(w, r, rbac.PermBackupsRestore)
+	if !ok {
 		return
 	}
-
-	// Decide the type once so we can route system runs to the legacy
-	// extract+sanity flow and stack/volume runs to the new structural
-	// verify. The Service.VerifyRun helper handles the latter; system
-	// runs still need internal/restore for the deep DB checks.
-	runType, err := h.Backups.RunSourceType(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
-	}
-	if runType == "system" {
+	id := run.ID
+	// System runs need internal/restore for the deep DB checks.
+	if backup.HasSystemSource(run.Sources) {
 		h.verifySystemRun(w, r, id)
 		return
 	}
@@ -140,10 +134,7 @@ func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// verifySystemRun keeps the existing system-backup verify flow:
-// stream the run through ExtractToTemp + Sanity, return the result.
-// Pulled into its own helper so the type-dispatch in VerifyBackupRun
-// stays readable.
+// verifySystemRun streams a system run through ExtractToTemp + Sanity.
 func (h *Handlers) verifySystemRun(w http.ResponseWriter, r *http.Request, id int64) {
 	src, err := h.Backups.ReadRun(r.Context(), id)
 	if err != nil {
@@ -215,4 +206,3 @@ func sanitizeExtractErr(err error, tmpDir string) string {
 // data combined is usually tens of MB). Larger uploads indicate
 // either a misconfigured backup or an attempted DoS.
 const uploadLimit = 1 << 30
-

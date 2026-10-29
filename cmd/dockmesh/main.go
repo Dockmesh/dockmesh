@@ -631,6 +631,7 @@ func main() {
 		}
 	})
 	noticesSvc.Register("api-tokens.legacy", apiTokensSvc.SyncLegacyNotice)
+	noticesSvc.Register("backups.job-name-collision", backupSvc.SyncNameCollisionNotice)
 
 	// Wire the registries service into every code path that pulls an
 	// image. Without this, compose deploys + the "update image" button
