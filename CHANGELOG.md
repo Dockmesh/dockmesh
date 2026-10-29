@@ -54,6 +54,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ### Fixed
 
+- `dockmesh init` now writes `DOCKMESH_HTTP_ADDR` to the env file, so the listen address
+  you chose takes effect instead of being ignored.
 - The Operator role can create its own API tokens again, as the permission list always
   promised, and the permission counts no longer include image, volume and network update
   permissions that do not exist.
