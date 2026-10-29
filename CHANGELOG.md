@@ -101,6 +101,7 @@ see Upgrade notes.
 - GHSA-j4wx-v546-r4fj (high): SFTP backup targets did not verify the server's host key
 - GHSA-x6v3-qvjw-56xq (high): Backup hooks could run commands in containers outside the creator's permissions
 - GHSA-q2m7-rqw3-3hrp (high): Single sign-on attached logins to existing accounts by email alone
+- GHSA-h743-wmjg-j2xx (moderate): API token checks could exhaust the server's memory
 - Dockmesh is now built with Go 1.27.3, and its Go dependencies (including the SSH, HTTP/2,
   Git, JWT, SAML signature and Docker client libraries) are updated to versions that fix
   the known vulnerabilities in code Dockmesh calls. The previous release was built with Go
