@@ -195,7 +195,7 @@ More in [Backups](../operations/backups.md).
 ## Alerts are not firing
 
 <!-- update after: alerts: fix duration gate, cooldown and mute handling -->
-Alert rules can only watch `cpu_percent` and `mem_percent` of containers on the local host. In the current version the duration check almost never passes: a rule with duration 0 never fires, and rules with a duration fire only rarely. The built-in rules are therefore effectively silent as well. Cooldown and **muted until** are saved but not applied. Until this is fixed, don't rely on Dockmesh alert rules for anything important; scrape `/metrics` with Prometheus or use another external monitor.
+Alert rules can only watch `cpu_percent` and `mem_percent` of containers on the local host. The duration check almost never passes: a rule with duration 0 never fires, and rules with a duration fire only rarely. The built-in rules are therefore effectively silent as well. Cooldown and **muted until** are saved but not applied. Don't rely on Dockmesh alert rules for anything important; scrape `/metrics` with Prometheus or use another external monitor.
 
 To check that a channel delivers at all, click **Test** next to it on the channel list of the **Alerts** page. The test does not depend on any rule. See [Alerts](../features/alerts.md).
 
@@ -211,4 +211,4 @@ Open an issue at [github.com/dockmesh/dockmesh/issues](https://github.com/dockme
 Remove tokens, passwords and host names you don't want to publish before posting logs.
 
 <!-- update after: security: report through GitHub private advisories -->
-Do not report security vulnerabilities in a public issue. Follow `SECURITY.md` in the repository, which currently asks for reports by email to `security@dockmesh.dev`.
+Do not report security vulnerabilities in a public issue. Follow [`SECURITY.md`](https://github.com/dockmesh/dockmesh/blob/main/SECURITY.md) in the repository.

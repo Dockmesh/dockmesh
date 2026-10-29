@@ -30,7 +30,7 @@ Either way the configuration is saved first and the first sync runs immediately.
 
 **SSH:** enter the SSH user (default `git`) and paste an OpenSSH private key without a passphrase. Use a deploy key that has read access to this one repository. The Git host's key is checked against `~/.ssh/known_hosts` of the user the server runs as, or `/etc/ssh/ssh_known_hosts` (or the files listed in `SSH_KNOWN_HOSTS`). If the sync fails with a host key error, add the key there, for example with `ssh-keyscan github.com >> ~/.ssh/known_hosts` as that user.
 
-The token and the SSH key are encrypted with the server's age key before they are stored and are never returned by the API. When you edit the source, leave the field blank to keep the stored value.
+The token and the SSH key are encrypted with the server's age key before they are stored (when secrets encryption is on, `DOCKMESH_SECRETS_ENCRYPT_ENV`, default `true`) and are never returned by the API. When you edit the source, leave the field blank to keep the stored value.
 
 ## What a sync does
 

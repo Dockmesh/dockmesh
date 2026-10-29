@@ -13,7 +13,7 @@ Every subcommand reads the same `DOCKMESH_*` environment variables as the server
 - If you pass no `--env-file` and `DOCKMESH_DB_PATH` is not set, Dockmesh loads `/var/lib/dockmesh/dockmesh.env` (Linux) or `/usr/local/var/dockmesh/dockmesh.env` (macOS) if one exists.
 - Variables already set in your shell always win over values from the file.
 
-If your data directory lives elsewhere (for example `/data`, which `install.sh` picks when that directory exists), pass `--env-file /data/dockmesh.env` explicitly.
+If your data root lives elsewhere (for example `/data`, which `install.sh` picks when that directory exists), pass `--env-file /data/dockmesh.env` explicitly.
 
 Commands that write files (`admin`, `enroll`, `db`, `ca`, `secrets`, `import`, `restore`) create them as the user that runs the command. On a systemd install the service runs as `dockmesh`, so `sudo -u dockmesh dockmesh <command>` keeps file ownership consistent.
 
@@ -69,23 +69,24 @@ The agent URL defaults to the base URL host with `wss://` and port `8443`. If th
 
 > **Note:** init writes the listen address as `DOCKMESH_LISTEN`, which the server does not read. The server keeps listening on `:8080` unless you add `DOCKMESH_HTTP_ADDR` to `dockmesh.env`.
 
-The systemd unit init writes runs as user `dockmesh`, group `docker`, with `ProtectSystem=strict` and write access limited to the data directory and `/var/run/docker.sock`. A copy of the unit is kept at `<data-dir>/dockmesh.service`.
+The systemd unit init writes runs as user `dockmesh`, group `docker`, with `ProtectSystem=strict` and write access limited to the data root and `/var/run/docker.sock`. A copy of the unit is kept at `<data-dir>/dockmesh.service`.
 
 ## restore
 
 <!-- update after: restore: stage system restores and swap them in at startup -->
 ```bash
 sudo systemctl stop dockmesh
-sudo -u dockmesh dockmesh restore --from ./dockmesh-system.tar.gz --dry-run
-sudo -u dockmesh dockmesh restore --from ./dockmesh-system.tar.gz --force
+sudo dockmesh restore --from ./dockmesh-system.tar.gz --dry-run
+sudo dockmesh restore --from ./dockmesh-system.tar.gz --force
+sudo chown -R dockmesh:docker /var/lib/dockmesh
 ```
 
-Restores the database, stacks directory and data directory from a system backup archive. Stop the server first: files are written in place.
+Restores the database, stacks directory and data directory from a system backup archive. Stop the server first: files are written in place. Run as root, the restored files belong to root, hence the `chown` afterwards.
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--from` | (required) | Path to the system backup tarball |
-| `--force` | `false` | Overwrite an existing database and non-empty stacks/data directories |
+| `--force` | `false` | Restore over a database that already has users. The current database is moved to `dockmesh.db.pre-restore-<unix time>` |
 | `--dry-run` | `false` | Count files and bytes, write nothing |
 | `--skip-sanity` | `false` | Skip the post-restore checks (DB opens, migrates, at least one admin exists) |
 
@@ -97,7 +98,7 @@ Encrypted archives (`.tar.gz.age`) are refused. Decrypt them first with `age -d`
 sudo -u dockmesh dockmesh doctor
 ```
 
-Checks that the configuration loads, `DOCKMESH_AGENT_PUBLIC_URL` is set (warning only), the database opens and has users, the data directory exists and is writable, the Docker daemon answers, and the agent CA and server certificate load. Exits with status 1 if any check fails. No flags.
+Checks, in this order, that the configuration loads (warning if `DOCKMESH_AGENT_PUBLIC_URL` is unset), the database opens and answers, the data directory exists, the Docker daemon answers (warning only), the agent CA and server certificate load, and the data directory is writable. Exits with status 1 if any check fails; warnings alone do not fail. No flags besides the global `--env-file`.
 
 ## ca
 
@@ -123,10 +124,10 @@ The running server keeps the old certificates in memory, so rotate while it is s
 
 ```bash
 sudo -u dockmesh dockmesh db migrate
-sudo -u dockmesh dockmesh db backup --out /var/backups/dockmesh-$(date +%F).db
+sudo -u dockmesh sh -c 'umask 077; dockmesh db backup --out /var/lib/dockmesh/dockmesh-$(date +%F).db'
 ```
 
-`db migrate` applies pending migrations and reports the DB path. `db backup --out PATH` writes a consistent snapshot with SQLite `VACUUM INTO`; it works while the server runs and refuses to overwrite an existing file. The snapshot holds the database only, not stacks or keys.
+`db migrate` applies pending migrations and reports the DB path. `db backup --out PATH` writes a consistent snapshot with SQLite `VACUUM INTO`; it works while the server runs and refuses to overwrite an existing file. The snapshot holds the database only, not stacks or keys, but the database contains plaintext secrets, so keep the file private (hence the `umask 077`).
 
 ## admin
 

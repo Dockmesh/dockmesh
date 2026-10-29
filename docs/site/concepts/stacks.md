@@ -94,8 +94,6 @@ These parse without error but have no effect on the container. Check this list b
 - the service-level `tmpfs:` key and `volumes_from` (use a `type: tmpfs` volume entry instead of `tmpfs:`)
 - `build` when `image` is also set (the image is pulled instead)
 
-In short, a service field that is not in the table above has no effect.
-
 Two cases fail instead of being ignored: a service with `build:` and no `image:` is rejected, and services that declare `profiles:` are skipped because no profile is ever activated. `restart: on-failure:N` is passed to Docker as one string; use `on-failure` without a count.
 
 ### Relative paths and the staging directory

@@ -82,7 +82,7 @@ A remote host runs `dockmesh-agent`, which connects out to the server on port 84
 4. The dialog waits until the agent connects and then shows the host as online.
 
 <!-- update after: agents: pin the CA at enrollment and verify self-upgrades -->
-The agent installer needs Linux with systemd and Docker on the remote host, and it always downloads the `linux-amd64` agent build. Some features work on the local host only; [Multi-host](../features/multi-host.md) lists them.
+The agent installer needs Linux with systemd on the remote host. It installs Docker from get.docker.com if Docker is missing (`--skip-docker` turns that off), and it always downloads the `linux-amd64` agent build. Some features work on the local host only; [Multi-host](../features/multi-host.md) lists them.
 
 ## Set up a backup
 

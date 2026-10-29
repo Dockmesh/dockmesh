@@ -38,7 +38,7 @@ networks:
     internal: true
 ```
 
-Note that Dockmesh ignores the top-level `ipam` key in compose files (see [Compose fields that are silently ignored](../concepts/stacks.md#compose-fields-that-are-silently-ignored)), so custom subnets need to be created with `docker network create` on the host and referenced as `external: true`.
+Dockmesh ignores the top-level `ipam` key in compose files (see [Compose fields that are silently ignored](../concepts/stacks.md#compose-fields-that-are-silently-ignored)), so custom subnets need to be created with `docker network create` on the host and referenced as `external: true`.
 
 ## Removing and pruning
 

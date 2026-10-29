@@ -166,7 +166,7 @@ The dialog lists exactly which networks, volumes and images would be removed. Ne
 
 A git source connected to the stack is not removed with it. Disconnect it first, or the next sync recreates the stack.
 
-The other controls on the **Settings** tab (auto-update images, webhook on deploy, restart policy) are not functional and have no effect.
+The other controls on the **Settings** tab (auto-update images, webhook on deploy, restart policy) have no effect.
 
 ## Permissions
 

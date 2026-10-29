@@ -58,7 +58,7 @@ Dockmesh ships five roles, from least to most privileged: `viewer`, `operator`, 
 | system | view | view | view | view, update | all |
 | metrics | view | view | view | view | view |
 
-In short: viewers read everything, operators run existing stacks and containers, deployers also write compose files and pull images, host-admins run the whole fleet and its integrations, and only admins manage users, roles, audit settings and server upgrades.
+Viewers read everything, operators run existing stacks and containers, deployers also write compose files and pull images, host-admins run the whole fleet and its integrations, and only admins manage users, roles, audit settings and server upgrades.
 
 <!-- update after: rbac: scope read endpoints, limit grants, gate sensitive downloads -->
 > **Warning:** `host-admin` holds `system.update` and `backups.restore`. Together these let a host-admin change sign-in and SSO settings and export the secrets encryption key. Give `host-admin` only to people you would trust as admins.
@@ -92,7 +92,7 @@ A role with several entries matches if any entry matches. A role with no entries
 
 Host tags are described in [Hosts and agents](./hosts-and-agents.md#host-tags). If you send a user update through the API, include `scope_tags`; omitting the field clears the user's scope.
 
-### What scope restricts today
+### What scope restricts
 
 <!-- update after: rbac: scope read endpoints, limit grants, gate sensitive downloads -->
 Scope is enforced mainly on actions that change something on a specific host or stack: deploy, stop, edit and delete stacks, container lifecycle and removal, logs, exec and stats sessions, image pull, removal and scan, volume and network create, remove and prune, volume browsing, and migrations. The container, host and stack lists are also filtered.

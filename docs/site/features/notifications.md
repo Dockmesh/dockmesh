@@ -64,7 +64,7 @@ Most events are sent to every active user, not only to users who have access to 
 
 Notices are banners for conditions that need someone to act. Dockmesh raises one while the condition holds and removes it once it's fixed. Each notice targets an audience: everyone, admins (users with `system.update`), specific users, or holders of a permission. Severity is info, warning or critical. Info and warning notices can be hidden. Critical notices stay until resolved.
 
-The current notice:
+Notices:
 
 | Key | Audience | Raised when |
 |---|---|---|

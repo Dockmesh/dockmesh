@@ -46,7 +46,7 @@ Each request to an agent times out after 30 seconds. That includes deploys, so a
 <!-- update after: agents: survive disconnects, flow-control streams, renew certs -->
 Client certificates are valid for 365 days and are not renewed automatically. Before a certificate expires, revoke the host and add it again.
 
-**Revoke** (in the host's row menu or on the host detail page) deletes the host record. The agent's certificate is rejected on its next connection. A connection that is already open is not cut immediately, so stop the agent on the host as well (`systemctl stop dockmesh-agent`). Containers on that host keep running; Dockmesh just stops managing them.
+**Revoke** (in the host's row menu or on the host detail page) deletes the host record. The agent's certificate is rejected on its next connection. A connection that is already open is not cut immediately, so stop the agent on the host as well (`systemctl disable --now dockmesh-agent`). Containers on that host keep running; Dockmesh just stops managing them.
 
 <!-- update after: agents: pin the CA at enrollment and verify self-upgrades -->
 **Re-issue token** on the host detail page creates a new token, but the server only accepts enrollment for hosts that are still pending. For a host that has already enrolled, revoke it and add it again instead. Running the new install command on the host removes the old certificate files before enrolling.
@@ -56,7 +56,7 @@ Client certificates are valid for 365 days and are not renewed automatically. Be
 ### Agent upgrades
 
 <!-- update after: agents: pin the CA at enrollment and verify self-upgrades -->
-The upgrade mode decides what happens to agents whose version differs from the server's: `auto`, `staged` (a percentage of agents per wave) or `manual`. The default is `manual`, where you click **Upgrade now** on the host detail page. The **Agent upgrade policy** panel on the Hosts page shows the mode and how many agents are behind; changing the mode is done through the API (`PUT /api/v1/agents/upgrade-policy`). The agent downloads the new binary from the server without a checksum check. See [Upgrading](../getting-started/upgrading.md).
+The upgrade mode decides what happens to agents whose version differs from the server's: `auto`, `staged` (a percentage of agents per wave) or `manual`. The default is `manual`, where you click **Upgrade now** on the host detail page. The **Agent upgrade policy** panel on the Hosts page shows the mode and how many agents are behind; changing the mode is done through the API (`PUT /api/v1/agents/upgrade-policy`). The agent downloads the new binary from the server without a checksum check. See [Upgrade](../operations/upgrade.md#upgrading-agents).
 
 ## What works on remote hosts
 
@@ -75,7 +75,7 @@ These work on the local host only:
 | Image update detection and one-click update | Watches local containers only. |
 | Live deploy progress | Not reported; you see the result when the deploy finishes. |
 | Git-source auto-deploy and auto-scaling rules | Run against the local host only. |
-| Private registry credentials | Not sent to agents; pulls on remote hosts are anonymous. Log the host's Docker in yourself or pre-pull private images. |
+| Private registry credentials | Not sent to agents; pulls on remote hosts are anonymous. Pre-pull private images on the host (`docker login` and `docker pull`); see [Registries](../features/registries.md). |
 
 Volume browsing on a remote host works only when the agent runs as root (`--as-root`). Volume backups of remote volumes stream through the server; restores write to the local host. See [Backups](../operations/backups.md).
 

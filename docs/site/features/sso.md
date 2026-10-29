@@ -35,7 +35,7 @@ The provider dialog shows the exact URL as **Callback URL** or **ACS URL (read-o
 
 **SAML:** **IdP metadata URL** or **IdP metadata XML**, **SP entity ID**, **Signing certificate (PEM)**, **Encryption certificate (PEM)** if the IdP encrypts assertions, **NameID format**, and the **Username attribute**, **Email attribute** and **Groups attribute**.
 
-**LDAP:** **Host**, **Port**, **TLS mode** (`ldaps`, `starttls` or `none`), skip-verify, **Bind DN** and password for the service account, **User search base**, **User search filter** (`%s` is replaced by the login name), **Username attribute**, **Email attribute**, **Group search base**, **Group membership attribute** (`memberOf` for Active Directory). Dockmesh binds as the service account, finds the user, then binds as the user to check the password. The service account's password is stored encrypted.
+**LDAP:** **Host**, **Port**, **TLS mode** (`ldaps`, `starttls` or `none`), skip-verify, **Bind DN** and password for the service account, **User search base**, **User search filter** (`%s` is replaced by the login name), **Username attribute**, **Email attribute**, **Group search base**, **Group membership attribute** (`memberOf` for Active Directory). Dockmesh binds as the service account, finds the user, then binds as the user to check the password. The service account's password is stored encrypted when secrets encryption is on (`DOCKMESH_SECRETS_ENCRYPT_ENV`, default `true`).
 
 ## Roles from groups
 

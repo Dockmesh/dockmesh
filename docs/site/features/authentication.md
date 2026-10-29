@@ -25,7 +25,7 @@ The policy applies when a password is set or changed. **Rotation (days)** is sto
 After the configured number of failed sign-ins, the account is locked for the configured time. Unlock it early with `dockmesh admin unlock --user <name>`. Unknown user names take as long to reject as wrong passwords. Separately, `POST /api/v1/auth/login` is rate-limited per client IP: 10 failures within a minute block that address for 5 minutes.
 
 <!-- update after: http: trust forwarding headers only from configured proxies -->
-The client IP is taken from `X-Forwarded-For` / `X-Real-IP` without checking where the request came from, so a client can set it itself. That weakens the IP rate limit and puts unverified addresses into the session list and audit log. Account lockout isn't affected.
+The client IP is taken from `X-Forwarded-For`, `X-Real-IP` or `True-Client-IP` without checking where the request came from, so a client can set it itself. That weakens the IP rate limit and puts unverified addresses into the session list and audit log. Account lockout isn't affected.
 
 ## Sessions
 
@@ -54,7 +54,7 @@ Users turn on TOTP under **02 · Security** on the **Account** page:
 From then on, sign-in asks for a code after the password. Turning 2FA off needs a current TOTP or recovery code. An admin can reset a user's 2FA with `DELETE /api/v1/users/{id}/mfa`. There's no button for it.
 
 <!-- update after: http: trust forwarding headers only from configured proxies -->
-The TOTP secret is stored unencrypted in the database, and a code can be used more than once within its 30-second window. The MFA step isn't rate-limited. Protect the database file, and keep the account lockout enabled.
+The TOTP secret is stored unencrypted in the database, and a code can be used more than once within its 30-second window. The code step (`POST /api/v1/auth/mfa`) isn't rate-limited, and wrong codes don't count towards the account lockout, so someone who knows a password can keep guessing codes. Protect the database file, and rate-limit `/api/v1/auth/login` and `/api/v1/auth/mfa` at your reverse proxy (see [Security hardening](../operations/hardening.md)).
 
 Sign-ins through SSO providers don't ask for the Dockmesh second factor. See [SSO](./sso.md#security-notes).
 

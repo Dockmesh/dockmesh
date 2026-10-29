@@ -34,8 +34,8 @@ The script:
 3. Installs the binaries and agent assets (table below).
 4. Installs the `grype` vulnerability scanner with Anchore's install script, unless `grype` is already on the `PATH` or you set `DOCKMESH_NO_SCANNER=1`. If that install fails, Dockmesh still works; image scans are just unavailable.
 5. On Linux, creates a system user `dockmesh` (no login shell, no home) and adds it to the `docker` group.
-6. Creates the data directory with `data/` and `stacks/` inside, owned by `dockmesh:docker`, mode 750.
-7. Writes `<data dir>/dockmesh.env` (mode 600) and a systemd unit, then enables and starts the service.
+6. Creates the data root with `data/` and `stacks/` inside, owned by `dockmesh:docker`, mode 750.
+7. Writes `<data root>/dockmesh.env` (mode 600) and a systemd unit, then enables and starts the service.
 8. Prints the setup wizard URL, `http://<first IP of the host>:8080/setup`.
 
 ### What goes where
@@ -47,12 +47,12 @@ The script:
 | `/usr/local/bin/grype` | Vulnerability scanner (unless skipped) |
 | `/usr/local/share/dockmesh/install-agent.sh` | Agent installer served to remote hosts |
 | `/usr/local/share/dockmesh/bin/dockmesh-agent-<os>-<arch>` | Agent binary served to remote hosts |
-| `/var/lib/dockmesh/` | Data directory: `dockmesh.env`, `data/` (database, keys, certificates), `stacks/` |
-| `/etc/systemd/system/dockmesh.service` | Service unit: runs `dockmesh serve` as `dockmesh:docker` with `EnvironmentFile=<data dir>/dockmesh.env` |
+| `/var/lib/dockmesh/` | Data root: `dockmesh.env`, `data/` (database, keys, certificates), `stacks/` |
+| `/etc/systemd/system/dockmesh.service` | Service unit: runs `dockmesh serve` as `dockmesh:docker` with `EnvironmentFile=<data root>/dockmesh.env` |
 
 The agent binary is not installed into `/usr/local/bin`; it is only kept so the server can hand it to remote hosts.
 
-The data directory is `/data` instead of `/var/lib/dockmesh` if a `/data` directory already exists on the host. On macOS it is `/usr/local/var/dockmesh`, the service is the launchd job `/Library/LaunchDaemons/dev.dockmesh.service.plist` running as root, and logs go to `/usr/local/var/log/dockmesh.log` and `dockmesh.err`.
+The data root is `/data` instead of `/var/lib/dockmesh` if a `/data` directory already exists on the host. On macOS it is `/usr/local/var/dockmesh`, the service is the launchd job `/Library/LaunchDaemons/dev.dockmesh.service.plist` running as root, and logs go to `/usr/local/var/log/dockmesh.log` and `dockmesh.err`.
 
 The repository also contains `scripts/dockmesh.service`. That is a sample unit for running from a checkout in `/home/dockmesh/dockmesh`; neither the installer nor `dockmesh init` uses it.
 
@@ -70,9 +70,9 @@ curl -fsSL https://get.dockmesh.dev | sudo DOCKMESH_NO_SCANNER=1 bash
 | `DOCKMESH_CHANNEL` | `stable` | `testing` also considers pre-releases when resolving "latest". |
 | `DOCKMESH_INSTALL_DIR` | `/usr/local/bin` | Where `dockmesh`, `dmctl` and `grype` go. |
 | `DOCKMESH_ASSET_DIR` | `<install dir>/../share/dockmesh` | Where the agent installer and agent binary go. |
-| `DOCKMESH_DATA_DIR` | `/data` if it exists, else `/var/lib/dockmesh` | Data directory. |
+| `DOCKMESH_DATA_DIR` | `/data` if it exists, else `/var/lib/dockmesh` | Data root. |
 | `DOCKMESH_NO_SCANNER` | unset | `1` skips the `grype` install. |
-| `DOCKMESH_NO_BOOTSTRAP` | unset | `1` installs the binaries only: no service user, data directory, env file or unit. Run `sudo dockmesh init` afterwards. |
+| `DOCKMESH_NO_BOOTSTRAP` | unset | `1` installs the binaries only: no service user, data root, env file or unit. Run `sudo dockmesh init` afterwards. |
 | `DOCKMESH_NO_SUDO` | unset | `1` never calls `sudo` (the install directory must be writable). |
 | `DOCKMESH_FORCE` | unset | `1` reinstalls even if the installed version is already the target version. |
 | `NO_COLOR` | unset | Disables colored output. |
@@ -96,7 +96,7 @@ DOCKMESH_SETUP_FORCE=true
 
 `DOCKMESH_SETUP_FORCE=true` keeps the server in setup mode until the web wizard has run; the wizard removes the line when it finishes. Edit the file and restart the service to change settings. All variables are listed in [Environment variables](../reference/environment-variables.md).
 
-`dockmesh` subcommands such as `dockmesh admin list-users` load `/var/lib/dockmesh/dockmesh.env` automatically. If your data directory is elsewhere, pass `--env-file <path>`. Run them with `sudo`, because the data directory is only readable by the service account.
+`dockmesh` subcommands such as `dockmesh admin list-users` load `/var/lib/dockmesh/dockmesh.env` automatically. If your data root is elsewhere, pass `--env-file <path>`. Run them with `sudo`, because the data root is only readable by the service account.
 
 ## The setup wizard
 
@@ -106,16 +106,24 @@ Open the URL the installer printed (`http://<host>:8080/setup`). While setup mod
 The wizard has seven steps:
 
 1. **Welcome** runs preflight checks: operating system, CPU, RAM, root disk space, Docker Engine, Docker socket, time synchronisation. A failed Docker check blocks the wizard.
-2. **Data** asks for a data directory.
+2. **Data** asks for the data root.
 3. **Service user** asks which OS account Dockmesh runs as (`dockmesh` is recommended).
 4. **Admin** creates the first administrator: username, password, optional email.
-5. **URL** asks for the public URL users and agents use to reach the server. It defaults to the address in your browser.
+5. **URL** asks for the public URL users and agents use to reach the server. It defaults to the address in your browser; enter the `https://` address of your reverse proxy instead of accepting a plain `http://<host>:8080`.
 6. **Review** shows your answers. Confirming here starts the installation.
 7. **Done** streams the progress of the installation, then shows the URL and admin credentials.
 
 On commit the server creates the admin account, stores the public URL as the server's base URL setting, and removes `DOCKMESH_SETUP_FORCE` from `dockmesh.env`. Sign in afterwards at `http://<host>:8080`.
 
-The data directory and service user answers do not relocate anything: the server keeps using the paths in `dockmesh.env` and keeps running as the user from the unit file. The wizard only creates the directory you name and, if the server runs as root, the user. To move the data directory, stop the service, move the files and edit `dockmesh.env`.
+The wizard's URL ends up only in the database setting. Agent install commands and SSO redirect URLs are built from the environment, so also add the public address to `dockmesh.env` and restart the service (for remote hosts, see [Multi-host](../features/multi-host.md) for the agent variables as well):
+
+```bash
+DOCKMESH_BASE_URL=https://dockmesh.example.com
+```
+
+Port 8080 is plain HTTP. Before you use Dockmesh beyond a trusted LAN, put a TLS reverse proxy in front and keep 8080 off the network; see [Security hardening](../operations/hardening.md) and [Ports](../reference/ports.md).
+
+The data root and service user answers do not relocate anything: the server keeps using the paths in `dockmesh.env` and keeps running as the user from the unit file. The wizard only creates the directory you name and, if the server runs as root, the user. To move the data root, stop the service, move the files and edit `dockmesh.env`.
 
 <!-- update after: setup: block internal targets in url test, lock commit -->
 The wizard accepts a commit for 30 minutes after the server starts. After that it refuses with "setup window expired"; restart the service (`sudo systemctl restart dockmesh`) to open a new window. Until the wizard is finished, anyone who can reach port 8080 can complete it and become admin, so finish it right away and keep the port closed to untrusted networks until then.
@@ -128,12 +136,12 @@ The wizard accepts a commit for 30 minutes after the server starts. After that i
 sudo dockmesh init
 ```
 
-It asks for the data directory, HTTP listen address, admin username and password (leave the password empty to generate one), public base URL, the agent connection URL (default `wss://<host>:8443/connect`), and whether to install and start the service. It then creates the database and admin account, writes `<data dir>/dockmesh.env` and, on Linux, writes a hardened systemd unit to `/etc/systemd/system/dockmesh.service` (a copy stays in the data directory), creates the `dockmesh` user, and starts the service. A generated password is printed once.
+It asks for the data root, HTTP listen address, admin username and password (leave the password empty to generate one), public base URL, the agent connection URL (default `wss://<host>:8443/connect`), and whether to install and start the service. It then creates the database and admin account, writes `<data dir>/dockmesh.env` and, on Linux, writes a hardened systemd unit to `/etc/systemd/system/dockmesh.service` (a copy stays in the data root), creates the `dockmesh` user, and starts the service. A generated password is printed once.
 
 | Flag | Default | |
 |---|---|---|
 | `--yes` | off | Non-interactive: accept defaults, generate the admin password. Required when stdin is not a terminal. |
-| `--data-dir` | `/var/lib/dockmesh` (`/usr/local/var/dockmesh` on macOS) | Data directory. |
+| `--data-dir` | `/var/lib/dockmesh` (`/usr/local/var/dockmesh` on macOS) | Data root. |
 | `--listen` | `:8080` | HTTP listen address. |
 | `--admin-user` | `admin` | Admin username. |
 | `--base-url` | `http://<hostname>:<port>` | Public base URL. |
@@ -163,7 +171,7 @@ Install `grype` yourself if you want image scans ([grype installation](https://g
 
 ## Build from source
 
-You need Go (the version in `go.mod`, currently 1.25), Node.js with npm, `make` and `git`.
+You need Go (the version in `go.mod`), Node.js with npm, `make` and `git`.
 
 ```bash
 git clone https://github.com/dockmesh/dockmesh.git

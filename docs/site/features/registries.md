@@ -15,7 +15,7 @@ Pick a provider under **Add a known provider** (Docker Hub, GitHub Container, Ha
 | **Display label** | Free text shown in the list. |
 | **Registry URL** | Host only, for example `ghcr.io` or `registry.example.com:5000`. Scheme and trailing slash are removed. |
 | **Username** | |
-| **Password / token** | Encrypted before it is stored; never returned by the API. When editing, leave it blank to keep the stored value. |
+| **Password / token** | Encrypted before it is stored when secrets encryption is on (see below); never returned by the API. When editing, leave it blank to keep the stored value. |
 | **Scope (host tags)** | Leave empty. See [Limits](#limits). |
 
 Use tokens with read-only scope: on GitHub a token with `read:packages`, on Docker Hub a personal access token, on Harbor a robot account. AWS ECR tokens expire after 12 hours (`aws ecr get-login-password`) and must be replaced by hand; Dockmesh has no ECR integration.

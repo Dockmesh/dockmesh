@@ -36,7 +36,7 @@ What each file is for:
 |---|---|---|
 | `dockmesh.db` | Users, roles, sessions, hosts, deployments and history, backup jobs, alert rules, settings, audit log, SSO providers, registries, API tokens | Everything except stack files is gone |
 | `secrets.env` | JWT signing secret | All sessions end; users sign in again |
-| `secrets.age-key` | Key for `.env.age` files and encrypted DB fields (SSO secrets, registry passwords, Git credentials) and for encrypted backups | Encrypted data cannot be recovered |
+| `secrets.age-key` | Key for `.env.age` files and encrypted DB fields (OIDC and OAuth2 client secrets, the LDAP bind password, registry passwords, Git credentials) and for encrypted backups | Encrypted data cannot be recovered |
 | `agents-ca.key` | Root of trust for agent mTLS | Every agent must re-enroll |
 | `audit-genesis.sha256` | Anchor of the audit hash chain | The chain cannot be checked against its start |
 

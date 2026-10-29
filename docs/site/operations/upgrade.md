@@ -7,7 +7,7 @@ An upgrade replaces the `dockmesh` binary and restarts the service. The database
 
 ## Find out what changed
 
-Dockmesh checks GitHub for new releases every 2 hours. When one is out, a banner with a **Release notes** link appears at the top of the UI and an entry shows up in the notification bell. **Settings** → **Updates** shows the current and latest version, has a **Check now** button, and lists the command to run.
+Dockmesh asks the GitHub releases API for the latest release 30 seconds after start and then every 120 minutes. When one is out, users who can see system information get an **Update available** banner with a **Release notes** link, and a notification is posted once per new release. **Settings** → **Updates** shows the current and latest version and the command to run; there you can also turn **Automatic update checks** off (useful without outbound internet access), change the **Check interval (minutes)** (15 to 10080), and run **Check now** (needs `system.upgrade`). The check never downloads or installs anything.
 
 Read the release notes before you upgrade. Releases after v0.3.3 take their notes from [`CHANGELOG.md`](https://github.com/dockmesh/dockmesh/blob/main/CHANGELOG.md):
 
@@ -19,7 +19,7 @@ Some of these steps are also checked by the server itself after the upgrade. The
 
 ## 1. Back up
 
-Take a copy you can roll back to. Database migrations only go forward, and there are no down-migrations. The simplest safe copy is the whole install directory, taken while the service is stopped:
+Take a copy you can roll back to. Database migrations only go forward, and there are no down-migrations. The simplest safe copy is the whole data root, taken while the service is stopped:
 
 ```bash
 sudo systemctl stop dockmesh
@@ -45,7 +45,11 @@ When `/usr/local/bin/dockmesh` already exists, the installer switches to upgrade
 4. It installs `grype` if it is missing, unless `DOCKMESH_NO_SCANNER=1`.
 5. It moves installs that still run as root to the `dockmesh` user, then restarts `dockmesh.service` and checks that it comes back up.
 
-`dockmesh.env`, the data directory and the systemd unit are left as they are. To install a specific version, set `DOCKMESH_VERSION=v0.3.3`; `DOCKMESH_CHANNEL=testing` includes pre-releases.
+`dockmesh.env`, the data root and the systemd unit are left as they are. To install a specific version, set `DOCKMESH_VERSION=v0.3.3`; `DOCKMESH_CHANNEL=testing` includes pre-releases.
+
+> **Warning:** If you installed with a custom `DOCKMESH_INSTALL_DIR`, pass the same value again. Otherwise the script does not find the existing binary, runs a fresh install, and overwrites `dockmesh.env` and the systemd unit with defaults, including `DOCKMESH_SETUP_FORCE=true`.
+
+Without systemd, the script replaces the binary but cannot restart the server; restart it yourself. On macOS it restarts the launchd job `dev.dockmesh.service`. If you built from source or run the locally built container, pull the new source and rebuild (`make build`, or `docker compose up -d --build`).
 
 To upgrade by hand, for example on an air-gapped host:
 
@@ -70,7 +74,7 @@ journalctl -u dockmesh --since "5 min ago"
 
 Pending migrations run in order at startup, each in its own transaction. If one fails, the server logs `db migrate failed` and exits, and systemd keeps restarting it. In that case roll back.
 
-After the restart, sign in, check that every host under **Hosts** is online, and open one or two stacks. Then work through the release's upgrade notes.
+Some releases sign everyone out once, for example when the session format changes; the sign-in page then says why. After the restart, sign in, check that every host under **Hosts** is online, and open one or two stacks. Then work through the release's upgrade notes.
 
 ## Rolling back
 

@@ -57,7 +57,7 @@ The **Files** tab lists a directory in the container with size, mode and modific
 
 With `containers.exec` you can also **Edit** a text file and **Save** it, or **Upload** a file into the current directory. Writing a file into a container is treated like a shell session, which is why it needs the exec permission.
 
-Editing and uploading only work for containers on the local host. Browsing the files of a container on a remote host is not supported.
+The **Files** tab works for containers on the local host only.
 
 ## Permissions
 

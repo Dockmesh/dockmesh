@@ -150,7 +150,7 @@ There is no general rate limit. Two protections apply to sign-in:
 - **Per account:** 5 failed passwords lock the account for 15 minutes (`423`). Both numbers are set in the password policy on the **Authentication** page (0 disables the lockout). An admin can lift a lock with `dockmesh admin unlock`.
 - **Per client address:** 10 failed logins within a minute block `POST /auth/login` from that address for 5 minutes (`429`).
 
-The client address is taken from `X-Forwarded-For` when that header is present, from any client. If the server is reachable directly, a client can send its own header and avoid the per-address limit, so expose Dockmesh only through a proxy that overwrites `X-Forwarded-For`, and add rate limiting there if the server faces the internet. `POST /auth/mfa`, SSO logins, invite acceptance and enrollment have no limit. Disabling your own MFA (`DELETE /api/v1/mfa`) allows 5 attempts per 15 minutes.
+The client address is taken from `X-Forwarded-For`, `X-Real-IP` or `True-Client-IP` when one of them is present, from any client. If the server is reachable directly, a client can send its own header and avoid the per-address limit, so expose Dockmesh only through a proxy that overwrites `X-Forwarded-For`, and add rate limiting there if the server faces the internet. `POST /auth/mfa`, SSO logins, invite acceptance and enrollment have no limit. Disabling your own MFA (`DELETE /api/v1/mfa`) allows 5 attempts per 15 minutes.
 
 ## Public endpoints
 

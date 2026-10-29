@@ -12,7 +12,7 @@ Paths below are for the `install.sh` layout (`/var/lib/dockmesh`). Other layouts
 | Path | Contents | Lost means |
 |---|---|---|
 | `data/dockmesh.db` | Users, roles, hosts, backup jobs and runs, audit log, settings | Everything except stack files |
-| `data/secrets.age-key` | age key for stack `.env.age` files, encrypted settings and encrypted backups | Encrypted archives and secrets cannot be decrypted |
+| `data/secrets.age-key` | age key for stack `.env.age` files, encrypted credentials in the database (SSO client secrets, LDAP bind password, registry passwords, Git credentials) and encrypted backups | Encrypted archives and secrets cannot be decrypted |
 | `data/secrets.env` | JWT signing secret | All sessions end; users sign in again |
 | `data/agents-ca.crt`, `agents-ca.key`, `agents-server.crt`, `agents-server.key` | Agent CA and the server's mTLS certificate | Every agent must re-enroll |
 | `data/audit-genesis.sha256` | Anchor of the audit hash chain | Chain can't be checked against its origin |
@@ -34,6 +34,7 @@ sudo cat /var/lib/dockmesh/data/secrets.age-key
 The API offers the same as a download: `GET /api/v1/system/backup-key/export` returns the key as `dockmesh-backup-key.txt`. The endpoint requires `backups.restore` and every call is written to the audit log. The **Export key** button under **Settings** → **Encryption key** fails with 401 because it doesn't send your session token, so call the endpoint with an [API token](../features/api-tokens.md):
 
 ```bash
+umask 077
 curl -fsS -H "Authorization: Bearer dmt_xxxxxxxx" \
   https://dockmesh.example.com/api/v1/system/backup-key/export -o dockmesh-backup-key.txt
 ```

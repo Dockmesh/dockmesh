@@ -63,7 +63,7 @@ Every change sends the whole config to Caddy's `/load` endpoint, with no contain
 | `none` | **HTTP only** | No automation policy is set for the host. |
 
 <!-- update after: proxy: keep the Caddy container, resume routes, serve tls none as http -->
-`none` doesn't currently give you a plain-HTTP site. All routes share one Caddy server on `:80` and `:443` with automatic HTTPS, so Caddy still tries to get a certificate for a `none` host and redirects HTTP to HTTPS. If TLS terminates in front of Dockmesh (a load balancer or tunnel), point that at your service directly rather than through a `none` route.
+`none` doesn't give you a plain-HTTP site. All routes share one Caddy server on `:80` and `:443` with automatic HTTPS, so Caddy still tries to get a certificate for a `none` host and redirects HTTP to HTTPS. If TLS terminates in front of Dockmesh (a load balancer or tunnel), point that at your service directly rather than through a `none` route.
 
 DNS-01 challenges and wildcard certificates can't be configured, even though the hostname hint mentions them. You also can't upload your own certificate.
 
@@ -77,6 +77,6 @@ Per-route traffic metrics stay empty, because Caddy's metrics aren't enabled in 
 
 ## Using your own proxy instead
 
-Leave the proxy disabled, publish your services' ports in `compose.yaml`, and point your proxy at them. Dockmesh doesn't need to know about it.
+Leave the proxy disabled, publish your services' ports in `compose.yaml` bound to loopback (`127.0.0.1:<port>:<port>`) when your proxy runs on the same host, and point your proxy at them. Dockmesh doesn't need to know about it.
 
 See also [Ports](../reference/ports.md) and [Hardening](../operations/hardening.md).

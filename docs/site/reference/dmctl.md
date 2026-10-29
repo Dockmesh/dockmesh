@@ -10,9 +10,11 @@ description: Reference for dmctl, the command-line client that talks to a Dockme
 `scripts/install.sh` installs `dmctl` next to the server binary (`/usr/local/bin/dmctl` by default). For another machine, take it from the release tarball for your platform:
 
 ```bash
-curl -fsSL https://github.com/dockmesh/dockmesh/releases/latest/download/dockmesh_linux_amd64.tar.gz \
-  | tar -xzO dmctl | sudo tee /usr/local/bin/dmctl > /dev/null
-sudo chmod +x /usr/local/bin/dmctl
+curl -fLO https://github.com/dockmesh/dockmesh/releases/latest/download/dockmesh_linux_amd64.tar.gz
+curl -fLO https://github.com/dockmesh/dockmesh/releases/latest/download/checksums.txt
+sha256sum -c --ignore-missing checksums.txt
+tar -xzf dockmesh_linux_amd64.tar.gz dmctl
+sudo install -m 0755 dmctl /usr/local/bin/dmctl
 dmctl --version
 ```
 
@@ -114,7 +116,7 @@ Containers keep running after adoption, but the next deploy from Dockmesh recrea
 
 `exec` opens an interactive TTY session, `/bin/sh` by default, and forwards terminal resizes. There are no start, stop or remove commands; use the UI or the API for container lifecycle.
 
-Known issues on `main`: `containers list --all` still lists only running containers (the server expects `all=true`, dmctl sends `all=1`), and log streams always follow until you press Ctrl-C or the container stops, whether or not you pass `--follow`.
+Known issues: `containers list --all` still lists only running containers (the server expects `all=true`, dmctl sends `all=1`), and log streams always follow until you press Ctrl-C or the container stops, whether or not you pass `--follow`.
 
 ## backup
 

@@ -22,7 +22,7 @@ Boolean variables are case-sensitive: "on by default" variables are only switche
 |---|---|---|
 | `DOCKMESH_HTTP_ADDR` | `:8080` | Listen address for the web UI, REST API, `/metrics` and `/install/*`. Plain HTTP |
 | `DOCKMESH_BASE_URL` | `http://localhost:8080` | Public URL of the server. Used for SSO callback URLs, invite links, agent enrollment and binary download URLs, and the default agent URL |
-| `DOCKMESH_AGENT_LISTEN` | `:8443` | Listen address of the agent mTLS listener. Empty disables it |
+| `DOCKMESH_AGENT_LISTEN` | `:8443` | Listen address of the agent mTLS listener. It always runs; an empty value falls back to the default |
 | `DOCKMESH_AGENT_PUBLIC_URL` | derived | `wss://` URL agents dial, put into install commands. Empty means `wss://<host of BASE_URL>:<port of AGENT_LISTEN>/connect` |
 | `DOCKMESH_AGENT_SANS` | empty | Comma-separated extra hostnames and IPs for the agent listener certificate. `localhost`, `127.0.0.1` and `::1` are always included |
 
@@ -82,7 +82,7 @@ Relative defaults resolve against the server's working directory. The installers
 | `DOCKMESH_OTEL_ENDPOINT` | empty | OTLP/gRPC endpoint for traces; empty disables tracing |
 | `DOCKMESH_OTEL_INSECURE` | `false` | Plaintext connection to the OTLP endpoint |
 
-Tracing does not start on `main`: initialisation fails with a resource schema conflict, which the server logs as a warning and continues without tracing.
+Tracing does not start: initialisation fails with a resource schema conflict, which the server logs as a warning and continues without tracing.
 
 ### Variables that are not read from the environment
 
@@ -142,7 +142,7 @@ The agent installer reads no environment variables: the server fills in the toke
 | `DOCKMESH_INSTALL_DIR` | `/usr/local/bin` | Where to remove `dockmesh`, `dockmesh.bak` and `dmctl` from |
 | `NO_COLOR` | unset | Disables colours |
 
-It finds the data and asset directories by looking for `dockmesh.env` in `/var/lib/dockmesh`, `/usr/local/var/dockmesh`, `/opt/dockmesh` and `/data`. Flags: `--yes`, `--purge` (also deletes the data directory), `--dry-run`. See [Uninstall](../operations/uninstall.md).
+It finds the data root and the asset directory by looking for `dockmesh.env` in `/var/lib/dockmesh`, `/usr/local/var/dockmesh`, `/opt/dockmesh` and `/data`. Flags: `--yes`, `--purge` (also deletes the data root), `--dry-run`. See [Uninstall](../operations/uninstall.md).
 
 ## Settings stored in the database
 

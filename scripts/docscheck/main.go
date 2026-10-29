@@ -181,6 +181,9 @@ func checkPage(fsys fs.FS, p string, body []byte) []string {
 			}
 		}
 	}
+	if err := sc.Err(); err != nil {
+		problems = append(problems, fmt.Sprintf("%s: %v", p, err))
+	}
 	return problems
 }
 

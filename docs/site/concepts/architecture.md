@@ -35,7 +35,7 @@ Dockmesh is one server binary, `dockmesh`. It serves the web UI and the REST API
 | SQLite database | `modernc.org/sqlite`, file at `DOCKMESH_DB_PATH` (default `./data/dockmesh.db`) | The only supported database. |
 | Local Docker engine | Reached through the Docker SDK | Connection settings come from the standard Docker environment (`DOCKER_HOST` etc.), usually the local socket. Dockmesh never shells out to the `docker` CLI. |
 | `dockmesh-agent` | Small binary on each remote host | Dials out to the server over a mutual-TLS WebSocket and runs Docker operations locally on the server's behalf. See [Hosts and agents](./hosts-and-agents.md). |
-| Reverse proxy | Docker container `dockmesh-proxy` running the `caddy:2` image | Only exists when the proxy is enabled (`DOCKMESH_PROXY_ENABLED=true` or the setting in the UI). Dockmesh configures it over Caddy's admin API on `127.0.0.1:2019`. See [Reverse proxy](../features/reverse-proxy.md). |
+| Reverse proxy | Docker container `dockmesh-proxy` running the `caddy:2` image | Only exists when the proxy is enabled (`DOCKMESH_PROXY_ENABLED=true` or the `proxy_enabled` setting). Dockmesh configures it over Caddy's admin API on `127.0.0.1:2019`. See [Reverse proxy](../features/reverse-proxy.md). |
 | Vulnerability scanner | External `grype` binary, run as a subprocess | `scripts/install.sh` installs it unless `DOCKMESH_NO_SCANNER=1`. The Dockerfile in the repository does not include it. Binary path: `DOCKMESH_SCANNER_BINARY` (default `grype`). See [Vulnerability scanning](../features/vulnerability-scanning.md). |
 | `dmctl` | Command-line client | Talks to the same REST API with an API token or a password login. See [dmctl](../reference/dmctl.md). |
 
@@ -70,7 +70,7 @@ Live logs, exec shells, container stats and the event feed run over WebSockets u
 
 ## How a deploy flows
 
-1. You click **Deploy** (or run `dmctl stacks deploy`). The server reads `compose.yaml` and the decrypted `.env` from the stack directory, merges global environment variables and applies the active environment override if there is one.
+1. You click **Deploy** (or run `dmctl stacks deploy`). The server reads `compose.yaml` and the decrypted `.env` from the stack directory, and merges global environment variables. If an environment override is active, the merged compose file is interpolated with the stack's `.env` only, so global variables do not apply.
 2. The server sends the compose text and environment to the target: the local host, or the agent on a remote host.
 3. On the target, Dockmesh writes both into a temporary staging directory, parses them with the Compose library, and reconciles with the Docker SDK: networks, then volumes, then image pulls, then each service in alphabetical order (remove the old container, create, start, wait for health).
 4. The server records which host the stack is on and adds a deploy-history entry. For remote hosts it also pushes a copy of the stack files to the agent.
