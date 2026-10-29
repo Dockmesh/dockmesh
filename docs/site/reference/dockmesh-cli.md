@@ -140,7 +140,7 @@ sudo -u dockmesh dockmesh admin unlock --user admin
 
 | Subcommand | Flags | Effect |
 |---|---|---|
-| `create` | `--username` (required), `--email`, `--role` (default `viewer`), `--password` | Creates a local user. Role is a built-in (`admin`, `host-admin`, `deployer`, `operator`, `viewer`) or the name of a custom role. The value is stored without validation, so check the spelling |
+| `create` | `--username` (required), `--email`, `--role` (default `viewer`), `--password` (omit it to be prompted or pipe it on stdin; a value on the command line ends up in shell history and `ps`) | Creates a local user. Role is a built-in (`admin`, `host-admin`, `deployer`, `operator`, `viewer`) or the name of a custom role. The value is stored without validation, so check the spelling |
 | `reset-password` | `--user` (username or ID, required), `--password` | Sets a new password and signs out all of the user's sessions |
 | `unlock` | `--user` (required) | Clears a login lockout and the failed-attempt counter; the password stays |
 | `list-users` | none | Prints ID, username, role, email and MFA status |

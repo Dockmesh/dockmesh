@@ -104,7 +104,7 @@ sudo chown -R dockmesh:docker /var/lib/dockmesh
 Carry over the settings from your saved `dockmesh.env` (`DOCKMESH_BASE_URL`, `DOCKMESH_AGENT_PUBLIC_URL`, `DOCKMESH_AGENT_SANS`, proxy settings and so on). Then check and start:
 
 ```bash
-sudo dockmesh doctor
+sudo -u dockmesh dockmesh doctor
 sudo systemctl start dockmesh
 ```
 
@@ -122,7 +122,7 @@ Agents trust the CA they received at enrollment and connect to the address they 
 
 If the CA files were missing, Dockmesh creates a new CA on first start and the agents' certificates no longer match. The same happens after `dockmesh ca rotate`. Re-enroll every agent, using one of two ways:
 
-- `sudo dockmesh ca rotate --reissue-all-agents` issues a new CA, sets every agent to pending with a fresh token, and prints one install command per agent. Run each command on its host.
+- `sudo -u dockmesh dockmesh ca rotate --reissue-all-agents` issues a new CA, sets every agent to pending with a fresh token, and prints one install command per agent. Run each command on its host.
 - Per host: **Revoke…** the host under **Hosts**, add it again with **Add host**, and run the new install command on the agent host. The installer removes the old certificates there before enrolling.
 
 <!-- update after: agents: survive disconnects, flow-control streams, renew certs -->

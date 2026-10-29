@@ -38,7 +38,7 @@ Without `--token` and `--user`, dmctl prompts for the token on a terminal or rea
 With username and password:
 
 ```bash
-dmctl login http://dockmesh.lan:8080 --user admin
+dmctl login https://dockmesh.example.com --user admin
 ```
 
 dmctl prompts for the password (hidden) and, if the account has two-factor authentication, for the TOTP or recovery code. The MFA prompt needs a terminal. dmctl saves the access and refresh tokens and, when a request returns 401, refreshes once and retries. The session ends when dmctl has not refreshed it for 60 minutes (the default idle limit; each refresh also renews the 24-hour lifetime), so use an API token for anything unattended.

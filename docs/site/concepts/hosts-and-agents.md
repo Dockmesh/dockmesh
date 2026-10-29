@@ -12,7 +12,7 @@ All hosts appear on the **Hosts** page and in the host switcher at the top of th
 
 ## The agent model
 
-The agent only makes outbound connections. Remote hosts need no open inbound ports; they need to reach the server's HTTP port for enrollment and agent upgrades (the new binary is downloaded from `/install/`), and the agent port (default `8443`) for the permanent connection.
+The agent only makes outbound connections. Remote hosts need no open inbound ports; they need to reach the server's public URL (`DOCKMESH_BASE_URL`, which should be `https://` behind your TLS proxy) for enrollment and agent upgrades (the new binary is downloaded from `/install/` without a checksum check), and the agent port (default `8443`) for the permanent connection.
 
 ### Adding a host
 

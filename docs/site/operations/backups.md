@@ -134,7 +134,7 @@ Restores always write to the local host, whichever host the backup came from. Th
 <!-- update after: restore: stage system restores and swap them in at startup -->
 - **Volume run**: extracted into the volume you name (the **Runs** tab suggests `<volume>-restored`; the run page starts empty). The volume is created if it does not exist.
 - **Stack run**: the stack files are written to `stacks/<name>/` and the volumes in the archive are restored under their original names, which are usually `<original-stack>_<volume>`. Restoring under a different stack name therefore still writes into the original stack's volumes. A failed volume shows up as a warning while the restore reports success. The stack is not redeployed.
-- **System run**: the UI shows **Restore**, but it only unpacks the archive into a Docker volume with the name you type; it does not restore the server. Use `dockmesh restore` on the command line, see [Disaster recovery](./disaster-recovery.md).
+- **System run**: the UI shows **Restore**, but it does not restore the server. It decrypts the archive and unpacks it into a Docker volume with the name you type, so that volume then holds the database, the JWT secret (`secrets.env`) and the age key in plaintext, readable by anyone who can browse volumes or deploy a stack that mounts it. Don't use it; if you did, remove that volume (`docker volume rm <name>`) and rotate the secrets key. Use `dockmesh restore` on the command line, see [Disaster recovery](./disaster-recovery.md).
 
 The run page also offers **Download archive**, which streams the archive decrypted, as plain `.tar.gz`.
 

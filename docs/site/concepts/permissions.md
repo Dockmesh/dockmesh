@@ -58,7 +58,7 @@ Dockmesh ships five roles, from least to most privileged: `viewer`, `operator`, 
 | system | view | view | view | view, update | all |
 | metrics | view | view | view | view | view |
 
-Viewers read everything, operators run existing stacks and containers, deployers also write compose files and pull images, host-admins run the whole fleet and its integrations, and only admins manage users, roles, audit settings, secrets-key rotation and update checks.
+Viewers read everything, operators run existing stacks and containers, deployers also write compose files and pull images, host-admins run the whole fleet and its integrations, and only admins manage users, roles, audit settings and secrets-key rotation, and run an on-demand update check. Host-admins can still turn automatic update checks off or change their interval, because those are ordinary settings.
 
 <!-- update after: rbac: scope read endpoints, limit grants, gate sensitive downloads -->
 > **Warning:** `host-admin` holds `system.update` and `backups.restore`. Together these let a host-admin change sign-in and SSO settings and export the secrets encryption key. Give `host-admin` only to people you would trust as admins.

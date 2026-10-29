@@ -96,7 +96,7 @@ DOCKMESH_SETUP_FORCE=true
 
 `DOCKMESH_SETUP_FORCE=true` keeps the server in setup mode until the web wizard has run; the wizard removes the line when it finishes. Edit the file and restart the service to change settings. All variables are listed in [Environment variables](../reference/environment-variables.md).
 
-`dockmesh` subcommands such as `dockmesh admin list-users` load `/var/lib/dockmesh/dockmesh.env` automatically. If your data root is elsewhere, pass `--env-file <path>`. Run them with `sudo`, because the data root is only readable by the service account.
+`dockmesh` subcommands such as `dockmesh admin list-users` load `/var/lib/dockmesh/dockmesh.env` automatically. If your data root is elsewhere, pass `--env-file <path>`. Run them as the service user (`sudo -u dockmesh dockmesh …`), because the data root is only readable by the service account and files they create keep the right owner.
 
 ## The setup wizard
 
@@ -147,7 +147,7 @@ It asks for the data root, HTTP listen address, admin username and password (lea
 | `--base-url` | `http://<hostname>:<port>` | Public base URL. |
 | `--service` | `true` | Install and start a systemd unit (launchd on macOS). `--service=false` to skip. |
 
-Because `init` creates the admin itself, the server starts without setup mode and you go straight to the login page. Re-running `init` is safe: an existing admin keeps its password (reset it with `sudo dockmesh admin reset-password --user admin`).
+Because `init` creates the admin itself, the server starts without setup mode and you go straight to the login page. Re-running `init` is safe: an existing admin keeps its password (reset it with `sudo -u dockmesh dockmesh admin reset-password --user admin`).
 
 > **Note:** `init` writes the listen address as `DOCKMESH_LISTEN`, which the server does not read; the server listens on `DOCKMESH_HTTP_ADDR` (default `:8080`). If you chose another address, add `DOCKMESH_HTTP_ADDR=<address>` to `dockmesh.env` and restart.
 

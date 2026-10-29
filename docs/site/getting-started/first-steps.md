@@ -18,7 +18,7 @@ How you get the first admin account depends on how you installed:
 If you lose the admin password, reset it on the server:
 
 ```bash
-sudo dockmesh admin reset-password --user admin
+sudo -u dockmesh dockmesh admin reset-password --user admin
 ```
 
 After signing in you land on the **Dashboard**. Turn on two-factor authentication for the admin account on the **Account** page (user menu → **Profile & security**); see [Authentication](../features/authentication.md).

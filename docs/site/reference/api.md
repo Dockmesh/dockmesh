@@ -13,7 +13,7 @@ The web UI is a client of the same REST API you can call yourself. Everything is
 | `GET /api/v1/openapi.yaml` | The same spec as YAML |
 | `GET /api/v1/docs` | Swagger UI for the spec |
 
-All three are public; the JSON and YAML specs are cached for five minutes. Swagger UI loads its JavaScript and CSS from `cdn.jsdelivr.net`, so the browser needs internet access; use the **Authorize** button to paste a token before you try requests. The spec is maintained by hand next to the router, and a CI test fails when a route is missing from it. Request and response schemas are not checked by that test, so treat field lists as documentation, not a guarantee.
+All three are public; the JSON and YAML specs are cached for five minutes. Swagger UI loads its JavaScript and CSS from `cdn.jsdelivr.net`, so the browser needs internet access; use the **Authorize** button to paste a token before you try requests, preferably a short-lived API token with a narrow role. The spec is maintained by hand next to the router, and a CI test fails when a route is missing from it. Request and response schemas are not checked by that test, so treat field lists as documentation, not a guarantee.
 
 ```bash
 curl -s https://dockmesh.example.com/api/v1/openapi.json -o dockmesh-openapi.json

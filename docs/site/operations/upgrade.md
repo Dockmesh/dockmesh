@@ -57,7 +57,7 @@ To upgrade by hand, for example on an air-gapped host:
 TAG=v0.3.3
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/dockmesh_linux_amd64.tar.gz"
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/checksums.txt"
-sha256sum -c --ignore-missing checksums.txt
+sha256sum -c --ignore-missing checksums.txt || { echo "checksum mismatch, aborting"; exit 1; }
 tar -xzf dockmesh_linux_amd64.tar.gz dockmesh dmctl dockmesh-agent install-agent.sh
 sudo cp -a /usr/local/bin/dockmesh /usr/local/bin/dockmesh.bak
 sudo install -m 0755 dockmesh dmctl /usr/local/bin/
