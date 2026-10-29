@@ -54,6 +54,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ### Fixed
 
+- The group-mapping hints now say what the code does (the last matching group decides, and OIDC
+  keeps only one admin and one operator group), and the audit webhook placeholder no longer
+  shows an internal-looking hostname.
 - The notice about SAML accounts waiting for their re-key now disappears once the re-key
   window has passed, without restarting the server.
 - Opening an image that was never scanned no longer logs a 404 error in the browser console;
