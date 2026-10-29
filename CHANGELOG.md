@@ -63,6 +63,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   window closes, and it reopens only when no account can administer Dockmesh (custom roles
   included). It no longer adds an existing system account to the `docker` group; only an
   account the wizard creates itself is added.
+- Reinstalling over an existing install no longer reopens the setup wizard to anyone who can
+  reach the server. `DOCKMESH_SETUP_FORCE=true` in the env file is now ignored once an admin
+  account exists, and admins get a notice to remove it. The installer no longer writes that
+  flag when a database is already there, and it keeps a copy of an existing env file as
+  `dockmesh.env.bak` (or `dockmesh.env.bak.<timestamp>` if a backup is already there).
 
 ### Upgrade notes
 - [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The
@@ -70,3 +75,6 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - [legacy-api-tokens, admins] API tokens created before this version have no owner. They keep
   working and are marked "legacy" under API tokens; recreate each one while signed in as the
   user who should own it, then revoke the old one. A notice stays up until none are left.
+- [setup-force-flag, admins] If a notice says the setup flag was ignored, delete the
+  `DOCKMESH_SETUP_FORCE=true` line from the env file it names (by default
+  `/var/lib/dockmesh/dockmesh.env`) and restart Dockmesh. The notice goes away after the restart.

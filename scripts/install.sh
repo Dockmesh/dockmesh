@@ -180,6 +180,76 @@ get_time() {
 }
 
 # ------------------------------------------------------------------
+#  Env file helpers (exercised by scripts/install_test.go)
+# ------------------------------------------------------------------
+
+# Copy FILE to FILE.bak, or to FILE.bak.<timestamp> when FILE.bak already
+# exists, so the first backup (usually the hand-tuned original) is never
+# overwritten by a later reinstall. Prints the backup path.
+backup_env_file() {
+  local f="$1" bak
+  $USE_SUDO test -e "$f" || return 0
+  bak="$f.bak"
+  if $USE_SUDO test -e "$bak"; then
+    bak="$f.bak.$(date +%Y%m%d%H%M%S)"
+  fi
+  $USE_SUDO cp -p "$f" "$bak"
+  $USE_SUDO chmod 600 "$bak"
+  printf '%s' "$bak"
+}
+
+# Succeeds only when none of the given database files exist. A reinstall
+# over kept data must not reopen the setup wizard. A directory we can't
+# look into counts as "database present".
+setup_flag_wanted() {
+  local db dir
+  for db in "$@"; do
+    [ -n "$db" ] || continue
+    if $USE_SUDO test -e "$db"; then
+      return 1
+    fi
+    dir="$(dirname "$db")"
+    if $USE_SUDO test -d "$dir" && ! $USE_SUDO test -x "$dir"; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# write_env_file ENV_FILE DATA_DIR ASSET_DIR
+write_env_file() {
+  local env_file="$1" data_dir="$2" asset_dir="$3"
+  local old_db="" bak="" setup_line=""
+  if $USE_SUDO test -e "$env_file"; then
+    old_db="$($USE_SUDO grep -E '^[[:space:]]*(export[[:space:]]+)?DOCKMESH_DB_PATH=' "$env_file" | tail -n 1 | sed -E 's/^[^=]*=//' | tr -d "\"'" || true)"
+    bak="$(backup_env_file "$env_file")"
+    ok "env backup      $bak"
+  fi
+  if setup_flag_wanted "$data_dir/data/dockmesh.db" "$old_db"; then
+    setup_line="DOCKMESH_SETUP_FORCE=true"
+  else
+    info "existing database found — setup wizard not forced open"
+  fi
+  (umask 077; $USE_SUDO tee "$env_file" >/dev/null <<EOF
+# Written by install.sh — minimal bootstrap config so the install
+# wizard can take over. The wizard removes DOCKMESH_SETUP_FORCE on
+# successful commit; this file stays as the live config afterwards.
+DOCKMESH_HTTP_ADDR=:8080
+DOCKMESH_AGENT_LISTEN=:8443
+DOCKMESH_DB_PATH=$data_dir/data/dockmesh.db
+DOCKMESH_STACKS_ROOT=$data_dir/stacks
+DOCKMESH_SECRETS_PATH=$data_dir/data/secrets.env
+DOCKMESH_SECRETS_KEY_PATH=$data_dir/data/secrets.age-key
+DOCKMESH_AUDIT_GENESIS_PATH=$data_dir/data/audit-genesis.sha256
+DOCKMESH_INSTALL_SCRIPT=$asset_dir/install-agent.sh
+DOCKMESH_BINARY_DIR=$asset_dir/bin
+$setup_line
+EOF
+  )
+  $USE_SUDO chmod 600 "$env_file"
+}
+
+# ------------------------------------------------------------------
 #  Banner
 # ------------------------------------------------------------------
 cat >&2 <<BANNER
@@ -910,26 +980,12 @@ else
   ok "data layout     $DATA_DIR/{data,stacks}"
 
   # Bootstrap env file. DOCKMESH_SETUP_FORCE=true keeps the wizard in
-  # control of admin creation (auto-bootstrap is suppressed). The
-  # wizard's commit handler scrubs that flag at the end so a future
-  # service restart behaves normally.
+  # control of admin creation (auto-bootstrap is suppressed) and is only
+  # written when no database exists yet. The wizard's commit handler
+  # scrubs that flag at the end so a future service restart behaves
+  # normally. An existing env file is backed up first.
   ENV_FILE="$DATA_DIR/dockmesh.env"
-  $USE_SUDO tee "$ENV_FILE" >/dev/null <<EOF
-# Written by install.sh — minimal bootstrap config so the install
-# wizard can take over. The wizard removes DOCKMESH_SETUP_FORCE on
-# successful commit; this file stays as the live config afterwards.
-DOCKMESH_HTTP_ADDR=:8080
-DOCKMESH_AGENT_LISTEN=:8443
-DOCKMESH_DB_PATH=$DATA_DIR/data/dockmesh.db
-DOCKMESH_STACKS_ROOT=$DATA_DIR/stacks
-DOCKMESH_SECRETS_PATH=$DATA_DIR/data/secrets.env
-DOCKMESH_SECRETS_KEY_PATH=$DATA_DIR/data/secrets.age-key
-DOCKMESH_AUDIT_GENESIS_PATH=$DATA_DIR/data/audit-genesis.sha256
-DOCKMESH_INSTALL_SCRIPT=$ASSET_DIR/install-agent.sh
-DOCKMESH_BINARY_DIR=$ASSET_DIR/bin
-DOCKMESH_SETUP_FORCE=true
-EOF
-  $USE_SUDO chmod 600 "$ENV_FILE"
+  write_env_file "$ENV_FILE" "$DATA_DIR" "$ASSET_DIR"
   if [ "$OS" = "linux" ]; then
     $USE_SUDO chown dockmesh:docker "$ENV_FILE"
   fi
