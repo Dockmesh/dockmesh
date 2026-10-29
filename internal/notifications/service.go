@@ -139,7 +139,7 @@ func (s *Service) Emit(ctx context.Context, in EmitInput) (int64, error) {
 	// loop continues — losing one fan-out row is better than dropping
 	// the entire emit.
 	if s.users == nil {
-		slog.Warn("notification fan-out skipped — user directory not wired", "kind", in.Kind, "title", in.Title)
+		slog.Warn("notification fan-out skipped: user directory not wired", "kind", in.Kind, "title", in.Title)
 		return 0, nil
 	}
 	ids, err := s.users.ListActiveUserIDs(ctx)
@@ -147,7 +147,7 @@ func (s *Service) Emit(ctx context.Context, in EmitInput) (int64, error) {
 		return 0, err
 	}
 	if s.access == nil {
-		slog.Warn("notification fan-out skipped — access checker not wired", "kind", in.Kind, "title", in.Title)
+		slog.Warn("notification fan-out skipped: access checker not wired", "kind", in.Kind, "title", in.Title)
 		return 0, nil
 	}
 	var firstID int64

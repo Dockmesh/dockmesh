@@ -23,8 +23,7 @@ type LocalConfig struct {
 const (
 	LocalRootsSetting       = "backups.local_roots"
 	LocalRootsSeededSetting = "backups.local_roots_seeded"
-	// DefaultLocalPath is where an unset path pointed before allowed roots
-	// existed; new targets get DefaultLocalDir instead.
+	// DefaultLocalPath is what an unset path means; new targets get DefaultLocalDir.
 	DefaultLocalPath = "./data/backups"
 )
 

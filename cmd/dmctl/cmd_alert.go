@@ -55,8 +55,8 @@ func alertListActiveCmd() *cobra.Command {
 			if err := c.request("GET", "/api/v1/alerts/history", q, nil, &hist); err != nil {
 				return err
 			}
-			// Keep the newest status per rule and container; a rule whose latest entry is
-			// "fired" is active, everything else is resolved / never fired.
+			// Keep the newest status per rule and container; one whose
+			// latest entry is "fired" is active.
 			type key struct {
 				rule      int64
 				container string

@@ -323,6 +323,7 @@ func (h *LocalHost) InspectVolume(ctx context.Context, name string) (volume.Volu
 	return h.cli.InspectVolume(ctx, name)
 }
 
+// VolumeBrowseEntries lists a directory inside a local volume.
 func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath string) ([]VolumeEntry, error) {
 	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker

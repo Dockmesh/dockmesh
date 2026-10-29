@@ -283,13 +283,8 @@ func (h *Handlers) roleIsUnscoped(r *http.Request) bool {
 	return true
 }
 
-// StackScope guards every /stacks/{name}/... route: once a stack is
-// deployed, only callers whose host scope and role scope include it on its
-// deployment host reach the handler. For an undeployed stack only roles
-// scoped to stacks are checked here for changes; host scope is up to the
-// handler, which knows the host it is asked to act on. Reading one is
-// stricter, because no host is known to judge by: a caller limited by host,
-// host tag or user tag gets in only through a role that lists the stack.
+// StackScope checks /stacks/{name}/... requests against the caller's scope
+// on the stack's deployment host, or by stack name before it is deployed.
 func (h *Handlers) StackScope(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
