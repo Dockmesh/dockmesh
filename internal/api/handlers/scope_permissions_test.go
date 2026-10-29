@@ -452,3 +452,74 @@ func TestSystemBackupsStayAdminOnly(t *testing.T) {
 		t.Errorf("system job after host-admin delete: %v", err)
 	}
 }
+
+func TestBackupJobsKeepTheirOwnArchives(t *testing.T) {
+	e := newScopeEnv(t)
+	ctx := context.Background()
+	svc := e.h.Backups
+	// A legacy non-system job carrying the default name, created before
+	// names were checked, must not stand in for the system job.
+	for _, stmt := range []string{
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources, enabled) VALUES (1, 'dockmesh-system', 'local', 'local', '[{"type":"volume","name":"v"}]', 1)`,
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources, enabled) VALUES (5, 'nightly', 'local', 'local', '[{"type":"system","name":"dockmesh"}]', 1)`,
+	} {
+		if _, err := e.db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vol := []backup.Source{{Type: "volume", Name: "data"}}
+	sys := []backup.Source{{Type: "system", Name: "dockmesh"}}
+	web, err := svc.CreateJob(ctx, backup.JobInput{Name: "web", TargetType: "local", Sources: vol})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		id      int64
+		in      backup.JobInput
+		wantErr bool
+	}{
+		{"same folder as another job", 0, backup.JobInput{Name: "Web!", Sources: vol}, true},
+		{"name without letters or digits", 0, backup.JobInput{Name: "!!!", Sources: vol}, true},
+		{"system name on a volume job", 0, backup.JobInput{Name: "Dockmesh-System", Sources: vol}, true},
+		{"system name on a second system job", 0, backup.JobInput{Name: "Dockmesh System", Sources: sys}, true},
+		{"rename onto another job", web.ID, backup.JobInput{Name: "nightly", Sources: vol}, true},
+		{"keep own name", web.ID, backup.JobInput{Name: "web", Sources: vol}, false},
+		{"distinct name", 0, backup.JobInput{Name: "web-db", Sources: vol}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.in.TargetType = "local"
+			var err error
+			if tt.id == 0 {
+				_, err = svc.CreateJob(ctx, tt.in)
+			} else {
+				_, err = svc.UpdateJob(ctx, tt.id, tt.in)
+			}
+			if (err != nil) != tt.wantErr {
+				t.Errorf("err = %v, want error %v", err, tt.wantErr)
+			}
+		})
+	}
+
+	if err := svc.SetDefaultJobEnabled(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[int64]bool{1: true, 5: false} {
+		j, err := svc.GetJob(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if j.Enabled != want {
+			t.Errorf("job %d enabled = %v, want %v", id, j.Enabled, want)
+		}
+	}
+	st, err := svc.LastSystemRun(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Exists || st.Enabled {
+		t.Errorf("system status = %+v, want the disabled system job", st)
+	}
+}

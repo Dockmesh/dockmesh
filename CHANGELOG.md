@@ -90,6 +90,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   system backups, reading their run log, and turning on, editing, running or deleting the
   system backup job are admin-only. Restoring, verifying and reading the log of other backups
   needs the job's host within your scope.
+- Backup jobs whose names differ only in case or punctuation stored their archives in the
+  same folder, so the retention of one job could delete another job's backups, including the
+  system backups. Such names are now rejected, and the name `dockmesh-system` is kept for
+  the system backup job. On S3, retention no longer touches jobs whose name merely starts
+  with the same text.
 
 ### Upgrade notes
 - [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The

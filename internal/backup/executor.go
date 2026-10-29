@@ -330,8 +330,9 @@ func (e *Executor) applyRetention(ctx context.Context, job *Job, target targets.
 	if job.RetentionCount <= 0 && job.RetentionDays <= 0 {
 		return nil
 	}
-	prefix := jobPrefix(job)
-	entries, err := target.List(ctx, prefix)
+	// The trailing slash keeps prefix-matching targets (S3) from also
+	// listing jobs whose name merely starts with this one's.
+	entries, err := target.List(ctx, jobPrefix(job)+"/")
 	if err != nil {
 		return err
 	}

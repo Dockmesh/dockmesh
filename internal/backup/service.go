@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 
@@ -125,6 +126,9 @@ func (s *Service) CreateJob(ctx context.Context, in JobInput) (*Job, error) {
 	if err := validateJob(in); err != nil {
 		return nil, err
 	}
+	if err := s.checkJobName(ctx, 0, in); err != nil {
+		return nil, err
+	}
 	id, err := s.store.createJob(ctx, in)
 	if err != nil {
 		return nil, err
@@ -141,6 +145,9 @@ func (s *Service) UpdateJob(ctx context.Context, id int64, in JobInput) (*Job, e
 	if err := validateJob(in); err != nil {
 		return nil, err
 	}
+	if err := s.checkJobName(ctx, id, in); err != nil {
+		return nil, err
+	}
 	if err := s.store.updateJob(ctx, id, in); err != nil {
 		return nil, err
 	}
@@ -150,6 +157,30 @@ func (s *Service) UpdateJob(ctx context.Context, id int64, in JobInput) (*Job, e
 	}
 	_ = s.schedule(j)
 	return j, nil
+}
+
+// checkJobName rejects names that would share an archive directory with
+// another job: retention deletes whatever is under the job's directory, so
+// a shared one lets one job delete another's backups. The system job's
+// directory is reserved for jobs with a system source. id is 0 on create.
+func (s *Service) checkJobName(ctx context.Context, id int64, in JobInput) error {
+	dir := sanitize(in.Name)
+	if dir == "" {
+		return errors.New("job name needs at least one letter or digit")
+	}
+	if dir == sanitize(DefaultSystemJobName) && !HasSystemSource(in.Sources) {
+		return fmt.Errorf("job name %q is reserved for the system backup job", in.Name)
+	}
+	jobs, err := s.store.listJobs(ctx)
+	if err != nil {
+		return err
+	}
+	for _, j := range jobs {
+		if j.ID != id && sanitize(j.Name) == dir {
+			return fmt.Errorf("job name %q would share its archive folder with job %q; pick another name", in.Name, j.Name)
+		}
+	}
+	return nil
 }
 
 func (s *Service) DeleteJob(ctx context.Context, id int64) error {

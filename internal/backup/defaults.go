@@ -29,17 +29,10 @@ func (s *Service) EnsureDefaultJob(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for _, j := range jobs {
-		if j.Name == DefaultSystemJobName {
-			return nil
-		}
-		// Respect any existing user-created system-source job so we
-		// don't end up with two competing daily backups.
-		for _, src := range j.Sources {
-			if src.Type == "system" {
-				return nil
-			}
-		}
+	// Any existing system-source job counts, so we don't end up with two
+	// competing daily backups.
+	if systemJob(jobs) != nil {
+		return nil
 	}
 
 	in := JobInput{
@@ -165,18 +158,13 @@ func (s *Service) LastSystemRun(ctx context.Context) (SystemStatus, error) {
 	if err != nil {
 		return out, err
 	}
-	var jobID int64 = -1
-	for _, j := range jobs {
-		if j.Name == DefaultSystemJobName {
-			jobID = j.ID
-			out.Exists = true
-			out.Enabled = j.Enabled
-			break
-		}
-	}
-	if !out.Exists {
+	j := systemJob(jobs)
+	if j == nil {
 		return out, nil
 	}
+	jobID := j.ID
+	out.Exists = true
+	out.Enabled = j.Enabled
 	runs, err := s.store.listRuns(ctx, 100)
 	if err != nil {
 		return out, err
@@ -200,12 +188,10 @@ func (s *Service) SetDefaultJobEnabled(ctx context.Context, enabled bool) error 
 	if err != nil {
 		return err
 	}
-	for _, j := range jobs {
-		if j.Name != DefaultSystemJobName {
-			continue
-		}
+	if j := systemJob(jobs); j != nil {
 		in := JobInput{
 			Name:           j.Name,
+			HostID:         j.HostID,
 			TargetType:     j.TargetType,
 			TargetConfig:   j.TargetConfig,
 			Sources:        j.Sources,
@@ -224,4 +210,17 @@ func (s *Service) SetDefaultJobEnabled(ctx context.Context, enabled bool) error 
 		return s.EnsureDefaultJob(ctx)
 	}
 	return nil
+}
+
+// systemJob returns the oldest job with a system source, or nil. The
+// default job is found by its source, not its name, so another job can't
+// take its place by being named like it.
+func systemJob(jobs []Job) *Job {
+	var out *Job
+	for i := range jobs {
+		if HasSystemSource(jobs[i].Sources) && (out == nil || jobs[i].ID < out.ID) {
+			out = &jobs[i]
+		}
+	}
+	return out
 }
