@@ -347,7 +347,7 @@ func (h *RemoteHost) VolumeBrowseEntries(ctx context.Context, name, subpath stri
 }
 
 // VolumeTar opens a volume_export stream on the remote agent and
-// returns an io.ReadCloser of the tar.gz bytes. FINDING-33.
+// returns an io.ReadCloser of the tar.gz bytes.
 // The agent ships raw docker hijack bytes (with 8-byte mux headers)
 // so we wrap the stream in a demuxer to recover stdout-only content.
 func (h *RemoteHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser, error) {

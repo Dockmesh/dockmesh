@@ -48,8 +48,7 @@ func TestServerCertMismatchedKeyIsReissued(t *testing.T) {
 	if _, err := New(dir, []string{"10.0.0.1"}); err != nil {
 		t.Fatal(err)
 	}
-	// Simulate the half-written state of the old non-atomic rewrite: a
-	// key that belongs to a different cert.
+	// A key that belongs to a different cert.
 	other := t.TempDir()
 	if _, err := New(other, []string{"10.0.0.1"}); err != nil {
 		t.Fatal(err)

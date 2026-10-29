@@ -387,8 +387,8 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 
 // streamReg tracks a single in-flight stream on the agent side. With
 // flow control (the server sent a window) outbound data waits for credit
-// and inbound data is acknowledged once written; without it the agent
-// behaves as before and only overflow is caught.
+// and inbound data is acknowledged once written; without it, input that
+// overflows the queue fails the stream.
 type streamReg struct {
 	id     string
 	ctx    context.Context
@@ -466,7 +466,7 @@ func deliverStreamInput(conn *websocket.Conn, id string, data []byte) {
 	}
 }
 
-// deliverStreamControl handles out-of-band control ops.
+// deliverStreamControl handles the resize, credit and eof control ops.
 func deliverStreamControl(id, op string, params map[string]any) {
 	r := lookupStream(id)
 	if r == nil {
