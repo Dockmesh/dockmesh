@@ -416,6 +416,21 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 	if !h.requireHostAccess(w, r, origin) || !h.requireHostAccess(w, r, opts.HostID) {
 		return
 	}
+	src := h.hostScopeReq(r.Context(), origin)
+	dst := h.hostScopeReq(r.Context(), opts.HostID)
+	if kind == "stack" {
+		src.StackName = run.Sources[0].Name
+		dst.StackName = opts.Target
+		if dst.StackName == "" {
+			dst.StackName = src.StackName
+		}
+	}
+	for _, req := range []rbac.ScopeRequest{src, dst} {
+		if !h.checkRoleScope(r, req) {
+			h.writeRoleScopeDenied(w, r, rbac.PermBackupsRestore, req, "")
+			return
+		}
+	}
 
 	// A restore stopped halfway leaves a half-written volume, so it runs to
 	// the end even if the client disconnects.

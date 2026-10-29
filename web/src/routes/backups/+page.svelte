@@ -2,9 +2,7 @@
   // Backups — editorial rebuild based on `Dockmesh Wizard (6)/backups.jsx`.
   // Header with the "restore is the only test that matters" quote, stat
   // banner, ed-tabs strip Jobs / Runs / Targets, jobs+targets as card
-  // grids per the mockup, runs as a cleaner editorial table. Wizards
-  // and the restore modal stay on the legacy `Modal` component for now —
-  // they're functional and the editorial rebuild of those is a follow-up.
+  // grids per the mockup, runs as a cleaner editorial table.
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { api, ApiError, runRestorable } from '$lib/api';
@@ -136,10 +134,6 @@
     drawerJob = null;
     drawerRun = r;
   }
-  // Restore from RunDrawer routes through the existing restore-modal
-  // flow so the confirm-text validation stays in one place. Each mode
-  // opens the same restore modal with a pre-set context (the modal
-  // text adapts in a follow-up).
   function restoreRunFromDrawer(r: BackupRun, mode: 'in-place' | 'alongside' | 'download') {
     if (mode === 'download') {
       downloadRunArchive(r);

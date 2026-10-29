@@ -705,7 +705,7 @@ func runVolumeImportStream(ctx context.Context, conn *websocket.Conn, cli *clien
 
 	script := "tar xzf - -C /dest"
 	if replace {
-		script = "rm -rf /dest/..?* /dest/.[!.]* /dest/* && " + script
+		script = agents.VolumeReplaceScript
 	}
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:       helperImage,

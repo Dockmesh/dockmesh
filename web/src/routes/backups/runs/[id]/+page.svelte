@@ -638,7 +638,5 @@
   }
   :global(.bk-detail-job-link-arrow) { color: var(--fg-subtle); }
 
-  /* Restore-confirm modal (matches the existing flow's destructive
-     volume-name-typing pattern). Centred + 480px wide. */
   .bk-detail-spacer { flex: 1; }
 </style>

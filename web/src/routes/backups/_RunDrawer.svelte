@@ -1,10 +1,6 @@
 <script lang="ts">
-  // Run drawer — right-side aside per backup-wizards.jsx::RunDrawer.
-  // Shows status / size / duration / phase summary, the run error if
-  // any, and the restore-flow with three modes (in-place / alongside /
-  // download). Per-run log streaming isn't backed yet (BackupRun has
-  // status + error but no log array) — placeholder block surfaces what
-  // we have and notes the rest is a follow-up.
+  // Run drawer: status, size, duration, error, log and the restore modes
+  // (in-place / alongside / download).
   import { api, runRestorable, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
   import { Eyebrow } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';

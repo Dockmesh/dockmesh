@@ -219,6 +219,11 @@ type StackCheckScaleReq struct {
 	Service string `json:"service"`
 }
 
+// VolumeReplaceScript is the helper command for a volume restore that
+// replaces the contents: the globs cover dotfiles, and rm -f ignores
+// patterns that match nothing.
+const VolumeReplaceScript = "rm -rf /dest/..?* /dest/.[!.]* /dest/* && tar xzf - -C /dest"
+
 // VolumeImportReady is the first data the agent sends on a volume_import
 // stream, once the archive can be written; earlier data would be lost.
 const VolumeImportReady = "dockmesh:volume-import-ready"

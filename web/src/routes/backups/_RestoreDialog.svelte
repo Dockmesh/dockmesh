@@ -3,7 +3,7 @@
   // the host the backup was taken on) and replace vs. merge. The server
   // verifies the whole archive before it writes anything.
   import { untrack } from 'svelte';
-  import { api, ApiError, type BackupRun, type BackupRestoreReport, type HostInfo } from '$lib/api';
+  import { api, ApiError, type BackupRun, type HostInfo } from '$lib/api';
   import { Button, Input, Modal } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { Undo2 } from 'lucide-svelte';
@@ -15,9 +15,8 @@
     // Host the backup was taken on; '' or undefined = central server.
     originHost?: string;
     onclose: () => void;
-    ondone?: (report: BackupRestoreReport) => void;
   }
-  let { run, preset = 'alongside', originHost = '', onclose, ondone }: Props = $props();
+  let { run, preset = 'alongside', originHost = '', onclose }: Props = $props();
 
   const isStack = $derived(!!run?.sources.some((s) => s.type === 'stack'));
   const sourceName = $derived(run?.sources[0]?.name ?? '');
@@ -58,7 +57,6 @@
         : target.trim();
       toast.success('Restored', what);
       for (const w of report.warnings ?? []) toast.warning('Restore warning', w);
-      ondone?.(report);
       onclose();
     } catch (err) {
       toast.error('Restore failed', err instanceof ApiError ? err.message : undefined);

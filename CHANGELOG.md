@@ -108,8 +108,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   on (or one you pick), instead of always on the central server. The archive is checked
   completely before anything is overwritten, and you choose between replacing the volume's
   contents (refused while containers use it) and merging. A volume that fails to restore now
-  fails the stack restore instead of being reported as a warning. Restoring onto a remote host
-  needs the agent from this release.
+  fails the stack restore instead of being reported as a warning. Restoring a stack under
+  another name gives the copy its own volumes instead of writing into the original stack's.
+  Restoring onto a remote host needs the agent from this release.
 
 ### Upgrade notes
 - [redeploy-relative-bind-mounts, admins] Redeploy every stack that uses a relative bind mount
