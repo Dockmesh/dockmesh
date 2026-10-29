@@ -199,31 +199,41 @@ func (s *Service) Raise(ctx context.Context, in RaiseInput) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var id int64
-	var resolved sql.NullTime
-	err = tx.QueryRowContext(ctx, `SELECT id, resolved_at FROM notices WHERE key = ?`, in.Key).Scan(&id, &resolved)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO notices (key, audience, audience_value, severity, title, body, link)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			in.Key, string(in.Audience.Kind), value, string(in.Severity), in.Title, in.Body, in.Link); err != nil {
-			return err
-		}
-	case err != nil:
+	// The first statement is a write: a transaction that reads first and
+	// upgrades later fails at once with SQLITE_BUSY when another writer
+	// committed in between, without waiting for busy_timeout.
+	res, err := tx.ExecContext(ctx, `
+		UPDATE notices SET audience = ?, audience_value = ?, severity = ?, title = ?, body = ?, link = ?,
+		       created_at = CURRENT_TIMESTAMP, resolved_at = NULL
+		 WHERE key = ? AND resolved_at IS NOT NULL`,
+		string(in.Audience.Kind), value, string(in.Severity), in.Title, in.Body, in.Link, in.Key)
+	if err != nil {
 		return err
-	case !resolved.Valid:
-		return nil
-	default:
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE notices SET audience = ?, audience_value = ?, severity = ?, title = ?, body = ?, link = ?,
-			       created_at = CURRENT_TIMESTAMP, resolved_at = NULL
-			 WHERE id = ?`,
-			string(in.Audience.Kind), value, string(in.Severity), in.Title, in.Body, in.Link, id); err != nil {
+	}
+	reopened, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if reopened > 0 {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM notice_dismissals WHERE notice_id = (SELECT id FROM notices WHERE key = ?)`, in.Key); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM notice_dismissals WHERE notice_id = ?`, id); err != nil {
+	} else {
+		res, err = tx.ExecContext(ctx, `
+			INSERT INTO notices (key, audience, audience_value, severity, title, body, link)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(key) DO NOTHING`,
+			in.Key, string(in.Audience.Kind), value, string(in.Severity), in.Title, in.Body, in.Link)
+		if err != nil {
 			return err
+		}
+		inserted, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if inserted == 0 {
+			return nil
 		}
 	}
 	if err := tx.Commit(); err != nil {
