@@ -280,6 +280,25 @@ EOF
   $USE_SUDO mv -f "$tmp" "$env_file"
 }
 
+# systemd_unit_loaded avoids `systemctl list-unit-files | grep -q`: under
+# pipefail grep -q exits on the first match, systemctl gets SIGPIPE and the
+# whole pipeline reports failure intermittently.
+systemd_unit_loaded() {
+  [ "$(systemctl show -p LoadState --value dockmesh.service 2>/dev/null)" = "loaded" ]
+}
+
+# service_runs_new_binary succeeds when dockmesh.service has a main process
+# that is not $1 (the PID from before the restart) and whose executable was
+# not replaced underneath it.
+service_runs_new_binary() {
+  local old_pid="$1" pid exe
+  pid="$(systemctl show -p MainPID --value dockmesh 2>/dev/null || true)"
+  { [ -n "$pid" ] && [ "$pid" != "0" ] && [ "$pid" != "$old_pid" ]; } || return 1
+  exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+  case "$exe" in *" (deleted)") return 1 ;; esac
+  return 0
+}
+
 # ------------------------------------------------------------------
 #  Banner
 # ------------------------------------------------------------------
@@ -339,7 +358,7 @@ SYSTEMD_PID=""
 HAS_LAUNCHD_UNIT=0
 LAUNCHD_ACTIVE=0
 if command -v systemctl >/dev/null 2>&1; then
-  if systemctl list-unit-files dockmesh.service 2>/dev/null | grep -q '^dockmesh\.service'; then
+  if systemd_unit_loaded; then
     HAS_SYSTEMD_UNIT=1
     systemctl is-active --quiet dockmesh   && SYSTEMD_ACTIVE=1
     systemctl is-enabled --quiet dockmesh  && SYSTEMD_ENABLED=1
@@ -856,25 +875,32 @@ if [ "$IS_UPGRADE" = "1" ]; then
     fi
     info "restarting dockmesh.service..."
     RESTART_T0=$(get_time)
-    if $USE_SUDO systemctl restart dockmesh 2>/dev/null; then
-      # Wait for the service to come back healthy. We probe the systemd
-      # state rather than HTTP because the listen port is whatever the
-      # user configured — we don't know it from here.
-      for i in 1 2 3 4 5 6 7 8 9 10; do
-        sleep 0.5
-        systemctl is-active --quiet dockmesh && break
-      done
-      RESTART_T1=$(get_time)
-      DOWNTIME=$(awk "BEGIN { printf \"%.1f\", $RESTART_T1 - $RESTART_T0 }")
-      if systemctl is-active --quiet dockmesh; then
-        ok "service restarted"
-        ok "health OK       downtime ${DOWNTIME}s"
-      else
-        fail "service failed to start — see: journalctl -u dockmesh --since '1 min ago'"
-      fi
-    else
-      warn "restart failed — run manually: $USE_SUDO systemctl restart dockmesh"
+    if ! $USE_SUDO systemctl restart dockmesh; then
+      die "restart failed — the new binary is installed but the old one may still be running. Run: $USE_SUDO systemctl restart dockmesh"
     fi
+    # Probe the systemd state rather than HTTP because the listen port is
+    # whatever the user configured.
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      sleep 0.5
+      systemctl is-active --quiet dockmesh && break
+    done
+    RESTART_T1=$(get_time)
+    DOWNTIME=$(awk "BEGIN { printf \"%.1f\", $RESTART_T1 - $RESTART_T0 }")
+    if ! systemctl is-active --quiet dockmesh; then
+      die "service failed to start — see: journalctl -u dockmesh --since '1 min ago'"
+    fi
+    if ! service_runs_new_binary "$SYSTEMD_PID"; then
+      die "dockmesh.service is still running the old binary — run: $USE_SUDO systemctl restart dockmesh"
+    fi
+    ok "service restarted"
+    ok "health OK       downtime ${DOWNTIME}s"
+    RUNNING_VERSION="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || true)"
+    case "$RUNNING_VERSION" in
+      *"$DM_VERSION"*) ok "running         $RUNNING_VERSION" ;;
+      *) die "installed binary reports '${RUNNING_VERSION:-unknown}', expected $DM_VERSION" ;;
+    esac
+  else
+    warn "no systemd unit found — restart dockmesh manually to run the new version"
   fi
   step_done
 

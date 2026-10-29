@@ -24,6 +24,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ## [Unreleased]
 
+### Fixed
+
+- The installer now detects an existing Dockmesh service reliably on upgrade, always restarts
+  it after replacing the binary and stops with an error if the old binary is still running.
+
 ## [0.4.0] - 2026-10-29 [security]
 
 Security release. It fixes authorization, sign-in, agent enrollment and backup problems found

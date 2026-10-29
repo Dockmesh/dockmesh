@@ -223,3 +223,41 @@ func TestInstallWriteEnvFileRefusesSymlinks(t *testing.T) {
 		})
 	}
 }
+
+func TestInstallServiceHelpers(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	helpers := envHelpers(t)
+
+	tests := []struct {
+		name string
+		call string
+		fake string // body of the fake systemctl
+		want bool
+	}{
+		{"unit loaded", "systemd_unit_loaded", `echo loaded`, true},
+		{"unit not found", "systemd_unit_loaded", `echo not-found`, false},
+		{"systemctl fails", "systemd_unit_loaded", `exit 1`, false},
+		{"new pid", "service_runs_new_binary 100", `echo 200`, true},
+		{"same pid", "service_runs_new_binary 100", `echo 100`, false},
+		{"no main pid", "service_runs_new_binary 100", `echo 0`, false},
+		{"old pid empty", "service_runs_new_binary ''", `echo 200`, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bin := t.TempDir()
+			mustWrite(t, filepath.Join(bin, "systemctl"), "#!/bin/sh\n"+tt.fake+"\n")
+			if err := os.Chmod(filepath.Join(bin, "systemctl"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			script := "set -euo pipefail\n" + helpers + "\n" + tt.call + "\n"
+			cmd := exec.Command("bash", "-c", script)
+			cmd.Env = append(os.Environ(), "PATH="+filepath.ToSlash(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+			err := cmd.Run()
+			if got := err == nil; got != tt.want {
+				t.Errorf("%s = %v, want %v (err %v)", tt.call, got, tt.want, err)
+			}
+		})
+	}
+}
