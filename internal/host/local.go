@@ -299,9 +299,6 @@ func (h *LocalHost) InspectVolume(ctx context.Context, name string) (volume.Volu
 	return h.cli.InspectVolume(ctx, name)
 }
 
-// VolumeBrowseEntries resolves the requested path against the volume's
-// mountpoint on the docker host's own filesystem, then walks it via
-// the shared helper. P.11.8 — admin-only at the handler layer.
 // VolumeBrowseEntries first tries direct filesystem access via the
 // volume's mountpoint. On EACCES (common — Docker volumes are
 // root:root 0700 and Dockmesh runs as an unprivileged user) we fall
@@ -319,11 +316,12 @@ func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath strin
 	if err != nil {
 		return nil, err
 	}
-	abs, err := SanitizeVolumePath(mp, subpath)
-	if err != nil {
-		return nil, err
+	// The helper container resolves links inside its own mount of the
+	// volume, so absolute in-volume symlinks work there safely.
+	entries, err := BrowseVolume(mp, subpath)
+	if errors.Is(err, ErrVolumePathEscape) {
+		return BrowseDirViaHelper(ctx, h.cli, name, subpath)
 	}
-	entries, err := BrowseDir(abs)
 	if err != nil && errors.Is(err, fs.ErrPermission) {
 		return BrowseDirViaHelper(ctx, h.cli, name, subpath)
 	}
@@ -342,11 +340,10 @@ func (h *LocalHost) VolumeReadFile(ctx context.Context, name, subpath string, ma
 	if err != nil {
 		return nil, err
 	}
-	abs, err := SanitizeVolumePath(mp, subpath)
-	if err != nil {
-		return nil, err
+	res, err := ReadVolumeFile(mp, subpath, maxBytes)
+	if errors.Is(err, ErrVolumePathEscape) {
+		return ReadFileViaHelper(ctx, h.cli, name, subpath, maxBytes)
 	}
-	res, err := ReadFile(abs, maxBytes)
 	if err != nil && errors.Is(err, fs.ErrPermission) {
 		return ReadFileViaHelper(ctx, h.cli, name, subpath, maxBytes)
 	}

@@ -2948,7 +2948,7 @@
             {/if}
             <span class="font-medium">{check.name.replace(/_/g, ' ')}</span>
             {#if check.detail}
-              <span class="text-[var(--fg-muted)] truncate">{check.detail}</span>
+              <span class="text-[var(--fg-muted)] {check.passed ? 'truncate' : 'break-words'}">{check.detail}</span>
             {/if}
           </div>
         {/each}

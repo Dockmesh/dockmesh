@@ -52,7 +52,8 @@ func (h *Handlers) ConfigureGitSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	src, err := h.GitSource.Configure(r.Context(), name, in)
-	if errors.Is(err, gitsource.ErrInvalidAuthKind) || errors.Is(err, gitsource.ErrPollTooShort) || errors.Is(err, gitsource.ErrStackNameInvalid) {
+	if errors.Is(err, gitsource.ErrInvalidAuthKind) || errors.Is(err, gitsource.ErrPollTooShort) ||
+		errors.Is(err, gitsource.ErrStackNameInvalid) || errors.Is(err, gitsource.ErrPathOutsideRepo) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -306,6 +306,19 @@ func (s *Service) Restore(ctx context.Context, runID int64, destVolume string) e
 	return untarVolume(ctx, s.docker, destVolume, reader)
 }
 
+// CheckRestoreTarget rejects a dest_volume that isn't a volume name before
+// any archive is read, for runs that restore into a volume.
+func (s *Service) CheckRestoreTarget(ctx context.Context, runID int64, destVolume string) error {
+	run, err := s.store.getRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if len(run.Sources) > 0 && run.Sources[0].Type == "stack" {
+		return nil
+	}
+	return docker.CheckVolumeName(destVolume)
+}
+
 // StackRestoreReport tells the caller what actually happened on a stack
 // restore — files extracted, volumes restored, anything skipped — so
 // the UI can show a list rather than a flat success/fail.

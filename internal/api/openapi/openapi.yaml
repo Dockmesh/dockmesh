@@ -2270,6 +2270,15 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            The stack uses named volumes. Volume data can't be transferred
+            yet, so the migration is refused instead of starting the stack
+            with empty volumes on the target. Preflight reports the same
+            as the failing `named_volumes` check.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /stacks/{name}/migrate/preflight:
     post:
@@ -3297,9 +3306,9 @@ paths:
       tags: [backups]
       summary: Restore a specific backup run onto a target
       description: |
-        For volume/stack backups this extracts the tar into a fresh volume
-        or stack directory; for system backups it writes the snapshot DB
-        + stacks tree to a specified path for the operator to swap in.
+        For volume backups this extracts the archive into the Docker volume
+        named by `dest_volume`; for stack backups `dest_volume` carries the
+        target stack name.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       requestBody:
@@ -3308,23 +3317,16 @@ paths:
           application/json:
             schema:
               type: object
+              required: [dest_volume]
               properties:
-                target_host_id: { type: string }
-                target_volume: { type: string }
-                target_stack: { type: string }
-                target_path: { type: string, description: "For system backups — filesystem destination." }
+                dest_volume:
+                  type: string
+                  description: |
+                    Docker volume name (`[a-zA-Z0-9][a-zA-Z0-9_.-]+`), or the
+                    stack name for stack backups. Paths are rejected with 400.
       responses:
-        "200":
-          description: Restore started.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status: { type: string }
-                  extracted_paths:
-                    type: array
-                    items: { type: string }
+        "204":
+          description: Restored.
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -3373,7 +3375,8 @@ paths:
 
         Rejects age-encrypted tarballs — the server's own age key is
         inside the tarball, so self-encrypted system backups can't
-        self-verify.
+        self-verify. Uploads are limited to 1 GiB. Symlink and hardlink
+        entries are never extracted (Dockmesh backups contain none).
       requestBody:
         required: true
         content:
@@ -3395,6 +3398,11 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "413":
+          description: Upload larger than 1 GiB, or the archive unpacks to more than 8 GiB or 200,000 entries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "422":
           description: Verification failed, sanity check broke, or tarball is encrypted.
           content:
@@ -4133,6 +4141,11 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Another key rotation is already running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "503":
           description: Secrets or stacks service not configured.
           content:
@@ -7406,6 +7419,7 @@ components:
           properties:
             files: { type: integer }
             bytes: { type: integer, format: int64 }
+            skipped_links: { type: integer, description: Symlink/hardlink entries that were not extracted. }
         sanity:
           type: object
           required: [passed, checks]
@@ -7811,7 +7825,12 @@ components:
       properties:
         repo_url: { type: string }
         branch: { type: string }
-        path_in_repo: { type: string }
+        path_in_repo:
+          type: string
+          description: |
+            Relative path inside the repository (directory or compose file).
+            Absolute paths and ".." are rejected with 400; symlinks that
+            lead outside the repository are not followed.
         auth_kind:
           type: string
           enum: [none, http, ssh]

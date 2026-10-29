@@ -11,7 +11,7 @@ import (
 )
 
 // runSecretsCmd handles `dockmesh secrets <subcommand>`. Only `rotate` is
-// implemented in Phase 2 per concept §15.2.
+// implemented.
 func runSecretsCmd(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: dockmesh secrets rotate")
@@ -44,13 +44,12 @@ func rotateSecrets() error {
 		return fmt.Errorf("load current key: %w", err)
 	}
 
-	// Move the current key to .old and generate a fresh one in its place.
-	if err := oldSvc.ArchiveKey(); err != nil {
-		return fmt.Errorf("archive key: %w", err)
-	}
-	newSvc, err := secrets.New(cfg.SecretsKeyPath, true)
+	newSvc, err := oldSvc.RotateInMemory()
 	if err != nil {
 		return fmt.Errorf("generate new key: %w", err)
+	}
+	if err := oldSvc.PrepareRotation(newSvc); err != nil {
+		return err
 	}
 
 	// Walk every stack and re-encrypt its .env.age.
@@ -63,10 +62,13 @@ func rotateSecrets() error {
 	if err != nil {
 		return fmt.Errorf("reencrypt: %w", err)
 	}
+	if _, err := oldSvc.AdoptAndPersist(newSvc); err != nil {
+		return fmt.Errorf("persist new key: %w", err)
+	}
 
 	fmt.Printf("rotation complete: %d .env.age files re-encrypted\n", count)
 	fmt.Printf("new recipient: %s\n", newSvc.PublicRecipient())
-	fmt.Printf("old key archived to: %s.old\n", cfg.SecretsKeyPath)
+	fmt.Printf("previous keys kept in: %s.history\n", cfg.SecretsKeyPath)
 	fmt.Println()
 	fmt.Println("!! If dockmesh is currently running, restart it now:")
 	fmt.Println("     systemctl restart dockmesh   (or kill + start)")
