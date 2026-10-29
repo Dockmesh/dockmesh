@@ -416,6 +416,7 @@ func main() {
 	// decision is made below once the settings store is loaded so the
 	// DB-backed `proxy_enabled` setting outranks the env var default.
 	proxySvc := proxy.NewService(database, dockerCli, false)
+	proxySvc.SetImage(cfg.ProxyImage)
 	updaterSvc := updater.NewService(dockerCli, database)
 	// Background image-update watcher: every 30 minutes asks each
 	// running container's registry for a fresher manifest. Result is
@@ -558,22 +559,6 @@ func main() {
 	selfUpdateChk := selfupdate.New(settingsStore, version.Version)
 	selfUpdateChk.Start(ctx)
 
-	// Proxy: the boot-time config flag is just the *default* — the
-	// DB-backed `proxy_enabled` setting overrides it so an admin
-	// flipping the toggle persists across restarts without env-var
-	// edits. If enabled, bring the Caddy container up now (idempotent
-	// — EnableProxy removes any stale container + reseeds bootstrap
-	// config + pushes the current routes).
-	if settingsStore.GetBool("proxy_enabled", cfg.ProxyEnabled) {
-		if err := proxySvc.EnableProxy(ctx); err != nil {
-			slog.Warn("proxy boot-up failed — toggle off/on in Settings once Docker is reachable", "err", err)
-		}
-	}
-	// Start the ACME event tailer regardless of current proxy state —
-	// the loop is dormant when the proxy is disabled and reconnects
-	// automatically once the container appears.
-	proxySvc.StartACMETailer(ctx)
-
 	globalEnvStore := globalenv.NewStore(database)
 
 	// RBAC v2: DB-backed custom roles with in-memory cache.
@@ -606,6 +591,23 @@ func main() {
 	// noticesSvc; they run once every service below is wired.
 	noticesSvc := notices.NewService(database)
 	noticesSvc.Register("api-tokens.legacy", apiTokensSvc.SyncLegacyNotice)
+	proxySvc.SetNotices(noticesSvc)
+
+	// Proxy: the boot-time config flag is just the *default* — the
+	// DB-backed `proxy_enabled` setting overrides it so an admin
+	// flipping the toggle persists across restarts without env-var
+	// edits. If enabled, reconcile the Caddy container (kept when its
+	// spec is current) and push the current routes.
+	if settingsStore.GetBool("proxy_enabled", cfg.ProxyEnabled) {
+		if err := proxySvc.EnableProxy(ctx); err != nil {
+			slog.Warn("proxy boot-up failed — toggle off/on in Settings once Docker is reachable", "err", err)
+		}
+	}
+	// Start the ACME event tailer regardless of current proxy state —
+	// the loop is dormant when the proxy is disabled and reconnects
+	// automatically once the container appears.
+	proxySvc.StartACMETailer(ctx)
+	proxySvc.StartWatchdog(ctx, 30*time.Second)
 
 	// Wire the registries service into every code path that pulls an
 	// image. Without this, compose deploys + the "update image" button

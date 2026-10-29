@@ -84,7 +84,7 @@ func (s *Service) Metrics(ctx context.Context) (*MetricsSnapshot, error) {
 }
 
 func (s *Service) scrapeCaddy(ctx context.Context) ([]promSample, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, adminURL+"/metrics", nil)
+	req, err := adminRequest(ctx, http.MethodGet, "/metrics", nil)
 	if err != nil {
 		return nil, err
 	}

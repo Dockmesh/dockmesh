@@ -21,6 +21,8 @@ type Config struct {
 	ScannerBinary     string
 	ScannerEnabled    bool
 	ProxyEnabled      bool
+	// ProxyImage overrides the pinned Caddy image (DOCKMESH_PROXY_IMAGE).
+	ProxyImage string
 	BaseURL           string
 	AgentListen       string
 	AgentPublicURL    string
@@ -67,6 +69,7 @@ func Load() (*Config, error) {
 		ScannerEnabled:    envOr("DOCKMESH_SCANNER_ENABLED", "true") != "false",
 		// Proxy is opt-in: many users already run Traefik or NPM.
 		ProxyEnabled: envOr("DOCKMESH_PROXY_ENABLED", "false") == "true",
+		ProxyImage:   envOr("DOCKMESH_PROXY_IMAGE", ""),
 		// BaseURL is used to build the OIDC redirect URL. Providers must
 		// have <baseURL>/api/v1/auth/oidc/{slug}/callback whitelisted.
 		BaseURL: envOr("DOCKMESH_BASE_URL", "http://localhost:8080"),

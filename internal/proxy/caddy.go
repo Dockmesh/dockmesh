@@ -8,10 +8,20 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"time"
 )
 
-const adminURL = "http://127.0.0.1:2019"
+const (
+	adminAddr = "127.0.0.1:2019"
+	adminURL  = "http://" + adminAddr
+)
+
+// adminOrigins are the only Host/Origin values Caddy's admin API
+// accepts. Requests without a matching Origin (browsers on other sites,
+// DNS rebinding) are refused; see Service docs for what this does not
+// cover.
+var adminOrigins = []string{adminAddr, "localhost:2019"}
 
 // caddyConfig is the subset of Caddy's JSON config we generate. Full
 // schema: https://caddyserver.com/docs/json/
@@ -21,7 +31,9 @@ type caddyConfig struct {
 }
 
 type caddyAdmin struct {
-	Listen string `json:"listen"`
+	Listen        string   `json:"listen"`
+	Origins       []string `json:"origins,omitempty"`
+	EnforceOrigin bool     `json:"enforce_origin,omitempty"`
 }
 
 type caddyApps struct {
@@ -34,14 +46,14 @@ type caddyHTTP struct {
 }
 
 type caddyServer struct {
-	Listen []string      `json:"listen"`
-	Routes []caddyRoute  `json:"routes"`
+	Listen []string     `json:"listen"`
+	Routes []caddyRoute `json:"routes"`
 }
 
 type caddyRoute struct {
-	Match  []caddyMatch   `json:"match"`
-	Handle []caddyHandler `json:"handle"`
-	Terminal bool         `json:"terminal,omitempty"`
+	Match    []caddyMatch   `json:"match"`
+	Handle   []caddyHandler `json:"handle"`
+	Terminal bool           `json:"terminal,omitempty"`
 }
 
 type caddyMatch struct {
@@ -74,24 +86,28 @@ type caddyIssuer struct {
 	Module string `json:"module"`
 }
 
-// buildConfig turns the DB routes into a complete Caddy JSON config.
-func buildConfig(routes []Route) *caddyConfig {
+const (
+	serverHTTPS = "dockmesh"
+	serverHTTP  = "dockmesh_http"
+)
+
+// buildConfig turns the DB routes into a complete Caddy JSON config and
+// returns the hosts of routes it left out because their upstream points
+// at Caddy's own admin API.
+//
+// Plain-HTTP routes (tls_mode none) live in a server that listens only
+// on :80, which Caddy never applies automatic HTTPS to. TLS routes live
+// in the :443 server; Caddy adds their HTTP->HTTPS redirects to the :80
+// server after the host-matched plain routes.
+func buildConfig(routes []Route) (*caddyConfig, []string) {
 	cfg := &caddyConfig{
-		Admin: &caddyAdmin{Listen: "127.0.0.1:2019"},
-		Apps: caddyApps{
-			HTTP: caddyHTTP{
-				Servers: map[string]caddyServer{
-					"dockmesh": {
-						Listen: []string{":80", ":443"},
-						Routes: []caddyRoute{},
-					},
-				},
-			},
-		},
+		Admin: &caddyAdmin{Listen: adminAddr, Origins: adminOrigins, EnforceOrigin: true},
+		Apps:  caddyApps{HTTP: caddyHTTP{Servers: map[string]caddyServer{}}},
 	}
 
 	var policies []caddyAutomationPolicy
-	server := cfg.Apps.HTTP.Servers["dockmesh"]
+	var plain, secure []caddyRoute
+	var blocked []string
 	for _, r := range routes {
 		// Disabled routes stay in the DB but are not pushed to Caddy —
 		// traffic stops flowing without losing the host/upstream
@@ -99,7 +115,11 @@ func buildConfig(routes []Route) *caddyConfig {
 		if !r.Enabled {
 			continue
 		}
-		server.Routes = append(server.Routes, caddyRoute{
+		if targetsAdmin(r.Upstream) {
+			blocked = append(blocked, r.Host)
+			continue
+		}
+		route := caddyRoute{
 			Match: []caddyMatch{{Host: []string{r.Host}}},
 			Handle: []caddyHandler{
 				{
@@ -108,41 +128,63 @@ func buildConfig(routes []Route) *caddyConfig {
 				},
 			},
 			Terminal: true,
-		})
+		}
 		switch r.TLSMode {
+		case "none":
+			plain = append(plain, route)
+			continue
 		case "internal":
 			policies = append(policies, caddyAutomationPolicy{
 				Subjects: []string{r.Host},
 				Issuers:  []caddyIssuer{{Module: "internal"}},
 			})
-		case "auto":
+		default:
 			policies = append(policies, caddyAutomationPolicy{
 				Subjects: []string{r.Host},
 				Issuers:  []caddyIssuer{{Module: "acme"}},
 			})
 		}
+		secure = append(secure, route)
 	}
-	cfg.Apps.HTTP.Servers["dockmesh"] = server
+	if plain == nil {
+		plain = []caddyRoute{}
+	}
+	cfg.Apps.HTTP.Servers[serverHTTP] = caddyServer{Listen: []string{":80"}, Routes: plain}
+	if len(secure) > 0 {
+		cfg.Apps.HTTP.Servers[serverHTTPS] = caddyServer{Listen: []string{":443"}, Routes: secure}
+	}
 	if len(policies) > 0 {
 		cfg.Apps.TLS = &caddyTLS{Automation: caddyAutomation{Policies: policies}}
 	}
-	return cfg
+	return cfg, blocked
 }
 
-// pushConfig POSTs the current config to Caddy's admin API /load endpoint.
-// Caddy replaces its entire running config atomically.
-func (s *Service) pushConfig(ctx context.Context, routes []Route) error {
-	cfg := buildConfig(routes)
+// adminRequest builds a request to Caddy's admin API with the Origin
+// header enforce_origin requires.
+func adminRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, adminURL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Origin", adminURL)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return req, nil
+}
+
+// pushConfig POSTs the config to Caddy's admin API /load endpoint.
+// Caddy replaces its entire running config atomically and saves it, so
+// a restarted container (`--resume`) comes back with the same routes.
+func pushConfig(ctx context.Context, cfg *caddyConfig) error {
 	body, err := json.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, adminURL+"/load", bytes.NewReader(body))
+	req, err := adminRequest(ctx, http.MethodPost, "/load", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -150,15 +192,50 @@ func (s *Service) pushConfig(ctx context.Context, routes []Route) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(resp.Body)
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 		return fmt.Errorf("caddy /load %d: %s", resp.StatusCode, string(b))
 	}
 	return nil
 }
 
+// runningConfig fetches the config Caddy is currently running.
+func runningConfig(ctx context.Context) ([]byte, error) {
+	req, err := adminRequest(ctx, http.MethodGet, "/config/", nil)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("caddy /config %d", resp.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+}
+
+// sameConfig reports whether Caddy's running config (as returned by
+// /config/) matches want, ignoring formatting and key order.
+func sameConfig(running []byte, want *caddyConfig) bool {
+	wantJSON, err := json.Marshal(want)
+	if err != nil {
+		return false
+	}
+	var a, b any
+	if json.Unmarshal(running, &a) != nil || json.Unmarshal(wantJSON, &b) != nil {
+		return false
+	}
+	return reflect.DeepEqual(a, b)
+}
+
 // adminStatus pings the Caddy admin API and reports whether it's reachable.
 func adminStatus(ctx context.Context) (bool, string) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, adminURL+"/config/", nil)
+	req, err := adminRequest(ctx, http.MethodGet, "/config/", nil)
+	if err != nil {
+		return false, ""
+	}
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {

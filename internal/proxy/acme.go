@@ -89,7 +89,7 @@ func (s *Service) tailACME(ctx context.Context) {
 			return
 		default:
 		}
-		if !s.enabled {
+		if !s.Enabled() {
 			select {
 			case <-ctx.Done():
 				return

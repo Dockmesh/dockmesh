@@ -4,9 +4,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"time"
 
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -17,32 +21,91 @@ import (
 // bootstrapConfig is the minimal Caddy config we seed into the config
 // volume before first start. It only enables the admin API; the real
 // config is pushed via /load once the API is reachable.
-var bootstrapConfig = []byte(`{"admin":{"listen":"127.0.0.1:2019"}}`)
+var bootstrapConfig = []byte(`{"admin":{"listen":"` + adminAddr + `"}}`)
 
 // ProxyContainerName is the fixed name we use for the managed Caddy
 // container so repeated enable/disable cycles don't leave orphans.
 const ProxyContainerName = "dockmesh-proxy"
 
-// ProxyImage is the Caddy image we pull if it isn't already local.
-const ProxyImage = "caddy:2"
+// DefaultProxyImage pins the Caddy release Dockmesh is tested with.
+const DefaultProxyImage = "caddy:2.11.7"
 
-// EnableProxy pulls the Caddy image (if missing), removes any stale
-// container, creates a new one with host networking so it can reach any
-// localhost port, starts it, and waits for the admin API.
+// specLabel carries a hash of the container spec, so reconcile can tell
+// a container it can keep from one created with an older spec.
+const specLabel = "dockmesh.proxy.spec"
+
+// proxyCmd starts Caddy from its autosaved last config when there is
+// one (every /load is saved), so a restarted container keeps serving
+// the routes without waiting for Dockmesh.
+var proxyCmd = []string{"caddy", "run", "--config", "/config/caddy.json", "--resume"}
+
+var proxyBinds = []string{
+	"dockmesh-caddy-data:/data",
+	"dockmesh-caddy-config:/config",
+}
+
+func (s *Service) specHash() string {
+	h := sha256.New()
+	for _, part := range [][]string{{s.image}, proxyCmd, proxyBinds, {"host", "unless-stopped"}} {
+		for _, p := range part {
+			h.Write([]byte(p))
+			h.Write([]byte{0})
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// EnableProxy makes sure the managed Caddy container runs with the
+// current spec and serves the current routes. A container that already
+// matches the spec is kept (and started if stopped); only an outdated
+// or foreign one is replaced. Called at boot and by the enable toggle.
 func (s *Service) EnableProxy(ctx context.Context) error {
 	if s.docker == nil {
 		return errors.New("docker unavailable")
 	}
 	cli := s.docker.Raw()
+	want := s.specHash()
 
-	// Pull image if we don't have it.
-	if _, _, err := cli.ImageInspectWithRaw(ctx, ProxyImage); err != nil {
+	existing, err := cli.ContainerInspect(ctx, ProxyContainerName)
+	switch {
+	case err == nil && existing.Config != nil && existing.Config.Labels[specLabel] == want:
+		if existing.State == nil || !existing.State.Running {
+			if err := cli.ContainerStart(ctx, existing.ID, container.StartOptions{}); err != nil {
+				return fmt.Errorf("container start: %w", err)
+			}
+		}
+	case err == nil:
+		slog.Info("proxy: replacing container with outdated spec", "container", existing.ID[:12])
+		if err := s.createProxy(ctx, &existing); err != nil {
+			return err
+		}
+	case errdefs.IsNotFound(err):
+		if err := s.createProxy(ctx, nil); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("inspect proxy container: %w", err)
+	}
+
+	// Host networking means 127.0.0.1:2019 is Caddy's.
+	if err := ensureAdmin(ctx); err != nil {
+		return err
+	}
+	s.enabled.Store(true)
+	return s.SyncFromDB(ctx)
+}
+
+// createProxy pulls the image if needed, removes old (when set) and
+// creates + starts a fresh container.
+func (s *Service) createProxy(ctx context.Context, old *dtypes.ContainerJSON) error {
+	cli := s.docker.Raw()
+	if _, _, err := cli.ImageInspectWithRaw(ctx, s.image); err != nil {
 		if !errdefs.IsNotFound(err) {
 			return fmt.Errorf("image inspect: %w", err)
 		}
-		rc, err := cli.ImagePull(ctx, ProxyImage, dtypes.ImagePullOptions{})
+		rc, err := cli.ImagePull(ctx, s.image, dtypes.ImagePullOptions{})
 		if err != nil {
-			return fmt.Errorf("image pull: %w", err)
+			return fmt.Errorf("image pull %s: %w", s.image, err)
 		}
 		if _, err := io.Copy(io.Discard, rc); err != nil {
 			rc.Close()
@@ -51,40 +114,35 @@ func (s *Service) EnableProxy(ctx context.Context) error {
 		rc.Close()
 	}
 
-	// Remove any stale container with the reserved name.
-	if existing, err := cli.ContainerInspect(ctx, ProxyContainerName); err == nil {
-		_ = cli.ContainerStop(ctx, existing.ID, container.StopOptions{})
-		if err := cli.ContainerRemove(ctx, existing.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
-			return fmt.Errorf("remove stale: %w", err)
+	if old != nil {
+		_ = cli.ContainerStop(ctx, old.ID, container.StopOptions{})
+		if err := cli.ContainerRemove(ctx, old.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+			return fmt.Errorf("remove outdated proxy container: %w", err)
 		}
 	}
 
-	labels := map[string]string{
-		"dockmesh.managed":   "true",
-		"dockmesh.component": "proxy",
-	}
 	cfg := &container.Config{
-		Image:  ProxyImage,
-		Cmd:    []string{"caddy", "run", "--config", "/config/caddy.json"},
-		Labels: labels,
+		Image: s.image,
+		Cmd:   proxyCmd,
+		Labels: map[string]string{
+			"dockmesh.managed":   "true",
+			"dockmesh.component": "proxy",
+			specLabel:            s.specHash(),
+		},
 	}
 	hostCfg := &container.HostConfig{
 		NetworkMode:   "host",
 		RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
-		Binds: []string{
-			"dockmesh-caddy-data:/data",
-			"dockmesh-caddy-config:/config",
-		},
+		Binds:         proxyBinds,
 	}
-
 	resp, err := cli.ContainerCreate(ctx, cfg, hostCfg, &dnetwork.NetworkingConfig{}, nil, ProxyContainerName)
 	if err != nil {
 		return fmt.Errorf("container create: %w", err)
 	}
 
-	// Seed the bootstrap config so caddy has something to read on start.
-	// We copy after Create (state=created) and before Start so there's no
-	// race with the Caddy process reading the file.
+	// Seed the bootstrap config so caddy has something to read on its
+	// very first start. Copied after Create and before Start so there's
+	// no race with the Caddy process reading the file.
 	tarStream, err := tarSingleFile("caddy.json", bootstrapConfig)
 	if err != nil {
 		return fmt.Errorf("build bootstrap tar: %w", err)
@@ -92,30 +150,51 @@ func (s *Service) EnableProxy(ctx context.Context) error {
 	if err := cli.CopyToContainer(ctx, resp.ID, "/config", tarStream, dtypes.CopyToContainerOptions{}); err != nil {
 		return fmt.Errorf("seed bootstrap config: %w", err)
 	}
-
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return fmt.Errorf("container start: %w", err)
 	}
+	return nil
+}
 
-	// Wait for admin API (host networking means 127.0.0.1:2019 is Caddy's).
-	if err := ensureAdmin(ctx); err != nil {
-		return err
+// StartWatchdog re-pushes the routes whenever Caddy runs a different
+// config than the stored routes produce, e.g. after the container was
+// recreated outside Dockmesh or its autosave was lost.
+func (s *Service) StartWatchdog(ctx context.Context, interval time.Duration) {
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+			if err := s.reconcileConfig(ctx); err != nil {
+				slog.Debug("proxy: config check failed", "err", err)
+			}
+		}
+	}()
+}
+
+func (s *Service) reconcileConfig(ctx context.Context) error {
+	if !s.Enabled() {
+		return nil
 	}
-	// Flip the in-memory gate BEFORE pushing config so SyncFromDB
-	// doesn't early-return on the enabled check. CreateRoute /
-	// UpdateRoute / DeleteRoute all call SyncFromDB, which skips
-	// everything when `!s.enabled` — and the flag used to only ever
-	// be set from the boot-time config, so toggling the proxy on at
-	// runtime left routes silently un-synced.
 	s.mu.Lock()
-	s.enabled = true
-	s.mu.Unlock()
-	// Push the current routes so the container boots into the right state.
-	routes, err := s.listRoutes(ctx)
+	defer s.mu.Unlock()
+	running, err := runningConfig(ctx)
 	if err != nil {
 		return err
 	}
-	return s.pushConfig(ctx, routes)
+	want, err := s.desiredConfig(ctx)
+	if err != nil {
+		return err
+	}
+	if sameConfig(running, want) {
+		return nil
+	}
+	slog.Info("proxy: caddy config differs from stored routes, pushing")
+	return pushConfig(ctx, want)
 }
 
 // DisableProxy stops and removes the managed Caddy container. The Docker
@@ -129,6 +208,7 @@ func (s *Service) DisableProxy(ctx context.Context) error {
 	info, err := cli.ContainerInspect(ctx, ProxyContainerName)
 	if err != nil {
 		if errdefs.IsNotFound(err) {
+			s.enabled.Store(false)
 			return nil
 		}
 		return err
@@ -137,9 +217,7 @@ func (s *Service) DisableProxy(ctx context.Context) error {
 	if err := cli.ContainerRemove(ctx, info.ID, container.RemoveOptions{Force: true}); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	s.enabled = false
-	s.mu.Unlock()
+	s.enabled.Store(false)
 	return nil
 }
 
@@ -167,7 +245,7 @@ func tarSingleFile(name string, content []byte) (io.Reader, error) {
 
 // GetStatus inspects the container and pings the admin API.
 func (s *Service) GetStatus(ctx context.Context) *Status {
-	st := &Status{Enabled: s.enabled}
+	st := &Status{Enabled: s.Enabled()}
 	if s.docker == nil {
 		return st
 	}
