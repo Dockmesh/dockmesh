@@ -607,3 +607,59 @@ func TestBackupNameCollisionNotice(t *testing.T) {
 		})
 	}
 }
+
+func TestLegacyBackupJobsCanBeDisabled(t *testing.T) {
+	e := newScopeEnv(t)
+	ctx := context.Background()
+	e.router.Group(func(r chi.Router) {
+		r.Use(middleware.NewAuth(e.h.Auth))
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Put("/backups/jobs/{id}", e.h.UpdateBackupJob)
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Post("/backups/jobs/{id}/review/{mode}", e.h.AcknowledgeBackupJobReview)
+	})
+	// Saved before names and volume sources were checked: a path source,
+	// and three names sharing one archive folder.
+	for _, stmt := range []string{
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources, schedule, enabled, needs_review) VALUES (20, 'Web', 's3', 'local', '[{"type":"volume","name":"/"}]', '0 3 * * *', 1, 1)`,
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources, schedule, enabled) VALUES (21, 'web!', 's3', 'local', '[{"type":"volume","name":"/"}]', '0 3 * * *', 1)`,
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources, schedule, enabled) VALUES (22, 'web', 's3', 'local', '[{"type":"system","name":"dockmesh"}]', '0 3 * * *', 1)`,
+	} {
+		if _, err := e.db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.user("boss", "admin")
+	boss := e.login("boss").AccessToken
+	job := func(enabled bool, schedule string) map[string]any {
+		return map[string]any{"name": "web!", "host_id": "local", "target_type": "s3", "target_config": map[string]any{},
+			"sources": []map[string]string{{"type": "volume", "name": "/"}}, "schedule": schedule, "encrypt": true, "enabled": enabled}
+	}
+
+	steps := []struct {
+		name, method, path string
+		body               any
+		want               int
+	}{
+		{"edit beyond the flag is still checked", http.MethodPut, "/backups/jobs/21", job(false, "0 4 * * *"), http.StatusBadRequest},
+		{"disable via job update", http.MethodPut, "/backups/jobs/21", job(false, "0 3 * * *"), http.StatusOK},
+		{"disable via review", http.MethodPost, "/backups/jobs/20/review/disable", nil, http.StatusNoContent},
+	}
+	for _, st := range steps {
+		t.Run(st.name, func(t *testing.T) {
+			if rr := e.do(st.method, st.path, boss, st.body); rr.Code != st.want {
+				t.Errorf("%d, want %d: %s", rr.Code, st.want, rr.Body)
+			}
+		})
+	}
+	if err := e.h.Backups.SetDefaultJobEnabled(ctx, false); err != nil {
+		t.Fatalf("disable system job: %v", err)
+	}
+	for _, id := range []int64{20, 21, 22} {
+		j, err := e.h.Backups.GetJob(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if j.Enabled {
+			t.Errorf("job %d still enabled", id)
+		}
+	}
+}

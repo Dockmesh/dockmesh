@@ -107,21 +107,7 @@ func (s *Service) AcknowledgeReview(ctx context.Context, id int64, mode string) 
 		return err
 	}
 	if mode == "disable" && j.Enabled {
-		in := JobInput{
-			Name:           j.Name,
-			HostID:         j.HostID,
-			TargetType:     j.TargetType,
-			TargetConfig:   j.TargetConfig,
-			Sources:        j.Sources,
-			Schedule:       j.Schedule,
-			RetentionCount: j.RetentionCount,
-			RetentionDays:  j.RetentionDays,
-			Encrypt:        j.Encrypt,
-			PreHooks:       j.PreHooks,
-			PostHooks:      j.PostHooks,
-			Enabled:        false,
-		}
-		if _, err := s.UpdateJob(ctx, j.ID, in); err != nil {
+		if _, err := s.SetJobEnabled(ctx, j.ID, false); err != nil {
 			return err
 		}
 	}
@@ -175,21 +161,7 @@ func (s *Service) SetDefaultJobEnabled(ctx context.Context, enabled bool) error 
 		return err
 	}
 	if j := systemJob(jobs); j != nil {
-		in := JobInput{
-			Name:           j.Name,
-			HostID:         j.HostID,
-			TargetType:     j.TargetType,
-			TargetConfig:   j.TargetConfig,
-			Sources:        j.Sources,
-			Schedule:       j.Schedule,
-			RetentionCount: j.RetentionCount,
-			RetentionDays:  j.RetentionDays,
-			Encrypt:        j.Encrypt,
-			PreHooks:       j.PreHooks,
-			PostHooks:      j.PostHooks,
-			Enabled:        enabled,
-		}
-		_, err := s.UpdateJob(ctx, j.ID, in)
+		_, err := s.SetJobEnabled(ctx, j.ID, enabled)
 		return err
 	}
 	if enabled {

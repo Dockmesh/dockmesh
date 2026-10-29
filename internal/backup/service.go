@@ -1,8 +1,10 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -192,6 +194,15 @@ func (s *Service) CreateJob(ctx context.Context, in JobInput) (*Job, error) {
 }
 
 func (s *Service) UpdateJob(ctx context.Context, id int64, in JobInput) (*Job, error) {
+	if !in.Enabled {
+		cur, err := s.store.getJob(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if onlyEnabledChanged(cur, in) {
+			return s.SetJobEnabled(ctx, id, false)
+		}
+	}
 	if err := validateJob(in); err != nil {
 		return nil, err
 	}
@@ -215,6 +226,55 @@ func (s *Service) UpdateJob(ctx context.Context, id int64, in JobInput) (*Job, e
 	}
 	_ = s.schedule(j)
 	return j, nil
+}
+
+// SetJobEnabled changes only the enabled flag and skips the save-time
+// checks, so a job stored before those checks existed can always be
+// turned off.
+func (s *Service) SetJobEnabled(ctx context.Context, id int64, enabled bool) (*Job, error) {
+	j, err := s.store.getJob(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if enabled && j.Encrypt && !s.canEncrypt() {
+		return nil, ErrEncryptUnavailable
+	}
+	if err := s.store.setJobEnabled(ctx, id, enabled); err != nil {
+		return nil, err
+	}
+	j.Enabled = enabled
+	_ = s.schedule(j) //nolint:contextcheck // scheduled runs outlive the request
+	return j, nil
+}
+
+// onlyEnabledChanged reports whether in is cur with a different enabled
+// flag and nothing else changed.
+func onlyEnabledChanged(cur *Job, in JobInput) bool {
+	same := JobInput{
+		Name: cur.Name, HostID: cur.HostID, TargetType: cur.TargetType, TargetConfig: cur.TargetConfig,
+		Sources: cur.Sources, Schedule: cur.Schedule, RetentionCount: cur.RetentionCount,
+		RetentionDays: cur.RetentionDays, Encrypt: cur.Encrypt, PreHooks: cur.PreHooks,
+		PostHooks: cur.PostHooks, Enabled: in.Enabled,
+	}
+	a, errA := json.Marshal(normalizeInput(same))
+	b, errB := json.Marshal(normalizeInput(in))
+	return errA == nil && errB == nil && bytes.Equal(a, b)
+}
+
+func normalizeInput(in JobInput) JobInput {
+	if in.HostID == "" {
+		in.HostID = "local"
+	}
+	if len(in.Sources) == 0 {
+		in.Sources = nil
+	}
+	if len(in.PreHooks) == 0 {
+		in.PreHooks = nil
+	}
+	if len(in.PostHooks) == 0 {
+		in.PostHooks = nil
+	}
+	return in
 }
 
 // checkJobName rejects names that would share an archive directory with

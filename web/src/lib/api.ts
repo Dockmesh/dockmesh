@@ -852,6 +852,7 @@ export interface BackupHook {
 export interface BackupJob {
   id: number;
   name: string;
+  host_id?: string;
   target_type: string;
   target_config: any;
   sources: BackupSource[];
@@ -874,6 +875,7 @@ export interface BackupJob {
 
 export interface BackupJobInput {
   name: string;
+  host_id?: string;
   target_type: string;
   target_config: any;
   sources: BackupSource[];
