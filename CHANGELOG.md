@@ -35,6 +35,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   to it and keeps the newest three.
 
 ### Changed
+- The Authentication page no longer shows sign-in settings Dockmesh doesn't enforce yet:
+  password rotation and reuse, remember-me, requiring 2FA for admins, turning off local
+  passwords and self-registration. Saved values are kept.
 - API tokens now belong to the user who created them. A token never grants more than its
   role and its owner's current permissions and host scope allow, and it stops working when
   the owner is deleted. A token created with another token expires no later than it, and a
