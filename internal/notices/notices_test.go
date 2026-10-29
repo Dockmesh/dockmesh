@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/db"
 )
@@ -136,6 +139,45 @@ func TestRaiseIsIdempotentAndReopens(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Title != "second" || got[0].Dismissed {
 		t.Fatalf("reopened notice should carry new content and no dismissal, got %+v", got)
+	}
+}
+
+func TestRaiseWhileOtherWritersCommit(t *testing.T) {
+	s, database := newTestService(t)
+	ctx := context.Background()
+	stop := make(chan struct{})
+	var writers sync.WaitGroup
+	writers.Add(1)
+	go func() {
+		defer writers.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_, _ = database.Exec(`INSERT INTO notices (key, audience, severity, title) VALUES (?, 'all', 'info', 'noise')`,
+				fmt.Sprintf("noise-%d", i))
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	var raisers sync.WaitGroup
+	errs := make(chan error, 40)
+	for i := 0; i < 40; i++ {
+		raisers.Add(1)
+		go func() {
+			defer raisers.Done()
+			errs <- s.Raise(ctx, RaiseInput{Key: fmt.Sprintf("k-%d", i), Audience: All(), Severity: SevInfo, Title: "t"})
+		}()
+	}
+	raisers.Wait()
+	close(stop)
+	writers.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("raise under concurrent writes: %v", err)
+		}
 	}
 }
 

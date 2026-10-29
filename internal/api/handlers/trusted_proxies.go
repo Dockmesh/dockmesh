@@ -14,7 +14,8 @@ const noticeKeyUntrustedProxy = "trusted-proxies.unconfigured"
 
 // proxyNotice raises the "configure trusted proxies" notice the first time
 // an untrusted peer sends forwarding headers. The flag keeps it to one DB
-// write per process instead of one per request.
+// write per process instead of one per request; a failed write clears it so
+// the next forwarded request retries.
 type proxyNotice struct {
 	notices *notices.Service
 	raised  atomic.Bool
@@ -41,6 +42,7 @@ func (p *proxyNotice) observe(peer string) {
 			Link: "/settings",
 		})
 		if err != nil {
+			p.raised.Store(false)
 			slog.Warn("trusted proxies notice", "err", err)
 		}
 	}()
