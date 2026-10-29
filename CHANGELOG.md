@@ -24,6 +24,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-29 [security]
+
+Security release. It fixes authorization, sign-in, agent enrollment and backup problems found
+in a review of the 0.3 code. Update soon; several changes need an admin's attention afterwards,
+see Upgrade notes.
+
 ### Added
 - Settings → System → Trusted proxies (or `DOCKMESH_TRUSTED_PROXIES`) lists the reverse
   proxies in front of Dockmesh. Only these may tell Dockmesh the client address or that the
@@ -80,6 +86,22 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   restored. An interrupted rotation no longer leaves the server without a usable key.
 
 ### Security
+- GHSA-22fg-hmg7-9x6w (high): Half-finished two-factor login could turn two-factor authentication off
+- GHSA-hxmj-9372-56xx (high): WebSocket connections ignored the caller's role and host scope
+- GHSA-h34h-wr2v-w89h (moderate): Scope restrictions were not applied to several read endpoints
+- GHSA-m2fv-5hrc-8xjh (high): Users who may edit users, invites or roles could grant themselves any permission
+- GHSA-26g2-j8h2-jc69 (critical): A Host Admin could reach all secrets through the system backup
+- GHSA-6pcr-2hh4-gwg9 (moderate): Backup archives could be downloaded by every role
+- GHSA-62wv-8jrc-cww7 (high): Symlinks could lead volume browsing, restore and Git sources out of their directory
+- GHSA-9qxm-6p2m-77ch (high): Backup restore accepted a host path as its target
+- GHSA-8mf8-c6qw-xc7j (moderate): Git webhooks could be triggered without authentication
+- GHSA-46r3-rjv8-79g8 (high): The setup wizard could be reopened and misused after a reinstall
+- GHSA-7r93-wr7q-hv2p (high): Client address headers were trusted from anyone and several sign-in paths had no rate limit
+- GHSA-3p82-vprr-2m4p (high): Agents accepted any server during enrollment and did not verify self-upgrades
+- GHSA-j4wx-v546-r4fj (high): SFTP backup targets did not verify the server's host key
+- GHSA-x6v3-qvjw-56xq (high): Backup hooks could run commands in containers outside the creator's permissions
+- GHSA-q2m7-rqw3-3hrp (high): Single sign-on attached logins to existing accounts by email alone
+- GHSA-h743-wmjg-j2xx (moderate): API token checks could exhaust the server's memory
 - Dockmesh is now built with Go 1.27.3, and its Go dependencies (including the SSH, HTTP/2,
   Git, JWT, SAML signature and Docker client libraries) are updated to versions that fix
   the known vulnerabilities in code Dockmesh calls. The previous release was built with Go
@@ -197,10 +219,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   overlapping syncs of the same stack.
 
 ### Fixed
-- Requests that a client cancelled while they were reading the database (a closed browser tab,
-  a dropped connection) could leave the database connection failing every later query until the
-  restart, so sign-in, host enrollment and most pages answered with errors. The SQLite driver is
-  updated, which fixes this.
+- The SQLite driver is updated. With the old version, a request that a client cancelled at an
+  unlucky moment (a closed browser tab, a dropped connection) could leave a database connection
+  failing every later query until the restart.
 - Notices and other short database writes could fail with "database is locked" while other
   requests were writing. The notice about an untrusted proxy then never appeared until the next
   restart. The database connection now waits for the lock from the start.
@@ -241,7 +262,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - [agent-upgrade, admins] Hosts that are already enrolled keep working and do not need to be
   re-enrolled. Upgrade each agent once from its host page (or use automatic upgrades) so it
   verifies future upgrades; the upgrade from an older agent is still downloaded the old,
-  unverified way.
+  unverified way. For a fully verified path, re-issue the host's token on its host page and run
+  the new install command on the host: the installer checks the binary's SHA-256, pins the
+  agent CA, and the host keeps its ID, stacks and backup jobs.
 - [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The
   sign-in page says why.
 - [legacy-api-tokens, admins] API tokens created before this version have no owner. They keep
@@ -281,7 +304,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   alone. A notice lists how many accounts are linked to SSO and which of them are admins; check
   that each belongs to the right person.
 - [host-admin-system-settings, admins] Host Admins no longer change system settings, SSO or
-  global environment variables. Give the Admin role to anyone who still needs that.
+  global environment variables, and no longer see or download system backups. Give the Admin
+  role to anyone who still needs that.
 - [backup-job-name-collision, admins] Backup jobs whose names differ only in case or
   punctuation, or a non-system job named like `dockmesh-system`, share an archive folder and
   their retention can delete each other's backups. A notice lists the affected jobs; rename
@@ -300,6 +324,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   polling and manual sync keep working. A notice lists the affected stacks. To keep using a
   webhook, edit the stack's git source, set a webhook secret and enter the same secret in the
   webhook settings of your git provider.
+- [stack-files-outside-changes, admins] Dockmesh now remembers the `compose.yaml` and `.env`
+  it last wrote for each stack, taking the files as they are at a stack's first deploy or
+  check after the upgrade. If you edit stack files on the server by hand, or a container
+  changes them, the stack page says "modified outside Dockmesh" and the next deploy asks you
+  to confirm the new content. Git syncs of such a stack wait until you confirm.
 - [setup-force-flag, admins] If a notice says the setup flag was ignored, delete the
   `DOCKMESH_SETUP_FORCE=true` line from the env file it names (by default
   `/var/lib/dockmesh/dockmesh.env`) and restart Dockmesh. The notice goes away after the restart.
