@@ -39,6 +39,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   during setup cannot start the installation or probe URLs from your network.
 - Alert emails no longer let a rule or alert name inject extra headers (such as extra recipients)
   into the message.
+- Two simultaneous requests to refresh a session with the same token can no longer both
+  succeed; only the first one rotates the session.
 
 ### Fixed
 

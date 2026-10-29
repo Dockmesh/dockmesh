@@ -762,9 +762,18 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*LoginResul
 	if cfg.SessionAbsoluteTTLHr > 0 {
 		newExpires = time.Now().Add(time.Duration(cfg.SessionAbsoluteTTLHr) * time.Hour)
 	}
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE sessions SET current_seq = ?, expires_at = ? WHERE family_id = ?`, newSeq, newExpires, claims.FamilyID); err != nil {
+	// Conditional on the sequence we read, so of two parallel refreshes with
+	// the same token only one rotates the session.
+	upd, err := s.db.ExecContext(ctx,
+		`UPDATE sessions SET current_seq = ?, expires_at = ? WHERE family_id = ? AND current_seq = ? AND revoked_at IS NULL`,
+		newSeq, newExpires, claims.FamilyID, currentSeq)
+	if err != nil {
 		return nil, err
+	}
+	if n, err := upd.RowsAffected(); err != nil {
+		return nil, err
+	} else if n == 0 {
+		return nil, ErrInvalidToken
 	}
 	u, err := s.GetUser(ctx, userID)
 	if err != nil {
