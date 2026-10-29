@@ -101,10 +101,7 @@ func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decide the type once so we can route system runs to the legacy
-	// extract+sanity flow and stack/volume runs to the new structural
-	// verify. The Service.VerifyRun helper handles the latter; system
-	// runs still need internal/restore for the deep DB checks.
+	// System runs need internal/restore for the DB checks.
 	runType, err := h.Backups.RunSourceType(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
@@ -140,10 +137,8 @@ func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// verifySystemRun keeps the existing system-backup verify flow:
-// stream the run through ExtractToTemp + Sanity, return the result.
-// Pulled into its own helper so the type-dispatch in VerifyBackupRun
-// stays readable.
+// verifySystemRun streams the run through ExtractToTemp + Sanity and
+// adds the hash check.
 func (h *Handlers) verifySystemRun(w http.ResponseWriter, r *http.Request, id int64) {
 	src, hashCheck, err := h.Backups.OpenRunHashed(r.Context(), id)
 	if err != nil {

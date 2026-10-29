@@ -3,6 +3,7 @@ package handlers
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -10,13 +11,15 @@ import (
 	"sync"
 
 	"filippo.io/age"
-	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/restore"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 )
 
-// stageMu keeps two uploads from staging over each other.
+// stageMu keeps staging, applying and discarding from running at once.
 var stageMu sync.Mutex
+
+// setupRestoreHeader must be set on POST /setup/restore.
+const setupRestoreHeader = "X-Dockmesh-Setup"
 
 // GetStagedRestore reports a system restore waiting for the next start.
 //
@@ -54,6 +57,7 @@ func (h *Handlers) StageSystemRestore(w http.ResponseWriter, r *http.Request) {
 	var (
 		src    io.Reader
 		source string
+		opts   restore.StageOptions
 	)
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 		rc, name, ok := h.openUploadedSystemBackup(w, r)
@@ -89,12 +93,27 @@ func (h *Handlers) StageSystemRestore(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer rc.Close()
-		// The hash is checked after extraction; a mismatch discards the
-		// staged copy.
-		src, source = &hashCheckedReader{r: rc, check: hashCheck}, "run:"+strconv.FormatInt(req.RunID, 10)
+		src, source = rc, "run:"+strconv.FormatInt(req.RunID, 10)
+		// Checked before the restore is marked ready, so a tampered
+		// archive is never applied, not even by an unplanned restart.
+		opts.Verify = func() error {
+			if c := hashCheck(); c.Status == "fail" {
+				return fmt.Errorf("%w: %s", errHashMismatch, c.Message)
+			}
+			return nil
+		}
 	}
-	h.stageAndRespond(w, r, src, source)
+	counts, result, err := restore.Stage(r.Context(), src, h.RestoreConfig, source, opts)
+	if err != nil {
+		writeStageError(w, err, result)
+		return
+	}
+	info, _ := restore.Staged(h.RestoreConfig)
+	h.audit(r, "system.restore_stage", source, map[string]any{"files": counts.Files, "bytes": counts.Bytes})
+	writeJSON(w, http.StatusOK, map[string]any{"staged": info, "counts": counts, "sanity": result})
 }
+
+var errHashMismatch = errors.New("archive hash mismatch")
 
 // ApplySystemRestore restarts the server so the staged restore is
 // swapped in before anything opens the database.
@@ -105,6 +124,11 @@ func (h *Handlers) ApplySystemRestore(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "system restore not configured")
 		return
 	}
+	if !stageMu.TryLock() {
+		writeError(w, http.StatusConflict, "a restore is being staged")
+		return
+	}
+	defer stageMu.Unlock()
 	info, err := restore.Staged(h.RestoreConfig)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -127,6 +151,11 @@ func (h *Handlers) DiscardSystemRestore(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, "system restore not configured")
 		return
 	}
+	if !stageMu.TryLock() {
+		writeError(w, http.StatusConflict, "a restore is being staged")
+		return
+	}
+	defer stageMu.Unlock()
 	if err := restore.DiscardStaged(h.RestoreConfig); errors.Is(err, restore.ErrNothingStaged) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -153,6 +182,14 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusGone, "setup window expired — restart the dockmesh service to start a fresh window")
 		return
 	}
+	// The setup endpoints have no session yet. A browser only sends this
+	// header from a same-origin script (a cross-site one needs a CORS
+	// preflight, which is not answered), so a page the operator happens to
+	// visit can't post a backup of its own here.
+	if r.Header.Get(setupRestoreHeader) != "1" || r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+		writeError(w, http.StatusForbidden, "missing "+setupRestoreHeader+" header")
+		return
+	}
 	if h.RestoreConfig == nil || h.RequestRestart == nil {
 		writeError(w, http.StatusServiceUnavailable, "system restore not configured")
 		return
@@ -167,7 +204,7 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
-	counts, result, err := restore.Stage(r.Context(), rc, h.RestoreConfig, "setup:"+name)
+	counts, result, err := restore.Stage(r.Context(), rc, h.RestoreConfig, "setup:"+name, restore.StageOptions{})
 	if err != nil {
 		writeStageError(w, err, result)
 		return
@@ -183,30 +220,14 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 	h.RequestRestart()
 }
 
-func (h *Handlers) stageAndRespond(w http.ResponseWriter, r *http.Request, src io.Reader, source string) {
-	counts, result, err := restore.Stage(r.Context(), src, h.RestoreConfig, source)
-	if err == nil {
-		if hc, ok := src.(*hashCheckedReader); ok {
-			if c := hc.finish(); c.Status == "fail" {
-				_ = restore.DiscardStaged(h.RestoreConfig)
-				writeError(w, http.StatusUnprocessableEntity, "archive hash mismatch: "+c.Message)
-				return
-			}
-		}
-	}
-	if err != nil {
-		writeStageError(w, err, result)
-		return
-	}
-	info, _ := restore.Staged(h.RestoreConfig)
-	h.audit(r, "system.restore_stage", source, map[string]any{"files": counts.Files, "bytes": counts.Bytes})
-	writeJSON(w, http.StatusOK, map[string]any{"staged": info, "counts": counts, "sanity": result})
-}
-
 func writeStageError(w http.ResponseWriter, err error, result *restore.SanityResult) {
 	switch {
+	case errors.Is(err, restore.ErrTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, err.Error())
+	case errors.Is(err, errHashMismatch):
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
 	case errors.Is(err, restore.ErrEncryptedBackup):
-		writeError(w, http.StatusUnprocessableEntity, "the backup is encrypted; add the backup key file exported from the original install")
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
 	case result != nil:
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error(), "sanity": result})
 	default:
@@ -257,8 +278,7 @@ func (h *Handlers) openUploadedSystemBackup(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	br := bufio.NewReaderSize(file, 64*1024)
-	peek, _ := br.Peek(len("age-encryption.org/v1"))
-	if string(peek) != "age-encryption.org/v1" {
+	if !restore.IsAgeEncrypted(br) {
 		return readCloser{Reader: br, Closer: file}, header.Filename, true
 	}
 	if len(ids) == 0 {
@@ -279,12 +299,3 @@ type readCloser struct {
 	io.Reader
 	io.Closer
 }
-
-// hashCheckedReader carries the run's hash check through staging.
-type hashCheckedReader struct {
-	r     io.Reader
-	check func() backup.VerifyCheck
-}
-
-func (h *hashCheckedReader) Read(p []byte) (int, error) { return h.r.Read(p) }
-func (h *hashCheckedReader) finish() backup.VerifyCheck { return h.check() }

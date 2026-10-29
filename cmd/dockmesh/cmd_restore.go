@@ -66,7 +66,7 @@ func runRestore(args []string) error {
 		return err
 	}
 
-	counts, result, err := restore.Stage(context.Background(), src, cfg, "cli:"+*from)
+	counts, result, err := restore.Stage(context.Background(), src, cfg, "cli:"+*from, restore.StageOptions{})
 	if result != nil {
 		for _, c := range result.Checks {
 			icon := "[ ok ]"
@@ -99,8 +99,7 @@ func runRestore(args []string) error {
 // plaintextArchive decrypts an age-encrypted archive with the key file.
 func plaintextArchive(f io.Reader, keyFile string) (io.Reader, error) {
 	br := bufio.NewReaderSize(f, 64*1024)
-	peek, _ := br.Peek(len("age-encryption.org/v1"))
-	if string(peek) != "age-encryption.org/v1" {
+	if !restore.IsAgeEncrypted(br) {
 		return br, nil
 	}
 	if keyFile == "" {

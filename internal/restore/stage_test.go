@@ -73,7 +73,7 @@ func TestStageAndApply(t *testing.T) {
 		entry{name: "stacks/web/compose.yaml", body: "services: {}\n"},
 		entry{name: "data/secrets.age-key", body: "new-key"},
 	)
-	if _, res, err := Stage(context.Background(), arc, cfg, "test"); err != nil {
+	if _, res, err := Stage(context.Background(), arc, cfg, "test", StageOptions{}); err != nil {
 		t.Fatalf("stage: %v %+v", err, res)
 	}
 	// Staging leaves the live install alone.
@@ -129,7 +129,7 @@ func TestApplyResumesAfterCrash(t *testing.T) {
 		entry{name: "dockmesh.db", body: systemDB(t, "restored-admin")},
 		entry{name: "data/secrets.age-key", body: "new-key"},
 	)
-	if _, _, err := Stage(context.Background(), arc, cfg, "test"); err != nil {
+	if _, _, err := Stage(context.Background(), arc, cfg, "test", StageOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	// Simulate a crash after the database was swapped: run the first
@@ -168,7 +168,7 @@ func TestApplyResumesAfterCrash(t *testing.T) {
 func TestStageRejectsBrokenBackup(t *testing.T) {
 	cfg, _ := restoreEnv(t)
 	arc := archive(t, entry{name: "stacks/web/compose.yaml", body: "x"})
-	if _, _, err := Stage(context.Background(), arc, cfg, "test"); err == nil {
+	if _, _, err := Stage(context.Background(), arc, cfg, "test", StageOptions{}); err == nil {
 		t.Fatal("archive without a database staged")
 	}
 	if info, _ := Staged(cfg); info != nil {
@@ -176,5 +176,17 @@ func TestStageRejectsBrokenBackup(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(cfg.DBPath), StagingDir)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("failed staging left files")
+	}
+}
+
+func TestStageVerifyFailureLeavesNothing(t *testing.T) {
+	cfg, _ := restoreEnv(t)
+	arc := archive(t, entry{name: "dockmesh.db", body: systemDB(t, "admin")})
+	_, _, err := Stage(context.Background(), arc, cfg, "test", StageOptions{Verify: func() error { return errors.New("hash mismatch") }})
+	if err == nil {
+		t.Fatal("verify failure ignored")
+	}
+	if info, _ := Staged(cfg); info != nil {
+		t.Fatal("restore marked ready although verification failed")
 	}
 }

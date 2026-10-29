@@ -59,10 +59,18 @@ type SanityCheck struct {
 	Message string `json:"message,omitempty"`
 }
 
-// ErrEncryptedBackup is returned when the tarball looks age-encrypted.
-// The server's own age key is inside the tarball, so self-encrypted
-// system backups can't self-restore — callers must decrypt externally.
-var ErrEncryptedBackup = errors.New("tarball is age-encrypted; decrypt externally first (server's own key is inside the tarball, so encrypted system backups cannot self-restore)")
+// ErrEncryptedBackup is returned when the archive is still age-encrypted.
+var ErrEncryptedBackup = errors.New("archive is age-encrypted; supply the backup key file exported from the original install")
+
+// AgeHeader starts every age-encrypted file.
+const AgeHeader = "age-encryption.org/v1"
+
+// IsAgeEncrypted reports whether the buffered stream starts with an age
+// header, without consuming it.
+func IsAgeEncrypted(br *bufio.Reader) bool {
+	peek, _ := br.Peek(len(AgeHeader))
+	return string(peek) == AgeHeader
+}
 
 // Extract reads a gzipped tar from r and writes its contents to the
 // paths referenced by cfg. Returns file + byte counts. The DB is
@@ -73,8 +81,7 @@ var ErrEncryptedBackup = errors.New("tarball is age-encrypted; decrypt externall
 // the archive to validate it + count entries.
 func Extract(ctx context.Context, r io.Reader, cfg *config.Config, opts Options) (*Counts, error) {
 	br := bufio.NewReaderSize(r, 64*1024)
-	peek, _ := br.Peek(32)
-	if strings.HasPrefix(string(peek), "age-encryption.org/v1") {
+	if IsAgeEncrypted(br) {
 		return nil, ErrEncryptedBackup
 	}
 	gzr, err := gzip.NewReader(br)

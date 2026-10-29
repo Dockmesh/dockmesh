@@ -923,16 +923,15 @@ export async function uploadSystemBackup(
   url: string,
   file: File,
   key?: File | null,
-  token?: string | null
+  token?: string | null,
+  extraHeaders: Record<string, string> = {}
 ): Promise<StageSystemRestoreResult & { error?: string; restarting?: boolean }> {
   const form = new FormData();
   form.append('file', file);
   if (key) form.append('key', key);
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: form
-  });
+  const headers: Record<string, string> = { ...extraHeaders };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(url, { method: 'POST', headers, body: form });
   const data = await res.json().catch(() => ({}));
   if (!res.ok && !(res.status === 422 && data?.sanity)) throw new ApiError(data?.error ?? res.statusText, res.status);
   return data;

@@ -73,10 +73,23 @@ func pathsFor(cfg *config.Config) stagePaths {
 	return p
 }
 
+// StageOptions tune Stage. Verify runs after extraction and before the
+// restore is marked ready, e.g. to compare the archive's hash.
+type StageOptions struct {
+	Verify func() error
+}
+
+// Stage caps what an archive may unpack to, like verification does: the
+// archive may come from an upload.
+const (
+	stageMaxBytes   = verifyMaxBytes
+	stageMaxEntries = verifyMaxEntries
+)
+
 // Stage extracts a plaintext system archive into the staging area and
 // runs the sanity checks on it. A failing check removes the staging
 // area again and returns the result with an error.
-func Stage(ctx context.Context, r io.Reader, cfg *config.Config, source string) (*Counts, *SanityResult, error) {
+func Stage(ctx context.Context, r io.Reader, cfg *config.Config, source string, opts StageOptions) (*Counts, *SanityResult, error) {
 	p := pathsFor(cfg)
 	if err := clearStaging(p); err != nil {
 		return nil, nil, err
@@ -84,10 +97,16 @@ func Stage(ctx context.Context, r io.Reader, cfg *config.Config, source string) 
 	if err := os.MkdirAll(p.data, 0o700); err != nil {
 		return nil, nil, err
 	}
-	counts, err := Extract(ctx, r, p.cfg, Options{Force: true, TmpBase: p.root})
+	counts, err := Extract(ctx, r, p.cfg, Options{Force: true, TmpBase: p.root, MaxBytes: stageMaxBytes, MaxEntries: stageMaxEntries})
 	if err != nil {
 		_ = clearStaging(p)
 		return nil, nil, err
+	}
+	if opts.Verify != nil {
+		if err := opts.Verify(); err != nil {
+			_ = clearStaging(p)
+			return counts, nil, err
+		}
 	}
 	result, err := Sanity(p.cfg)
 	if err != nil {

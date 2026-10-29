@@ -316,7 +316,16 @@ paths:
         restored files in before it opens the database. Sign in with an
         account of the restored install afterwards. The service manager
         has to restart the process (exit code 75).
+
+        Requests must carry `X-Dockmesh-Setup: 1`; browsers only send it
+        from a same-origin page, so another site can't post a backup here.
+        Archives may unpack to at most 8 GiB / 200,000 entries.
       security: []
+      parameters:
+        - name: X-Dockmesh-Setup
+          in: header
+          required: true
+          schema: { type: string, enum: ["1"] }
       requestBody:
         required: true
         content:
@@ -339,6 +348,11 @@ paths:
                   counts: { type: object }
                   sanity: { type: object }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403":
+          description: The X-Dockmesh-Setup header is missing or the request is cross-site.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "409":
           description: Another restore is being staged.
           content:
@@ -349,7 +363,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-        "413": { description: Archive larger than 1 GiB. }
+        "413": { description: Archive larger than 1 GiB, or it unpacks to more than the limit. }
         "422":
           description: Encrypted without a matching key, or the backup failed the restore checks (`sanity` lists them).
           content:
@@ -3500,7 +3514,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-        "413": { description: Upload larger than 1 GiB. }
+        "413": { description: Upload larger than 1 GiB, or the archive unpacks to more than 8 GiB / 200,000 entries. }
         "422":
           description: Encrypted without a matching key, hash mismatch, or the backup failed the restore checks.
           content:

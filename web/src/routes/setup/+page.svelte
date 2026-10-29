@@ -84,7 +84,7 @@
     restoreError = '';
     restoreChecks = [];
     try {
-      const res = await uploadSystemBackup('/api/v1/setup/restore', restoreFile, restoreKey);
+      const res = await uploadSystemBackup('/api/v1/setup/restore', restoreFile, restoreKey, null, { 'X-Dockmesh-Setup': '1' });
       if (!res.restarting) {
         restoreError = res.error ?? res.sanity?.summary ?? 'the backup failed the restore checks';
         restoreChecks = res.sanity?.checks ?? [];
