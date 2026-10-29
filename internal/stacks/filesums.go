@@ -186,7 +186,7 @@ func (m *Manager) ModifiedOutside(name string) ([]string, error) {
 		return nil, err
 	}
 	if len(recorded) == 0 {
-		return nil, m.AcceptExternal(name)
+		return nil, m.recordSums(name)
 	}
 	var changed []string
 	for _, f := range trackedFiles {
@@ -204,7 +204,15 @@ func (m *Manager) ModifiedOutside(name string) ([]string, error) {
 
 // AcceptExternal records the stack files as they are now, after an
 // operator reviewed and confirmed them.
-func (m *Manager) AcceptExternal(name string) error {
+func (m *Manager) AcceptExternal(ctx context.Context, name string) error {
+	if err := m.recordSums(name); err != nil {
+		return err
+	}
+	m.resolveGitDeployHold(ctx, name)
+	return nil
+}
+
+func (m *Manager) recordSums(name string) error {
 	if m.sums == nil {
 		return nil
 	}
@@ -221,7 +229,6 @@ func (m *Manager) AcceptExternal(name string) error {
 			return err
 		}
 	}
-	m.resolveGitDeployHold(context.Background(), name)
 	return nil
 }
 

@@ -920,7 +920,7 @@ func (h *Handlers) checkStackFiles(w http.ResponseWriter, r *http.Request, name 
 		})
 		return false
 	}
-	if err := h.Stacks.AcceptExternal(name); err != nil {
+	if err := h.Stacks.AcceptExternal(r.Context(), name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return false
 	}

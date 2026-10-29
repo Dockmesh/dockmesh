@@ -62,7 +62,7 @@ func TestModifiedOutside(t *testing.T) {
 		t.Fatalf("outside edit: %v, %v", changed, err)
 	}
 
-	if err := m.AcceptExternal("web"); err != nil {
+	if err := m.AcceptExternal(context.Background(), "web"); err != nil {
 		t.Fatal(err)
 	}
 	if changed, _ := m.ModifiedOutside("web"); len(changed) != 0 {
@@ -90,9 +90,9 @@ func TestModifiedOutsideRecordsUntrackedStack(t *testing.T) {
 	}
 }
 
-func openNotices(t *testing.T, n *notices.Service, key string) []notices.Notice {
+func openNotices(ctx context.Context, t *testing.T, n *notices.Service, key string) []notices.Notice {
 	t.Helper()
-	open, err := n.Open(context.Background())
+	open, err := n.Open(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestGitDeployHoldNotice(t *testing.T) {
 			m.Deployed(ctx, "web")
 			return nil
 		}, false},
-		{"accept", func(m *Manager) error { return m.AcceptExternal("web") }, false},
+		{"accept", func(m *Manager) error { return m.AcceptExternal(ctx, "web") }, false},
 		{"delete", func(m *Manager) error { return m.Delete("web") }, false},
 	}
 	for _, tt := range tests {
@@ -135,7 +135,7 @@ func TestGitDeployHoldNotice(t *testing.T) {
 			if err := m.CheckGitDeploy(ctx, "web"); err != nil {
 				t.Fatalf("unchanged stack: %v", err)
 			}
-			if got := openNotices(t, n, key); len(got) != 0 {
+			if got := openNotices(ctx, t, n, key); len(got) != 0 {
 				t.Fatalf("notice for unchanged stack: %v", got)
 			}
 
@@ -151,7 +151,7 @@ func TestGitDeployHoldNotice(t *testing.T) {
 					t.Fatalf("poll %d: err = %v, want ErrModifiedOutside", i, err)
 				}
 			}
-			got := openNotices(t, n, key)
+			got := openNotices(ctx, t, n, key)
 			if len(got) != 1 {
 				t.Fatalf("open notices = %d, want 1", len(got))
 			}
@@ -171,7 +171,7 @@ func TestGitDeployHoldNotice(t *testing.T) {
 			if err := tt.release(m); err != nil {
 				t.Fatal(err)
 			}
-			if got := openNotices(t, n, key); (len(got) == 1) != tt.wantOpen {
+			if got := openNotices(ctx, t, n, key); (len(got) == 1) != tt.wantOpen {
 				t.Errorf("open notices after %s = %d, want open %v", tt.name, len(got), tt.wantOpen)
 			}
 		})
