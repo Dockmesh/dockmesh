@@ -185,6 +185,11 @@ paths:
                   parent_writable: { type: boolean }
                   status: { type: string, enum: [ok, warn, fail] }
                   message: { type: string }
+        "410":
+          description: Setup window expired or setup already complete.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /setup/validate-user:
     post:
@@ -218,12 +223,23 @@ paths:
                   in_docker_group: { type: boolean }
                   status: { type: string, enum: [ok, warn, fail] }
                   message: { type: string }
+        "410":
+          description: Setup window expired or setup already complete.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /setup/test-url:
     post:
       operationId: setup.test_url
       tags: [setup]
       summary: Reachability probe for Step 5's public URL
+      description: |
+        Connects only to public addresses and to this server's own LAN
+        addresses on the port it is served on, 80 or 443. Loopback,
+        link-local, cloud metadata, NAT64 and other private addresses
+        are refused after DNS resolution and on every redirect hop; the
+        result is then `status: fail` with a "not tested" message.
       security: []
       requestBody:
         required: true
@@ -248,6 +264,11 @@ paths:
                   latency_ms: { type: integer }
                   status: { type: string, enum: [ok, warn, fail] }
                   message: { type: string }
+        "410":
+          description: Setup window expired or setup already complete.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /setup/commit:
     post:
@@ -257,8 +278,10 @@ paths:
       description: |
         Returns 202 Accepted with a `run_id`. The actual install runs
         in the background; subscribe to `/setup/stream/{run_id}` (SSE)
-        to read each step's status as it happens. Idempotent — a
-        re-submit emits "already exists" warnings instead of failing.
+        to read each step's status as it happens. Only one install runs
+        at a time. The service user is added to the `docker` group only
+        when the wizard creates it (`mode: create`); existing accounts
+        are never changed.
       security: []
       requestBody:
         required: true
@@ -295,6 +318,14 @@ paths:
                   run_id: { type: string }
                   stream_url: { type: string }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: |
+            Another install is already running or has just finished, or an
+            account that can administer Dockmesh already exists (setup then
+            closes).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "410":
           description: Setup window expired or setup already complete.
           content:

@@ -180,6 +180,107 @@ get_time() {
 }
 
 # ------------------------------------------------------------------
+#  Env file helpers (exercised by scripts/install_test.go)
+#
+#  The data dir belongs to the service user, so anything in it may be a
+#  link planted to make root write elsewhere. Files are only created with
+#  O_EXCL (bash noclobber), which never follows a link, and moved into
+#  place with rename.
+# ------------------------------------------------------------------
+
+# Env files of an earlier install at the script's default data dirs.
+ENV_FILE_CANDIDATES=(/var/lib/dockmesh/dockmesh.env /data/dockmesh.env /usr/local/var/dockmesh/dockmesh.env)
+
+# Copy FILE to FILE.bak, or to FILE.bak.<timestamp>.<random> when FILE.bak
+# already exists, so the first backup (usually the hand-tuned original) is
+# never overwritten by a later reinstall. Prints the backup path.
+backup_env_file() {
+  local f="$1"
+  if $USE_SUDO test -L "$f.bak"; then
+    die "refusing to back up $f: $f.bak is a symlink — remove it and re-run"
+  fi
+  # shellcheck disable=SC2016
+  $USE_SUDO bash -c 'set -C; umask 077
+    for b in "$1.bak" "$1.bak.$(date +%Y%m%d%H%M%S).$RANDOM" "$1.bak.$(date +%Y%m%d%H%M%S).$RANDOM"; do
+      if { cat -- "$1" >"$b"; } 2>/dev/null; then printf "%s" "$b"; exit 0; fi
+    done
+    exit 1' _ "$f" || die "could not back up $f"
+}
+
+# Succeeds only on a host without an earlier install: no service unit, no
+# env file at the default locations, and none of the given paths (target
+# env file, databases) present. A directory we can't look into counts as
+# "present". Without the flag the server opens the wizard by itself when
+# no admin exists.
+setup_flag_wanted() {
+  local p dir
+  if [ "${HAS_SYSTEMD_UNIT:-0}" = "1" ] || [ "${HAS_LAUNCHD_UNIT:-0}" = "1" ]; then
+    return 1
+  fi
+  for p in "${ENV_FILE_CANDIDATES[@]}" "$@"; do
+    [ -n "$p" ] || continue
+    if $USE_SUDO test -e "$p" || $USE_SUDO test -L "$p"; then
+      return 1
+    fi
+    dir="$(dirname "$p")"
+    if $USE_SUDO test -d "$dir" && ! $USE_SUDO test -x "$dir"; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# write_env_file ENV_FILE DATA_DIR ASSET_DIR [OWNER]
+write_env_file() {
+  local env_file="$1" data_dir="$2" asset_dir="$3" owner="${4:-}"
+  local old_db="" bak="" setup_line="" tmp
+  if $USE_SUDO test -L "$env_file"; then
+    die "refusing to write $env_file: it is a symlink — remove it and re-run"
+  fi
+  if $USE_SUDO test -d "$env_file"; then
+    die "refusing to write $env_file: it is a directory"
+  fi
+  if $USE_SUDO test -e "$env_file"; then
+    old_db="$($USE_SUDO grep -E '^[[:space:]]*(export[[:space:]]+)?DOCKMESH_DB_PATH=' "$env_file" | tail -n 1 | sed -E 's/^[^=]*=//' | tr -d "\"'" || true)"
+  fi
+  if setup_flag_wanted "$env_file" "$data_dir/data/dockmesh.db" "$old_db"; then
+    setup_line="DOCKMESH_SETUP_FORCE=true"
+  else
+    info "earlier install found — setup wizard not forced open"
+  fi
+  if $USE_SUDO test -e "$env_file"; then
+    bak="$(backup_env_file "$env_file")" || exit 1
+    ok "env backup      $bak"
+  fi
+  # shellcheck disable=SC2016
+  tmp="$($USE_SUDO bash -c 'set -C; umask 077
+    for i in 1 2 3; do
+      t="$1.new.$$.$RANDOM"
+      if { cat >"$t"; } 2>/dev/null; then printf "%s" "$t"; exit 0; fi
+    done
+    exit 1' _ "$env_file" <<EOF
+# Written by install.sh — minimal bootstrap config so the install
+# wizard can take over. The wizard removes DOCKMESH_SETUP_FORCE on
+# successful commit; this file stays as the live config afterwards.
+DOCKMESH_HTTP_ADDR=:8080
+DOCKMESH_AGENT_LISTEN=:8443
+DOCKMESH_DB_PATH=$data_dir/data/dockmesh.db
+DOCKMESH_STACKS_ROOT=$data_dir/stacks
+DOCKMESH_SECRETS_PATH=$data_dir/data/secrets.env
+DOCKMESH_SECRETS_KEY_PATH=$data_dir/data/secrets.age-key
+DOCKMESH_AUDIT_GENESIS_PATH=$data_dir/data/audit-genesis.sha256
+DOCKMESH_INSTALL_SCRIPT=$asset_dir/install-agent.sh
+DOCKMESH_BINARY_DIR=$asset_dir/bin
+$setup_line
+EOF
+  )" || die "could not create a temp file next to $env_file"
+  if [ -n "$owner" ]; then
+    $USE_SUDO chown -h "$owner" "$tmp"
+  fi
+  $USE_SUDO mv -f "$tmp" "$env_file"
+}
+
+# ------------------------------------------------------------------
 #  Banner
 # ------------------------------------------------------------------
 cat >&2 <<BANNER
@@ -914,24 +1015,10 @@ else
   # wizard's commit handler scrubs that flag at the end so a future
   # service restart behaves normally.
   ENV_FILE="$DATA_DIR/dockmesh.env"
-  $USE_SUDO tee "$ENV_FILE" >/dev/null <<EOF
-# Written by install.sh — minimal bootstrap config so the install
-# wizard can take over. The wizard removes DOCKMESH_SETUP_FORCE on
-# successful commit; this file stays as the live config afterwards.
-DOCKMESH_HTTP_ADDR=:8080
-DOCKMESH_AGENT_LISTEN=:8443
-DOCKMESH_DB_PATH=$DATA_DIR/data/dockmesh.db
-DOCKMESH_STACKS_ROOT=$DATA_DIR/stacks
-DOCKMESH_SECRETS_PATH=$DATA_DIR/data/secrets.env
-DOCKMESH_SECRETS_KEY_PATH=$DATA_DIR/data/secrets.age-key
-DOCKMESH_AUDIT_GENESIS_PATH=$DATA_DIR/data/audit-genesis.sha256
-DOCKMESH_INSTALL_SCRIPT=$ASSET_DIR/install-agent.sh
-DOCKMESH_BINARY_DIR=$ASSET_DIR/bin
-DOCKMESH_SETUP_FORCE=true
-EOF
-  $USE_SUDO chmod 600 "$ENV_FILE"
   if [ "$OS" = "linux" ]; then
-    $USE_SUDO chown dockmesh:docker "$ENV_FILE"
+    write_env_file "$ENV_FILE" "$DATA_DIR" "$ASSET_DIR" dockmesh:docker
+  else
+    write_env_file "$ENV_FILE" "$DATA_DIR" "$ASSET_DIR"
   fi
   ok "env file        $ENV_FILE"
 
