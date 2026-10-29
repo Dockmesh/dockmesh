@@ -63,7 +63,7 @@ Relative defaults resolve against the server's working directory. The installers
 | `DOCKMESH_SETUP_FORCE` | `false` | Start in setup mode and skip creating the bootstrap admin. `install.sh` sets it; the web wizard removes it from `dockmesh.env` when it finishes |
 
 <!-- update after: proxy: keep the Caddy container, resume routes, serve tls none as http -->
-> **Note:** The reverse proxy at boot follows the database setting `proxy_enabled`. That setting is seeded with `false` on first start and then takes precedence, so `DOCKMESH_PROXY_ENABLED=true` has no effect in practice. The enable button on the **Proxy** page starts the proxy but does not change the setting. To have the proxy start with the server, set the setting through the API (needs `system.update`):
+> **Note:** The reverse proxy at boot follows the database setting `proxy_enabled`. When that setting is empty or `false` and `DOCKMESH_PROXY_ENABLED` is set, the server copies the variable into the setting at startup, so `DOCKMESH_PROXY_ENABLED=true` turns the proxy on and keeps it on for as long as the variable is set. The enable button on the **Proxy** page starts the proxy but does not change the setting. Without the variable, set the setting through the API (needs `system.update`):
 >
 > ```bash
 > curl -X PUT https://dockmesh.example.com/api/v1/settings \
