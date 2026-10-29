@@ -19,11 +19,11 @@ UPDATE users SET role_source = 'sso'
 INSERT INTO notices (key, audience, audience_value, severity, title, body, link)
 SELECT 'sso-linked-accounts-review', 'admins', '', 'warning',
        'Review accounts linked to single sign-on',
-       'Earlier versions linked SSO logins to existing accounts by email without checking that the email was verified, so a link could have been made by someone else. Check that these accounts belong to the right people: '
-       || n || ' account(s) linked to SSO'
-       || CASE WHEN admins <> '' THEN ', including admins: ' || admins ELSE '' END || '.',
+       'Earlier versions linked SSO logins to existing accounts by email without checking that the email was verified, so a link could have been made by someone else. Check that these accounts belong to the right people.'
+       || char(10) || n || ' account(s) linked to SSO.'
+       || CASE WHEN admins <> '' THEN char(10) || 'Admins among them:' || char(10) || admins ELSE '' END,
        '/users'
   FROM (SELECT COUNT(*) AS n,
-               COALESCE(group_concat(CASE WHEN role = 'admin' THEN username END, ', '), '') AS admins
+               COALESCE(group_concat(CASE WHEN role = 'admin' THEN '- ' || username END, char(10)), '') AS admins
           FROM users WHERE role_source = 'sso')
  WHERE n > 0;

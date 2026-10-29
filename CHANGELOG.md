@@ -30,10 +30,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   connection was HTTPS.
 - Each release now ships a `release-manifest.json` with its severity, advisories and
   required upgrade steps, and its release notes are taken from this changelog.
-- When something needs your attention after an upgrade, Dockmesh now shows it as a banner
-  and at the top of the notifications drawer, with a link to where you fix it. The notice
-  goes away on its own once the issue is fixed; non-critical ones can be hidden from the
-  banner.
+- When something needs your attention after an upgrade, Dockmesh now shows it as a notice
+  with a link to where you fix it. The page shows one banner for the most urgent open notice
+  (Critical before Action required); "+N more notices" opens the full list below it, and
+  the notifications drawer lists them too. Info notices only appear in the list and the
+  drawer. A notice goes away on its own once the issue is fixed; non-critical ones can be
+  hidden from the banner.
 - Before applying database schema changes, Dockmesh now writes a copy of the database next
   to it and keeps the newest three.
 

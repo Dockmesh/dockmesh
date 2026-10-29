@@ -77,5 +77,6 @@ func nameCollisions(jobs []Job) string {
 		return ""
 	}
 	sort.Strings(lines)
-	return strings.Join(lines, " ") + " Rename one of them; until then their retention can delete each other's archives."
+	return "These backup jobs write to the same archive folder:" + notices.Bullets(lines) +
+		"Rename one of them; until then their retention can delete each other's archives."
 }

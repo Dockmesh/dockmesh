@@ -282,3 +282,21 @@ func mustOpen(t *testing.T, s *Service) []Notice {
 	}
 	return open
 }
+
+func TestBullets(t *testing.T) {
+	tests := []struct {
+		name  string
+		items []string
+		want  string
+	}{
+		{name: "two items", items: []string{"web", "db"}, want: "Stacks:\n- web\n- db\nFix them."},
+		{name: "one item", items: []string{"web"}, want: "Stacks:\n- web\nFix them."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := "Stacks:" + Bullets(tt.items) + "Fix them."; got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

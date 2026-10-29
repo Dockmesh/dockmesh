@@ -72,8 +72,9 @@ type Notice struct {
 	audience Audience
 }
 
-// RaiseInput describes a notice. Body is plain text; Link is an in-app path
-// ("/stacks/foo") the UI turns into a button.
+// RaiseInput describes a notice. Body is plain text: the UI keeps its line
+// breaks and shows lines starting with "- " as a list (see Bullets). Link
+// is an in-app path ("/stacks/foo") the UI turns into a button.
 type RaiseInput struct {
 	Key      string
 	Audience Audience
@@ -81,6 +82,18 @@ type RaiseInput struct {
 	Title    string
 	Body     string
 	Link     string
+}
+
+// Bullets formats items as list lines for a notice body, each on its own
+// line so it can sit between two sentences of the body.
+func Bullets(items []string) string {
+	var b strings.Builder
+	for _, it := range items {
+		b.WriteString("\n- ")
+		b.WriteString(it)
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 // Viewer is the reading user. Allowed answers permission checks for the
