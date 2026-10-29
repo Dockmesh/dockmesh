@@ -503,6 +503,12 @@ func main() {
 	if err := backupSvc.MarkAutoCreatedJobsForReview(ctx); err != nil {
 		slog.Warn("backup default review migration", "err", err)
 	}
+	// Before seedLocalBackupRoots, so a kept legacy directory becomes an
+	// allowed root on the first start.
+	sysPathFrom, sysPathTo, err := backupSvc.MigrateSystemJobPath(ctx)
+	if err != nil {
+		slog.Warn("system backup path migration", "err", err)
+	}
 	defer backupSvc.Stop()
 
 	// Auto-scaling controller (P.8). The ScaleFunc closure routes through
@@ -638,6 +644,9 @@ func main() {
 	noticesSvc := notices.NewService(database)
 	noticesSvc.Register("backups.local-roots-review", func(ctx context.Context, n *notices.Service) error {
 		return syncSeededRootsNotice(ctx, n, settingsStore)
+	})
+	noticesSvc.Register("backups.system-job-path", func(ctx context.Context, n *notices.Service) error {
+		return raiseSystemPathNotice(ctx, n, sysPathFrom, sysPathTo)
 	})
 	noticesSvc.Register("backups.encrypt-unavailable", func(ctx context.Context, n *notices.Service) error {
 		return syncUnencryptableNotice(ctx, n, backupSvc)

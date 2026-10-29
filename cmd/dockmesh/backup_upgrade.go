@@ -104,6 +104,24 @@ func syncSeededRootsNotice(ctx context.Context, n *notices.Service, st *settings
 	})
 }
 
+// raiseSystemPathNotice tells admins where the system backup job writes
+// after its relative path was made absolute on this start.
+func raiseSystemPathNotice(ctx context.Context, n *notices.Service, from, to string) error {
+	if to == "" {
+		return nil
+	}
+	return n.Raise(ctx, notices.RaiseInput{
+		Key:      "backups.system-job-path",
+		Audience: notices.Admins(),
+		Severity: notices.SevInfo,
+		Title:    "System backup directory changed",
+		Body: "The system backup job had the relative path " + from + ", which depended on the " +
+			"directory Dockmesh was started from. It now writes to " + to + ". Existing archives " +
+			"were not moved.",
+		Link: "/backups",
+	})
+}
+
 // syncUnencryptableNotice tells admins about jobs set to encrypt while
 // secrets encryption is off: their runs now fail instead of quietly
 // writing unencrypted archives.
