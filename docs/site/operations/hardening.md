@@ -1,5 +1,5 @@
 ---
-title: Hardening
+title: Security hardening
 description: A checklist for running Dockmesh on a network where not everyone is trusted.
 ---
 

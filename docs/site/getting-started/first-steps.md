@@ -21,7 +21,7 @@ If you lose the admin password, reset it on the server:
 sudo dockmesh admin reset-password --user admin
 ```
 
-After signing in you land on the **Dashboard**. Turn on two-factor authentication for the admin account under **Account**; see [Authentication](../features/authentication.md).
+After signing in you land on the **Dashboard**. Turn on two-factor authentication for the admin account on the **Account** page (user menu → **Profile & security**); see [Authentication](../features/authentication.md).
 
 ## Create a stack
 
@@ -49,7 +49,7 @@ Instead of pasting YAML you can use **Import from docker run** to convert a `doc
 
 ## Deploy
 
-On the stack's page, click **Deploy**. Dockmesh pulls all images first and aborts before touching any container if a pull fails. It then recreates every service's container, in alphabetical order of service name, and waits for each to become healthy (or, without a healthcheck, to stay up for a few seconds). Every deploy recreates all containers of the stack, even when nothing changed.
+On the stack's page, click **Deploy**. Dockmesh first pulls every image that is not on the host yet, plus images of services with `pull_policy: always`. If a pull fails for an image that isn't cached, it aborts before touching any container; if a cached copy exists, it logs a warning and uses that. It then recreates every service's container, in alphabetical order of service name, and waits for each to become healthy (or, without a healthcheck, to stay up for a few seconds). Every deploy recreates all containers of the stack, even when nothing changed.
 
 With the example above, `http://<host>:8081` now shows the nginx welcome page. If the host port is already taken, the deploy fails with a port-conflict error.
 
@@ -58,7 +58,7 @@ Each successful deploy is recorded under the stack's **History** tab, from where
 ## Look at containers and logs
 
 - The stack's **Logs** tab streams the logs of the stack's running containers.
-- **Containers** in the sidebar lists the containers of the host selected in the top bar (or of all hosts). Open one to get the **Overview**, **Logs**, **Terminal** (a shell inside the container), **Inspect** and **Files** tabs. **Files** is only available on the local host.
+- **Containers** in the sidebar lists the containers of the host selected in the top bar (or of all hosts). Open one to get the **Overview**, **Logs**, **Terminal** (a shell inside the container, needs exec permission), **Inspect**, **Network** and **Files** tabs, plus **Updates**. **Files** and **Updates** are only available on the local host.
 
 See [Containers](../features/containers.md).
 
@@ -68,7 +68,7 @@ See [Containers](../features/containers.md).
 2. Enter one or more email addresses, pick a **Role** and, optionally, limit access to hosts with certain tags.
 3. Generate the links and send each one to its recipient yourself. Dockmesh does not email them.
 
-The recipient opens the link, picks a username and a password (at least 8 characters) and is signed in with the role you chose. Links are single-use and expire after 24 hours. The dialog's **Initial password** and **Link expiry** fields have no effect.
+The recipient opens the link, picks a username and a password that meets the password policy (at least 8 characters by default) and is signed in with the role you chose. Links are single-use and expire after 24 hours. The dialog's **Initial password** and **Link expiry** fields have no effect.
 
 The built-in roles are `admin`, `host-admin`, `deployer`, `operator` and `viewer`; you can also create your own. See [Permissions](../concepts/permissions.md). For single sign-on instead of local accounts, see [SSO](../features/sso.md).
 

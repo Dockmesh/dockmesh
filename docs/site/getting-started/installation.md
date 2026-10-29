@@ -179,7 +179,7 @@ cd dockmesh
 make build VERSION=v0.0.0-local
 ```
 
-`make build` builds the web UI, embeds it, and produces `./dockmesh`, the agents `bin/dockmesh-agent-linux-amd64` and `bin/dockmesh-agent-linux-arm64`, and `dmctl` builds for Linux, macOS and Windows in `bin/`. Run `./dockmesh` from the checkout: without an env file it uses `./data/` and `./stacks/` and serves the agent installer from `./scripts/` and `./bin/`. On first start it creates a user `admin` with a random password and writes it to the log once, in a line starting with `bootstrap admin created`.
+`make build` builds the web UI, embeds it, and produces `./dockmesh`, the agents `bin/dockmesh-agent-linux-amd64` and `bin/dockmesh-agent-linux-arm64`, and `dmctl` builds for Linux, macOS and Windows in `bin/`. Run `./dockmesh` from the checkout: without an env file it uses `./data/` and `./stacks/` (but if `/var/lib/dockmesh/dockmesh.env` exists on the machine and `DOCKMESH_DB_PATH` is unset, that file is loaded) and serves the agent installer from `./scripts/` and `./bin/`. On first start it creates a user `admin` with a random password and writes it to the log once: the default JSON log line has the message `bootstrap admin created` and the password in its `password` field.
 
 For development, `make dev` starts the backend on `:8080` and the Vite dev server on `:5173`. `make test` runs the Go tests and `svelte-check`.
 
@@ -201,7 +201,7 @@ Things to know about the image:
 - It is distroless and runs as the non-root user 65532. Make `./data` and `./stacks` writable for that user (`sudo chown -R 65532:65532 data stacks`), and give the container access to the socket by adding `group_add: ["<gid of the docker group on the host>"]` to the service.
 - `grype` is not in the image, so image scans are unavailable.
 - The agent installer and agent binaries are not in the image, so the one-line agent install from this server does not work unless you mount them and set `DOCKMESH_INSTALL_SCRIPT` and `DOCKMESH_BINARY_DIR`. Port 8443 is not published either; add `8443:8443` if you use remote agents.
-- The builder stage uses `golang:1.22-alpine`, older than the Go version `go.mod` requires. If the build stops with a Go version error, change that line to `golang:1.25-alpine`.
+- The builder stage uses `golang:1.22-alpine`, older than the Go version `go.mod` requires. The build fails with a Go version error until you change that line to `golang:1.25-alpine`.
 - Mounting the socket read-only does not restrict what can be done through it. Whoever controls Dockmesh controls the Docker engine.
 
 ## Next steps

@@ -25,7 +25,7 @@ Most commands open the database and apply pending migrations first. Loading the 
 |---|---|
 | `serve` | Start the HTTP server and the agent mTLS listener (default) |
 | `init` | Interactive first-run setup on the command line |
-| `restore` | Restore DB, stacks and data dir from a system backup |
+| `restore` | Restore DB, stacks and data directory from a system backup |
 | `doctor` | Run local health checks |
 | `ca export` / `ca rotate` | Export or replace the agent CA |
 | `db migrate` / `db backup` | Apply migrations / write a SQLite snapshot |
