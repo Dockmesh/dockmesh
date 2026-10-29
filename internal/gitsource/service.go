@@ -142,6 +142,11 @@ func (s *Service) Start(ctx context.Context) {
 	if err := os.MkdirAll(s.cacheDir, 0o700); err != nil {
 		slog.Warn("gitsource cache dir", "err", err, "path", s.cacheDir)
 	}
+	if n, err := s.EncryptLegacyWebhookSecrets(ctx); err != nil {
+		slog.Warn("gitsource: encrypt stored webhook secrets", "err", err)
+	} else if n > 0 {
+		slog.Info("gitsource: encrypted stored webhook secrets", "count", n)
+	}
 	s.wg.Add(1)
 	go s.pollLoop(ctx)
 }
@@ -242,7 +247,11 @@ func (s *Service) Configure(ctx context.Context, stackName string, in Input) (*S
 	case in.ClearWebhook:
 		webhook = nil
 	case in.WebhookSecret != "":
-		webhook = in.WebhookSecret
+		enc, err := s.encryptWebhookSecret(in.WebhookSecret)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt webhook secret: %w", err)
+		}
+		webhook = enc
 	}
 
 	if existing == nil {
@@ -323,7 +332,7 @@ func (s *Service) WebhookSecret(ctx context.Context, stackName string) (string, 
 	if !secret.Valid {
 		return "", nil
 	}
-	return secret.String, nil
+	return s.decryptWebhookSecret(secret.String)
 }
 
 // -----------------------------------------------------------------------------

@@ -44,6 +44,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - Notifications sent to everyone (alerts, backups, agent offline, deploys, image and version
   updates, migrations) now reach only users whose role has the matching permission and whose
   host and stack scope covers the event, instead of every user.
+- Git webhook secrets are now stored encrypted in the database, like the git password and SSH
+  key. Secrets saved by earlier versions are encrypted automatically on the next start and
+  existing webhooks keep working without changes.
 
 ### Fixed
 
