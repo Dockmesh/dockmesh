@@ -19,6 +19,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/deploy"
@@ -94,6 +95,11 @@ type Handlers struct {
 	SelfUpdate     *selfupdate.Checker
 	SetupState     *setup.State    // first-run wizard state; nil = setup never active
 	SetupCommit_   setup.CommitFunc // wizard's commit-runner — wired by main; nil = wizard cannot commit
+	// System restore: the live paths, a restart request after staging,
+	// and the end-of-setup step for a restore from the wizard.
+	RestoreConfig  *config.Config
+	RequestRestart func()
+	FinishSetup    func() error
 	setupRuns      sync.Map        // runID → *setup.Runner; populated when SetupCommit fires
 	JWTSecret      []byte // raw secret used to sign the short-lived OIDC + SAML state cookies
 	// RBACv2Enforce gates per-host + per-stack scope checks on typed-
@@ -151,6 +157,9 @@ type Deps struct {
 	SelfUpdate     *selfupdate.Checker
 	SetupState     *setup.State
 	SetupCommit_   setup.CommitFunc
+	RestoreConfig  *config.Config
+	RequestRestart func()
+	FinishSetup    func() error
 	JWTSecret      []byte
 	RBACv2Enforce  bool
 }
@@ -205,6 +214,9 @@ func New(d Deps) *Handlers {
 		SelfUpdate:     d.SelfUpdate,
 		SetupState:     d.SetupState,
 		SetupCommit_:   d.SetupCommit_,
+		RestoreConfig:  d.RestoreConfig,
+		RequestRestart: d.RequestRestart,
+		FinishSetup:    d.FinishSetup,
 		JWTSecret:      d.JWTSecret,
 		RBACv2Enforce:  d.RBACv2Enforce,
 	}

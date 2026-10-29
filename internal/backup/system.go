@@ -10,6 +10,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/dockmesh/dockmesh/internal/restore"
 )
 
 // DefaultSystemJobName is the well-known name of the auto-created daily
@@ -137,7 +139,13 @@ func tarSystem(ctx context.Context, db *sql.DB, paths SystemPaths, w io.Writer) 
 	// 3. Data dir → data/…, excluding the live DB (plus WAL/SHM siblings)
 	// since VACUUM INTO already gave us a consistent copy.
 	liveDB, _ := filepath.Abs(paths.DBPath)
+	dataDir, _ := filepath.Abs(paths.DataDir)
 	skip := map[string]bool{
+		// A staged or replaced restore, and the default local backup
+		// folder: a system backup must not contain earlier backups.
+		filepath.Join(dataDir, restore.StagingDir):    true,
+		filepath.Join(dataDir, restore.PreRestoreDir): true,
+		filepath.Join(dataDir, "backups"):             true,
 		liveDB:            true,
 		liveDB + "-wal":   true,
 		liveDB + "-shm":   true,
@@ -175,6 +183,9 @@ func walkInto(root, prefix string, skip map[string]bool, add func(src, archivePa
 		}
 		abs, _ := filepath.Abs(p)
 		if skip != nil && skip[abs] {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		info, err := d.Info()

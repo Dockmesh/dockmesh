@@ -1,25 +1,26 @@
 package main
 
 import (
+	"bufio"
 	"context"
-	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
+	"filippo.io/age"
 	"github.com/dockmesh/dockmesh/internal/restore"
+	"github.com/dockmesh/dockmesh/internal/secrets"
 )
 
 // runRestoreCmd handles `dockmesh restore --from <path> [flags]`.
-// Extracts a system-backup tarball (produced by the P.6.5 default
-// system backup job) into the server's DBPath / StacksRoot / DataDir
-// so a fresh host can come up with the pre-incident state. P.12.4.
-//
-// Core logic lives in internal/restore so the HTTP upload path can
-// reuse the same extraction + sanity code.
+// Restores a system backup into the server's DBPath / StacksRoot /
+// DataDir, with the server stopped. Uses the same stage-then-swap as the
+// UI: nothing live changes until the archive has been extracted and
+// checked, and the replaced files are kept.
 func runRestoreCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: dockmesh restore --from <path> [--force] [--dry-run]")
+		fmt.Fprintln(os.Stderr, "usage: dockmesh restore --from <path> [--key <file>] [--force] [--dry-run]")
 		os.Exit(2)
 	}
 	if err := runRestore(args); err != nil {
@@ -30,71 +31,88 @@ func runRestoreCmd(args []string) {
 
 func runRestore(args []string) error {
 	fs := flag.NewFlagSet("restore", flag.ExitOnError)
-	from := fs.String("from", "", "path to a system-backup tarball (dockmesh-system job output) — required")
-	force := fs.Bool("force", false, "overwrite a populated DB / non-empty /stacks / non-empty /data")
+	from := fs.String("from", "", "path to a system-backup archive (.tar.gz or .tar.gz.age) — required")
+	keyFile := fs.String("key", "", "backup key file exported from the original install, for encrypted archives")
+	force := fs.Bool("force", false, "restore over a populated install (its files are kept under the data directory)")
 	dryRun := fs.Bool("dry-run", false, "list what would be restored without writing anything")
-	skipSanity := fs.Bool("skip-sanity", false, "skip the post-restore sanity check (advanced; you own the consequences)")
 	_ = fs.Parse(args)
 
 	if *from == "" {
 		return fmt.Errorf("--from is required")
 	}
-	if _, err := os.Stat(*from); err != nil {
-		return fmt.Errorf("--from %q: %w", *from, err)
-	}
 	cfg, err := cliLoadConfig()
 	if err != nil {
 		return err
 	}
-	src, err := os.Open(*from)
+	f, err := os.Open(*from)
 	if err != nil {
 		return err
 	}
-	defer src.Close()
-
-	counts, err := restore.Extract(context.Background(), src, cfg, restore.Options{Force: *force, DryRun: *dryRun})
+	defer f.Close()
+	src, err := plaintextArchive(f, *keyFile)
 	if err != nil {
-		if errors.Is(err, restore.ErrEncryptedBackup) {
+		return err
+	}
+
+	if *dryRun {
+		counts, err := restore.Extract(context.Background(), src, cfg, restore.Options{DryRun: true})
+		if err != nil {
 			return err
 		}
-		return err
-	}
-	if *dryRun {
 		fmt.Printf("would restore %d files, %d bytes\n", counts.Files, counts.Bytes)
 		return nil
 	}
+	if err := restore.CheckSafety(cfg, *force); err != nil {
+		return err
+	}
 
+	counts, result, err := restore.Stage(context.Background(), src, cfg, "cli:"+*from)
+	if result != nil {
+		for _, c := range result.Checks {
+			icon := "[ ok ]"
+			switch c.Status {
+			case "warn":
+				icon = "[warn]"
+			case "fail":
+				icon = "[FAIL]"
+			}
+			msg := c.Message
+			if msg == "" {
+				msg = c.Status
+			}
+			fmt.Printf("  %s %-20s %s\n", icon, c.Name, msg)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := restore.ApplyStaged(cfg); err != nil {
+		return fmt.Errorf("swap in the restored files: %w (run the command again or start the server to resume)", err)
+	}
 	fmt.Printf("restore complete — %d files, %d bytes\n", counts.Files, counts.Bytes)
 	fmt.Printf("  db      → %s\n", cfg.DBPath)
 	fmt.Printf("  stacks  → %s\n", cfg.StacksRoot)
-
-	if *skipSanity {
-		fmt.Println("\nsanity check skipped (--skip-sanity). Run 'dockmesh doctor' before serving traffic.")
-		return nil
-	}
-
-	fmt.Println("\nrunning post-restore sanity checks…")
-	result, err := restore.Sanity(cfg)
-	if err != nil {
-		return fmt.Errorf("post-restore sanity: %w", err)
-	}
-	for _, c := range result.Checks {
-		icon := "[ ok ]"
-		switch c.Status {
-		case "warn":
-			icon = "[warn]"
-		case "fail":
-			icon = "[FAIL]"
-		}
-		msg := c.Message
-		if msg == "" {
-			msg = c.Status
-		}
-		fmt.Printf("  %s %-20s %s\n", icon, c.Name, msg)
-	}
-	if !result.Passed {
-		return fmt.Errorf("sanity failed: %s", result.Summary)
-	}
-	fmt.Println("\nsanity OK — start the server with `systemctl start dockmesh` (or equivalent)")
+	fmt.Println("\nstart the server with `systemctl start dockmesh` (or equivalent)")
 	return nil
+}
+
+// plaintextArchive decrypts an age-encrypted archive with the key file.
+func plaintextArchive(f io.Reader, keyFile string) (io.Reader, error) {
+	br := bufio.NewReaderSize(f, 64*1024)
+	peek, _ := br.Peek(len("age-encryption.org/v1"))
+	if string(peek) != "age-encryption.org/v1" {
+		return br, nil
+	}
+	if keyFile == "" {
+		return nil, fmt.Errorf("the archive is encrypted; pass the backup key file exported from the original install with --key")
+	}
+	b, err := os.ReadFile(keyFile)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := secrets.ParseKeyFile(b)
+	if err != nil {
+		return nil, fmt.Errorf("--key: %w", err)
+	}
+	return age.Decrypt(br, ids...)
 }

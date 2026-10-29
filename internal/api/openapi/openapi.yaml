@@ -301,6 +301,61 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /setup/restore:
+    post:
+      operationId: setup.restore
+      tags: [setup]
+      summary: Restore a system backup instead of setting up a new install
+      description: |
+        Only while setup mode is active. Takes a system backup archive
+        (`file`) and, for an archive encrypted by the original install,
+        the backup key file exported there (`key`, from
+        `GET /system/backup-key/export`). The archive is extracted next to
+        the live files and checked (database opens and migrates, an admin
+        exists); then setup mode ends and the server restarts, swapping the
+        restored files in before it opens the database. Sign in with an
+        account of the restored install afterwards. The service manager
+        has to restart the process (exit code 75).
+      security: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: System backup (.tar.gz or .tar.gz.age), up to 1 GiB. }
+                key: { type: string, format: binary, description: Exported backup key file; needed for encrypted archives. }
+      responses:
+        "202":
+          description: Staged; the server restarts now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restarting: { type: boolean }
+                  counts: { type: object }
+                  sanity: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: Another restore is being staged.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          description: Setup mode is not active or its window expired.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413": { description: Archive larger than 1 GiB. }
+        "422":
+          description: Encrypted without a matching key, or the backup failed the restore checks (`sanity` lists them).
+          content:
+            application/json:
+              schema: { type: object }
+
   /setup/stream/{run_id}:
     get:
       operationId: setup.stream
@@ -3320,8 +3375,8 @@ paths:
         Same flow as `restore-stack`. For volume backups the archive goes
         into `dest_volume` (default: the backed-up volume) on `host_id`.
         For stack backups `target_stack` (or, for older clients,
-        `dest_volume`) names the stack. System backups can't be restored
-        here; see `dockmesh restore`.
+        `dest_volume`) names the stack. System backups are restored with
+        `POST /restore/system` or the setup wizard.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       requestBody:
@@ -3377,6 +3432,124 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BackupVerifyResult" }
+
+  /restore/system:
+    get:
+      operationId: restore.system_staged
+      tags: [backups]
+      summary: The system restore waiting for the next start, if any
+      description: Needs `system.upgrade`.
+      responses:
+        "200":
+          description: Staged restore or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  staged:
+                    oneOf:
+                      - { $ref: "#/components/schemas/StagedRestore" }
+                      - { type: "null" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: restore.system_stage
+      tags: [backups]
+      summary: Stage a system restore
+      description: |
+        Needs `system.upgrade`. Source is a saved system-backup run
+        (JSON `{"run_id": N}`, decrypted with this server's keys and checked
+        against the run's hash) or an uploaded archive (multipart `file`,
+        plus `key` for an archive encrypted by another install). The archive
+        is extracted next to the live files and checked; the live install
+        is not touched until `POST /restore/system/apply`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [run_id]
+              properties:
+                run_id: { type: integer, format: int64 }
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                key: { type: string, format: binary }
+      responses:
+        "200":
+          description: Staged.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  staged: { $ref: "#/components/schemas/StagedRestore" }
+                  counts: { type: object }
+                  sanity: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Run not restorable, or another restore is being staged.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413": { description: Upload larger than 1 GiB. }
+        "422":
+          description: Encrypted without a matching key, hash mismatch, or the backup failed the restore checks.
+          content:
+            application/json:
+              schema: { type: object }
+    delete:
+      operationId: restore.system_discard
+      tags: [backups]
+      summary: Drop a staged system restore
+      description: Needs `system.upgrade`.
+      responses:
+        "204": { description: Discarded. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The swap has already started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /restore/system/apply:
+    post:
+      operationId: restore.system_apply
+      tags: [backups]
+      summary: Restart and swap the staged system restore in
+      description: |
+        Needs `system.upgrade`. Answers 202, then shuts down and exits with
+        code 75 so the service manager restarts the server; at start the
+        staged files replace the live database, data and stacks before the
+        database is opened. Replaced files stay under `<data>/.pre-restore/`
+        and `<stacks>.pre-restore-<time>`.
+      responses:
+        "202":
+          description: Restarting.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restarting: { type: boolean }
+                  staged: { $ref: "#/components/schemas/StagedRestore" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Nothing staged.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /restore/verify:
     post:
@@ -7429,6 +7602,16 @@ components:
         sources:
           type: array
           items: { $ref: "#/components/schemas/BackupSource" }
+
+    StagedRestore:
+      type: object
+      properties:
+        staged_at: { type: string, format: date-time }
+        source: { type: string, description: "run:<id>, upload:<file> or setup:<file>" }
+        files: { type: integer }
+        bytes: { type: integer, format: int64 }
+        prev_dir: { type: string, description: Set once the swap started. }
+        prev_stacks: { type: string }
 
     BackupRestoreRequest:
       type: object

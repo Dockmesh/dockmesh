@@ -31,6 +31,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and at the top of the notifications drawer, with a link to where you fix it. The notice
   goes away on its own once the issue is fixed; non-critical ones can be hidden from the
   banner.
+- System backups can be restored from the UI (Backups → a system run → Restore, or "Restore
+  system from file" for an uploaded archive) and from the setup wizard of a fresh install
+  ("Restore from a backup instead"), including encrypted backups together with the key file
+  exported from the original server. The backup is unpacked and checked next to the live
+  files first; the server then restarts and swaps the restored files in before it opens the
+  database. The replaced files stay in the data directory under `.pre-restore`.
 - Backup schedules run in the time zone set in `backups.timezone` (an IANA name such as
   `Europe/Berlin`); without it they use the server's time zone, which the job wizard now
   shows next to the schedule.
@@ -104,6 +110,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   retention are shown as pruned.
 - Backup runs that were still running when the server stopped are marked failed at the
   next start instead of showing "running" forever.
+- `dockmesh restore` uses the same staged swap: a restore that stops halfway no longer leaves
+  stacks and data overwritten next to the old database, and it finishes on the next start.
+  It takes `--key` for encrypted archives; `--skip-sanity` is gone, the checks always run.
+- System backups no longer include the `backups` folder in the data directory, so each one
+  stopped containing all earlier local backups.
 - Restoring a volume or stack backup puts the volumes back on the host the backup was taken
   on (or one you pick), instead of always on the central server. The archive is checked
   completely before anything is overwritten, and you choose between replacing the volume's

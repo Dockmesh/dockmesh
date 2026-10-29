@@ -13,6 +13,8 @@
   // block at the bottom so this file is fully self-contained.
   import { onMount, onDestroy } from 'svelte';
   import { copyToClipboard as clipboardCopy } from '$lib/clipboard';
+  import { uploadSystemBackup } from '$lib/api';
+  import { waitForRestart } from '$lib/restart';
 
   type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
@@ -65,6 +67,42 @@
       sub: `Service is running. Below are your credentials — copy them somewhere safe before you close this tab.`
     }
   };
+
+  // "Restore from backup" path: instead of a new install, bring back a
+  // system backup (with the key file exported from the original install
+  // if the backup is encrypted). The server restarts into it.
+  let restoreOpen = $state(false);
+  let restoreFile = $state<File | null>(null);
+  let restoreKey = $state<File | null>(null);
+  let restorePhase = $state<'idle' | 'uploading' | 'restarting' | 'stuck'>('idle');
+  let restoreError = $state('');
+  let restoreChecks = $state<{ name: string; status: string; message?: string }[]>([]);
+
+  async function restoreFromBackup() {
+    if (!restoreFile) return;
+    restorePhase = 'uploading';
+    restoreError = '';
+    restoreChecks = [];
+    try {
+      const res = await uploadSystemBackup('/api/v1/setup/restore', restoreFile, restoreKey);
+      if (!res.restarting) {
+        restoreError = res.error ?? res.sanity?.summary ?? 'the backup failed the restore checks';
+        restoreChecks = res.sanity?.checks ?? [];
+        restorePhase = 'idle';
+        return;
+      }
+    } catch (err) {
+      restoreError = err instanceof Error ? err.message : String(err);
+      restorePhase = 'idle';
+      return;
+    }
+    restorePhase = 'restarting';
+    if (await waitForRestart()) {
+      window.location.href = '/login';
+    } else {
+      restorePhase = 'stuck';
+    }
+  }
 
   // Wizard-wide state machine.
   let step = $state<Step>(1);
@@ -649,7 +687,41 @@
                 </svg>
               </button>
               <span class="ed-hero-cta-meta">7 steps · about 60 seconds · no internet required</span>
+              <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (restoreOpen = !restoreOpen)}>
+                Restore from a backup instead
+              </button>
             </div>
+            {#if restoreOpen}
+              <div class="ed-restore">
+                <p class="ed-restore-lead">
+                  Bring back a Dockmesh system backup: users, settings, keys and stacks. Volumes are
+                  restored separately afterwards, from the Backups page.
+                </p>
+                <label class="ed-restore-field">
+                  <span>System backup (.tar.gz or .tar.gz.age)</span>
+                  <input type="file" accept=".gz,.age,.tar" onchange={(e) => (restoreFile = (e.currentTarget as HTMLInputElement).files?.[0] ?? null)} />
+                </label>
+                <label class="ed-restore-field">
+                  <span>Backup key file, if the backup is encrypted (Settings → Encryption key → Export key on the old server)</span>
+                  <input type="file" accept=".txt,.key" onchange={(e) => (restoreKey = (e.currentTarget as HTMLInputElement).files?.[0] ?? null)} />
+                </label>
+                {#if restoreError}
+                  <p class="ed-restore-error">{restoreError}</p>
+                  {#each restoreChecks.filter((c) => c.status === 'fail') as c (c.name)}
+                    <p class="ed-restore-error">{c.name}: {c.message ?? ''}</p>
+                  {/each}
+                {/if}
+                {#if restorePhase === 'restarting'}
+                  <p class="ed-restore-lead">Restoring and restarting Dockmesh… You'll be sent to the login page; sign in with an account of the restored install.</p>
+                {:else if restorePhase === 'stuck'}
+                  <p class="ed-restore-error">Dockmesh hasn't come back yet. If it isn't run by systemd or Docker, start it again by hand; the restore finishes on the next start.</p>
+                {:else}
+                  <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={restoreFromBackup} disabled={!restoreFile || restorePhase === 'uploading'}>
+                    {restorePhase === 'uploading' ? 'Checking the backup…' : 'Restore'}
+                  </button>
+                {/if}
+              </div>
+            {/if}
           </div>
 
         {:else if step === 2}
@@ -1342,6 +1414,18 @@
     margin-top: 8px;
     flex-wrap: wrap;
   }
+  .ed-restore {
+    margin-top: 20px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: grid;
+    gap: 12px;
+    max-width: 60ch;
+  }
+  .ed-restore-lead { font-size: 13px; color: var(--fg-muted); }
+  .ed-restore-field { display: grid; gap: 6px; font-size: 12px; color: var(--fg-muted); }
+  .ed-restore-error { font-size: 13px; color: var(--color-danger-400); }
   .ed-hero-cta-meta {
     font-family: var(--font-mono);
     font-size: 11px;

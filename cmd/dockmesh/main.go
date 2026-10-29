@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -51,6 +52,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/saml"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/restore"
 	"github.com/dockmesh/dockmesh/internal/scaling"
 	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
@@ -168,7 +170,22 @@ func countServicesString(n int) string {
 	return fmt.Sprintf("%d services", n)
 }
 
+// restartRequested makes main exit with exitRestart after a normal
+// shutdown, so the service manager starts it again (systemd
+// Restart=on-failure, Docker restart policies). Used to apply a staged
+// system restore.
+var restartRequested atomic.Bool
+
+const exitRestart = 75
+
 func main() {
+	// Registered first so it runs after every other deferred cleanup.
+	defer func() {
+		if restartRequested.Load() {
+			slog.Info("exiting for restart")
+			os.Exit(exitRestart)
+		}
+	}()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
@@ -263,6 +280,16 @@ func main() {
 			defer scancel()
 			_ = otelShutdown(sctx)
 		}()
+	}
+
+	// A staged system restore is swapped in before anything opens the
+	// database. If the swap stops halfway it resumes on the next start;
+	// serving from a half-swapped install is never an option.
+	if applied, err := restore.ApplyStaged(cfg); err != nil {
+		slog.Error("applying the staged system restore failed; fix the error and start again", "err", err)
+		os.Exit(1)
+	} else if applied {
+		slog.Warn("system backup restored; the replaced files are kept under the data directory", "dir", restore.PreRestoreDir)
 	}
 
 	database, err := db.Open(cfg.DBPath)
@@ -828,6 +855,18 @@ func main() {
 
 	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
 
+	restartCh := make(chan struct{}, 1)
+	requestRestart := func() {
+		restartRequested.Store(true)
+		// Let the response reach the client before the listener closes.
+		time.AfterFunc(time.Second, func() {
+			select {
+			case restartCh <- struct{}{}:
+			default:
+			}
+		})
+	}
+
 	// P.14.2: install-wizard commit function. Built here because it
 	// needs auth.Service + settings.Store + the configured paths.
 	// Idempotent — re-running the wizard against an already-set-up
@@ -1001,6 +1040,15 @@ func main() {
 		SelfUpdate:     selfUpdateChk,
 		SetupState:     setupState,
 		SetupCommit_:   setupCommit,
+		RestoreConfig:  cfg,
+		RequestRestart: requestRestart,
+		FinishSetup: func() error {
+			envPath := filepath.Join(filepath.Dir(cfg.DBPath), "..", "dockmesh.env")
+			if _, err := scrubEnvFlag(envPath, "DOCKMESH_SETUP_FORCE"); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			return nil
+		},
 		JWTSecret:      cfg.JWTSecret,
 		RBACv2Enforce:  cfg.RBACv2Enforce,
 	})
@@ -1082,7 +1130,10 @@ func main() {
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	<-stop
+	select {
+	case <-stop:
+	case <-restartCh:
+	}
 
 	// P.12.2 — graceful shutdown.
 	//

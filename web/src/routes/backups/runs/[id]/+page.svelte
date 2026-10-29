@@ -9,6 +9,7 @@
   import { api, ApiError, runRestorable, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
   import { Eyebrow } from '$lib/components/editorial';
   import RestoreDialog from '../../_RestoreDialog.svelte';
+  import SystemRestoreDialog from '../../_SystemRestoreDialog.svelte';
   import { Skeleton, EmptyState } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
@@ -337,8 +338,13 @@
     </div>
   </section>
 
+  <SystemRestoreDialog
+    open={!!restorePreset && !!run?.sources.some((s) => s.type === 'system')}
+    {run}
+    onclose={() => (restorePreset = null)}
+  />
   <RestoreDialog
-    run={restorePreset ? run : null}
+    run={restorePreset && !run?.sources.some((s) => s.type === 'system') ? run : null}
     preset={restorePreset ?? 'alongside'}
     originHost={job?.host_id ?? ''}
     onclose={() => (restorePreset = null)}
