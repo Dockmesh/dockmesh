@@ -9,9 +9,9 @@ import (
 	"io"
 	"time"
 
-	"github.com/dockmesh/dockmesh/internal/docker"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
 const volumeTarHelperImage = "busybox:latest"
@@ -71,11 +71,11 @@ func tarVolumeHelper(ctx context.Context, dc *docker.Client, volumeName string) 
 }
 
 type volumeTarStream struct {
-	ctx     context.Context
-	cli     dockerClient
-	id      string
-	hijack  io.Reader
-	closeFn func()
+	ctx      context.Context
+	cli      dockerClient
+	id       string
+	hijack   io.Reader
+	closeFn  func()
 	leftover []byte
 }
 

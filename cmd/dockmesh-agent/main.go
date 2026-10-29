@@ -28,9 +28,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os/exec"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -40,17 +40,17 @@ import (
 
 	dockerwrap "github.com/dockmesh/dockmesh/internal/docker"
 
-	"github.com/dockmesh/dockmesh/internal/agents"
-	"github.com/dockmesh/dockmesh/internal/compose"
-	"github.com/dockmesh/dockmesh/internal/host"
-	"github.com/dockmesh/dockmesh/internal/stacks"
-	"github.com/dockmesh/dockmesh/internal/system"
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/gorilla/websocket"
 
 	"github.com/dockmesh/dockmesh/pkg/version"
@@ -319,7 +319,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 // hook for control frames.
 type streamReg struct {
 	cancel context.CancelFunc
-	stdin  io.Writer                  // nil for non-bidirectional streams
+	stdin  io.Writer                   // nil for non-bidirectional streams
 	resize func(rows, cols uint) error // nil if not resizable
 }
 

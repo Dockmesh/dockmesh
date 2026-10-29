@@ -75,9 +75,9 @@ func (s *store) migrateInlineTargets(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	type pending struct {
-		id         int64
-		name, typ  string
-		config     string
+		id        int64
+		name, typ string
+		config    string
 	}
 	var jobs []pending
 	for rows.Next() {

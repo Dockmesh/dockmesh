@@ -35,9 +35,9 @@ type VerifyCheck struct {
 }
 
 type VerifyCounts struct {
-	Entries int      `json:"entries"`
-	Bytes   int64    `json:"bytes"`
-	Volumes []string `json:"volumes,omitempty"`     // populated for stack runs
+	Entries    int      `json:"entries"`
+	Bytes      int64    `json:"bytes"`
+	Volumes    []string `json:"volumes,omitempty"`     // populated for stack runs
 	StackFiles []string `json:"stack_files,omitempty"` // populated for stack runs
 }
 

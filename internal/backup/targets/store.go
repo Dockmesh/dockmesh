@@ -10,17 +10,17 @@ import (
 
 // StoredTarget is one row of backup_targets.
 type StoredTarget struct {
-	ID            int64     `json:"id"`
-	Name          string    `json:"name"`
-	Type          string    `json:"type"`
-	Config        any       `json:"config"`
-	Status        string    `json:"status"`
-	TotalBytes    int64     `json:"total_bytes"`
-	UsedBytes     int64     `json:"used_bytes"`
-	FreeBytes     int64     `json:"free_bytes"`
+	ID            int64      `json:"id"`
+	Name          string     `json:"name"`
+	Type          string     `json:"type"`
+	Config        any        `json:"config"`
+	Status        string     `json:"status"`
+	TotalBytes    int64      `json:"total_bytes"`
+	UsedBytes     int64      `json:"used_bytes"`
+	FreeBytes     int64      `json:"free_bytes"`
 	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 type TargetInput struct {

@@ -15,13 +15,13 @@ import (
 	"strings"
 	"time"
 
+	dtypes "github.com/docker/docker/api/types"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
-	dtypes "github.com/docker/docker/api/types"
 )
 
 // Executor turns a Job into a Run: pre-hooks → tar → encrypt → upload →
@@ -496,4 +496,3 @@ func encryptionFor(job *Job, sec *secrets.Service) *secrets.Service {
 	}
 	return sec
 }
-
