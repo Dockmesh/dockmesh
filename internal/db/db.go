@@ -47,6 +47,8 @@ func Open(path string) (*sql.DB, error) {
 	return db, nil
 }
 
+// Migrate applies all pending migrations. On an existing database it first
+// writes a snapshot next to the DB file (see snapshotBeforeMigrate).
 func Migrate(db *sql.DB) error { return migrateUpTo(db, "") }
 
 // migrateUpTo applies migrations up to and including last ("" = all), so
@@ -65,17 +67,28 @@ func migrateUpTo(db *sql.DB, last string) error {
 	}
 	sort.Strings(names)
 
+	applied, err := appliedMigrations(db)
+	if err != nil {
+		return err
+	}
+	var pending []string
 	for _, name := range names {
 		if last != "" && name > last {
 			break
 		}
-		var exists int
-		if err := db.QueryRow(`SELECT COUNT(1) FROM schema_migrations WHERE version = ?`, name).Scan(&exists); err != nil {
+		if !applied[name] {
+			pending = append(pending, name)
+		}
+	}
+	// A database without any applied migration is a fresh install with
+	// nothing in it to lose.
+	if len(pending) > 0 && len(applied) > 0 {
+		if err := snapshotBeforeMigrate(db); err != nil {
 			return err
 		}
-		if exists > 0 {
-			continue
-		}
+	}
+
+	for _, name := range pending {
 		b, err := migrations.ReadFile("migrations/" + name)
 		if err != nil {
 			return err
@@ -97,4 +110,21 @@ func migrateUpTo(db *sql.DB, last string) error {
 		}
 	}
 	return nil
+}
+
+func appliedMigrations(db *sql.DB) (map[string]bool, error) {
+	rows, err := db.Query(`SELECT version FROM schema_migrations`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	applied := map[string]bool{}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		applied[v] = true
+	}
+	return applied, rows.Err()
 }
