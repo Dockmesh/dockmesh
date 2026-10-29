@@ -98,6 +98,20 @@ http_get() {
   fi
 }
 
+# agent_log_state classifies the agent's JSON log lines ($1) as connected,
+# failed (enrollment rejected) or waiting.
+agent_log_state() {
+  local logs="$1"
+  if grep -q '"msg":"connected"' <<<"$logs"; then
+    echo connected
+  elif grep -q '"msg":"enrollment failed"' <<<"$logs"; then
+    echo failed
+  else
+    echo waiting
+  fi
+}
+# end agent_log_state
+
 # -----------------------------------------------------------------------------
 # Pre-flight
 # -----------------------------------------------------------------------------
@@ -175,8 +189,14 @@ fi
 # -----------------------------------------------------------------------------
 RUN_USER=root
 RUN_GROUP=root
-DATA_DIR=/var/lib/dockmesh
 ENV_DIR=/etc/dockmesh-agent
+# The server defaults to /var/lib/dockmesh; an agent on the same host must not
+# share it. A re-run keeps the directory an earlier install already used.
+DATA_DIR=/var/lib/dockmesh-agent
+if [[ -r "$ENV_DIR/agent.env" ]]; then
+  PREV_DATA_DIR="$(sed -n 's/^DOCKMESH_DATA_DIR=//p' "$ENV_DIR/agent.env" | head -1)"
+  if [[ -n "$PREV_DATA_DIR" ]]; then DATA_DIR="$PREV_DATA_DIR"; fi
+fi
 
 if [[ $AS_ROOT -eq 0 ]]; then
   RUN_USER=dockmesh-agent
@@ -330,24 +350,33 @@ EOF
 # -----------------------------------------------------------------------------
 log "reloading systemd"
 systemctl daemon-reload
+START_TS="$(date +"%Y-%m-%d %H:%M:%S")"
 systemctl enable --now dockmesh-agent.service
 
-log "waiting for agent to connect"
-for i in 1 2 3 4 5 6 7 8 9 10; do
-  if systemctl is-active --quiet dockmesh-agent; then
-    break
-  fi
+AGENT_WAIT_SECS="${AGENT_WAIT_SECS:-60}"
+log "waiting for agent to connect (up to ${AGENT_WAIT_SECS}s)"
+STATE=waiting
+AGENT_LOGS=""
+for ((i = 0; i < AGENT_WAIT_SECS; i++)); do
+  AGENT_LOGS="$(journalctl -u dockmesh-agent --since "$START_TS" --no-pager -o cat 2>/dev/null || true)"
+  STATE="$(agent_log_state "$AGENT_LOGS")"
+  [[ "$STATE" != waiting ]] && break
   sleep 1
 done
 
-if systemctl is-active --quiet dockmesh-agent; then
-  printf '\n\033[1;32m✓\033[0m dockmesh-agent installed and running\n'
+if [[ "$STATE" == connected ]]; then
+  printf '\n\033[1;32m✓\033[0m dockmesh-agent installed and connected\n'
   printf '  user:    %s\n' "$RUN_USER"
   printf '  data:    %s\n' "$DATA_DIR"
   printf '  status:  systemctl status dockmesh-agent\n'
   printf '  logs:    journalctl -u dockmesh-agent -f\n'
 else
-  printf '\n\033[1;31m!!\033[0m dockmesh-agent failed to start. Recent logs:\n\n'
-  journalctl -u dockmesh-agent --no-pager -n 30 || true
+  if [[ "$STATE" == failed ]]; then
+    printf '\n\033[1;31m!!\033[0m the agent could not enroll. If the token expired or was already used, copy a fresh command from the Hosts page.\n'
+  else
+    printf '\n\033[1;31m!!\033[0m the agent did not connect to the server within %ss.\n' "$AGENT_WAIT_SECS"
+  fi
+  printf 'Last agent log lines:\n\n'
+  journalctl -u dockmesh-agent --no-pager -n 20 -o cat || true
   exit 1
 fi

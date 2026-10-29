@@ -28,6 +28,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 - The installer now detects an existing Dockmesh service reliably on upgrade, always restarts
   it after replacing the binary and stops with an error if the old binary is still running.
+- The agent installer now reports success only once the agent has connected to the server.
+  If enrollment fails or the server is unreachable it exits with an error and the last agent
+  log lines instead of printing "installed and running".
+- New agents keep their data in `/var/lib/dockmesh-agent` instead of `/var/lib/dockmesh`, so an
+  agent on the same host as the server no longer mixes its files with the server's. Re-running
+  the installer on an existing agent keeps its current directory.
 
 ## [0.4.0] - 2026-10-29 [security]
 
