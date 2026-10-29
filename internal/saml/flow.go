@@ -277,47 +277,11 @@ func (s *Service) HandleACS(ctx context.Context, pending *Pending, r *http.Reque
 }
 
 func (s *Service) jitProvision(ctx context.Context, p *Provider, subject, name, email, role string) (*auth.User, error) {
-	// Try existing user by (provider, subject) or by email.
-	var userID, username string
-	err := s.db.QueryRowContext(ctx, `
-		SELECT id, username FROM users
-		 WHERE (saml_provider = ? AND saml_subject = ?)
-		    OR email = ?
-		 LIMIT 1`, p.Slug, subject, email).Scan(&userID, &username)
-	if err != nil {
-		// New user — create.
-		u, cerr := s.auth.CreateSSOUser(ctx, name, email, role, p.Slug, subject)
-		if cerr != nil {
-			// Retry with numeric suffix if username collides.
-			for i := 2; i < 100; i++ {
-				u, cerr = s.auth.CreateSSOUser(ctx, fmt.Sprintf("%s%d", name, i), email, role, p.Slug, subject)
-				if cerr == nil {
-					break
-				}
-			}
-			if cerr != nil {
-				return nil, fmt.Errorf("create sso user: %w", cerr)
-			}
-		}
-		// CreateSSOUser writes the OIDC columns; backfill the SAML
-		// columns separately so subsequent lookups by saml_subject
-		// hit the row.
-		_, _ = s.db.ExecContext(ctx,
-			`UPDATE users SET saml_provider = ?, saml_subject = ?,
-			                  oidc_provider = NULL, oidc_subject = NULL
-			   WHERE id = ?`, p.Slug, subject, u.ID)
-		return u, nil
-	}
-	// Existing user — refresh role + provider linkage so group
-	// changes at the IdP propagate on every login.
-	_, err = s.db.ExecContext(ctx, `
-		UPDATE users SET saml_provider = ?, saml_subject = ?, role = ?,
-		                 updated_at = CURRENT_TIMESTAMP
-		   WHERE id = ?`, p.Slug, subject, role, userID)
-	if err != nil {
-		return nil, err
-	}
-	return &auth.User{ID: userID, Username: username, Email: email, Role: role}, nil
+	return s.auth.ProvisionSSOUser(ctx, auth.SSOIdentity{
+		Kind: "saml", Provider: p.Slug, Subject: subject,
+		Email: email, EmailVerified: false,
+		Username: name, Role: role,
+	})
 }
 
 func extractAssertion(a *crewjam.Assertion, _ *Provider) (subject string, attrs map[string]string) {

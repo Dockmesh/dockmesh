@@ -30,18 +30,21 @@ func (h *Handlers) ListVolumes(w http.ResponseWriter, r *http.Request) {
 	hostID := r.URL.Query().Get("host")
 
 	if host.IsAll(hostID) && h.Hosts != nil {
-		targets := h.Hosts.PickAll(r.Context())
+		targets := h.filterHostsByScope(r, h.Hosts.PickAll(r.Context()))
 		res := host.FanOut(r.Context(), targets, func(ctx context.Context, hh host.Host) ([]volumeRow, error) {
 			list, err := hh.ListVolumes(ctx)
 			if err != nil {
 				return nil, err
 			}
-			rows := make([]volumeRow, len(list))
-			for i, v := range list {
+			rows := make([]volumeRow, 0, len(list))
+			for _, v := range list {
 				row := toMap(v)
+				if !h.inReadScope(r, hh.ID(), composeProjectLabel(row["Labels"])) {
+					continue
+				}
 				row["host_id"] = hh.ID()
 				row["host_name"] = hh.Name()
-				rows[i] = row
+				rows = append(rows, row)
 			}
 			return rows, nil
 		})
@@ -54,12 +57,29 @@ func (h *Handlers) ListVolumes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	if !h.requireHostAccess(w, r, target.ID()) {
+		return
+	}
 	vols, err := target.ListVolumes(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, vols)
+	out := make([]any, 0, len(vols))
+	for _, v := range vols {
+		if h.inReadScope(r, target.ID(), composeProjectLabel(toMap(v)["Labels"])) {
+			out = append(out, v)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// composeProjectLabel returns the compose project from a decoded Docker
+// labels map, or "" when there is none.
+func composeProjectLabel(labels any) string {
+	m, _ := labels.(map[string]any)
+	proj, _ := m["com.docker.compose.project"].(string)
+	return proj
 }
 
 func (h *Handlers) InspectVolume(w http.ResponseWriter, r *http.Request) {
@@ -73,6 +93,10 @@ func (h *Handlers) InspectVolume(w http.ResponseWriter, r *http.Request) {
 	vol, err := target.InspectVolume(r.Context(), chi.URLParam(r, "name"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if !h.inReadScope(r, target.ID(), vol.Labels["com.docker.compose.project"]) {
+		writeError(w, http.StatusForbidden, "out of scope: your role does not include this volume")
 		return
 	}
 	writeJSON(w, http.StatusOK, vol)
@@ -134,6 +158,9 @@ func (h *Handlers) BrowseVolume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	if !h.requireHostAccess(w, r, target.ID()) {
+		return
+	}
 	scopeReq := h.hostScopeReq(r.Context(), target.ID())
 	if !h.checkRoleScope(r, scopeReq) {
 		h.writeRoleScopeDenied(w, r, rbac.PermVolumesBrowse, scopeReq, "host "+target.ID())
@@ -157,6 +184,9 @@ func (h *Handlers) ReadVolumeFile(w http.ResponseWriter, r *http.Request) {
 	target, err := h.pickHost(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
 	scopeReq := h.hostScopeReq(r.Context(), target.ID())

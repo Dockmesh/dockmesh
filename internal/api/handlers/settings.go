@@ -4,6 +4,9 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // ListSettings returns all DB-backed settings for the System tab.
@@ -42,6 +45,19 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, e := range entries {
+		// Where local backups may be written is as powerful as replacing the
+		// server binary, so it needs that permission rather than settings
+		// access.
+		if (e.Key == targets.LocalRootsSetting || e.Key == targets.LocalRootsSeededSetting) && !roleAllows(r, rbac.PermSystemUpgrade) {
+			writeError(w, http.StatusForbidden, "changing "+e.Key+" needs the system.upgrade permission")
+			return
+		}
+		if e.Key == targets.LocalRootsSetting {
+			if err := h.Settings.Set(r.Context(), targets.LocalRootsSeededSetting, "reviewed"); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
 		prev := h.Settings.Get(e.Key, "")
 		if err := h.Settings.Set(r.Context(), e.Key, e.Value); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())

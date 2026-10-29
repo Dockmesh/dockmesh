@@ -68,6 +68,8 @@ type Provider struct {
 	LastTestError   string         `json:"last_test_error,omitempty"`
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
+
+	AllowEmailLink bool `json:"allow_email_link"`
 }
 
 // ProviderInput is the create/update payload.
@@ -83,6 +85,8 @@ type ProviderInput struct {
 	GroupMappings  []GroupMapping `json:"group_mappings,omitempty"`
 	Enabled        bool           `json:"enabled"`
 	IsDefault      bool           `json:"is_default,omitempty"`
+
+	AllowEmailLink bool `json:"allow_email_link"`
 }
 
 // PublicProvider is what the unauthenticated login page sees.
@@ -137,6 +141,13 @@ func (s *Service) ListProviders(ctx context.Context) ([]Provider, error) {
 			return nil, err
 		}
 	}
+	links, err := s.auth.EmailLinkingByID(ctx, "saml")
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].AllowEmailLink = links[out[i].ID]
+	}
 	return out, nil
 }
 
@@ -178,6 +189,11 @@ func (s *Service) GetProvider(ctx context.Context, id int64) (*Provider, error) 
 	if err := s.loadGroupMappings(ctx, p); err != nil {
 		return nil, err
 	}
+	links, err := s.auth.EmailLinkingByID(ctx, "saml")
+	if err != nil {
+		return nil, err
+	}
+	p.AllowEmailLink = links[p.ID]
 	return p, nil
 }
 
@@ -248,6 +264,9 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 			return nil, err
 		}
 	}
+	if err := s.auth.SetEmailLinking(ctx, "saml", id, in.AllowEmailLink); err != nil {
+		return nil, err
+	}
 	return s.GetProvider(ctx, id)
 }
 
@@ -295,6 +314,9 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 		if err := s.SetGroupMappings(ctx, id, in.GroupMappings); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.auth.SetEmailLinking(ctx, "saml", id, in.AllowEmailLink); err != nil {
+		return nil, err
 	}
 	return s.GetProvider(ctx, id)
 }

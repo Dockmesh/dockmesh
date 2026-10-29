@@ -17,13 +17,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/safepath"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-git/go-git/v5"
@@ -40,7 +43,10 @@ var (
 	ErrPollTooShort     = errors.New("poll_interval_sec must be >= 60")
 	ErrComposeMissing   = errors.New("repo did not contain compose.yaml at path_in_repo")
 	ErrStackNameInvalid = errors.New("stack name contains characters that cannot be used on disk")
+	ErrPathOutsideRepo  = errors.New("path_in_repo must be a relative path inside the repository")
 )
+
+var ErrWebhookSecretShort = fmt.Errorf("webhook_secret must be at least %d characters", minWebhookSecretLen)
 
 // Source is the DB-backed row, returned to handlers with secrets
 // redacted via the Has* flags instead of raw values.
@@ -108,16 +114,25 @@ type Service struct {
 
 	stop chan struct{}
 	wg   sync.WaitGroup
+
+	syncMu    sync.Mutex
+	stackMu   map[string]*sync.Mutex
+	triggered map[string]bool // stack -> another sync was requested while one ran
+
+	// syncFn replaces the clone/copy/deploy body in tests.
+	syncFn func(ctx context.Context, stackName string) (*SyncResult, error)
 }
 
 func New(db *sql.DB, secretsSvc *secrets.Service, stacksMgr *stacks.Manager, cacheDir string, deploy DeployFunc) *Service {
 	return &Service{
-		db:       db,
-		secrets:  secretsSvc,
-		stacks:   stacksMgr,
-		cacheDir: cacheDir,
-		deploy:   deploy,
-		stop:     make(chan struct{}),
+		db:        db,
+		secrets:   secretsSvc,
+		stacks:    stacksMgr,
+		cacheDir:  cacheDir,
+		deploy:    deploy,
+		stop:      make(chan struct{}),
+		stackMu:   make(map[string]*sync.Mutex),
+		triggered: make(map[string]bool),
 	}
 }
 
@@ -147,7 +162,7 @@ func (s *Service) Get(ctx context.Context, stackName string) (*Source, error) {
 		       password_encrypted IS NOT NULL AS has_password,
 		       ssh_key_encrypted IS NOT NULL AS has_ssh_key,
 		       auto_deploy, poll_interval_sec,
-		       webhook_secret IS NOT NULL AS has_webhook_secret,
+		       COALESCE(webhook_secret, '') <> '' AS has_webhook_secret,
 		       COALESCE(last_sync_sha, ''),
 		       last_sync_at,
 		       COALESCE(last_sync_error, ''),
@@ -315,7 +330,70 @@ func (s *Service) WebhookSecret(ctx context.Context, stackName string) (string, 
 // Sync — clone/pull + copy into the stack's FS location
 // -----------------------------------------------------------------------------
 
+// webhookSyncTimeout bounds a webhook-triggered sync, which outlives the
+// request that queued it.
+const webhookSyncTimeout = 10 * time.Minute
+
+// Sync pulls the stack's repo and copies it into the stack. Syncs of the
+// same stack (poller, manual, webhook) run one at a time, since they share
+// the clone dir and the stack files.
 func (s *Service) Sync(ctx context.Context, stackName string) (*SyncResult, error) {
+	mu := s.stackLock(stackName)
+	mu.Lock()
+	defer mu.Unlock()
+	if s.syncFn != nil {
+		return s.syncFn(ctx, stackName)
+	}
+	return s.sync(ctx, stackName)
+}
+
+func (s *Service) stackLock(stackName string) *sync.Mutex {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	mu, ok := s.stackMu[stackName]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.stackMu[stackName] = mu
+	}
+	return mu
+}
+
+// TriggerSync starts a background sync for a webhook delivery and returns
+// at once. Deliveries arriving while one runs collapse into a single
+// follow-up sync, so replaying a delivery can't pile up syncs or deploys.
+func (s *Service) TriggerSync(ctx context.Context, stackName string) {
+	s.syncMu.Lock()
+	if _, running := s.triggered[stackName]; running {
+		s.triggered[stackName] = true
+		s.syncMu.Unlock()
+		return
+	}
+	s.triggered[stackName] = false
+	s.syncMu.Unlock()
+
+	base := context.WithoutCancel(ctx)
+	go func() {
+		for {
+			runCtx, cancel := context.WithTimeout(base, webhookSyncTimeout)
+			if _, err := s.Sync(runCtx, stackName); err != nil {
+				slog.Warn("git webhook sync failed", "stack", stackName, "err", err)
+			}
+			cancel()
+
+			s.syncMu.Lock()
+			again := s.triggered[stackName]
+			if !again {
+				delete(s.triggered, stackName)
+				s.syncMu.Unlock()
+				return
+			}
+			s.triggered[stackName] = false
+			s.syncMu.Unlock()
+		}
+	}()
+}
+
+func (s *Service) sync(ctx context.Context, stackName string) (*SyncResult, error) {
 	src, err := s.Get(ctx, stackName)
 	if err != nil {
 		return nil, err
@@ -469,28 +547,18 @@ func (s *Service) cloneOrPull(ctx context.Context, src *Source, dir string, auth
 // UI can render a "drift detected" banner.
 func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string) (EnvDrift, error) {
 	var drift EnvDrift
-	src := filepath.Join(cloneDir, pathInRepo)
-	composePath := src
-	isDir := false
-	if info, err := os.Stat(src); err == nil && info.IsDir() {
-		isDir = true
-		for _, name := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
-			p := filepath.Join(src, name)
-			if _, err := os.Stat(p); err == nil {
-				composePath = p
-				break
-			}
-		}
-	}
-	compose, err := os.ReadFile(composePath)
+	// The repo decides what its files are, including symlinks, so the clone
+	// is only read through an os.Root: nothing outside it can be reached.
+	repo, err := os.OpenRoot(cloneDir)
 	if err != nil {
-		return drift, ErrComposeMissing
+		return drift, err
 	}
-	envFromRepo := ""
-	envPath := filepath.Join(filepath.Dir(composePath), ".env")
-	if b, err := os.ReadFile(envPath); err == nil {
-		envFromRepo = string(b)
+	defer repo.Close()
+	src, err := readCompose(repo, pathInRepo)
+	if err != nil {
+		return drift, err
 	}
+	compose, envFromRepo := src.compose, src.env
 	if _, err := s.stacks.Get(stackName); err != nil {
 		// First sync — seed both compose + .env straight from the repo.
 		// The merger still runs to surface compose `${VAR}` that the
@@ -518,20 +586,69 @@ func (s *Service) copyIntoStack(cloneDir, pathInRepo, stackName string) (EnvDrif
 		}
 	}
 	// Mirror sibling files when path_in_repo was a directory.
-	if !isDir {
+	if !src.isDir {
 		return drift, nil
 	}
 	dstDir, err := s.stacks.Dir(stackName)
 	if err != nil {
 		return drift, nil // non-fatal — compose + env are already in place
 	}
-	return drift, copyTreeSiblings(filepath.Dir(composePath), dstDir)
+	return drift, copyTreeSiblings(repo, src.dir, dstDir)
 }
 
-// copyTreeSiblings mirrors all non-dotfile entries under src into dst,
-// recursively, EXCEPT the compose / .env files the main copy already
-// handled. Tops out at 64 MiB per file to keep build-contexts sane.
-func copyTreeSiblings(src, dst string) error {
+type repoCompose struct {
+	compose, env string
+	dir          string // directory of the compose file, relative to the clone
+	isDir        bool   // path_in_repo named a directory
+}
+
+// readCompose finds the compose file (and an optional .env next to it) at
+// pathInRepo inside the clone.
+func readCompose(repo *os.Root, pathInRepo string) (repoCompose, error) {
+	var out repoCompose
+	rel := filepath.Clean(filepath.FromSlash(pathInRepo))
+	composeRel := rel
+	info, err := repo.Stat(rel)
+	if safepath.IsRootEscape(err) {
+		return out, ErrPathOutsideRepo
+	}
+	if err == nil && info.IsDir() {
+		out.isDir = true
+		for _, name := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
+			p := filepath.Join(rel, name)
+			_, err := repo.Stat(p)
+			if safepath.IsRootEscape(err) {
+				return out, ErrPathOutsideRepo
+			}
+			if err == nil {
+				composeRel = p
+				break
+			}
+		}
+	}
+	b, err := repo.ReadFile(composeRel)
+	if safepath.IsRootEscape(err) {
+		return out, ErrPathOutsideRepo
+	}
+	if err != nil {
+		return out, ErrComposeMissing
+	}
+	out.compose = string(b)
+	out.dir = filepath.Dir(composeRel)
+	if env, err := repo.ReadFile(filepath.Join(out.dir, ".env")); err == nil {
+		out.env = string(env)
+	}
+	return out, nil
+}
+
+// copyTreeSiblings mirrors all non-dotfile entries under srcRel (relative
+// to the clone) into dst, recursively, EXCEPT the compose / .env files the
+// main copy already handled. Tops out at 64 MiB per file to keep
+// build-contexts sane. Symlinks are copied as the file they point to and
+// skipped when that lies outside the clone. dst is written through an
+// os.Root as well: containers bind-mount parts of the stack directory and
+// could leave symlinks there.
+func copyTreeSiblings(repo *os.Root, srcRel, dst string) error {
 	const maxFile = 64 << 20
 	skip := map[string]bool{
 		"compose.yaml":        true,
@@ -541,41 +658,58 @@ func copyTreeSiblings(src, dst string) error {
 		".env":                true,
 		".git":                true,
 	}
-	return filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+	out, err := os.OpenRoot(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	fsys := repo.FS()
+	start := filepath.ToSlash(srcRel)
+	return fs.WalkDir(fsys, start, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(src, p)
-		if rel == "." {
+		rel := strings.TrimPrefix(strings.TrimPrefix(p, start), "/")
+		if start == "." {
+			rel = p
+		}
+		if rel == "" || rel == "." {
 			return nil
 		}
 		// skip top-level compose / .env (already written) and anything
 		// git-adjacent.
 		if skip[rel] || strings.HasPrefix(rel, ".git") {
 			if d.IsDir() {
-				return filepath.SkipDir
+				return fs.SkipDir
 			}
 			return nil
 		}
-		dstPath := filepath.Join(dst, rel)
+		dstRel := filepath.FromSlash(rel)
 		if d.IsDir() {
-			return os.MkdirAll(dstPath, 0o755)
+			return out.MkdirAll(dstRel, 0o755)
 		}
-		info, ierr := d.Info()
-		if ierr != nil {
-			return ierr
+		info, err := fs.Stat(fsys, p)
+		if safepath.IsRootEscape(err) {
+			slog.Warn("git sync: skipping symlink that leaves the repository", "path", rel)
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
 		}
 		if info.Size() > maxFile {
 			return fmt.Errorf("file %s exceeds %d bytes — refusing to copy into stack dir", rel, maxFile)
 		}
-		if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+		if err := out.MkdirAll(filepath.Dir(dstRel), 0o755); err != nil {
 			return err
 		}
-		b, err := os.ReadFile(p)
+		b, err := fs.ReadFile(fsys, p)
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(dstPath, b, info.Mode().Perm())
+		return out.WriteFile(dstRel, b, info.Mode().Perm())
 	})
 }
 
@@ -755,8 +889,19 @@ func validateInput(in Input) error {
 	if in.PollIntervalSec != 0 && in.PollIntervalSec < 60 {
 		return ErrPollTooShort
 	}
+	// Only new secrets are checked; shorter ones stored earlier keep working.
+	if in.WebhookSecret != "" && len(in.WebhookSecret) < minWebhookSecretLen {
+		return ErrWebhookSecretShort
+	}
+	p := filepath.ToSlash(in.PathInRepo)
+	if strings.HasPrefix(p, "/") || filepath.IsAbs(in.PathInRepo) || slices.Contains(strings.Split(p, "/"), "..") {
+		return ErrPathOutsideRepo
+	}
 	return nil
 }
+
+// minWebhookSecretLen keeps webhook secrets out of guessing range.
+const minWebhookSecretLen = 16
 
 func safeStackName(s string) bool {
 	if s == "" || strings.ContainsAny(s, `/\:*?"<>|`) {
