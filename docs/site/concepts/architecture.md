@@ -62,7 +62,7 @@ Compose files are never stored only in the database. If you lose the database yo
 
 1. The browser or `dmctl` sends a request to `/api/v1/...` with a bearer token. Browser sessions use a 15-minute access token plus a refresh token; scripts use API tokens (`dmt_...`).
 2. The auth middleware checks the token and loads the user's current role and scope from the database on every request, so role changes take effect immediately.
-3. Each route is gated by one permission such as `stacks.deploy`. Handlers that act on a specific host or stack also check scope. See [Permissions](./permissions.md).
+3. Most routes are gated by one permission such as `stacks.deploy`. Handlers that act on a specific host or stack also check scope. See [Permissions](./permissions.md).
 4. The handler picks the target host from the `?host=` query parameter. No parameter or `local` means the local host; an agent ID means that remote host. List endpoints also accept `?host=all` and query every online host in parallel.
 5. For the local host the server calls the Docker SDK directly. For a remote host it sends a request frame over the agent's WebSocket and waits for the reply.
 

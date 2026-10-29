@@ -18,7 +18,7 @@ sudo install -m 0755 dmctl /usr/local/bin/dmctl
 dmctl --version
 ```
 
-Release tarballs exist for `linux_amd64`, `linux_arm64`, `darwin_amd64` and `darwin_arm64`. There is no Windows build; build from source with `go build ./cmd/dmctl` if you need one.
+Release tarballs exist for `linux_amd64`, `linux_arm64`, `darwin_amd64` and `darwin_arm64`. Releases contain no Windows build; `make build` produces `bin/dmctl-windows-amd64.exe`, or run `go build ./cmd/dmctl`.
 
 ## Log in
 

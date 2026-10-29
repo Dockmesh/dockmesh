@@ -8,8 +8,8 @@ Dockmesh supports four kinds of external identity providers. All of them are fre
 | Kind | Typical providers | Templates in the dialog |
 |---|---|---|
 | OIDC | Keycloak, Authelia, Authentik, Azure AD, Google, GitLab | Keycloak, Authelia, Microsoft 365 (Azure AD), Google, GitLab, Generic OIDC |
-| OAuth2 | GitHub, Gitea, Bitbucket, GitLab OAuth | GitHub, GitLab OAuth, Google OAuth |
-| SAML | Azure AD, AD FS, Okta, Authentik | none |
+| OAuth2 | GitHub, Gitea, Bitbucket, GitLab OAuth | GitHub, GitLab OAuth, Google OAuth, Generic OAuth2 |
+| SAML | Azure AD, AD FS, Okta, Authentik | Azure AD (Microsoft Entra), AD FS, Okta, Authentik / Keycloak, Generic SAML 2.0 |
 | LDAP | OpenLDAP, Active Directory, FreeIPA | none |
 
 Every provider has a slug (used in its URLs), a display name, a **Default role** and an enabled flag. For OIDC, **Test discovery** in the dialog checks that the issuer URL answers. The other kinds have test endpoints in the API (`POST /api/v1/<kind>/providers/{id}/test`).

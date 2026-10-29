@@ -40,7 +40,7 @@ A stack directory you create by hand while the server is running does not appear
 
 ## What the database holds
 
-- **Deployment record:** one row per stack name with the host ID and a status (`deployed`, `stopped`, `migrating`, `migrated_away`).
+- **Deployment record:** one row per stack name with the host ID and a status (`deployed` or `stopped`).
 - **Deploy history:** the compose text that was deployed (with the environment override already merged) and the image tag each service used. Rollback redeploys one of these entries. The `.env` file itself is not stored, but when an environment override was active the stored compose text has the `.env` values already filled in.
 - **Dependencies** between stacks, **git-source** bindings, **templates** and **global environment variables**.
 

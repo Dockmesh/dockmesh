@@ -9,7 +9,7 @@ The recommended path is the installer script on a Linux host that already runs D
 
 | | |
 |---|---|
-| Operating system | Linux (amd64 or arm64). macOS (amd64 or arm64) is also handled by the installer but is less tested; the setup wizard warns on anything other than Linux. There are no Windows builds. |
+| Operating system | Linux (amd64 or arm64). macOS (amd64 or arm64) is also handled by the installer but is less tested; the setup wizard warns on anything other than Linux. The server and agent do not run on Windows. |
 | Docker | A running Docker Engine reachable at `/var/run/docker.sock`. 20.10 or newer is recommended. The installer does not install Docker; it prints the command for your distribution if Docker is missing. On macOS, enable **Allow the default Docker socket to be used** in Docker Desktop's advanced settings. |
 | Tools | `curl`, `tar`, and `sha256sum` (or `shasum` on macOS). systemd is optional; without it the server has to be started by hand. |
 | Privileges | root or `sudo`. |
