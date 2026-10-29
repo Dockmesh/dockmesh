@@ -256,16 +256,17 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   that already signed in through SSO keep working as long as the provider sends the same
   subject; users whose LDAP DN or OAuth2 login changed need their old account removed or
   relinked by an admin.
-- [saml-subject, admins] SAML accounts are now keyed by a stable subject. New providers ask for
-  a persistent NameID; existing providers keep their NameID format, so check it under
-  Authentication (persistent is recommended, and with emailAddress a changed email breaks the
-  login) or set a subject attribute. Accounts created through SAML before this version get
-  their new subject at their next sign-in, once, when it comes from the same provider with the
-  same email and within 90 days of the upgrade. Admin accounts and accounts with two-factor
-  authentication are not changed this way; for them, and after the 90 days, an admin has to
-  remove the old account.
-  Each of these changes is written to the audit log as `auth.saml_rekey`. With an identity
-  provider on another domain, Dockmesh must be reached over HTTPS.
+- [saml-subject, admins] SAML accounts are now keyed by a stable subject. New providers ask
+  for a persistent NameID; existing providers keep their NameID format. Check it under
+  Authentication before your users sign in again (persistent is recommended, and with
+  emailAddress a changed email breaks the login) or set a subject attribute: the first sign-in
+  after the upgrade fixes the subject an account is known by. Accounts created through SAML
+  before this version get their new subject at their next sign-in, once, when it comes from
+  the same provider with the same email and within 90 days of the upgrade. Admin accounts and
+  accounts with two-factor authentication are not changed this way; for them, and after the 90
+  days, an admin has to remove the old account. Each of these changes is written to the audit
+  log as `auth.saml_rekey`. With an identity provider on another domain, Dockmesh must be
+  reached over HTTPS.
 - [sso-linked-accounts-review, admins] Earlier versions linked SSO logins to accounts by email
   alone. A notice lists how many accounts are linked to SSO and which of them are admins; check
   that each belongs to the right person.
