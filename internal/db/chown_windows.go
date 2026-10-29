@@ -1,3 +1,5 @@
 package db
 
-func chownLike(path, ref string) error { return nil }
+import "os"
+
+func chownLike(*os.File, string) error { return nil }

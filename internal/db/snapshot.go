@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -16,15 +17,42 @@ import (
 // snapshot, e.g. when the disk is too full to hold a copy of the database.
 const SkipSnapshotEnv = "DOCKMESH_SKIP_PREMIGRATE_BACKUP"
 
-const keepSnapshots = 3
+const (
+	keepSnapshots  = 3
+	snapshotLayout = "20060102T150405.000Z"
+	tmpSuffix      = ".tmp"
+	// Bounds the search for a free name when snapshots land in the same
+	// millisecond.
+	nameAttempts = 10
+)
+
+var snapshotSuffix = regexp.MustCompile(`\.pre-migrate-\d{8}T\d{6}\.\d{3}Z\.bak(\.tmp)?$`)
 
 // nowUTC is swapped in tests to get a predictable snapshot name.
 var nowUTC = func() time.Time { return time.Now().UTC() }
 
+// IsSnapshotName reports whether name is a pre-migration snapshot (finished
+// or in progress) of the database file named dbBase. An empty dbBase
+// matches snapshots of any database.
+func IsSnapshotName(dbBase, name string) bool {
+	loc := snapshotSuffix.FindStringIndex(name)
+	if loc == nil || loc[0] == 0 {
+		return false
+	}
+	return dbBase == "" || name[:loc[0]] == dbBase
+}
+
+func isFinishedSnapshot(dbBase, name string) bool {
+	return IsSnapshotName(dbBase, name) && !strings.HasSuffix(name, tmpSuffix)
+}
+
 // snapshotBeforeMigrate writes <db>.pre-migrate-<UTC timestamp>.bak next to
 // the database file and prunes older snapshots of the same database.
-// In-memory databases have no file and are skipped.
-func snapshotBeforeMigrate(db *sql.DB) error {
+// In-memory databases have no file and are skipped. latest is the newest
+// applied migration; if the newest snapshot is already at that version it
+// is reused, so a migration that fails on every start does not rotate the
+// pre-upgrade copy out.
+func snapshotBeforeMigrate(db *sql.DB, latest string) error {
 	if v := os.Getenv(SkipSnapshotEnv); v == "1" || v == "true" {
 		slog.Warn("skipping pre-migration database snapshot", "env", SkipSnapshotEnv)
 		return nil
@@ -36,12 +64,20 @@ func snapshotBeforeMigrate(db *sql.DB) error {
 	if path == "" {
 		return nil
 	}
-	target := fmt.Sprintf("%s.pre-migrate-%s.bak", path, nowUTC().Format("20060102T150405Z"))
-	if err := vacuumInto(db, path, target); err != nil {
+	existing, err := listSnapshots(path)
+	if err != nil {
+		return snapshotError(err)
+	}
+	if n := len(existing); n > 0 && snapshotVersion(existing[n-1]) == latest {
+		slog.Info("reusing existing database snapshot from before migration", "path", existing[n-1])
+		return nil
+	}
+	target, err := writeSnapshot(db, path)
+	if err != nil {
 		return snapshotError(err)
 	}
 	slog.Info("database snapshot written before migration", "path", target)
-	pruneSnapshots(path)
+	pruneSnapshots(path, target)
 	return nil
 }
 
@@ -70,51 +106,105 @@ func mainDBFile(db *sql.DB) (string, error) {
 	return "", rows.Err()
 }
 
-func vacuumInto(db *sql.DB, dbPath, target string) error {
-	// Creating the file up front fixes its mode before any data lands in
-	// it; VACUUM INTO accepts an existing empty file.
-	f, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(target)
-		return err
-	}
-	if err := chownLike(target, dbPath); err != nil {
-		_ = os.Remove(target)
-		return err
-	}
-	if _, err := db.Exec(`VACUUM INTO ?`, target); err != nil {
-		_ = os.Remove(target)
-		return err
-	}
-	return nil
-}
-
-func pruneSnapshots(dbPath string) {
+// listSnapshots returns the finished snapshots of dbPath, oldest first.
+func listSnapshots(dbPath string) ([]string, error) {
 	dir, base := filepath.Split(dbPath)
 	if dir == "" {
 		dir = "."
 	}
-	pattern := regexp.MustCompile(`^` + regexp.QuoteMeta(base) + `\.pre-migrate-\d{8}T\d{6}Z\.bak$`)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		slog.Warn("listing database snapshots failed", "dir", dir, "err", err)
-		return
+		return nil, err
 	}
 	var snaps []string
 	for _, e := range entries {
-		if e.Type().IsRegular() && pattern.MatchString(e.Name()) {
-			snaps = append(snaps, e.Name())
+		if e.Type().IsRegular() && isFinishedSnapshot(base, e.Name()) {
+			snaps = append(snaps, filepath.Join(dir, e.Name()))
 		}
 	}
-	if len(snaps) <= keepSnapshots {
+	sort.Strings(snaps)
+	return snaps, nil
+}
+
+// snapshotVersion returns the newest migration recorded in the snapshot at
+// path, or "" when it cannot be read.
+func snapshotVersion(path string) string {
+	snap, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	if err != nil {
+		return ""
+	}
+	defer snap.Close()
+	var v sql.NullString
+	if err := snap.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v); err != nil {
+		return ""
+	}
+	return v.String
+}
+
+// writeSnapshot fills <target>.tmp and renames it into place, so a crash
+// mid-copy never leaves a file that looks like a finished snapshot.
+func writeSnapshot(db *sql.DB, dbPath string) (string, error) {
+	ts := nowUTC()
+	var target string
+	for i := 0; ; i++ {
+		if i == nameAttempts {
+			return "", fmt.Errorf("no free snapshot name after %d attempts", nameAttempts)
+		}
+		target = fmt.Sprintf("%s.pre-migrate-%s.bak", dbPath, ts.Add(time.Duration(i)*time.Millisecond).Format(snapshotLayout))
+		if _, err := os.Lstat(target); errors.Is(err, os.ErrNotExist) {
+			break
+		} else if err != nil {
+			return "", err
+		}
+	}
+	tmp := target + tmpSuffix
+	if err := os.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	// Creating the file up front fixes its mode and owner before any data
+	// lands in it; VACUUM INTO accepts an existing empty file.
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // derived from the configured DB path
+	if err != nil {
+		return "", err
+	}
+	if err := chownLike(f, dbPath); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	if _, err := db.Exec(`VACUUM INTO ?`, tmp); err != nil {
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	if err := os.Rename(tmp, target); err != nil {
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	return target, nil
+}
+
+// pruneSnapshots deletes the oldest snapshots of dbPath so keepSnapshots
+// remain, never touching keep (the one just written).
+func pruneSnapshots(dbPath, keep string) {
+	snaps, err := listSnapshots(dbPath)
+	if err != nil {
+		slog.Warn("listing database snapshots failed", "db", dbPath, "err", err)
 		return
 	}
-	sort.Strings(snaps)
-	for _, name := range snaps[:len(snaps)-keepSnapshots] {
-		p := filepath.Join(dir, name)
+	var others []string
+	for _, s := range snaps {
+		if s != keep {
+			others = append(others, s)
+		}
+	}
+	if len(others) < keepSnapshots {
+		return
+	}
+	for _, p := range others[:len(others)-(keepSnapshots-1)] {
 		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
 			slog.Warn("removing old database snapshot failed", "path", p, "err", err)
 		}

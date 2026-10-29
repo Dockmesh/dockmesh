@@ -7,9 +7,9 @@ import (
 	"syscall"
 )
 
-// chownLike gives path the owner of ref when running as root, so a
-// snapshot taken by a root-run binary stays readable by the service user.
-func chownLike(path, ref string) error {
+// chownLike gives f the owner of ref when running as root, so a snapshot
+// taken by a root-run binary stays readable by the service user.
+func chownLike(f *os.File, ref string) error {
 	if os.Geteuid() != 0 {
 		return nil
 	}
@@ -21,5 +21,5 @@ func chownLike(path, ref string) error {
 	if !ok {
 		return nil
 	}
-	return os.Chown(path, int(st.Uid), int(st.Gid))
+	return f.Chown(int(st.Uid), int(st.Gid))
 }

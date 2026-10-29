@@ -67,8 +67,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   user who should own it, then revoke the old one. A notice stays up until none are left.
 - [premigrate-snapshot, admins] Make sure the database directory has room for a full copy
   of the database. Before schema changes Dockmesh writes `<db>.pre-migrate-<timestamp>.bak`
-  next to the database (`dockmesh.db.pre-migrate-20261029T101500Z.bak`, UTC) and keeps the
-  newest three. If the copy cannot be written, Dockmesh does not start and does not change
+  next to the database (`dockmesh.db.pre-migrate-20261029T101500.000Z.bak`, UTC) and keeps
+  the newest three; system backups leave these copies out. If the copy cannot be written, Dockmesh does not start and does not change
   the database; set `DOCKMESH_SKIP_PREMIGRATE_BACKUP=1` to upgrade without it. To roll back,
   stop the service, copy the `.bak` file over the database file, delete the database's
   `-wal` and `-shm` files if present, and start the previous version.

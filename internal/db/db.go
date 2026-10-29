@@ -72,6 +72,10 @@ func migrateUpTo(db *sql.DB, last string) error {
 		return err
 	}
 	var pending []string
+	latest := ""
+	for name := range applied {
+		latest = max(latest, name)
+	}
 	for _, name := range names {
 		if last != "" && name > last {
 			break
@@ -83,7 +87,7 @@ func migrateUpTo(db *sql.DB, last string) error {
 	// A database without any applied migration is a fresh install with
 	// nothing in it to lose.
 	if len(pending) > 0 && len(applied) > 0 {
-		if err := snapshotBeforeMigrate(db); err != nil {
+		if err := snapshotBeforeMigrate(db, latest); err != nil {
 			return err
 		}
 	}
