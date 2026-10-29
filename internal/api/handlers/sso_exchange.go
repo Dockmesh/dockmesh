@@ -79,12 +79,12 @@ func (h *Handlers) finishSSOLogin(w http.ResponseWriter, r *http.Request, login 
 		ssoErrorRedirect(w, r, "too many pending sign-ins, try again")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure follows the request scheme via cookiesSecure; HttpOnly and SameSite=Strict are set
 		Name:     ssoCodeCookie,
 		Value:    code,
 		Path:     "/api/v1/auth/sso/exchange",
 		HttpOnly: true,
-		Secure:   h.cookiesSecure(r), // #nosec G124 -- Secure follows the request scheme via cookiesSecure
+		Secure:   h.cookiesSecure(r),
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   int(ssoCodeTTL / time.Second),
 	})
@@ -104,11 +104,11 @@ func (h *Handlers) SSOExchange(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "code required")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure follows the request scheme via cookiesSecure; HttpOnly and SameSite=Strict are set
 		Name:     ssoCodeCookie,
 		Path:     "/api/v1/auth/sso/exchange",
 		HttpOnly: true,
-		Secure:   h.cookiesSecure(r), // #nosec G124 -- Secure follows the request scheme via cookiesSecure
+		Secure:   h.cookiesSecure(r),
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 	})

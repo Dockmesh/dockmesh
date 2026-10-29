@@ -105,7 +105,7 @@ func runCheck(args []string, stdout io.Writer) error {
 	} else if !errors.Is(statErr, fs.ErrNotExist) {
 		return statErr
 	}
-	if unreleasedBody(head) == unreleasedBody(baseSections) {
+	if unreleasedBody(head) == unreleasedBody(baseSections) && !hasNewRelease(head, baseSections) {
 		return errors.New("CHANGELOG.md [Unreleased] was not changed; add an entry, or label the PR no-changelog if users won't notice the change")
 	}
 	fmt.Fprintln(stdout, "changelog: [Unreleased] updated")
