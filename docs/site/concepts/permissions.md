@@ -13,13 +13,13 @@ Permissions are written `domain.verb`, for example `stacks.deploy` or `container
 
 | Domain | Permissions |
 |---|---|
-| `containers` | `view`, `update` (start, stop, restart, pause, kill), `delete`, `exec`, `logs` |
-| `stacks` | `view`, `create`, `update` (edit files), `delete`, `deploy` (deploy, stop, scale), `migrate`, `adopt` |
+| `containers` | `view`, `update` (start, stop, restart, pause, kill, remove, one-click image update and rollback), `delete` (not checked), `exec`, `logs` |
+| `stacks` | `view`, `create`, `update` (edit files), `delete`, `deploy` (deploy, stop, scale, rollback, deploy history, dependencies, environment overrides, scaling rules, template deploy), `migrate`, `adopt` |
 | `volumes` | `view`, `create`, `delete`, `browse`, `read_file` |
 | `networks` | `view`, `create`, `delete` |
 | `images` | `view`, `create` (pull), `delete`, `scan` |
 | `registries` | `view`, `create`, `update`, `delete` |
-| `hosts` | `view`, `create` (add a host), `update` (drain, upgrade), `delete` (revoke), `tag` |
+| `hosts` | `view`, `create` (add a host), `update` (drain, upgrade, re-issue enrollment token, agent upgrade policy), `delete` (revoke), `tag` |
 | `users` | `view`, `create`, `update`, `delete`, `password_reset`, `suspend` |
 | `roles` | `view`, `create`, `update`, `delete` |
 | `tokens` | `view`, `create`, `delete`, `manage_others` |
@@ -33,7 +33,7 @@ Permissions are written `domain.verb`, for example `stacks.deploy` or `container
 
 `GET /api/v1/roles/permissions` returns the full list with descriptions; the role editor builds its permission matrix from it.
 
-Four permissions appear in the matrix but are not checked by any endpoint: `audit.export`, `users.password_reset`, `users.suspend` and `volumes.read_file`. Reading a file inside a volume is covered by `volumes.browse`. Resetting another user's password requires the built-in `admin` role, whatever permissions a custom role holds.
+Six permissions appear in the matrix but are not checked by any endpoint: `audit.export`, `users.password_reset`, `users.suspend`, `volumes.read_file`, `containers.delete` and `templates.view`. Reading a file inside a volume is covered by `volumes.browse`, removing a container by `containers.update`, and any signed-in user can read templates. Resetting another user's password requires the built-in `admin` role, whatever permissions a custom role holds.
 
 ## Built-in roles
 
@@ -58,7 +58,7 @@ Dockmesh ships five roles, from least to most privileged: `viewer`, `operator`, 
 | system | view | view | view | view, update | all |
 | metrics | view | view | view | view | view |
 
-Viewers read everything, operators run existing stacks and containers, deployers also write compose files and pull images, host-admins run the whole fleet and its integrations, and only admins manage users, roles, audit settings and server upgrades.
+Viewers read everything, operators run existing stacks and containers, deployers also write compose files and pull images, host-admins run the whole fleet and its integrations, and only admins manage users, roles, audit settings, secrets-key rotation and update checks.
 
 <!-- update after: rbac: scope read endpoints, limit grants, gate sensitive downloads -->
 > **Warning:** `host-admin` holds `system.update` and `backups.restore`. Together these let a host-admin change sign-in and SSO settings and export the secrets encryption key. Give `host-admin` only to people you would trust as admins.

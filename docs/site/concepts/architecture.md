@@ -48,7 +48,7 @@ Dockmesh splits state between the filesystem and the database on purpose.
 **On the filesystem (source of truth for what runs):**
 
 - Stack definitions: `<stacks root>/<name>/compose.yaml`, the stack's `.env` or encrypted `.env.age`, optional `compose.<env>.yaml` override files and `.dockmesh.meta.json`. The stacks root is `DOCKMESH_STACKS_ROOT` (default `./stacks`). See [Stacks](./stacks.md).
-- The data directory, which is the directory containing the database file. It holds the JWT secret (`secrets.env`), the age key used to encrypt stack secrets (`secrets.age-key`), the internal CA and server certificate for agents, the git-source cache and the default local backup target.
+- The data directory, which is the directory containing the database file. It holds the internal CA and server certificate for agents and the git-source cache (`git-cache/`). The JWT secret (`secrets.env`, `DOCKMESH_SECRETS_PATH`), the age key used to encrypt stack secrets (`secrets.age-key`, `DOCKMESH_SECRETS_KEY_PATH`) and the default local backup target (`./data/backups`) are in `./data` by default too, but their paths do not follow `DOCKMESH_DB_PATH`.
 
 **In SQLite (runtime and management state):**
 
@@ -70,7 +70,7 @@ Live logs, exec shells, container stats and the event feed run over WebSockets u
 
 ## How a deploy flows
 
-1. You click **Deploy** (or run `dmctl stacks deploy`). The server reads `compose.yaml` and the decrypted `.env` from the stack directory, and merges global environment variables. If an environment override is active, the merged compose file is interpolated with the stack's `.env` only, so global variables do not apply.
+1. You click **Deploy** (or run `dmctl stacks deploy`). The server reads `compose.yaml` and the decrypted `.env` from the stack directory, and merges global environment variables. Stacks it depends on that aren't running on the target host yet are deployed first, in dependency order. If an environment override is active, the merged compose file is interpolated with the stack's `.env` only, so global variables do not apply.
 2. The server sends the compose text and environment to the target: the local host, or the agent on a remote host.
 3. On the target, Dockmesh writes both into a temporary staging directory, parses them with the Compose library, and reconciles with the Docker SDK: networks, then volumes, then image pulls, then each service in alphabetical order (remove the old container, create, start, wait for health).
 4. The server records which host the stack is on and adds a deploy-history entry. For remote hosts it also pushes a copy of the stack files to the agent.
@@ -81,7 +81,7 @@ The deploy runs inside the HTTP request. The details of what reconcile does, inc
 
 | Port | Listener | Who connects |
 |---|---|---|
-| `8080/tcp` | UI, REST API, WebSockets, `/metrics`, agent installer and enrollment | Browsers, `dmctl`, agents during enrollment |
+| `8080/tcp` | UI, REST API, WebSockets, `/metrics`, agent installer and enrollment | Browsers, `dmctl`, agents during enrollment and upgrades |
 | `8443/tcp` | Agent mTLS WebSocket (`/connect`) | Agents only |
 | `80/tcp`, `443/tcp` | Caddy in `dockmesh-proxy` (host network) | Your users, only when the proxy is enabled |
 

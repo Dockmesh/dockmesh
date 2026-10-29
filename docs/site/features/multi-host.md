@@ -77,7 +77,7 @@ The agent reads these from its environment (the installer puts them in `agent.en
 Each host gets a single-use enrollment token. Tokens don't expire. Keep unused install commands private, or revoke the pending host if a command leaks. On enrollment the server generates the agent's key pair and a client certificate signed by its internal CA, and returns them together with the CA certificate. The agent doesn't verify the server's TLS certificate during this request. It trusts whatever CA the enroll endpoint returns, and pins that CA for all later connections. Only enroll over a network path you trust, and use an `https://` base URL.
 
 <!-- update after: agents: survive disconnects, flow-control streams, renew certs -->
-Agent certificates are valid for 365 days and are not renewed automatically. When a certificate expires, the agent can no longer connect. To bring it back, remove the host and add it again (see below). Plan a re-enrollment before the year is up.
+Agent certificates are valid for 365 days and are not renewed automatically. When a certificate expires, the agent can no longer connect. To bring it back, revoke the host and add it again (see below). Plan a re-enrollment before the year is up.
 
 The CA (10 years) and the agent listener's certificate (5 years) live in the data directory as `agents-ca.crt`/`.key` and `agents-server.crt`/`.key`. Back them up with the rest of the data directory. Losing them means re-enrolling every agent.
 

@@ -105,7 +105,7 @@ When an environment override is active, the files are merged in the real stack d
 
 ## Environment overrides
 
-An override file `compose.<env>.yaml` sits next to `compose.yaml`. `<env>` may contain lowercase letters, digits, `-` and `_`. On deploy, Dockmesh merges `compose.yaml` with the override chosen for that deploy, or with the stack's default override from `.dockmesh.meta.json`. Interpolation in the merged file uses the stack's `.env` only, not global environment variables. Deploy history stores the merged result. See [Environment variables](../features/environment-variables.md).
+An override file `compose.<env>.yaml` sits next to `compose.yaml`. `<env>` starts with a lowercase letter or digit and may contain lowercase letters, digits, `-` and `_`. On deploy, Dockmesh merges `compose.yaml` with the override chosen for that deploy, or with the stack's default override from `.dockmesh.meta.json`. Interpolation in the merged file uses the stack's `.env` only, not global environment variables. Deploy history stores the merged result. See [Environment variables](../features/environment-variables.md).
 
 ## Related
 

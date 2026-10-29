@@ -12,7 +12,7 @@ All hosts appear on the **Hosts** page and in the host switcher at the top of th
 
 ## The agent model
 
-The agent only makes outbound connections. Remote hosts need no open inbound ports; they need to reach the server's HTTP port once for enrollment and the agent port (default `8443`) for the permanent connection.
+The agent only makes outbound connections. Remote hosts need no open inbound ports; they need to reach the server's HTTP port for enrollment and agent upgrades (the new binary is downloaded from `/install/`), and the agent port (default `8443`) for the permanent connection.
 
 ### Adding a host
 
@@ -60,7 +60,7 @@ The upgrade mode decides what happens to agents whose version differs from the s
 
 ## What works on remote hosts
 
-Most day-to-day features work on every host: container lists and lifecycle, logs, exec, live stats, images, volumes, networks, stack deploy, stop and scale, host metrics, drains and stack migration.
+Most day-to-day features work on every host: container lists and lifecycle, logs, exec, live stats, image, volume and network lists and inspect, stack deploy, stop and scale, host metrics, drains and stack migration.
 
 These work on the local host only:
 
@@ -69,6 +69,7 @@ These work on the local host only:
 | Rolling updates | Returns an error. |
 | Stack cleanup (preview and delete of leftover resources) | Returns an error. |
 | Container file browser | Returns an error. |
+| Image pull, volume and network create, remove and prune | Always run on the local host, whatever host is selected. |
 | Container metrics history | Only live stats; no stored history. |
 | Alerts | Rules evaluate local containers only. |
 | Vulnerability scanning | Scans images on the local host only. |
@@ -84,14 +85,14 @@ Stack migration moves the stack definition and redeploys it on the target host, 
 
 ## Host tags
 
-A host can carry up to 20 tags. Tags are lowercase letters, digits and hyphens, start with a letter or digit, and are at most 32 characters (`prod`, `eu-west`, `team-web`). Edit them with **Edit tags** in the host's row menu or on the host detail page; this needs `hosts.tag`. The local host can be tagged too.
+A host can carry up to 20 tags. Tags are lowercase letters, digits and hyphens, start with a letter or digit, and are at most 32 characters (`prod`, `eu-west`, `team-web`). Edit them with **Edit tags** in the host's row menu or on the **Tags** tab of the host detail page; this needs `hosts.tag`. The local host can be tagged too.
 
 Tags are used for:
 
 - **Searching** on the Hosts page.
 - **Scoping access.** A user's scope tags and a custom role's `host_tag` scope match against host tags. See [Permissions](./permissions.md#scopes).
 
-The **Scope (host tags)** field on saved registry credentials is stored but not applied when images are pulled.
+Leave the **Scope (host tags)** field on saved registry credentials empty: Dockmesh never passes host tags when it looks up credentials, so a credential with any scope tag is never used.
 
 ## Querying all hosts at once
 
