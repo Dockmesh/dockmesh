@@ -9,6 +9,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
@@ -62,7 +63,7 @@ func (h *Handlers) CreateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if !h.requireJobAccess(w, r, nil, &in) {
+	if !h.requireJobAccess(w, r, nil, &in) || !h.checkBackupJobScope(w, r, in) {
 		return
 	}
 	job, err := h.Backups.CreateJob(r.Context(), in)
@@ -99,7 +100,7 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !h.requireJobAccess(w, r, prev, &in) {
+	if !h.requireJobAccess(w, r, prev, &in) || !h.checkBackupJobScope(w, r, in) {
 		return
 	}
 	if prev.TargetType == in.TargetType {
@@ -162,6 +163,35 @@ func (h *Handlers) AcknowledgeBackupJobReview(w http.ResponseWriter, r *http.Req
 		return
 	}
 	h.audit(r, audit.ActionStackUpdate, "backup:"+strconv.FormatInt(job.ID, 10), map[string]string{"review": mode})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AcceptBackupHostKey trusts the changed SFTP host key a job last saw.
+//
+//	POST /api/v1/backups/jobs/{id}/accept-host-key
+func (h *Handlers) AcceptBackupHostKey(w http.ResponseWriter, r *http.Request) {
+	if h.Backups == nil {
+		writeError(w, http.StatusServiceUnavailable, "backups not configured")
+		return
+	}
+	job, ok := h.jobForAccess(w, r)
+	if !ok {
+		return
+	}
+	id := job.ID
+	err := h.Backups.AcceptHostKey(r.Context(), id)
+	switch {
+	case errors.Is(err, backup.ErrJobNotFound):
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	case errors.Is(err, backup.ErrNoPendingHostKey):
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, "backup.accept_host_key", "backup-job:"+strconv.FormatInt(id, 10), nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -304,6 +334,14 @@ func (h *Handlers) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "dest_volume required")
 		return
 	}
+	if err := h.Backups.CheckRestoreTarget(r.Context(), id, req.DestVolume); err != nil {
+		if errors.Is(err, docker.ErrInvalidVolumeName) {
+			writeError(w, http.StatusBadRequest, "dest_volume must be a Docker volume name, not a path")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if err := h.Backups.Restore(r.Context(), id, req.DestVolume); err != nil {
 		writeRestoreError(w, err)
 		return
@@ -354,4 +392,62 @@ func (h *Handlers) syncBackupNameNotice(r *http.Request) {
 	if err := h.Backups.SyncNameCollisionNotice(r.Context(), h.Notices); err != nil {
 		slog.Warn("backup job name notice", "err", err)
 	}
+}
+
+// checkBackupJobScope requires the job's host to be in the caller's scope.
+// Hooks run commands inside containers, so they also need containers.exec
+// and every hook container must be in the caller's host and role scope.
+func (h *Handlers) checkBackupJobScope(w http.ResponseWriter, r *http.Request, in backup.JobInput) bool {
+	hostID := in.HostID
+	if hostID == "" {
+		hostID = "local"
+	}
+	if !h.requireHostAccess(w, r, hostID) {
+		return false
+	}
+	hooks := append(append([]backup.Hook{}, in.PreHooks...), in.PostHooks...)
+	if len(hooks) == 0 {
+		return true
+	}
+	if !roleAllows(r, rbac.PermContainersExec) {
+		writeError(w, http.StatusForbidden, "backup hooks run commands in containers and need the containers.exec permission")
+		return false
+	}
+	for _, hk := range hooks {
+		if hk.Container == "" {
+			writeError(w, http.StatusBadRequest, "hook container required")
+			return false
+		}
+		// Inspect on the job's host: the hook runs there, and a container with
+		// the same name elsewhere says nothing about it.
+		req, ok := h.hookScopeReq(r, hostID, hk.Container)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "hook container "+hk.Container+" not found on the job's host")
+			return false
+		}
+		if !h.checkRoleScope(r, req) {
+			h.writeRoleScopeDenied(w, r, rbac.PermContainersExec, req, "container "+hk.Container)
+			return false
+		}
+	}
+	return true
+}
+
+func (h *Handlers) hookScopeReq(r *http.Request, hostID, container string) (rbac.ScopeRequest, bool) {
+	if h.Hosts == nil {
+		return rbac.ScopeRequest{}, false
+	}
+	target, err := h.Hosts.Pick(hostID)
+	if err != nil {
+		return rbac.ScopeRequest{}, false
+	}
+	info, err := target.InspectContainer(r.Context(), container)
+	if err != nil {
+		return rbac.ScopeRequest{}, false
+	}
+	req := h.hostScopeReq(r.Context(), hostID)
+	if info.Config != nil {
+		req.StackName = info.Config.Labels["com.docker.compose.project"]
+	}
+	return req, true
 }

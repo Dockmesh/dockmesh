@@ -390,7 +390,7 @@ func TestSystemBackupsStayAdminOnly(t *testing.T) {
 		r.With(middleware.RequirePerm(rbac.PermBackupsRestore)).Post("/restore/verify", e.h.VerifyUploadedBackup)
 	})
 	for _, stmt := range []string{
-		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (7, 'sys', 'local', 'local', '[{"type":"system","name":"system"}]')`,
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (7, 'sys', 's3', 'local', '[{"type":"system","name":"system"}]')`,
 		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (1, 'web', 'local', 'local', '[{"type":"stack","name":"web"}]')`,
 		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (2, 'remote', 'local', 'agent-1', '[{"type":"stack","name":"web"}]')`,
 		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (3, 'spare', 'local', 'local', '[{"type":"volume","name":"v"}]')`,
@@ -461,8 +461,8 @@ func TestBackupJobsKeepTheirOwnArchives(t *testing.T) {
 	// A legacy non-system job carrying the default name, created before
 	// names were checked, must not stand in for the system job.
 	for _, stmt := range []string{
-		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources, enabled) VALUES (1, 'dockmesh-system', 'local', 'local', '[{"type":"volume","name":"v"}]', 1)`,
-		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources, enabled) VALUES (5, 'nightly', 'local', 'local', '[{"type":"system","name":"dockmesh"}]', 1)`,
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources, enabled) VALUES (1, 'dockmesh-system', 's3', 'local', '[{"type":"volume","name":"v"}]', 1)`,
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources, enabled) VALUES (5, 'nightly', 's3', 'local', '[{"type":"system","name":"dockmesh"}]', 1)`,
 	} {
 		if _, err := e.db.Exec(stmt); err != nil {
 			t.Fatal(err)
@@ -470,7 +470,7 @@ func TestBackupJobsKeepTheirOwnArchives(t *testing.T) {
 	}
 	vol := []backup.Source{{Type: "volume", Name: "data"}}
 	sys := []backup.Source{{Type: "system", Name: "dockmesh"}}
-	web, err := svc.CreateJob(ctx, backup.JobInput{Name: "web", TargetType: "local", Sources: vol})
+	web, err := svc.CreateJob(ctx, backup.JobInput{Name: "web", TargetType: "s3", Sources: vol})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -491,7 +491,7 @@ func TestBackupJobsKeepTheirOwnArchives(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.in.TargetType = "local"
+			tt.in.TargetType = "s3"
 			var err error
 			if tt.id == 0 {
 				_, err = svc.CreateJob(ctx, tt.in)
