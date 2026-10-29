@@ -43,10 +43,10 @@ const (
 	FrameReqContainerKill    = "req.containers.kill"
 
 	// Resource listings + mutations (server → agent)
-	FrameReqImageList    = "req.images.list"
-	FrameReqImageInspect = "req.images.inspect"
-	FrameReqImageRemove  = "req.images.remove"
-	FrameReqImagePrune   = "req.images.prune"
+	FrameReqImageList      = "req.images.list"
+	FrameReqImageInspect   = "req.images.inspect"
+	FrameReqImageRemove    = "req.images.remove"
+	FrameReqImagePrune     = "req.images.prune"
 	FrameReqNetworkList    = "req.networks.list"
 	FrameReqNetworkInspect = "req.networks.inspect"
 	FrameReqVolumeList     = "req.volumes.list"
@@ -57,7 +57,7 @@ const (
 	// offers "too large, 5.2 MB" + a download button today.
 	FrameReqVolumeBrowse     = "req.volume.browse"
 	FrameReqVolumeBrowseFile = "req.volume.browse_file"
-	FrameReqDaemonInfo  = "req.daemon.info"
+	FrameReqDaemonInfo       = "req.daemon.info"
 
 	// Host-level system metrics (CPU / memory / disk / uptime) for the
 	// dashboard's all-mode System Health panel. Payload is empty; the
