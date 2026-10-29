@@ -47,6 +47,10 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - Git webhook secrets are now stored encrypted in the database, like the git password and SSH
   key. Secrets saved by earlier versions are encrypted automatically on the next start and
   existing webhooks keep working without changes.
+- The system settings API no longer returns the audit webhook signing secret or URL to users who
+  may change system settings but not the audit configuration, and those users can no longer
+  rewrite the audit webhook through it. Global environment variables marked secret are no
+  longer shown in API responses; leaving the value empty when editing keeps the stored one.
 
 ### Fixed
 

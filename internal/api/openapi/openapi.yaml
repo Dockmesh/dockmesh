@@ -5236,6 +5236,10 @@ paths:
       operationId: settings.list
       tags: [settings]
       summary: Effective server settings (runtime-overridable key/value pairs)
+      description: |
+        The audit webhook keys (`audit.webhook_url`,
+        `audit.webhook_hmac_secret`, `audit.webhook_filter_actions`) are
+        omitted; read them through `GET /audit/webhook`.
       responses:
         "200":
           description: Settings.
@@ -5261,6 +5265,9 @@ paths:
         X-Forwarded-For / X-Real-IP / X-Forwarded-Proto headers are
         believed (empty = loopback only); invalid entries are rejected with
         400 and nothing is saved.
+
+        The audit webhook keys are rejected with 400; configure them via
+        `PUT /audit/webhook`. The response omits them like `GET /settings`.
       requestBody:
         required: true
         content:
@@ -7691,11 +7698,13 @@ components:
       properties:
         id: { type: integer, format: int64 }
         key: { type: string }
-        value: { type: string }
+        value:
+          type: string
+          description: Empty for secret (`encrypted`) variables; their value is never returned.
         group_name: { type: string }
         encrypted:
           type: boolean
-          description: True when the value is age-encrypted at rest.
+          description: True when the variable is marked secret; its value is write-only.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -7704,8 +7713,13 @@ components:
       required: [key, value, group_name]
       properties:
         key: { type: string }
-        value: { type: string }
+        value:
+          type: string
+          description: On update of a secret variable, empty keeps the stored value.
         group_name: { type: string, example: production }
+        encrypted:
+          type: boolean
+          description: Marks the value as secret so it is never returned by the API.
 
     CustomRole:
       type: object

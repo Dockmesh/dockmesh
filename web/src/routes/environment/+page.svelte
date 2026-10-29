@@ -157,7 +157,7 @@
   function openEdit(v: EnvVar) {
     editing = v;
     formKey = v.key;
-    formValue = v.value;
+    formValue = v.encrypted ? '' : v.value;
     formGroup = v.group_name;
     showModal = true;
   }
@@ -169,7 +169,7 @@
     try {
       const payload = { key: formKey.trim(), value: formValue, group_name: formGroup.trim() };
       if (editing) {
-        await api.globalEnv.update(editing.id, payload);
+        await api.globalEnv.update(editing.id, { ...payload, encrypted: editing.encrypted });
         toast.success('Updated', formKey);
       } else {
         await api.globalEnv.create(payload);
@@ -583,14 +583,14 @@
     <Field
       label="Value"
       hint={editing?.encrypted
-        ? 'This variable is encrypted at rest. Updating the value re-encrypts it.'
+        ? 'Secret value is never shown. Leave empty to keep the stored value.'
         : 'Plain string. Multi-line is fine.'}
     >
       <textarea
         class="dm-input acc-input-mono env-textarea"
         bind:value={formValue}
         disabled={saving}
-        placeholder="value or multi-line content"
+        placeholder={editing?.encrypted ? '•••••••• (unchanged)' : 'value or multi-line content'}
         rows="4"
       ></textarea>
     </Field>
