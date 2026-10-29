@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/notifications"
-	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/pki"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"

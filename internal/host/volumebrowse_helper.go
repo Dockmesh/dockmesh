@@ -315,7 +315,7 @@ func dockerHelperRunner(cli *client.Client, volumeName string) helperRunner {
 			return helperResult{}, fmt.Errorf("volume helper: create: %w", err)
 		}
 		defer func() {
-			_ = cli.ContainerRemove(context.Background(), createResp.ID, container.RemoveOptions{Force: true})
+			_ = cli.ContainerRemove(context.WithoutCancel(ctx), createResp.ID, container.RemoveOptions{Force: true})
 		}()
 
 		if err := cli.ContainerStart(ctx, createResp.ID, container.StartOptions{}); err != nil {

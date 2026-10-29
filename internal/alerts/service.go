@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/notifications"
-	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/notify"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 var (
@@ -47,17 +47,17 @@ type Rule struct {
 	// recurring quiet-hours. When non-empty and IsMutedNow returns true
 	// at fire time, notifications are suppressed (but firing state and
 	// history still update so the UI shows the rule is breached).
-	MuteSchedule    string     `json:"mute_schedule"`
+	MuteSchedule string `json:"mute_schedule"`
 	// Builtin rules ship with the server (P.11.5). The UI marks them
 	// with a badge and disables the Delete action. Admins can still
 	// disable, edit thresholds, and attach channels — only deletion is
 	// blocked so new installs always retain baseline coverage.
-	Builtin         bool       `json:"builtin"`
-	FiringSince     *time.Time `json:"firing_since,omitempty"`
-	LastTriggered   *time.Time `json:"last_triggered_at,omitempty"`
-	LastResolved    *time.Time `json:"last_resolved_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	Builtin       bool       `json:"builtin"`
+	FiringSince   *time.Time `json:"firing_since,omitempty"`
+	LastTriggered *time.Time `json:"last_triggered_at,omitempty"`
+	LastResolved  *time.Time `json:"last_resolved_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 // HistoryEntry is one row of alert_history.
@@ -601,9 +601,10 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, container string, value
 // container metrics only.
 func alertNotification(r *Rule, msg string) notifications.EmitInput {
 	sev := notifications.SevWarning
-	if r.Severity == "critical" {
+	switch r.Severity {
+	case "critical":
 		sev = notifications.SevError
-	} else if r.Severity == "info" {
+	case "info":
 		sev = notifications.SevInfo
 	}
 	return notifications.EmitInput{

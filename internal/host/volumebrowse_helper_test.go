@@ -282,7 +282,7 @@ func TestAgentBrowseError(t *testing.T) {
 		})
 	}
 	other := errors.New("agent: permission denied")
-	if got := agentBrowseError(other); got != other {
+	if got := agentBrowseError(other); !errors.Is(got, other) {
 		t.Fatalf("unrelated error rewritten: %v", got)
 	}
 }
