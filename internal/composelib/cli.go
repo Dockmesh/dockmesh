@@ -25,7 +25,7 @@ import (
 // given env file, no OS env), then handed to the SDK.
 func RunCLI(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: compose-spike <up|adopt|down|ps|pull|scale|legacy-up> -dir <stackdir> [-name n] [-env file] [-force-recreate] [-wait] [-replicas svc=N]")
+		fmt.Fprintln(os.Stderr, "usage: compose-spike <up|adopt|down|ps|pull|scale|legacy-up> -dir <stackdir> [-name n] [-env file] [-pull] [-force-recreate] [-wait] [-remove-orphans=false] [-replicas svc=N]")
 		os.Exit(2)
 	}
 	cmd := args[0]
@@ -93,7 +93,9 @@ func RunCLI(args []string) {
 			}
 			var removed []string
 			removed, err = eng.AdoptLegacy(ctx, proj)
-			fmt.Fprintln(os.Stderr, "removed legacy containers:", removed)
+			if len(removed) > 0 {
+				fmt.Fprintln(os.Stderr, "removed legacy containers:", removed)
+			}
 			if err != nil {
 				break
 			}

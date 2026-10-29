@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -24,8 +23,7 @@ import (
 	"github.com/moby/moby/client"
 )
 
-// Event is one progress update from the SDK, flattened for the deploy
-// tracker / WebSocket stream. ID is "Container <name>", "Image <ref>",
+// Event is one SDK progress update. ID is "Container <name>", "Image <ref>",
 // "Network <name>", "Volume <name>" or api.ResourceCompose.
 type Event struct {
 	Operation string
@@ -104,6 +102,9 @@ type UpOptions struct {
 // any container is touched, unchanged services are left running, and with
 // WaitHealthy it only returns once every service is running/healthy.
 func (e *Engine) Up(ctx context.Context, proj *types.Project, uo UpOptions, opts Options) error {
+	if err := Validate(proj); err != nil {
+		return err
+	}
 	svc, err := e.service(opts)
 	if err != nil {
 		return err
@@ -140,6 +141,9 @@ func (e *Engine) Up(ctx context.Context, proj *types.Project, uo UpOptions, opts
 
 // Pull pulls every image without touching containers.
 func (e *Engine) Pull(ctx context.Context, proj *types.Project, opts Options) error {
+	if err := Validate(proj); err != nil {
+		return err
+	}
 	svc, err := e.service(opts)
 	if err != nil {
 		return err
@@ -167,17 +171,15 @@ func (e *Engine) Ps(ctx context.Context, project string) ([]api.ContainerSummary
 
 // Scale sets replica counts and converges only those services.
 func (e *Engine) Scale(ctx context.Context, proj *types.Project, replicas map[string]int, opts Options) error {
+	if err := Validate(proj); err != nil {
+		return err
+	}
 	svc, err := e.service(opts)
 	if err != nil {
 		return err
 	}
 	return svc.Scale(ctx, proj, api.ScaleOptions{Replicas: replicas})
 }
-
-// ConfigHash is the value compose stores in com.docker.compose.config-hash;
-// comparing it with the running container's label tells whether a deploy
-// would recreate the service.
-func ConfigHash(s types.ServiceConfig) (string, error) { return compose.ServiceHash(s) }
 
 // configFromAuth builds an in-memory CLI config so the SDK never reads
 // ~/.docker/config.json or a credential helper of the user running Dockmesh.
@@ -257,6 +259,3 @@ func logWriter(w io.Writer) io.Writer {
 	}
 	return w
 }
-
-// IsNotFound reports whether err means the project has no containers.
-func IsNotFound(err error) bool { return errors.Is(err, api.ErrNotFound) }

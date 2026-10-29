@@ -11,11 +11,14 @@ import (
 	"github.com/moby/moby/client"
 )
 
+// legacyManagedLabel is set by internal/compose on every container it
+// creates; containers without it belong to someone else.
+const legacyManagedLabel = "dockmesh.managed"
+
 // AdoptLegacy removes containers the hand-written reconciler created for
 // proj. They carry the project/service labels but no container-number, so
 // the SDK sees them as replica #0 and fails creating #1 under the same
-// name. Called after Pull succeeded, so a registry failure still leaves the
-// old deployment running; named volumes are kept. Returns the removed names.
+// name. Named volumes are kept. Returns the removed names.
 func (e *Engine) AdoptLegacy(ctx context.Context, proj *types.Project) ([]string, error) {
 	list, err := e.api.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
@@ -26,6 +29,9 @@ func (e *Engine) AdoptLegacy(ctx context.Context, proj *types.Project) ([]string
 	}
 	var removed []string
 	for _, c := range list.Items {
+		if c.Labels[legacyManagedLabel] != "true" {
+			continue
+		}
 		if _, ok := c.Labels[api.ContainerNumberLabel]; ok {
 			continue
 		}

@@ -9,11 +9,9 @@ import (
 	"github.com/docker/compose/v5/pkg/api"
 )
 
-// StampLabels sets the per-service labels the SDK's own LoadProject would
-// add. Containers get their project/service labels from these, so a
-// project loaded through internal/compose.LoadProject (which, unlike the
-// SDK loader, never interpolates the server's OS env or reads .env from
-// disk) is invisible to Ps/Down and `docker compose` without them.
+// StampLabels adds the per-service labels the SDK loader would set.
+// internal/compose.LoadProject skips them, and without them Ps/Down and
+// `docker compose` cannot see the containers.
 func StampLabels(proj *types.Project) {
 	for name, s := range proj.Services {
 		s.CustomLabels = map[string]string{
@@ -23,6 +21,7 @@ func StampLabels(proj *types.Project) {
 			api.WorkingDirLabel:  proj.WorkingDir,
 			api.ConfigFilesLabel: strings.Join(proj.ComposeFiles, ","),
 			api.OneoffLabel:      "False",
+			legacyManagedLabel:   "true",
 		}
 		proj.Services[name] = s
 	}
