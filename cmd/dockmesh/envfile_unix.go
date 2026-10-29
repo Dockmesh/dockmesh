@@ -15,7 +15,7 @@ import (
 // current user owns it and nobody else may write it, so a file planted
 // or edited by another account cannot redirect a root CLI run.
 func readTrustedEnvFile(path string) ([]byte, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G703 -- path is one of the fixed defaultEnvFiles locations
 	if err != nil {
 		return nil, err
 	}

@@ -34,7 +34,7 @@ func (s *Service) decryptWebhookSecret(stored string) (string, error) {
 	}
 	ct, err := base64.StdEncoding.DecodeString(enc)
 	if err != nil {
-		return stored, nil
+		return stored, nil //nolint:nilerr // not valid base64: a legacy plaintext secret that happens to start with the prefix
 	}
 	if !s.encryptionEnabled() {
 		return "", fmt.Errorf("webhook secret is encrypted but secrets encryption is disabled")

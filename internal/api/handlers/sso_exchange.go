@@ -84,7 +84,7 @@ func (h *Handlers) finishSSOLogin(w http.ResponseWriter, r *http.Request, login 
 		Value:    code,
 		Path:     "/api/v1/auth/sso/exchange",
 		HttpOnly: true,
-		Secure:   h.cookiesSecure(r),
+		Secure:   h.cookiesSecure(r), // #nosec G124 -- Secure follows the request scheme via cookiesSecure
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   int(ssoCodeTTL / time.Second),
 	})
@@ -108,7 +108,7 @@ func (h *Handlers) SSOExchange(w http.ResponseWriter, r *http.Request) {
 		Name:     ssoCodeCookie,
 		Path:     "/api/v1/auth/sso/exchange",
 		HttpOnly: true,
-		Secure:   h.cookiesSecure(r),
+		Secure:   h.cookiesSecure(r), // #nosec G124 -- Secure follows the request scheme via cookiesSecure
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 	})

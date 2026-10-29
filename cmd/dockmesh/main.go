@@ -146,7 +146,7 @@ func loadEnvFileFromArgs() error {
 	var data []byte
 	var err error
 	if explicit {
-		data, err = os.ReadFile(path)
+		data, err = os.ReadFile(path) // #nosec G703 -- explicit --env-file chosen by the operator running the CLI
 	} else {
 		data, err = readTrustedEnvFile(path)
 		if errors.Is(err, errUntrustedEnvFile) {
