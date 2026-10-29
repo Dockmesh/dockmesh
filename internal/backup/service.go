@@ -301,28 +301,13 @@ func (s *Service) openRun(ctx context.Context, run *Run, rawTap io.Writer) (io.R
 		_ = src.Close()
 		return nil, err
 	}
-	return &readRunCloser{r: dec, underlying: src}, nil
+	// Closing the decrypting reader closes src.
+	return dec, nil
 }
 
 type tappedReader struct {
 	io.Reader
 	io.Closer
-}
-
-// readRunCloser closes the decrypt wrapper then the underlying source.
-type readRunCloser struct {
-	r          io.ReadCloser
-	underlying io.ReadCloser
-}
-
-func (c *readRunCloser) Read(p []byte) (int, error) { return c.r.Read(p) }
-func (c *readRunCloser) Close() error {
-	err1 := c.r.Close()
-	err2 := c.underlying.Close()
-	if err1 != nil {
-		return err1
-	}
-	return err2
 }
 
 // Restore fetches the run's archive from its target, decrypts if needed,
@@ -355,7 +340,6 @@ func (s *Service) Restore(ctx context.Context, runID int64, destVolume string) e
 		if err != nil {
 			return err
 		}
-		defer dec.Close()
 		reader = dec
 	}
 
@@ -438,7 +422,6 @@ func (s *Service) RestoreStack(ctx context.Context, runID int64, targetStack str
 		if err != nil {
 			return nil, err
 		}
-		defer dec.Close()
 		reader = dec
 	}
 
