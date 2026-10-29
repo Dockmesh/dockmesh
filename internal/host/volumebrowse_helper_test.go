@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -46,10 +47,12 @@ func TestHelperTarget(t *testing.T) {
 type fakeRunner struct {
 	res     helperResult
 	scripts []string
+	limits  []int64
 }
 
-func (f *fakeRunner) run(_ context.Context, script string) (helperResult, error) {
+func (f *fakeRunner) run(_ context.Context, script string, limit int64) (helperResult, error) {
 	f.scripts = append(f.scripts, script)
+	f.limits = append(f.limits, limit)
 	return f.res, nil
 }
 
@@ -115,6 +118,9 @@ func TestHelperScripts(t *testing.T) {
 	if len(entries) != 2 || entries[0].Type != "dir" || entries[1].Type != "symlink" || entries[1].LinkDest != "/etc" {
 		t.Errorf("entries = %+v", entries)
 	}
+	if f.limits[0] != helperListingLimit {
+		t.Errorf("listing limit = %d", f.limits[0])
+	}
 
 	f = &fakeRunner{res: helperResult{stdout: "5000\nab\x00cdef"}}
 	res, err := readFileViaHelper(context.Background(), f.run, "data.bin", 4)
@@ -127,15 +133,30 @@ func TestHelperScripts(t *testing.T) {
 	if string(res.Content) != "ab\x00c" || res.Size != 5000 || !res.Truncated || !res.Binary {
 		t.Errorf("read result = %+v", res)
 	}
+	if f.limits[0] != 4+4096 {
+		t.Errorf("read limit = %d", f.limits[0])
+	}
 }
 
 func TestHelperContainerConfig(t *testing.T) {
 	cfg, hostCfg := helperContainerConfig("pgdata", "true")
-	if cfg.Image != helperImage || len(cfg.Cmd) != 3 || cfg.Cmd[2] != "true" {
-		t.Errorf("config = %+v", cfg)
+	if cfg.Image != helperImage || !strings.Contains(helperImage, "@sha256:") {
+		t.Errorf("image = %q, want a digest-pinned image", cfg.Image)
+	}
+	if !reflect.DeepEqual([]string(cfg.Entrypoint), []string{"/bin/sh", "-c"}) || !reflect.DeepEqual([]string(cfg.Cmd), []string{"true"}) {
+		t.Errorf("entrypoint = %q, cmd = %q", cfg.Entrypoint, cfg.Cmd)
 	}
 	if !hostCfg.ReadonlyRootfs || hostCfg.NetworkMode != "none" || len(hostCfg.Binds) != 0 {
 		t.Errorf("host config = %+v", hostCfg)
+	}
+	if !reflect.DeepEqual([]string(hostCfg.CapDrop), []string{"ALL"}) || !reflect.DeepEqual([]string(hostCfg.CapAdd), []string{"DAC_OVERRIDE"}) {
+		t.Errorf("caps: drop %q add %q", hostCfg.CapDrop, hostCfg.CapAdd)
+	}
+	if !reflect.DeepEqual(hostCfg.SecurityOpt, []string{"no-new-privileges"}) {
+		t.Errorf("security opts = %q", hostCfg.SecurityOpt)
+	}
+	if hostCfg.PidsLimit == nil || *hostCfg.PidsLimit != helperPidsLimit || hostCfg.Memory != helperMemoryLimit {
+		t.Errorf("resources = %+v", hostCfg.Resources)
 	}
 	if len(hostCfg.Mounts) != 1 {
 		t.Fatalf("mounts = %+v", hostCfg.Mounts)

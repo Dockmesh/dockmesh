@@ -27,8 +27,14 @@ import (
 // inside its own namespace.
 
 const (
-	helperImage = "alpine:latest"
+	// Pinned to the multi-arch index digest so a retagged or replaced
+	// image never runs with access to the volume.
+	helperImage = "alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f"
 	helperMount = "/mnt/target"
+
+	helperListingLimit = 16 << 20
+	helperPidsLimit    = 64
+	helperMemoryLimit  = 64 << 20
 )
 
 // Exit codes the helper scripts use to report containment and type
@@ -80,7 +86,8 @@ type helperResult struct {
 	exitCode int64
 }
 
-type helperRunner func(ctx context.Context, script string) (helperResult, error)
+// helperRunner runs script and reads at most limit bytes of its output.
+type helperRunner func(ctx context.Context, script string, limit int64) (helperResult, error)
 
 // helperTarget maps sub onto the helper's mount, rejecting lexical
 // escapes before any container is started.
@@ -152,7 +159,7 @@ func browseDirViaHelper(ctx context.Context, run helperRunner, sub string) ([]Vo
 	if err != nil {
 		return nil, err
 	}
-	res, err := run(ctx, browseDirScript(target))
+	res, err := run(ctx, browseDirScript(target), helperListingLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +214,7 @@ func readFileViaHelper(ctx context.Context, run helperRunner, sub string, maxByt
 	if err != nil {
 		return nil, err
 	}
-	res, err := run(ctx, readFileScript(target, maxBytes))
+	res, err := run(ctx, readFileScript(target, maxBytes), maxBytes+4096)
 	if err != nil {
 		return nil, err
 	}
@@ -240,9 +247,11 @@ func shellEscape(s string) string {
 }
 
 func helperContainerConfig(volumeName, script string) (*container.Config, *container.HostConfig) {
+	pids := int64(helperPidsLimit)
 	cfg := &container.Config{
-		Image: helperImage,
-		Cmd:   []string{"sh", "-c", script},
+		Image:      helperImage,
+		Entrypoint: []string{"/bin/sh", "-c"},
+		Cmd:        []string{script},
 		Labels: map[string]string{
 			"com.dockmesh.helper": "volume-browse",
 		},
@@ -250,6 +259,15 @@ func helperContainerConfig(volumeName, script string) (*container.Config, *conta
 	hostCfg := &container.HostConfig{
 		NetworkMode:    "none",
 		ReadonlyRootfs: true,
+		// DAC_OVERRIDE lets root read files of any owner in the volume; the
+		// mount is read-only, so it grants no writes.
+		CapDrop:     []string{"ALL"},
+		CapAdd:      []string{"DAC_OVERRIDE"},
+		SecurityOpt: []string{"no-new-privileges"},
+		Resources: container.Resources{
+			PidsLimit: &pids,
+			Memory:    helperMemoryLimit,
+		},
 		Mounts: []mount.Mount{{
 			Type:     mount.TypeVolume,
 			Source:   volumeName,
@@ -263,7 +281,7 @@ func helperContainerConfig(volumeName, script string) (*container.Config, *conta
 // dockerHelperRunner runs a script in a throwaway helper container with
 // the volume mounted, collects its output and removes the container.
 func dockerHelperRunner(cli *client.Client, volumeName string) helperRunner {
-	return func(ctx context.Context, script string) (helperResult, error) {
+	return func(ctx context.Context, script string, limit int64) (helperResult, error) {
 		if _, _, err := cli.ImageInspectWithRaw(ctx, helperImage); err != nil {
 			rc, pullErr := cli.ImagePull(ctx, helperImage, dtypes.ImagePullOptions{})
 			if pullErr != nil {
@@ -312,7 +330,7 @@ func dockerHelperRunner(cli *client.Client, volumeName string) helperRunner {
 		defer logs.Close()
 
 		var stdout, stderr bytes.Buffer
-		if _, err := stdcopy.StdCopy(&stdout, &stderr, logs); err != nil {
+		if _, err := stdcopy.StdCopy(&stdout, &stderr, io.LimitReader(logs, limit)); err != nil {
 			return helperResult{}, fmt.Errorf("volume helper: stream: %w", err)
 		}
 		return helperResult{stdout: stdout.String(), stderr: stderr.String(), exitCode: exitCode}, nil

@@ -61,6 +61,9 @@ earlier, makes the installers more reliable on upgrade, and repairs volume brows
   may change system settings but not the audit configuration, and those users can no longer
   rewrite the audit webhook through it. Global environment variables marked secret are no
   longer shown in API responses; leaving the value empty when editing keeps the stored one.
+- The short-lived container that reads volumes for the volume browser now uses an Alpine image
+  pinned by digest, drops every capability except reading files of other owners, cannot gain
+  privileges, has process and memory limits, and its output is capped.
 
 ### Fixed
 
