@@ -1,78 +1,74 @@
 package proxy
 
 import (
-	"context"
 	"errors"
 	"net"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 )
 
 var (
 	ErrInvalidUpstream = errors.New("upstream must be host:port, e.g. 127.0.0.1:8080 or app.lan:3000")
 	ErrAdminUpstream   = errors.New("upstream points at the proxy's own admin API")
+	ErrInvalidHost     = errors.New("host must be a domain name or address like app.example.com (localhost, loopback addresses and a bare * are not allowed)")
 )
 
-var hostnameRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?)*$`)
+var (
+	hostnameRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?)*$`)
+	numericRe  = regexp.MustCompile(`^(0[xX][0-9A-Fa-f]+|[0-9]+)$`)
+)
 
 // checkUpstream accepts a plain host:port dial address. Schemes, paths,
-// Caddy placeholders and unix sockets are refused, as is the admin API,
-// which a route would otherwise publish to anyone who can reach the
-// proxy.
-func checkUpstream(ctx context.Context, dial string) error {
+// Caddy placeholders, network prefixes (`tcp/`) and unix sockets are
+// refused, as is the admin API, which a route would otherwise publish
+// to anyone who can reach the proxy.
+func checkUpstream(dial string) error {
 	host, portStr, err := net.SplitHostPort(dial)
 	if err != nil || host == "" {
 		return ErrInvalidUpstream
 	}
 	port, err := strconv.Atoi(portStr)
-	if err != nil || port < 1 || port > 65535 {
+	if err != nil || port < 1 || port > 65535 || strconv.Itoa(port) != portStr {
 		return ErrInvalidUpstream
 	}
-	if net.ParseIP(host) == nil && (len(host) > 253 || !hostnameRe.MatchString(host)) {
-		return ErrInvalidUpstream
+	ip := net.ParseIP(host)
+	if ip == nil {
+		if len(host) > 253 || !hostnameRe.MatchString(host) {
+			return ErrInvalidUpstream
+		}
+		// `127.1`, `2130706433` and `0x7f000001` are IPv4 in inet_aton
+		// form to a libc resolver.
+		labels := strings.Split(host, ".")
+		if numericRe.MatchString(labels[len(labels)-1]) {
+			return ErrInvalidUpstream
+		}
 	}
-	if targetsAdmin(ctx, dial) {
+	// Names are refused on the admin port outright: a DNS check here
+	// could be answered differently when Caddy dials.
+	if port == adminPort && (ip == nil || ip.IsLoopback() || ip.IsUnspecified()) {
 		return ErrAdminUpstream
 	}
 	return nil
 }
 
-// targetsAdmin reports whether dial reaches Caddy's admin listener,
-// which binds the loopback interface of the host network.
-func targetsAdmin(ctx context.Context, dial string) bool {
-	host, portStr, err := net.SplitHostPort(strings.TrimSpace(dial))
-	if err != nil {
-		return false
+// checkRouteHost refuses hosts that would make a route match requests
+// addressed to the admin API (its Host allow-list is localhost and
+// 127.0.0.1) or catch every request.
+func checkRouteHost(host string) error {
+	h := strings.ToLower(strings.TrimSuffix(host, "."))
+	h = strings.TrimPrefix(h, "*.")
+	if h == "" || h == "*" || h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return ErrInvalidHost
 	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil || port != adminPort {
-		return false
-	}
-	if host == "" || strings.EqualFold(strings.TrimSuffix(host, "."), "localhost") {
-		return true
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback() || ip.IsUnspecified()
-	}
-	return resolvesToLoopback(ctx, host)
-}
-
-// resolvesToLoopback covers names like *.localhost or /etc/hosts
-// entries pointing at 127.0.0.1. Lookup failures count as not loopback;
-// the route then fails at request time like any unresolvable upstream.
-func resolvesToLoopback(ctx context.Context, host string) bool {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return false
-	}
-	for _, a := range addrs {
-		if a.IP.IsLoopback() || a.IP.IsUnspecified() {
-			return true
+	if ip := net.ParseIP(strings.Trim(h, "[]")); ip != nil {
+		if ip.IsLoopback() || ip.IsUnspecified() {
+			return ErrInvalidHost
 		}
+		return nil
 	}
-	return false
+	if len(h) > 253 || !hostnameRe.MatchString(h) {
+		return ErrInvalidHost
+	}
+	return nil
 }

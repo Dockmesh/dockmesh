@@ -93,14 +93,14 @@ const (
 )
 
 // buildConfig turns the DB routes into a complete Caddy JSON config and
-// returns the hosts of routes it left out because their upstream points
-// at Caddy's own admin API.
+// returns the hosts of routes it left out because their host or
+// upstream is not allowed (rows stored before validation existed).
 //
 // Plain-HTTP routes (tls_mode none) live in a server that listens only
 // on :80, which Caddy never applies automatic HTTPS to. TLS routes live
 // in the :443 server; Caddy adds their HTTP->HTTPS redirects to the :80
 // server after the host-matched plain routes.
-func buildConfig(ctx context.Context, routes []Route) (*caddyConfig, []string) {
+func buildConfig(routes []Route) (*caddyConfig, []string) {
 	cfg := &caddyConfig{
 		Admin: &caddyAdmin{Listen: adminAddr, Origins: adminOrigins, EnforceOrigin: true},
 		Apps:  caddyApps{HTTP: caddyHTTP{Servers: map[string]caddyServer{}}},
@@ -116,7 +116,7 @@ func buildConfig(ctx context.Context, routes []Route) (*caddyConfig, []string) {
 		if !r.Enabled {
 			continue
 		}
-		if targetsAdmin(ctx, r.Upstream) {
+		if checkRouteHost(r.Host) != nil || checkUpstream(r.Upstream) != nil {
 			blocked = append(blocked, r.Host)
 			continue
 		}

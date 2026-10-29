@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -15,7 +14,7 @@ func TestBuildConfigSplitsPlainAndTLS(t *testing.T) {
 		{Host: "off.lan", Upstream: "127.0.0.1:3002", TLSMode: "auto", Enabled: false},
 		{Host: "evil.lan", Upstream: "localhost:2019", TLSMode: "none", Enabled: true},
 	}
-	cfg, blocked := buildConfig(context.Background(), routes)
+	cfg, blocked := buildConfig(routes)
 
 	if len(blocked) != 1 || blocked[0] != "evil.lan" {
 		t.Fatalf("blocked = %v", blocked)
@@ -43,7 +42,7 @@ func TestBuildConfigSplitsPlainAndTLS(t *testing.T) {
 }
 
 func TestBuildConfigWithoutTLSRoutesHasNoHTTPSServer(t *testing.T) {
-	cfg, _ := buildConfig(context.Background(), []Route{{Host: "a.lan", Upstream: "192.0.2.2:80", TLSMode: "none", Enabled: true}})
+	cfg, _ := buildConfig([]Route{{Host: "a.lan", Upstream: "192.0.2.2:80", TLSMode: "none", Enabled: true}})
 	if _, ok := cfg.Apps.HTTP.Servers[serverHTTPS]; ok {
 		t.Fatal("HTTPS server present without TLS routes")
 	}
@@ -72,7 +71,16 @@ func TestCheckUpstream(t *testing.T) {
 		{"198.51.100.10:443", nil},
 		{"localhost:2019", ErrAdminUpstream},
 		{"127.0.0.1:2019", ErrAdminUpstream},
-		{"127.0.0.1:02019", ErrAdminUpstream},
+		{"127.0.0.1:02019", ErrInvalidUpstream},
+		{"127.0.0.1:+2019", ErrInvalidUpstream},
+		{"[::ffff:127.0.0.1]:2019", ErrAdminUpstream},
+		{"x.localhost:2019", ErrAdminUpstream},
+		{"rebind.example.com:2019", ErrAdminUpstream},
+		{"127.1:8080", ErrInvalidUpstream},
+		{"2130706433:80", ErrInvalidUpstream},
+		{"0x7f000001:80", ErrInvalidUpstream},
+		{"tcp/127.0.0.1:2019", ErrInvalidUpstream},
+		{"127.0.0.1:{http.request.header.P}", ErrInvalidUpstream},
 		{"0.0.0.0:2019", ErrAdminUpstream},
 		{"[::1]:2019", ErrAdminUpstream},
 		{"LOCALHOST.:2019", ErrInvalidUpstream},
@@ -87,14 +95,14 @@ func TestCheckUpstream(t *testing.T) {
 		{"app/path:80", ErrInvalidUpstream},
 	}
 	for _, tt := range tests {
-		if got := checkUpstream(context.Background(), tt.in); !errors.Is(got, tt.want) {
+		if got := checkUpstream(tt.in); !errors.Is(got, tt.want) {
 			t.Errorf("checkUpstream(%q) = %v, want %v", tt.in, got, tt.want)
 		}
 	}
 }
 
 func TestSameConfig(t *testing.T) {
-	cfg, _ := buildConfig(context.Background(), []Route{{Host: "a.lan", Upstream: "192.0.2.2:80", TLSMode: "auto", Enabled: true}})
+	cfg, _ := buildConfig([]Route{{Host: "a.lan", Upstream: "192.0.2.2:80", TLSMode: "auto", Enabled: true}})
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -122,10 +130,41 @@ func TestSpecHashFollowsImage(t *testing.T) {
 	}
 }
 
-func TestTargetsAdminCatchesStoredForms(t *testing.T) {
-	for _, dial := range []string{"LOCALHOST.:2019", " localhost:2019", ":2019", "127.0.0.2:2019"} {
-		if !targetsAdmin(context.Background(), dial) {
-			t.Errorf("targetsAdmin(%q) = false", dial)
+func TestCheckRouteHost(t *testing.T) {
+	tests := []struct {
+		in string
+		ok bool
+	}{
+		{"app.example.com", true},
+		{"*.example.com", true},
+		{"nas", true},
+		{"192.0.2.7", true},
+		{"localhost", false},
+		{"LocalHost.", false},
+		{"api.localhost", false},
+		{"*.localhost", false},
+		{"127.0.0.1", false},
+		{"[::1]", false},
+		{"0.0.0.0", false},
+		{"*", false},
+		{"", false},
+		{"a b.com", false},
+	}
+	for _, tt := range tests {
+		if got := checkRouteHost(tt.in) == nil; got != tt.ok {
+			t.Errorf("checkRouteHost(%q) ok = %v, want %v", tt.in, got, tt.ok)
 		}
+	}
+}
+
+func TestBuildConfigSkipsStoredUnsafeRoutes(t *testing.T) {
+	_, blocked := buildConfig([]Route{
+		{Host: "ok.example.com", Upstream: "192.0.2.2:80", TLSMode: "none", Enabled: true},
+		{Host: "localhost", Upstream: "192.0.2.2:80", TLSMode: "none", Enabled: true},
+		{Host: "a.example.com", Upstream: "tcp/127.0.0.1:2019", TLSMode: "none", Enabled: true},
+		{Host: "b.example.com", Upstream: "{http.request.header.X-Up}", TLSMode: "none", Enabled: true},
+	})
+	if len(blocked) != 3 {
+		t.Fatalf("blocked = %v", blocked)
 	}
 }

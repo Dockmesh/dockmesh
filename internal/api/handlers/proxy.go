@@ -129,7 +129,7 @@ func (h *Handlers) CreateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid tls_mode")
 		return
 	}
-	if errors.Is(err, proxy.ErrInvalidUpstream) || errors.Is(err, proxy.ErrAdminUpstream) {
+	if errors.Is(err, proxy.ErrInvalidUpstream) || errors.Is(err, proxy.ErrAdminUpstream) || errors.Is(err, proxy.ErrInvalidHost) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -162,7 +162,7 @@ func (h *Handlers) UpdateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		enabled = *req.Enabled
 	}
 	err = h.Proxy.UpdateRoute(r.Context(), id, req.Upstream, req.TLSMode, enabled)
-	if errors.Is(err, proxy.ErrInvalidTLSMode) || errors.Is(err, proxy.ErrInvalidUpstream) || errors.Is(err, proxy.ErrAdminUpstream) {
+	if errors.Is(err, proxy.ErrInvalidTLSMode) || errors.Is(err, proxy.ErrInvalidUpstream) || errors.Is(err, proxy.ErrAdminUpstream) || errors.Is(err, proxy.ErrInvalidHost) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -198,7 +198,12 @@ func (h *Handlers) SetProxyRouteEnabled(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if err := h.Proxy.SetRouteEnabled(r.Context(), id, body.Enabled); err != nil {
+	err = h.Proxy.SetRouteEnabled(r.Context(), id, body.Enabled)
+	if errors.Is(err, proxy.ErrInvalidUpstream) || errors.Is(err, proxy.ErrAdminUpstream) || errors.Is(err, proxy.ErrInvalidHost) {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

@@ -76,9 +76,12 @@ type Service struct {
 	image   string
 	notices noticeSetter
 
-	mu      sync.Mutex
-	metrics *metricsState
-	acme    *acmeBuffer
+	// lifecycle serialises EnableProxy/DisableProxy; mu guards config
+	// pushes and metrics.
+	lifecycle sync.Mutex
+	mu        sync.Mutex
+	metrics   *metricsState
+	acme      *acmeBuffer
 }
 
 func NewService(db *sql.DB, dockerCli *docker.Client, enabled bool) *Service {
@@ -122,15 +125,16 @@ func (s *Service) desiredConfig(ctx context.Context) (*caddyConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg, blocked := buildConfig(ctx, routes)
+	cfg, blocked := buildConfig(routes)
 	if s.notices != nil {
 		err := s.notices.Set(ctx, len(blocked) > 0, notices.RaiseInput{
 			Key:      noticeKeyBlocked,
 			Audience: notices.Admins(),
 			Severity: notices.SevWarning,
-			Title:    "Proxy routes disabled: upstream is the proxy admin API",
-			Body: "These routes forward to Caddy's admin API, which would let anyone reach it through the proxy, " +
-				"so they are not served: " + strings.Join(blocked, ", ") + ". Change their upstream to the app's address.",
+			Title:    "Some proxy routes are not served",
+			Body: "These routes have a host or upstream Dockmesh no longer accepts (for example the proxy's admin API, " +
+				"localhost, or a placeholder), so they are left out of the proxy: " + strings.Join(blocked, ", ") +
+				". Edit each one to a domain name and a host:port upstream, or delete it.",
 			Link: "/proxy",
 		})
 		if err != nil {
@@ -150,7 +154,10 @@ func (s *Service) CreateRoute(ctx context.Context, host, upstream, tlsMode strin
 	if err := validateTLSMode(tlsMode); err != nil {
 		return nil, err
 	}
-	if err := checkUpstream(ctx, upstream); err != nil {
+	if err := checkRouteHost(host); err != nil {
+		return nil, err
+	}
+	if err := checkUpstream(upstream); err != nil {
 		return nil, err
 	}
 	res, err := s.db.ExecContext(ctx,
@@ -176,7 +183,7 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode s
 	if err := validateTLSMode(tlsMode); err != nil {
 		return err
 	}
-	if err := checkUpstream(ctx, upstream); err != nil {
+	if err := checkUpstream(upstream); err != nil {
 		return err
 	}
 	_, err := s.db.ExecContext(ctx,
@@ -192,6 +199,21 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode s
 // disable/enable toggle in the UI so callers don't have to round-trip
 // upstream + tls_mode unchanged.
 func (s *Service) SetRouteEnabled(ctx context.Context, id int64, enabled bool) error {
+	if enabled {
+		var host, upstream string
+		err := s.db.QueryRowContext(ctx, `SELECT host, upstream FROM proxy_routes WHERE id = ?`, id).Scan(&host, &upstream)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil {
+			if err := checkRouteHost(host); err != nil {
+				return err
+			}
+			if err := checkUpstream(upstream); err != nil {
+				return err
+			}
+		}
+	}
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE proxy_routes SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		boolToInt(enabled), id)

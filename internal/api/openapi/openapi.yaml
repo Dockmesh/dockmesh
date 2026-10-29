@@ -5445,8 +5445,8 @@ paths:
       description: |
         Reconciles the `dockmesh-proxy` container: one created with the
         current spec (image, command, mounts) is kept and started if needed;
-        an outdated one is replaced. The image is pinned (`caddy:2.11.7`,
-        override with `DOCKMESH_PROXY_IMAGE`). Caddy resumes its last pushed
+        an outdated or foreign one is replaced. The image is pinned by digest
+        (`caddy:2.11.7@sha256:…`, override with `DOCKMESH_PROXY_IMAGE`). Caddy resumes its last pushed
         config after a restart, and Dockmesh re-pushes the routes when the
         running config drifts from them.
       responses:
@@ -7875,14 +7875,17 @@ components:
       type: object
       required: [upstream]
       properties:
-        host: { type: string, description: Required on create; ignored on update. }
+        host:
+          type: string
+          description: Required on create; ignored on update. A domain name (optionally `*.` wildcard) or a non-loopback IP; `localhost`, `*.localhost`, loopback addresses and a bare `*` are rejected (400).
         upstream:
           type: string
           description: |
             `host:port` with a hostname or IP and a port from 1 to 65535. Schemes,
             paths, placeholders and unix sockets are rejected (400), as is the
-            proxy's own admin API (loopback port 2019). Stored routes that point at
-            the admin API are not served and raise an admin notice.
+            proxy's own admin API (port 2019 on a loopback address or any name).
+            Stored routes that fail these checks are not served, raise an admin
+            notice, and can't be re-enabled until edited.
         tls_mode:
           type: string
           enum: [auto, internal, none]

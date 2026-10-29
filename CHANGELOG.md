@@ -44,11 +44,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   or with `dockmesh admin reset-password`) signs out all of the user's sessions.
 - A role or scope change now applies to a signed-in user's next request instead of after up
   to 15 minutes.
-- The proxy now runs a pinned Caddy version (2.11.7) instead of whatever `caddy:2` pointed
+- The proxy now runs a pinned Caddy version (2.11.7, pinned by digest) instead of whatever `caddy:2` pointed
   to; set `DOCKMESH_PROXY_IMAGE` to use another. The proxy container is recreated once after
   this upgrade and then kept across Dockmesh restarts instead of being replaced on every start.
-- Proxy route upstreams must be `host:port`; routes pointing at the proxy's own admin API are
-  refused, and existing ones stop being served and are listed in a notice for admins.
+- Proxy route upstreams must be `host:port` and may not point at the proxy's own admin API,
+  and a route's host may not be `localhost`, a loopback address or a bare `*`. Existing routes
+  that break these rules stop being served and are listed in a notice for admins.
 
 ### Fixed
 - Proxy routes keep working after the Caddy container restarts; before, it came back with no
@@ -57,6 +58,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   certificate and an HTTPS redirect anyway.
 
 ### Security
+- A proxy route can no longer forward to the proxy's own admin API, which would have let anyone
+  reaching the proxy change its configuration. The admin API now also refuses requests from
+  browsers on other sites.
 - Each kind of signed token (session, refresh, two-factor challenge, WebSocket ticket, single
   sign-on state) now has its own key and is only accepted for its own purpose. Before, a
   half-finished two-factor login could be used to turn two-factor authentication off.

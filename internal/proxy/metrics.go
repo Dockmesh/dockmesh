@@ -24,23 +24,23 @@ import (
 // versus the previous snapshot — first call after process start has
 // rate=0 across the board, that's deliberate (no synthetic peaks).
 type MetricsSnapshot struct {
-	ScrapedAt    time.Time            `json:"scraped_at"`
-	TotalReqs    uint64               `json:"total_requests"`
-	RPS          float64              `json:"requests_per_second"`
-	StatusBuckets map[string]uint64   `json:"status_buckets"` // "2xx", "3xx", "4xx", "5xx"
-	P95LatencyMS float64              `json:"p95_latency_ms"`
-	PerHost      []HostMetric         `json:"per_host"`
+	ScrapedAt     time.Time         `json:"scraped_at"`
+	TotalReqs     uint64            `json:"total_requests"`
+	RPS           float64           `json:"requests_per_second"`
+	StatusBuckets map[string]uint64 `json:"status_buckets"` // "2xx", "3xx", "4xx", "5xx"
+	P95LatencyMS  float64           `json:"p95_latency_ms"`
+	PerHost       []HostMetric      `json:"per_host"`
 }
 
 // HostMetric is the per-route slice of the snapshot. host matches
 // Route.Host so the UI can join with the route list without an extra
 // lookup.
 type HostMetric struct {
-	Host          string             `json:"host"`
-	Reqs          uint64             `json:"requests"`
-	RPS           float64            `json:"requests_per_second"`
-	StatusBuckets map[string]uint64  `json:"status_buckets"`
-	P95LatencyMS  float64            `json:"p95_latency_ms"`
+	Host          string            `json:"host"`
+	Reqs          uint64            `json:"requests"`
+	RPS           float64           `json:"requests_per_second"`
+	StatusBuckets map[string]uint64 `json:"status_buckets"`
+	P95LatencyMS  float64           `json:"p95_latency_ms"`
 }
 
 type metricsState struct {

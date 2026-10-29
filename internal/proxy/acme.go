@@ -25,7 +25,7 @@ const acmeBufferSize = 200
 // ACMEEvent is one row in the timeline shown on the proxy page.
 type ACMEEvent struct {
 	TS         time.Time `json:"ts"`
-	Kind       string    `json:"kind"`        // obtain | renew | failure
+	Kind       string    `json:"kind"` // obtain | renew | failure
 	Host       string    `json:"host,omitempty"`
 	Issuer     string    `json:"issuer,omitempty"`
 	Message    string    `json:"message"`

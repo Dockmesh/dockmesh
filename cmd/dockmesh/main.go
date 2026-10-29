@@ -607,7 +607,9 @@ func main() {
 	// the loop is dormant when the proxy is disabled and reconnects
 	// automatically once the container appears.
 	proxySvc.StartACMETailer(ctx)
-	proxySvc.StartWatchdog(ctx, 30*time.Second)
+	proxySvc.StartWatchdog(ctx, 30*time.Second, func() bool {
+		return settingsStore.GetBool("proxy_enabled", cfg.ProxyEnabled)
+	})
 
 	// Wire the registries service into every code path that pulls an
 	// image. Without this, compose deploys + the "update image" button
