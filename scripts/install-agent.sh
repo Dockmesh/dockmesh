@@ -295,7 +295,7 @@ fi
 cat > "$UNIT_FILE" <<EOF
 [Unit]
 Description=Dockmesh Agent
-Documentation=https://github.com/BlinkMSP/dockmesh
+Documentation=https://github.com/Dockmesh/dockmesh
 After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
