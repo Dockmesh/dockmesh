@@ -108,3 +108,7 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   roles; grant "Download backups" or "Shell into container" under Users → Roles where intended.
 - [host-admin-system-settings, admins] Host Admins no longer change system settings, SSO or
   global environment variables. Give the Admin role to anyone who still needs that.
+- [backup-job-name-collision, admins] Backup jobs whose names differ only in case or
+  punctuation, or a non-system job named like `dockmesh-system`, share an archive folder and
+  their retention can delete each other's backups. A notice lists the affected jobs; rename
+  one job of each group under Backups. The notice goes away once no names collide.

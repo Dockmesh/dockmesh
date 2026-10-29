@@ -78,37 +78,23 @@ func (s *Service) MarkAutoCreatedJobsForReview(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	flagged := 0
-	for _, j := range jobs {
-		if j.Name != DefaultSystemJobName {
-			continue
-		}
-		// Skip jobs that already carry the flag (no point re-flagging
-		// every boot — the banner is already up) and jobs the operator
-		// has explicitly reviewed (Keep / Disable). The review_acked
-		// column is sticky once set, so this branch makes the boot
-		// migration genuinely idempotent across restarts.
-		if j.NeedsReview || j.ReviewAcked {
-			continue
-		}
-		// Heuristic: a job is "auto-created by an older dockmesh" if
-		// its name matches the well-known default AND its target is the
-		// stock local ./data/backups path. Anything else has been
-		// touched by a human and we leave it alone.
-		reason := "Auto-created by an earlier dockmesh version. Default behaviour changed in v0.3 — review and choose Keep or Disable. " +
-			"Default jobs back up everything to a local directory, which can fill the disk and is not off-host. Move to an off-host target if you want to keep it."
-		if err := s.store.markJobNeedsReview(ctx, j.ID, reason); err != nil {
-			slog.Warn("flag legacy default job for review", "id", j.ID, "err", err)
-			continue
-		}
-		flagged++
-		slog.Info("legacy default backup job flagged for review", "id", j.ID, "name", j.Name)
+	// Only the system job still carrying the stock name counts as
+	// auto-created. Jobs that already carry the flag, or that the operator
+	// has reviewed (review_acked is sticky), are left alone so this stays
+	// idempotent across restarts.
+	j := systemJob(jobs)
+	if j == nil || j.Name != DefaultSystemJobName || j.NeedsReview || j.ReviewAcked {
+		return nil
 	}
-	if flagged > 0 {
-		slog.Warn("backup default job flagged for review",
-			"count", flagged,
-			"action_needed", "open the Backups page in the UI and choose Keep or Disable")
+	reason := "Auto-created by an earlier dockmesh version. Default behaviour changed in v0.3 — review and choose Keep or Disable. " +
+		"Default jobs back up everything to a local directory, which can fill the disk and is not off-host. Move to an off-host target if you want to keep it."
+	if err := s.store.markJobNeedsReview(ctx, j.ID, reason); err != nil {
+		slog.Warn("flag legacy default job for review", "id", j.ID, "err", err)
+		return nil
 	}
+	slog.Warn("backup default job flagged for review",
+		"id", j.ID,
+		"action_needed", "open the Backups page in the UI and choose Keep or Disable")
 	return nil
 }
 

@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -69,6 +70,7 @@ func (h *Handlers) CreateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.syncBackupNameNotice(r)
 	h.audit(r, audit.ActionStackCreate, "backup:"+job.Name, nil)
 	writeJSON(w, http.StatusCreated, redactJob(job))
 }
@@ -115,6 +117,7 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.syncBackupNameNotice(r)
 	h.audit(r, audit.ActionStackUpdate, "backup:"+job.Name, nil)
 	writeJSON(w, http.StatusOK, redactJob(job))
 }
@@ -132,6 +135,7 @@ func (h *Handlers) DeleteBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.syncBackupNameNotice(r)
 	h.audit(r, audit.ActionStackDelete, "backup:"+strconv.FormatInt(job.ID, 10), nil)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -342,4 +346,12 @@ func writeRestoreError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeError(w, http.StatusInternalServerError, err.Error())
+}
+
+// syncBackupNameNotice re-evaluates the shared-archive-folder notice after
+// the set of jobs changed.
+func (h *Handlers) syncBackupNameNotice(r *http.Request) {
+	if err := h.Backups.SyncNameCollisionNotice(r.Context(), h.Notices); err != nil {
+		slog.Warn("backup job name notice", "err", err)
+	}
 }

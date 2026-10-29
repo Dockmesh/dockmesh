@@ -606,6 +606,7 @@ func main() {
 	// noticesSvc; they run once every service below is wired.
 	noticesSvc := notices.NewService(database)
 	noticesSvc.Register("api-tokens.legacy", apiTokensSvc.SyncLegacyNotice)
+	noticesSvc.Register("backups.job-name-collision", backupSvc.SyncNameCollisionNotice)
 
 	// Wire the registries service into every code path that pulls an
 	// image. Without this, compose deploys + the "update image" button

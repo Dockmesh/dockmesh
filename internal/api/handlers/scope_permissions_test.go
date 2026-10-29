@@ -18,6 +18,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/hosttags"
 	"github.com/dockmesh/dockmesh/internal/invites"
+	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -521,5 +522,74 @@ func TestBackupJobsKeepTheirOwnArchives(t *testing.T) {
 	}
 	if !st.Exists || st.Enabled {
 		t.Errorf("system status = %+v, want the disabled system job", st)
+	}
+}
+
+func TestBackupNameCollisionNotice(t *testing.T) {
+	e := newScopeEnv(t)
+	ctx := context.Background()
+	n := notices.NewService(e.db)
+	for _, stmt := range []string{
+		`INSERT INTO backup_jobs (id, name, target_type, sources) VALUES (1, 'web', 'local', '[{"type":"volume","name":"a"}]')`,
+		`INSERT INTO backup_jobs (id, name, target_type, sources) VALUES (2, 'Web!', 'local', '[{"type":"volume","name":"b"}]')`,
+		`INSERT INTO backup_jobs (id, name, target_type, sources) VALUES (3, 'Dockmesh System', 'local', '[{"type":"volume","name":"c"}]')`,
+		`INSERT INTO backup_jobs (id, name, target_type, sources) VALUES (4, 'dockmesh-system', 'local', '[{"type":"system","name":"dockmesh"}]')`,
+	} {
+		if _, err := e.db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	notice := func() *notices.Notice {
+		t.Helper()
+		if err := e.h.Backups.SyncNameCollisionNotice(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+		open, err := n.Open(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range open {
+			if open[i].Key == "backups.job-name-collision" {
+				return &open[i]
+			}
+		}
+		return nil
+	}
+
+	steps := []struct {
+		name, rename string
+		id           int
+		want         []string
+	}{
+		{"both collisions listed", "", 0, []string{`"Web!", "web"`, `"Dockmesh System" is not a system backup`, `"Dockmesh System", "dockmesh-system"`}},
+		{"one group renamed", "web-old", 2, []string{`"Dockmesh System" is not a system backup`}},
+		{"all renamed", "misc", 3, nil},
+	}
+	for _, st := range steps {
+		t.Run(st.name, func(t *testing.T) {
+			if st.rename != "" {
+				if _, err := e.db.Exec(`UPDATE backup_jobs SET name = ? WHERE id = ?`, st.rename, st.id); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := notice()
+			if st.want == nil {
+				if got != nil {
+					t.Fatalf("notice still open: %s", got.Body)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("no notice")
+			}
+			for _, w := range st.want {
+				if !strings.Contains(got.Body, w) {
+					t.Errorf("body %q lacks %q", got.Body, w)
+				}
+			}
+			if st.id != 0 && strings.Contains(got.Body, `"web"`) {
+				t.Errorf("stale body after rename: %s", got.Body)
+			}
+		})
 	}
 }
