@@ -90,7 +90,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   folder named after the job ID; existing archives are still managed where they are. The
   newest archive of a job is never removed by retention.
 - SMB backup targets work again when Dockmesh runs on Linux: the job's folder on the share was
-  never created, so every run failed with "file does not exist".
+  never created, so every run failed with "file does not exist", and closing the connection
+  after a complete upload was reported as an error.
 - A failed backup run deletes its partial archive and is no longer counted by retention, so
   a few failed runs can't push the last good backups out.
 - A stack backup fails when the compose file can't be read or one of the stack's volumes
