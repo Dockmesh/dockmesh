@@ -1053,8 +1053,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AgentCreateResult" }
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "403":
-          description: Caller lacks `hosts.create` or the host is outside the caller's scope.
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /agents/upgrade-policy:

@@ -695,15 +695,17 @@
           </button>
         </div>
 
-        <div class="ed-host-card" style="grid-column: span 6;">
-          <div class="ed-host-card-title">Re-issue token</div>
-          <p class="ed-host-empty" style="margin-top: 0;">
-            If the agent's mTLS cert is suspect — leaked from CI logs, host wiped, etc. — generate a new enrollment token. The old cert is revoked the moment the new one is presented.
-          </p>
-          <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={isLocal} onclick={rotateToken}>
-            <RefreshCw size={11} strokeWidth={1.5} /> Re-issue
-          </button>
-        </div>
+        {#if allowed('hosts.create')}
+          <div class="ed-host-card" style="grid-column: span 6;">
+            <div class="ed-host-card-title">Re-issue token</div>
+            <p class="ed-host-empty" style="margin-top: 0;">
+              If the agent's mTLS cert is suspect — leaked from CI logs, host wiped, etc. — generate a new enrollment token. The old cert is revoked the moment the new one is presented.
+            </p>
+            <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={isLocal} onclick={rotateToken}>
+              <RefreshCw size={11} strokeWidth={1.5} /> Re-issue
+            </button>
+          </div>
+        {/if}
 
         <div class="ed-host-card ed-host-card-danger" style="grid-column: span 6;">
           <div class="ed-host-card-title ed-host-card-danger-title">Revoke</div>
