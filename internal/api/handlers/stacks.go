@@ -310,6 +310,10 @@ func (h *Handlers) GetStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	d, err := h.Stacks.Get(name)
 	if err == nil {
+		d.MountsStackDir = compose.MountsProjectDir(d.Compose)
+		if d.ModifiedOutside, err = h.Stacks.ModifiedOutside(name); err != nil {
+			slog.Warn("stack file checksums", "stack", name, "err", err)
+		}
 		writeJSON(w, http.StatusOK, d)
 		return
 	}
@@ -622,6 +626,9 @@ func (h *Handlers) CleanupPreview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "no host available")
 		return
 	}
+	if !h.requireStackScope(w, r, rbac.PermStacksDelete, target.ID(), name) {
+		return
+	}
 	plan, err := target.CleanupPreview(r.Context(), name)
 	if err != nil {
 		writeError(w, http.StatusNotImplemented, err.Error())
@@ -766,6 +773,9 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
 		return
 	}
+	if !h.checkStackFiles(w, r, name) {
+		return
+	}
 
 	// Dependency resolution (P.12.7). For any declared prerequisite
 	// stack whose containers aren't already running, deploy it first
@@ -799,6 +809,9 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 			}
 			if satisfied {
 				continue
+			}
+			if !h.checkStackFiles(w, r, depName) {
+				return
 			}
 			depDetail, dErr := h.Stacks.Get(depName)
 			if dErr != nil {
@@ -888,6 +901,35 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		out["dependencies_deployed"] = depsDeployed
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// checkStackFiles refuses to deploy stack files changed outside Dockmesh
+// until the request confirms them with ?confirm_external=1, which records
+// them as reviewed.
+func (h *Handlers) checkStackFiles(w http.ResponseWriter, r *http.Request, name string) bool {
+	changed, err := h.Stacks.ModifiedOutside(name)
+	if err != nil {
+		writeStackError(w, err)
+		return false
+	}
+	if len(changed) == 0 {
+		return true
+	}
+	if r.URL.Query().Get("confirm_external") != "1" {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": stacks.ErrModifiedOutside.Error(),
+			"code":  "modified_outside",
+			"stack": name,
+			"files": changed,
+		})
+		return false
+	}
+	if err := h.Stacks.AcceptExternal(r.Context(), name); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	h.audit(r, "stack.accept_external_changes", name, map[string]any{"files": changed})
+	return true
 }
 
 // deployErrorStatus classifies a deploy failure into the right HTTP
@@ -1033,6 +1075,9 @@ func (h *Handlers) StackStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	if !h.requireStackScope(w, r, rbac.PermStacksView, target.ID(), name) {
+		return
+	}
 	status, err := target.StackStatus(r.Context(), name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

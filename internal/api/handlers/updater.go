@@ -22,9 +22,7 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	scopeReq := h.containerScopeReq(r.Context(), "local", id)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermContainersUpdate, scopeReq, "container "+id)
+	if !h.requireContainerScope(w, r, rbac.PermContainersUpdate, "local", id) {
 		return
 	}
 	res, err := h.Updater.Update(r.Context(), id)
@@ -49,9 +47,7 @@ func (h *Handlers) RollbackContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	scopeReq := h.containerScopeReq(r.Context(), "local", id)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermContainersUpdate, scopeReq, "container "+id)
+	if !h.requireContainerScope(w, r, rbac.PermContainersUpdate, "local", id) {
 		return
 	}
 	var req rollbackRequest

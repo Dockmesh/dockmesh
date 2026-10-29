@@ -840,7 +840,7 @@ export interface BackupTarget {
 }
 
 export interface BackupSource {
-  type: 'volume' | 'stack';
+  type: 'volume' | 'stack' | 'system';
   name: string;
 }
 
@@ -852,6 +852,7 @@ export interface BackupHook {
 export interface BackupJob {
   id: number;
   name: string;
+  host_id?: string;
   target_type: string;
   target_config: any;
   sources: BackupSource[];
@@ -874,6 +875,7 @@ export interface BackupJob {
 
 export interface BackupJobInput {
   name: string;
+  host_id?: string;
   target_type: string;
   target_config: any;
   sources: BackupSource[];
@@ -1179,9 +1181,11 @@ export interface UpdateHistoryEntry {
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  body?: any;
+  constructor(message: string, status: number, body?: any) {
     super(message);
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -1207,11 +1211,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
+    let body: any;
     try {
-      const body = await res.json();
+      body = await res.json();
       if (body.error) msg = body.error;
     } catch { /* ignore */ }
-    throw new ApiError(msg, res.status);
+    throw new ApiError(msg, res.status, body);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -1289,7 +1294,7 @@ export const api = {
 
   stacks: {
     list: () => request<StackListEntry[]>('/stacks'),
-    get: (name: string) => request<{ name: string; compose: string; env: string; status?: 'ok' | 'needs_recovery' }>(`/stacks/${encodeURIComponent(name)}`),
+    get: (name: string) => request<{ name: string; compose: string; env: string; status?: 'ok' | 'needs_recovery'; modified_outside?: string[]; mounts_stack_dir?: boolean }>(`/stacks/${encodeURIComponent(name)}`),
     create: (name: string, compose: string, env?: string) =>
       request<{ name: string }>('/stacks', { method: 'POST', body: JSON.stringify({ name, compose, env }) }),
     createFromGit: (name: string, git: StackGitSourceInput) =>
@@ -1346,10 +1351,11 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input)
       }),
-    deploy: (name: string, host = 'local', environment?: string) => {
+    deploy: (name: string, host = 'local', environment?: string, confirmExternal = false) => {
       const params = new URLSearchParams();
       if (host && host !== 'local') params.set('host', host);
       if (environment) params.set('environment', environment);
+      if (confirmExternal) params.set('confirm_external', '1');
       const qs = params.toString() ? '?' + params.toString() : '';
       return request<{
         stack: string;
@@ -1414,8 +1420,11 @@ export const api = {
       request<DeployHistoryEntry[]>(`/stacks/${encodeURIComponent(name)}/deployments?limit=${limit}`),
     getDeployment: (name: string, id: number) =>
       request<DeployHistoryEntry>(`/stacks/${encodeURIComponent(name)}/deployments/${id}`),
-    rollback: (name: string, id: number, host = 'local') => {
-      const qs = host && host !== 'local' ? '?host=' + encodeURIComponent(host) : '';
+    rollback: (name: string, id: number, host = 'local', confirmExternal = false) => {
+      const params = new URLSearchParams();
+      if (host && host !== 'local') params.set('host', host);
+      if (confirmExternal) params.set('confirm_external', '1');
+      const qs = params.toString() ? '?' + params.toString() : '';
       return request<RollbackResult>(
         `/stacks/${encodeURIComponent(name)}/deployments/${id}/rollback${qs}`,
         { method: 'POST' }
@@ -1804,10 +1813,12 @@ export const api = {
       request<BackupTarget>(`/backups/targets/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
     deleteTarget: (id: number) => request<void>(`/backups/targets/${id}`, { method: 'DELETE' }),
     testTarget: (id: number) => request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string }>(`/backups/targets/${id}/test`, { method: 'POST' }),
-    testTargetConfig: (type: string, config: any) =>
+    testTargetConfig: (type: string, config: any, targetId?: number) =>
       request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string }>('/backups/targets/test-config', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'test', type, config })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'test', type, config, target_id: targetId })
       }),
+    acceptTargetHostKey: (id: number) =>
+      request<void>(`/backups/targets/${id}/accept-host-key`, { method: 'POST' }),
     discoverShares: (host: string, port: number, username: string, password: string) =>
       request<{ shares: string[]; error?: string }>('/backups/targets/discover-shares', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ host, port: port || 445, username, password })
@@ -1820,7 +1831,9 @@ export const api = {
       request<BackupJob>(`/backups/jobs/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
     deleteJob: (id: number) => request<void>(`/backups/jobs/${id}`, { method: 'DELETE' }),
     runJob: (id: number) => request<BackupRun>(`/backups/jobs/${id}/run`, { method: 'POST' }),
-    // P.13.2 — clear the needs_review flag on a legacy auto-created
+    acceptHostKey: (id: number) =>
+      request<void>(`/backups/jobs/${id}/accept-host-key`, { method: 'POST' }),
+    // Clear the needs_review flag on a legacy auto-created
     // job. mode "keep" preserves enabled state; "disable" also flips
     // enabled=0 so the scheduler stops firing it.
     acknowledgeReview: (id: number, mode: 'keep' | 'disable') =>

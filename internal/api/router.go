@@ -127,6 +127,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.NewAuth(authSvc))
+			r.Use(h.StackScope)
 
 			// Self-service routes (any authenticated user)
 			r.Get("/me", h.Me)
@@ -189,20 +190,17 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/containers/{id}", h.InspectContainer)
 				// Historical metrics are read-only data, not a control action.
 				r.Get("/containers/{id}/metrics", h.GetMetrics)
-				// File browser (read-only) — list dir + read text preview +
-				// stream raw file bytes for download. Write goes through a
-				// separate group keyed on containers.exec because uploading
-				// a file is effectively code injection.
-				r.Get("/containers/{id}/files", h.BrowseContainerFiles)
-				r.Get("/containers/{id}/files/content", h.ReadContainerFile)
-				r.Get("/containers/{id}/files/download", h.DownloadContainerFile)
 				r.Get("/hosts/{id}/stats/containers", h.BatchContainerStats)
 			})
 
-			// File-write into a container is gated on containers.exec
-			// because the blast radius is the same as a shell session.
+			// Container file access, read and write, is gated on
+			// containers.exec: files hold the same secrets a shell
+			// reaches, and anyone with a shell can read them anyway.
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermContainersExec))
+				r.Get("/containers/{id}/files", h.BrowseContainerFiles)
+				r.Get("/containers/{id}/files/content", h.ReadContainerFile)
+				r.Get("/containers/{id}/files/download", h.DownloadContainerFile)
 				r.Post("/containers/{id}/files", h.WriteContainerFile)
 			})
 
@@ -510,8 +508,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			})
 
 			// -------------------------- DISASTER RECOVERY --------------------
-			// Backup verification (P.12.4) — destructive precursor to
-			// a real restore, so backups.restore is the right gate.
+			// Backup verification reads the whole archive like a restore
+			// would; the handlers add host scope and keep system backups
+			// admin-only.
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermBackupsRestore))
 				r.Post("/restore/verify", h.VerifyUploadedBackup)
@@ -701,10 +700,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/backups/runs", h.ListBackupRuns)
 				r.Get("/backups/runs/{id}", h.GetBackupRun)
 				r.Get("/backups/runs/{id}/log", h.GetBackupRunLog)
-				// Archive download is gated by backups.view: anyone
-				// who can list runs can also pull the bytes for one
-				// they own. Restore-grade access stays under
-				// backups.restore.
+			})
+			r.Group(func(r chi.Router) {
+				// Archives are decrypted server-side and carry secrets;
+				// the handler adds host scope and admin-only system archives.
+				r.Use(middleware.RequirePerm(rbac.PermBackupsDownload))
 				r.Get("/backups/runs/{id}/archive", h.DownloadBackupArchive)
 			})
 			r.Group(func(r chi.Router) {
@@ -718,9 +718,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Use(middleware.RequirePerm(rbac.PermBackupsUpdate))
 				r.Put("/backups/jobs/{id}", h.UpdateBackupJob)
 				r.Post("/backups/jobs/{id}/run", h.RunBackupJob)
+				r.Post("/backups/jobs/{id}/accept-host-key", h.AcceptBackupHostKey)
 				r.Post("/backups/jobs/{id}/review/{mode}", h.AcknowledgeBackupJobReview)
 				r.Put("/backups/targets/{id}", h.UpdateBackupTarget)
 				r.Post("/backups/targets/{id}/test", h.TestBackupTarget)
+				r.Post("/backups/targets/{id}/accept-host-key", h.AcceptBackupTargetHostKey)
 				r.Put("/backups/system/enabled", h.SetBackupEnabled)
 			})
 			r.Group(func(r chi.Router) {
@@ -731,12 +733,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermBackupsRestore))
 				r.Post("/backups/runs/{id}/restore", h.RestoreBackup)
-				// P.13.3: stack-typed runs need their own entry point so
-				// the restore actually writes stack/<rel> + each volume
-				// instead of returning the legacy "not implemented" stub.
+				// Stack-typed runs need their own entry point that writes
+				// stack/<rel> plus each volume.
 				r.Post("/backups/runs/{id}/restore-stack", h.RestoreStackBackup)
-				// Backup-key export is sensitive material that lets you
-				// decrypt every backup blob — gate behind backups.restore.
+				// The key decrypts every backup and stored secret; the
+				// handler additionally requires an admin.
 				r.Get("/system/backup-key/export", h.ExportBackupKey)
 			})
 			r.Group(func(r chi.Router) {

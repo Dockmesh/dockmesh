@@ -27,6 +27,9 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 	if dc == nil {
 		return nil, errors.New("docker unavailable")
 	}
+	if err := docker.CheckVolumeName(volumeName); err != nil {
+		return nil, err
+	}
 	cli := dc.Raw()
 
 	if err := ensureHelperImage(ctx, dc); err != nil {
@@ -109,6 +112,9 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src io.Reader) error {
 	if dc == nil {
 		return errors.New("docker unavailable")
+	}
+	if err := docker.CheckVolumeName(volumeName); err != nil {
+		return err
 	}
 	cli := dc.Raw()
 	if err := ensureHelperImage(ctx, dc); err != nil {

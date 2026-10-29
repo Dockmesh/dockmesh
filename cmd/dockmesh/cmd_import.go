@@ -90,6 +90,7 @@ func importComposeDir(args []string) error {
 		return fmt.Errorf("stacks manager: %w", err)
 	}
 	defer mgr.Close()
+	defer attachSumStore(mgr, cfg.DBPath)()
 
 	entries, err := os.ReadDir(*path)
 	if err != nil {

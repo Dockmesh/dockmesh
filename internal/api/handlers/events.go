@@ -33,6 +33,7 @@ func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	unscoped := h.callerUnscoped(r)
 
 	// Cancel ctx when the client disconnects.
 	go func() {
@@ -66,6 +67,7 @@ func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
 					Name:   ev.Actor.Attributes["name"],
 					Image:  ev.Actor.Attributes["image"],
 					Time:   ev.Time,
+					stack:  ev.Actor.Attributes["com.docker.compose.project"],
 				}
 			}
 		}()
@@ -86,6 +88,9 @@ func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
 				dockerMsgs = nil
 				continue
 			}
+			if !unscoped && !h.inReadScope(r, "local", ev.stack) {
+				continue
+			}
 			if b, err := json.Marshal(ev); err == nil {
 				if err := conn.WriteMessage(websocket.TextMessage, b); err != nil {
 					return
@@ -94,6 +99,9 @@ func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
 		case ev, ok := <-stackCh:
 			if !ok {
 				stackCh = nil
+				continue
+			}
+			if !unscoped && !h.stackVisible(r, ev.Name) {
 				continue
 			}
 			payload := map[string]any{
@@ -119,4 +127,21 @@ type dockerEventLike struct {
 	Name   string `json:"name,omitempty"`
 	Image  string `json:"image,omitempty"`
 	Time   int64  `json:"time,omitempty"`
+
+	stack string
+}
+
+// stackVisible reports whether the caller's scope includes the stack on
+// its deployment host, or by name alone while it is not deployed.
+func (h *Handlers) stackVisible(r *http.Request, name string) bool {
+	hostID := ""
+	if h.Deployments != nil {
+		if d, err := h.Deployments.Get(r.Context(), name); err == nil && d != nil {
+			hostID = d.HostID
+		}
+	}
+	if hostID != "" {
+		return h.inReadScope(r, hostID, name)
+	}
+	return h.checkRoleScope(r, rbac.ScopeRequest{StackName: name})
 }
