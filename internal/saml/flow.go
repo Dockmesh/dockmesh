@@ -213,7 +213,7 @@ func (s *Service) StartLogin(ctx context.Context, slug, relayState string) (stri
 }
 
 // ACSResult is a completed SAML login. RekeyedUser is set when the login
-// gave an account from before stable subjects its new subject.
+// gave a marked account its new subject.
 type ACSResult struct {
 	Login       *auth.LoginResult
 	RekeyedUser string
@@ -290,10 +290,11 @@ func identity(p *Provider, a *crewjam.Assertion) (subject, email, name string, a
 	nameID, attrs := extractAssertion(a, p)
 	subject = nameID
 	if p.SubjectAttribute != "" {
-		subject = attrs[p.SubjectAttribute]
-		if subject == "" {
-			return "", "", "", nil, fmt.Errorf("assertion has no %q attribute to identify the user", p.SubjectAttribute)
+		vals := attributeValues(a, p.SubjectAttribute)
+		if len(vals) != 1 {
+			return "", "", "", nil, fmt.Errorf("assertion needs exactly one %q value to identify the user, got %d", p.SubjectAttribute, len(vals))
 		}
+		subject = vals[0]
 	}
 	if subject == "" {
 		return "", "", "", nil, errors.New("assertion has no NameID subject")
@@ -314,11 +315,10 @@ func identity(p *Provider, a *crewjam.Assertion) (subject, email, name string, a
 	return subject, email, name, attrs, nil
 }
 
-// rekey moves an account of this provider from before stable subjects to
-// its new subject, once and only while the account is marked
-// (saml_rekey_until, set by the upgrade). It matches provider and email;
-// local accounts and accounts of other providers never match. A marked
-// account that already has the subject just loses the marker.
+// rekey gives a marked account of this provider (saml_rekey_until) the new
+// subject once, matched by email; one that already has it loses the mark.
+// The IdP's email isn't verified, so like email linking it never takes an
+// admin account or one with two-factor authentication.
 func (s *Service) rekey(ctx context.Context, slug, subject, email string) (string, error) {
 	var known int
 	if err := s.db.QueryRowContext(ctx,
@@ -333,7 +333,8 @@ func (s *Service) rekey(ctx context.Context, slug, subject, email string) (strin
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id FROM users
-		 WHERE saml_provider = ? AND email = ? COLLATE NOCASE AND saml_rekey_until > CURRENT_TIMESTAMP`, slug, email)
+		 WHERE saml_provider = ? AND email = ? COLLATE NOCASE AND saml_rekey_until > CURRENT_TIMESTAMP
+		   AND role <> 'admin' AND totp_verified = 0`, slug, email)
 	if err != nil {
 		return "", err
 	}
@@ -378,6 +379,10 @@ func (s *Service) jitProvision(ctx context.Context, p *Provider, subject, name, 
 // requestTTL matches the lifetime of the signed state cookie.
 const requestTTL = 5 * time.Minute
 
+// maxRequests bounds the open sign-ins the unauthenticated login endpoint
+// can pile up; beyond it the oldest is dropped.
+const maxRequests = 10000
+
 // issueRequest remembers an AuthnRequest ID until it is answered or
 // expires.
 func (s *Service) issueRequest(id string) {
@@ -387,9 +392,18 @@ func (s *Service) issueRequest(id string) {
 	if s.requests == nil {
 		s.requests = map[string]time.Time{}
 	}
-	for k, exp := range s.requests {
-		if now.After(exp) {
-			delete(s.requests, k)
+	if now.Sub(s.reqSwept) > time.Second || len(s.requests) >= maxRequests {
+		s.reqSwept = now
+		oldest, oldestExp := "", time.Time{}
+		for k, exp := range s.requests {
+			if now.After(exp) {
+				delete(s.requests, k)
+			} else if oldest == "" || exp.Before(oldestExp) {
+				oldest, oldestExp = k, exp
+			}
+		}
+		if len(s.requests) >= maxRequests {
+			delete(s.requests, oldest)
 		}
 	}
 	s.requests[id] = now.Add(requestTTL)
@@ -403,6 +417,25 @@ func (s *Service) consumeRequest(id string) bool {
 	exp, ok := s.requests[id]
 	delete(s.requests, id)
 	return ok && time.Now().Before(exp)
+}
+
+// attributeValues returns the non-empty values of the attribute with the
+// given Name or FriendlyName.
+func attributeValues(a *crewjam.Assertion, name string) []string {
+	var out []string
+	for _, st := range a.AttributeStatements {
+		for _, at := range st.Attributes {
+			if at.Name != name && at.FriendlyName != name {
+				continue
+			}
+			for _, v := range at.Values {
+				if v.Value != "" {
+					out = append(out, v.Value)
+				}
+			}
+		}
+	}
+	return out
 }
 
 func extractAssertion(a *crewjam.Assertion, _ *Provider) (subject string, attrs map[string]string) {

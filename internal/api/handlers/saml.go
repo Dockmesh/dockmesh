@@ -9,6 +9,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
+	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/saml"
 	"github.com/go-chi/chi/v5"
 )
@@ -62,8 +63,8 @@ func (h *Handlers) SAMLLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
-// errSAMLNeedsHTTPS explains the usual reason the state cookie is missing.
-const errSAMLNeedsHTTPS = "SAML sign-in did not return to the browser session it started from. " +
+// samlNeedsHTTPSMsg explains the usual reason the state cookie is missing.
+const samlNeedsHTTPSMsg = "SAML sign-in did not return to the browser session it started from. " +
 	"With an identity provider on another domain, Dockmesh must be reached over HTTPS."
 
 // SAMLACS handles the assertion-consumer POST from the IdP. Validates
@@ -77,8 +78,8 @@ func (h *Handlers) SAMLACS(w http.ResponseWriter, r *http.Request) {
 	c, err := r.Cookie(samlStateCookie)
 	if err != nil {
 		msg := "SAML sign-in session expired or missing; sign in again."
-		if !h.cookiesSecure(r) {
-			msg = errSAMLNeedsHTTPS
+		if !clientip.Secure(r) {
+			msg = samlNeedsHTTPSMsg
 		}
 		ssoErrorRedirect(w, r, msg)
 		return

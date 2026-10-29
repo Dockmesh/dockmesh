@@ -146,8 +146,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   overwritten by the provider's group mapping on the next login, and turning off "create
   accounts on first SSO login" now really stops new accounts.
 - SAML sign-in now asks the identity provider for the NameID format set on the provider
-  (persistent unless changed; unspecified and emailAddress are the other choices) and keys the
-  account by it, or by a subject attribute such as the Microsoft Entra object ID. Before,
+  (persistent by default) and keys the account by it, or by a subject attribute such as the
+  Microsoft Entra object ID. Before,
   Dockmesh asked for a transient NameID, which changes on every login. A SAML response is now
   accepted only once and only as the answer to a sign-in that this server started.
 - Passwords, keys and tokens of backup targets and notification channels, and webhook URLs
@@ -261,7 +261,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   Authentication (persistent is recommended, and with emailAddress a changed email breaks the
   login) or set a subject attribute. Accounts created through SAML before this version get
   their new subject at their next sign-in, once, when it comes from the same provider with the
-  same email and within 90 days of the upgrade; later, an admin has to remove the old account.
+  same email and within 90 days of the upgrade. Admin accounts and accounts with two-factor
+  authentication are not changed this way; for them, and after the 90 days, an admin has to
+  remove the old account.
   Each of these changes is written to the audit log as `auth.saml_rekey`. With an identity
   provider on another domain, Dockmesh must be reached over HTTPS.
 - [sso-linked-accounts-review, admins] Earlier versions linked SSO logins to accounts by email

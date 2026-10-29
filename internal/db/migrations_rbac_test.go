@@ -139,8 +139,8 @@ func TestSSOLinkingMigration(t *testing.T) {
 	}
 }
 
-// SAML accounts from before stable subjects may be re-keyed once within
-// 90 days; local accounts are never marked.
+// Existing SAML accounts are marked for one re-key within 90 days; local
+// accounts are not.
 func TestSAMLRekeyMarkerMigration(t *testing.T) {
 	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

@@ -9,12 +9,14 @@ import (
 	"io"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	crewjam "github.com/crewjam/saml"
 
+	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/db"
 )
 
@@ -55,7 +57,11 @@ func assertion(nameID string, attrs map[string]string) *crewjam.Assertion {
 	a := &crewjam.Assertion{Subject: &crewjam.Subject{NameID: &crewjam.NameID{Value: nameID}}}
 	st := crewjam.AttributeStatement{}
 	for k, v := range attrs {
-		st.Attributes = append(st.Attributes, crewjam.Attribute{Name: k, Values: []crewjam.AttributeValue{{Value: v}}})
+		at := crewjam.Attribute{Name: k}
+		for _, part := range strings.Split(v, ";") {
+			at.Values = append(at.Values, crewjam.AttributeValue{Value: part})
+		}
+		st.Attributes = append(st.Attributes, at)
 	}
 	a.AttributeStatements = []crewjam.AttributeStatement{st}
 	return a
@@ -81,6 +87,8 @@ func TestIdentity(t *testing.T) {
 			wantSubject: "00000000-1111", wantEmail: "ann.new@example.com"},
 		{name: "subject attribute missing", subjectAttr: oid, nameID: "a1b2c3",
 			attrs: map[string]string{"email": "ann@example.com"}, wantErr: true},
+		{name: "subject attribute with two values", subjectAttr: "uid", nameID: "a1b2c3",
+			attrs: map[string]string{"uid": "a;b", "email": "ann@example.com"}, wantErr: true},
 		{name: "no email anywhere", nameID: "a1b2c3", attrs: map[string]string{}, wantErr: true},
 	}
 	for _, tt := range tests {
@@ -114,6 +122,83 @@ func TestRequestIDsAreSingleUse(t *testing.T) {
 	if s.consumeRequest("id-2") {
 		t.Fatal("expired request accepted")
 	}
+	for i := 0; i < maxRequests+50; i++ {
+		s.issueRequest("flood-" + strconv.Itoa(i))
+	}
+	if len(s.requests) > maxRequests {
+		t.Fatalf("%d open requests, want at most %d", len(s.requests), maxRequests)
+	}
+	if !s.consumeRequest("flood-" + strconv.Itoa(maxRequests+49)) {
+		t.Fatal("newest request was dropped")
+	}
+}
+
+// A provider that is deleted, or pointed at another IdP, must not re-key
+// the accounts marked for it.
+func TestProviderChangeDropsRekeyMarkers(t *testing.T) {
+	tests := []struct {
+		name       string
+		change     func(t *testing.T, s *Service, id int64)
+		wantMarked bool
+	}{
+		{name: "delete", change: func(t *testing.T, s *Service, id int64) {
+			if err := s.DeleteProvider(context.Background(), id); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "other IdP", change: func(t *testing.T, s *Service, id int64) {
+			md := strings.Replace(testIdPMetadataWithCert(t), "https://idp.example/realm", "https://other.example/realm", 1)
+			if _, err := s.UpdateProvider(context.Background(), id, ProviderInput{Slug: "corp", DisplayName: "Corp", IdPMetadataXML: md, Enabled: true}); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "same IdP", wantMarked: true, change: func(t *testing.T, s *Service, id int64) {
+			if _, err := s.UpdateProvider(context.Background(), id, ProviderInput{Slug: "corp", DisplayName: "Corp", IdPMetadataXML: testIdPMetadataWithCert(t), Enabled: true}); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			database := newTestDB(t)
+			res, err := database.Exec(`INSERT INTO saml_providers (slug, display_name, entity_id, sso_url, idp_metadata_xml, idp_cert_pem, nameid_format, enabled)
+				VALUES ('corp', 'Corp', 'https://idp.example/realm', 'https://idp.example/sso', ?, '', ?, 1)`, testIdPMetadata, NameIDPersistent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id, _ := res.LastInsertId()
+			if _, err := database.Exec(`INSERT INTO users (id, username, email, password, saml_provider, saml_subject, saml_rekey_until)
+				VALUES ('u1', 'ann', 'ann@example.com', 'x', 'corp', 'G-1', datetime('now','+90 days'))`); err != nil {
+				t.Fatal(err)
+			}
+			s := &Service{db: database, auth: auth.NewService(database, []byte("0123456789abcdef0123456789abcdef"))}
+			tt.change(t, s, id)
+			var marked bool
+			if err := database.QueryRow(`SELECT saml_rekey_until IS NOT NULL FROM users WHERE id = 'u1'`).Scan(&marked); err != nil {
+				t.Fatal(err)
+			}
+			if marked != tt.wantMarked {
+				t.Errorf("marked = %v, want %v", marked, tt.wantMarked)
+			}
+		})
+	}
+}
+
+// testIdPMetadataWithCert is testIdPMetadata with the signing certificate
+// parseIdPMetadata requires.
+func testIdPMetadataWithCert(t *testing.T) string {
+	t.Helper()
+	_, _, _, certPEM, err := generateSPKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := strings.TrimSpace(certPEM)
+	block = strings.TrimPrefix(block, "-----BEGIN CERTIFICATE-----")
+	block = strings.TrimSuffix(block, "-----END CERTIFICATE-----")
+	block = strings.ReplaceAll(block, "\n", "")
+	kd := `<KeyDescriptor use="signing"><KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><X509Data><X509Certificate>` +
+		block + `</X509Certificate></X509Data></KeyInfo></KeyDescriptor>`
+	return strings.Replace(testIdPMetadata, `protocol">`, `protocol">`+kd, 1)
 }
 
 func TestRekey(t *testing.T) {
@@ -122,6 +207,8 @@ func TestRekey(t *testing.T) {
 		provider  any // nil = local account
 		subject   string
 		marker    string // SQL expression for saml_rekey_until, "" = NULL
+		role      string
+		totp      int
 	}
 	tests := []struct {
 		name        string
@@ -156,6 +243,14 @@ func TestRekey(t *testing.T) {
 			accounts: []acct{{id: "u1", email: "ann@example.com", provider: "corp", subject: "G-old", marker: "datetime('now','+90 days')"}},
 			subject:  "persist-1", email: "bob@example.com",
 			wantSubject: map[string]string{"u1": "G-old"}, wantMarked: map[string]bool{"u1": true}},
+		{name: "admin account is never re-keyed",
+			accounts: []acct{{id: "u1", email: "ann@example.com", provider: "corp", subject: "G-old", marker: "datetime('now','+90 days')", role: "admin"}},
+			subject:  "persist-1", email: "ann@example.com",
+			wantSubject: map[string]string{"u1": "G-old"}, wantMarked: map[string]bool{"u1": true}},
+		{name: "account with two-factor authentication is never re-keyed",
+			accounts: []acct{{id: "u1", email: "ann@example.com", provider: "corp", subject: "G-old", marker: "datetime('now','+90 days')", totp: 1}},
+			subject:  "persist-1", email: "ann@example.com",
+			wantSubject: map[string]string{"u1": "G-old"}, wantMarked: map[string]bool{"u1": true}},
 		{name: "known subject only drops the marker",
 			accounts: []acct{{id: "u1", email: "ann@example.com", provider: "corp", subject: "persist-1", marker: "datetime('now','+90 days')"}},
 			subject:  "persist-1", email: "other@example.com",
@@ -173,8 +268,12 @@ func TestRekey(t *testing.T) {
 				if a.subject != "" {
 					subject = a.subject
 				}
-				if _, err := database.Exec(`INSERT INTO users (id, username, email, password, role, saml_provider, saml_subject, saml_rekey_until)
-					VALUES (?, ?, ?, 'x', 'viewer', ?, ?, `+marker+`)`, a.id, a.id, a.email, a.provider, subject); err != nil {
+				role := a.role
+				if role == "" {
+					role = "viewer"
+				}
+				if _, err := database.Exec(`INSERT INTO users (id, username, email, password, role, totp_verified, saml_provider, saml_subject, saml_rekey_until)
+					VALUES (?, ?, ?, 'x', ?, ?, ?, ?, `+marker+`)`, a.id, a.id, a.email, role, a.totp, a.provider, subject); err != nil {
 					t.Fatal(err)
 				}
 			}

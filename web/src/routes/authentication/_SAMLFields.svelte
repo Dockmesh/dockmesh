@@ -132,8 +132,8 @@
   <div class="saml-help">
     <span class="saml-help-icon">!</span>
     <span class="saml-help-text">
-      This server is reached over plain HTTP. An identity provider on another domain answers with a
-      cross-site POST that only reaches Dockmesh over HTTPS; set the public URL to https:// first.
+      This server is reached over plain HTTP. An identity provider on another domain can only sign
+      users in over HTTPS; set the public URL to https://.
     </span>
   </div>
 {/if}
@@ -183,7 +183,7 @@
   </Field>
   <Field
     label="Subject attribute (optional)"
-    hint="Identify the account by this attribute instead of the NameID, e.g. the Entra object ID."
+    hint="Identify the account by this attribute instead of the NameID, e.g. the Entra object ID. Use an ID the user can't change; changing this later disconnects existing accounts."
   >
     <input
       class="dm-input acc-input-mono"

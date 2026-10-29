@@ -6674,7 +6674,7 @@ paths:
       tags: [auth]
       summary: Assertion-consumer endpoint — receives the signed SAMLResponse
       description: |
-        Needs the state cookie set by `/login` and a response to a sign-in
+        Needs the state cookie set by `/auth/saml/{slug}/login` and a response to a sign-in
         request this server issued; each request can be answered once.
         Over HTTPS the state cookie is `SameSite=None; Secure` so the
         identity provider's cross-site POST carries it. Over plain HTTP it
@@ -7470,7 +7470,6 @@ components:
 
     SAMLProviderInput:
       type: object
-      additionalProperties: true
       required: [slug, display_name]
       properties:
         slug: { type: string }

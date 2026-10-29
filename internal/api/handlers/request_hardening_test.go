@@ -198,9 +198,6 @@ func TestSSOStateCookieSecure(t *testing.T) {
 	}
 }
 
-// The IdP answers SAML with a cross-site POST, which only carries a
-// SameSite=None cookie; without HTTPS the cookie stays Lax and a missing
-// cookie says why.
 func TestSAMLStateCookie(t *testing.T) {
 	e := newAuthzEnv(t)
 	store := settings.NewStore(e.db)
@@ -229,8 +226,12 @@ func TestSAMLStateCookie(t *testing.T) {
 				t.Fatalf("cookie = %+v, want SameSite %v Secure %v", c, tt.wantSite, tt.wantSecure)
 			}
 
+			acs := httptest.NewRequest(http.MethodPost, "/auth/saml/x/acs", strings.NewReader("SAMLResponse=x"))
+			if tt.wantSecure {
+				acs.TLS = &tls.ConnectionState{}
+			}
 			rr = httptest.NewRecorder()
-			e.h.SAMLACS(rr, httptest.NewRequest(http.MethodPost, "/auth/saml/x/acs", strings.NewReader("SAMLResponse=x")))
+			e.h.SAMLACS(rr, acs)
 			loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
 			if rr.Code != http.StatusFound || !strings.HasPrefix(loc, "/login?sso_error=") || !strings.Contains(loc, tt.wantError) {
 				t.Errorf("ACS without cookie: %d %q, want redirect mentioning %q", rr.Code, loc, tt.wantError)

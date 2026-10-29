@@ -129,6 +129,7 @@ type Service struct {
 
 	reqMu    sync.Mutex
 	requests map[string]time.Time // AuthnRequest ID -> expiry
+	reqSwept time.Time
 }
 
 func NewService(db *sql.DB, authSvc *auth.Service, secretsSvc *secrets.Service, baseURL string) *Service {
@@ -308,6 +309,13 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", ErrInvalidMetadata, err)
 		}
+		// Another IdP behind the same provider must not re-key its accounts.
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE users SET saml_rekey_until = NULL
+			 WHERE saml_provider = (SELECT slug FROM saml_providers WHERE id = ? AND entity_id <> ?)`,
+			id, meta.EntityID); err != nil {
+			return nil, err
+		}
 		_, err = s.db.ExecContext(ctx, `
 			UPDATE saml_providers SET
 				display_name = ?, entity_id = ?, sso_url = ?, slo_url = ?,
@@ -351,8 +359,22 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 }
 
 func (s *Service) DeleteProvider(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM saml_providers WHERE id = ?`, id)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	// A new provider with the same slug may be another IdP, so the marked
+	// accounts of this one must not be re-keyed through it.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE users SET saml_rekey_until = NULL
+		 WHERE saml_provider = (SELECT slug FROM saml_providers WHERE id = ?)`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM saml_providers WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Service) SetGroupMappings(ctx context.Context, providerID int64, mappings []GroupMapping) error {
