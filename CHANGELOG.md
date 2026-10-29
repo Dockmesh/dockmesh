@@ -54,6 +54,7 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ### Fixed
 
+- The agent logs the verified SHA-256 of a downloaded upgrade binary before replacing itself.
 - The backup wizards now prefill the data directory's `backups` folder (or the first allowed
   local directory) for local targets instead of `./data/backups`, which the allowed-directory
   check rejected.
