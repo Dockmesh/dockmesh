@@ -34,6 +34,7 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - New agents keep their data in `/var/lib/dockmesh-agent` instead of `/var/lib/dockmesh`, so an
   agent on the same host as the server no longer mixes its files with the server's. Re-running
   the installer on an existing agent keeps its current directory.
+- `uninstall.sh --dry-run` no longer kills the processes of the `dockmesh` service user.
 
 ## [0.4.0] - 2026-10-29 [security]
 
