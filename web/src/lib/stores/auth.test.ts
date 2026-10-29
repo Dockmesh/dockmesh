@@ -14,6 +14,16 @@ function jwt(serial: number, nowMs: number) {
 
 const user = { id: 'u1', username: 'admin', role: 'admin' };
 
+function memStorage() {
+  const data = new Map<string, string>();
+  const storage = {
+    getItem: (k: string) => data.get(k) ?? null,
+    setItem: (k: string, v: string) => void data.set(k, v),
+    removeItem: (k: string) => void data.delete(k)
+  };
+  return { data, storage };
+}
+
 // Rotating refresh tokens like the backend: each token is single use and
 // replaying a spent one revokes the session.
 class FakeServer {
@@ -49,12 +59,9 @@ class FakeServer {
 
 // One browser profile: shared localStorage, broadcast bus and lock.
 class Browser {
-  data = new Map<string, string>();
-  storage = {
-    getItem: (k: string) => this.data.get(k) ?? null,
-    setItem: (k: string, v: string) => void this.data.set(k, v),
-    removeItem: (k: string) => void this.data.delete(k)
-  };
+  mem = memStorage();
+  data = this.mem.data;
+  storage = this.mem.storage;
   subscribers: Array<{ tab: number; fn: (msg: any) => void }> = [];
   lockTail: Promise<unknown> = Promise.resolve();
   reasons: Array<{ tab: number; reason: SignOutReason }> = [];
@@ -243,12 +250,7 @@ describe('leaseLock', () => {
   });
 
   it('runs one holder at a time across owners', async () => {
-    const data = new Map<string, string>();
-    const storage = {
-      getItem: (k: string) => data.get(k) ?? null,
-      setItem: (k: string, v: string) => void data.set(k, v),
-      removeItem: (k: string) => void data.delete(k)
-    };
+    const { data, storage } = memStorage();
     const env = { storage, now: () => Date.now(), setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms) };
     const lockA = leaseLock(env, 'a');
     const lockB = leaseLock(env, 'b');

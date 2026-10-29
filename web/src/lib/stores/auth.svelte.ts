@@ -99,7 +99,7 @@ function localExpiry(token: string, now: number): number | null {
   return exp * 1000;
 }
 
-const sleep = (env: AuthEnv, ms: number) => new Promise<void>((r) => env.setTimeout(r, ms));
+const sleep = (env: Pick<AuthEnv, 'setTimeout'>, ms: number) => new Promise<void>((r) => env.setTimeout(r, ms));
 
 // Cross-tab mutex on a localStorage lease, for insecure origins (plain-HTTP
 // LAN installs) where navigator.locks does not exist. Not strictly atomic;
@@ -112,17 +112,16 @@ export function leaseLock(env: Pick<AuthEnv, 'now' | 'setTimeout'> & { storage: 
       return null;
     }
   };
-  const wait = (ms: number) => new Promise<void>((r) => env.setTimeout(r, ms));
   return async <T>(fn: () => Promise<T>): Promise<T> => {
     const giveUpAt = env.now() + LEASE_WAIT_MS;
     while (env.now() < giveUpAt) {
       const cur = read();
       if (!cur || cur.until < env.now() || cur.owner === owner) {
         env.storage.setItem(LEASE_KEY, JSON.stringify({ owner, until: env.now() + LEASE_MS }));
-        await wait(25);
+        await sleep(env, 25);
         if (read()?.owner === owner) break;
       }
-      await wait(100);
+      await sleep(env, 100);
     }
     try {
       return await fn();

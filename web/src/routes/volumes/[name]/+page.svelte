@@ -7,6 +7,7 @@
   // rename / write / delete in here. Operators who need that have a
   // shell-into-container path.
   import { untrack } from 'svelte';
+  import { latest } from '$lib/latest';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { api, ApiError, isFanOut, type VolumeEntry, type VolumeFileResult } from '$lib/api';
@@ -38,21 +39,21 @@
   let inspect = $state<any>(null);
   let inspectLoading = $state(true);
   let inspectError = $state<string | null>(null);
-  let inspectSeq = 0;
+  const nextInspect = latest();
   async function loadInspect() {
-    const seq = ++inspectSeq;
+    const current = nextInspect();
     inspectLoading = true;
     try {
       const r = await api.volumes.inspect(name, hostId);
-      if (seq !== inspectSeq) return;
+      if (!current()) return;
       inspect = r;
       inspectError = null;
     } catch (err) {
-      if (seq !== inspectSeq) return;
-      inspectError = err instanceof ApiError ? err.message : 'failed to load volume';
+      if (!current()) return;
+      inspectError = err instanceof ApiError ? err.message : 'Failed to load volume';
       toast.error('Failed to load volume', inspectError);
     } finally {
-      if (seq === inspectSeq) inspectLoading = false;
+      if (current()) inspectLoading = false;
     }
   }
 
@@ -230,12 +231,12 @@
     name; hostId;
     inspect = null;
     inspectError = null;
-    untrack(() => loadInspect());
+    untrack(loadInspect);
   });
   $effect(() => {
     name; hostId;
     if (tab === 'files') untrack(() => loadDir('/'));
-    else if (tab === 'containers') untrack(() => loadAttached());
+    else if (tab === 'containers') untrack(loadAttached);
   });
 
   const canWrite = $derived(allowed('volumes.delete'));

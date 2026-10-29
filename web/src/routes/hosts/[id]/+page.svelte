@@ -7,6 +7,7 @@
   // See project_hosts_open_punch_list.md for deferred features
   // (per-container metrics, host-affinity panel).
   import { untrack } from 'svelte';
+  import { latest } from '$lib/latest';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import {
@@ -68,11 +69,9 @@
   let upgradeBusy = $state(false);
   let revokeBusy = $state(false);
 
-  // Responses for a host the page has since navigated away from are dropped.
-  let loadSeq = 0;
+  const nextLoad = latest();
   async function loadAll() {
-    const seq = ++loadSeq;
-    const stale = () => seq !== loadSeq;
+    const current = nextLoad();
     loading = true;
     loadError = null;
     try {
@@ -85,7 +84,7 @@
           api.hosts.list().catch(() => []),
           api.agents.getUpgradePolicy().catch(() => null)
         ]);
-        if (stale()) return;
+        if (!current()) return;
         const local = hostList.find((h) => h.kind === 'local');
         localName = local?.name ?? 'local';
         agent = null;
@@ -95,13 +94,13 @@
         upgradePolicyVersion = polRes?.server_version ?? '';
       } else {
         const [a, m, ctrRes, stk, polRes] = await Promise.all([
-          api.agents.get(id).catch((e) => { if (!stale()) loadError = e instanceof ApiError ? e.message : 'Load failed'; return null; }),
+          api.agents.get(id).catch((e) => { if (current()) loadError = e instanceof ApiError ? e.message : 'Load failed'; return null; }),
           api.system.metrics(id).catch(() => null),
           api.containers.list(false, id).catch(() => []),
           api.stacks.list().catch(() => []),
           api.agents.getUpgradePolicy().catch(() => null)
         ]);
-        if (stale()) return;
+        if (!current()) return;
         agent = a;
         if (m && !('hosts' in m)) metrics = m;
         containers = Array.isArray(ctrRes) ? ctrRes : [];
@@ -114,7 +113,7 @@
         api.hosts.allTags().catch(() => []),
         api.migrations.list(50).catch(() => [])
       ]);
-      if (stale()) return;
+      if (!current()) return;
       tags = t;
       tagsDraft = [...t];
       allFleetTags = allT;
@@ -124,9 +123,9 @@
         metricsHistory = [...metricsHistory.slice(-15), metrics];
       }
     } catch (err) {
-      if (!stale()) loadError = err instanceof ApiError ? err.message : 'Load failed';
+      if (current()) loadError = err instanceof ApiError ? err.message : 'Load failed';
     } finally {
-      if (!stale()) loading = false;
+      if (current()) loading = false;
     }
   }
 

@@ -85,7 +85,7 @@ export class EventStream {
       return;
     }
 
-    if (this.stopped || gen !== this.gen) return;
+    if (gen !== this.gen) return;
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${proto}//${location.host}/api/v1/ws/events?ticket=${ticket}`;
