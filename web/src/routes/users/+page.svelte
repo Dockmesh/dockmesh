@@ -30,6 +30,7 @@
     email?: string;
     role: string;
     scope_tags?: string[];
+    locked_until?: string;
   }
   let users = $state<UserRow[]>([]);
   let usersLoading = $state(true);
@@ -223,6 +224,17 @@
   onMount(() => { loadAll(); });
 
   // ─── User actions ─────────────────────────────────────────────────────
+  async function unlockUser(u: UserRow) {
+    openMenu = null;
+    try {
+      await api.auth.unlockUser(u.id);
+      toast.success('Unlocked', u.username);
+      await loadAll();
+    } catch (err) {
+      toast.error('Unlock failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
   async function deleteUser(u: UserRow) {
     if (!(await confirm.ask({
       title: `Remove ${u.username}`,
@@ -627,6 +639,9 @@
                           {#if me?.id === u.id}
                             <span class="ed-user-self">— this is you</span>
                           {/if}
+                          {#if u.locked_until}
+                            <span class="dm-pill dm-pill-warning" title="Locked until {new Date(u.locked_until).toLocaleString()}">locked</span>
+                          {/if}
                         </span>
                       </div>
                     </div>
@@ -677,6 +692,15 @@
                           >
                             Edit role &amp; scope
                           </button>
+                          {#if u.locked_until}
+                            <button
+                              type="button"
+                              class="ed-user-menu-item"
+                              onclick={() => unlockUser(u)}
+                            >
+                              Unlock
+                            </button>
+                          {/if}
                           <button
                             type="button"
                             class="ed-user-menu-item"

@@ -7331,6 +7331,10 @@ components:
           items: { type: string }
           description: Host tags this user is scoped to. Empty / omitted = access to all hosts.
         mfa_enabled: { type: boolean }
+        locked_until:
+          type: string
+          format: date-time
+          description: Only in the user list, while the account is blocked by failed sign-ins. Clear it with the unlock endpoint.
 
     StackInput:
       type: object

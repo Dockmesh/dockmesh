@@ -41,6 +41,9 @@ type User struct {
 	// Profile timestamps surfaced in the Account page.
 	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
 	PasswordChangedAt *time.Time `json:"password_changed_at,omitempty"`
+	// LockedUntil is set by ListUsers while the account is blocked by the
+	// policy lockout or the per-account login limit.
+	LockedUntil *time.Time `json:"locked_until,omitempty"`
 	// HasAvatar indicates whether the user has uploaded an avatar.
 	// The actual bytes are served from a separate endpoint
 	// (GET /users/{id}/avatar) so we don't bloat every list response.
@@ -346,22 +349,27 @@ func (s *Service) UserAccess(ctx context.Context, userID string) (string, []stri
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, username, email, role, scope_tags, totp_verified,
-		        display_name, last_login_at, password_changed_at, avatar_mime
+		        display_name, last_login_at, password_changed_at, avatar_mime,
+		        locked_until, login_limit_until
 		   FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []User{}
+	now := time.Now()
 	for rows.Next() {
 		var u User
 		var email, scope, displayName, avatarMime sql.NullString
 		var totp int
-		var lastLoginAt, pwChangedAt sql.NullTime
+		var lastLoginAt, pwChangedAt, lockedUntil sql.NullTime
+		var limitUntil int64
 		if err := rows.Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &totp,
-			&displayName, &lastLoginAt, &pwChangedAt, &avatarMime); err != nil {
+			&displayName, &lastLoginAt, &pwChangedAt, &avatarMime,
+			&lockedUntil, &limitUntil); err != nil {
 			return nil, err
 		}
+		u.LockedUntil = activeLockEnd(now, lockedUntil, limitUntil)
 		if email.Valid {
 			u.Email = email.String
 		}
@@ -382,6 +390,22 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// activeLockEnd returns the later of the two block ends that are still in
+// the future, or nil when the account is not blocked.
+func activeLockEnd(now time.Time, lockedUntil sql.NullTime, limitUntil int64) *time.Time {
+	var end time.Time
+	if lockedUntil.Valid && lockedUntil.Time.After(now) {
+		end = lockedUntil.Time
+	}
+	if t := time.Unix(limitUntil, 0); limitUntil > 0 && t.After(now) && t.After(end) {
+		end = t
+	}
+	if end.IsZero() {
+		return nil
+	}
+	return &end
 }
 
 // UpdateUser edits email, role, and (optionally) display name. Scope

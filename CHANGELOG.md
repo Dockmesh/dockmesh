@@ -54,6 +54,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ### Fixed
 
+- The users list now marks locked accounts and offers an Unlock action, so an admin no longer
+  needs the API or `dockmesh admin unlock` to release someone locked out by failed sign-ins.
 - The installer now detects an existing Dockmesh service reliably on upgrade, always restarts
   it after replacing the binary and stops with an error if the old binary is still running.
 - The agent installer now reports success only once the agent has connected to the server.

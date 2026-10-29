@@ -1932,7 +1932,7 @@ export const api = {
 
   users: {
     me: () => request<{ id: string; username: string; email?: string; role: string; scope_tags?: string[] }>('/me'),
-    list: () => request<Array<{ id: string; username: string; email?: string; role: string; scope_tags?: string[] }>>('/users'),
+    list: () => request<Array<{ id: string; username: string; email?: string; role: string; scope_tags?: string[]; locked_until?: string }>>('/users'),
     create: (username: string, password: string, role: string, email?: string) =>
       request<{ id: string; username: string; role: string }>('/users', {
         method: 'POST',
