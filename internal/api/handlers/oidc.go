@@ -65,8 +65,8 @@ func (h *Handlers) OIDCLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // OIDCCallback handles the provider redirect, completes the exchange,
-// provisions the user, and redirects to the SPA with tokens in the
-// URL fragment.
+// provisions the user, and redirects to the SPA with a one-time code in the
+// query string.
 func (h *Handlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 	if h.OIDC == nil {
 		writeError(w, http.StatusServiceUnavailable, "oidc not configured")
@@ -118,10 +118,7 @@ func (h *Handlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		h.audit(r, "auth.sso_login", res.User.ID, map[string]string{"provider": claims.Pending.Slug})
 	}
 
-	// Hand tokens to the SPA via URL fragment (fragment is never sent to
-	// the server by the browser, so it doesn't leak to logs).
-	loc := "/login#sso_access=" + res.AccessToken + "&sso_refresh=" + res.RefreshToken
-	http.Redirect(w, r, loc, http.StatusFound)
+	h.finishSSOLogin(w, r, res)
 }
 
 // -----------------------------------------------------------------------------

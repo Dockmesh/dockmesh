@@ -103,6 +103,7 @@ type Handlers struct {
 	SelfUpdate     *selfupdate.Checker
 	SetupState     *setup.State    // first-run wizard state; nil = setup never active
 	SetupCommit_   setup.CommitFunc // wizard's commit-runner — wired by main; nil = wizard cannot commit
+	ssoCodes       ssoCodes
 	setupRuns      sync.Map        // runID → *setup.Runner; populated when SetupCommit fires
 	// RBACv2Enforce gates per-host + per-stack scope checks on typed-
 	// resource handlers. Wired from cfg.RBACv2Enforce.

@@ -109,8 +109,7 @@ func (h *Handlers) SAMLACS(w http.ResponseWriter, r *http.Request) {
 	if res.Login.User != nil {
 		h.audit(r, "auth.sso_login", res.Login.User.ID, map[string]string{"provider": claims.Pending.Slug, "kind": "saml"})
 	}
-	loc := "/login#sso_access=" + res.Login.AccessToken + "&sso_refresh=" + res.Login.RefreshToken
-	http.Redirect(w, r, loc, http.StatusFound)
+	h.finishSSOLogin(w, r, res.Login)
 }
 
 // SAMLMetadata serves the SP-side metadata XML for the given slug.

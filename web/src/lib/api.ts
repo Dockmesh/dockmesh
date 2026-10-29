@@ -1264,6 +1264,12 @@ export const api = {
         refresh_token: string;
         user: { id: string; username: string; role: string; mfa_enabled?: boolean };
       }>('/auth/mfa', { method: 'POST', body: JSON.stringify({ mfa_token: mfaToken, code }) }),
+    ssoExchange: (code: string) =>
+      request<{
+        access_token: string;
+        refresh_token: string;
+        user: { id: string; username: string; role: string; mfa_enabled?: boolean };
+      }>('/auth/sso/exchange', { method: 'POST', body: JSON.stringify({ code }) }),
     logout: () => {
       const body = auth.refreshToken ? JSON.stringify({ refresh_token: auth.refreshToken }) : '{}';
       return request<void>('/auth/logout', { method: 'POST', body }).finally(() => auth.clear());

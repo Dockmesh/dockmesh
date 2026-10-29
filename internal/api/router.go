@@ -87,6 +87,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 		r.Post("/auth/mfa", h.LoginMFA)
 		r.Post("/auth/logout", h.Logout)
 		r.Post("/auth/refresh", h.Refresh)
+		r.Post("/auth/sso/exchange", h.SSOExchange)
 
 		// OIDC flow is public — state is carried in a signed cookie.
 		r.Get("/auth/oidc/providers", h.ListOIDCProvidersPublic)

@@ -526,6 +526,39 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /auth/sso/exchange:
+    post:
+      operationId: auth.ssoExchange
+      tags: [auth]
+      summary: Exchange an SSO one-time code for a session
+      description: |
+        Final step of OIDC, OAuth2 and SAML sign-in. The callback redirects
+        to `/login?sso_code=...` and sets an httpOnly cookie with the same
+        code; this call needs both. A code works once and expires after
+        60 seconds, so a code from a link someone else sends signs nobody in.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        "200":
+          description: Session tokens and user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Unknown, expired, already used code, or the cookie is missing or does not match.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /auth/mfa:
     post:
       operationId: auth.login_mfa
@@ -652,7 +685,7 @@ paths:
           schema: { type: string }
       responses:
         "302":
-          description: Redirect to the UI with the session token fragment.
+          description: Redirect to `/login?sso_code=...`; the SPA exchanges the one-time code at `/auth/sso/exchange`.
         "400": { $ref: "#/components/responses/BadRequest" }
         "401":
           description: State mismatch or code exchange failed.
@@ -6688,7 +6721,7 @@ paths:
       responses:
         "302":
           description: |
-            Redirect to the SPA with session tokens in the fragment, or to
+            Redirect to `/login?sso_code=...` (one-time code for `/auth/sso/exchange`), or to
             `/login?sso_error=...` when the sign-in failed (for example no
             state cookie, a reused response, or no stable subject).
 

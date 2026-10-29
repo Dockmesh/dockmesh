@@ -24,6 +24,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ## [Unreleased]
 
+### Security
+
+- SSO sign-in (OIDC, OAuth2, SAML) no longer puts session tokens in the redirect URL. The
+  browser gets a one-time code that expires after a minute and only works in the browser that
+  completed the sign-in, so a crafted link can no longer sign someone in to another account.
+
 ### Fixed
 
 - The installer now detects an existing Dockmesh service reliably on upgrade, always restarts
