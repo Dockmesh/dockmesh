@@ -21,12 +21,13 @@ func startPipeUpload(upload func(io.Reader) error, discard func()) *pipeUpload {
 	pr, pw := io.Pipe()
 	u := &pipeUpload{pw: pw, done: make(chan error, 1), discard: discard}
 	go func() {
-		err := upload(pr)
-		if err == nil {
+		body := &eofReader{r: pr}
+		err := upload(body)
+		// An upload that returned before reading everything would publish
+		// a truncated file. HTTP clients close the body when done, so EOF
+		// has to be tracked rather than probed afterwards.
+		if err == nil && !body.eof {
 			err = errUploadAborted
-			if _, rerr := pr.Read(make([]byte, 1)); errors.Is(rerr, io.EOF) {
-				err = nil
-			}
 		}
 		// Unblocks a writer if the upload stopped reading early.
 		pr.CloseWithError(err)
@@ -53,4 +54,17 @@ func (u *pipeUpload) Abort() error {
 		u.discard()
 	}
 	return nil
+}
+
+type eofReader struct {
+	r   io.Reader
+	eof bool
+}
+
+func (e *eofReader) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if errors.Is(err, io.EOF) {
+		e.eof = true
+	}
+	return n, err
 }

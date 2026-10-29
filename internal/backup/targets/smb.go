@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 
@@ -76,8 +77,15 @@ func (s *SMB) Open(ctx context.Context, path string) (io.WriteCloser, error) {
 	}
 	full := filepath.Join(s.cfg.Path, filepath.FromSlash(path))
 	full = strings.ReplaceAll(full, "/", "\\")
-	dir := filepath.Dir(full)
-	_ = share.MkdirAll(dir, 0o755)
+	// filepath.Dir doesn't split on backslashes on Linux, so the parent
+	// comes from the slash form.
+	dir := strings.ReplaceAll(pathpkg.Dir(filepath.ToSlash(filepath.Join(s.cfg.Path, path))), "/", "\\")
+	if err := share.MkdirAll(dir, 0o755); err != nil {
+		share.Umount()
+		session.Logoff()
+		conn.Close()
+		return nil, fmt.Errorf("smb: create %s: %w", dir, err)
+	}
 	f, err := share.Create(full)
 	if err != nil {
 		share.Umount()
