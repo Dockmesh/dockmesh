@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/dockmesh/dockmesh/internal/agents"
-	"github.com/dockmesh/dockmesh/internal/docker"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/dockmesh/dockmesh/internal/agents"
+	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
 const helperImage = "alpine:3.19"
@@ -38,8 +38,8 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 	}
 
 	cfg := &container.Config{
-		Image: helperImage,
-		Cmd:   []string{"sh", "-c", "tar czf - -C /source ."},
+		Image:        helperImage,
+		Cmd:          []string{"sh", "-c", "tar czf - -C /source ."},
 		AttachStdout: true,
 		AttachStderr: true,
 		Labels: map[string]string{
@@ -124,12 +124,12 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 	}
 
 	cfg := &container.Config{
-		Image: helperImage,
-		Cmd:   []string{"sh", "-c", untarScript(replace)},
-		AttachStdin: true,
+		Image:        helperImage,
+		Cmd:          []string{"sh", "-c", untarScript(replace)},
+		AttachStdin:  true,
 		AttachStderr: true,
-		OpenStdin: true,
-		StdinOnce: true,
+		OpenStdin:    true,
+		StdinOnce:    true,
 		Labels: map[string]string{
 			"dockmesh.managed":   "true",
 			"dockmesh.component": "backup-helper",
