@@ -146,10 +146,10 @@ func tarSystem(ctx context.Context, db *sql.DB, paths SystemPaths, w io.Writer) 
 		filepath.Join(dataDir, restore.StagingDir):    true,
 		filepath.Join(dataDir, restore.PreRestoreDir): true,
 		filepath.Join(dataDir, "backups"):             true,
-		liveDB:            true,
-		liveDB + "-wal":   true,
-		liveDB + "-shm":   true,
-		liveDB + "-journal": true,
+		liveDB:                                        true,
+		liveDB + "-wal":                               true,
+		liveDB + "-shm":                               true,
+		liveDB + "-journal":                           true,
 	}
 	if err := walkInto(paths.DataDir, "data", skip, add); err != nil {
 		_ = tw.Close()

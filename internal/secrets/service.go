@@ -281,9 +281,11 @@ func (s *Service) loadHistory() error {
 }
 
 // parseKeyFile reads an age-keygen-style file. Supported layout:
-//   # created: <ts>
-//   # public key: age1...
-//   AGE-SECRET-KEY-1...
+//
+//	# created: <ts>
+//	# public key: age1...
+//	AGE-SECRET-KEY-1...
+//
 // Lines beginning with "#" are skipped.
 func (s *Service) parseKeyFile(b []byte) error {
 	ids, err := parseIdentities(b)
