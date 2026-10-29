@@ -7,7 +7,7 @@ When the Dockmesh server goes down, containers keep running: on the local host D
 
 ## What to keep safe
 
-Paths below are for the `install.sh` layout (`/var/lib/dockmesh`). Other layouts follow `DOCKMESH_DB_PATH`: the data directory is the directory that contains the database file.
+Paths below are for the default `install.sh` layout (`/var/lib/dockmesh`). If `/data` existed at install time, `install.sh` used `/data` instead; replace the paths and pass `--env-file /data/dockmesh.env` to `dockmesh` commands. Other layouts follow `DOCKMESH_DB_PATH`: the data directory is the directory that contains the database file.
 
 | Path | Contents | Lost means |
 |---|---|---|
@@ -80,6 +80,8 @@ Copy the latest system archive from your backup target, e.g. `jobs/dockmesh-syst
 age -d -i dockmesh-backup-key.txt -o /root/system.tar.gz 20261029-030000-r412.tar.gz.age
 ```
 
+If secrets encryption was off on the old server, the `.age` file is not actually encrypted: rename it to `.tar.gz` and skip `age -d`.
+
 ### 3. Restore
 
 ```bash
@@ -88,7 +90,7 @@ sudo dockmesh restore --from /root/system.tar.gz
 ```
 
 <!-- update after: restore: stage system restores and swap them in at startup -->
-Files under `stacks/` and `data/` are written in place, before the database is swapped. Files that exist on disk but not in the archive stay. The restore ends with checks printed as `[ ok ]`, `[warn]` or `[FAIL]`. The database must open and migrate, and contain at least one admin. Missing CA, server certificate, audit genesis or `secrets.env` files are warnings. On success it prints `sanity OK`.
+Files under `stacks/` and `data/` are written in place, before the database is swapped. Files that exist on disk but not in the archive stay. The restore ends with checks printed as `[ ok ]`, `[warn]` or `[FAIL]`. The database must open and migrate, and contain at least one admin. A missing CA certificate or key (`agents-ca.crt`, `agents-ca.key`), audit genesis or `secrets.env` is a warning. The server certificate and the age key are not checked. On success it prints `sanity OK`.
 
 ### 4. Fix configuration and ownership
 

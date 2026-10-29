@@ -7,7 +7,7 @@ An upgrade replaces the `dockmesh` binary and restarts the service. The database
 
 ## Find out what changed
 
-Dockmesh asks the GitHub releases API for the latest release 30 seconds after start and then every 120 minutes. When one is out, users who can see system information get an **Update available** banner with a **Release notes** link, and a notification is posted once per new release. **Settings** → **Updates** shows the current and latest version and the command to run; there you can also turn **Automatic update checks** off (useful without outbound internet access), change the **Check interval (minutes)** (15 to 10080), and run **Check now** (needs `system.upgrade`). The check never downloads or installs anything.
+Dockmesh asks the GitHub releases API for the latest release 30 seconds after start and then every 120 minutes. When one is out, users who can see system information get an **Update available** banner with a **Release notes** link, and a notification is posted once per new release (again after a server restart). **Settings** → **Updates** shows the current and latest version and the command to run; there you can also turn **Automatic update checks** off (useful without outbound internet access), change the **Check interval (minutes)** (15 to 10080), and run **Check now** (needs `system.upgrade`). The check never downloads or installs anything.
 
 Read the release notes before you upgrade. Releases after v0.3.3 take their notes from [`CHANGELOG.md`](https://github.com/dockmesh/dockmesh/blob/main/CHANGELOG.md):
 
@@ -58,9 +58,11 @@ TAG=v0.3.3
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/dockmesh_linux_amd64.tar.gz"
 curl -fLO "https://github.com/dockmesh/dockmesh/releases/download/$TAG/checksums.txt"
 sha256sum -c --ignore-missing checksums.txt
-tar -xzf dockmesh_linux_amd64.tar.gz dockmesh dmctl
+tar -xzf dockmesh_linux_amd64.tar.gz dockmesh dmctl dockmesh-agent install-agent.sh
 sudo cp -a /usr/local/bin/dockmesh /usr/local/bin/dockmesh.bak
 sudo install -m 0755 dockmesh dmctl /usr/local/bin/
+sudo install -m 0755 dockmesh-agent /usr/local/share/dockmesh/bin/dockmesh-agent-linux-amd64
+sudo install -m 0755 install-agent.sh /usr/local/share/dockmesh/install-agent.sh
 sudo systemctl restart dockmesh
 ```
 

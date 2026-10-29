@@ -20,9 +20,9 @@ Each job has exactly one source. To back up three stacks, create three jobs.
 What a stack backup does not contain: bind-mounted host paths and anything outside the stack directory. Containers are not stopped while the archive is written, so a database that is busy writing can end up inconsistent. Use a [hook](#hooks) to dump it first.
 
 <!-- update after: backups: keep retention per job, fail on partial or missing data -->
-If the stack's compose file cannot be parsed, or a volume cannot be read, the run still reports success and the archive is missing that data. Open the run and read its log after the first run of every new job.
+If the stack's compose file cannot be parsed, or a volume cannot be read, the run still reports success and the archive is missing that data. The run log does not mention skipped data, so after the first run of every new job download the archive and check that it contains `volumes/<name>.tar.gz` for every volume you expect.
 
-Jobs created in the web UI always read volumes from the local host; the wizard has no host picker. A `volume` job for a remote host can be created through the API by setting `host_id`, and the data then streams through the server. Volume backups use a small helper container (`alpine:3.19`), which Dockmesh pulls if it is missing.
+Jobs created in the web UI always read volumes from the local host; the wizard has no host picker. A `volume` job for a remote host can be created through the API by setting `host_id`, and the data then streams through the server. The agent stream can drop chunks under load, so archives of remote volumes may be silently incomplete; test-restore them. Volume backups use a small helper container (`alpine:3.19`), which Dockmesh pulls if it is missing.
 
 ## Targets
 
@@ -48,9 +48,9 @@ Know the limits of each target type before you rely on it:
 - **Local**: a relative path is resolved against the server's working directory, which is `/` under the systemd unit that `install.sh` writes. Always enter an absolute path, such as `/var/lib/dockmesh-backups`, and keep it outside the data directory. Otherwise every system backup also contains all earlier backups. A local target on the server's own disk does not protect you against losing that disk.
 - **S3**: the target form has no TLS switch and no prefix field, and `use_ssl` defaults to false. A target created in the UI talks plain HTTP to the endpoint. Set `"use_ssl": true` (and `prefix` if you need one) through the API. Each archive is first written to a temporary file on the server and then uploaded in one request, so the server needs free temporary disk space as large as the archive.
 - **SFTP**: the server's host key is not verified, so anyone who can intercept the connection can impersonate the server. Only use SFTP on networks you trust. The form only offers password authentication; `private_key` (PEM) can be set through the API.
-- **SMB**: does not work when the Dockmesh server runs on Linux. The job folder is never created and listing fails, so do not use SMB targets there.
+- **SMB**: does not work when the Dockmesh server runs on Linux. The job folder is never created and listing returns wrong paths, so retention deletes nothing; so do not use SMB targets there.
 - **WebDAV**: the whole archive is held in server memory before upload, and requests time out after 30 seconds. **Test connection** always reports success for WebDAV. Use it only for small archives.
-- **Inline port**: the inline form in the job wizard sends the port as text, which the server rejects when the job runs. For a non-default SFTP or SMB port, create a saved target and pick it.
+- **Inline port**: the inline form in the job wizard has a port field only for SFTP and sends it as text, which the server rejects when the job runs. For a non-default SFTP port, or any SMB port, create a saved target and pick it.
 
 ## Creating a job
 
@@ -84,7 +84,7 @@ Keep a copy of the key outside the server: without it nobody can decrypt the arc
 <!-- update after: backups: scope hooks, limit targets, check sftp keys; fix bind mounts -->
 A hook is a command that Dockmesh runs with `docker exec` in a named container on the job's host. Pre-hooks run before the archive is written, post-hooks after it. Each hook has a 5-minute timeout, and up to 16 KB of its output goes into the run log. A failing pre-hook fails the run before anything is written. A failing post-hook marks the run as failed even though the archive was written, and failed runs cannot be restored from the UI.
 
-The wizard's presets (**PostgreSQL dump**, **MySQL dump** and so on) do not work as they ship. They target fixed container names such as `postgres` that Dockmesh never creates (Dockmesh names containers `<stack>-<service>-1`), the command runs without a shell so `>` is passed to the program as an argument, and the dump goes to `/tmp` in the container, which is not part of any backed-up volume.
+The wizard's presets (**PostgreSQL dump**, **MySQL dump** and so on) do not work as they ship. They target fixed container names such as `postgres` that Dockmesh never creates (Dockmesh names containers `<stack>-<service>-1`), the MySQL and MariaDB presets run without a shell, so `>` is passed to the program as an argument, and the dump goes to `/tmp` in the container, which is not part of any backed-up volume.
 
 A working hook has three properties:
 
@@ -111,7 +111,7 @@ For MySQL or MariaDB the command would be `["sh", "-c", "mysqldump -u root -p\"$
 
 ## Default system backup
 
-`PUT /api/v1/backups/system/enabled` with `{"enabled": true}` creates a job named `dockmesh-system`: system source, daily at `0 3 * * *`, 14 days retention, local target `./data/backups`, encrypted when secrets encryption is on. `{"enabled": false}` disables it. The UI has no switch for this; you can also create the same job in the wizard with **Whole dockmesh**. Change its target to an absolute path, or better an off-host target, for the reasons given under [Targets](#targets).
+`PUT /api/v1/backups/system/enabled` with `{"enabled": true}` creates a job named `dockmesh-system`, unless a job with a system source already exists: system source, daily at `0 3 * * *`, 14 days retention, local target `./data/backups`, encrypted when secrets encryption is on. `{"enabled": false}` disables it. The UI has no switch for this; you can also create the same job in the wizard with **Whole dockmesh**. Change its target to an absolute path, or better an off-host target, for the reasons given under [Targets](#targets).
 
 Installs upgraded from older versions may still have an auto-created `dockmesh-system` job. The **Jobs** tab flags it for review with **Keep** and **Disable** buttons.
 
@@ -120,7 +120,7 @@ Installs upgraded from older versions may still have an auto-created `dockmesh-s
 **Run now** (on a job card, in the job drawer and on the job page) starts a run immediately and requires `backups.update`.
 
 <!-- update after: backups: run in the background, set the time zone, use saved targets -->
-Despite the confirmation text, the run is not started in the background: it runs inside the HTTP request. Keep the page open until it finishes, because closing the tab or losing the connection cancels the run. **Run all due** starts every enabled job at once, whether it is due or not. For long backups, rely on the schedule.
+Despite the confirmation text, the run is not started in the background: it runs inside the HTTP request. Keep the page open until it finishes, because closing the tab or losing the connection cancels the run. **Run all due** starts every enabled job at once, whether it is due or not, but only while no run is `running`; a run left in `running` by a server restart disables the button. For long backups, rely on the schedule.
 
 The **Runs** tab lists every run with status, size and duration; open one to see its log. Each finished run also posts a success or failure entry to the notification bell. A run that was interrupted by a server restart stays in the `running` state.
 
@@ -132,9 +132,9 @@ Click **Restore** on a successful run (in the **Runs** tab or on the run's page)
 Restores always write to the local host, whichever host the backup came from. They merge into what is there: files in the archive overwrite existing files, and everything else stays. Dockmesh does not stop containers before a restore, regardless of what the UI says. Stop the stack first and redeploy it afterwards.
 
 <!-- update after: restore: stage system restores and swap them in at startup -->
-- **Volume run**: extracted into the volume you name (the default suggestion is `<volume>-restored`). The volume is created if it does not exist.
+- **Volume run**: extracted into the volume you name (the **Runs** tab suggests `<volume>-restored`; the run page starts empty). The volume is created if it does not exist.
 - **Stack run**: the stack files are written to `stacks/<name>/` and the volumes in the archive are restored under their original names, which are usually `<original-stack>_<volume>`. Restoring under a different stack name therefore still writes into the original stack's volumes. A failed volume shows up as a warning while the restore reports success. The stack is not redeployed.
-- **System run**: cannot be restored from the UI. Use `dockmesh restore` on the command line, see [Disaster recovery](./disaster-recovery.md).
+- **System run**: the UI shows **Restore**, but it only unpacks the archive into a Docker volume with the name you type; it does not restore the server. Use `dockmesh restore` on the command line, see [Disaster recovery](./disaster-recovery.md).
 
 The run page also offers **Download archive**, which streams the archive decrypted, as plain `.tar.gz`.
 
@@ -144,7 +144,7 @@ Verification has no UI. Both endpoints require `backups.restore`:
 
 | Endpoint | What it checks |
 |---|---|
-| `POST /api/v1/backups/runs/{id}/verify` | System runs: extracts to a temp directory, opens and migrates the database, checks for an admin user and for the key and PKI files. Stack and volume runs: walks the archive and compares its checksum. |
+| `POST /api/v1/backups/runs/{id}/verify` | System runs: extracts to a temp directory, opens and migrates the database, checks for an admin user and warns on a missing CA certificate or key, audit genesis or `secrets.env`. Stack and volume runs: walks the archive and compares its checksum. |
 | `POST /api/v1/restore/verify` | An uploaded, unencrypted system archive (multipart field `file`), with the same checks as a system run. |
 
 <!-- update after: backups: keep retention per job, fail on partial or missing data -->
