@@ -44,7 +44,7 @@ Click an image to open its page. The tabs are:
 
 | Action | Where | Effect |
 |---|---|---|
-| Remove | trash icon in a row, **Remove image** on the detail page, or several rows at once | Force-removes the image. Docker still refuses when a container uses it. |
+| Remove | trash icon in a row, **Remove image** on the detail page, or several rows at once | Force-removes the image. Docker refuses only while a running container uses it; an image used only by stopped containers is removed. |
 | **Prune dangling** | Images tab | Removes dangling images only (`dangling=true`). Tagged images that no container uses are kept. |
 | **System cleanup…** | page header | Prunes dangling images, unused volumes and unused networks in one go. See [Volumes](./volumes.md#removing-and-pruning) before you use it. |
 

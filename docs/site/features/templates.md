@@ -52,7 +52,7 @@ Placeholders use this syntax:
 | `{{name\|enum:a,b,c}}` | Only allow one of the listed values (shown as a drop-down). |
 | `{{name\|pattern:^[a-z]+$}}` | Validate the value against a regular expression. |
 
-Flags can be combined, for example `{{port|default:8080|pattern:^[0-9]+$}}`. Every placeholder found in the compose text becomes a parameter automatically. Declare a parameter explicitly when you want a description, or to mark it required. A declaration overrides the inline flags of the same name.
+Flags can be combined, for example `{{port|default:8080|pattern:^[0-9]+$}}`. Every placeholder found in the compose text becomes a parameter automatically. Add `|required` to make a placeholder mandatory, or declare the parameter explicitly when you want a description. Where a declaration sets a default, secret, enum or pattern, it overrides the inline flag; inline flags still fill in what the declaration leaves empty.
 
 Example:
 
@@ -86,6 +86,6 @@ There is no import of exported YAML files. To copy a template to another server,
 
 | Action | Permission |
 |---|---|
-| List and view templates | any signed-in user |
+| List and view templates | any signed-in user through the API; the **Templates** sidebar entry needs `templates.view` |
 | Deploy a template | `stacks.deploy` |
 | Create, edit, delete custom templates | `templates.create`, `templates.update`, `templates.delete` |

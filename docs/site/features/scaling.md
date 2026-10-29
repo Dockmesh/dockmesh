@@ -16,7 +16,7 @@ Scaling beyond 1 is refused when the service:
 - sets `container_name` (two containers cannot share a name), or
 - publishes a fixed host port such as `8080:80` (only one container can bind it). Leave the host port out, or use a range such as `"8080-8085:80"`.
 
-When the image looks like a database (`postgres`, `mysql`, `mariadb`, `mongo`, `redis`, `elasticsearch` and similar) and the service mounts volumes, the dialog warns that replicas would share the data. You have to tick **I understand the risk — proceed anyway** to continue.
+When the image looks like a database (`postgres`, `mysql`, `mariadb`, `mongo`, `redis`, `elasticsearch` and similar), the dialog warns that replicas would share the data, whether or not the service mounts volumes. You have to tick **I understand the risk — proceed anyway** to continue.
 
 Things to know:
 
@@ -36,7 +36,7 @@ The rolling-update icon in a service row replaces every container of the service
 | **Parallelism** | How many containers to replace at once. 1 is the safest. |
 | **On failure** | **pause**: stop at the first failed replica. **continue**: replace the rest anyway. **rollback**: restart the old replicas and abort. |
 
-Defaults come from `deploy.update_config` on the service (`order`, `parallelism`, `delay`, `failure_action`), then from stop-first, 1, pause. Each new container must pass its health check, as in a normal deploy. start-first is refused for services with `container_name` or a fixed host port, because two containers would collide.
+The dialog always sends its own **Order**, **Parallelism** and **On failure** values (preset to stop-first, 1, pause), so from the UI only `delay` comes from `deploy.update_config`. API calls that leave fields out fall back to `deploy.update_config` on the service, then to those defaults. Each new container must pass its health check, as in a normal deploy. start-first is refused for services with `container_name` or a fixed host port, because two containers would collide.
 
 Rolling updates work on the local host only. On a remote host the request fails with an error.
 
@@ -61,11 +61,11 @@ curl -X PUT -H "Authorization: Bearer $DOCKMESH_TOKEN" \
   }'
 ```
 
-`GET` returns the rules and `DELETE` removes them, on the same path. The rules are stored in the stack's `.dockmesh.meta.json`. Every 30 seconds Dockmesh compares the service's average usage with the thresholds and adds or removes one replica at a time, then waits for the cooldown. A manual scale also starts a 60-second cooldown.
+`GET` returns the rules and `DELETE` removes them, on the same path. The rules are stored in the stack's `.dockmesh.meta.json`. Every 30 seconds Dockmesh compares the service's average usage with the thresholds and adds or removes one replica at a time, then waits for the cooldown. A manual scale does not pause or update the auto-scaler; it may scale the service again on its next evaluation.
 
 Before you rely on it, note the limits:
 
-- Only stacks on the local host are evaluated, because container metrics are only collected there.
+- Rules are evaluated for every stack, but metrics are only collected for local containers and scaling always acts on the local host, so rules only work for stacks on the local host.
 - The current replica count is kept in memory and starts at 1 after a server restart, whatever is actually running.
 - When no metrics are available for the service, the average counts as 0, which can trigger a scale-down.
 - Both thresholds are compared against the `scale_up` metric; the `metric` of `scale_down` is not used. Only the first 20 replicas are included in the average.

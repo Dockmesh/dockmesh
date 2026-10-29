@@ -18,7 +18,7 @@ The server builds the install command and the agent's connection URL from its ow
 
 > **Note:** The public URL you enter in the web setup wizard is stored as a setting but isn't used for agent enrollment. Set `DOCKMESH_BASE_URL` in the environment file as well.
 
-The server certificate always covers `localhost`, `127.0.0.1` and `::1`. When the SAN list changes, Dockmesh issues a new server certificate on the next start. `dockmesh doctor` warns when `DOCKMESH_AGENT_PUBLIC_URL` isn't set. Port 8443 (or whatever you chose) has to be open on the server, not on the agent host. See [Ports](../reference/ports.md).
+The server certificate always covers `localhost`, `127.0.0.1` and `::1`. When the SAN list contains a name the current certificate does not cover, Dockmesh issues a new server certificate on the next start. `dockmesh doctor` warns when `DOCKMESH_AGENT_PUBLIC_URL` isn't set. Port 8443 (or whatever you chose) has to be open on the server, not on the agent host. See [Ports](../reference/ports.md).
 
 ## Add a host
 

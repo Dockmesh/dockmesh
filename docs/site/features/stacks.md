@@ -16,7 +16,7 @@ Two banners can appear above the list:
 
 ## Creating a stack
 
-Click **New stack** (needs `stacks.create`). The **Create stack** dialog asks for a name (2 to 63 characters, lowercase letters, digits and hyphens) and offers two sources:
+Click **New stack** (needs `stacks.create`). The **Create stack** dialog asks for a name (2 to 63 characters, lowercase letters, digits and hyphens, starting and ending with a letter or digit; `dockmesh`, `agent`, `system`, `api`, `admin` and `config` are reserved) and offers two sources:
 
 - **Compose editor**: paste a `compose.yaml` and, optionally, the contents of a `.env` file.
 - **From git repository**: clone the compose file from a repository. The fields are described in [Git sources](./git-sources.md).
@@ -25,7 +25,7 @@ On a server with more than one host, **Deploy on host** picks where **Create & d
 
 | Button | What it does |
 |---|---|
-| **Create** (or **Import & sync** for git) | Writes the files under `<stacks root>/<name>/`. Nothing runs yet. |
+| **Create** (or **Import & sync** for git) | Writes the files under `<stacks root>/<name>/`. Nothing runs yet, unless the git source has **Auto-deploy on new commits** on: then the first sync deploys the stack on the local host. |
 | **Create & deploy** | Writes the files, then deploys on the chosen host. Needs `stacks.deploy`. |
 
 ### Converting a `docker run` command
@@ -60,7 +60,7 @@ The tabs are **Overview**, **Compose**, **Environment**, **Logs**, **History** a
 
 **Overview** lists each service with its container state and image, plus rolled-up resource usage, published ports, and the stack's networks and volumes. Each service row has buttons for scaling and rolling updates (see [Scaling](./scaling.md)).
 
-**Logs** streams the logs of all services side by side. Click a service name to show or hide it.
+**Logs** merges the logs of all services into one stream, each line tagged with its service. Click service names to show only those services; **clear filter** shows all again.
 
 ### Editing compose.yaml
 
@@ -90,7 +90,7 @@ Common failures are translated into readable messages, for example a host port t
 
 ## History and rollback
 
-The **History** tab lists past deploys, newest first, with the user, the time, the duration and the image of each service. Entries are labelled, for example `rollback to #3`, `git auto-deploy`, `env: prod` or `auto-deployed as dependency`. A delta marker shows which service images changed against the previous entry. Click the file icon to view the deployed `compose.yaml` or a diff.
+The **History** tab lists past deploys, newest first, with the user, the time, the duration and the image of each service. Each entry has a badge such as `manual`, `rollback to #3`, `git auto-deploy`, `env override` or the start of a custom note; hover the badge for the full note (for example `env: prod`). A delta marker shows which service images changed against the previous entry. Click the file icon to view the deployed `compose.yaml` or a diff.
 
 Manual deploys are recorded only when they succeed. Git auto-deploys are recorded whether they succeed or fail. History is kept forever.
 
@@ -153,7 +153,7 @@ When a stack's `compose.yaml` is missing or empty, the stack page hides the tabs
 
 ## Deleting a stack
 
-The **Delete** button at the bottom of the **Settings** tab opens **Delete stack**. Deleting always removes the stack directory. You choose what else is cleaned up:
+The **Delete &lt;name&gt;** button at the bottom of the **Settings** tab opens **Delete stack &lt;name&gt;**. Deleting always removes the stack directory. You choose what else is cleaned up:
 
 | Option | Default | Notes |
 |---|---|---|
@@ -162,7 +162,7 @@ The **Delete** button at the bottom of the **Settings** tab opens **Delete stack
 | **Remove volumes** | off | Deletes the data permanently. External volumes are never removed. |
 | **Remove images** | off | Images shared with other projects are kept. |
 
-The dialog lists exactly which networks, volumes and images would be removed. Network, volume and image cleanup only works on the local host; for a stack on a remote host the dialog says so, and only the files are removed. Clean up on that host with `docker` afterwards.
+The dialog lists exactly which networks, volumes and images would be removed. Network, volume and image cleanup only works on the local host; for a stack on a remote host the dialog says so. **Stop and remove containers** still works there, and the files are removed. Clean up on that host with `docker` afterwards.
 
 A git source connected to the stack is not removed with it. Disconnect it first, or the next sync recreates the stack.
 

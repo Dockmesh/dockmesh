@@ -31,7 +31,7 @@ You can also edit the file on the server, as long as encryption is off (see belo
 
 The **Environment** page (needs `system.update`) holds variables for all stacks, grouped by a free-form **Group** name.
 
-- **Add variable** creates one. Keys are upper-cased and may contain `A-Z`, `0-9` and `_`.
+- **Add variable** creates one. The form upper-cases keys and strips characters other than `A-Z`, `0-9` and `_`. Bulk import keeps keys as written and lower-cases the group name.
 - **Templates** adds common sets with one click: `TZ`, `PUID`, `PGID`, `UMASK`; database, SMTP and proxy settings. Adjust the values afterwards; `TZ` defaults to `Europe/Vienna`.
 - **Bulk import** takes the contents of a `.env` file and creates one variable per line in a group you name. Comments and blank lines are skipped, keys that already exist are skipped too.
 

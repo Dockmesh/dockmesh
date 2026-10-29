@@ -16,7 +16,7 @@ The **Networks** tab on the **Resources** page lists the Docker networks on the 
 | containers | Number of attached containers |
 | created | Creation time |
 
-The pills **user**, **internal**, **attachable** and **empty** filter the list. Docker's built-in networks `bridge`, `host` and `none` are always sorted first.
+The pills **user**, **internal**, **attachable** and **empty** filter the list. Docker's built-in networks `bridge`, `host` and `none` are hidden until you tick **show system networks**; they are then sorted first.
 
 ## Network details
 
@@ -30,7 +30,7 @@ The **Topology** page in the sidebar draws hosts, networks and containers as a g
 
 ## Creating a network
 
-**Create network** asks for a **Name** and a **Driver**, `bridge` or `overlay`. `overlay` only works on a Docker engine in Swarm mode. The network is created on the local host with default IPAM settings; subnet, gateway and the internal flag cannot be set here. If you need those, declare the network in a stack's `compose.yaml`:
+**Create network** asks for a **Name** and a **Driver** (`bridge`, `overlay`, `macvlan` or `ipvlan`). `overlay` only works on a Docker engine in Swarm mode. The network is created on the local host with default IPAM settings; subnet, gateway and the internal flag cannot be set here. If you need those, declare the network in a stack's `compose.yaml`:
 
 ```yaml
 networks:

@@ -32,8 +32,8 @@ Click a container to open it. The header shows state, image and host, plus the a
 | State | Buttons |
 |---|---|
 | running | **Restart**, **Stop**, **Kill**, and under **More**: **Pause**, **Copy ID**, **Remove** |
-| paused | **Resume**, **Kill** |
-| stopped | **Start** |
+| paused | **Resume**, **Kill**, and under **More**: **Copy ID**, **Remove** |
+| stopped | **Start**, and under **More**: **Copy ID**, **Remove** |
 
 **Kill** sends `SIGKILL` after a confirmation. **Remove** force-removes the container; named volumes and the image stay.
 

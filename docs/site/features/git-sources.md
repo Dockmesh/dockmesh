@@ -22,7 +22,7 @@ Either way the configuration is saved first and the first sync runs immediately.
 | **Authentication** | None | **None (public repo)**, HTTPS with username and token, or SSH private key. |
 | **Poll interval** | 300 s | Minimum 60 s. |
 | **Webhook secret** | empty | Shared secret for the push webhook. Always set one; see below. |
-| **Auto-deploy on new commits** | off | Deploy after every sync that brought a new commit. |
+| **Auto-deploy on new commits** | off | Deploy after every sync that brought a new commit, including the first sync. |
 
 ### Authentication
 
@@ -35,8 +35,8 @@ The token and the SSH key are encrypted with the server's age key before they ar
 ## What a sync does
 
 1. Clone the branch (shallow, depth 1) into `git-cache/` in the data directory, or fetch and reset an existing clone.
-2. On the first sync, or when the commit changed, copy the compose file into the stack directory. If **Path in repo** is a directory, the other files in it are copied too (except dotfiles and `.git`, at most 64 MiB per file).
-3. Merge the repository's `.env` (the one next to the compose file) into the stack's `.env`.
+2. On the first sync, or when the commit changed, copy the compose file into the stack directory. If **Path in repo** is a directory, every other file and subdirectory in it is copied too, including dotfiles. Only the top-level compose file and `.env`, and names starting with `.git`, are skipped. A file over 64 MiB aborts the sync.
+3. On the same occasions, merge the repository's `.env` (the one next to the compose file) into the stack's `.env`.
 4. If the commit changed and auto-deploy is on, deploy the stack.
 
 The stack page shows the repository, branch, the short commit SHA of the last sync and its time. **Sync now** pulls immediately, **Edit** changes the settings and the unlink icon disconnects the source. Disconnecting removes the configuration and the local clone; the stack and its files stay.
@@ -45,7 +45,7 @@ The stack page shows the repository, branch, the short commit SHA of the last sy
 
 Values you set in Dockmesh are never overwritten by a sync:
 
-- On the first sync, the stack's `.env` is seeded from the repository's `.env`.
+- When the stack is created from the repository, its `.env` is seeded from the repository's `.env`. When you connect an existing stack, the repository's `.env` is merged into the existing one.
 - Keys that appear in the repository's `.env` later are appended with the repository's value.
 - `${VAR}` references in `compose.yaml` that neither file defines are appended with an empty value, so the deploy does not fail on a missing variable.
 - Keys that exist only in the stack's `.env` are left alone.

@@ -20,7 +20,7 @@ Pick a provider under **Add a known provider** (Docker Hub, GitHub Container, Ha
 
 Use tokens with read-only scope: on GitHub a token with `read:packages`, on Docker Hub a personal access token, on Harbor a robot account. AWS ECR tokens expire after 12 hours (`aws ecr get-login-password`) and must be replaced by hand; Dockmesh has no ECR integration.
 
-**Test connection** in the dialog, or **Test** in the list, logs in to the registry through the local Docker engine and records the result. The list counts failing tests, and marks credentials as stale when they were last changed more than 90 days ago.
+**Test** in the list, or **Test connection** when you edit a saved entry, logs in to the registry through the local Docker engine and records the result. The list counts failing tests, and marks credentials as stale when they were last changed more than 90 days ago.
 
 ## How credentials are matched
 
@@ -50,7 +50,7 @@ docker login ghcr.io -u <user>
 docker pull ghcr.io/acme/app:1.4.2
 ```
 
-Do not set `pull_policy: always` on such services, or the deploy tries to pull again and fails.
+With `pull_policy: always` the deploy still tries to pull. When that fails and the image is already on the host, Dockmesh logs a warning and deploys the cached image, so you do not get a newer one.
 
 Image update checks for running containers query registries anonymously, so private images do not show available updates. See [Image updates](./image-updates.md).
 
