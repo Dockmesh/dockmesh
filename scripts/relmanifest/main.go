@@ -112,6 +112,17 @@ func runCheck(args []string, stdout io.Writer) error {
 	return nil
 }
 
+// hasNewRelease reports whether head carries a versioned section that base
+// lacks, i.e. the PR cuts a release and moves the Unreleased entries into it.
+func hasNewRelease(head, base []*Section) bool {
+	for _, s := range head {
+		if s.Version != unreleased && Find(base, s.Version) == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func parseFile(path string) ([]*Section, error) {
 	b, err := os.ReadFile(path) //nolint:gosec // path comes from the CLI caller
 	if err != nil {

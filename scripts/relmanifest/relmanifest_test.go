@@ -315,6 +315,7 @@ func TestCheckCommand(t *testing.T) {
 		{"untouched", base, base, "was not changed"},
 		{"whitespace only", base, strings.Replace(base, "### Fixed\n- Old", "### Fixed\n\n- Old", 1), "was not changed"},
 		{"only a released section changed", base, strings.Replace(base, "- x\n", "- y\n", 1), "was not changed"},
+		{"release cut from unreleased", base, "# Changelog\n\n## [Unreleased]\n\n## [0.4.0] - 2026-10-20 [normal]\n\n### Fixed\n- Old entry.\n\n## [0.3.3] - 2026-10-01 [normal]\n\n### Fixed\n- x\n", ""},
 		{"no base changelog yet", "", base, ""},
 		{"head has no unreleased", base, "# Changelog\n", "no [Unreleased] section"},
 		{"malformed head", base, base + "\n### Removed\n- z\n", "unknown subsection"},
