@@ -7,16 +7,16 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/oauth2auth"
 	"github.com/go-chi/chi/v5"
-	"github.com/golang-jwt/jwt/v5"
 )
 
 const oauth2StateCookie = "dockmesh_oauth2"
 
 type oauth2StateClaims struct {
 	Pending *oauth2auth.Pending `json:"p"`
-	jwt.RegisteredClaims
+	auth.TypedClaims
 }
 
 // -----------------------------------------------------------------------------
@@ -47,16 +47,7 @@ func (h *Handlers) OAuth2Login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	claims := oauth2StateClaims{
-		Pending: pending,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "dockmesh",
-			Subject:   "oauth2-pending",
-		},
-	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(h.JWTSecret)
+	token, err := h.Auth.TokenKeys().Sign(auth.KindOAuth2State, 5*time.Minute, &oauth2StateClaims{Pending: pending})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -89,15 +80,12 @@ func (h *Handlers) OAuth2Callback(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name: oauth2StateCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
 	})
-	parsed, err := jwt.ParseWithClaims(c.Value, &oauth2StateClaims{}, func(t *jwt.Token) (any, error) {
-		return h.JWTSecret, nil
-	})
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid state cookie: "+err.Error())
+	claims := &oauth2StateClaims{}
+	if err := h.Auth.TokenKeys().Parse(auth.KindOAuth2State, c.Value, claims); err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid state cookie")
 		return
 	}
-	claims, ok := parsed.Claims.(*oauth2StateClaims)
-	if !ok || !parsed.Valid || claims.Pending == nil {
+	if claims.Pending == nil {
 		writeError(w, http.StatusUnauthorized, "invalid state cookie")
 		return
 	}

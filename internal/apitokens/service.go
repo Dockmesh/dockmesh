@@ -3,20 +3,23 @@
 // short-lived user JWTs issued by the auth package:
 //
 //   - They don't auto-expire (unless an expiry is explicitly set)
-//   - They carry a pinned role at creation time (not tied to a user session)
+//   - They carry a role chosen at creation and belong to the user who
+//     created them; they never grant more than that user currently holds
 //   - They're created through a settings UI and can be revoked without
 //     touching the user's session
 //
 // Token format: "dmt_" + 40 chars of base64url-encoded randomness.
-// Server stores only an argon2id hash plus the first 12 chars as a
-// display prefix.
+// Server stores only a hash plus the first 12 chars as a display prefix.
 package apitokens
 
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -47,25 +50,42 @@ var (
 	ErrRevoked  = errors.New("api token revoked")
 	ErrExpired  = errors.New("api token expired")
 	ErrInvalid  = errors.New("invalid api token")
+	// ErrBusy means too many argon2 verifications are already running.
+	ErrBusy = errors.New("api token verification busy")
 )
+
+// Tokens carry ~180 bits of randomness, so a plain SHA-256 is enough to
+// store them. Older tokens were stored as argon2id (64 MiB per check); they
+// are rehashed on their first successful use, and argon2 checks run at
+// most maxArgon2 at a time so bad requests can't exhaust memory.
+const (
+	sha256Scheme = "sha256$"
+	maxArgon2    = 2
+	argon2Wait   = 5 * time.Second
+)
+
+func hashToken(plaintext string) string {
+	sum := sha256.Sum256([]byte(plaintext))
+	return sha256Scheme + hex.EncodeToString(sum[:])
+}
 
 // Token is one row in api_tokens. The plaintext value is never stored
 // after creation — only token_hash survives.
 type Token struct {
-	ID         int64      `json:"id"`
-	Prefix     string     `json:"prefix"` // 'dmt_XXXXXXXX', shown in UI
-	Name       string     `json:"name"`
-	Role       string     `json:"role"`
-	// users.id is a TEXT UUID in this codebase, even though the
-	// api_tokens schema declared the column as INTEGER. SQLite is
-	// dynamic-typed so we can store strings here; the *string here
-	// keeps Go's view aligned with reality.
-	CreatedBy  *string    `json:"created_by,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
-	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
-	LastUsedIP string     `json:"last_used_ip,omitempty"`
-	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	ID        int64   `json:"id"`
+	Prefix    string  `json:"prefix"` // 'dmt_XXXXXXXX', shown in UI
+	Name      string  `json:"name"`
+	Role      string  `json:"role"`
+	CreatedBy *string `json:"created_by,omitempty"`
+	// Legacy tokens predate owner tracking: no owner, pinned role.
+	Legacy bool `json:"legacy"`
+	// OwnerMissing: the owner was deleted, so the token no longer works.
+	OwnerMissing bool       `json:"owner_missing,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
+	LastUsedIP   string     `json:"last_used_ip,omitempty"`
+	RevokedAt    *time.Time `json:"revoked_at,omitempty"`
 }
 
 // scanRow reads one row into a Token, using sql.NullString for the
@@ -77,7 +97,7 @@ func scanRow(row interface {
 	var hash string
 	var lastIP sql.NullString
 	err := row.Scan(
-		&t.ID, &hash, &t.Name, &t.Role, &t.CreatedBy,
+		&t.ID, &hash, &t.Name, &t.Role, &t.CreatedBy, &t.Legacy,
 		&t.CreatedAt, &t.ExpiresAt, &t.LastUsedAt, &lastIP,
 		&t.RevokedAt,
 	)
@@ -87,6 +107,7 @@ func scanRow(row interface {
 	if lastIP.Valid {
 		t.LastUsedIP = lastIP.String
 	}
+	t.OwnerMissing = !t.Legacy && t.CreatedBy == nil
 	return t, hash, nil
 }
 
@@ -98,7 +119,7 @@ func scanRowListing(row interface {
 	t := &Token{}
 	var lastIP sql.NullString
 	err := row.Scan(
-		&t.ID, &t.Prefix, &t.Name, &t.Role, &t.CreatedBy,
+		&t.ID, &t.Prefix, &t.Name, &t.Role, &t.CreatedBy, &t.Legacy,
 		&t.CreatedAt, &t.ExpiresAt, &t.LastUsedAt, &lastIP,
 		&t.RevokedAt,
 	)
@@ -108,6 +129,7 @@ func scanRowListing(row interface {
 	if lastIP.Valid {
 		t.LastUsedIP = lastIP.String
 	}
+	t.OwnerMissing = !t.Legacy && t.CreatedBy == nil
 	return t, nil
 }
 
@@ -115,8 +137,9 @@ func scanRowListing(row interface {
 type CreateInput struct {
 	Name            string
 	Role            string
-	ExpiresInDays   int     // 0 = no expiry
-	CreatedByUserID *string // nil for CLI-created tokens; UUID otherwise
+	ExpiresInDays   int        // 0 = no expiry
+	NotAfter        *time.Time // caps the expiry (tokens minted by tokens)
+	CreatedByUserID string     // owner; required
 }
 
 // Service persists tokens and provides middleware-friendly lookup.
@@ -128,6 +151,8 @@ type Service struct {
 	// Start().
 	mu      sync.Mutex
 	touches map[int64]touchEntry
+
+	argon2Slots chan struct{}
 }
 
 type touchEntry struct {
@@ -138,8 +163,9 @@ type touchEntry struct {
 // New returns a fresh service backed by the given DB.
 func New(db *sql.DB) *Service {
 	return &Service{
-		db:      db,
-		touches: make(map[int64]touchEntry),
+		db:          db,
+		touches:     make(map[int64]touchEntry),
+		argon2Slots: make(chan struct{}, maxArgon2),
 	}
 }
 
@@ -172,6 +198,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (plaintext string,
 	if in.Role == "" {
 		return "", nil, errors.New("role required")
 	}
+	if in.CreatedByUserID == "" {
+		return "", nil, errors.New("owner required")
+	}
 
 	raw := make([]byte, rawBytes)
 	if _, err := rand.Read(raw); err != nil {
@@ -179,14 +208,15 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (plaintext string,
 	}
 	plaintext = TokenPrefix + base64.RawURLEncoding.EncodeToString(raw)
 	prefix := plaintext[:prefixLen]
-	hash, err := auth.HashPassword(plaintext)
-	if err != nil {
-		return "", nil, fmt.Errorf("hash: %w", err)
-	}
+	hash := hashToken(plaintext)
 
 	var expiresAt *time.Time
 	if in.ExpiresInDays > 0 {
 		t := time.Now().Add(time.Duration(in.ExpiresInDays) * 24 * time.Hour)
+		expiresAt = &t
+	}
+	if in.NotAfter != nil && (expiresAt == nil || expiresAt.After(*in.NotAfter)) {
+		t := *in.NotAfter
 		expiresAt = &t
 	}
 
@@ -201,12 +231,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (plaintext string,
 	}
 	id, _ := res.LastInsertId()
 
+	owner := in.CreatedByUserID
 	token = &Token{
 		ID:        id,
 		Prefix:    prefix,
 		Name:      in.Name,
 		Role:      in.Role,
-		CreatedBy: in.CreatedByUserID,
+		CreatedBy: &owner,
 		CreatedAt: time.Now(),
 		ExpiresAt: expiresAt,
 	}
@@ -214,55 +245,95 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (plaintext string,
 }
 
 // Validate looks up a token by its plaintext and returns the metadata
-// record if it is active (not revoked, not expired). This is called
-// from auth middleware on every request — performance-critical.
-//
-// Strategy: extract prefix (first 12 chars), find candidate rows by
-// prefix index, verify argon2id hash on the candidate. Prefix collision
-// is rare (64^8 = 281T space) but possible — iterate if found.
+// record if it is active (not revoked, not expired). Called from the auth
+// middleware on every request. token_prefix is unique, so at most one
+// hash is checked per request.
 func (s *Service) Validate(ctx context.Context, plaintext string) (*Token, error) {
-	if !strings.HasPrefix(plaintext, TokenPrefix) {
-		return nil, ErrInvalid
-	}
-	if len(plaintext) < prefixLen {
+	if !strings.HasPrefix(plaintext, TokenPrefix) || len(plaintext) < prefixLen {
 		return nil, ErrInvalid
 	}
 	prefix := plaintext[:prefixLen]
 
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, token_hash, name, role, created_by_user_id,
+	t, hash, err := scanRow(s.db.QueryRowContext(ctx, `
+		SELECT id, token_hash, name, role, created_by_user_id, legacy,
 		       created_at, expires_at, last_used_at, last_used_ip,
 		       revoked_at
 		FROM api_tokens
 		WHERE token_prefix = ?`,
 		prefix,
-	)
+	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	t.Prefix = prefix
 
-	for rows.Next() {
-		t, hash, err := scanRow(rows)
-		if err != nil {
-			return nil, err
-		}
-		t.Prefix = prefix
-
-		ok, err := auth.VerifyPassword(plaintext, hash)
-		if err != nil || !ok {
-			continue
-		}
-
-		if t.RevokedAt != nil {
-			return nil, ErrRevoked
-		}
-		if t.ExpiresAt != nil && t.ExpiresAt.Before(time.Now()) {
-			return nil, ErrExpired
-		}
-		return t, nil
+	// Dead tokens are refused before hashing, so their known prefixes can't
+	// be used to keep the argon2 slots busy.
+	if t.RevokedAt != nil {
+		return nil, ErrRevoked
 	}
-	return nil, ErrNotFound
+	if t.ExpiresAt != nil && t.ExpiresAt.Before(time.Now()) {
+		return nil, ErrExpired
+	}
+	ok, err := s.verify(ctx, t.ID, plaintext, hash)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return t, nil
+}
+
+func (s *Service) verify(ctx context.Context, id int64, plaintext, stored string) (bool, error) {
+	if strings.HasPrefix(stored, sha256Scheme) {
+		return subtle.ConstantTimeCompare([]byte(hashToken(plaintext)), []byte(stored)) == 1, nil
+	}
+	timer := time.NewTimer(argon2Wait)
+	defer timer.Stop()
+	select {
+	case s.argon2Slots <- struct{}{}:
+	case <-timer.C:
+		return false, ErrBusy
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+	ok, err := auth.VerifyPassword(plaintext, stored)
+	<-s.argon2Slots
+	if err != nil || !ok {
+		return false, nil
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE api_tokens SET token_hash = ? WHERE id = ? AND token_hash = ?`,
+		hashToken(plaintext), id, stored); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// CountActiveLegacy counts legacy tokens that still authenticate.
+func (s *Service) CountActiveLegacy(ctx context.Context) (int, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT expires_at FROM api_tokens WHERE legacy = 1 AND revoked_at IS NULL`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	n := 0
+	now := time.Now()
+	for rows.Next() {
+		var exp *time.Time
+		if err := rows.Scan(&exp); err != nil {
+			return 0, err
+		}
+		if exp == nil || exp.After(now) {
+			n++
+		}
+	}
+	return n, rows.Err()
 }
 
 // TouchAsync records the use of a token. Buffered — writes land in DB
@@ -297,7 +368,7 @@ func (s *Service) flushTouches(ctx context.Context) {
 // (there are none in the struct — token plaintext is never stored).
 func (s *Service) List(ctx context.Context) ([]Token, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, token_prefix, name, role, created_by_user_id,
+		SELECT id, token_prefix, name, role, created_by_user_id, legacy,
 		       created_at, expires_at, last_used_at, last_used_ip,
 		       revoked_at
 		FROM api_tokens
@@ -324,7 +395,7 @@ func (s *Service) List(ctx context.Context) ([]Token, error) {
 // Get returns a single token by id (without plaintext).
 func (s *Service) Get(ctx context.Context, id int64) (*Token, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, token_prefix, name, role, created_by_user_id,
+		SELECT id, token_prefix, name, role, created_by_user_id, legacy,
 		       created_at, expires_at, last_used_at, last_used_ip,
 		       revoked_at
 		FROM api_tokens WHERE id = ?`,

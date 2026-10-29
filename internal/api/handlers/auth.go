@@ -125,6 +125,12 @@ func (h *Handlers) Refresh(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, auth.ErrTokenReused):
 		writeError(w, http.StatusUnauthorized, "token reuse detected")
 		return
+	case errors.Is(err, auth.ErrSessionOutdated):
+		writeJSON(w, http.StatusUnauthorized, map[string]string{
+			"error": "signed out after a security update, please sign in again",
+			"code":  "session_outdated",
+		})
+		return
 	case errors.Is(err, auth.ErrInvalidToken):
 		writeError(w, http.StatusUnauthorized, "invalid token")
 		return
