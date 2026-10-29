@@ -14,7 +14,7 @@ import (
 	dmdb "github.com/dockmesh/dockmesh/internal/db"
 )
 
-func TestTarSystemSkipsPremigrateSnapshots(t *testing.T) {
+func TestTarSystemSkipsSnapshotsAndBackups(t *testing.T) {
 	dataDir := t.TempDir()
 	dbPath := filepath.Join(dataDir, "dockmesh.db")
 	database, err := dmdb.Open(dbPath)
@@ -30,6 +30,16 @@ func TestTarSystemSkipsPremigrateSnapshots(t *testing.T) {
 		"dockmesh.db.pre-migrate-manual.bak",
 	} {
 		if err := os.WriteFile(filepath.Join(dataDir, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, rel := range []string{"backups/jobs/dockmesh-system/20261028-030000-r1.tar.gz", "backups-old/keep.txt"} {
+		p := filepath.Join(dataDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -64,6 +74,9 @@ func TestTarSystemSkipsPremigrateSnapshots(t *testing.T) {
 		"data/dockmesh.db":                                          false,
 		"data/dockmesh.db.pre-migrate-20261029T101500.000Z.bak":     false,
 		"data/dockmesh.db.pre-migrate-20261029T101500.000Z.bak.tmp": false,
+		"data/backups": false,
+		"data/backups/jobs/dockmesh-system/20261028-030000-r1.tar.gz": false,
+		"data/backups-old/keep.txt":                                   true,
 	} {
 		if got[name] != want {
 			t.Errorf("archive has %s = %v, want %v", name, got[name], want)

@@ -190,7 +190,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   system backup jobs write to `backups` in the data directory. An existing system backup job
   with a relative path keeps the directory it already wrote archives to, now as an absolute
   path, or moves to the new default if it has none there; admins get a notice with the new
-  path. No archives are moved.
+  path. No archives are moved. System backups leave out the `backups` folder of the data
+  directory, so an archive no longer contains all earlier ones.
 - Relative bind mounts such as `./html:/usr/share/nginx/html` now point at the stack's own
   directory. They used to point at a temporary directory that was deleted after the deploy, so
   the container saw an empty folder and whatever it wrote there was lost. On the first redeploy
