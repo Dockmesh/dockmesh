@@ -70,10 +70,10 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 		r.Get("/setup/status", h.SetupStatus)
 		r.Get("/setup/preflight", h.SetupPreflight)
 		r.Get("/setup/server-info", h.SetupServerInfo)
-		r.Post("/setup/validate-data-dir", h.SetupValidateDataDir)
-		r.Post("/setup/validate-user", h.SetupValidateUser)
-		r.Post("/setup/test-url", h.SetupTestURL)
-		r.Post("/setup/commit", h.SetupCommit)
+		r.With(middleware.RequireSetupHeader).Post("/setup/validate-data-dir", h.SetupValidateDataDir)
+		r.With(middleware.RequireSetupHeader).Post("/setup/validate-user", h.SetupValidateUser)
+		r.With(middleware.RequireSetupHeader).Post("/setup/test-url", h.SetupTestURL)
+		r.With(middleware.RequireSetupHeader).Post("/setup/commit", h.SetupCommit)
 		r.Get("/setup/stream/{run_id}", h.SetupStream)
 
 		// OpenAPI 3.1 spec + Swagger UI (P.11.10). Public — the spec

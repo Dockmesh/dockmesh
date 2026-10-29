@@ -157,6 +157,8 @@ paths:
       tags: [setup]
       summary: Live-validate Step 2's data-directory input
       security: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
       requestBody:
         required: true
         content:
@@ -167,6 +169,7 @@ paths:
               properties:
                 path: { type: string }
       responses:
+        "403": { description: "Missing the `X-Dockmesh-Setup` header." }
         "200":
           description: Check result.
           content:
@@ -197,6 +200,8 @@ paths:
       tags: [setup]
       summary: Validate Step 3's service-user choice
       security: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
       requestBody:
         required: true
         content:
@@ -208,6 +213,7 @@ paths:
                 mode: { type: string, enum: [existing, create] }
                 username: { type: string }
       responses:
+        "403": { description: "Missing the `X-Dockmesh-Setup` header." }
         "200":
           description: Check result.
           content:
@@ -241,6 +247,8 @@ paths:
         are refused after DNS resolution and on every redirect hop; the
         result is then `status: fail` with a "not tested" message.
       security: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
       requestBody:
         required: true
         content:
@@ -252,6 +260,7 @@ paths:
                 url: { type: string, format: uri }
                 expect_health: { type: boolean }
       responses:
+        "403": { description: "Missing the `X-Dockmesh-Setup` header." }
         "200":
           description: Probe result.
           content:
@@ -283,6 +292,8 @@ paths:
         when the wizard creates it (`mode: create`); existing accounts
         are never changed.
       security: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
       requestBody:
         required: true
         content:
@@ -308,6 +319,7 @@ paths:
                     password: { type: string }
                 public_url: { type: string, format: uri }
       responses:
+        "403": { description: "Missing the `X-Dockmesh-Setup` header." }
         "202":
           description: Run accepted.
           content:
@@ -8628,6 +8640,12 @@ components:
           description: "Short-lived challenge token for the `/auth/mfa` completion."
 
   parameters:
+    SetupHeader:
+      name: X-Dockmesh-Setup
+      in: header
+      required: true
+      description: Any non-empty value. Sent by the install wizard so other websites cannot trigger setup calls from a visitor's browser.
+      schema: { type: string }
     HostQuery:
       name: host
       in: query

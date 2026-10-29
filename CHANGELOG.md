@@ -34,6 +34,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   checks the caller's role scope for each dependency.
 - Users and roles limited to certain hosts or host tags can no longer read the compose file and
   `.env` of a stack that has not been deployed yet, unless a role lists that stack by name.
+- The first-run setup wizard's state-changing calls (`/setup/commit` and the validation
+  helpers) now require a header only the wizard sends, so a website opened in the same browser
+  during setup cannot start the installation or probe URLs from your network.
 
 ### Fixed
 
