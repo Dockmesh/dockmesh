@@ -2,7 +2,12 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
+	"io/fs"
 	"log/slog"
+	"path/filepath"
+
+	"github.com/dockmesh/dockmesh/internal/backup/targets"
 )
 
 // DefaultSystemSchedule is the cron expression suggested for a daily
@@ -39,7 +44,7 @@ func (s *Service) EnsureDefaultJob(ctx context.Context) error {
 		Name:       DefaultSystemJobName,
 		TargetType: "local",
 		TargetConfig: map[string]any{
-			"path": "./data/backups",
+			"path": filepath.Join(s.paths.DataDir, "backups"),
 		},
 		Sources: []Source{{
 			Type: "system",
@@ -62,6 +67,74 @@ func (s *Service) EnsureDefaultJob(ctx context.Context) error {
 		"encrypted", j.Encrypt,
 	)
 	return nil
+}
+
+// MigrateSystemJobPath gives a local system job that still has a relative
+// path an absolute one. Earlier versions resolved it against the working
+// directory, "/" under systemd. If archives of the job are already there the
+// job keeps that directory, otherwise it moves to <data>/backups. It returns
+// the old and new path when it changed the job.
+func (s *Service) MigrateSystemJobPath(ctx context.Context) (from, to string, err error) {
+	if s.paths.DataDir == "" {
+		return "", "", nil
+	}
+	jobs, err := s.store.listJobs(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	j := systemJob(jobs)
+	if j == nil || j.TargetType != "local" {
+		return "", "", nil
+	}
+	var cfg map[string]any
+	if b, err := json.Marshal(j.TargetConfig); err == nil {
+		_ = json.Unmarshal(b, &cfg)
+	}
+	if cfg == nil {
+		cfg = map[string]any{}
+	}
+	from, _ = cfg["path"].(string)
+	if from == "" {
+		from = targets.DefaultLocalPath
+	}
+	if filepath.IsAbs(from) {
+		return "", "", nil
+	}
+	old, err := filepath.Abs(from)
+	if err != nil {
+		return "", "", err
+	}
+	to = filepath.Join(s.paths.DataDir, "backups")
+	if hasFiles(filepath.Join(old, "jobs", sanitize(j.Name))) {
+		to = old
+	}
+	cfg["path"] = to
+	in := JobInput{
+		Name: j.Name, HostID: j.HostID, TargetType: j.TargetType, TargetConfig: cfg,
+		Sources: j.Sources, Schedule: j.Schedule, RetentionCount: j.RetentionCount,
+		RetentionDays: j.RetentionDays, Encrypt: j.Encrypt, PreHooks: j.PreHooks,
+		PostHooks: j.PostHooks, Enabled: j.Enabled,
+	}
+	if err := s.store.updateJob(ctx, j.ID, in); err != nil {
+		return "", "", err
+	}
+	slog.Info("system backup job path made absolute", "job", j.Name, "from", from, "to", to)
+	return from, to, nil
+}
+
+func hasFiles(dir string) bool {
+	found := false
+	_ = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return fs.SkipAll
+		}
+		if d.Type().IsRegular() {
+			found = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
 // MarkAutoCreatedJobsForReview is a one-shot migration helper. On boot,
