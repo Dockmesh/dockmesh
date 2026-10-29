@@ -252,6 +252,7 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   `-wal` and `-shm` files if present, and start the previous version.
 - [redeploy-relative-bind-mounts, admins] Redeploy every stack that uses a relative bind mount
   (`./path:/...`). Dockmesh lists the affected stacks in a notice until each one is redeployed.
+  On a remote host, upgrade the agent first: an older agent keeps the temporary mount.
 - [git-webhook-secret, admins] Git webhooks for stacks without a webhook secret are disabled;
   polling and manual sync keep working. A notice lists the affected stacks. To keep using a
   webhook, edit the stack's git source, set a webhook secret and enter the same secret in the
