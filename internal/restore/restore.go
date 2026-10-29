@@ -36,13 +36,13 @@ type Counts struct {
 
 // Options controls Extract behaviour.
 type Options struct {
-	Force    bool
-	DryRun   bool
+	Force  bool
+	DryRun bool
 	// MaxBytes and MaxEntries cap what an archive may unpack to (0 = no
 	// limit). Set for verification, where the archive comes from outside.
 	MaxBytes   int64
 	MaxEntries int
-	TmpBase  string // where to stage the DB temp file; default: same dir as cfg.DBPath
+	TmpBase    string // where to stage the DB temp file; default: same dir as cfg.DBPath
 }
 
 // SanityResult is the structured output of the post-restore checks.

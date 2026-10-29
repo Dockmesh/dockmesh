@@ -9,8 +9,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"os"
 	"net/url"
+	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -24,14 +24,13 @@ import (
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/api"
+	"github.com/dockmesh/dockmesh/internal/api/handlers"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/apitokens"
-	"github.com/dockmesh/dockmesh/internal/backup"
-	"github.com/dockmesh/dockmesh/internal/hosttags"
-	"github.com/dockmesh/dockmesh/internal/backup/targets"
-	"github.com/dockmesh/dockmesh/internal/api/handlers"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
+	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
@@ -40,6 +39,8 @@ import (
 	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/hosttags"
+	"github.com/dockmesh/dockmesh/internal/invites"
 	"github.com/dockmesh/dockmesh/internal/ldapauth"
 	"github.com/dockmesh/dockmesh/internal/metrics"
 	"github.com/dockmesh/dockmesh/internal/migration"
@@ -50,25 +51,24 @@ import (
 	"github.com/dockmesh/dockmesh/internal/oidc"
 	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/dockmesh/dockmesh/internal/proxy"
-	"github.com/dockmesh/dockmesh/internal/saml"
-	"github.com/dockmesh/dockmesh/internal/rbac"
-	"github.com/dockmesh/dockmesh/internal/restore"
-	"github.com/dockmesh/dockmesh/internal/scaling"
-	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/registries"
+	"github.com/dockmesh/dockmesh/internal/restore"
+	"github.com/dockmesh/dockmesh/internal/saml"
+	"github.com/dockmesh/dockmesh/internal/scaling"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/selfupdate"
+	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/setup"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/dockmesh/dockmesh/internal/telemetry"
 	"github.com/dockmesh/dockmesh/internal/templates"
-	"github.com/dockmesh/dockmesh/internal/invites"
 	"github.com/dockmesh/dockmesh/internal/updater"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"github.com/dockmesh/dockmesh/pkg/version"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 //go:embed all:web_dist
@@ -119,7 +119,7 @@ func loadEnvFileFromArgs() error {
 			return nil
 		}
 		for _, candidate := range []string{
-			"/var/lib/dockmesh/dockmesh.env",      // Linux default
+			"/var/lib/dockmesh/dockmesh.env",       // Linux default
 			"/usr/local/var/dockmesh/dockmesh.env", // macOS default
 		} {
 			if _, err := os.Stat(candidate); err == nil {
@@ -992,45 +992,45 @@ func main() {
 	handlers.SetSetupVersionString(version.Version)
 
 	h := handlers.New(handlers.Deps{
-		DB:           database,
-		Auth:         authSvc,
-		Audit:        auditSvc,
-		Docker:       dockerCli,
-		Stacks:       stacksMgr,
-		Deployments:  deployStore,
-		DeployHistory: deployHistoryStore,
-		DeployTracker: deployTracker,
-		Notifications: notifSvc,
-		Notices:       noticesSvc,
-		Dependencies: depStore,
-		Compose:      composeSvc,
-		LoginLimiter: loginLimiter,
-		Scanner:      scannerSvc,
-		ScanStore:    scanStore,
-		Proxy:        proxySvc,
-		Updater:      updaterSvc,
-		UpdateWatcher: updateWatcher,
-		OIDC:         oidcSvc,
-		SAML:         samlSvc,
-		LDAP:         ldapSvc,
-		OAuth2:       oauth2Svc,
-		Metrics:      metricsCol,
-		Notify:       notifySvc,
-		Alerts:       alertsSvc,
-		Backups:       backupSvc,
-		BackupTargets: backupTargetStore,
-		Secrets:       secretsSvc,
-		Migrations:   migrationSvc,
-		Drains:       drainSvc,
-		Agents:       agentsSvc,
-		Hosts:        hostRegistry,
-		HostTags:     hostTagsSvc,
-		Roles:        rolesStore,
-		Settings:     settingsStore,
-		GlobalEnv:    globalEnvStore,
-		APITokens:    apiTokensSvc,
-		Registries:   registriesSvc,
-		GitSource:    gitSourceSvc,
+		DB:             database,
+		Auth:           authSvc,
+		Audit:          auditSvc,
+		Docker:         dockerCli,
+		Stacks:         stacksMgr,
+		Deployments:    deployStore,
+		DeployHistory:  deployHistoryStore,
+		DeployTracker:  deployTracker,
+		Notifications:  notifSvc,
+		Notices:        noticesSvc,
+		Dependencies:   depStore,
+		Compose:        composeSvc,
+		LoginLimiter:   loginLimiter,
+		Scanner:        scannerSvc,
+		ScanStore:      scanStore,
+		Proxy:          proxySvc,
+		Updater:        updaterSvc,
+		UpdateWatcher:  updateWatcher,
+		OIDC:           oidcSvc,
+		SAML:           samlSvc,
+		LDAP:           ldapSvc,
+		OAuth2:         oauth2Svc,
+		Metrics:        metricsCol,
+		Notify:         notifySvc,
+		Alerts:         alertsSvc,
+		Backups:        backupSvc,
+		BackupTargets:  backupTargetStore,
+		Secrets:        secretsSvc,
+		Migrations:     migrationSvc,
+		Drains:         drainSvc,
+		Agents:         agentsSvc,
+		Hosts:          hostRegistry,
+		HostTags:       hostTagsSvc,
+		Roles:          rolesStore,
+		Settings:       settingsStore,
+		GlobalEnv:      globalEnvStore,
+		APITokens:      apiTokensSvc,
+		Registries:     registriesSvc,
+		GitSource:      gitSourceSvc,
 		Templates:      templatesSvc,
 		Invites:        invitesSvc,
 		AuditRetention: auditRetention,
@@ -1049,8 +1049,8 @@ func main() {
 			}
 			return nil
 		},
-		JWTSecret:      cfg.JWTSecret,
-		RBACv2Enforce:  cfg.RBACv2Enforce,
+		JWTSecret:     cfg.JWTSecret,
+		RBACv2Enforce: cfg.RBACv2Enforce,
 	})
 	router := api.NewRouter(h, authSvc, webFS, cfg.MetricsAuth, setupState)
 
