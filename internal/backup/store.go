@@ -20,7 +20,7 @@ func newStore(db *sql.DB) *store { return &store{db: db} }
 
 func (s *store) listJobs(ctx context.Context) ([]Job, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, COALESCE(host_id, ''), target_type, target_config, sources, schedule,
+		SELECT id, name, COALESCE(host_id, ''), COALESCE(target_id, 0), target_type, target_config, sources, schedule,
 		       retention_count, retention_days, encrypt, pre_hooks, post_hooks,
 		       enabled, COALESCE(needs_review, 0), COALESCE(review_reason, ''),
 		       COALESCE(review_acked, 0),
@@ -53,7 +53,7 @@ func (s *store) getJobForRun(ctx context.Context, id int64) (*Job, error) {
 
 func (s *store) queryJob(ctx context.Context, id int64, includeDeleted bool) (*Job, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, COALESCE(host_id, ''), target_type, target_config, sources, schedule,
+		SELECT id, name, COALESCE(host_id, ''), COALESCE(target_id, 0), target_type, target_config, sources, schedule,
 		       retention_count, retention_days, encrypt, pre_hooks, post_hooks,
 		       enabled, COALESCE(needs_review, 0), COALESCE(review_reason, ''),
 		       COALESCE(review_acked, 0),
@@ -73,10 +73,10 @@ func (s *store) createJob(ctx context.Context, in JobInput) (int64, error) {
 	post, _ := json.Marshal(in.PostHooks)
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO backup_jobs
-			(name, host_id, target_type, target_config, sources, schedule,
+			(name, host_id, target_id, target_type, target_config, sources, schedule,
 			 retention_count, retention_days, encrypt, pre_hooks, post_hooks, enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.Name, in.HostID, in.TargetType, string(tcfg), string(srcs), in.Schedule,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.Name, in.HostID, nullID(in.TargetID), in.TargetType, string(tcfg), string(srcs), in.Schedule,
 		in.RetentionCount, in.RetentionDays, boolInt(in.Encrypt),
 		string(pre), string(post), boolInt(in.Enabled))
 	if err != nil {
@@ -93,12 +93,12 @@ func (s *store) updateJob(ctx context.Context, id int64, in JobInput) error {
 	post, _ := json.Marshal(in.PostHooks)
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE backup_jobs SET
-			name = ?, host_id = ?, target_type = ?, target_config = ?, sources = ?,
+			name = ?, host_id = ?, target_id = ?, target_type = ?, target_config = ?, sources = ?,
 			schedule = ?, retention_count = ?, retention_days = ?,
 			encrypt = ?, pre_hooks = ?, post_hooks = ?, enabled = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
-		in.Name, in.HostID, in.TargetType, string(tcfg), string(srcs), in.Schedule,
+		in.Name, in.HostID, nullID(in.TargetID), in.TargetType, string(tcfg), string(srcs), in.Schedule,
 		in.RetentionCount, in.RetentionDays, boolInt(in.Encrypt),
 		string(pre), string(post), boolInt(in.Enabled), id)
 	return err
@@ -199,6 +199,20 @@ func (s *store) startRun(ctx context.Context, j *Job) (int64, error) {
 	}
 	id, _ := res.LastInsertId()
 	return id, nil
+}
+
+// failInterruptedRuns fails runs left in state running by a process that
+// stopped mid-run. Their target_path stays without a hash, so the next
+// retention pass of the job removes the partial archive.
+func (s *store) failInterruptedRuns(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE backup_runs SET status = 'failed', finished_at = ?, sha256 = '',
+			error = 'interrupted: the server stopped during this run'
+		WHERE status = 'running'`, time.Now())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (s *store) setRunPath(ctx context.Context, runID int64, path string) error {
@@ -361,7 +375,7 @@ func scanJob(r rowScanner) (*Job, error) {
 	var enabled, encrypt, needsReview, reviewAcked int
 	var lastRun, nextRun sql.NullTime
 	if err := r.Scan(
-		&j.ID, &j.Name, &j.HostID, &j.TargetType, &tcfg, &srcs, &j.Schedule,
+		&j.ID, &j.Name, &j.HostID, &j.TargetID, &j.TargetType, &tcfg, &srcs, &j.Schedule,
 		&j.RetentionCount, &j.RetentionDays, &encrypt, &pre, &post,
 		&enabled, &needsReview, &j.ReviewReason, &reviewAcked,
 		&lastRun, &nextRun, &j.CreatedAt, &j.UpdatedAt,
@@ -385,6 +399,13 @@ func scanJob(r rowScanner) (*Job, error) {
 		j.NextRunAt = &t
 	}
 	return &j, nil
+}
+
+func nullID(id int64) any {
+	if id <= 0 {
+		return nil
+	}
+	return id
 }
 
 func boolInt(b bool) int {

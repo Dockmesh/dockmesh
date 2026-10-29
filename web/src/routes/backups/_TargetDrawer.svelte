@@ -28,7 +28,7 @@
   }
 
   const usedPct = $derived(target.total_bytes > 0 ? (target.used_bytes / target.total_bytes) * 100 : 0);
-  const jobsHere = $derived(jobs.filter((j) => j.target_type === target.type));
+  const jobsHere = $derived(jobs.filter((j) => j.target_id === target.id));
 
   function fmtBytes(n: number): string {
     if (!n) return '—';

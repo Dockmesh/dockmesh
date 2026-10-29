@@ -31,8 +31,20 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and at the top of the notifications drawer, with a link to where you fix it. The notice
   goes away on its own once the issue is fixed; non-critical ones can be hidden from the
   banner.
+- Backup schedules run in the time zone set in `backups.timezone` (an IANA name such as
+  `Europe/Berlin`); without it they use the server's time zone, which the job wizard now
+  shows next to the schedule.
 
 ### Changed
+- Backup jobs now write to saved backup targets. On upgrade, the target settings stored in
+  each job are moved to a saved target (jobs with identical settings share one), and a new
+  target set up in the job wizard is saved under the job's name. A target that jobs still use
+  can't be deleted.
+- "Run now" starts the backup in the background and returns at once; closing the browser no
+  longer cancels it. A job that is still running is not started a second time, and a
+  scheduled run is skipped (with a notification) while the previous one is in progress.
+- S3 and WebDAV backups stream to the target instead of being held in a temporary file or in
+  memory first.
 - Migrating a stack that uses named volumes to another host is refused with an explanation,
   including in the pre-flight checks. Volume data isn't copied yet, so such a migration used
   to finish with empty volumes on the new host.
@@ -90,6 +102,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   service stopped by a pre-hook is started again.
 - Deleting a backup job keeps its runs restorable; runs whose archive was removed by
   retention are shown as pruned.
+- Backup runs that were still running when the server stopped are marked failed at the
+  next start instead of showing "running" forever.
 
 ### Upgrade notes
 - [redeploy-relative-bind-mounts, admins] Redeploy every stack that uses a relative bind mount

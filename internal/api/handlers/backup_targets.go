@@ -91,7 +91,10 @@ func (h *Handlers) DeleteBackupTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.BackupTargets.Delete(r.Context(), id); err != nil {
+	if err := h.BackupTargets.Delete(r.Context(), id); errors.Is(err, targets.ErrTargetInUse) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

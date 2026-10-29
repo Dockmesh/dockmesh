@@ -848,6 +848,8 @@ export interface BackupHook {
 export interface BackupJob {
   id: number;
   name: string;
+  host_id?: string;
+  target_id?: number;
   target_type: string;
   target_config: any;
   sources: BackupSource[];
@@ -870,6 +872,10 @@ export interface BackupJob {
 
 export interface BackupJobInput {
   name: string;
+  host_id?: string;
+  // A saved target; without it target_type/target_config are saved as a
+  // new target named after the job.
+  target_id?: number;
   target_type: string;
   target_config: any;
   sources: BackupSource[];
@@ -1830,6 +1836,8 @@ export const api = {
       request<BackupJob>(`/backups/jobs/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
     deleteJob: (id: number) => request<void>(`/backups/jobs/${id}`, { method: 'DELETE' }),
     runJob: (id: number) => request<BackupRun>(`/backups/jobs/${id}/run`, { method: 'POST' }),
+    schedule: () =>
+      request<{ timezone: string; source: 'setting' | 'server'; server_timezone: string }>('/backups/schedule'),
     acceptHostKey: (id: number) =>
       request<void>(`/backups/jobs/${id}/accept-host-key`, { method: 'POST' }),
     // Clear the needs_review flag on a legacy auto-created

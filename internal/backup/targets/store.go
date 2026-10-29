@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 )
 
@@ -91,9 +92,24 @@ func (s *TargetStore) Update(ctx context.Context, id int64, in TargetInput) (*St
 	return s.Get(ctx, id)
 }
 
+// ErrTargetInUse refuses deleting a target that backup jobs write to;
+// runs of deleted jobs count too, their archives are read from it.
+var ErrTargetInUse = errors.New("backup target is used by backup jobs or their archives")
+
 func (s *TargetStore) Delete(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM backup_targets WHERE id = ?`, id)
-	return err
+	res, err := s.db.ExecContext(ctx, `
+		DELETE FROM backup_targets WHERE id = ?
+		  AND NOT EXISTS (SELECT 1 FROM backup_jobs WHERE target_id = ?)`, id, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		var inUse bool
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM backup_jobs WHERE target_id = ?)`, id).Scan(&inUse); err == nil && inUse {
+			return ErrTargetInUse
+		}
+	}
+	return nil
 }
 
 func (s *TargetStore) UpdateStatus(ctx context.Context, id int64, status string, totalBytes, usedBytes int64) error {

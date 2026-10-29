@@ -1,10 +1,10 @@
 package targets
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"path"
 	"time"
 
@@ -21,6 +21,10 @@ type WebDAVConfig struct {
 type WebDAV struct {
 	cfg    WebDAVConfig
 	client *gowebdav.Client
+	// upload has no overall timeout (an archive upload takes as long as it
+	// takes) and authenticates up front, so the body is never buffered
+	// for an auth retry.
+	upload *gowebdav.Client
 }
 
 func NewWebDAV(raw any) (*WebDAV, error) {
@@ -36,14 +40,18 @@ func NewWebDAV(raw any) (*WebDAV, error) {
 	}
 	client := gowebdav.NewClient(cfg.URL, cfg.Username, cfg.Password)
 	client.SetTimeout(30 * time.Second)
-	return &WebDAV{cfg: cfg, client: client}, nil
+	upload := gowebdav.NewAuthClient(cfg.URL, gowebdav.NewPreemptiveAuth(&basicAuth{user: cfg.Username, pw: cfg.Password}))
+	return &WebDAV{cfg: cfg, client: client, upload: upload}, nil
 }
 
 func (w *WebDAV) Open(ctx context.Context, p string) (io.WriteCloser, error) {
 	full := path.Join(w.cfg.Path, p)
 	dir := path.Dir(full)
 	_ = w.client.MkdirAll(dir, 0o755)
-	return &webdavWriter{client: w.client, path: full}, nil
+	// Content length -1 sends the body chunked, straight from the pipe.
+	return startPipeUpload(func(r io.Reader) error {
+		return w.upload.WriteStreamWithLength(full, r, -1, 0o644)
+	}, func() { _ = w.client.Remove(full) }), nil
 }
 
 func (w *WebDAV) Read(ctx context.Context, p string) (io.ReadCloser, error) {
@@ -89,26 +97,32 @@ func (w *WebDAV) Delete(ctx context.Context, p string) error {
 	return w.client.Remove(path.Join(w.cfg.Path, p))
 }
 
+// basicAuth sends credentials with every request. gowebdav's negotiating
+// authorizer copies each upload body into memory so it can resend it
+// after a 401.
+type basicAuth struct{ user, pw string }
+
+func (b *basicAuth) Authorize(_ *http.Client, rq *http.Request, _ string) error {
+	if b.user != "" || b.pw != "" {
+		rq.SetBasicAuth(b.user, b.pw)
+	}
+	return nil
+}
+
+func (b *basicAuth) Verify(_ *http.Client, rs *http.Response, p string) (bool, error) {
+	if rs.StatusCode == http.StatusUnauthorized {
+		return false, gowebdav.NewPathError("Authorize", p, rs.StatusCode)
+	}
+	return false, nil
+}
+
+func (b *basicAuth) Clone() gowebdav.Authenticator { return b }
+func (b *basicAuth) Close() error                  { return nil }
+func (b *basicAuth) String() string                { return "basic " + b.user }
+
 // StorageInfo queries WebDAV quota (RFC 4331). Returns 0,0 if not supported.
 func (w *WebDAV) StorageInfo() (total, used int64, err error) {
 	// gowebdav doesn't expose quota directly. Try a PROPFIND.
 	// If it fails, return 0,0 (not all servers support quota).
 	return 0, 0, nil
-}
-
-// webdavWriter buffers the entire write and flushes on Close because
-// gowebdav doesn't support streaming writes (WriteStream takes a reader).
-type webdavWriter struct {
-	client *gowebdav.Client
-	path   string
-	buf    bytes.Buffer
-}
-
-func (w *webdavWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
-func (w *webdavWriter) Abort() error {
-	w.buf.Reset()
-	return nil
-}
-func (w *webdavWriter) Close() error {
-	return w.client.WriteStream(w.path, &w.buf, 0o644)
 }

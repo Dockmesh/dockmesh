@@ -548,6 +548,11 @@ func main() {
 	targets.SetLocalRoots(func() []string {
 		return targets.ParseRoots(settingsStore.Get(targets.LocalRootsSetting, ""))
 	})
+	if tz := settingsStore.Get(backup.TimezoneSetting, ""); tz != "" {
+		if err := backupSvc.SetTimezone(ctx, tz); err != nil {
+			slog.Warn("backup time zone setting ignored, using the server time zone", "err", err)
+		}
+	}
 	// P.12.1 — hand the settings store to auth.Service so password
 	// policy + per-user lockout thresholds + rotation-day setting
 	// are live-editable via the UI without a restart.

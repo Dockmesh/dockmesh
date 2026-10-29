@@ -202,13 +202,29 @@ func (h *Handlers) RunBackupJob(w http.ResponseWriter, r *http.Request) {
 	if !h.requireStoredJobAccess(w, r, id) {
 		return
 	}
-	run, err := h.Backups.RunNow(r.Context(), id)
-	if err != nil {
+	run, err := h.Backups.StartRun(r.Context(), id)
+	switch {
+	case errors.Is(err, backup.ErrJobNotFound):
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	case errors.Is(err, backup.ErrJobRunning):
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	h.audit(r, audit.ActionStackDeploy, "backup:run:"+strconv.FormatInt(id, 10), nil)
-	writeJSON(w, http.StatusOK, run)
+	writeJSON(w, http.StatusAccepted, run)
+}
+
+// GetBackupSchedule reports the time zone backup schedules run in.
+func (h *Handlers) GetBackupSchedule(w http.ResponseWriter, r *http.Request) {
+	if h.Backups == nil {
+		writeError(w, http.StatusServiceUnavailable, "backups not configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, h.Backups.ScheduleInfo())
 }
 
 func (h *Handlers) ListBackupRuns(w http.ResponseWriter, r *http.Request) {
