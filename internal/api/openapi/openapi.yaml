@@ -7861,6 +7861,13 @@ components:
         name: { type: string }
         target_type: { type: string, enum: [local, sftp, smb, webdav, s3] }
         target_config: { type: object }
+        target_id:
+          type: integer
+          description: |
+            Saved backup target the config was picked from. Its stored
+            secrets fill the redacted fields of target_config. A config
+            that still carries a redacted secret without a matching
+            target_id is rejected.
         sources:
           type: array
           minItems: 1

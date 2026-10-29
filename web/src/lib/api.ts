@@ -881,6 +881,7 @@ export interface BackupJobInput {
   host_id?: string;
   target_type: string;
   target_config: any;
+  target_id?: number;
   sources: BackupSource[];
   schedule: string;
   retention_count: number;

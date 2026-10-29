@@ -226,6 +226,7 @@
         name: name.trim(),
         target_type: targetType,
         target_config: targetConfig,
+        target_id: preTargetId !== -1 ? preTargetId : undefined,
         sources,
         schedule: cronExpr,
         retention_count: keepN,

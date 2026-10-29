@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/redact"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -58,9 +61,14 @@ func (h *Handlers) CreateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "backups not configured")
 		return
 	}
-	var in backup.JobInput
-	if err := decodeJSON(r, &in); err != nil {
+	var body jobBody
+	if err := decodeJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	in := body.JobInput
+	if err := h.resolveJobTargetSecrets(r.Context(), &in, body.TargetID, nil); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if !h.requireJobAccess(w, r, nil, &in) || !h.checkBackupJobScope(w, r, in) {
@@ -86,11 +94,12 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	var in backup.JobInput
-	if err := decodeJSON(r, &in); err != nil {
+	var body jobBody
+	if err := decodeJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	in := body.JobInput
 	prev, err := h.Backups.GetJob(r.Context(), id)
 	if errors.Is(err, backup.ErrJobNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
@@ -103,11 +112,9 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 	if !h.requireJobAccess(w, r, prev, &in) || !h.checkBackupJobScope(w, r, in) {
 		return
 	}
-	if prev.TargetType == in.TargetType {
-		if in.TargetConfig, err = keepConfig(in.TargetConfig, prev.TargetConfig, backupTargetSecrets); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
+	if err := h.resolveJobTargetSecrets(r.Context(), &in, body.TargetID, prev); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	job, err := h.Backups.UpdateJob(r.Context(), id, in)
 	if errors.Is(err, backup.ErrJobNotFound) {
@@ -450,4 +457,58 @@ func (h *Handlers) hookScopeReq(r *http.Request, hostID, container string) (rbac
 		req.StackName = info.Config.Labels["com.docker.compose.project"]
 	}
 	return req, true
+}
+
+// jobBody is a job create/update request. TargetID names the saved
+// target the job's config was picked from, so its write-only secrets
+// can be filled in server-side.
+type jobBody struct {
+	backup.JobInput
+	TargetID int64 `json:"target_id"`
+}
+
+// resolveJobTargetSecrets fills the redacted secrets in in.TargetConfig
+// from the saved target (targetID) or the job's previous config, and
+// rejects a job that would be stored with a secret still blank.
+func (h *Handlers) resolveJobTargetSecrets(ctx context.Context, in *backup.JobInput, targetID int64, prev *backup.Job) error {
+	blank := blankedSecrets(in.TargetConfig)
+	var err error
+	if targetID > 0 && h.BackupTargets != nil {
+		stored, gerr := h.BackupTargets.Get(ctx, targetID)
+		if gerr != nil {
+			return errors.New("backup target not found")
+		}
+		if stored.Type == in.TargetType {
+			if in.TargetConfig, err = keepConfig(in.TargetConfig, stored.Config, backupTargetSecrets); err != nil {
+				return err
+			}
+		}
+	}
+	if prev != nil && prev.TargetType == in.TargetType {
+		if in.TargetConfig, err = keepConfig(in.TargetConfig, prev.TargetConfig, backupTargetSecrets); err != nil {
+			return err
+		}
+	}
+	m := redact.ToMap(in.TargetConfig)
+	for _, k := range blank {
+		if s, _ := m[k].(string); s == "" {
+			return fmt.Errorf("the saved %s was not included; pick the target again or re-enter it", k)
+		}
+	}
+	return nil
+}
+
+// blankedSecrets lists the secret fields a client sent back redacted
+// ("" plus "<field>_set": true).
+func blankedSecrets(cfg any) []string {
+	m := redact.ToMap(cfg)
+	var out []string
+	for _, k := range backupTargetSecrets {
+		if set, _ := m[k+redact.SetSuffix].(bool); set {
+			if s, _ := m[k].(string); s == "" {
+				out = append(out, k)
+			}
+		}
+	}
+	return out
 }
