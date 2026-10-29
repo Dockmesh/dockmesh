@@ -42,6 +42,9 @@ func newScopeEnv(t *testing.T) *authzEnv {
 		r.With(middleware.RequirePerm(rbac.PermRolesCreate)).Post("/roles", e.h.CreateRole)
 		r.With(middleware.RequirePerm(rbac.PermRolesUpdate)).Put("/roles/{name}", e.h.UpdateRole)
 		r.With(middleware.RequirePerm(rbac.PermContainersView)).Get("/containers/{id}", e.h.InspectContainer)
+		r.With(middleware.RequirePerm(rbac.PermStacksView)).Get("/api/v1/stacks/{name}", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
 		r.With(middleware.RequirePerm(rbac.PermStacksView)).Get("/api/v1/stacks/{name}/status", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		})
@@ -162,6 +165,11 @@ func TestReadEndpointsEnforceScope(t *testing.T) {
 	tagged := e.user("tagged", "viewer")
 	e.scopeUser(tagged.ID, "prod")
 	e.user("stacky", "stack-only")
+	e.role("host-only", []rbac.Perm{rbac.PermContainersView, rbac.PermStacksView}, rbac.Scope{ScopeType: "host", ScopeValue: "agent-1"})
+	e.user("hosty", "host-only")
+	e.role("tag-and-stack", []rbac.Perm{rbac.PermStacksView},
+		rbac.Scope{ScopeType: "host_tag", ScopeValue: "prod"}, rbac.Scope{ScopeType: "stack", ScopeValue: "mine"})
+	e.user("mixed", "tag-and-stack")
 	if err := e.h.Deployments.Set(ctx, "db", "agent-1", "running"); err != nil {
 		t.Fatal(err)
 	}
@@ -182,6 +190,15 @@ func TestReadEndpointsEnforceScope(t *testing.T) {
 		{"stacky", "/api/v1/stacks/db/status", http.StatusForbidden},
 		{"stacky", "/api/v1/stacks/web/status", http.StatusNoContent},
 		{"tagged", "/api/v1/stacks/undeployed/status", http.StatusNoContent},
+		// An undeployed stack has no host to judge by, so host-limited
+		// callers may not read its files unless a role lists the stack.
+		{"free", "/api/v1/stacks/undeployed", http.StatusNoContent},
+		{"hosty", "/api/v1/stacks/undeployed", http.StatusForbidden},
+		{"hosty", "/api/v1/stacks/undeployed/status", http.StatusNoContent},
+		{"tagged", "/api/v1/stacks/undeployed", http.StatusForbidden},
+		{"mixed", "/api/v1/stacks/undeployed", http.StatusForbidden},
+		{"mixed", "/api/v1/stacks/mine", http.StatusNoContent},
+		{"stacky", "/api/v1/stacks/web", http.StatusNoContent},
 	}
 	for _, tt := range tests {
 		t.Run(tt.user+tt.path, func(t *testing.T) {

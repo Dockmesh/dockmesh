@@ -32,6 +32,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - Deploying a template now applies the same host and role-scope checks as deploying a stack and
   is recorded in the deploy history. Deploying a stack that pulls in dependency stacks also
   checks the caller's role scope for each dependency.
+- Users and roles limited to certain hosts or host tags can no longer read the compose file and
+  `.env` of a stack that has not been deployed yet, unless a role lists that stack by name.
 
 ### Fixed
 
