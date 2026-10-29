@@ -299,6 +299,25 @@ service_runs_new_binary() {
   return 0
 }
 
+# install_agent_binaries copies the agent binaries from an extracted release
+# ($1) into $2/bin. Linux tarballs carry one per architecture; older ones and
+# the macOS tarballs carry a single dockmesh-agent for the host's own $3-$4.
+install_agent_binaries() {
+  local src="$1" asset_dir="$2" os="$3" arch="$4" f name found=0
+  for f in "$src"/dockmesh-agent-linux-*; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f")"
+    $USE_SUDO install -m 0755 "$f" "$asset_dir/bin/$name"
+    ok "agent binary    $asset_dir/bin/$name"
+    found=1
+  done
+  if [ "$found" = "0" ] && [ -f "$src/dockmesh-agent" ]; then
+    name="dockmesh-agent-${os}-${arch}"
+    $USE_SUDO install -m 0755 "$src/dockmesh-agent" "$asset_dir/bin/$name"
+    ok "agent binary    $asset_dir/bin/$name"
+  fi
+}
+
 # ------------------------------------------------------------------
 #  Banner
 # ------------------------------------------------------------------
@@ -800,13 +819,10 @@ if [ "$IS_UPGRADE" = "1" ]; then
   fi
 
   # Refresh agent assets on upgrade too — they carry the bundled
-  # install-agent.sh + host-matched agent binary for enrollment.
+  # install-agent.sh + the agent binaries for enrollment.
   $USE_SUDO mkdir -p "$ASSET_DIR/bin"
   [ -f "$TMP/install-agent.sh" ] && $USE_SUDO install -m 0755 "$TMP/install-agent.sh" "$ASSET_DIR/install-agent.sh"
-  if [ -f "$TMP/dockmesh-agent" ]; then
-    AGENT_NAME="dockmesh-agent-${OS}-${ARCH}"
-    $USE_SUDO install -m 0755 "$TMP/dockmesh-agent" "$ASSET_DIR/bin/$AGENT_NAME"
-  fi
+  install_agent_binaries "$TMP" "$ASSET_DIR" "$OS" "$ARCH"
   ok "agent assets    $ASSET_DIR/"
 
   # ----------------------------------------------------------------
@@ -971,11 +987,7 @@ if [ -f "$TMP/install-agent.sh" ]; then
   $USE_SUDO install -m 0755 "$TMP/install-agent.sh" "$ASSET_DIR/install-agent.sh"
   ok "agent installer $ASSET_DIR/install-agent.sh"
 fi
-if [ -f "$TMP/dockmesh-agent" ]; then
-  AGENT_NAME="dockmesh-agent-${OS}-${ARCH}"
-  $USE_SUDO install -m 0755 "$TMP/dockmesh-agent" "$ASSET_DIR/bin/$AGENT_NAME"
-  ok "agent binary    $ASSET_DIR/bin/$AGENT_NAME"
-fi
+install_agent_binaries "$TMP" "$ASSET_DIR" "$OS" "$ARCH"
 ok "mode            0755 (root:root)"
 step_done
 

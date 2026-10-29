@@ -261,3 +261,49 @@ func TestInstallServiceHelpers(t *testing.T) {
 		})
 	}
 }
+
+func TestInstallAgentBinaries(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	helpers := envHelpers(t)
+
+	tests := []struct {
+		name  string
+		files []string
+		want  []string
+	}{
+		{"linux tarball ships both", []string{"dockmesh-agent-linux-amd64", "dockmesh-agent-linux-arm64"},
+			[]string{"dockmesh-agent-linux-amd64", "dockmesh-agent-linux-arm64"}},
+		{"single agent of an older release", []string{"dockmesh-agent"}, []string{"dockmesh-agent-linux-amd64"}},
+		{"no agent", nil, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src, assets := t.TempDir(), t.TempDir()
+			if err := os.MkdirAll(filepath.Join(assets, "bin"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range tt.files {
+				mustWrite(t, filepath.Join(src, f), f)
+			}
+			script := "set -euo pipefail\nUSE_SUDO=\nok() { :; }\n" + helpers +
+				"\ninstall_agent_binaries \"$1\" \"$2\" linux amd64\n"
+			cmd := exec.Command("bash", "-c", script, "t", filepath.ToSlash(src), filepath.ToSlash(assets))
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			entries, err := os.ReadDir(filepath.Join(assets, "bin"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, e := range entries {
+				got = append(got, e.Name())
+			}
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("installed %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

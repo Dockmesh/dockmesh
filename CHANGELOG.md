@@ -35,6 +35,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   agent on the same host as the server no longer mixes its files with the server's. Re-running
   the installer on an existing agent keeps its current directory.
 - `uninstall.sh --dry-run` no longer kills the processes of the `dockmesh` service user.
+- Linux release tarballs now include the agent for both amd64 and arm64, and the installer
+  places both, so a server of one architecture can enroll hosts of the other.
 
 ## [0.4.0] - 2026-10-29 [security]
 
