@@ -622,7 +622,9 @@ func main() {
 	noticesSvc.Register("stacks.staged-bind-mounts", func(ctx context.Context, n *notices.Service) error {
 		return syncStagedMountNotices(ctx, n, hostRegistry)
 	})
+	stacksMgr.SetNotices(noticesSvc)
 	hostRegistry.SetAfterDeploy(func(ctx context.Context, hostID, stack string, res *compose.DeployResult) {
+		stacksMgr.Deployed(ctx, stack)
 		reportBindCopies(ctx, noticesSvc, hostID, stack, res)
 		if err := syncStagedMountNotices(ctx, noticesSvc, hostRegistry); err != nil {
 			slog.Warn("staged bind mount notices", "err", err)
@@ -663,10 +665,8 @@ func main() {
 		if dockerCli == nil {
 			return nil, fmt.Errorf("docker unavailable")
 		}
-		if changed, err := stacksMgr.ModifiedOutside(stackName); err != nil {
+		if err := stacksMgr.CheckGitDeploy(ctx, stackName); err != nil {
 			return nil, err
-		} else if len(changed) > 0 {
-			return nil, fmt.Errorf("%w: %s", stacks.ErrModifiedOutside, strings.Join(changed, ", "))
 		}
 		detail, err := stacksMgr.Get(stackName)
 		if err != nil {

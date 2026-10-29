@@ -1,14 +1,20 @@
 package stacks
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/notices"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // trackedFiles are the stack files a deploy reads.
@@ -58,6 +64,54 @@ func (s *SumStore) deleteStack(stack string) error {
 
 // SetSumStore enables tracking of changes made outside Dockmesh.
 func (m *Manager) SetSumStore(s *SumStore) { m.sums = s }
+
+// SetNotices lets a held-back git deploy tell the stack's deployers.
+func (m *Manager) SetNotices(n *notices.Service) { m.notices = n }
+
+const gitDeployBlockedPrefix = "stacks.git-deploy-blocked:"
+
+// GitDeployBlockedNoticeKey is the notice raised while a git deploy of
+// stack waits for its outside changes to be confirmed.
+func GitDeployBlockedNoticeKey(stack string) string { return gitDeployBlockedPrefix + stack }
+
+// CheckGitDeploy refuses an automatic deploy from stack files changed
+// outside Dockmesh. Nobody is there to confirm them, so it raises a
+// notice asking a deployer to review and deploy the stack by hand.
+func (m *Manager) CheckGitDeploy(ctx context.Context, name string) error {
+	changed, err := m.ModifiedOutside(name)
+	if err != nil || len(changed) == 0 {
+		return err
+	}
+	if m.notices != nil {
+		files := strings.Join(changed, ", ")
+		if nerr := m.notices.Raise(ctx, notices.RaiseInput{
+			Key:      GitDeployBlockedNoticeKey(name),
+			Audience: notices.WithPermission(string(rbac.PermStacksDeploy)),
+			Severity: notices.SevWarning,
+			Title:    "Git deploy of " + name + " is on hold",
+			Body: "The new commit was not deployed because " + files + " of this stack changed " +
+				"outside Dockmesh. Open the stack, review the files and deploy it to confirm the changes; " +
+				"git deploys resume after that.",
+			Link: "/stacks/" + name,
+		}); nerr != nil {
+			slog.Warn("git deploy held back notice", "stack", name, "err", nerr)
+		}
+	}
+	return fmt.Errorf("%w: %s", ErrModifiedOutside, strings.Join(changed, ", "))
+}
+
+// Deployed clears the held-back git deploy notice of a stack once any
+// deploy of it went through.
+func (m *Manager) Deployed(ctx context.Context, name string) { m.releaseGitDeploy(ctx, name) }
+
+func (m *Manager) releaseGitDeploy(ctx context.Context, name string) {
+	if m.notices == nil {
+		return
+	}
+	if err := m.notices.Resolve(ctx, GitDeployBlockedNoticeKey(name)); err != nil {
+		slog.Warn("resolve git deploy held back notice", "stack", name, "err", err)
+	}
+}
 
 // fileSum is the hex SHA-256 of path, or "" when it does not exist.
 func fileSum(path string) (string, error) {
@@ -156,6 +210,7 @@ func (m *Manager) AcceptExternal(name string) error {
 			return err
 		}
 	}
+	m.releaseGitDeploy(context.Background(), name)
 	return nil
 }
 

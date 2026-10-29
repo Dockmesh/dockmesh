@@ -59,7 +59,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   same applies to saved SFTP targets, used for the audit log archive and the target test.
 - When a stack's `compose.yaml` or `.env` changes outside Dockmesh, for example through a
   container that mounts the stack directory, the stack page says so and the next deploy or
-  rollback asks for confirmation.
+  rollback asks for confirmation. Git auto-deploys of such a stack are held back, and users who
+  can deploy stacks get a notice naming the changed files; deploying the stack from its page
+  confirms the changes and the notice goes away.
 - A backup job set to encrypt no longer writes an unencrypted archive when secrets encryption
   is turned off; the run fails and admins get a notice.
 
