@@ -197,6 +197,10 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   overlapping syncs of the same stack.
 
 ### Fixed
+- Requests that a client cancelled while they were reading the database (a closed browser tab,
+  a dropped connection) could leave the database connection failing every later query until the
+  restart, so sign-in, host enrollment and most pages answered with errors. The SQLite driver is
+  updated, which fixes this.
 - Notices and other short database writes could fail with "database is locked" while other
   requests were writing. The notice about an untrusted proxy then never appeared until the next
   restart. The database connection now waits for the lock from the start.
