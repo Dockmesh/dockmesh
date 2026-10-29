@@ -6804,6 +6804,48 @@ paths:
             application/json:
               schema: { type: object, additionalProperties: true }
 
+  /saml/rekey:
+    get:
+      operationId: saml.rekey_pending
+      tags: [oidc]
+      summary: Admin — accounts still waiting for their one-time SAML re-key
+      description: |
+        Accounts created through SAML before stable subjects may take their
+        new subject once, at a sign-in from the same provider with the same
+        email, until the date in `until` (30 days after the upgrade).
+      responses:
+        "200":
+          description: Pending re-keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accounts:
+                    type: array
+                    items: { type: string }
+                  until: { type: string, format: date-time, description: Latest end of the re-key window. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /saml/rekey/end:
+    post:
+      operationId: saml.rekey_end
+      tags: [oidc]
+      summary: Admin — end the one-time SAML re-key for all remaining accounts
+      description: Clears every re-key mark and writes `auth.saml_rekey_end` to the audit log.
+      responses:
+        "200":
+          description: Number of accounts whose re-key was ended.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ended: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   # ---------------------- LDAP -------------------------------------------
   /auth/ldap/providers:
     get:

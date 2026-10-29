@@ -645,6 +645,7 @@ func main() {
 	noticesSvc.Register("backups.local-roots-review", func(ctx context.Context, n *notices.Service) error {
 		return syncSeededRootsNotice(ctx, n, settingsStore)
 	})
+	noticesSvc.Register(saml.RekeyNoticeKey, samlSvc.SyncRekeyNotice)
 	noticesSvc.Register("backups.system-job-path", func(ctx context.Context, n *notices.Service) error {
 		return raiseSystemPathNotice(ctx, n, sysPathFrom, sysPathTo)
 	})

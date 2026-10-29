@@ -30,6 +30,7 @@ const (
 	ActionLogout             = "auth.logout"
 	ActionRefresh            = "auth.refresh"
 	ActionSAMLRekey          = "auth.saml_rekey"
+	ActionSAMLRekeyEnd       = "auth.saml_rekey_end"
 	ActionUserCreate         = "user.create"
 	ActionUserUpdate         = "user.update"
 	ActionUserDelete         = "user.delete"

@@ -22,6 +22,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
+  import SAMLRekeyCard from './_SAMLRekeyCard.svelte';
   import {
     Plus, Trash2, Edit2, Globe, Copy,
   } from 'lucide-svelte';
@@ -324,6 +325,10 @@
         </p>
       </div>
     </header>
+
+    {#if allowed('system.update')}
+      <SAMLRekeyCard />
+    {/if}
 
     {#if !allowed('system.update')}
       <div class="dm-card auth-permission-block">

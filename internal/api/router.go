@@ -612,6 +612,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Put("/saml/providers/{id}", h.UpdateSAMLProvider)
 				r.Delete("/saml/providers/{id}", h.DeleteSAMLProvider)
 				r.Post("/saml/providers/{id}/test", h.TestSAMLProvider)
+				r.Get("/saml/rekey", h.GetSAMLRekey)
+				r.Post("/saml/rekey/end", h.EndSAMLRekey)
 			})
 
 			// -------------------------- LDAP ADMIN ---------------------------
