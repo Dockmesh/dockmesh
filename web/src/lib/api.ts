@@ -974,6 +974,7 @@ export interface OIDCProvider {
   admin_group?: string;
   operator_group?: string;
   default_role: string;
+  allow_email_link?: boolean;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -990,6 +991,7 @@ export interface OIDCProviderInput {
   admin_group?: string;
   operator_group?: string;
   default_role: string;
+  allow_email_link?: boolean;
   enabled: boolean;
 }
 
@@ -1056,6 +1058,7 @@ export interface SAMLProvider {
   email_attribute: string;
   groups_attribute: string;
   default_role: string;
+  allow_email_link?: boolean;
   group_mappings: GroupMapping[];
   enabled: boolean;
   is_default: boolean;
@@ -1075,6 +1078,7 @@ export interface SAMLProviderInput {
   email_attribute: string;
   groups_attribute: string;
   default_role: string;
+  allow_email_link?: boolean;
   group_mappings?: GroupMapping[];
   enabled: boolean;
   is_default?: boolean;
@@ -1096,6 +1100,7 @@ export interface LDAPProvider {
   group_search_base?: string;
   group_membership_attribute: string;
   default_role: string;
+  allow_email_link?: boolean;
   group_mappings: GroupMapping[];
   enabled: boolean;
   is_default: boolean;
@@ -1122,6 +1127,7 @@ export interface LDAPProviderInput {
   group_search_base: string;
   group_membership_attribute: string;
   default_role: string;
+  allow_email_link?: boolean;
   group_mappings?: GroupMapping[];
   enabled: boolean;
   is_default?: boolean;
@@ -1140,6 +1146,7 @@ export interface OAuth2Provider {
   email_field: string;
   groups_field: string;
   default_role: string;
+  allow_email_link?: boolean;
   group_mappings: GroupMapping[];
   enabled: boolean;
   is_default: boolean;
@@ -1163,6 +1170,7 @@ export interface OAuth2ProviderInput {
   email_field: string;
   groups_field: string;
   default_role: string;
+  allow_email_link?: boolean;
   group_mappings?: GroupMapping[];
   enabled: boolean;
   is_default?: boolean;
