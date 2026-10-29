@@ -37,7 +37,7 @@ type alertRule struct {
 }
 
 // alertListActiveCmd implements `dmctl alert list-active` from the spec.
-// "Active" = most recent `firing` history entries per rule. We pull the
+// "Active" = most recent `fired` history entries per rule. We pull the
 // history list and filter client-side since the server doesn't expose a
 // dedicated active-alerts endpoint.
 func alertListActiveCmd() *cobra.Command {
@@ -55,18 +55,23 @@ func alertListActiveCmd() *cobra.Command {
 			if err := c.request("GET", "/api/v1/alerts/history", q, nil, &hist); err != nil {
 				return err
 			}
-			// Keep the newest status per rule; a rule whose latest entry is
-			// "firing" is active, everything else is resolved / never fired.
-			latest := map[int64]alertHistory{}
+			// Keep the newest status per rule and container; a rule whose latest entry is
+			// "fired" is active, everything else is resolved / never fired.
+			type key struct {
+				rule      int64
+				container string
+			}
+			latest := map[key]alertHistory{}
 			for _, h := range hist {
-				prev, seen := latest[h.RuleID]
+				k := key{h.RuleID, h.ContainerName}
+				prev, seen := latest[k]
 				if !seen || h.OccurredAt > prev.OccurredAt {
-					latest[h.RuleID] = h
+					latest[k] = h
 				}
 			}
 			active := make([]alertHistory, 0)
 			for _, h := range latest {
-				if h.Status == "firing" {
+				if h.Status == "fired" {
 					active = append(active, h)
 				}
 			}

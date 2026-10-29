@@ -54,6 +54,10 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ### Fixed
 
+- dmctl: `containers list --all`, `--host all` and `alert list-active` now return results,
+  `backup run` prints the finished run, `backup runs` shows the archive size, and long backups
+  and stack deploys are no longer cut off after 60 seconds. `logs` only keeps streaming with
+  `--follow`.
 - Several UI texts now match what the code does: permission names on the Registries,
   Authentication, API tokens and Users pages, Drain (no cordon), host tags (scoping, not stack
   placement), global variables (hidden, not "encrypted"), and the stack delete description.
