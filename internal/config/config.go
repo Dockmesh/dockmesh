@@ -39,8 +39,9 @@ type Config struct {
 	OTelEndpoint string
 	OTelInsecure bool
 	JWTSecret    []byte
-	// SetupForce disables the auto-bootstrap admin and forces the
-	// server into setup-mode on every boot until the wizard runs.
+	// SetupForce disables the auto-bootstrap admin and keeps the
+	// server in setup-mode until the wizard runs. It is ignored once an
+	// admin exists.
 	// Set by the install script for the wizard install path; off by
 	// default so existing installs and `dockmesh init --yes` keep
 	// working unchanged. P.14.1.

@@ -49,9 +49,8 @@ type State struct {
 	startedAt  time.Time
 }
 
-// NewForced returns a State pinned to active. Used during development
-// or when the install script signals via DOCKMESH_SETUP_FORCE=true
-// that the wizard owns admin creation regardless of existing rows.
+// NewForced returns a State pinned to active regardless of existing users.
+// Server startup uses NewForBoot instead.
 func NewForced() *State {
 	return &State{active: true, startedAt: time.Now()}
 }

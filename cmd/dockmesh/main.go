@@ -87,6 +87,27 @@ var webDist embed.FS
 // Originally built because launchd on macOS has no EnvironmentFile
 // directive (unlike systemd), so init's plist template passes
 // `--env-file PATH` to `dockmesh serve` explicitly.
+// loadedEnvFile is the env file loadEnvFileFromArgs read, empty when the
+// environment came from elsewhere (systemd's EnvironmentFile=, a shell).
+var loadedEnvFile string
+
+// serverEnvFile names the env file this server most likely runs with: the
+// one loaded from --env-file or the default location, else the file
+// install.sh writes next to the data dir. Empty when neither is known.
+func serverEnvFile(dbPath string) string {
+	if loadedEnvFile != "" {
+		return loadedEnvFile
+	}
+	if dbPath == "" {
+		return ""
+	}
+	guess := filepath.Clean(filepath.Join(filepath.Dir(dbPath), "..", "dockmesh.env"))
+	if _, err := os.Stat(guess); err == nil {
+		return guess
+	}
+	return ""
+}
+
 func loadEnvFileFromArgs() error {
 	var path string
 	var keep []string
@@ -135,6 +156,7 @@ func loadEnvFileFromArgs() error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
+	loadedEnvFile = path
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -296,19 +318,18 @@ func main() {
 	}
 
 	// P.14.1: setup-mode state. Active when no admin user exists in the
-	// DB, or when the force-flag pins it on. Used by the gating
+	// DB; the force flag never reopens it over an admin. Used by the gating
 	// middleware to redirect a freshly-installed server's URL to /setup
 	// instead of the login screen.
-	setupState, err := setup.NewFromDB(ctx, database)
+	setupState, setupForceIgnored, err := setup.NewForBoot(ctx, database, cfg.SetupForce)
 	if err != nil {
 		slog.Error("setup state init failed", "err", err)
 		os.Exit(1)
 	}
-	if cfg.SetupForce {
-		// Pin active even if an admin exists (used during dev for the
-		// wizard, never normal-operation). Status output makes this
-		// visible.
-		setupState = setup.NewForced()
+	setupEnvFile := serverEnvFile(cfg.DBPath)
+	if setupForceIgnored {
+		slog.Warn("DOCKMESH_SETUP_FORCE ignored: an admin account exists, the setup wizard stays closed — remove the flag from the env file",
+			"env_file", setupEnvFile)
 	}
 	if setupState.Active() {
 		slog.Warn("server starting in setup-mode — finish the install wizard at /setup",
@@ -606,6 +627,7 @@ func main() {
 	// noticesSvc; they run once every service below is wired.
 	noticesSvc := notices.NewService(database)
 	noticesSvc.Register("api-tokens.legacy", apiTokensSvc.SyncLegacyNotice)
+	noticesSvc.Register(setup.ForceIgnoredNoticeKey, setup.ForceNoticeCheck(setupForceIgnored, setupEnvFile))
 
 	// Wire the registries service into every code path that pulls an
 	// image. Without this, compose deploys + the "update image" button
