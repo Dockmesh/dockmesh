@@ -98,9 +98,8 @@ func serverEnvFile(dbPath string) string {
 // os.Args so the rest of the process never sees it.
 //
 // If no --env-file was passed, we also try the default location where
-// `dockmesh init` writes its env file (/var/lib/dockmesh/dockmesh.env
-// on Linux, /usr/local/var/dockmesh/dockmesh.env on macOS). This lets
-// CLI commands like `sudo dockmesh admin list-users` find the DB + PKI
+// install.sh and `dockmesh init` write the env file (see defaultEnvFiles).
+// This lets CLI commands like `sudo dockmesh admin list-users` find the DB + PKI
 // without the operator having to source the file or pass --env-file
 // every time.
 //
@@ -136,15 +135,7 @@ func loadEnvFileFromArgs() error {
 		if _, already := os.LookupEnv("DOCKMESH_DB_PATH"); already {
 			return nil
 		}
-		for _, candidate := range []string{
-			"/var/lib/dockmesh/dockmesh.env",      // Linux default
-			"/usr/local/var/dockmesh/dockmesh.env", // macOS default
-		} {
-			if _, err := os.Stat(candidate); err == nil {
-				path = candidate
-				break
-			}
-		}
+		path = firstExistingFile(defaultEnvFiles)
 		if path == "" {
 			return nil
 		}

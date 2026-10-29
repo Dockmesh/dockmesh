@@ -14,6 +14,7 @@
 #    DOCKMESH_NO_SUDO         1 to skip sudo        (default: sudo if not root)
 #    DOCKMESH_FORCE           1 to reinstall even if already on latest version
 #    DOCKMESH_NO_SCANNER      1 to skip Grype CVE scanner install (default: install)
+#    DOCKMESH_SKIP_CHECKSUM   1 to install without checksum verification (default: verify)
 #    NO_COLOR                 1 to disable ANSI colors
 #
 #  What this script does:
@@ -24,11 +25,10 @@
 #    - Downloads + sha256-verifies the release tarball
 #    - Installs the binary to $DOCKMESH_INSTALL_DIR
 #    - On upgrade: backs up the old binary, auto-restarts the systemd service
-#    - On fresh install: hands off to `sudo dockmesh init` for setup
+#    - On fresh install: starts the service so you can finish setup in the web wizard
 #
-#  This script never touches DB/admin/systemd-unit state on fresh installs —
-#  all of that lives in `dockmesh init`, which runs interactively and is
-#  idempotent (safe to re-run).
+#  The admin account and public URL are set in the web wizard at /setup;
+#  `dockmesh init` remains available for scripted, non-interactive setups.
 # ============================================================================
 set -euo pipefail
 
@@ -758,19 +758,21 @@ step_done
 #  [4]  Verify checksum
 # ------------------------------------------------------------------
 step 4 $TOTAL_STEPS "Verifying"
-if curl -fsSL --retry 2 -o "$TMP/checksums.txt" "$CHECKSUMS_URL" 2>/dev/null; then
-  EXPECTED="$(grep " ${TARBALL}$" "$TMP/checksums.txt" | awk '{print $1}' || true)"
-  if [ -n "$EXPECTED" ]; then
-    ACTUAL="$(sha256_of "$TMP/$TARBALL")"
-    if [ "$EXPECTED" != "$ACTUAL" ]; then
-      die "checksum mismatch — expected $EXPECTED got $ACTUAL"
-    fi
-    ok "sha256          ${EXPECTED:0:16}…${EXPECTED: -16}"
-  else
-    warn "no checksum entry for $TARBALL — continuing without verification"
-  fi
+if [ "${DOCKMESH_SKIP_CHECKSUM:-0}" = "1" ]; then
+  warn "checksum verification skipped — DOCKMESH_SKIP_CHECKSUM=1"
 else
-  warn "no checksums.txt published for $DM_VERSION — continuing without verification"
+  if ! curl -fsSL --retry 2 -o "$TMP/checksums.txt" "$CHECKSUMS_URL" 2>/dev/null; then
+    die "no checksums.txt published for $DM_VERSION — refusing to install an unverified binary (DOCKMESH_SKIP_CHECKSUM=1 overrides)"
+  fi
+  EXPECTED="$(grep " ${TARBALL}$" "$TMP/checksums.txt" | awk '{print $1}' || true)"
+  if [ -z "$EXPECTED" ]; then
+    die "no checksum entry for $TARBALL — refusing to install an unverified binary (DOCKMESH_SKIP_CHECKSUM=1 overrides)"
+  fi
+  ACTUAL="$(sha256_of "$TMP/$TARBALL")"
+  if [ "$EXPECTED" != "$ACTUAL" ]; then
+    die "checksum mismatch — expected $EXPECTED got $ACTUAL"
+  fi
+  ok "sha256          ${EXPECTED:0:16}…${EXPECTED: -16}"
 fi
 step_done
 

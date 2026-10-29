@@ -37,6 +37,10 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - `uninstall.sh --dry-run` no longer kills the processes of the `dockmesh` service user.
 - Linux release tarballs now include the agent for both amd64 and arm64, and the installer
   places both, so a server of one architecture can enroll hosts of the other.
+- `install.sh` now refuses to install when the release has no published checksum for the
+  download (set `DOCKMESH_SKIP_CHECKSUM=1` to override) instead of continuing with a warning.
+- The `dockmesh` command-line tools (`dockmesh admin ...`) also find the settings file in
+  `/data/dockmesh.env`, where the installer puts it on hosts with a separate `/data` volume.
 
 ## [0.4.0] - 2026-10-29 [security]
 
