@@ -2,6 +2,7 @@ package updater
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -192,7 +193,7 @@ func TestAcquireSerialisesPerStack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.acquire(db, st); err != ErrBusy {
+	if _, err := s.acquire(db, st); !errors.Is(err, ErrBusy) {
 		t.Fatalf("second swap in the same stack: err = %v, want ErrBusy", err)
 	}
 	other, err := s.acquire(db, nil)

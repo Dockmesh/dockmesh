@@ -50,11 +50,11 @@ func swapContainer(ctx context.Context, cli *client.Client, old *dtypes.Containe
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		defer cancel()
 		if err := cli.ContainerRename(rctx, old.ID, name); err != nil {
-			return fmt.Errorf("%w; restoring the old container failed too, it is kept as %s: %v", cause, parked, err)
+			return fmt.Errorf("%w; restoring the old container failed too, it is kept as %s: %w", cause, parked, err)
 		}
 		if wasRunning {
 			if err := cli.ContainerStart(rctx, old.ID, container.StartOptions{}); err != nil {
-				return fmt.Errorf("%w; old container restored but not restarted: %v", cause, err)
+				return fmt.Errorf("%w; old container restored but not restarted: %w", cause, err)
 			}
 		}
 		return cause
