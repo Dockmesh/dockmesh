@@ -843,7 +843,7 @@
           disabled={creating}
         />
         <Input
-          label="Webhook secret (optional)"
+          label="Webhook secret (needed for push webhooks)"
           type="password"
           bind:value={newGit.webhook_secret as any}
           disabled={creating}

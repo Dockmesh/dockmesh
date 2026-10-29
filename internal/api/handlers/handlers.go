@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log/slog"
@@ -111,6 +112,8 @@ type Handlers struct {
 	// router mounts its middleware.
 	ClientIPs   *clientip.Resolver
 	proxyNotice *proxyNotice
+	// gitWebhookTrigger replaces GitSource.TriggerSync in tests.
+	gitWebhookTrigger func(ctx context.Context, stackName string)
 }
 
 type Deps struct {

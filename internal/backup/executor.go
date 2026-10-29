@@ -15,6 +15,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -33,6 +34,7 @@ type Executor struct {
 	secrets *secrets.Service
 	paths   SystemPaths
 	notifs  *notifications.Service
+	notices *notices.Service
 }
 
 // hostResolver lets the executor route to local vs remote hosts without
@@ -84,7 +86,13 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 		return e.store.getRun(ctx, runID)
 	}
 
-	target, err := buildTarget(job.TargetType, job.TargetConfig)
+	if job.Encrypt && !canEncrypt(e.secrets) {
+		e.logf(ctx, runID, "error", "%s", ErrEncryptUnavailable)
+		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", ErrEncryptUnavailable)
+		return e.store.getRun(ctx, runID)
+	}
+
+	target, err := jobTarget(ctx, e.store, e.notices, job)
 	if err != nil {
 		e.logf(ctx, runID, "error", "build target: %s", err)
 		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", err)
@@ -330,8 +338,9 @@ func (e *Executor) applyRetention(ctx context.Context, job *Job, target targets.
 	if job.RetentionCount <= 0 && job.RetentionDays <= 0 {
 		return nil
 	}
-	prefix := jobPrefix(job)
-	entries, err := target.List(ctx, prefix)
+	// The trailing slash keeps prefix-matching targets (S3) from also
+	// listing jobs whose name merely starts with this one's.
+	entries, err := target.List(ctx, jobPrefix(job)+"/")
 	if err != nil {
 		return err
 	}

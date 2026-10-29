@@ -6,14 +6,14 @@ import (
 	"testing"
 )
 
-func (s *Service) limitRow(t *testing.T, userID string) (failed, count int, since int64) {
+func (s *Service) limitRow(t *testing.T, userID string) (failed, count int) {
 	t.Helper()
 	if err := s.db.QueryRow(
-		`SELECT failed_login_attempts, login_limit_count, login_limit_since FROM users WHERE id = ?`, userID).
-		Scan(&failed, &count, &since); err != nil {
+		`SELECT failed_login_attempts, login_limit_count FROM users WHERE id = ?`, userID).
+		Scan(&failed, &count); err != nil {
 		t.Fatal(err)
 	}
-	return failed, count, since
+	return failed, count
 }
 
 func TestLoginRecordsFailureAfterHangup(t *testing.T) {
@@ -25,7 +25,7 @@ func TestLoginRecordsFailureAfterHangup(t *testing.T) {
 	if _, err := s.Login(ctx, "hank", "wrong", "test", "127.0.0.1"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("err = %v, want ErrInvalidCredentials", err)
 	}
-	if failed, count, _ := s.limitRow(t, u.ID); failed != 1 || count != 1 {
+	if failed, count := s.limitRow(t, u.ID); failed != 1 || count != 1 {
 		t.Errorf("after a hung-up failure: failed_login_attempts = %d, login_limit_count = %d, want 1 and 1", failed, count)
 	}
 }
@@ -67,7 +67,7 @@ func TestRefundAccountSkipsReplacedWindow(t *testing.T) {
 				}
 			}
 			s.refundAccount(ctx, a)
-			if _, count, _ := s.limitRow(t, u.ID); count != tt.wantCount {
+			if _, count := s.limitRow(t, u.ID); count != tt.wantCount {
 				t.Errorf("login_limit_count = %d, want %d", count, tt.wantCount)
 			}
 		})

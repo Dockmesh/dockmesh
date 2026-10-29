@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -21,10 +22,11 @@ func (h *Handlers) ListBackupTargets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if list == nil {
-		list = []targets.StoredTarget{}
+	out := make([]*targets.StoredTarget, len(list))
+	for i := range list {
+		out[i] = redactTarget(&list[i])
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *Handlers) CreateBackupTarget(w http.ResponseWriter, r *http.Request) {
@@ -37,12 +39,18 @@ func (h *Handlers) CreateBackupTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if in.Type == "local" {
+		if err := targets.CheckLocalConfig(in.Config); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	t, err := h.BackupTargets.Create(r.Context(), in)
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, t)
+	writeJSON(w, http.StatusCreated, redactTarget(t))
 }
 
 func (h *Handlers) UpdateBackupTarget(w http.ResponseWriter, r *http.Request) {
@@ -60,12 +68,24 @@ func (h *Handlers) UpdateBackupTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if prev, err := h.BackupTargets.Get(r.Context(), id); err == nil && prev.Type == in.Type {
+		if in.Config, err = keepConfig(in.Config, prev.Config, backupTargetSecrets); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if in.Type == "local" {
+		if err := targets.CheckLocalConfig(in.Config); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	t, err := h.BackupTargets.Update(r.Context(), id, in)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, t)
+	writeJSON(w, http.StatusOK, redactTarget(t))
 }
 
 func (h *Handlers) DeleteBackupTarget(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +127,7 @@ func (h *Handlers) TestBackupTarget(w http.ResponseWriter, r *http.Request) {
 		StorageInfo() (int64, int64, error)
 	}
 
-	tgt, buildErr := buildTargetFromStored(stored)
+	tgt, buildErr := h.BackupTargets.BuildChecked(r.Context(), stored, h.Notices)
 	if buildErr != nil {
 		_ = h.BackupTargets.UpdateStatus(r.Context(), id, "error", 0, 0)
 		writeJSON(w, http.StatusOK, map[string]any{"status": "error", "error": buildErr.Error()})
@@ -153,16 +173,58 @@ func (h *Handlers) TestBackupTarget(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// AcceptBackupTargetHostKey trusts the changed SFTP host key a stored
+// target last saw.
+//
+//	POST /api/v1/backups/targets/{id}/accept-host-key
+func (h *Handlers) AcceptBackupTargetHostKey(w http.ResponseWriter, r *http.Request) {
+	if h.BackupTargets == nil {
+		writeError(w, http.StatusServiceUnavailable, "backup targets unavailable")
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if _, err := h.BackupTargets.Get(r.Context(), id); err != nil {
+		writeError(w, http.StatusNotFound, "target not found")
+		return
+	}
+	err = h.BackupTargets.AcceptHostKey(r.Context(), id, h.Notices)
+	switch {
+	case errors.Is(err, targets.ErrNoPendingHostKey):
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, "backup.accept_target_host_key", "backup-target:"+strconv.FormatInt(id, 10), nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // TestBackupTargetConfig tests a raw config without saving (for the dialog).
 //
 //	POST /api/v1/backups/targets/test-config
 func (h *Handlers) TestBackupTargetConfig(w http.ResponseWriter, r *http.Request) {
-	var in targets.TargetInput
+	var in struct {
+		targets.TargetInput
+		TargetID int64 `json:"target_id"`
+	}
 	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	tgt, err := buildTargetFromInput(in.Type, in.Config)
+	// An unsaved config has nowhere to record a key; when it edits a
+	// stored SFTP target, the server must still present the stored key.
+	cfg := targets.KeepHostKey("", nil, in.Type, in.Config)
+	if in.TargetID > 0 && h.BackupTargets != nil {
+		if stored, err := h.BackupTargets.Get(r.Context(), in.TargetID); err == nil {
+			cfg = targets.KeepHostKey(stored.Type, stored.Config, in.Type, in.Config)
+		}
+	}
+	tgt, err := buildTargetFromInput(in.Type, cfg)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "error", "error": err.Error()})
 		return
@@ -219,20 +281,4 @@ func buildTargetFromInput(typ string, cfg any) (targets.Target, error) {
 		return targets.NewWebDAV(cfg)
 	}
 	return nil, fmt.Errorf("unknown target type: %s", typ)
-}
-
-func buildTargetFromStored(s *targets.StoredTarget) (targets.Target, error) {
-	switch s.Type {
-	case "local":
-		return targets.NewLocal(s.Config)
-	case "s3":
-		return targets.NewS3(s.Config)
-	case "sftp":
-		return targets.NewSFTP(s.Config)
-	case "smb":
-		return targets.NewSMB(s.Config)
-	case "webdav":
-		return targets.NewWebDAV(s.Config)
-	}
-	return nil, fmt.Errorf("unknown target type: %s", s.Type)
 }

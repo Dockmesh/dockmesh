@@ -135,7 +135,8 @@ func TestInviteAcceptRateLimited(t *testing.T) {
 			t.Fatalf("guess %d: %d, want 404", i+1, code)
 		}
 	}
-	inv, err := e.h.Invites.Create(context.Background(), invites.CreateInput{Role: "viewer"})
+	inviter := e.user("inviter", "admin")
+	inv, err := e.h.Invites.Create(context.Background(), invites.CreateInput{Role: "viewer", CreatedBy: inviter.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

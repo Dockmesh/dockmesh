@@ -13,6 +13,7 @@ import (
 
 	"github.com/pquerna/otp/totp"
 
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/settings"
@@ -79,11 +80,14 @@ func blockEntries(t *testing.T, e *authzEnv) []blockEntry {
 	return out
 }
 
+// unlockAs unlocks userID through the API as a freshly created admin.
 func unlockAs(t *testing.T, e *authzEnv, userID string) {
 	t.Helper()
+	admin := e.user("unlock-admin", "admin")
+	req := httptest.NewRequest(http.MethodPost, "/users/"+userID+"/unlock", nil)
+	req = req.WithContext(middleware.WithIdentity(req.Context(), middleware.Identity{UserID: admin.ID, Role: admin.Role}))
 	rr := httptest.NewRecorder()
-	chiRouterFor(http.MethodPost, "/users/{id}/unlock", e.h.UnlockUser).
-		ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/"+userID+"/unlock", nil))
+	chiRouterFor(http.MethodPost, "/users/{id}/unlock", e.h.UnlockUser).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("unlock: %d", rr.Code)
 	}

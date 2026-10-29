@@ -386,6 +386,8 @@ func main() {
 		os.Exit(1)
 	}
 	defer stacksMgr.Close()
+	stacksMgr.SetSumStore(stacks.NewSumStore(database))
+	stacksMgr.RecordUntrackedSums()
 
 	webFS, err := fs.Sub(webDist, "web_dist")
 	if err != nil {
@@ -541,6 +543,12 @@ func main() {
 	if err := settingsStore.Load(ctx); err != nil {
 		slog.Warn("settings store load", "err", err)
 	}
+	if err := seedLocalBackupRoots(ctx, settingsStore, database, backupSvc, filepath.Dir(cfg.DBPath)); err != nil {
+		slog.Warn("seed local backup roots", "err", err)
+	}
+	targets.SetLocalRoots(func() []string {
+		return targets.ParseRoots(settingsStore.Get(targets.LocalRootsSetting, ""))
+	})
 	// P.12.1 — hand the settings store to auth.Service so password
 	// policy + per-user lockout thresholds + rotation-day setting
 	// are live-editable via the UI without a restart.
@@ -606,7 +614,25 @@ func main() {
 	// Action-required notices. Packages register startup checks on
 	// noticesSvc; they run once every service below is wired.
 	noticesSvc := notices.NewService(database)
+	noticesSvc.Register("backups.local-roots-review", func(ctx context.Context, n *notices.Service) error {
+		return syncSeededRootsNotice(ctx, n, settingsStore)
+	})
+	noticesSvc.Register("backups.encrypt-unavailable", func(ctx context.Context, n *notices.Service) error {
+		return syncUnencryptableNotice(ctx, n, backupSvc)
+	})
+	noticesSvc.Register("stacks.staged-bind-mounts", func(ctx context.Context, n *notices.Service) error {
+		return syncStagedMountNotices(ctx, n, hostRegistry)
+	})
+	stacksMgr.SetNotices(noticesSvc)
+	hostRegistry.SetAfterDeploy(func(ctx context.Context, hostID, stack string, res *compose.DeployResult) {
+		stacksMgr.Deployed(ctx, stack)
+		reportBindCopies(ctx, noticesSvc, hostID, stack, res)
+		if err := syncStagedMountNotices(ctx, noticesSvc, hostRegistry); err != nil {
+			slog.Warn("staged bind mount notices", "err", err)
+		}
+	})
 	noticesSvc.Register("api-tokens.legacy", apiTokensSvc.SyncLegacyNotice)
+	noticesSvc.Register("backups.job-name-collision", backupSvc.SyncNameCollisionNotice)
 
 	// Wire the registries service into every code path that pulls an
 	// image. Without this, compose deploys + the "update image" button
@@ -615,6 +641,7 @@ func main() {
 	composeSvc.SetAuthResolver(registriesSvc)
 	updaterSvc.SetAuthResolver(registriesSvc)
 	hostRegistry.Local().SetAuthResolver(registriesSvc)
+	hostRegistry.Local().SetStackDirResolver(stacksMgr.Dir)
 
 	// Deploy progress tracker — same propagation pattern as the auth
 	// resolver. Frontend polls /stacks/{name}/deploy/progress for the
@@ -640,6 +667,9 @@ func main() {
 	gitDeploy := func(ctx context.Context, stackName string) (any, error) {
 		if dockerCli == nil {
 			return nil, fmt.Errorf("docker unavailable")
+		}
+		if err := stacksMgr.CheckGitDeploy(ctx, stackName); err != nil {
+			return nil, err
 		}
 		detail, err := stacksMgr.Get(stackName)
 		if err != nil {
@@ -724,6 +754,7 @@ func main() {
 		return res, nil
 	}
 	gitSourceSvc = gitsource.New(database, secretsSvc, stacksMgr, gitCacheDir, gitDeploy)
+	noticesSvc.Register("git-webhook.no-secret", gitSourceSvc.SyncWebhookNotice)
 	gitSourceSvc.Start(ctx)
 	defer gitSourceSvc.Stop()
 
@@ -747,7 +778,7 @@ func main() {
 	// it on archive_target runs. Nil-safe if the backup-targets store
 	// is ever unavailable — archive_target mode then reports an error.
 	backupTargetStore := targets.NewTargetStore(database)
-	auditTargetWriter := &auditTargetsAdapter{store: backupTargetStore}
+	auditTargetWriter := &auditTargetsAdapter{store: backupTargetStore, notices: noticesSvc}
 	auditRetention := audit.NewRetention(database, auditSvc, settingsStore, auditTargetWriter)
 	auditRetention.Start(ctx)
 	defer auditRetention.Stop()
@@ -788,6 +819,7 @@ func main() {
 	// it just stays silent instead of crashing.
 	alertsSvc.SetNotifier(notifSvc)
 	backupSvc.SetNotifier(notifSvc)
+	backupSvc.SetNotices(noticesSvc)
 	updateWatcher.SetNotifier(notifSvc)
 	agentsSvc.SetNotifier(notifSvc)
 	selfUpdateChk.SetNotifier(notifSvc)
@@ -913,6 +945,8 @@ func main() {
 	}
 
 	noticesSvc.RunChecks(ctx)
+	// Agents reconnect after the server started; look at their stacks too.
+	time.AfterFunc(2*time.Minute, func() { noticesSvc.RunChecks(ctx) })
 
 	// Wizard top-bar shows the same version `dockmesh --version` does.
 	handlers.SetSetupVersionString(version.Version)
@@ -1069,10 +1103,11 @@ func main() {
 
 // auditTargetsAdapter bridges audit.Retention's TargetWriter interface
 // to the backup_targets store. Loads the target row, builds the live
-// target via targets.Build, opens a writer for the given name, and
-// streams the archive bytes through.
+// target with the SFTP host-key check, opens a writer for the given
+// name, and streams the archive bytes through.
 type auditTargetsAdapter struct {
-	store *targets.TargetStore
+	store   *targets.TargetStore
+	notices *notices.Service
 }
 
 func (a *auditTargetsAdapter) WriteFile(ctx context.Context, targetID int64, name string, body io.Reader) error {
@@ -1080,7 +1115,7 @@ func (a *auditTargetsAdapter) WriteFile(ctx context.Context, targetID int64, nam
 	if err != nil {
 		return err
 	}
-	t, err := targets.Build(stored.Type, stored.Config)
+	t, err := a.store.BuildChecked(ctx, stored, a.notices)
 	if err != nil {
 		return err
 	}

@@ -24,13 +24,8 @@ func (h *Handlers) BrowseContainerFiles(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	if !h.requireHostAccess(w, r, target.ID()) {
-		return
-	}
 	id := chi.URLParam(r, "id")
-	scopeReq := h.containerScopeReq(r.Context(), target.ID(), id)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermContainersView, scopeReq, "container "+id)
+	if !h.requireContainerScope(w, r, rbac.PermContainersExec, target.ID(), id) {
 		return
 	}
 	p := r.URL.Query().Get("path")
@@ -61,13 +56,8 @@ func (h *Handlers) ReadContainerFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	if !h.requireHostAccess(w, r, target.ID()) {
-		return
-	}
 	id := chi.URLParam(r, "id")
-	scopeReq := h.containerScopeReq(r.Context(), target.ID(), id)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermContainersView, scopeReq, "container "+id)
+	if !h.requireContainerScope(w, r, rbac.PermContainersExec, target.ID(), id) {
 		return
 	}
 	p := r.URL.Query().Get("path")
@@ -95,13 +85,8 @@ func (h *Handlers) DownloadContainerFile(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	if !h.requireHostAccess(w, r, target.ID()) {
-		return
-	}
 	id := chi.URLParam(r, "id")
-	scopeReq := h.containerScopeReq(r.Context(), target.ID(), id)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermContainersView, scopeReq, "container "+id)
+	if !h.requireContainerScope(w, r, rbac.PermContainersExec, target.ID(), id) {
 		return
 	}
 	p := r.URL.Query().Get("path")
@@ -146,13 +131,8 @@ func (h *Handlers) WriteContainerFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	if !h.requireHostAccess(w, r, target.ID()) {
-		return
-	}
 	id := chi.URLParam(r, "id")
-	scopeReq := h.containerScopeReq(r.Context(), target.ID(), id)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermContainersExec, scopeReq, "container "+id)
+	if !h.requireContainerScope(w, r, rbac.PermContainersExec, target.ID(), id) {
 		return
 	}
 	var req containerFileWriteRequest

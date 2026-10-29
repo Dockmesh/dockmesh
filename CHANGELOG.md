@@ -20,7 +20,7 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   is published as an advisory.
 - Every Upgrade notes bullet is something a person has to do after upgrading and starts with
   `[id, audience]`, where `id` is a short kebab-case name that stays fixed and audience is
-  `all` or `admins`: `- [sftp-host-key, admins] Re-save each SFTP backup target.`
+  `all` or `admins`: `- [re-login, all] Sign in again after the upgrade.`
 
 ## [Unreleased]
 
@@ -34,8 +34,13 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and at the top of the notifications drawer, with a link to where you fix it. The notice
   goes away on its own once the issue is fixed; non-critical ones can be hidden from the
   banner.
+- Before applying database schema changes, Dockmesh now writes a copy of the database next
+  to it and keeps the newest three.
 
 ### Changed
+- The Authentication page no longer shows sign-in settings Dockmesh doesn't enforce yet:
+  password rotation and reuse, remember-me, requiring 2FA for admins, turning off local
+  passwords and self-registration. Saved values are kept.
 - API tokens now belong to the user who created them. A token never grants more than its
   role and its owner's current permissions and host scope allow, and it stops working when
   the owner is deleted. A token created with another token expires no later than it, and a
@@ -47,6 +52,23 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   or with `dockmesh admin reset-password`) signs out all of the user's sessions.
 - A role or scope change now applies to a signed-in user's next request instead of after up
   to 15 minutes.
+- Downloading a backup archive needs the new "Download backups" permission, which the
+  built-in Admin and Host Admin roles have; Host Admins only for jobs on their own hosts.
+  System backups and the backup key export are admin-only. Viewer, Operator and Deployer
+  can still see backup status but no longer download archives. Creating, editing or running
+  a backup job that includes the server itself is admin-only too, and other jobs need their
+  host within your scope.
+- Browsing, reading and downloading files inside a container now needs "Shell into
+  container", the same permission as uploading files or opening a terminal.
+- The built-in Host Admin role no longer edits system settings, global environment
+  variables, password and sign-in policy or single sign-on providers.
+- Saving a user without `scope_tags` keeps the user's host scope instead of clearing it.
+- Migrating a stack that uses named volumes to another host is refused with an explanation,
+  including in the pre-flight checks. Volume data isn't copied yet, so such a migration used
+  to finish with empty volumes on the new host.
+- Rotating the secrets key keeps every previous key in `secrets.age-key.history`, and the
+  exported backup key file contains them all, so backups made before a rotation can still be
+  restored. An interrupted rotation no longer leaves the server without a usable key.
 
 ### Security
 - Each kind of signed token (session, refresh, two-factor challenge, WebSocket ticket, single
@@ -82,6 +104,77 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   redirect to the sign-in page.
 - The password of the first admin account is printed once to the console instead of being
   written to the structured log.
+- Creating or editing users, invites and roles can no longer grant permissions or host scope
+  the editor doesn't have, and nobody can change or remove a user or role with more rights
+  than their own. Before, anyone allowed to edit users could make themselves admin. The last
+  account that can administer Dockmesh can no longer be demoted or deleted, and an invite
+  can no longer be accepted twice.
+- Users restricted to some hosts or stacks no longer see other hosts' or stacks' data:
+  container details (including environment variables), compose files, stack status, volumes,
+  networks, images, host metrics and the live event stream are now filtered by scope, and
+  container checks look at the host the container actually runs on.
+- Backup archives could be downloaded by every role, including Viewer, and a system backup
+  contains every secret of the installation. Downloads now need their own permission and are
+  recorded in the audit log.
+- Single sign-on no longer attaches a login to an existing account just because the email
+  matches. Linking needs the provider's new "link to existing accounts" option and an email the
+  provider marks as verified (OIDC and OAuth2). A role an admin set by hand is no longer
+  overwritten by the provider's group mapping on the next login, and turning off "create
+  accounts on first SSO login" now really stops new accounts.
+- Passwords, keys and tokens of backup targets and notification channels, and webhook URLs
+  that act as credentials, are no longer returned by the API. Forms show them as set; leaving
+  a field empty keeps the stored value, unless the server, URL or user changes, in which
+  case the secret has to be entered again. Only unscoped users can change or delete roles,
+  and an invite stops working once its creator could no longer grant it.
+- A user allowed to restore backups could restore a system backup into a volume and read the
+  database and secrets from it. Restoring a system backup into a volume or stack is no longer
+  possible; system backups are restored only with `dockmesh restore` on the server. Verifying
+  system backups, reading their run log, and turning on, editing, running or deleting the
+  system backup job are admin-only. Restoring, verifying and reading the log of other backups
+  needs the job's host within your scope.
+- Backup jobs whose names differ only in case or punctuation stored their archives in the
+  same folder, so the retention of one job could delete another job's backups, including the
+  system backups. Such names are now rejected, and the name `dockmesh-system` is kept for
+  the system backup job. On S3, retention no longer touches jobs whose name merely starts
+  with the same text.
+- Volume browsing, system restore and Git-synced stacks no longer follow symlinks out of the
+  volume, the data directory or the repository. Before, a symlink in a volume or repository,
+  or a crafted backup archive, could read or overwrite files on the host.
+- A Git source's `path_in_repo` must stay inside the repository.
+- Restoring a volume backup only accepts a Docker volume name as the target; a path such as
+  `/etc` was mounted from the host and overwritten. Saving a backup job whose volume source
+  is a path instead of a volume name is refused as well.
+- Uploads to the backup verification endpoint are limited to 1 GiB.
+- Backup hooks run commands inside containers, so creating or changing a job with hooks now
+  needs the permission to exec into containers, and every hook container must be within your
+  host and stack scope.
+- Local backup targets can only write below allowed directories (setting
+  `backups.local_roots`, which only admins can change). The directories existing local
+  targets use were added automatically.
+- SFTP backup targets now check the server's host key: the first connection records it, and a
+  different key later stops the job until an admin accepts it. Existing jobs keep running. The
+  same applies to saved SFTP targets, used for the audit log archive and the target test.
+- When a stack's `compose.yaml` or `.env` changes outside Dockmesh, for example through a
+  container that mounts the stack directory, the stack page says so and the next deploy or
+  rollback asks for confirmation. Git auto-deploys of such a stack are held back, and users who
+  can deploy stacks get a notice naming the changed files; deploying the stack from its page
+  confirms the changes and the notice goes away.
+- A backup job set to encrypt no longer writes an unencrypted archive when secrets encryption
+  is turned off; the run fails and admins get a notice.
+- Git webhooks now need a webhook secret and a valid signature. Before, anyone who knew a
+  stack name could trigger a sync, and with auto-deploy a deploy, without any secret. New
+  webhook secrets must be at least 16 characters, and repeated deliveries no longer start
+  overlapping syncs of the same stack.
+
+### Fixed
+- Relative bind mounts such as `./html:/usr/share/nginx/html` now point at the stack's own
+  directory. They used to point at a temporary directory that was deleted after the deploy, so
+  the container saw an empty folder and whatever it wrote there was lost. On the first redeploy
+  of an affected stack, files the old container wrote are copied into the stack directory if
+  it is still empty. On remote hosts the directory starts empty, because files next to
+  `compose.yaml` aren't copied to agents yet. A bind of the whole stack directory (`.:/app`)
+  mounts it read-write like docker compose does, and the stack page warns that the container
+  can change `compose.yaml` and `.env`.
 
 ### Upgrade notes
 - [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The
@@ -94,3 +187,36 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   then every user appears with the proxy's address in sessions and the audit log, and they
   share one per-address login limit of 100 failures in 15 minutes. Dockmesh shows a notice
   when it sees such a proxy.
+- [custom-role-permissions, admins] Custom roles that could restore backups keep downloading
+  archives; other custom roles lose archive downloads and container file access, and lose
+  system backups and the backup key unless they are admins. A notice lists the affected
+  roles; grant "Download backups" or "Shell into container" under Users → Roles where intended.
+- [sso-email-linking, admins] Someone who has a local account and signs in through SSO for the
+  first time now gets "an account with this email already exists". Turn on "link to existing
+  accounts" for that provider (OIDC/OAuth2 with verified emails), or remove the local account.
+  Accounts with two-factor authentication or the Admin role are never linked this way. Accounts
+  that already signed in through SSO keep working as long as the provider sends the same
+  subject; users whose LDAP DN, SAML NameID or OAuth2 login changed need their old account
+  removed or relinked by an admin.
+- [sso-linked-accounts-review, admins] Earlier versions linked SSO logins to accounts by email
+  alone. A notice lists how many accounts are linked to SSO and which of them are admins; check
+  that each belongs to the right person.
+- [host-admin-system-settings, admins] Host Admins no longer change system settings, SSO or
+  global environment variables. Give the Admin role to anyone who still needs that.
+- [backup-job-name-collision, admins] Backup jobs whose names differ only in case or
+  punctuation, or a non-system job named like `dockmesh-system`, share an archive folder and
+  their retention can delete each other's backups. A notice lists the affected jobs; rename
+  one job of each group under Backups. The notice goes away once no names collide.
+- [premigrate-snapshot, admins] Make sure the database directory has room for a full copy
+  of the database. Before schema changes Dockmesh writes `<db>.pre-migrate-<timestamp>.bak`
+  next to the database (`dockmesh.db.pre-migrate-20261029T101500.000Z.bak`, UTC) and keeps
+  the newest three; system backups leave these copies out. If the copy cannot be written, Dockmesh does not start and does not change
+  the database; set `DOCKMESH_SKIP_PREMIGRATE_BACKUP=1` to upgrade without it. To roll back,
+  stop the service, copy the `.bak` file over the database file, delete the database's
+  `-wal` and `-shm` files if present, and start the previous version.
+- [redeploy-relative-bind-mounts, admins] Redeploy every stack that uses a relative bind mount
+  (`./path:/...`). Dockmesh lists the affected stacks in a notice until each one is redeployed.
+- [git-webhook-secret, admins] Git webhooks for stacks without a webhook secret are disabled;
+  polling and manual sync keep working. A notice lists the affected stacks. To keep using a
+  webhook, edit the stack's git source, set a webhook secret and enter the same secret in the
+  webhook settings of your git provider.
