@@ -128,7 +128,8 @@ func loadEnvFileFromArgs() error {
 		keep = append(keep, arg)
 		i++
 	}
-	if path == "" {
+	explicit := path != ""
+	if !explicit {
 		// Auto-detect a well-known env file location. Only load if the
 		// operator hasn't already set DOCKMESH_DB_PATH in their shell —
 		// an explicit env var always wins over the auto-loaded file.
@@ -142,7 +143,17 @@ func loadEnvFileFromArgs() error {
 	} else {
 		os.Args = keep
 	}
-	data, err := os.ReadFile(path)
+	var data []byte
+	var err error
+	if explicit {
+		data, err = os.ReadFile(path)
+	} else {
+		data, err = readTrustedEnvFile(path)
+		if errors.Is(err, errUntrustedEnvFile) {
+			fmt.Fprintf(os.Stderr, "dockmesh: not loading %s (%v); pass --env-file to use it\n", path, err)
+			return nil
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}

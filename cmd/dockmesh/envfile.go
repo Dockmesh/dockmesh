@@ -1,6 +1,9 @@
 package main
 
-import "os"
+import (
+	"errors"
+	"os"
+)
 
 // defaultEnvFiles are the places install.sh and `dockmesh init` put
 // dockmesh.env: the Linux default, /data for hosts with a separate data
@@ -10,6 +13,8 @@ var defaultEnvFiles = []string{
 	"/data/dockmesh.env",
 	"/usr/local/var/dockmesh/dockmesh.env",
 }
+
+var errUntrustedEnvFile = errors.New("untrusted env file")
 
 func firstExistingFile(candidates []string) string {
 	for _, c := range candidates {

@@ -114,6 +114,9 @@ earlier, makes the installers more reliable on upgrade, and repairs volume brows
   download (set `DOCKMESH_SKIP_CHECKSUM=1` to override) instead of continuing with a warning.
 - The `dockmesh` command-line tools (`dockmesh admin ...`) also find the settings file in
   `/data/dockmesh.env`, where the installer puts it on hosts with a separate `/data` volume.
+  A settings file found this way is only read when it belongs to root or to the user running
+  the command and nobody else can write to it. Otherwise the command says so; run it as that
+  user (`sudo -u dockmesh dockmesh admin ...`) or pass `--env-file`.
 - Browsing a volume on an agent host works again. The agent now reads the volume through a
   short-lived read-only helper container, like the server does, instead of failing with
   "permission denied" on every folder. File names that start with `-` or contain a newline or
