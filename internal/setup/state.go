@@ -50,7 +50,6 @@ type State struct {
 }
 
 // NewForced returns a State pinned to active regardless of existing users.
-// Server startup uses NewForBoot instead.
 func NewForced() *State {
 	return &State{active: true, startedAt: time.Now()}
 }
@@ -64,7 +63,7 @@ func NewFromDB(ctx context.Context, db *sql.DB) (*State, error) {
 		// No DB — treat as setup-mode-on so the wizard at least loads.
 		return &State{active: true, startedAt: time.Now()}, nil
 	}
-	ok, err := adminExists(ctx, db)
+	ok, err := AdminExists(ctx, db)
 	if err != nil {
 		return nil, err
 	}
@@ -78,11 +77,11 @@ var adminPerms = []rbac.Perm{
 	rbac.PermUsersView, rbac.PermUsersCreate, rbac.PermUsersUpdate, rbac.PermUsersDelete,
 }
 
-// adminExists reports whether any user's role grants every adminPerms
+// AdminExists reports whether any user's role grants every adminPerms
 // permission. A permission counts when the role has it in role_permissions
 // or as a built-in default, so a custom admin-equivalent role keeps setup
 // closed just like the built-in admin role.
-func adminExists(ctx context.Context, db *sql.DB) (bool, error) {
+func AdminExists(ctx context.Context, db *sql.DB) (bool, error) {
 	rows, err := db.QueryContext(ctx, `SELECT DISTINCT role FROM users`)
 	if err != nil {
 		return false, err

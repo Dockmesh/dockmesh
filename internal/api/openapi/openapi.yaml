@@ -319,7 +319,10 @@ paths:
                   stream_url: { type: string }
         "400": { $ref: "#/components/responses/BadRequest" }
         "409":
-          description: Another install is already running or has just finished.
+          description: |
+            Another install is already running or has just finished, or an
+            account that can administer Dockmesh already exists (setup then
+            closes).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

@@ -72,21 +72,6 @@ import (
 //go:embed all:web_dist
 var webDist embed.FS
 
-// loadEnvFileFromArgs scans os.Args for --env-file=PATH or
-// --env-file PATH, loads that file as KEY=VALUE env vars (skipping
-// `#`-prefixed comments + blank lines), and strips the flag out of
-// os.Args so the rest of the process never sees it.
-//
-// If no --env-file was passed, we also try the default location where
-// `dockmesh init` writes its env file (/var/lib/dockmesh/dockmesh.env
-// on Linux, /usr/local/var/dockmesh/dockmesh.env on macOS). This lets
-// CLI commands like `sudo dockmesh admin list-users` find the DB + PKI
-// without the operator having to source the file or pass --env-file
-// every time.
-//
-// Originally built because launchd on macOS has no EnvironmentFile
-// directive (unlike systemd), so init's plist template passes
-// `--env-file PATH` to `dockmesh serve` explicitly.
 // loadedEnvFile is the env file loadEnvFileFromArgs read, empty when the
 // environment came from elsewhere (systemd's EnvironmentFile=, a shell).
 var loadedEnvFile string
@@ -108,6 +93,21 @@ func serverEnvFile(dbPath string) string {
 	return ""
 }
 
+// loadEnvFileFromArgs scans os.Args for --env-file=PATH or
+// --env-file PATH, loads that file as KEY=VALUE env vars (skipping
+// `#`-prefixed comments + blank lines), and strips the flag out of
+// os.Args so the rest of the process never sees it.
+//
+// If no --env-file was passed, we also try the default location where
+// `dockmesh init` writes its env file (/var/lib/dockmesh/dockmesh.env
+// on Linux, /usr/local/var/dockmesh/dockmesh.env on macOS). This lets
+// CLI commands like `sudo dockmesh admin list-users` find the DB + PKI
+// without the operator having to source the file or pass --env-file
+// every time.
+//
+// Originally built because launchd on macOS has no EnvironmentFile
+// directive (unlike systemd), so init's plist template passes
+// `--env-file PATH` to `dockmesh serve` explicitly.
 func loadEnvFileFromArgs() error {
 	var path string
 	var keep []string
@@ -317,7 +317,7 @@ func main() {
 		}
 	}
 
-	// P.14.1: setup-mode state. Active when no admin user exists in the
+	// Setup-mode state. Active when no admin user exists in the
 	// DB; the force flag never reopens it over an admin. Used by the gating
 	// middleware to redirect a freshly-installed server's URL to /setup
 	// instead of the login screen.
@@ -889,8 +889,12 @@ func main() {
 		// exists in the DB), the next service restart should NOT
 		// re-enter setup mode — drop the flag so a regular boot lands
 		// the operator on the login screen.
-		envPath := filepath.Join(filepath.Dir(cfg.DBPath), "..", "dockmesh.env")
-		if cleaned, derr := scrubEnvFlag(envPath, "DOCKMESH_SETUP_FORCE"); derr == nil && cleaned {
+		envPath := serverEnvFile(cfg.DBPath)
+		if envPath == "" {
+			if cfg.SetupForce {
+				emit("setup_flag", "env file not located — remove DOCKMESH_SETUP_FORCE from it manually (default "+setup.DefaultEnvFile+")", "warn")
+			}
+		} else if cleaned, derr := scrubEnvFlag(envPath, "DOCKMESH_SETUP_FORCE"); derr == nil && cleaned {
 			emit("setup_flag", "removed DOCKMESH_SETUP_FORCE from "+envPath+" — next boot will not re-enter setup mode", "ok")
 		} else if derr != nil {
 			emit("setup_flag", "could not scrub setup flag: "+derr.Error()+" (manual edit may be needed)", "warn")

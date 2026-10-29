@@ -4,10 +4,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/setup"
 )
 
@@ -70,6 +72,64 @@ func TestSetupProbesClosedAfterSetup(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if code := postSetup(tt.fn, "/api/v1/setup/x", tt.body); code != http.StatusGone {
 				t.Fatalf("got %d, want 410", code)
+			}
+		})
+	}
+}
+
+func TestSetupCommitRefusedOnceAdminExists(t *testing.T) {
+	tests := []struct {
+		name     string
+		admin    bool
+		wantCode int
+		wantRun  bool
+	}{
+		{name: "no admin", admin: false, wantCode: http.StatusAccepted, wantRun: true},
+		{name: "admin created after boot", admin: true, wantCode: http.StatusConflict},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { database.Close() })
+			if err := db.Migrate(database); err != nil {
+				t.Fatal(err)
+			}
+			st, err := setup.NewFromDB(context.Background(), database)
+			if err != nil || !st.Active() {
+				t.Fatalf("setup not active on an empty database: %v", err)
+			}
+			if tt.admin {
+				if _, err := database.Exec(`INSERT INTO users (id, username, password, role) VALUES ('u1', 'cli-admin', 'x', 'admin')`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ran := make(chan struct{}, 1)
+			h := &Handlers{
+				DB:         database,
+				SetupState: st,
+				SetupCommit_: func(context.Context, setup.CommitInput, func(string, string, string)) error {
+					ran <- struct{}{}
+					return nil
+				},
+			}
+			if code := postSetup(h.SetupCommit, "/api/v1/setup/commit", setupCommitBody); code != tt.wantCode {
+				t.Fatalf("commit: got %d, want %d", code, tt.wantCode)
+			}
+			select {
+			case <-ran:
+				if !tt.wantRun {
+					t.Fatal("install ran although an admin exists")
+				}
+			case <-time.After(time.Second):
+				if tt.wantRun {
+					t.Fatal("install did not run")
+				}
+			}
+			if tt.admin && st.Active() {
+				t.Fatal("setup still active after an admin was found")
 			}
 		})
 	}

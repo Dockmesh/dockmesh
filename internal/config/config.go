@@ -44,7 +44,7 @@ type Config struct {
 	// admin exists.
 	// Set by the install script for the wizard install path; off by
 	// default so existing installs and `dockmesh init --yes` keep
-	// working unchanged. P.14.1.
+	// working unchanged.
 	SetupForce bool
 	// RBACv2Enforce gates the new role-scope (per-host + per-stack)
 	// enforcement on typed-resource handlers. Default false during the

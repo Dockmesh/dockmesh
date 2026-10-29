@@ -65,9 +65,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   account the wizard creates itself is added.
 - Reinstalling over an existing install no longer reopens the setup wizard to anyone who can
   reach the server. `DOCKMESH_SETUP_FORCE=true` in the env file is now ignored once an admin
-  account exists, and admins get a notice to remove it. The installer no longer writes that
-  flag when a database is already there, and it keeps a copy of an existing env file as
-  `dockmesh.env.bak` (or `dockmesh.env.bak.<timestamp>` if a backup is already there).
+  account exists, and admins get a notice to remove it; the wizard also refuses to finish if
+  an admin was created in the meantime. The installer only writes that flag on a host without
+  an earlier install, keeps a copy of an existing env file as `dockmesh.env.bak` (or
+  `dockmesh.env.bak.<timestamp>.<n>` if a backup is already there), and refuses to write
+  through symlinks in the data directory.
 
 ### Upgrade notes
 - [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The
