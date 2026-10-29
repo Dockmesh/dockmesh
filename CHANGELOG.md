@@ -197,6 +197,10 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   overlapping syncs of the same stack.
 
 ### Fixed
+- Requests that a client cancelled while they were reading the database (a closed browser tab,
+  a dropped connection) could leave the database connection failing every later query until the
+  restart, so sign-in, host enrollment and most pages answered with errors. The SQLite driver is
+  updated, which fixes this.
 - SAML sign-in with an identity provider on another domain failed with "missing state cookie",
   because the browser did not send the cookie along with the provider's answer. Over HTTPS the
   cookie now goes along; over plain HTTP the sign-in page explains that HTTPS is needed.
