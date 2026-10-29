@@ -7,16 +7,16 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/saml"
 	"github.com/go-chi/chi/v5"
-	"github.com/golang-jwt/jwt/v5"
 )
 
 const samlStateCookie = "dockmesh_saml"
 
 type samlStateClaims struct {
 	Pending *saml.Pending `json:"p"`
-	jwt.RegisteredClaims
+	auth.TypedClaims
 }
 
 // -----------------------------------------------------------------------------
@@ -52,16 +52,7 @@ func (h *Handlers) SAMLLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	claims := samlStateClaims{
-		Pending: pending,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "dockmesh",
-			Subject:   "saml-pending",
-		},
-	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(h.JWTSecret)
+	token, err := h.Auth.TokenKeys().Sign(auth.KindSAMLState, 5*time.Minute, &samlStateClaims{Pending: pending})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -94,15 +85,12 @@ func (h *Handlers) SAMLACS(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name: samlStateCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
 	})
-	parsed, err := jwt.ParseWithClaims(c.Value, &samlStateClaims{}, func(t *jwt.Token) (any, error) {
-		return h.JWTSecret, nil
-	})
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid state cookie: "+err.Error())
+	claims := &samlStateClaims{}
+	if err := h.Auth.TokenKeys().Parse(auth.KindSAMLState, c.Value, claims); err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid state cookie")
 		return
 	}
-	claims, ok := parsed.Claims.(*samlStateClaims)
-	if !ok || !parsed.Valid || claims.Pending == nil {
+	if claims.Pending == nil {
 		writeError(w, http.StatusUnauthorized, "invalid state cookie")
 		return
 	}

@@ -1,4 +1,24 @@
 const STORAGE_KEY = 'dockmesh_auth';
+// Why the last session ended, shown once on the login page.
+const SIGNOUT_REASON_KEY = 'dockmesh_signout_reason';
+
+export type SignOutReason = 'session_outdated';
+
+function rememberSignOutReason(reason: SignOutReason) {
+  try {
+    sessionStorage.setItem(SIGNOUT_REASON_KEY, reason);
+  } catch { /* storage unavailable: the login page just shows no reason */ }
+}
+
+export function consumeSignOutReason(): SignOutReason | null {
+  try {
+    const v = sessionStorage.getItem(SIGNOUT_REASON_KEY);
+    sessionStorage.removeItem(SIGNOUT_REASON_KEY);
+    return v === 'session_outdated' ? v : null;
+  } catch {
+    return null;
+  }
+}
 
 interface MeScopes {
   stacks: string[];
@@ -62,6 +82,10 @@ function createAuthStore() {
         body: JSON.stringify({ refresh_token: state.refreshToken })
       });
       if (!res.ok) {
+        if (res.status === 401) {
+          const body = await res.json().catch(() => null);
+          if (body?.code === 'session_outdated') rememberSignOutReason('session_outdated');
+        }
         clear();
         return false;
       }

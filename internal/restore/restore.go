@@ -36,13 +36,13 @@ type Counts struct {
 
 // Options controls Extract behaviour.
 type Options struct {
-	Force    bool
-	DryRun   bool
+	Force  bool
+	DryRun bool
 	// MaxBytes and MaxEntries cap what an archive may unpack to (0 = no
 	// limit). Set for verification, where the archive comes from outside.
 	MaxBytes   int64
 	MaxEntries int
-	TmpBase  string // where to stage the DB temp file; default: same dir as cfg.DBPath
+	TmpBase    string // where to stage the DB temp file; default: same dir as cfg.DBPath
 }
 
 // SanityResult is the structured output of the post-restore checks.
@@ -304,6 +304,10 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 		case clean == "dockmesh.db":
 		case strings.HasPrefix(clean, "stacks/"):
 			root, rel = cfg.StacksRoot, strings.TrimPrefix(clean, "stacks/")
+		case strings.HasPrefix(clean, "data/") && db.IsSnapshotName("", filepath.Base(clean)):
+			// Archives written before backups excluded them can carry
+			// pre-migration snapshots with stale secrets.
+			continue
 		case strings.HasPrefix(clean, "data/"):
 			root, rel = dataDir, strings.TrimPrefix(clean, "data/")
 			// The live DB is never part of data/ (it is restored from the

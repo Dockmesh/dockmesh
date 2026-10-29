@@ -630,6 +630,7 @@ func main() {
 			slog.Warn("staged bind mount notices", "err", err)
 		}
 	})
+	noticesSvc.Register("api-tokens.legacy", apiTokensSvc.SyncLegacyNotice)
 
 	// Wire the registries service into every code path that pulls an
 	// image. Without this, compose deploys + the "update image" button
@@ -996,7 +997,6 @@ func main() {
 		SelfUpdate:     selfUpdateChk,
 		SetupState:     setupState,
 		SetupCommit_:   setupCommit,
-		JWTSecret:      cfg.JWTSecret,
 		RBACv2Enforce:  cfg.RBACv2Enforce,
 	})
 	router := api.NewRouter(h, authSvc, webFS, cfg.MetricsAuth, setupState)

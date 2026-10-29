@@ -191,7 +191,10 @@ func (h *Handlers) ChangeUserPassword(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	callerID := middleware.UserID(r.Context())
 	isSelf := id == callerID
-	isAdmin := middleware.Role(r.Context()) == "admin"
+	isAdmin := true
+	for _, role := range middleware.Roles(r.Context()) {
+		isAdmin = isAdmin && role == "admin"
+	}
 	// Self or admin can change password. Admin-for-other is allowed
 	// without current password; admin-for-self still needs it.
 	if !isSelf && !isAdmin {
@@ -222,7 +225,18 @@ func (h *Handlers) ChangeUserPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	meta := map[string]any{}
+	// A changed password must lock out whoever else holds a session: on a
+	// self-change every other session ends, on an admin reset all of them.
+	keep := ""
+	if isSelf {
+		keep = middleware.SessionID(r.Context())
+	}
+	revoked, err := h.Auth.RevokeUserSessions(r.Context(), id, keep)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	meta := map[string]any{"sessions_revoked": revoked}
 	if !isSelf {
 		meta["admin_reset"] = true
 		meta["target_user"] = id
@@ -246,6 +260,14 @@ func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 			Role:     tokRole,
 		}
 		enrichUserWithRBAC(h.Roles, fake)
+		// An owned token only gets what its owner's role also allows.
+		effective := make([]string, 0, len(fake.Permissions))
+		for _, p := range fake.Permissions {
+			if middleware.Allowed(r.Context(), rbac.Perm(p)) {
+				effective = append(effective, p)
+			}
+		}
+		fake.Permissions = effective
 		writeJSON(w, http.StatusOK, map[string]any{
 			"kind":         "api_token",
 			"username":     fake.Username,
@@ -254,6 +276,7 @@ func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 			"mfa_enabled":  false,
 			"permissions":  fake.Permissions,
 			"scopes":       fake.Scopes,
+			"scope_tags":   middleware.ScopeTags(r.Context()),
 		})
 		return
 	}

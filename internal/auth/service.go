@@ -21,6 +21,10 @@ var (
 	ErrUserExists         = errors.New("user already exists")
 	ErrUsernameTaken      = errors.New("username already in use")
 	ErrEmailTaken         = errors.New("email already in use")
+
+	// ErrSessionOutdated marks a refresh token from before per-kind token
+	// keys; the user has to sign in again and the UI says why.
+	ErrSessionOutdated = errors.New("session predates the current token format")
 )
 
 type User struct {
@@ -29,7 +33,7 @@ type User struct {
 	DisplayName string  `json:"display_name,omitempty"`
 	Email      string   `json:"email,omitempty"`
 	Role       string   `json:"role"`
-	ScopeTags  []string `json:"scope_tags,omitempty"` // P.11.3: empty = all hosts
+	ScopeTags  []string `json:"scope_tags,omitempty"` // empty = all hosts
 	MFAEnabled bool     `json:"mfa_enabled"`
 	// Profile timestamps surfaced in the Account page.
 	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
@@ -69,20 +73,30 @@ type LoginResult struct {
 
 type Service struct {
 	db         *sql.DB
-	secret     []byte
-	accessTTL  time.Duration
+	keys       *TokenKeys
+	tickets    *ticketStore
 	refreshTTL time.Duration
 	settings   SettingsReader // optional; nil = skip policy checks
 }
 
+// NewService panics if secret is shorter than 32 bytes; config always
+// generates 32.
 func NewService(db *sql.DB, secret []byte) *Service {
+	keys, err := NewTokenKeys(secret)
+	if err != nil {
+		panic(fmt.Sprintf("auth: %v", err))
+	}
 	return &Service{
 		db:         db,
-		secret:     secret,
-		accessTTL:  15 * time.Minute,
+		keys:       keys,
+		tickets:    newTicketStore(),
 		refreshTTL: 30 * 24 * time.Hour,
 	}
 }
+
+// TokenKeys exposes the per-kind signing keys for tokens minted outside
+// this package (SSO state cookies).
+func (s *Service) TokenKeys() *TokenKeys { return s.keys }
 
 // SetSettings wires the settings store for password-policy + lockout
 // lookups. Nil is fine — policy checks default to "no policy".
@@ -517,6 +531,9 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 		Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &hash, &totpVerified,
 			&failedAttempts, &lockedUntil, &displayName, &pwChangedAt)
 	if errors.Is(err, sql.ErrNoRows) {
+		// Same argon2 work as a wrong password, so response time doesn't
+		// tell which usernames exist.
+		_, _ = VerifyPassword(password, dummyHash())
 		return nil, ErrInvalidCredentials
 	}
 	if err != nil {
@@ -621,31 +638,13 @@ func (s *Service) startSession(ctx context.Context, u User, userAgent, ip string
 }
 
 func (s *Service) issueMFAPending(userID string) (string, error) {
-	c := Claims{
-		UserID: userID,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "dockmesh",
-			Subject:   "mfa-pending",
-		},
-	}
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString(s.secret)
+	return s.keys.Sign(KindMFAPending, 5*time.Minute, &Claims{UserID: userID})
 }
 
 func (s *Service) parseMFAPending(token string) (*Claims, error) {
-	t, err := jwt.ParseWithClaims(token, &Claims{}, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
-		return s.secret, nil
-	})
-	if err != nil {
+	c := &Claims{}
+	if err := s.keys.Parse(KindMFAPending, token, c); err != nil {
 		return nil, err
-	}
-	c, ok := t.Claims.(*Claims)
-	if !ok || !t.Valid || c.Subject != "mfa-pending" {
-		return nil, errors.New("invalid mfa token")
 	}
 	return c, nil
 }
@@ -653,6 +652,9 @@ func (s *Service) parseMFAPending(token string) (*Claims, error) {
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (*LoginResult, error) {
 	claims, err := s.parseRefresh(refreshToken)
 	if err != nil {
+		if isPreUpgradeRefresh(refreshToken) {
+			return nil, ErrSessionOutdated
+		}
 		return nil, ErrInvalidToken
 	}
 	var (
@@ -730,23 +732,73 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 	return err
 }
 
-// Validate parses an access token and returns (userID, role).
-func (s *Service) Validate(token string) (string, string, []string, error) {
-	c, err := ParseAccessToken(s.secret, token)
-	if err != nil {
-		return "", "", nil, err
+// Validate parses an access token and checks that its session is still
+// live. Role and scope are re-read from the user row, so a demotion or a
+// scope change applies to the next request rather than after the token's
+// 15 minutes.
+func (s *Service) Validate(ctx context.Context, token string) (*Claims, error) {
+	c := &Claims{}
+	if err := s.keys.Parse(KindAccess, token, c); err != nil {
+		return nil, err
 	}
-	return c.UserID, c.Role, c.ScopeTags, nil
+	role, scope, err := s.SessionIdentity(ctx, c.UserID, c.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	c.Role, c.ScopeTags = role, scope
+	return c, nil
+}
+
+// SessionIdentity returns the current role and scope of userID if
+// sessionID is one of their live sessions, ErrInvalidToken otherwise.
+func (s *Service) SessionIdentity(ctx context.Context, userID, sessionID string) (string, []string, error) {
+	if userID == "" || sessionID == "" {
+		return "", nil, ErrInvalidToken
+	}
+	var (
+		revokedAt sql.NullTime
+		expiresAt time.Time
+		role      string
+		scope     sql.NullString
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT s.revoked_at, s.expires_at, u.role, u.scope_tags
+		  FROM sessions s JOIN users u ON u.id = s.user_id
+		 WHERE s.family_id = ? AND s.user_id = ?`, sessionID, userID).
+		Scan(&revokedAt, &expiresAt, &role, &scope)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil, ErrInvalidToken
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	if revokedAt.Valid || time.Now().After(expiresAt) {
+		return "", nil, ErrInvalidToken
+	}
+	return role, parseScopeTags(scope), nil
+}
+
+// RevokeUserSessions ends every live session of userID except
+// keepSessionID (pass "" to end all). Access tokens of those sessions stop
+// working on their next request because Validate checks the session.
+func (s *Service) RevokeUserSessions(ctx context.Context, userID, keepSessionID string) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE sessions SET revoked_at = CURRENT_TIMESTAMP
+		 WHERE user_id = ? AND family_id != ? AND revoked_at IS NULL`, userID, keepSessionID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 type refreshClaims struct {
 	FamilyID string `json:"fam"`
 	Seq      int    `json:"seq"`
-	jwt.RegisteredClaims
+	TypedClaims
 }
 
 func (s *Service) mintPair(u User, familyID string, seq int, expiresAt time.Time) (*LoginResult, error) {
-	access, err := IssueAccessToken(s.secret, u.ID, u.Role, u.ScopeTags)
+	access, err := s.keys.Sign(KindAccess, accessTTL, &Claims{UserID: u.ID, SessionID: familyID})
 	if err != nil {
 		return nil, err
 	}
@@ -763,61 +815,17 @@ func (s *Service) mintPair(u User, familyID string, seq int, expiresAt time.Time
 }
 
 func (s *Service) issueRefresh(familyID string, seq int, expiresAt time.Time) (string, error) {
-	c := refreshClaims{
-		FamilyID: familyID,
-		Seq:      seq,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expiresAt),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "dockmesh",
-			Subject:   "refresh",
-		},
-	}
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString(s.secret)
+	c := &refreshClaims{FamilyID: familyID, Seq: seq}
+	c.ExpiresAt = jwt.NewNumericDate(expiresAt)
+	return s.keys.Sign(KindRefresh, 0, c)
 }
 
 func (s *Service) parseRefresh(token string) (*refreshClaims, error) {
-	t, err := jwt.ParseWithClaims(token, &refreshClaims{}, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
-		return s.secret, nil
-	})
-	if err != nil {
+	c := &refreshClaims{}
+	if err := s.keys.Parse(KindRefresh, token, c); err != nil {
 		return nil, err
 	}
-	c, ok := t.Claims.(*refreshClaims)
-	if !ok || !t.Valid || c.Subject != "refresh" {
-		return nil, errors.New("invalid refresh token")
-	}
 	return c, nil
-}
-
-// IssueWSTicket creates a short-lived (30s) JWT ticket for WebSocket auth (§15.8).
-// The client obtains it via POST /api/v1/ws/ticket?for=<perm> with a valid
-// Bearer token, then passes it as ?ticket=<JWT> on the WebSocket upgrade URL.
-// The ticket binds to the requested permission so a logs-ticket can't be
-// reused on /ws/exec — the WS handler compares claims.Perm against the
-// endpoint's required permission and rejects on mismatch.
-func (s *Service) IssueWSTicket(userID, role, perm string) (string, error) {
-	c := Claims{
-		UserID: userID,
-		Role:   role,
-		Perm:   perm,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(30 * time.Second)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "dockmesh",
-			Subject:   "ws-ticket",
-		},
-	}
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString(s.secret)
-}
-
-// ValidateWSTicket verifies a WebSocket ticket JWT and returns the full
-// claims so handlers can check both the user ID and the bound permission.
-func (s *Service) ValidateWSTicket(token string) (*Claims, error) {
-	return ParseAccessToken(s.secret, token)
 }
 
 func generatePassword(n int) (string, error) {
