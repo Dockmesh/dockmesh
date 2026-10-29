@@ -128,6 +128,25 @@ func (s *Stream) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+// Send writes a stream.data frame and waits for room in the agent's send
+// queue instead of failing when it is full, so bulk uploads (volume
+// restores) keep their order and lose nothing.
+func (s *Stream) Send(ctx context.Context, data []byte) error {
+	if s.closed.Load() {
+		return io.ErrClosedPipe
+	}
+	payload, err := json.Marshal(StreamData{StreamID: s.ID, Data: data})
+	if err != nil {
+		return err
+	}
+	select {
+	case s.agent.send <- Frame{Type: FrameStreamData, Payload: payload}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // Close ends the stream. Safe to call multiple times.
 func (s *Stream) Close() error {
 	if s.closed.Swap(true) {

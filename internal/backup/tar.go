@@ -109,7 +109,8 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 
 // untarVolume streams a gzipped tar archive into a named volume by
 // running `tar xzf -` inside a helper that mounts the volume read-write.
-func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src io.Reader) error {
+// replace empties the volume first.
+func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src io.Reader, replace bool) error {
 	if dc == nil {
 		return errors.New("docker unavailable")
 	}
@@ -123,7 +124,7 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 
 	cfg := &container.Config{
 		Image: helperImage,
-		Cmd:   []string{"sh", "-c", "tar xzf - -C /dest"},
+		Cmd:   []string{"sh", "-c", untarScript(replace)},
 		AttachStdin: true,
 		AttachStderr: true,
 		OpenStdin: true,
@@ -175,6 +176,14 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 		return ctx.Err()
 	}
 	return nil
+}
+
+func untarScript(replace bool) string {
+	if replace {
+		// Globs cover dotfiles too; unmatched patterns are ignored by rm -f.
+		return "rm -rf /dest/..?* /dest/.[!.]* /dest/* && tar xzf - -C /dest"
+	}
+	return "tar xzf - -C /dest"
 }
 
 func ensureHelperImage(ctx context.Context, dc *docker.Client) error {

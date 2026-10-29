@@ -104,6 +104,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   retention are shown as pruned.
 - Backup runs that were still running when the server stopped are marked failed at the
   next start instead of showing "running" forever.
+- Restoring a volume or stack backup puts the volumes back on the host the backup was taken
+  on (or one you pick), instead of always on the central server. The archive is checked
+  completely before anything is overwritten, and you choose between replacing the volume's
+  contents (refused while containers use it) and merging. A volume that fails to restore now
+  fails the stack restore instead of being reported as a warning. Restoring onto a remote host
+  needs the agent from this release.
 
 ### Upgrade notes
 - [redeploy-relative-bind-mounts, admins] Redeploy every stack that uses a relative bind mount

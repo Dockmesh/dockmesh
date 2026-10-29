@@ -3272,45 +3272,41 @@ paths:
       tags: [backups]
       summary: Restore a stack-typed backup run
       description: |
-        Extracts a stack-typed backup archive into the stacks directory
-        (`/stacks/<target>/`) and untars every embedded
-        `volumes/<vol>.tar.gz` entry into a docker volume of the same
-        name. Returns a structured report listing what was restored.
+        Verifies the whole archive first (hash, structure, every volume the
+        backup recorded); a failing check returns 422 and changes nothing.
+        Then writes `stack/*` into the stacks directory (`/stacks/<target>/`)
+        and streams every `volumes/<vol>.tar.gz` entry into that volume on
+        `host_id` (default: the host the backup was taken on; remote hosts
+        need an agent of this version).
 
-        Use `target_stack` to restore under a different name than the
-        original — useful for "restore as a copy". Defaults to the
-        archive's source stack name. Existing files at the destination
-        are overwritten; existing volumes have their contents replaced.
+        `target_stack` restores under another name (default: the source
+        stack). `mode: replace` empties each volume first and is refused
+        with 409 while running containers use one of them; `merge` (default)
+        overwrites the archived files and keeps everything else.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       requestBody:
         required: false
         content:
           application/json:
-            schema:
-              type: object
-              properties:
-                target_stack:
-                  type: string
-                  description: Optional override for the destination stack name.
+            schema: { $ref: "#/components/schemas/BackupRestoreRequest" }
       responses:
         "200":
-          description: Restore complete with per-file / per-volume report.
+          description: Restore complete.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  stack_name: { type: string }
-                  files_restored: { type: array, items: { type: string } }
-                  volumes_restored: { type: array, items: { type: string } }
-                  warnings: { type: array, items: { type: string } }
+              schema: { $ref: "#/components/schemas/BackupRestoreReport" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "500":
-          description: Archive corrupt / decryption failed / disk write error.
+        "409":
+          description: Run not restorable (failed, pruned) or a volume to replace is in use.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: The archive failed verification; nothing was restored.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -3319,33 +3315,40 @@ paths:
     post:
       operationId: backups.restore_run
       tags: [backups]
-      summary: Restore a specific backup run onto a target
+      summary: Restore a volume or stack backup run
       description: |
-        For volume backups this extracts the archive into the Docker volume
-        named by `dest_volume`; for stack backups `dest_volume` carries the
-        target stack name.
+        Same flow as `restore-stack`. For volume backups the archive goes
+        into `dest_volume` (default: the backed-up volume) on `host_id`.
+        For stack backups `target_stack` (or, for older clients,
+        `dest_volume`) names the stack. System backups can't be restored
+        here; see `dockmesh restore`.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
-            schema:
-              type: object
-              required: [dest_volume]
-              properties:
-                dest_volume:
-                  type: string
-                  description: |
-                    Docker volume name (`[a-zA-Z0-9][a-zA-Z0-9_.-]+`), or the
-                    stack name for stack backups. Paths are rejected with 400.
+            schema: { $ref: "#/components/schemas/BackupRestoreRequest" }
       responses:
-        "204":
-          description: Restored.
+        "200":
+          description: Restore complete.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupRestoreReport" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Run not restorable (failed, pruned) or the volume to replace is in use.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: The archive failed verification; nothing was restored.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /backups/runs/{id}/verify:
     post:
@@ -7426,6 +7429,27 @@ components:
         sources:
           type: array
           items: { $ref: "#/components/schemas/BackupSource" }
+
+    BackupRestoreRequest:
+      type: object
+      properties:
+        dest_volume:
+          type: string
+          description: Volume runs. Docker volume name (`[a-zA-Z0-9][a-zA-Z0-9_.-]+`); paths are rejected with 400.
+        target_stack: { type: string, description: Stack runs. Destination stack name. }
+        host_id: { type: string, description: Docker host to restore onto; default is the host the backup was taken on. }
+        mode: { type: string, enum: [merge, replace], default: merge }
+
+    BackupRestoreReport:
+      type: object
+      properties:
+        kind: { type: string, enum: [volume, stack] }
+        stack_name: { type: string }
+        host_id: { type: string }
+        mode: { type: string, enum: [merge, replace] }
+        files_restored: { type: array, items: { type: string } }
+        volumes_restored: { type: array, items: { type: string } }
+        warnings: { type: array, items: { type: string } }
 
     BackupVerifyResult:
       type: object

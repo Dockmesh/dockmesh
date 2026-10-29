@@ -426,3 +426,9 @@ func TestStackArchiveVolumes(t *testing.T) {
 		t.Fatal("unparseable compose must fail the backup")
 	}
 }
+
+func (f *fakeHost) VolumeImport(context.Context, string, io.Reader, bool) error {
+	return errors.New("fakeHost: import not supported")
+}
+
+func (f *fakeHost) VolumeInUse(context.Context, string) ([]string, error) { return nil, nil }

@@ -17,6 +17,7 @@
   import TargetDrawer from './_TargetDrawer.svelte';
   import JobWizard from './_JobWizard.svelte';
   import TargetWizard from './_TargetWizard.svelte';
+  import RestoreDialog from './_RestoreDialog.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { autoRefresh } from '$lib/autorefresh';
@@ -145,7 +146,7 @@
       return;
     }
     closeDrawers();
-    openRestore(r);
+    openRestore(r, mode);
   }
 
   async function downloadRunArchive(r: BackupRun) {
@@ -210,10 +211,8 @@
   }
 
   // Restore modal
-  let showRestore = $state(false);
   let restoreRun = $state<BackupRun | null>(null);
-  let restoreVolume = $state('');
-  let restoreConfirm = $state('');
+  let restorePreset = $state<'in-place' | 'alongside'>('alongside');
 
   // Runs filters
   let runJobFilter = $state('');
@@ -697,35 +696,9 @@
     } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
   }
 
-  function openRestore(r: BackupRun) {
-    restoreRun = r; restoreConfirm = '';
-    // Stack-typed runs default to "restore as same name". Volume runs
-    // default to "<source>-restored" — the legacy non-destructive
-    // pattern. The UI already shows the appropriate label per kind.
-    const stackSrc = r.sources.find(s => s.type === 'stack');
-    if (stackSrc) {
-      restoreVolume = stackSrc.name;
-    } else {
-      const vol = r.sources.find(s => s.type === 'volume');
-      restoreVolume = vol ? `${vol.name}-restored` : '';
-    }
-    showRestore = true;
-  }
-  async function doRestore() {
-    if (!restoreRun || restoreConfirm !== restoreVolume) return;
-    const isStack = restoreRun.sources.some(s => s.type === 'stack');
-    try {
-      if (isStack) {
-        const res = await api.backups.restoreStack(restoreRun.id, restoreVolume.trim());
-        toast.success('Stack restored', `${res.files_restored.length} file(s), ${res.volumes_restored.length} volume(s) into ${res.stack_name}`);
-      } else {
-        await api.backups.restore(restoreRun.id, restoreVolume.trim());
-        toast.success('Restored', restoreVolume);
-      }
-      showRestore = false;
-    } catch (err) {
-      toast.error('Restore failed', err instanceof ApiError ? err.message : undefined);
-    }
+  function openRestore(r: BackupRun, preset: 'in-place' | 'alongside' = 'alongside') {
+    restorePreset = preset;
+    restoreRun = r;
   }
 
   function addSource() { jSources = [...jSources, { type: 'volume', name: '' }]; }
@@ -1678,27 +1651,12 @@
   {/snippet}
 </Modal>
 
-<!-- Restore modal with confirmation -->
-<Modal bind:open={showRestore} title="Restore backup" maxWidth="max-w-md">
-  {#if restoreRun}
-    <div class="space-y-4">
-      <div class="p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-warning-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-warning-500)_30%,transparent)] text-xs text-[var(--color-warning-400)]">
-        This will untar the archive into a Docker volume. Existing data in the target volume will be <strong>overwritten</strong>. Stop any container using the volume first.
-      </div>
-      <Input label="Destination volume name" bind:value={restoreVolume} hint="Will be created if it doesn't exist" />
-      <div>
-        <label for="restore-confirm" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Type the volume name to confirm</label>
-        <input id="restore-confirm" type="text" class="dm-input text-sm font-mono" bind:value={restoreConfirm} placeholder={restoreVolume} />
-      </div>
-    </div>
-  {/if}
-  {#snippet footer()}
-    <Button variant="secondary" onclick={() => (showRestore = false)}>Cancel</Button>
-    <Button variant="danger" onclick={doRestore} disabled={!restoreVolume.trim() || restoreConfirm !== restoreVolume}>
-      <Undo2 class="w-4 h-4" /> Restore
-    </Button>
-  {/snippet}
-</Modal>
+<RestoreDialog
+  run={restoreRun}
+  preset={restorePreset}
+  originHost={jobs.find((j) => j.id === restoreRun?.job_id)?.host_id ?? ''}
+  onclose={() => (restoreRun = null)}
+/>
 
 <style>
   .bk-page { display: block; }

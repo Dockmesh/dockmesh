@@ -321,6 +321,7 @@ type streamReg struct {
 	cancel context.CancelFunc
 	stdin  io.Writer                   // nil for non-bidirectional streams
 	resize func(rows, cols uint) error // nil if not resizable
+	eof    func()                      // volume import: the server sent everything
 }
 
 var (
@@ -360,11 +361,15 @@ func closeStream(id string) {
 func deliverStreamInput(id string, data []byte) {
 	streamMu.Lock()
 	r, ok := streamMap[id]
+	var stdin io.Writer
+	if ok {
+		stdin = r.stdin
+	}
 	streamMu.Unlock()
-	if !ok || r.stdin == nil {
+	if stdin == nil {
 		return
 	}
-	_, _ = r.stdin.Write(data)
+	_, _ = stdin.Write(data)
 }
 
 // deliverStreamControl handles out-of-band control ops (currently only
@@ -377,6 +382,13 @@ func deliverStreamControl(id, op string, params map[string]any) {
 		return
 	}
 	switch op {
+	case "eof":
+		streamMu.Lock()
+		eof := r.eof
+		streamMu.Unlock()
+		if eof != nil {
+			eof()
+		}
 	case "resize":
 		if r.resize == nil {
 			return
@@ -669,15 +681,16 @@ func runVolumeExportStream(ctx context.Context, conn *websocket.Conn, cli *clien
 
 // runVolumeImportStream creates a temporary busybox container that mounts
 // the named volume and pipes incoming stream.data frames into `tar xzf -`.
-// Uses the existing stdin delivery mechanism (reg.stdin) so the server
-// can push bytes via deliverStreamInput. When the server closes the
-// stream, we close stdin and wait for tar to finish.
+// With params.replace the volume is emptied first. Once stdin is wired the
+// agent sends volumeImportReady, the server streams the archive and ends
+// it with the "eof" control op; the stream then closes with tar's result.
 func runVolumeImportStream(ctx context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) {
 	volumeName, _ := open.Params["volume"].(string)
 	if err := dockerwrap.CheckVolumeName(volumeName); err != nil {
 		sendStreamClose(conn, open.StreamID, err.Error())
 		return
 	}
+	replace, _ := open.Params["replace"].(bool)
 
 	const helperImage = "busybox:latest"
 	if _, _, err := cli.ImageInspectWithRaw(ctx, helperImage); err != nil {
@@ -690,12 +703,17 @@ func runVolumeImportStream(ctx context.Context, conn *websocket.Conn, cli *clien
 		rc.Close()
 	}
 
+	script := "tar xzf - -C /dest"
+	if replace {
+		script = "rm -rf /dest/..?* /dest/.[!.]* /dest/* && " + script
+	}
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:       helperImage,
-		Cmd:         []string{"sh", "-c", "tar xzf - -C /dest"},
+		Cmd:         []string{"sh", "-c", script},
 		AttachStdin: true,
 		OpenStdin:   true,
 		StdinOnce:   true,
+		Labels:      map[string]string{"dockmesh.managed": "true", "dockmesh.component": "backup-helper"},
 	}, &container.HostConfig{
 		Binds: []string{volumeName + ":/dest"},
 	}, nil, nil, "")
@@ -703,7 +721,7 @@ func runVolumeImportStream(ctx context.Context, conn *websocket.Conn, cli *clien
 		sendStreamClose(conn, open.StreamID, "create helper: "+err.Error())
 		return
 	}
-	defer func() { _ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true}) }()
+	defer func() { _ = cli.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{Force: true}) }()
 
 	hijack, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
 		Stream: true, Stdin: true,
@@ -719,16 +737,28 @@ func runVolumeImportStream(ctx context.Context, conn *websocket.Conn, cli *clien
 		return
 	}
 
-	// Wire the stream registry's stdin to the hijacked connection so
-	// deliverStreamInput() pushes bytes directly into the tar helper.
+	eof := make(chan struct{})
+	var eofOnce sync.Once
+	streamMu.Lock()
 	reg.stdin = hijack.Conn
+	reg.eof = func() { eofOnce.Do(func() { close(eof) }) }
+	streamMu.Unlock()
+	payload, _ := json.Marshal(agents.StreamData{StreamID: open.StreamID, Data: []byte(agents.VolumeImportReady)})
+	if err := safeWriteFrame(conn, agents.Frame{Type: agents.FrameStreamData, Payload: payload}); err != nil {
+		return
+	}
 
-	// Wait for the container to exit (stdin will be closed when the
-	// server sends stream.close, which triggers closeStream → cancel).
-	<-ctx.Done()
+	// Without "eof" the server went away mid-upload: the volume holds a
+	// partial archive, which the error below reports if anyone listens.
+	aborted := false
+	select {
+	case <-eof:
+	case <-ctx.Done():
+		aborted = true
+	}
 	_ = hijack.CloseWrite()
 
-	waitCtx, waitCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer waitCancel()
 	statusCh, errCh := cli.ContainerWait(waitCtx, resp.ID, container.WaitConditionNotRunning)
 	select {
@@ -740,8 +770,9 @@ func runVolumeImportStream(ctx context.Context, conn *websocket.Conn, cli *clien
 	case e := <-errCh:
 		sendStreamClose(conn, open.StreamID, e.Error())
 		return
-	case <-waitCtx.Done():
-		sendStreamClose(conn, open.StreamID, "tar timeout")
+	}
+	if aborted {
+		sendStreamClose(conn, open.StreamID, "upload interrupted")
 		return
 	}
 	sendStreamClose(conn, open.StreamID, "")

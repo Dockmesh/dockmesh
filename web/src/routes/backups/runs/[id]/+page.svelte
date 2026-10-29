@@ -8,6 +8,7 @@
   import { goto } from '$app/navigation';
   import { api, ApiError, runRestorable, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
   import { Eyebrow } from '$lib/components/editorial';
+  import RestoreDialog from '../../_RestoreDialog.svelte';
   import { Skeleton, EmptyState } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
@@ -70,10 +71,7 @@
     return () => { if (logTimer) clearTimeout(logTimer); };
   });
 
-  let restoreOpen = $state(false);
-  let restoreVolume = $state('');
-  let restoreConfirm = $state('');
-  let restoreBusy = $state(false);
+  let restorePreset = $state<'in-place' | 'alongside' | null>(null);
 
   async function doRestore(mode: 'in-place' | 'alongside' | 'download') {
     if (!run) return;
@@ -86,22 +84,7 @@
       }
       return;
     }
-    restoreOpen = true;
-  }
-
-  async function confirmRestore() {
-    if (!run) return;
-    if (restoreConfirm !== restoreVolume || !restoreVolume.trim()) return;
-    restoreBusy = true;
-    try {
-      await api.backups.restore(run.id, restoreVolume.trim());
-      toast.success('Restore queued');
-      restoreOpen = false;
-    } catch (err) {
-      toast.error('Restore failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      restoreBusy = false;
-    }
+    restorePreset = mode;
   }
 
   function fmtBytes(n: number): string {
@@ -354,35 +337,12 @@
     </div>
   </section>
 
-  <!-- Inline restore-confirm modal (volume-name typing matches the
-       legacy flow's destructive-confirm pattern). Wired only for
-       in-place + alongside; download is a future endpoint. -->
-  {#if restoreOpen && run}
-    <button type="button" class="bk-restore-backdrop" onclick={() => (restoreOpen = false)} aria-label="Close"></button>
-    <div class="bk-restore-modal" role="dialog" aria-modal="true">
-      <header class="bk-restore-head">
-        <Eyebrow>Confirm restore</Eyebrow>
-        <h2 class="ed-title bk-restore-title">Type the volume name to confirm</h2>
-        <p class="bk-detail-block-body">
-          Restoring run <em class="ed-accent">#{run.id}</em> from <em>{run.job_name}</em>.
-          Type the destination volume name below — must match exactly to proceed.
-        </p>
-      </header>
-      <div class="bk-restore-body">
-        <label class="bk-restore-label" for="restore-vol">Destination volume name</label>
-        <input id="restore-vol" class="bk-restore-input font-mono" bind:value={restoreVolume} placeholder="my-restored-volume" />
-        <label class="bk-restore-label" for="restore-confirm" style="margin-top: 14px;">Type the same name to confirm</label>
-        <input id="restore-confirm" class="bk-restore-input font-mono" bind:value={restoreConfirm} placeholder="must match exactly" />
-      </div>
-      <footer class="bk-restore-foot">
-        <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (restoreOpen = false)}>Cancel</button>
-        <span class="bk-detail-spacer"></span>
-        <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" disabled={restoreBusy || !restoreVolume.trim() || restoreConfirm !== restoreVolume} onclick={confirmRestore}>
-          <Undo2 size={11} strokeWidth={1.5} /> {restoreBusy ? 'Restoring…' : 'Restore'}
-        </button>
-      </footer>
-    </div>
-  {/if}
+  <RestoreDialog
+    run={restorePreset ? run : null}
+    preset={restorePreset ?? 'alongside'}
+    originHost={job?.host_id ?? ''}
+    onclose={() => (restorePreset = null)}
+  />
 {/if}
 
 <style>
@@ -680,59 +640,5 @@
 
   /* Restore-confirm modal (matches the existing flow's destructive
      volume-name-typing pattern). Centred + 480px wide. */
-  .bk-restore-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(2, 6, 23, 0.66);
-    backdrop-filter: blur(4px);
-    border: 0;
-    cursor: default;
-    z-index: 100;
-  }
-  .bk-restore-modal {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: min(480px, calc(100vw - 48px));
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
-    box-shadow: 0 25px 80px rgba(0, 0, 0, 0.5);
-    z-index: 101;
-  }
-  .bk-restore-head { padding: 22px 24px 12px; }
-  .bk-restore-title { margin-top: 6px; font-size: 18px; }
-  .bk-restore-body { padding: 0 24px 16px; }
-  .bk-restore-label {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    display: block;
-    margin-bottom: 4px;
-  }
-  .bk-restore-input {
-    width: 100%;
-    height: 32px;
-    padding: 0 12px;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--bg-elevated);
-    color: var(--fg);
-    font-size: 13px;
-  }
-  .bk-restore-input:focus { outline: none; border-color: var(--accent); }
-  .bk-restore-foot {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 14px 24px;
-    border-top: 1px solid var(--border);
-    background: var(--bg-elevated);
-    border-bottom-left-radius: 8px;
-    border-bottom-right-radius: 8px;
-  }
   .bk-detail-spacer { flex: 1; }
 </style>

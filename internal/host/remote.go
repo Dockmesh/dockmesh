@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/system"
 )
 
@@ -343,6 +345,73 @@ func (h *RemoteHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser,
 		return nil, fmt.Errorf("open volume_export stream: %w", err)
 	}
 	return &dockerMuxStripper{src: s}, nil
+}
+
+// ErrAgentTooOld is returned when the agent doesn't speak the volume
+// import handshake; it needs the agent version that ships with this server.
+var ErrAgentTooOld = errors.New("the agent on this host is too old to restore volumes; upgrade it from the Hosts page")
+
+// VolumeImport streams a tar.gz archive into the named volume on the
+// agent's host. replace empties the volume first. Returns tar's result.
+func (h *RemoteHost) VolumeImport(ctx context.Context, name string, src io.Reader, replace bool) error {
+	if h.agent == nil {
+		return fmt.Errorf("agent connection unavailable")
+	}
+	if err := docker.CheckVolumeName(name); err != nil {
+		return err
+	}
+	s, err := h.agent.OpenStream(ctx, "volume_import", "", map[string]any{"volume": name, "replace": replace})
+	if err != nil {
+		return fmt.Errorf("open volume_import stream: %w", err)
+	}
+	defer s.Close()
+
+	ready := make(chan error, 1)
+	go func() {
+		buf := make([]byte, len(agents.VolumeImportReady))
+		_, err := io.ReadFull(s, buf)
+		if err == nil && string(buf) != agents.VolumeImportReady {
+			err = ErrAgentTooOld
+		}
+		ready <- err
+	}()
+	select {
+	case err := <-ready:
+		if err != nil {
+			return fmt.Errorf("volume import on agent: %w", err)
+		}
+	case <-time.After(2 * time.Minute):
+		// Older agents never send the ready marker; data sent before the
+		// helper's stdin is attached would be dropped.
+		return ErrAgentTooOld
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	buf := make([]byte, 32*1024)
+	for {
+		n, rerr := src.Read(buf)
+		if n > 0 {
+			if err := s.Send(ctx, append([]byte(nil), buf[:n]...)); err != nil {
+				return fmt.Errorf("send archive: %w", err)
+			}
+		}
+		if errors.Is(rerr, io.EOF) {
+			break
+		}
+		if rerr != nil {
+			return fmt.Errorf("read archive: %w", rerr)
+		}
+	}
+	if err := s.WriteControl("eof", nil); err != nil {
+		return fmt.Errorf("finish upload: %w", err)
+	}
+	// The agent closes the stream once tar has exited; its error, if
+	// any, is what Read returns.
+	if _, err := io.Copy(io.Discard, s); err != nil {
+		return fmt.Errorf("volume import on agent: %w", err)
+	}
+	return nil
 }
 
 // dockerMuxStripper demuxes docker's attach-stream format: repeating

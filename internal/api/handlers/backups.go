@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -339,10 +340,25 @@ func (h *Handlers) DownloadBackupArchive(w http.ResponseWriter, r *http.Request)
 }
 
 type restoreRequest struct {
-	DestVolume string `json:"dest_volume"`
+	DestVolume  string `json:"dest_volume"`
+	TargetStack string `json:"target_stack"`
+	HostID      string `json:"host_id"`
+	Mode        string `json:"mode"`
 }
 
+// RestoreBackup restores a volume run into dest_volume (default: the
+// backed-up volume) on host_id (default: the host it was taken on).
 func (h *Handlers) RestoreBackup(w http.ResponseWriter, r *http.Request) {
+	h.restoreRun(w, r, false)
+}
+
+// RestoreStackBackup restores a stack run: files into the stack directory
+// (target_stack, default: the source name), volumes onto the host.
+func (h *Handlers) RestoreStackBackup(w http.ResponseWriter, r *http.Request) {
+	h.restoreRun(w, r, true)
+}
+
+func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly bool) {
 	if h.Backups == nil {
 		writeError(w, http.StatusServiceUnavailable, "backups not configured")
 		return
@@ -353,51 +369,75 @@ func (h *Handlers) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req restoreRequest
-	if err := decodeJSON(r, &req); err != nil || req.DestVolume == "" {
-		writeError(w, http.StatusBadRequest, "dest_volume required")
-		return
-	}
-	if err := h.Backups.CheckRestoreTarget(r.Context(), id, req.DestVolume); err != nil {
-		if errors.Is(err, docker.ErrInvalidVolumeName) {
-			writeError(w, http.StatusBadRequest, "dest_volume must be a Docker volume name, not a path")
+	if r.ContentLength != 0 {
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
 			return
 		}
+	}
+	if req.Mode != "" && req.Mode != "merge" && req.Mode != "replace" {
+		writeError(w, http.StatusBadRequest, "mode must be merge or replace")
+		return
+	}
+	run, err := h.Backups.GetRun(r.Context(), id)
+	if errors.Is(err, backup.ErrRunNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := h.Backups.Restore(r.Context(), id, req.DestVolume); err != nil {
+	kind := ""
+	if len(run.Sources) > 0 {
+		kind = run.Sources[0].Type
+	}
+	if stackOnly && kind != "stack" {
+		writeError(w, http.StatusBadRequest, "run is not a stack backup")
+		return
+	}
+	opts := backup.RestoreOptions{Target: req.DestVolume, HostID: req.HostID, Replace: req.Mode == "replace"}
+	if kind == "stack" {
+		opts.Target = req.TargetStack
+		if opts.Target == "" {
+			opts.Target = req.DestVolume
+		}
+	}
+	origin, err := h.Backups.RunHost(r.Context(), id)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionContainerRollback, "backup:restore:"+strconv.FormatInt(id, 10), map[string]string{"dest": req.DestVolume})
-	w.WriteHeader(http.StatusNoContent)
-}
+	if opts.HostID == "" {
+		opts.HostID = origin
+	}
+	// Reading the archive exposes the origin host's data, writing it
+	// changes the destination host: both must be in scope.
+	if !h.requireHostAccess(w, r, origin) || !h.requireHostAccess(w, r, opts.HostID) {
+		return
+	}
 
-// RestoreStackBackup is the explicit stack-restore entry point. Takes
-// an optional target stack name (defaults to the source name in the
-// run) and writes the archive's stack/* files into /stacks/<name>/
-// plus untars any volumes/<vol>.tar.gz into matching docker volumes.
-// Returns a structured report so the UI can show what happened.
-func (h *Handlers) RestoreStackBackup(w http.ResponseWriter, r *http.Request) {
-	if h.Backups == nil {
-		writeError(w, http.StatusServiceUnavailable, "backups not configured")
+	// A restore stopped halfway leaves a half-written volume, so it runs to
+	// the end even if the client disconnects.
+	report, err := h.Backups.Restore(context.WithoutCancel(r.Context()), id, opts)
+	var inUse *backup.VolumeInUseError
+	switch {
+	case errors.Is(err, docker.ErrInvalidVolumeName):
+		writeError(w, http.StatusBadRequest, "dest_volume must be a Docker volume name, not a path")
 		return
-	}
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	case errors.Is(err, backup.ErrNotRestorable), errors.As(err, &inUse):
+		writeError(w, http.StatusConflict, err.Error())
 		return
-	}
-	var req struct {
-		TargetStack string `json:"target_stack,omitempty"`
-	}
-	_ = decodeJSON(r, &req) // body is optional — empty means "same name as source"
-	report, err := h.Backups.RestoreStack(r.Context(), id, req.TargetStack)
-	if err != nil {
+	case errors.Is(err, backup.ErrArchiveInvalid):
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, audit.ActionContainerRollback, "backup:restore-stack:"+strconv.FormatInt(id, 10), map[string]string{"target": report.StackName})
+	h.audit(r, audit.ActionContainerRollback, "backup:restore:"+strconv.FormatInt(id, 10), map[string]string{
+		"kind": report.Kind, "target": opts.Target, "host": report.HostID, "mode": report.Mode,
+	})
 	writeJSON(w, http.StatusOK, report)
 }
 

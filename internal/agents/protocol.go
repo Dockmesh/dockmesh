@@ -219,6 +219,10 @@ type StackCheckScaleReq struct {
 	Service string `json:"service"`
 }
 
+// VolumeImportReady is the first data the agent sends on a volume_import
+// stream, once the archive can be written; earlier data would be lost.
+const VolumeImportReady = "dockmesh:volume-import-ready"
+
 // VolumeTarReq identifies the volume for tar export/import.
 type VolumeTarReq struct {
 	Volume string `json:"volume"`
