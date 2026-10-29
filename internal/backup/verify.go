@@ -54,6 +54,9 @@ func (s *Service) VerifyRun(ctx context.Context, runID int64) (*VerifyResult, er
 		return nil, errors.New("run has no sources — cannot determine backup type")
 	}
 	srcType := run.Sources[0].Type
+	if srcType == "system" {
+		return nil, errors.New("system runs are verified with the restore checks (POST /backups/runs/{id}/verify)")
+	}
 	res := &VerifyResult{RunID: runID, Type: srcType, Passed: true}
 
 	rc, finish, err := s.openRunHashed(ctx, run)
@@ -63,12 +66,6 @@ func (s *Service) VerifyRun(ctx context.Context, runID int64) (*VerifyResult, er
 	defer rc.Close()
 
 	switch srcType {
-	case "system":
-		n, err := io.Copy(io.Discard, rc)
-		res.Counts.Bytes = n
-		if err != nil {
-			res.fail("stream", err.Error())
-		}
 	case "stack":
 		verifyStackArchive(res, rc)
 	case "volume":
@@ -94,7 +91,7 @@ func (s *Service) OpenRunHashed(ctx context.Context, runID int64) (io.ReadCloser
 }
 
 // openRunHashed hashes what the stored SHA256 covers: the plaintext, or
-// for encrypted runs made before that was fixed, the stored ciphertext.
+// or the stored ciphertext when sha256Plain is false.
 func (s *Service) openRunHashed(ctx context.Context, run *Run) (io.ReadCloser, func() VerifyCheck, error) {
 	h := sha256.New()
 	var (

@@ -77,7 +77,7 @@ func TestStartRunAsyncAndSkipIfRunning(t *testing.T) {
 	if got := waitRun(t, svc, run.ID); got.Status != StatusSuccess {
 		t.Fatalf("async run: %+v", got)
 	}
-	if _, err := svc.RunNow(context.Background(), job.ID); err != nil {
+	if _, err := svc.runNow(context.Background(), job.ID); err != nil {
 		t.Fatalf("job should be free again: %v", err)
 	}
 }
@@ -206,7 +206,7 @@ func TestInlineTargetsMigrate(t *testing.T) {
 			a = j
 		}
 	}
-	if r, err := svc.RunNow(ctx, a.ID); err != nil || r.Status != StatusSuccess {
+	if r, err := svc.runNow(ctx, a.ID); err != nil || r.Status != StatusSuccess {
 		t.Fatalf("run after migration: %v %+v", err, r)
 	}
 }
