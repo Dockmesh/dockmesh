@@ -54,6 +54,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ### Fixed
 
+- Several UI texts now match what the code does: permission names on the Registries,
+  Authentication, API tokens and Users pages, Drain (no cordon), host tags (scoping, not stack
+  placement), global variables (hidden, not "encrypted"), and the stack delete description.
+  The invite dialog's link expiry now takes effect (1 to 7 days) and its unused initial
+  password field is gone. The Templates page shows each button by the permission its API call
+  needs.
 - The group-mapping hints now say what the code does (the last matching group decides, and OIDC
   keeps only one admin and one operator group), and the audit webhook placeholder no longer
   shows an internal-looking hostname.

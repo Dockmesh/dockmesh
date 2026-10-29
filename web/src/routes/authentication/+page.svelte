@@ -336,7 +336,7 @@
         <div>
           <div class="auth-perm-title">Admin-only</div>
           <p class="ed-subtitle auth-perm-blurb">
-            Authentication configuration requires the <em>user.manage</em> permission.
+            Authentication configuration requires the <em>system.update</em> permission.
           </p>
         </div>
       </div>

@@ -490,7 +490,7 @@
                       {#if v.encrypted}
                         <span class="env-value-secret">
                           <span class="env-value-mask">•••••••••••••••</span>
-                          <span class="env-value-encrypted-pill">encrypted</span>
+                          <span class="env-value-encrypted-pill">hidden</span>
                         </span>
                       {:else}
                         <code class="env-value-text" title={v.value}>{v.value || ' '}</code>

@@ -151,9 +151,8 @@
   let inviteRole = $state('viewer');
   let inviteScope = $state<Set<string>>(new Set(['__all__']));
   let inviteAuth = $state<'local' | 'oidc'>('local');
-  let inviteExpiry = $state<'1d' | '3d' | '7d' | '14d' | '30d'>('7d');
+  let inviteExpiry = $state<'1d' | '3d' | '7d'>('1d');
   let inviteEnforce2fa = $state(true);
-  let invitePassword = $state('');
   let inviteBusy = $state(false);
   // After sendInvitations() runs, this holds the generated links so
   // the admin can copy them out and share manually (no SMTP). Empty
@@ -274,6 +273,7 @@
           role: inviteRole,
           scope_tags: scopeTags,
           email_hint: email,
+          ttl_hours: { '1d': 24, '3d': 72, '7d': 168 }[inviteExpiry],
         });
         links.push({ email, url: res.accept_url });
       } catch (err) {
@@ -291,7 +291,6 @@
         'Copy each link and share it with the recipient',
       );
       inviteEmails = '';
-      invitePassword = '';
       await loadAll();
     }
   }
@@ -304,7 +303,6 @@
     showInvite = false;
     inviteLinks = [];
     inviteEmails = '';
-    invitePassword = '';
   }
 
   function toggleInviteScope(id: string) {
@@ -545,7 +543,7 @@
 <section class="ed-users">
   {#if !allowed('users.update')}
     <div class="dm-card" style="padding: 32px;">
-      <EmptyState icon={UsersIcon} title="Admin-only" description="User and role management requires user-manage permission." />
+      <EmptyState icon={UsersIcon} title="Admin-only" description="User and role management requires the users.update permission." />
     </div>
   {:else}
     <header class="ed-users-header">
@@ -1074,28 +1072,14 @@
 
         <div class="ed-invite-grid-2">
           <div class="ed-field">
-            <label class="ed-field-label">Initial password</label>
-            <input
-              type="text"
-              class="dm-input"
-              placeholder="Leave empty for random"
-              bind:value={invitePassword}
-            />
-            <p class="ed-field-hint" style="margin-top: 4px;">
-              {invitePassword ? 'Same password for every user above.' : 'A random 16-char password is generated per user.'}
-            </p>
-          </div>
-          <div class="ed-field">
             <label class="ed-field-label">
               Link expiry
-              <span class="ed-field-hint">used by email-link slice</span>
+              <span class="ed-field-hint">invitee sets their own password</span>
             </label>
-            <select class="dm-input" bind:value={inviteExpiry} disabled>
+            <select class="dm-input" bind:value={inviteExpiry}>
               <option value="1d">1 day</option>
               <option value="3d">3 days</option>
               <option value="7d">7 days</option>
-              <option value="14d">14 days</option>
-              <option value="30d">30 days</option>
             </select>
           </div>
         </div>
@@ -1107,7 +1091,7 @@
               {inviteEmailList.length === 1 ? 'user gets' : 'users get'} a
               <em class="ed-accent">{inviteRole}</em> account
               scoped to <em class="ed-accent">{inviteScope.has('__all__') ? 'all hosts' : `${inviteScope.size} tag${inviteScope.size === 1 ? '' : 's'}`}</em>.
-              {invitePassword ? 'Shared initial password.' : 'Random initial password per user.'}
+              Each gets a one-time link to set a password.
             </div>
           </div>
         {/if}

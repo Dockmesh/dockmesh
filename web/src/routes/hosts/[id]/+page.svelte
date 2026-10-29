@@ -615,7 +615,7 @@
         <div class="ed-host-card" style="grid-column: span 7;">
           <div class="ed-host-card-title">Tags on this host</div>
           <p class="ed-host-empty" style="margin-top: 0;">
-            Tags drive stack <span class="ed-accent-mono">host-affinity</span> rules. A stack with selector <code>tag:gpu</code> can only be deployed on hosts carrying that tag.
+            Tags group hosts for filtering and limit which hosts a user or role can see and manage (host scope).
           </p>
           <div class="ed-host-tags-edit">
             {#each tagsDraft as t (t)}
@@ -667,7 +667,7 @@
         <div class="ed-host-card" style="grid-column: span 6;">
           <div class="ed-host-card-title">Drain</div>
           <p class="ed-host-empty" style="margin-top: 0;">
-            Migrates every stack off <span class="ed-accent-mono">{hostName}</span> to other matching hosts, then marks it cordoned. Use before reboots, kernel upgrades, or pulling the plug.
+            Migrates every stack off <span class="ed-accent-mono">{hostName}</span> to other matching hosts. The host stays available for new deployments. Use before reboots, kernel upgrades, or pulling the plug.
           </p>
           <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={isLocal} onclick={openDrain}>
             <ArrowDownToLine size={11} strokeWidth={1.5} /> Plan drain…
@@ -739,7 +739,7 @@
           <p class="ed-host-empty"><RefreshCw size={12} strokeWidth={1.5} class="ed-spin" /> Generating drain plan…</p>
         {:else if drainPlan}
           {#if drainPlan.entries.length === 0}
-            <p class="ed-host-empty">No stacks running here. Drain is a no-op — host will be cordoned and ready for maintenance.</p>
+            <p class="ed-host-empty">No stacks running here. Drain is a no-op — nothing to move.</p>
           {:else}
             {@const stuck = drainPlan.entries.filter((e) => !e.feasible)}
             {#if stuck.length > 0}
