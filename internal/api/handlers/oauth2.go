@@ -52,14 +52,7 @@ func (h *Handlers) OAuth2Login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     oauth2StateCookie,
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   300,
-	})
+	h.setStateCookie(w, r, oauth2StateCookie, token, 300)
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
@@ -69,7 +62,7 @@ func (h *Handlers) OAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errStr := r.URL.Query().Get("error"); errStr != "" {
-		http.Redirect(w, r, "/login?sso_error="+errStr, http.StatusFound)
+		ssoErrorRedirect(w, r, errStr)
 		return
 	}
 	c, err := r.Cookie(oauth2StateCookie)
@@ -77,9 +70,7 @@ func (h *Handlers) OAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing state cookie")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: oauth2StateCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
-	})
+	h.setStateCookie(w, r, oauth2StateCookie, "", -1)
 	claims := &oauth2StateClaims{}
 	if err := h.Auth.TokenKeys().Parse(auth.KindOAuth2State, c.Value, claims); err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid state cookie")

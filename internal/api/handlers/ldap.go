@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/ldapauth"
 	"github.com/go-chi/chi/v5"
@@ -41,12 +42,24 @@ func (h *Handlers) LDAPLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slug := chi.URLParam(r, "slug")
+	limitBody(w, r)
 	var in ldapLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	res, err := h.LDAP.Authenticate(r.Context(), slug, in.Username, in.Password, r.UserAgent(), clientIP(r))
+	if len(in.Username) > 256 {
+		writeError(w, http.StatusBadRequest, "username too long")
+		return
+	}
+	ip := clientIP(r)
+	account := "ldap:" + slug + ":" + strings.ToLower(strings.TrimSpace(in.Username))
+	att, ok := h.ldapLimits.acquire(w, ip, account)
+	if !ok {
+		return
+	}
+	res, err := h.LDAP.Authenticate(r.Context(), slug, in.Username, in.Password, r.UserAgent(), ip)
+	h.ldapLimits.finish(att, errors.Is(err, ldapauth.ErrInvalidCredentials))
 	if errors.Is(err, ldapauth.ErrInvalidCredentials) {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return

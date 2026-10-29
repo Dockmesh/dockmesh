@@ -71,7 +71,7 @@
     const p = new URLSearchParams(window.location.search);
     const e = p.get('sso_error');
     if (e) {
-      error = 'SSO failed: ' + decodeURIComponent(e);
+      error = 'SSO failed: ' + e;
       history.replaceState(null, '', window.location.pathname);
     }
   }
@@ -101,10 +101,7 @@
         goto('/');
       }
     } catch (err) {
-      error =
-        err instanceof ApiError && err.status === 401
-          ? 'Invalid username or password'
-          : 'Login failed';
+      error = signInError(err, 'Invalid username or password', 'Login failed');
     } finally {
       loading = false;
     }
@@ -120,13 +117,18 @@
       auth.setSession(res.user, res.access_token, res.refresh_token);
       goto('/');
     } catch (err) {
-      error =
-        err instanceof ApiError && err.status === 401
-          ? 'Invalid code'
-          : 'Verification failed';
+      error = signInError(err, 'Invalid code', 'Verification failed');
     } finally {
       loading = false;
     }
+  }
+
+  // 423 and 429 carry the server's message with the wait time.
+  function signInError(err: unknown, invalid: string, fallback: string): string {
+    if (!(err instanceof ApiError)) return fallback;
+    if (err.status === 401) return invalid;
+    if (err.status === 423 || err.status === 429) return err.message;
+    return fallback;
   }
 
   function cancelMFA() {
