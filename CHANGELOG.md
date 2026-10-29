@@ -114,7 +114,8 @@ earlier, makes the installers more reliable on upgrade, and repairs volume brows
   `/data/dockmesh.env`, where the installer puts it on hosts with a separate `/data` volume.
 - Browsing a volume on an agent host works again. The agent now reads the volume through a
   short-lived read-only helper container, like the server does, instead of failing with
-  "permission denied" on every folder.
+  "permission denied" on every folder. File names that start with `-` or contain a newline or
+  `|` are listed correctly, and a name with a newline can no longer add fake rows.
 - Opening a path that leaves the volume (`..` or a symlink pointing outside) now answers with a
   400 error on every host instead of a server error, and a missing file answers 404.
 - Saving changes that first read and then update the database, such as re-enrolling all

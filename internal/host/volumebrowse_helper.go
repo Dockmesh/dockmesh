@@ -3,6 +3,7 @@ package host
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -32,6 +33,7 @@ const (
 	helperImage = "alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f"
 	helperMount = "/mnt/target"
 
+	helperMaxEntries   = 10000
 	helperListingLimit = 16 << 20
 	helperPidsLimit    = 64
 	helperMemoryLimit  = 64 << 20
@@ -114,21 +116,29 @@ case "$r" in %s|%s/*) ;; *) exit %d ;; esac
 }
 
 func browseDirScript(target string) string {
-	// BusyBox find has no -printf, so stat runs per entry. Output per line:
-	// <type>|<size>|<octal-mode>|<mtime>|<linkdest>|<name>
+	// BusyBox find has no -printf, so stat runs per entry. Globbing ./*
+	// keeps names starting with '-' from being read as options, and names
+	// and link targets are base64 so a newline cannot forge a row.
+	// Output per line: <type>|<size>|<octal-mode>|<mtime>|<b64 linkdest>|<b64 name>
 	return helperResolveScript(target) + fmt.Sprintf(`[ -d "$r" ] || exit %d
 cd "$r" || exit %d
-ls -A | while IFS= read -r n; do
-  if [ -L "$n" ]; then
-    l=$(readlink "$n")
-    printf 'l|0|%%s|%%s|%%s|%%s\n' "$(stat -c '%%a' "$n")" "$(stat -c '%%Y' "$n")" "$l" "$n"
-  elif [ -d "$n" ]; then
-    printf 'd|%%s|%%s|%%s||%%s\n' "$(stat -c '%%s' "$n")" "$(stat -c '%%a' "$n")" "$(stat -c '%%Y' "$n")" "$n"
+i=0
+for p in ./* ./.[!.]* ./..?*; do
+  [ -e "$p" ] || [ -L "$p" ] || continue
+  i=$((i+1))
+  [ "$i" -le %d ] || break
+  n=$(printf '%%s' "${p#./}" | base64 | tr -d '\n')
+  m=$(stat -c '%%s|%%a|%%Y' "$p") || continue
+  if [ -L "$p" ]; then
+    l=$(readlink "$p" | tr -d '\n' | base64 | tr -d '\n')
+    printf 'l|%%s|%%s|%%s\n' "$m" "$l" "$n"
+  elif [ -d "$p" ]; then
+    printf 'd|%%s||%%s\n' "$m" "$n"
   else
-    printf 'f|%%s|%%s|%%s||%%s\n' "$(stat -c '%%s' "$n")" "$(stat -c '%%a' "$n")" "$(stat -c '%%Y' "$n")" "$n"
+    printf 'f|%%s||%%s\n' "$m" "$n"
   fi
 done
-`, helperExitNotDir, helperExitNotFound)
+`, helperExitNotDir, helperExitNotFound, helperMaxEntries)
 }
 
 func readFileScript(target string, maxBytes int64) string {
@@ -169,17 +179,25 @@ func browseDirViaHelper(ctx context.Context, run helperRunner, sub string) ([]Vo
 	return parseHelperListing(res.stdout), nil
 }
 
-// parseHelperListing skips rows it cannot parse; names containing '|'
-// or a newline are the known cause.
+// parseHelperListing skips rows it cannot parse and a last row that the
+// output limit cut off.
 func parseHelperListing(raw string) []VolumeEntry {
 	out := make([]VolumeEntry, 0)
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	lines := strings.Split(raw, "\n")
+	for _, line := range lines[:len(lines)-1] {
+		if len(out) >= helperMaxEntries {
+			break
+		}
+		parts := strings.Split(strings.TrimSpace(line), "|")
+		if len(parts) != 6 {
 			continue
 		}
-		parts := strings.SplitN(line, "|", 6)
-		if len(parts) != 6 {
+		name, err := base64.StdEncoding.DecodeString(parts[5])
+		if err != nil || len(name) == 0 {
+			continue
+		}
+		linkDest, err := base64.StdEncoding.DecodeString(parts[4])
+		if err != nil {
 			continue
 		}
 		sizeBytes, _ := strconv.ParseInt(parts[1], 10, 64)
@@ -187,7 +205,7 @@ func parseHelperListing(raw string) []VolumeEntry {
 		mtimeSecs, _ := strconv.ParseInt(parts[3], 10, 64)
 
 		entry := VolumeEntry{
-			Name:    parts[5],
+			Name:    string(name),
 			Size:    sizeBytes,
 			Mode:    fmt.Sprintf("%04o", modeOctal),
 			ModTime: time.Unix(mtimeSecs, 0),
@@ -197,7 +215,7 @@ func parseHelperListing(raw string) []VolumeEntry {
 			entry.Type = "dir"
 		case "l":
 			entry.Type = "symlink"
-			entry.LinkDest = parts[4]
+			entry.LinkDest = string(linkDest)
 		default:
 			entry.Type = "file"
 		}

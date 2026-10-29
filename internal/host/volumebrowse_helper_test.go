@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -56,6 +57,8 @@ func (f *fakeRunner) run(_ context.Context, script string, limit int64) (helperR
 	return f.res, nil
 }
 
+func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+
 func TestHelperErrorsMapToSentinels(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -99,7 +102,7 @@ func TestHelperErrorsMapToSentinels(t *testing.T) {
 }
 
 func TestHelperScripts(t *testing.T) {
-	f := &fakeRunner{res: helperResult{stdout: "d|4096|755|1700000000||it's\nl|0|777|1700000000|/etc|hostlink\ngarbage\n"}}
+	f := &fakeRunner{res: helperResult{stdout: "d|4096|755|1700000000||" + b64("it's") + "\nl|4|777|1700000000|" + b64("/etc") + "|" + b64("hostlink") + "\ngarbage\n"}}
 	entries, err := browseDirViaHelper(context.Background(), f.run, "/it's here")
 	if err != nil {
 		t.Fatal(err)
@@ -110,12 +113,15 @@ func TestHelperScripts(t *testing.T) {
 		`r=$(realpath "$t")`,
 		`case "$r" in /mnt/target|/mnt/target/*) ;; *) exit 70 ;; esac`,
 		`[ -d "$r" ] || exit 72`,
+		`for p in ./* ./.[!.]* ./..?*; do`,
+		`stat -c '%s|%a|%Y' "$p"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("browse script lacks %q:\n%s", want, script)
 		}
 	}
-	if len(entries) != 2 || entries[0].Type != "dir" || entries[1].Type != "symlink" || entries[1].LinkDest != "/etc" {
+	if len(entries) != 2 || entries[0].Type != "dir" || entries[0].Name != "it's" ||
+		entries[1].Type != "symlink" || entries[1].LinkDest != "/etc" || entries[1].Name != "hostlink" {
 		t.Errorf("entries = %+v", entries)
 	}
 	if f.limits[0] != helperListingLimit {
@@ -135,6 +141,54 @@ func TestHelperScripts(t *testing.T) {
 	}
 	if f.limits[0] != 4+4096 {
 		t.Errorf("read limit = %d", f.limits[0])
+	}
+}
+
+func TestParseHelperListing(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{
+			name: "newline in name stays one entry",
+			raw:  "f|1|644|1||" + b64("a\nf|0|644|0||forged") + "\n",
+			want: []string{"a\nf|0|644|0||forged"},
+		},
+		{
+			name: "dash and pipe in names",
+			raw:  "f|1|644|1||" + b64("-rf") + "\nd|1|755|1||" + b64("x|y") + "\n",
+			want: []string{"-rf", "x|y"},
+		},
+		{
+			name: "plain name is not base64",
+			raw:  "f|1|644|1||plain!\n",
+			want: nil,
+		},
+		{
+			name: "row cut off by the output limit",
+			raw:  "f|1|644|1||" + b64("whole") + "\nf|1|644|1||" + b64("abcdef")[:4],
+			want: []string{"whole"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []string
+			for _, e := range parseHelperListing(tt.raw) {
+				got = append(got, e.Name)
+			}
+			if strings.Join(got, "\x00") != strings.Join(tt.want, "\x00") || len(got) != len(tt.want) {
+				t.Errorf("names = %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	var many strings.Builder
+	for i := 0; i < helperMaxEntries+5; i++ {
+		fmt.Fprintf(&many, "f|1|644|1||%s\n", b64(fmt.Sprint(i)))
+	}
+	if n := len(parseHelperListing(many.String())); n != helperMaxEntries {
+		t.Errorf("entries = %d, want cap %d", n, helperMaxEntries)
 	}
 }
 
