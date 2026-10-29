@@ -33,9 +33,9 @@ type Counts struct {
 
 // Options controls Extract behaviour.
 type Options struct {
-	Force    bool
-	DryRun   bool
-	TmpBase  string // where to stage the DB temp file; default: same dir as cfg.DBPath
+	Force   bool
+	DryRun  bool
+	TmpBase string // where to stage the DB temp file; default: same dir as cfg.DBPath
 }
 
 // SanityResult is the structured output of the post-restore checks.
@@ -275,6 +275,10 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 			targetPath = dbTmp
 		case strings.HasPrefix(clean, "stacks/"):
 			targetPath = filepath.Join(cfg.StacksRoot, strings.TrimPrefix(clean, "stacks/"))
+		case strings.HasPrefix(clean, "data/") && db.IsSnapshotName("", filepath.Base(clean)):
+			// Archives written before backups excluded them can carry
+			// pre-migration snapshots with stale secrets.
+			continue
 		case strings.HasPrefix(clean, "data/"):
 			targetPath = filepath.Join(dataDir, strings.TrimPrefix(clean, "data/"))
 		default:

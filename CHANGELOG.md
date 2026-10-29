@@ -31,6 +31,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and at the top of the notifications drawer, with a link to where you fix it. The notice
   goes away on its own once the issue is fixed; non-critical ones can be hidden from the
   banner.
+- Before applying database schema changes, Dockmesh now writes a copy of the database next
+  to it and keeps the newest three.
 
 ### Changed
 - The Authentication page no longer shows sign-in settings Dockmesh doesn't enforce yet:
@@ -66,3 +68,10 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - [legacy-api-tokens, admins] API tokens created before this version have no owner. They keep
   working and are marked "legacy" under API tokens; recreate each one while signed in as the
   user who should own it, then revoke the old one. A notice stays up until none are left.
+- [premigrate-snapshot, admins] Make sure the database directory has room for a full copy
+  of the database. Before schema changes Dockmesh writes `<db>.pre-migrate-<timestamp>.bak`
+  next to the database (`dockmesh.db.pre-migrate-20261029T101500.000Z.bak`, UTC) and keeps
+  the newest three; system backups leave these copies out. If the copy cannot be written, Dockmesh does not start and does not change
+  the database; set `DOCKMESH_SKIP_PREMIGRATE_BACKUP=1` to upgrade without it. To roll back,
+  stop the service, copy the `.bak` file over the database file, delete the database's
+  `-wal` and `-shm` files if present, and start the previous version.
