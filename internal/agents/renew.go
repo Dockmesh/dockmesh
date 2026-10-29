@@ -26,7 +26,10 @@ const (
 	certNoticePrefix = "agents.cert-expiry."
 )
 
-var errRenewNotDue = errors.New("certificate is not due for renewal")
+var (
+	errRenewNotDue  = errors.New("certificate is not due for renewal")
+	errRenewedTwice = errors.New("certificate was already renewed in this session")
+)
 
 // recordCert stores the expiry of the cert an agent connected with. A
 // connection with the renewed cert makes it the current one, which
@@ -62,6 +65,9 @@ func (s *Service) renewCert(ctx context.Context, ag *ConnectedAgent, raw json.Ra
 	if ag.certNotAfter.Sub(s.now()) > RenewBefore {
 		return nil, errRenewNotDue
 	}
+	if ag.renewed.Load() {
+		return nil, errRenewedTwice
+	}
 	var req CertRenewReq
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, fmt.Errorf("decode renew request: %w", err)
@@ -70,16 +76,21 @@ func (s *Service) renewCert(ctx context.Context, ag *ConnectedAgent, raw json.Ra
 	if err != nil {
 		return nil, err
 	}
+	// Bound to the session's cert: once a re-enrollment replaced it, a
+	// renewal still in flight on the old session matches no row.
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE agents
 		   SET pending_cert_fingerprint = ?, updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ? AND status != 'revoked'`, fingerprint, ag.ID)
+		 WHERE id = ? AND status NOT IN ('revoked', 'pending')
+		   AND (cert_fingerprint = ? OR pending_cert_fingerprint = ?)`,
+		fingerprint, ag.ID, ag.certFP, ag.certFP)
 	if err != nil {
 		return nil, err
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
 		return nil, ErrNotFound
 	}
+	ag.renewed.Store(true)
 	return &CertRenewRes{ClientCert: string(certPEM)}, nil
 }
 

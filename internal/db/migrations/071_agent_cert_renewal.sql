@@ -4,3 +4,4 @@
 -- lock it out.
 ALTER TABLE agents ADD COLUMN pending_cert_fingerprint TEXT;
 ALTER TABLE agents ADD COLUMN cert_expires_at DATETIME;
+CREATE INDEX idx_agents_pending_cert_fp ON agents(pending_cert_fingerprint);

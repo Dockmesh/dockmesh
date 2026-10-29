@@ -10,11 +10,13 @@ import (
 type Credit struct {
 	mu   sync.Mutex
 	n    int
+	max  int
 	wake chan struct{}
 }
 
+// NewCredit starts with n credits; grants never raise the balance above n.
 func NewCredit(n int) *Credit {
-	return &Credit{n: n, wake: make(chan struct{}, 1)}
+	return &Credit{n: n, max: n, wake: make(chan struct{}, 1)}
 }
 
 // Acquire takes one credit, waiting until one is granted, ctx is done or
@@ -44,7 +46,7 @@ func (c *Credit) Add(n int) {
 		return
 	}
 	c.mu.Lock()
-	c.n += n
+	c.n = min(c.n+n, c.max)
 	c.mu.Unlock()
 	select {
 	case c.wake <- struct{}{}:
@@ -56,13 +58,20 @@ func (c *Credit) Add(n int) {
 // credit frame doesn't follow every single data frame.
 const GrantBatch = StreamWindow / 4
 
-// CreditCount decodes the count of a StreamOpCredit control frame.
+// CreditCount decodes the count of a StreamOpCredit control frame (or a
+// window); anything outside 1..StreamWindow counts as 0.
 func CreditCount(params map[string]any) int {
-	switch n := params["n"].(type) {
+	var n float64
+	switch v := params["n"].(type) {
 	case float64:
-		return int(n)
+		n = v
 	case int:
-		return n
+		n = float64(v)
+	default:
+		return 0
 	}
-	return 0
+	if n < 1 || n > StreamWindow {
+		return 0
+	}
+	return int(n)
 }

@@ -35,6 +35,7 @@ const (
 	// maxFrameBytes bounds one inbound frame; the largest legitimate
 	// ones are 1 MiB file reads and exec output, base64-encoded.
 	maxFrameBytes  = 16 << 20
+	maxRenewBytes  = 16 << 10
 	heartbeatGrace = 60 * time.Second
 	pingInterval   = 30 * time.Second
 	writeWait      = 10 * time.Second
@@ -69,6 +70,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	ag := newConnectedAgent(agent.ID, agent.Name, func() { _ = conn.Close() })
+	ag.certFP = fp
 	ag.certNotAfter = peer.NotAfter
 	conn.SetReadLimit(maxFrameBytes)
 
@@ -149,7 +151,13 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case FrameStreamData, FrameStreamClose, FrameStreamControl:
 			ag.routeStreamFrame(f)
 		case FrameAgentCertRenew:
-			go h.svc.handleCertRenew(ctx, ag, f)
+			if len(f.Payload) > maxRenewBytes || !ag.renewing.CompareAndSwap(false, true) {
+				continue
+			}
+			go func(f Frame) {
+				defer ag.renewing.Store(false)
+				h.svc.handleCertRenew(ctx, ag, f)
+			}(f)
 		}
 	}
 }

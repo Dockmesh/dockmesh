@@ -338,3 +338,26 @@ func TestStreamWriteWaitsForCredit(t *testing.T) {
 		t.Fatal("credit did not release the writer")
 	}
 }
+
+func TestStreamOversizedChunkFails(t *testing.T) {
+	ag, _ := fakeAgent(CapStreamCredit)
+	st, _ := ag.OpenStream(context.Background(), "logs", "c1", nil)
+	nextFrame(t, ag)
+	ag.routeStreamFrame(dataFrame(st.ID, make([]byte, maxStreamChunk+1)))
+	if _, err := st.Read(make([]byte, 8)); !errors.Is(err, ErrStreamOverflow) {
+		t.Fatalf("got %v, want overflow", err)
+	}
+}
+
+func TestCreditCountClamps(t *testing.T) {
+	for _, v := range []any{float64(0), float64(-3), float64(1e300), "64", nil} {
+		if n := CreditCount(map[string]any{"n": v}); n != 0 {
+			t.Errorf("CreditCount(%v) = %d, want 0", v, n)
+		}
+	}
+	c := NewCredit(2)
+	c.Add(StreamWindow)
+	if c.n != 2 {
+		t.Fatalf("balance %d above the window", c.n)
+	}
+}

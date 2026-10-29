@@ -45,8 +45,9 @@ func enrolledAgent(t *testing.T, svc *Service) (*ConnectedAgent, string) {
 		t.Fatal(err)
 	}
 	ag := newConnectedAgent(res.Agent.ID, "edge-1", nil)
+	ag.certFP = pki.FingerprintFromCert(cert)
 	ag.certNotAfter = cert.NotAfter
-	return ag, pki.FingerprintFromCert(cert)
+	return ag, ag.certFP
 }
 
 func TestCertRenewalKeepsHostID(t *testing.T) {
@@ -78,6 +79,9 @@ func TestCertRenewalKeepsHostID(t *testing.T) {
 		t.Fatal("renewed cert is not for the agent's new key")
 	}
 	newFP := pki.FingerprintFromCert(cert)
+	if _, err := svc.renewCert(ctx, ag, req); !errors.Is(err, errRenewedTwice) {
+		t.Fatalf("second renewal in one session: %v", err)
+	}
 
 	// Both certs work until the agent connects with the new one.
 	for _, fp := range []string{oldFP, newFP} {
@@ -178,5 +182,25 @@ func TestCertNotices(t *testing.T) {
 	}
 	if noticeFor() != nil {
 		t.Fatal("notice stayed after the host was deleted")
+	}
+}
+
+func TestCertRenewalRefusedAfterReenroll(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	ag, _ := enrolledAgent(t, svc)
+	ag.certNotAfter = time.Now().Add(time.Hour)
+
+	rot, err := svc.RotateEnrollToken(ctx, ag.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Enroll(ctx, enrollReq(rot.Token)); err != nil {
+		t.Fatal(err)
+	}
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	req, _ := json.Marshal(CertRenewReq{CSR: csrPEM(t, key, "x")})
+	if _, err := svc.renewCert(ctx, ag, req); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("renewal on a session with a replaced cert: %v", err)
 	}
 }

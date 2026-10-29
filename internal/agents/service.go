@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/notifications"
@@ -107,9 +108,13 @@ type ConnectedAgent struct {
 	done      chan struct{}
 	closeOnce sync.Once
 	closeConn func()
-	// certNotAfter is the expiry of the client cert this session
+	// certFP and certNotAfter describe the client cert this session
 	// authenticated with.
+	certFP       string
 	certNotAfter time.Time
+	// renewing allows one renewal in flight, renewed one per session.
+	renewing atomic.Bool
+	renewed  atomic.Bool
 
 	pendingMu sync.Mutex
 	pending   map[string]chan Frame

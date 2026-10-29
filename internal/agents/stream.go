@@ -232,13 +232,14 @@ func (c *ConnectedAgent) routeStreamFrame(f Frame) {
 		if s == nil {
 			return
 		}
+		if len(sd.Data) > maxStreamChunk {
+			s.failOverflow()
+			return
+		}
 		select {
 		case s.incoming <- sd.Data:
 		default:
-			s.finish(ErrStreamOverflow)
-			c.removeStream(s.ID)
-			payload, _ := json.Marshal(StreamClose{StreamID: s.ID, Error: ErrStreamOverflow.Error()})
-			c.Send(Frame{Type: FrameStreamClose, Payload: payload})
+			s.failOverflow()
 		}
 
 	case FrameStreamControl:
@@ -264,6 +265,18 @@ func (c *ConnectedAgent) routeStreamFrame(f Frame) {
 			s.finish(nil)
 		}
 	}
+}
+
+// maxStreamChunk bounds one data frame, so the window also bounds the
+// memory a stream can hold. Agents send at most 32 KiB per frame.
+const maxStreamChunk = 256 << 10
+
+// failOverflow ends the stream loudly and tells the agent to stop.
+func (s *Stream) failOverflow() {
+	s.finish(ErrStreamOverflow)
+	s.agent.removeStream(s.ID)
+	payload, _ := json.Marshal(StreamClose{StreamID: s.ID, Error: ErrStreamOverflow.Error()})
+	s.agent.Send(Frame{Type: FrameStreamClose, Payload: payload})
 }
 
 func (c *ConnectedAgent) lookupStream(id string) *Stream {
