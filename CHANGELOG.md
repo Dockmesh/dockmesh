@@ -197,6 +197,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   overlapping syncs of the same stack.
 
 ### Fixed
+- Notices and other short database writes could fail with "database is locked" while other
+  requests were writing. The notice about an untrusted proxy then never appeared until the next
+  restart. The database connection now waits for the lock from the start.
 - SAML sign-in with an identity provider on another domain failed with "missing state cookie",
   because the browser did not send the cookie along with the provider's answer. Over HTTPS the
   cookie now goes along; over plain HTTP the sign-in page explains that HTTPS is needed.
