@@ -219,16 +219,15 @@ export function createAuthStore(env: AuthEnv | null) {
 
   function scheduleFromExpiry() {
     if (!env) return;
-    const now = env.now();
-    const expiresAt = state.accessExpiresAt ?? localExpiry(state.accessToken ?? '', now);
-    if (!expiresAt) {
+    const { exp, iat } = decodeClaims(state.accessToken);
+    if (exp === undefined) {
       scheduleIn(FALLBACK_REFRESH_MS);
       return;
     }
-    const { exp, iat } = decodeClaims(state.accessToken);
-    const lifetime = exp !== undefined && iat !== undefined ? (exp - iat) * 1000 : Infinity;
+    const expiresAt = state.accessExpiresAt ?? exp * 1000;
+    const lifetime = iat !== undefined ? (exp - iat) * 1000 : Infinity;
     const margin = Math.min(REFRESH_MARGIN_MS, lifetime / 4);
-    scheduleIn(expiresAt - margin - env.random() * REFRESH_JITTER_MS - now);
+    scheduleIn(expiresAt - margin - env.random() * REFRESH_JITTER_MS - env.now());
   }
 
   function apply(next: AuthState) {
@@ -260,15 +259,13 @@ export function createAuthStore(env: AuthEnv | null) {
 
   type Attempt = 'ok' | 'rejected' | 'transient';
 
-  async function attemptRefresh(): Promise<Attempt> {
-    // Inside the cross-tab lock: if another tab rotated the token while we
-    // waited, adopt its result instead of replaying a spent refresh token,
-    // which the server would treat as reuse and revoke the whole session.
-    const stored = readStored();
-    if (stored && stored.refreshToken !== state.refreshToken) {
-      syncFromStorage();
-      return state.refreshToken ? 'ok' : 'rejected';
-    }
+  // `from` is the refresh token the caller wanted to replace. Inside the
+  // cross-tab lock: if another tab rotated it meanwhile, adopt that result
+  // instead of replaying a spent token, which the server treats as reuse
+  // and answers by revoking the whole session.
+  async function attemptRefresh(from: string | null): Promise<Attempt> {
+    syncFromStorage();
+    if (state.refreshToken !== from) return state.refreshToken ? 'ok' : 'rejected';
     const token = state.refreshToken;
     if (!token || !env) return 'rejected';
 
@@ -281,6 +278,8 @@ export function createAuthStore(env: AuthEnv | null) {
         body: JSON.stringify({ refresh_token: token }),
         signal: ctrl.signal
       });
+      // A sign-out or new sign-in in this tab while the request was in flight wins.
+      if (state.refreshToken !== token) return state.refreshToken ? 'ok' : 'rejected';
       if (res.status === 400 || res.status === 401) {
         const body = await res.json().catch(() => null);
         const reason: SignOutReason | undefined = body?.code === 'session_outdated' ? 'session_outdated' : undefined;
@@ -291,8 +290,6 @@ export function createAuthStore(env: AuthEnv | null) {
       }
       if (!res.ok) return 'transient';
       const data = await res.json();
-      // A sign-out in this tab while the request was in flight wins.
-      if (state.refreshToken !== token) return state.refreshToken ? 'ok' : 'rejected';
       apply({
         user: data.user,
         accessToken: data.access_token,
@@ -311,15 +308,15 @@ export function createAuthStore(env: AuthEnv | null) {
 
   async function runRefresh(): Promise<boolean> {
     if (!env) return false;
+    const from = state.refreshToken;
     for (let i = 0; ; i++) {
-      const result = await env.lock(attemptRefresh);
+      const result = await env.lock(() => attemptRefresh(from));
       if (result !== 'transient') return result === 'ok';
       if (i >= RETRY_DELAYS_MS.length) {
         scheduleIn(BACKGROUND_RETRY_MS);
         return false;
       }
       await sleep(env, RETRY_DELAYS_MS[i]);
-      if (!state.refreshToken) return false;
     }
   }
 
