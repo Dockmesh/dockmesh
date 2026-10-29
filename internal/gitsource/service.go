@@ -51,23 +51,23 @@ var ErrWebhookSecretShort = fmt.Errorf("webhook_secret must be at least %d chara
 // Source is the DB-backed row, returned to handlers with secrets
 // redacted via the Has* flags instead of raw values.
 type Source struct {
-	StackName       string     `json:"stack_name"`
-	RepoURL         string     `json:"repo_url"`
-	Branch          string     `json:"branch"`
-	PathInRepo      string     `json:"path_in_repo"`
-	AuthKind        string     `json:"auth_kind"`
-	Username        string     `json:"username,omitempty"`
-	HasPassword     bool       `json:"has_password"`
-	HasSSHKey       bool       `json:"has_ssh_key"`
-	AutoDeploy      bool       `json:"auto_deploy"`
-	PollIntervalSec int        `json:"poll_interval_sec"`
-	HasWebhookSecret bool      `json:"has_webhook_secret"`
-	LastSyncSHA     string     `json:"last_sync_sha,omitempty"`
-	LastSyncAt      *time.Time `json:"last_sync_at,omitempty"`
-	LastSyncError   string     `json:"last_sync_error,omitempty"`
-	LastEnvDrift    *EnvDrift  `json:"last_env_drift,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	StackName        string     `json:"stack_name"`
+	RepoURL          string     `json:"repo_url"`
+	Branch           string     `json:"branch"`
+	PathInRepo       string     `json:"path_in_repo"`
+	AuthKind         string     `json:"auth_kind"`
+	Username         string     `json:"username,omitempty"`
+	HasPassword      bool       `json:"has_password"`
+	HasSSHKey        bool       `json:"has_ssh_key"`
+	AutoDeploy       bool       `json:"auto_deploy"`
+	PollIntervalSec  int        `json:"poll_interval_sec"`
+	HasWebhookSecret bool       `json:"has_webhook_secret"`
+	LastSyncSHA      string     `json:"last_sync_sha,omitempty"`
+	LastSyncAt       *time.Time `json:"last_sync_at,omitempty"`
+	LastSyncError    string     `json:"last_sync_error,omitempty"`
+	LastEnvDrift     *EnvDrift  `json:"last_env_drift,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 // Input is the CRUD payload. Empty password / ssh_key on update = keep
@@ -419,6 +419,17 @@ func (s *Service) sync(ctx context.Context, stackName string) (*SyncResult, erro
 	// Always copy on first sync (when LastSyncSHA is empty) so the
 	// stack's FS gets populated, even if the repo already matches.
 	if res.Changed || src.LastSyncSHA == "" {
+		// Before copying: the copy merges the stack's current .env and
+		// records the result as written by Dockmesh, which would hide
+		// changes made outside it from the deploy check.
+		if s.stacks != nil {
+			if _, gerr := s.stacks.Get(stackName); gerr == nil {
+				if err := s.stacks.CheckGitDeploy(ctx, stackName); err != nil {
+					s.recordSyncError(ctx, stackName, err)
+					return nil, err
+				}
+			}
+		}
 		drift, err := s.copyIntoStack(cloneDir, src.PathInRepo, stackName)
 		if err != nil {
 			s.recordSyncError(ctx, stackName, err)
