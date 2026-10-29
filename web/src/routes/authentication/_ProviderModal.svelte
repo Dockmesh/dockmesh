@@ -159,6 +159,7 @@
       signing_cert: '',
       encryption_cert: '',
       nameid_format: p.nameid_format,
+      subject_attribute: p.subject_attribute ?? '',
       username_attribute: p.username_attribute,
       email_attribute: p.email_attribute,
       groups_attribute: p.groups_attribute,
@@ -233,6 +234,7 @@
         saml.email_attribute = t.email_attribute;
         saml.groups_attribute = t.groups_attribute;
         saml.nameid_format = t.nameid_format;
+        saml.subject_attribute = t.subject_attribute;
         if (!saml.display_name) saml.display_name = `Sign in with ${t.label}`;
       }
     }
@@ -385,6 +387,7 @@
       display_name: saml.display_name.trim(),
       idp_metadata_xml: saml.idp_metadata_xml.trim(),
       nameid_format: saml.nameid_format,
+      subject_attribute: saml.subject_attribute.trim(),
       username_attribute: saml.username_attribute.trim() || 'NameID',
       email_attribute: saml.email_attribute.trim() || 'email',
       groups_attribute: saml.groups_attribute.trim() || 'groups',

@@ -1056,6 +1056,7 @@ export interface SAMLProvider {
   idp_metadata_xml?: string;
   idp_cert_pem?: string;
   nameid_format: string;
+  subject_attribute?: string;
   username_attribute: string;
   email_attribute: string;
   groups_attribute: string;
@@ -1076,6 +1077,7 @@ export interface SAMLProviderInput {
   display_name: string;
   idp_metadata_xml: string;
   nameid_format: string;
+  subject_attribute?: string;
   username_attribute: string;
   email_attribute: string;
   groups_attribute: string;

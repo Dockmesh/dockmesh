@@ -6673,6 +6673,12 @@ paths:
       operationId: saml.acs
       tags: [auth]
       summary: Assertion-consumer endpoint — receives the signed SAMLResponse
+      description: |
+        Needs the state cookie set by `/auth/saml/{slug}/login` and a response to a sign-in
+        request this server issued; each request can be answered once.
+        Over HTTPS the state cookie is `SameSite=None; Secure` so the
+        identity provider's cross-site POST carries it. Over plain HTTP it
+        stays `Lax` and only an identity provider on the same site works.
       security: []
       parameters:
         - in: path
@@ -6680,7 +6686,11 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        "302": { description: Redirect to SPA with session tokens in fragment. }
+        "302":
+          description: |
+            Redirect to the SPA with session tokens in the fragment, or to
+            `/login?sso_error=...` when the sign-in failed (for example no
+            state cookie, a reused response, or no stable subject).
 
   /auth/saml/{slug}/metadata:
     get:
@@ -6721,7 +6731,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: true }
+            schema: { $ref: "#/components/schemas/SAMLProviderInput" }
       responses:
         "201":
           description: Created.
@@ -6758,7 +6768,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: true }
+            schema: { $ref: "#/components/schemas/SAMLProviderInput" }
       responses:
         "200":
           description: Updated.
@@ -7457,6 +7467,46 @@ components:
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    SAMLProviderInput:
+      type: object
+      required: [slug, display_name]
+      properties:
+        slug: { type: string }
+        display_name: { type: string }
+        idp_metadata_xml:
+          type: string
+          description: IdP metadata XML. Required on create; empty on update keeps the stored metadata.
+        nameid_format:
+          type: string
+          enum:
+            - urn:oasis:names:tc:SAML:2.0:nameid-format:persistent
+            - urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified
+            - urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress
+          description: |
+            NameID format requested from the IdP; the NameID keys the account
+            unless `subject_attribute` is set. Empty means persistent.
+            emailAddress changes when the user's email does.
+        subject_attribute:
+          type: string
+          description: |
+            Attribute whose value keys the account instead of the NameID, for
+            example `http://schemas.microsoft.com/identity/claims/objectidentifier`
+            for Microsoft Entra ID. Empty uses the NameID.
+        username_attribute: { type: string }
+        email_attribute: { type: string }
+        groups_attribute: { type: string }
+        default_role: { type: string }
+        group_mappings:
+          type: array
+          items:
+            type: object
+            properties:
+              group: { type: string }
+              role: { type: string }
+        allow_email_link: { type: boolean }
+        enabled: { type: boolean }
+        is_default: { type: boolean }
 
     OIDCProviderInput:
       type: object

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,6 +22,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/invites"
 	"github.com/dockmesh/dockmesh/internal/oidc"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
+	"github.com/dockmesh/dockmesh/internal/saml"
 	"github.com/dockmesh/dockmesh/internal/settings"
 )
 
@@ -191,6 +193,48 @@ func TestSSOStateCookieSecure(t *testing.T) {
 			}
 			if cookies[0].Secure != tt.want {
 				t.Errorf("Secure = %v, want %v", cookies[0].Secure, tt.want)
+			}
+		})
+	}
+}
+
+func TestSAMLStateCookie(t *testing.T) {
+	e := newAuthzEnv(t)
+	store := settings.NewStore(e.db)
+	e.h.Settings = store
+	e.h.SAML = &saml.Service{}
+
+	tests := []struct {
+		name       string
+		baseURL    string
+		wantSite   http.SameSite
+		wantSecure bool
+		wantError  string
+	}{
+		{name: "https", baseURL: "https://dm.example.com", wantSite: http.SameSiteNoneMode, wantSecure: true, wantError: "expired or missing"},
+		{name: "plain http", baseURL: "http://dm.lan", wantSite: http.SameSiteLaxMode, wantError: "must be reached over HTTPS"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := store.Set(context.Background(), settings.KeyBaseURL, tt.baseURL); err != nil {
+				t.Fatal(err)
+			}
+			rr := httptest.NewRecorder()
+			e.h.setSAMLStateCookie(rr, httptest.NewRequest(http.MethodGet, "/auth/saml/x/login", nil), "v", 300)
+			c := rr.Result().Cookies()
+			if len(c) != 1 || c[0].SameSite != tt.wantSite || c[0].Secure != tt.wantSecure {
+				t.Fatalf("cookie = %+v, want SameSite %v Secure %v", c, tt.wantSite, tt.wantSecure)
+			}
+
+			acs := httptest.NewRequest(http.MethodPost, "/auth/saml/x/acs", strings.NewReader("SAMLResponse=x"))
+			if tt.wantSecure {
+				acs.TLS = &tls.ConnectionState{}
+			}
+			rr = httptest.NewRecorder()
+			e.h.SAMLACS(rr, acs)
+			loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+			if rr.Code != http.StatusFound || !strings.HasPrefix(loc, "/login?sso_error=") || !strings.Contains(loc, tt.wantError) {
+				t.Errorf("ACS without cookie: %d %q, want redirect mentioning %q", rr.Code, loc, tt.wantError)
 			}
 		})
 	}

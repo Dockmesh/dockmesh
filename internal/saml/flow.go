@@ -21,8 +21,8 @@ import (
 // browser between StartLogin and HandleACS. Like the OIDC Pending it
 // gets wrapped in a short-lived signed cookie by the HTTP handler.
 type Pending struct {
-	Slug      string `json:"slug"`
-	RequestID string `json:"rid"`
+	Slug       string `json:"slug"`
+	RequestID  string `json:"rid"`
 	RelayState string `json:"rs"`
 }
 
@@ -152,6 +152,9 @@ func (s *Service) buildSP(ctx context.Context, p *Provider) (*crewjam.ServicePro
 		MetadataURL: *metadataURL,
 		AcsURL:      *acsURL,
 		IDPMetadata: &idpEntity,
+		// Without it crewjam asks for a transient NameID, which changes on
+		// every login and can't identify an account.
+		AuthnNameIDFormat: crewjam.NameIDFormat(p.NameIDFormat),
 	}
 	if sloURL != nil {
 		sp.SloURL = *sloURL
@@ -201,6 +204,7 @@ func (s *Service) StartLogin(ctx context.Context, slug, relayState string) (stri
 	if err != nil {
 		return "", nil, fmt.Errorf("redirect: %w", err)
 	}
+	s.issueRequest(authReq.ID)
 	return redirectURL.String(), &Pending{
 		Slug:       slug,
 		RequestID:  authReq.ID,
@@ -208,11 +212,18 @@ func (s *Service) StartLogin(ctx context.Context, slug, relayState string) (stri
 	}, nil
 }
 
+// ACSResult is a completed SAML login. RekeyedUser is set when the login
+// gave a marked account its new subject.
+type ACSResult struct {
+	Login       *auth.LoginResult
+	RekeyedUser string
+}
+
 // HandleACS consumes a SAML Response posted to the assertion-consumer
 // endpoint, validates it, JIT-provisions the user, and starts a
 // Dockmesh session. The caller is responsible for verifying the
 // signed cookie that carried the Pending payload before calling here.
-func (s *Service) HandleACS(ctx context.Context, pending *Pending, r *http.Request, userAgent, ip string) (*auth.LoginResult, error) {
+func (s *Service) HandleACS(ctx context.Context, pending *Pending, r *http.Request, userAgent, ip string) (*ACSResult, error) {
 	if pending == nil {
 		return nil, errors.New("missing pending state")
 	}
@@ -231,26 +242,15 @@ func (s *Service) HandleACS(ctx context.Context, pending *Pending, r *http.Reque
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidAssertion, err)
 	}
+	// Each request is answered once, so a captured response and cookie
+	// can't be replayed.
+	if !s.consumeRequest(pending.RequestID) {
+		return nil, ErrRequestUsed
+	}
 
-	subject, attrs := extractAssertion(assertion, p)
-	if subject == "" {
-		return nil, errors.New("assertion has no NameID subject")
-	}
-	email := attrs[p.EmailAttribute]
-	if email == "" {
-		// Many IdPs put the email in the NameID rather than as a
-		// separate attribute. Fall back when the configured email
-		// attribute is empty.
-		if strings.Contains(subject, "@") {
-			email = subject
-		}
-	}
-	if email == "" {
-		return nil, ErrEmailRequired
-	}
-	name := attrs[p.UsernameAttribute]
-	if name == "" {
-		name = strings.Split(email, "@")[0]
+	subject, email, name, attrs, err := identity(p, assertion)
+	if err != nil {
+		return nil, err
 	}
 
 	role := p.DefaultRole
@@ -269,11 +269,103 @@ func (s *Service) HandleACS(ctx context.Context, pending *Pending, r *http.Reque
 		}
 	}
 
+	rekeyed, err := s.rekey(ctx, p.Slug, subject, email)
+	if err != nil {
+		return nil, err
+	}
 	user, err := s.jitProvision(ctx, p, subject, name, email, role)
 	if err != nil {
 		return nil, err
 	}
-	return s.auth.StartSessionForSSO(ctx, *user, userAgent, ip)
+	login, err := s.auth.StartSessionForSSO(ctx, *user, userAgent, ip)
+	if err != nil {
+		return nil, err
+	}
+	return &ACSResult{Login: login, RekeyedUser: rekeyed}, nil
+}
+
+// identity reads who signed in: the subject that keys the account (the
+// NameID, or the configured subject attribute), the email and the name.
+func identity(p *Provider, a *crewjam.Assertion) (subject, email, name string, attrs map[string]string, err error) {
+	nameID, attrs := extractAssertion(a, p)
+	subject = nameID
+	if p.SubjectAttribute != "" {
+		vals := attributeValues(a, p.SubjectAttribute)
+		if len(vals) != 1 {
+			return "", "", "", nil, fmt.Errorf("assertion needs exactly one %q value to identify the user, got %d", p.SubjectAttribute, len(vals))
+		}
+		subject = vals[0]
+	}
+	if subject == "" {
+		return "", "", "", nil, errors.New("assertion has no NameID subject")
+	}
+	email = attrs[p.EmailAttribute]
+	if email == "" && strings.Contains(nameID, "@") {
+		// Many IdPs put the email in the NameID rather than in an
+		// attribute.
+		email = nameID
+	}
+	if email == "" {
+		return "", "", "", nil, ErrEmailRequired
+	}
+	name = attrs[p.UsernameAttribute]
+	if name == "" {
+		name = strings.Split(email, "@")[0]
+	}
+	return subject, email, name, attrs, nil
+}
+
+// rekey gives a marked account of this provider (saml_rekey_until) the new
+// subject once, matched by email; one that already has it loses the mark.
+// The IdP's email isn't verified, so like email linking it never takes an
+// admin account or one with two-factor authentication.
+func (s *Service) rekey(ctx context.Context, slug, subject, email string) (string, error) {
+	var known int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM users WHERE saml_provider = ? AND saml_subject = ?`, slug, subject).Scan(&known); err != nil {
+		return "", err
+	}
+	if known > 0 {
+		_, err := s.db.ExecContext(ctx, `
+			UPDATE users SET saml_rekey_until = NULL
+			 WHERE saml_provider = ? AND saml_subject = ? AND saml_rekey_until IS NOT NULL`, slug, subject)
+		return "", err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id FROM users
+		 WHERE saml_provider = ? AND email = ? COLLATE NOCASE AND saml_rekey_until > CURRENT_TIMESTAMP
+		   AND role <> 'admin' AND totp_verified = 0`, slug, email)
+	if err != nil {
+		return "", err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return "", err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	// With several marked accounts for one email none is clearly the
+	// user's; an admin has to sort them out.
+	if len(ids) != 1 {
+		return "", nil
+	}
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE users SET saml_subject = ?, saml_rekey_until = NULL, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND saml_rekey_until IS NOT NULL`, subject, ids[0])
+	if err != nil {
+		return "", err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return "", nil
+	}
+	return ids[0], nil
 }
 
 func (s *Service) jitProvision(ctx context.Context, p *Provider, subject, name, email, role string) (*auth.User, error) {
@@ -282,6 +374,68 @@ func (s *Service) jitProvision(ctx context.Context, p *Provider, subject, name, 
 		Email: email, EmailVerified: false,
 		Username: name, Role: role,
 	})
+}
+
+// requestTTL matches the lifetime of the signed state cookie.
+const requestTTL = 5 * time.Minute
+
+// maxRequests bounds the open sign-ins the unauthenticated login endpoint
+// can pile up; beyond it the oldest is dropped.
+const maxRequests = 10000
+
+// issueRequest remembers an AuthnRequest ID until it is answered or
+// expires.
+func (s *Service) issueRequest(id string) {
+	s.reqMu.Lock()
+	defer s.reqMu.Unlock()
+	now := time.Now()
+	if s.requests == nil {
+		s.requests = map[string]time.Time{}
+	}
+	if now.Sub(s.reqSwept) > time.Second || len(s.requests) >= maxRequests {
+		s.reqSwept = now
+		oldest, oldestExp := "", time.Time{}
+		for k, exp := range s.requests {
+			if now.After(exp) {
+				delete(s.requests, k)
+			} else if oldest == "" || exp.Before(oldestExp) {
+				oldest, oldestExp = k, exp
+			}
+		}
+		if len(s.requests) >= maxRequests {
+			delete(s.requests, oldest)
+		}
+	}
+	s.requests[id] = now.Add(requestTTL)
+}
+
+// consumeRequest reports whether id was issued, has not expired and was
+// not answered yet, and marks it answered.
+func (s *Service) consumeRequest(id string) bool {
+	s.reqMu.Lock()
+	defer s.reqMu.Unlock()
+	exp, ok := s.requests[id]
+	delete(s.requests, id)
+	return ok && time.Now().Before(exp)
+}
+
+// attributeValues returns the non-empty values of the attribute with the
+// given Name or FriendlyName.
+func attributeValues(a *crewjam.Assertion, name string) []string {
+	var out []string
+	for _, st := range a.AttributeStatements {
+		for _, at := range st.Attributes {
+			if at.Name != name && at.FriendlyName != name {
+				continue
+			}
+			for _, v := range at.Values {
+				if v.Value != "" {
+					out = append(out, v.Value)
+				}
+			}
+		}
+	}
+	return out
 }
 
 func extractAssertion(a *crewjam.Assertion, _ *Provider) (subject string, attrs map[string]string) {

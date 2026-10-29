@@ -128,6 +128,16 @@
   </Field>
 </div>
 
+{#if callbackBase.startsWith('http://')}
+  <div class="saml-help">
+    <span class="saml-help-icon">!</span>
+    <span class="saml-help-text">
+      This server is reached over plain HTTP. An identity provider on another domain can only sign
+      users in over HTTPS; set the public URL to https://.
+    </span>
+  </div>
+{/if}
+
 <Field label="SP metadata URL (read-only)" hint="Hand this to the IdP for auto-config.">
   {#snippet right()}
     <button
@@ -160,14 +170,28 @@
 </Field>
 
 <div class="saml-fieldset">Attribute mapping</div>
-<Field label="NameID format">
-  <select class="dm-input acc-input-mono" bind:value={config.nameid_format}>
-    <option value="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">emailAddress</option>
-    <option value="urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified">unspecified</option>
-    <option value="urn:oasis:names:tc:SAML:2.0:nameid-format:persistent">persistent</option>
-    <option value="urn:oasis:names:tc:SAML:2.0:nameid-format:transient">transient</option>
-  </select>
-</Field>
+<div class="saml-grid-2">
+  <Field
+    label="NameID format"
+    hint="Requested from the IdP; the NameID identifies the account. emailAddress changes when the user's email does."
+  >
+    <select class="dm-input acc-input-mono" bind:value={config.nameid_format}>
+      <option value="urn:oasis:names:tc:SAML:2.0:nameid-format:persistent">persistent</option>
+      <option value="urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified">unspecified</option>
+      <option value="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">emailAddress</option>
+    </select>
+  </Field>
+  <Field
+    label="Subject attribute (optional)"
+    hint="Identify the account by this attribute instead of the NameID, e.g. the Entra object ID. Use an ID the user can't change; changing this later disconnects existing accounts."
+  >
+    <input
+      class="dm-input acc-input-mono"
+      bind:value={config.subject_attribute}
+      placeholder="http://schemas.microsoft.com/identity/claims/objectidentifier"
+    />
+  </Field>
+</div>
 
 <div class="saml-grid-3">
   <Field label="Username attribute">

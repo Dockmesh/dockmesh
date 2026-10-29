@@ -145,6 +145,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   provider marks as verified (OIDC and OAuth2). A role an admin set by hand is no longer
   overwritten by the provider's group mapping on the next login, and turning off "create
   accounts on first SSO login" now really stops new accounts.
+- SAML sign-in now asks the identity provider for the NameID format set on the provider
+  (persistent by default) and keys the account by it, or by a subject attribute such as the
+  Microsoft Entra object ID. Before,
+  Dockmesh asked for a transient NameID, which changes on every login. A SAML response is now
+  accepted only once and only as the answer to a sign-in that this server started.
 - Passwords, keys and tokens of backup targets and notification channels, and webhook URLs
   that act as credentials, are no longer returned by the API. Forms show them as set; leaving
   a field empty keeps the stored value, unless the server, URL or user changes, in which
@@ -192,6 +197,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   overlapping syncs of the same stack.
 
 ### Fixed
+- SAML sign-in with an identity provider on another domain failed with "missing state cookie",
+  because the browser did not send the cookie along with the provider's answer. Over HTTPS the
+  cookie now goes along; over plain HTTP the sign-in page explains that HTTPS is needed.
 - Turning on the daily system backup created a job with the relative path `./data/backups`,
   which a server started by systemd resolved to `/data/backups`, so the backups failed. New
   system backup jobs write to `backups` in the data directory. An existing system backup job
@@ -246,8 +254,19 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   accounts" for that provider (OIDC/OAuth2 with verified emails), or remove the local account.
   Accounts with two-factor authentication or the Admin role are never linked this way. Accounts
   that already signed in through SSO keep working as long as the provider sends the same
-  subject; users whose LDAP DN, SAML NameID or OAuth2 login changed need their old account
-  removed or relinked by an admin.
+  subject; users whose LDAP DN or OAuth2 login changed need their old account removed or
+  relinked by an admin.
+- [saml-subject, admins] SAML accounts are now keyed by a stable subject. New providers ask
+  for a persistent NameID; existing providers keep their NameID format. Check it under
+  Authentication before your users sign in again (persistent is recommended, and with
+  emailAddress a changed email breaks the login) or set a subject attribute: the first sign-in
+  after the upgrade fixes the subject an account is known by. Accounts created through SAML
+  before this version get their new subject at their next sign-in, once, when it comes from
+  the same provider with the same email and within 90 days of the upgrade. Admin accounts and
+  accounts with two-factor authentication are not changed this way; for them, and after the 90
+  days, an admin has to remove the old account. Each of these changes is written to the audit
+  log as `auth.saml_rekey`. With an identity provider on another domain, Dockmesh must be
+  reached over HTTPS.
 - [sso-linked-accounts-review, admins] Earlier versions linked SSO logins to accounts by email
   alone. A notice lists how many accounts are linked to SSO and which of them are admins; check
   that each belongs to the right person.
