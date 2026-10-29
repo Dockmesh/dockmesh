@@ -3233,6 +3233,10 @@ paths:
         SFTP jobs record the server's host key on their first connection
         and fail when it later changes; the new key is kept as
         `target_config.host_key_pending`. This moves it to `host_key`.
+
+        Jobs with a `system` source are admin-only (`system.update` with no
+        host or role scope); other jobs need their host in the caller's
+        scope (403).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       responses:

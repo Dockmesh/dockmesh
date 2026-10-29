@@ -111,7 +111,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   or a crafted backup archive, could read or overwrite files on the host.
 - A Git source's `path_in_repo` must stay inside the repository.
 - Restoring a volume backup only accepts a Docker volume name as the target; a path such as
-  `/etc` was mounted from the host and overwritten.
+  `/etc` was mounted from the host and overwritten. Saving a backup job whose volume source
+  is a path instead of a volume name is refused as well.
 - Uploads to the backup verification endpoint are limited to 1 GiB.
 - Backup hooks run commands inside containers, so creating or changing a job with hooks now
   needs the permission to exec into containers, and every hook container must be within your

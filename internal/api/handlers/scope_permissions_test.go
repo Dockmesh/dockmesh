@@ -382,6 +382,8 @@ func TestSystemBackupsStayAdminOnly(t *testing.T) {
 		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Put("/backups/jobs/{id}", e.h.UpdateBackupJob)
 		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Post("/backups/jobs/{id}/run", e.h.RunBackupJob)
 		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Post("/backups/jobs/{id}/review/{mode}", e.h.AcknowledgeBackupJobReview)
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Post("/backups/jobs/{id}/accept-host-key", e.h.AcceptBackupHostKey)
+		r.With(middleware.RequirePerm(rbac.PermBackupsCreate)).Post("/backups/jobs", e.h.CreateBackupJob)
 		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Put("/backups/system/enabled", e.h.SetBackupEnabled)
 		r.With(middleware.RequirePerm(rbac.PermBackupsDelete)).Delete("/backups/jobs/{id}", e.h.DeleteBackupJob)
 		r.With(middleware.RequirePerm(rbac.PermBackupsRestore)).Post("/backups/runs/{id}/restore", e.h.RestoreBackup)
@@ -414,6 +416,11 @@ func TestSystemBackupsStayAdminOnly(t *testing.T) {
 	look := e.login("look").AccessToken
 	vol := map[string]string{"dest_volume": "loot"}
 	plainJob := map[string]any{"name": "sys", "target_type": "local", "host_id": "local", "sources": []map[string]string{{"type": "volume", "name": "v"}}}
+	pathJob := map[string]any{"name": "rootfs", "target_type": "s3", "sources": []map[string]string{{"type": "volume", "name": "/"}}}
+	hookJob := map[string]any{"name": "hooked", "target_type": "s3", "sources": []map[string]string{{"type": "volume", "name": "data"}}, "pre_hooks": []map[string]any{{"container": "db", "cmd": []string{"true"}}}}
+	e.role("backupper", []rbac.Perm{rbac.PermBackupsView, rbac.PermBackupsCreate, rbac.PermBackupsUpdate})
+	e.user("bk", "backupper")
+	bk := e.login("bk").AccessToken
 
 	tests := []struct {
 		name, method, path, bearer string
@@ -440,6 +447,13 @@ func TestSystemBackupsStayAdminOnly(t *testing.T) {
 		{"host-admin verifies system run", http.MethodPost, "/backups/runs/10/verify", hadmin, nil, http.StatusForbidden},
 		{"host-admin verifies an upload", http.MethodPost, "/restore/verify", hadmin, nil, http.StatusForbidden},
 		{"admin verifies an empty upload", http.MethodPost, "/restore/verify", boss, nil, http.StatusBadRequest},
+		{"host-admin accepts system job host key", http.MethodPost, "/backups/jobs/7/accept-host-key", hadmin, nil, http.StatusForbidden},
+		{"admin accepts system job host key", http.MethodPost, "/backups/jobs/7/accept-host-key", boss, nil, http.StatusConflict},
+		{"scoped host-admin accepts remote job host key", http.MethodPost, "/backups/jobs/2/accept-host-key", thadmin, nil, http.StatusForbidden},
+		{"host-admin accepts own job host key", http.MethodPost, "/backups/jobs/1/accept-host-key", hadmin, nil, http.StatusConflict},
+		{"hooks without containers.exec", http.MethodPost, "/backups/jobs", bk, hookJob, http.StatusForbidden},
+		{"volume source is a path", http.MethodPost, "/backups/jobs", boss, pathJob, http.StatusBadRequest},
+		{"update to a path volume source", http.MethodPut, "/backups/jobs/1", boss, map[string]any{"name": "web", "target_type": "s3", "sources": []map[string]string{{"type": "volume", "name": "../etc"}}}, http.StatusBadRequest},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

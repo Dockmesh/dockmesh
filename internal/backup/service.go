@@ -500,6 +500,13 @@ func validateJob(in JobInput) error {
 		// several things create one job per source.
 		return errors.New("exactly one source per job — create one job per stack/volume/system you want to back up")
 	}
+	for _, src := range in.Sources {
+		if src.Type == "volume" {
+			if err := docker.CheckVolumeName(src.Name); err != nil {
+				return fmt.Errorf("volume source must be a Docker volume name, not a path: %w", err)
+			}
+		}
+	}
 	if in.Schedule != "" {
 		if _, err := cron.ParseStandard(in.Schedule); err != nil {
 			return err
