@@ -405,8 +405,17 @@ paths:
         `mfa_token` — clients must then call `POST /auth/mfa` with the
         token plus the 6-digit code to finish the login.
 
-        Rate-limited per source IP — 10 failures / minute, 5 min lockout
-        after that threshold. A 429 response includes `Retry-After`.
+        Failed attempts are limited per account: 10 failures within 15
+        minutes block the username for 15 minutes, whether or not it exists
+        and independent of the lockout policy. Wrong codes at
+        `POST /auth/mfa` count toward the same limit. Per client IP (IPv6 by
+        /64) the limit is 100 failures within 15 minutes, blocking for 15
+        minutes. A successful login clears the account counter, never the IP
+        one. Each block that starts is written to the audit log as
+        `auth.lockout`. A 429 response includes `Retry-After`.
+
+        The lockout policy (`/auth/policy`) additionally locks an existing
+        account after its configured number of failures; that answers 423.
       security: []
       requestBody:
         required: true
@@ -416,7 +425,7 @@ paths:
               type: object
               required: [username, password]
               properties:
-                username: { type: string, example: admin }
+                username: { type: string, maxLength: 256, example: admin }
                 password: { type: string, format: password }
       responses:
         "200":
@@ -431,12 +440,23 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-        "429":
-          description: Too many failed attempts — try again later.
+        "423":
+          description: Account locked by the lockout policy.
           headers:
             Retry-After:
               schema: { type: integer }
-              description: Seconds until lockout expires.
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: |
+            Too many failed attempts for this account (10 per 15 minutes) or
+            from this IP (100 per 15 minutes).
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until the block expires.
 
   /auth/logout:
     post:
@@ -464,7 +484,8 @@ paths:
       description: |
         Exchanges a refresh token for a fresh access+refresh pair. Refresh
         tokens are rotated on every use. Reusing a previously-rotated token
-        revokes the whole session family.
+        revokes the whole session family. Invalid tokens are rate-limited
+        per client IP.
       security: []
       requestBody:
         required: true
@@ -495,6 +516,15 @@ paths:
                 properties:
                   error: { type: string }
                   code: { type: string, enum: [session_outdated] }
+        "429":
+          description: Too many invalid refresh tokens from this IP (300 per 5 minutes).
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /auth/mfa:
     post:
@@ -503,7 +533,12 @@ paths:
       summary: Complete a two-factor login
       description: |
         Second step of the login flow when the user has MFA enabled.
-        Accepts a 6-digit TOTP code or a recovery code.
+        Accepts a 6-digit TOTP code or a recovery code. Each TOTP code is
+        accepted once. Wrong codes count as failed logins of the account:
+        they raise the lockout-policy counter and the per-account limit of
+        `POST /auth/login` (10 per 15 minutes), and the counters are only
+        reset once this step succeeds. Per client IP, 20 wrong codes within
+        15 minutes block for 15 minutes.
       security: []
       requestBody:
         required: true
@@ -529,6 +564,24 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401":
           description: Invalid or expired MFA token / code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "423":
+          description: Account locked by the lockout policy.
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: Too many failed attempts for this account or wrong codes from this IP.
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until the lock expires.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -790,12 +843,13 @@ paths:
     post:
       operationId: users.unlock
       tags: [users]
-      summary: "Admin: clear a user's lockout state (P.12.1)"
+      summary: "Admin: clear a user's lockout state"
       description: |
         After too many failed logins a user's account is locked. This
-        endpoint clears the lockout + failed-attempts counter so they
-        can log in again. Admin-only — call after verifying via another
-        channel that the real user is who asked for the unlock.
+        endpoint clears the lockout, the failed-attempts counter and the
+        per-account login limit so they can log in again. Admin-only —
+        call after verifying via another channel that the real user is
+        who asked for the unlock.
       parameters:
         - $ref: "#/components/parameters/UserIDPath"
       responses:
@@ -4446,6 +4500,15 @@ paths:
         "404": { description: invite not found }
         "409": { description: username or email already taken }
         "410": { description: expired or already used }
+        "429":
+          description: Too many failed attempts from this IP (10 per 15 minutes) or for this invite (5).
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /users:
     get:
@@ -5132,17 +5195,38 @@ paths:
       operationId: settings.update
       tags: [settings]
       summary: Update one or more settings
+      description: |
+        `trusted_proxies` is a comma-separated list of IPs or CIDRs whose
+        X-Forwarded-For / X-Real-IP / X-Forwarded-Proto headers are
+        believed (empty = loopback only); invalid entries are rejected with
+        400 and nothing is saved.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: { type: string }
+              type: array
+              items:
+                type: object
+                required: [key, value]
+                properties:
+                  key: { type: string }
+                  value: { type: string }
               example:
-                DOCKMESH_BASE_URL: "https://dockmesh.example.com"
+                - { key: base_url, value: "https://dockmesh.example.com" }
+                - { key: trusted_proxies, value: "10.0.0.5, 172.16.0.0/12" }
       responses:
-        "204": { description: Saved. }
+        "200":
+          description: Saved; all settings.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    key: { type: string }
+                    value: { type: string }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -6743,6 +6827,15 @@ paths:
               schema: { type: object, additionalProperties: true }
         "401":
           description: Bad credentials.
+        "429":
+          description: Too many failed logins from this IP or for this username (10 per 15 minutes each).
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /ldap/providers:
     get:

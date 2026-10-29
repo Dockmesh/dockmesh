@@ -57,14 +57,7 @@ func (h *Handlers) SAMLLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     samlStateCookie,
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   300,
-	})
+	h.setStateCookie(w, r, samlStateCookie, token, 300)
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
@@ -82,9 +75,7 @@ func (h *Handlers) SAMLACS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Clear the cookie immediately — single-use.
-	http.SetCookie(w, &http.Cookie{
-		Name: samlStateCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
-	})
+	h.setStateCookie(w, r, samlStateCookie, "", -1)
 	claims := &samlStateClaims{}
 	if err := h.Auth.TokenKeys().Parse(auth.KindSAMLState, c.Value, claims); err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid state cookie")

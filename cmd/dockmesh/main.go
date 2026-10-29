@@ -53,7 +53,6 @@ import (
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/scaling"
 	"github.com/dockmesh/dockmesh/internal/settings"
-	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/registries"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
@@ -312,8 +311,10 @@ func main() {
 			slog.Error("bootstrap failed", "err", err)
 			os.Exit(1)
 		} else if created {
-			slog.Warn("bootstrap admin created — store this password, it will not be shown again",
-				"username", username, "password", password)
+			// Straight to the console, not slog: structured logs get shipped
+			// to aggregators and kept, the password must not be.
+			slog.Warn("bootstrap admin created, the password was printed to the console once", "username", username)
+			fmt.Fprintf(os.Stderr, "\nBootstrap admin created. Store this password, it will not be shown again:\n  username: %s\n  password: %s\n\n", username, password)
 		}
 	}
 
@@ -846,7 +847,7 @@ func main() {
 	selfUpdateChk.SetNotifier(notifSvc)
 	migrationSvc.SetNotifier(notifSvc)
 
-	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
+	loginLimiter := handlers.NewLoginLimiter()
 
 	// P.14.2: install-wizard commit function. Built here because it
 	// needs auth.Service + settings.Store + the configured paths.

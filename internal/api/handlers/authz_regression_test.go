@@ -185,7 +185,8 @@ func TestMFADisableBypassIsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, _ := totp.GenerateCode(enr.Secret, time.Now())
+	// Each step below needs a fresh code: an accepted code can't be reused.
+	code, _ := totp.GenerateCode(enr.Secret, time.Now().Add(-30*time.Second))
 	if _, err := e.h.Auth.VerifyTOTPEnrollment(ctx, u.ID, code); err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +213,7 @@ func TestMFADisableBypassIsClosed(t *testing.T) {
 	if on, _ := e.h.Auth.HasMFA(ctx, u.ID); !on {
 		t.Fatal("MFA disabled without a code")
 	}
-	code, _ = totp.GenerateCode(enr.Secret, time.Now())
+	code, _ = totp.GenerateCode(enr.Secret, time.Now().Add(30*time.Second))
 	if rr := e.do(http.MethodDelete, "/mfa", full.AccessToken, map[string]string{"code": code}); rr.Code != http.StatusNoContent {
 		t.Fatalf("disable with code: %d %s", rr.Code, rr.Body)
 	}

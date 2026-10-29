@@ -26,6 +26,7 @@ import (
 const (
 	ActionLogin          = "auth.login"
 	ActionLoginFailed    = "auth.login_failed"
+	ActionLoginBlocked   = "auth.lockout"
 	ActionLogout         = "auth.logout"
 	ActionRefresh        = "auth.refresh"
 	ActionUserCreate     = "user.create"

@@ -60,14 +60,7 @@ func (h *Handlers) OIDCLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     oidcStateCookie,
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   300,
-	})
+	h.setStateCookie(w, r, oidcStateCookie, token, 300)
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
@@ -82,7 +75,7 @@ func (h *Handlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 
 	// Handle provider-side error (user clicked "Deny" etc.).
 	if errStr := r.URL.Query().Get("error"); errStr != "" {
-		http.Redirect(w, r, "/login?sso_error="+errStr, http.StatusFound)
+		ssoErrorRedirect(w, r, errStr)
 		return
 	}
 
@@ -92,9 +85,7 @@ func (h *Handlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Clear the cookie immediately.
-	http.SetCookie(w, &http.Cookie{
-		Name: oidcStateCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
-	})
+	h.setStateCookie(w, r, oidcStateCookie, "", -1)
 
 	claims := &oidcStateClaims{}
 	if err := h.Auth.TokenKeys().Parse(auth.KindOIDCState, c.Value, claims); err != nil {

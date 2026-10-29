@@ -25,6 +25,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 ## [Unreleased]
 
 ### Added
+- Settings → System → Trusted proxies (or `DOCKMESH_TRUSTED_PROXIES`) lists the reverse
+  proxies in front of Dockmesh. Only these may tell Dockmesh the client address or that the
+  connection was HTTPS.
 - Each release now ships a `release-manifest.json` with its severity, advisories and
   required upgrade steps, and its release notes are taken from this changelog.
 - When something needs your attention after an upgrade, Dockmesh now shows it as a banner
@@ -78,6 +81,29 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and exec sessions are now recorded in the audit log.
 - Signing in with an unknown username takes as long as with a wrong password, and invalid
   API tokens can no longer tie up the server with expensive hash checks.
+- `X-Forwarded-For` and `X-Real-IP` are only believed from a trusted proxy (localhost unless
+  configured). Before, anyone could set them to dodge the login rate limit and put a fake
+  address into sessions and the audit log.
+- Failed logins are now limited per account: after 10 failures within 15 minutes the
+  username is blocked for 15 minutes, also when the lockout policy is turned off and also
+  for usernames that don't exist. The limit per client address is raised to 100 failures in
+  15 minutes, so users behind one proxy or NAT don't lock each other out. Wrong two-factor
+  codes now count toward the lockout and the account limit like wrong passwords, a locked
+  account can no longer finish a two-factor login, and a correct password alone no longer
+  resets the failed-attempt counter. Unlocking a user (in the UI or with
+  `dockmesh admin unlock`) clears the account limit too, and each block is written to the
+  audit log as `auth.lockout`. The sign-in page now says how long to wait when a login is
+  blocked.
+- Two-factor codes, LDAP sign-in, invite links and session refresh are now rate-limited per
+  client address and, where there is one, per account. Each two-factor code works only once.
+- The web UI is served with a Content Security Policy that only allows Dockmesh's own
+  scripts, and with headers against clickjacking and MIME sniffing. HSTS is sent when
+  Dockmesh is reached over HTTPS.
+- Single sign-on state cookies are marked `Secure` when Dockmesh is reached over HTTPS, and an
+  error passed back by an identity provider can no longer inject parameters into the
+  redirect to the sign-in page.
+- The password of the first admin account is printed once to the console instead of being
+  written to the structured log.
 - Creating or editing users, invites and roles can no longer grant permissions or host scope
   the editor doesn't have, and nobody can change or remove a user or role with more rights
   than their own. Before, anyone allowed to edit users could make themselves admin. The last
@@ -170,6 +196,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - [legacy-api-tokens, admins] API tokens created before this version have no owner. They keep
   working and are marked "legacy" under API tokens; recreate each one while signed in as the
   user who should own it, then revoke the old one. A notice stays up until none are left.
+- [trusted-proxies, admins] If Dockmesh runs behind a reverse proxy on another machine or in
+  a container, add the proxy's address under Settings → System → Trusted proxies. Until
+  then every user appears with the proxy's address in sessions and the audit log, and they
+  share one per-address login limit of 100 failures in 15 minutes. Dockmesh shows a notice
+  when it sees such a proxy.
 - [custom-role-permissions, admins] Custom roles that could restore backups keep downloading
   archives; other custom roles lose archive downloads and container file access, and lose
   system backups and the backup key unless they are admins. A notice lists the affected

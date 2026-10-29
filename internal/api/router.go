@@ -21,7 +21,10 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
-	r.Use(chimw.RealIP)
+	if h.ClientIPs != nil {
+		r.Use(h.ClientIPs.Middleware)
+	}
+	r.Use(middleware.SecurityHeaders(middleware.ContentSecurityPolicy(middleware.InlineScriptHashes(webFS))))
 	r.Use(middleware.Logging)
 	r.Use(chimw.Recoverer)
 	r.Use(cors.Handler(cors.Options{

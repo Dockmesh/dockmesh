@@ -179,22 +179,38 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "invites not configured")
 		return
 	}
+	limitBody(w, r)
 	token := chi.URLParam(r, "token")
+	ip := clientIP(r)
+	ipAtt, ok := h.inviteLimits.acquire(w, ip, "")
+	if !ok {
+		return
+	}
+	failed := false
+	defer func() { h.inviteLimits.finish(ipAtt, failed) }()
 	inv, err := h.Invites.Get(r.Context(), token)
 	switch {
 	case errors.Is(err, invites.ErrNotFound):
+		failed = true
 		writeError(w, http.StatusNotFound, "invite not found")
 		return
 	case errors.Is(err, invites.ErrExpired):
+		failed = true
 		writeError(w, http.StatusGone, "invite expired")
 		return
 	case errors.Is(err, invites.ErrUsed):
+		failed = true
 		writeError(w, http.StatusGone, "invite already used")
 		return
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	accountAtt, ok := h.inviteLimits.acquire(w, "", "invite:"+strconv.FormatInt(inv.ID, 10))
+	if !ok {
+		return
+	}
+	defer func() { h.inviteLimits.finish(accountAtt, failed) }()
 
 	var in AcceptInviteInput
 	if err := decodeJSON(r, &in); err != nil {
@@ -233,6 +249,7 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.Auth.CreateUser(r.Context(), in.Username, in.Email, in.Password, inv.Role)
 	if err != nil {
+		failed = true
 		if rerr := h.Invites.Unclaim(r.Context(), token); rerr != nil {
 			slog.Warn("invite: release claim after failed accept", "err", rerr)
 		}
@@ -281,7 +298,7 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 	// Sign the new user in immediately so they land in the dashboard.
 	// StartSessionForSSO mints a fresh token pair without password /
 	// MFA — same shape we use after a verified SSO callback.
-	result, err := h.Auth.StartSessionForSSO(r.Context(), *user, r.UserAgent(), inviteClientIP(r))
+	result, err := h.Auth.StartSessionForSSO(r.Context(), *user, r.UserAgent(), ip)
 	if err != nil {
 		// User exists but session minting failed — they can log in
 		// manually. Return 201 + user so the UI can redirect to /login.
@@ -293,21 +310,4 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		"access_token":  result.AccessToken,
 		"refresh_token": result.RefreshToken,
 	})
-}
-
-// inviteClientIP extracts the caller's IP for the invite session.
-// Mirrors middleware.clientIP — duplicated here to avoid cross-package
-// dependency on an internal helper.
-func inviteClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i > 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
-	}
-	addr := r.RemoteAddr
-	if i := strings.LastIndexByte(addr, ':'); i > 0 {
-		return addr[:i]
-	}
-	return addr
 }
