@@ -74,6 +74,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   "permission denied" on every folder.
 - Opening a path that leaves the volume (`..` or a symlink pointing outside) now answers with a
   400 error on every host instead of a server error, and a missing file answers 404.
+- Saving changes that first read and then update the database, such as re-enrolling all
+  agents or raising a notice, now waits for other writes to finish instead of failing with
+  "database is locked" when several things write at the same time.
 
 ## [0.4.0] - 2026-10-29 [security]
 
