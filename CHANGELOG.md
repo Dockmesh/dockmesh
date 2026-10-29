@@ -31,8 +31,24 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and at the top of the notifications drawer, with a link to where you fix it. The notice
   goes away on its own once the issue is fixed; non-critical ones can be hidden from the
   banner.
+- Before applying database schema changes, Dockmesh now writes a copy of the database next
+  to it and keeps the newest three.
 
 ### Changed
+- The Authentication page no longer shows sign-in settings Dockmesh doesn't enforce yet:
+  password rotation and reuse, remember-me, requiring 2FA for admins, turning off local
+  passwords and self-registration. Saved values are kept.
+- API tokens now belong to the user who created them. A token never grants more than its
+  role and its owner's current permissions and host scope allow, and it stops working when
+  the owner is deleted. A token created with another token expires no later than it, and a
+  token can only revoke itself.
+- Turning off two-factor authentication, or replacing the authenticator, now asks for a
+  current code or a recovery code; after five wrong codes it is blocked for 15 minutes. Admins
+  can no longer use the user-management reset on their own account.
+- Changing your password signs out your other sessions; an admin password reset (in the UI
+  or with `dockmesh admin reset-password`) signs out all of the user's sessions.
+- A role or scope change now applies to a signed-in user's next request instead of after up
+  to 15 minutes.
 - Migrating a stack that uses named volumes to another host is refused with an explanation,
   including in the pre-flight checks. Volume data isn't copied yet, so such a migration used
   to finish with empty volumes on the new host.
@@ -41,6 +57,16 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   restored. An interrupted rotation no longer leaves the server without a usable key.
 
 ### Security
+- Each kind of signed token (session, refresh, two-factor challenge, WebSocket ticket, single
+  sign-on state) now has its own key and is only accepted for its own purpose. Before, a
+  half-finished two-factor login could be used to turn two-factor authentication off.
+- WebSocket connections for container exec, logs, stats and events now run with the
+  permissions and host scope of the user who opened them, and each ticket works only once.
+  Before, a user restricted to some stacks or hosts could open a shell in any container.
+  Open connections close when the session is signed out or the permission is taken away,
+  and exec sessions are now recorded in the audit log.
+- Signing in with an unknown username takes as long as with a wrong password, and invalid
+  API tokens can no longer tie up the server with expensive hash checks.
 - Volume browsing, system restore and Git-synced stacks no longer follow symlinks out of the
   volume, the data directory or the repository. Before, a symlink in a volume or repository,
   or a crafted backup archive, could read or overwrite files on the host.
@@ -59,7 +85,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   same applies to saved SFTP targets, used for the audit log archive and the target test.
 - When a stack's `compose.yaml` or `.env` changes outside Dockmesh, for example through a
   container that mounts the stack directory, the stack page says so and the next deploy or
-  rollback asks for confirmation.
+  rollback asks for confirmation. Git auto-deploys of such a stack are held back, and users who
+  can deploy stacks get a notice naming the changed files; deploying the stack from its page
+  confirms the changes and the notice goes away.
 - A backup job set to encrypt no longer writes an unencrypted archive when secrets encryption
   is turned off; the run fails and admins get a notice.
 
@@ -96,5 +124,17 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   retention are shown as pruned.
 
 ### Upgrade notes
+- [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The
+  sign-in page says why.
+- [legacy-api-tokens, admins] API tokens created before this version have no owner. They keep
+  working and are marked "legacy" under API tokens; recreate each one while signed in as the
+  user who should own it, then revoke the old one. A notice stays up until none are left.
+- [premigrate-snapshot, admins] Make sure the database directory has room for a full copy
+  of the database. Before schema changes Dockmesh writes `<db>.pre-migrate-<timestamp>.bak`
+  next to the database (`dockmesh.db.pre-migrate-20261029T101500.000Z.bak`, UTC) and keeps
+  the newest three; system backups leave these copies out. If the copy cannot be written, Dockmesh does not start and does not change
+  the database; set `DOCKMESH_SKIP_PREMIGRATE_BACKUP=1` to upgrade without it. To roll back,
+  stop the service, copy the `.bak` file over the database file, delete the database's
+  `-wal` and `-shm` files if present, and start the previous version.
 - [redeploy-relative-bind-mounts, admins] Redeploy every stack that uses a relative bind mount
   (`./path:/...`). Dockmesh lists the affected stacks in a notice until each one is redeployed.

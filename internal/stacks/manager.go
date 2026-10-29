@@ -1,6 +1,7 @@
 package stacks
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/fsnotify/fsnotify"
 )
@@ -48,7 +50,8 @@ type Manager struct {
 	selfWritesMu sync.Mutex
 	selfWrites   map[string]time.Time
 
-	sums *SumStore
+	sums    *SumStore
+	notices *notices.Service
 }
 
 // Event is emitted when a stack file changes on disk from outside Dockmesh
@@ -596,6 +599,7 @@ func (m *Manager) Delete(name string) error {
 			slog.Warn("forget stack file checksums", "stack", name, "err", err)
 		}
 	}
+	m.resolveGitDeployHold(context.Background(), name)
 	return nil
 }
 

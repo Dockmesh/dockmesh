@@ -12,15 +12,12 @@ import (
 )
 
 func (h *Handlers) noticeViewer(r *http.Request) notices.Viewer {
-	role := middleware.Role(r.Context())
+	ctx := r.Context()
 	return notices.Viewer{
-		UserID: middleware.UserID(r.Context()),
-		Role:   role,
+		UserID: middleware.UserID(ctx),
+		Role:   middleware.Role(ctx),
 		Allowed: func(perm string) bool {
-			if h.Roles != nil {
-				return h.Roles.AllowedDB(role, rbac.Perm(perm))
-			}
-			return rbac.Allowed(role, rbac.Perm(perm))
+			return middleware.Allowed(ctx, rbac.Perm(perm))
 		},
 	}
 }
