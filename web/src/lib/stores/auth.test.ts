@@ -232,6 +232,17 @@ describe('auth store', () => {
     expect(tab.refreshToken).toBe('r2');
   });
 
+  it('signs out instead of switching to another user signed in elsewhere', async () => {
+    const a = browser.tab(1);
+    const b = browser.tab(2);
+    browser.signIn(a);
+    await vi.advanceTimersByTimeAsync(0);
+    const t = server.issue();
+    a.setSession({ id: 'u2', username: 'other', role: 'viewer' }, t.access_token, t.refresh_token);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(b.isAuthenticated).toBe(false);
+  });
+
   it('restores the session from storage on load', () => {
     const a = browser.tab(1);
     browser.signIn(a);

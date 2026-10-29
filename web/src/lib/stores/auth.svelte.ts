@@ -247,12 +247,15 @@ export function createAuthStore(env: AuthEnv | null) {
     env?.channel?.post(reason ? { type: 'sync', reason } : { type: 'sync' });
   }
 
-  // Another tab changed the stored session: take it over as-is.
+  // Another tab changed the stored session: take it over, unless it belongs
+  // to a different user. A tab never switches accounts silently; it signs
+  // out and the user signs in again knowingly.
   function syncFromStorage(reason?: SignOutReason) {
     const stored = readStored();
     if (!stored) return;
     if (stored.refreshToken === state.refreshToken && stored.accessToken === state.accessToken) return;
-    if (!stored.user || !stored.refreshToken) signOutLocal(reason);
+    const otherUser = !!state.user?.id && !!stored.user?.id && state.user.id !== stored.user.id;
+    if (!stored.user || !stored.refreshToken || otherUser) signOutLocal(reason);
     else apply(stored);
   }
 

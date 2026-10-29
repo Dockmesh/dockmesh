@@ -1194,6 +1194,7 @@ async function authFetch(url: string, init: RequestInit = {}): Promise<Response>
     return fetch(url, { ...init, headers });
   };
   const used = auth.accessToken;
+  const userId = auth.user?.id;
   const res = await send(used);
   if (res.status !== 401 || !auth.refreshToken) return res;
   // Another caller may already have renewed the token while this one was in flight.
@@ -1201,6 +1202,8 @@ async function authFetch(url: string, init: RequestInit = {}): Promise<Response>
     if (auth.isAuthenticated) throw new ApiError('Cannot reach the server to renew the session', 0);
     return res;
   }
+  // Never replay a request under a different account.
+  if (auth.user?.id !== userId) return res;
   return send(auth.accessToken);
 }
 
