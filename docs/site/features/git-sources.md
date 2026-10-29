@@ -35,7 +35,7 @@ The token and the SSH key are encrypted with the server's age key before they ar
 ## What a sync does
 
 1. Clone the branch (shallow, depth 1) into `git-cache/` in the data directory, or fetch and reset an existing clone.
-2. On the first sync, or when the commit changed, copy the compose file into the stack directory. If **Path in repo** is a directory, every other file and subdirectory in it is copied too, including dotfiles. Only the top-level compose file and `.env`, and names starting with `.git`, are skipped. A file over 64 MiB aborts the sync.
+2. On the first sync, or when the commit changed, copy the compose file into the stack directory. If **Path in repo** is a directory, every other file and subdirectory in it is copied too, including dotfiles. Only the top-level compose file, the top-level `.env` and names starting with `.git` are skipped. A file over 64 MiB aborts the sync.
 3. On the same occasions, merge the repository's `.env` (the one next to the compose file) into the stack's `.env`.
 4. If the commit changed and auto-deploy is on, deploy the stack.
 

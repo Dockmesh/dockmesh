@@ -82,4 +82,4 @@ Docker publishes container ports through its own iptables rules, which bypass uf
 
 On agent hosts, no inbound rule is needed for Dockmesh. Allow outbound traffic to the server on the port of `DOCKMESH_BASE_URL` (443 behind a proxy) and on 8443.
 
-For a single-host install without agents, block 8443 (the listener always runs; an empty `DOCKMESH_AGENT_LISTEN` falls back to `:8443`) and expose only your TLS proxy. More advice in [Hardening](../operations/hardening.md).
+For a single-host install without agents, block 8443 (the listener always runs; an empty `DOCKMESH_AGENT_LISTEN` falls back to `:8443`) and expose only your TLS proxy. More advice in [Security hardening](../operations/hardening.md).

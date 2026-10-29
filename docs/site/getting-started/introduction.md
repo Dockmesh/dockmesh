@@ -30,7 +30,7 @@ Each release archive contains all three. The web UI is compiled into `dockmesh`,
 - **No Kubernetes, no Swarm.** Dockmesh drives plain Docker engines through the Docker API and reconciles compose files itself. There is no cluster, no scheduler that places workloads for you and no overlay networking between hosts. Each stack is deployed to one host you choose.
 - **SQLite only.** The server keeps its state in one SQLite file. There is no option to use Postgres or MySQL.
 - **Outbound agents.** Remote hosts dial the server; the server never connects to them.
-- **Not all compose features are supported.** Dockmesh reads compose files with the compose-spec library but creates containers itself, and some keys (for example `depends_on`, `devices`, `logging`, and everything under `deploy` except `update_config`, which rolling updates read) are ignored. [Stacks](../concepts/stacks.md) lists what is applied.
+- **Not all compose features are supported.** Dockmesh reads compose files with the compose-spec library but creates containers itself, and some keys are ignored, for example `depends_on`, `devices`, `logging` and everything under `deploy` except `deploy.update_config` (used by rolling updates). [Stacks](../concepts/stacks.md) lists what is applied.
 - **External helpers stay external.** The reverse proxy, when you enable it, is a separate Caddy container named `dockmesh-proxy` that the server manages over Caddy's admin API. Vulnerability scanning runs the `grype` binary as a subprocess; the installer puts it on the host for you.
 
 ## License

@@ -99,5 +99,5 @@ Start with a **Whole dockmesh** job to a target that is not on the same machine,
 ## Next steps
 
 - [Architecture](../concepts/architecture.md) explains how the server, agents and stacks fit together.
-- [Hardening](../operations/hardening.md) before exposing the server beyond your LAN.
+- [Security hardening](../operations/hardening.md) before exposing the server beyond your LAN.
 - [Upgrading](./upgrading.md) when a new release comes out.

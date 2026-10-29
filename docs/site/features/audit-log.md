@@ -27,7 +27,7 @@ Every entry stores the hash of the previous entry and its own hash, SHA-256 over
 
 The first entry's previous hash is the genesis value, also stored in `audit-genesis.sha256` in the data directory (path set by `DOCKMESH_AUDIT_GENESIS_PATH`).
 
-Click **Verify chain** to recompute the chain (`GET /api/v1/audit/verify`). The check stops at the first broken link and shows it (**Tamper detected**), or reports the chain intact, and earlier runs are listed under **Verify history**. Entries written before the chain existed are reported as warnings and skipped.
+Click **Verify chain** to recompute the chain (`GET /api/v1/audit/verify`). The check stops at the first broken link and shows it (**Tamper detected**), or reports the chain as intact. Earlier runs are listed under **Verify history**. Entries written before the chain existed are reported as warnings and skipped.
 
 Verification starts from the first chained entry in the table. It doesn't check that entry against the genesis file, so someone who can rewrite the whole table can rebuild a valid chain. To make the log tamper-evident in practice, copy `audit-genesis.sha256` somewhere the server can't write, and forward entries to an external system with the webhook below.
 
@@ -50,7 +50,7 @@ Under **Webhook receiver**, set a URL. Dockmesh then POSTs every new entry as JS
 
 - **Forward only** limits forwarding to certain actions. `stack` matches only the action `stack`, `stack.*` matches `stack` and every `stack.<x>` action, and any other trailing `*` matches by prefix.
 - If you set a secret, each request carries `X-Audit-Signature: sha256=<hex>`, an HMAC-SHA256 of the request body with that secret. Check it on the receiver.
-- Each delivery is tried up to 5 times in total, with backoff starting at 500 ms, with a 10-second timeout per attempt. The queue holds 256 entries. When it's full, the oldest are dropped.
+- Each delivery is tried up to 5 times in total, with backoff starting at 500 ms and a 10-second timeout per attempt. The queue holds 256 entries. When it's full, the oldest are dropped.
 - Use the test button to send a sample entry.
 
 The secret is stored unencrypted in the database. Use a dedicated secret for this webhook.
@@ -59,4 +59,4 @@ The secret is stored unencrypted in the database. Use a dedicated secret for thi
 
 **Export CSV** downloads the entries currently loaded on the page, according to the active filters and the row limit (100, 500 or 1000). It runs in the browser. There's no server-side export of the whole log. For a complete copy, use the archive retention modes or the webhook.
 
-See also [Authentication](./authentication.md) and [Hardening](../operations/hardening.md).
+See also [Authentication](./authentication.md) and [Security hardening](../operations/hardening.md).

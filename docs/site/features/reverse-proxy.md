@@ -79,4 +79,4 @@ Per-route traffic metrics stay empty, because Caddy's metrics aren't enabled in 
 
 Leave the proxy disabled, publish your services' ports in `compose.yaml` bound to loopback (`127.0.0.1:<port>:<port>`) when your proxy runs on the same host, and point your proxy at them. Dockmesh doesn't need to know about it.
 
-See also [Ports](../reference/ports.md) and [Hardening](../operations/hardening.md).
+See also [Ports](../reference/ports.md) and [Security hardening](../operations/hardening.md).

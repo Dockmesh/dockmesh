@@ -85,4 +85,4 @@ The deploy runs inside the HTTP request. The details of what reconcile does, inc
 | `8443/tcp` | Agent mTLS WebSocket (`/connect`) | Agents only |
 | `80/tcp`, `443/tcp` | Caddy in `dockmesh-proxy` (host network) | Your users, only when the proxy is enabled |
 
-The `8080` listener speaks plain HTTP. Put TLS in front of it with a reverse proxy, or use the managed proxy. See [Ports](../reference/ports.md) and [Hardening](../operations/hardening.md).
+The `8080` listener speaks plain HTTP. Put TLS in front of it with a reverse proxy, or use the managed proxy. See [Ports](../reference/ports.md) and [Security hardening](../operations/hardening.md).

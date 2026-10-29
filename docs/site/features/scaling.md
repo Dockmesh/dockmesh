@@ -36,7 +36,7 @@ The rolling-update icon in a service row replaces every container of the service
 | **Parallelism** | How many containers to replace at once. 1 is the safest. |
 | **On failure** | **pause**: stop at the first failed replica. **continue**: replace the rest anyway. **rollback**: restart the old replicas and abort. |
 
-The dialog always sends its own **Order**, **Parallelism** and **On failure** values (preset to stop-first, 1, pause), so from the UI only `delay` comes from `deploy.update_config`. API calls that leave fields out fall back to `deploy.update_config` on the service, then to those defaults. Each new container must pass its health check, as in a normal deploy. start-first is refused for services with `container_name` or a fixed host port, because two containers would collide.
+The dialog always sends its own **Order**, **Parallelism** and **On failure** values (preset to **stop-first**, 1, **pause**), so from the UI only `delay` comes from `deploy.update_config`. API calls that leave fields out fall back to `deploy.update_config` on the service, then to those defaults. Each new container must pass its health check, as in a normal deploy. **start-first** is refused for services with `container_name` or a fixed host port, because two containers would collide.
 
 Rolling updates work on the local host only. On a remote host the request fails with an error.
 

@@ -7,7 +7,7 @@ An upgrade replaces the `dockmesh` binary and restarts the service. The database
 
 ## Find out what changed
 
-Dockmesh asks the GitHub releases API for the latest release 30 seconds after start and then every 120 minutes. When one is out, users who can see system information get an **Update available** banner with a **Release notes** link, and a notification is posted once per new release (again after a server restart). **Settings** → **Updates** shows the current and latest version and the command to run; there you can also turn **Automatic update checks** off (useful without outbound internet access), change the **Check interval (minutes)** (15 to 10080), and run **Check now** (needs `system.upgrade`). The check never downloads or installs anything.
+Dockmesh asks the GitHub releases API for the latest release 30 seconds after start and then every 120 minutes. When a newer release exists, users who can see system information get an **Update available** banner with a **Release notes** link, and a notification is posted once per new release (and once more after each server restart). **Settings** → **Updates** shows the current and latest version and the command to run; there you can also turn **Automatic update checks** off (useful without outbound internet access) and change the **Check interval (minutes)** (15 to 10080). **Check now** runs a check immediately (needs `system.upgrade`). The check never downloads or installs anything.
 
 Read the release notes before you upgrade. Releases after v0.3.3 take their notes from [`CHANGELOG.md`](https://github.com/dockmesh/dockmesh/blob/main/CHANGELOG.md):
 

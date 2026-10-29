@@ -48,7 +48,7 @@ Know the limits of each target type before you rely on it:
 - **Local**: a relative path is resolved against the server's working directory, which is `/` under the systemd unit that `install.sh` writes. Always enter an absolute path, such as `/var/lib/dockmesh-backups`, and keep it outside the data directory. Otherwise every system backup also contains all earlier backups. A local target on the server's own disk does not protect you against losing that disk.
 - **S3**: the target form has no TLS switch and no prefix field, and `use_ssl` defaults to false. A target created in the UI talks plain HTTP to the endpoint. Set `"use_ssl": true` (and `prefix` if you need one) through the API. Each archive is first written to a temporary file on the server and then uploaded in one request, so the server needs free temporary disk space as large as the archive.
 - **SFTP**: the server's host key is not verified, so anyone who can intercept the connection can impersonate the server. Only use SFTP on networks you trust. The form only offers password authentication; `private_key` (PEM) can be set through the API.
-- **SMB**: does not work when the Dockmesh server runs on Linux. The job folder is never created and listing returns wrong paths, so retention deletes nothing; so do not use SMB targets there.
+- **SMB**: does not work when the Dockmesh server runs on Linux. The job folder is never created and listing returns wrong paths, so retention deletes nothing. Do not use SMB targets there.
 - **WebDAV**: the whole archive is held in server memory before upload, and requests time out after 30 seconds. **Test connection** always reports success for WebDAV. Use it only for small archives.
 - **Inline port**: the inline form in the job wizard has a port field only for SFTP and sends it as text, which the server rejects when the job runs. For a non-default SFTP port, or any SMB port, create a saved target and pick it.
 
@@ -84,7 +84,7 @@ Keep a copy of the key outside the server: without it nobody can decrypt the arc
 <!-- update after: backups: scope hooks, limit targets, check sftp keys; fix bind mounts -->
 A hook is a command that Dockmesh runs with `docker exec` in a named container on the job's host. Pre-hooks run before the archive is written, post-hooks after it. Each hook has a 5-minute timeout, and up to 16 KB of its output goes into the run log. A failing pre-hook fails the run before anything is written. A failing post-hook marks the run as failed even though the archive was written, and failed runs cannot be restored from the UI.
 
-The wizard's presets (**PostgreSQL dump**, **MySQL dump** and so on) do not work as they ship. They target fixed container names such as `postgres` that Dockmesh never creates (Dockmesh names containers `<stack>-<service>-1`), the MySQL and MariaDB presets run without a shell, so `>` is passed to the program as an argument, and the dump goes to `/tmp` in the container, which is not part of any backed-up volume.
+The wizard's presets (**PostgreSQL dump**, **MySQL dump** and so on) do not work as they ship. They target fixed container names such as `postgres` that Dockmesh never creates (Dockmesh names containers `<stack>-<service>-1`). The MySQL and MariaDB presets run without a shell, so `>` is passed to the program as an argument. And the dump goes to `/tmp` in the container, which is not part of any backed-up volume.
 
 A working hook has three properties:
 
@@ -111,7 +111,7 @@ For MySQL or MariaDB the command would be `["sh", "-c", "mysqldump -u root -p\"$
 
 ## Default system backup
 
-`PUT /api/v1/backups/system/enabled` with `{"enabled": true}` creates a job named `dockmesh-system`, unless a job with a system source already exists: system source, daily at `0 3 * * *`, 14 days retention, local target `./data/backups`, encrypted when secrets encryption is on. `{"enabled": false}` disables it. The UI has no switch for this; you can also create the same job in the wizard with **Whole dockmesh**. Change its target to an absolute path, or better an off-host target, for the reasons given under [Targets](#targets).
+`PUT /api/v1/backups/system/enabled` with `{"enabled": true}` creates a job named `dockmesh-system`: system source, daily at `0 3 * * *`, 14 days retention, local target `./data/backups`, encrypted when secrets encryption is on. If a job with a system source already exists, no new job is created. `{"enabled": false}` disables it. The UI has no switch for this; you can also create the same job in the wizard with **Whole dockmesh**. Change its target to an absolute path, or better an off-host target, for the reasons given under [Targets](#targets).
 
 Installs upgraded from older versions may still have an auto-created `dockmesh-system` job. The **Jobs** tab flags it for review with **Keep** and **Disable** buttons.
 

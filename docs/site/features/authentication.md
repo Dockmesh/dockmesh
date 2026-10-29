@@ -79,4 +79,4 @@ On the **Users** page, **Invite user** creates one-time links for a list of e-ma
 
 Links expire after 24 hours. The API accepts `ttl_hours` up to 7 days, and the expiry choice in the dialog isn't applied. Creating invites needs `users.create`. The role in an invite isn't checked against the inviter's own permissions, so only give `users.create` to people who may hand out any role.
 
-See also [API tokens](./api-tokens.md), [Permissions](../concepts/permissions.md) and [Hardening](../operations/hardening.md).
+See also [API tokens](./api-tokens.md), [Permissions](../concepts/permissions.md) and [Security hardening](../operations/hardening.md).

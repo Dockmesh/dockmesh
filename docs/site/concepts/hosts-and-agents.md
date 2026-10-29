@@ -102,4 +102,4 @@ Pick **All hosts** in the host switcher, or pass `?host=all` to the API, to aggr
 
 - [Multi-host](../features/multi-host.md): adding, monitoring and removing hosts step by step
 - [Ports](../reference/ports.md): firewall rules for the agent port
-- [Hardening](../operations/hardening.md): protecting the server agents connect to
+- [Security hardening](../operations/hardening.md): protecting the server agents connect to

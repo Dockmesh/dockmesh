@@ -17,7 +17,7 @@ The recommended path is the installer script on a Linux host that already runs D
 | Resources | The setup wizard warns below 512 MB RAM or below 2 GB free on the root filesystem. Images and volumes of your stacks need space on top of that. |
 | Clock | Keep the clock synchronised (NTP). Agent TLS handshakes fail when server and host clocks drift apart. |
 
-The UI is served over plain HTTP. For anything beyond a trusted LAN, put it behind a TLS-terminating reverse proxy; see [Hardening](../operations/hardening.md).
+The UI is served over plain HTTP. For anything beyond a trusted LAN, put it behind a TLS-terminating reverse proxy; see [Security hardening](../operations/hardening.md).
 
 ## Install with the script
 
@@ -179,7 +179,7 @@ cd dockmesh
 make build VERSION=v0.0.0-local
 ```
 
-`make build` builds the web UI, embeds it, and produces `./dockmesh`, the agents `bin/dockmesh-agent-linux-amd64` and `bin/dockmesh-agent-linux-arm64`, and `dmctl` builds for Linux, macOS and Windows in `bin/`. Run `./dockmesh` from the checkout: without an env file it uses `./data/` and `./stacks/` (but if `/var/lib/dockmesh/dockmesh.env` exists on the machine and `DOCKMESH_DB_PATH` is unset, that file is loaded) and serves the agent installer from `./scripts/` and `./bin/`. On first start it creates a user `admin` with a random password and writes it to the log once: the default JSON log line has the message `bootstrap admin created` and the password in its `password` field.
+`make build` builds the web UI, embeds it, and produces `./dockmesh`, the agents `bin/dockmesh-agent-linux-amd64` and `bin/dockmesh-agent-linux-arm64`, and `dmctl` builds for Linux, macOS and Windows in `bin/`. Run `./dockmesh` from the checkout: without an env file it uses `./data/` and `./stacks/` and serves the agent installer from `./scripts/` and `./bin/`. If `/var/lib/dockmesh/dockmesh.env` exists on the machine and `DOCKMESH_DB_PATH` is unset, that file is loaded instead. On first start it creates a user `admin` with a random password and writes it to the log once: the default JSON log line has the message `bootstrap admin created` and the password in its `password` field.
 
 For development, `make dev` starts the backend on `:8080` and the Vite dev server on `:5173`. `make test` runs the Go tests and `svelte-check`.
 
