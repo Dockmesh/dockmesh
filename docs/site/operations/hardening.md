@@ -66,7 +66,7 @@ The setup wizard is open while no admin user exists or while `DOCKMESH_SETUP_FOR
 
 <!-- update after: rbac: scope read endpoints, limit grants, gate sensitive downloads -->
 - **`backups.view`** lets a user download any backup decrypted, including system archives with the database, the JWT secret and the age key, and read backup target credentials. Every built-in role, viewer included, has it. Give users you don't fully trust a custom role without it. Built-in roles cannot be edited. See [Backups](./backups.md#permissions).
-- **host-admin** is close to admin: it holds `system.update` (settings, SSO configuration, global environment) and `backups.restore`, which includes exporting the age key. Assign it like admin.
+- **host-admin** is close to admin: it holds `system.update` (settings, SSO configuration, global environment) and `backups.restore`, which includes exporting the age key and extracting an archive into any host path as root (an absolute path as restore target becomes a bind mount). Assign it like admin.
 - `backups.create` and `backups.update` let a user run arbitrary commands in any container through backup hooks.
 - User and role management don't check that a grant is within the granter's own permissions, and nothing stops the last admin from being removed. Keep `users.*` and `roles.*` with admins.
 - Many read endpoints ignore host and role scopes. Treat a scoped role as a convenience filter, not as a security boundary.
