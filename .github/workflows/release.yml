@@ -61,8 +61,8 @@ jobs:
           VERSION: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           go run ./scripts/relmanifest release -version "$VERSION" \
-            -notes release-notes.md -manifest release-manifest.json
-          cat release-notes.md release-manifest.json
+            -notes release-notes.md -body release-body.md -manifest release-manifest.json
+          cat release-body.md release-manifest.json
 
       - name: upload notes
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -70,6 +70,7 @@ jobs:
           name: release-notes
           path: |
             release-notes.md
+            release-body.md
             release-manifest.json
 
   build:
@@ -217,7 +218,7 @@ jobs:
           name: Dockmesh ${{ steps.v.outputs.version }}
           draft: false
           prerelease: ${{ contains(steps.v.outputs.version, '-') }}
-          body_path: artifacts/release-notes/release-notes.md
+          body_path: artifacts/release-notes/release-body.md
           files: |
             release/*.tar.gz
             release/install.sh

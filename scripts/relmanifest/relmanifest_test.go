@@ -165,6 +165,81 @@ Direct upgrades are supported from 0.3.0 or later.
 	}
 }
 
+func TestRenderBody(t *testing.T) {
+	src := `## [0.4.0] - 2026-10-29 [security]
+
+Fixes two issues.
+
+### Security
+- GHSA-2xq8-c4fv-9m7w (critical): MFA could be disabled.
+- GHSA-3xq8-c4fv-9m7w (high): Another one.
+
+### Upgrade notes
+- [re-login, all] Sign in again once.
+- [sftp, admins] Re-save each SFTP target.
+
+### Fixed
+- Long list entry that stays out of the body.
+`
+	sections, err := Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := RenderBody(sections[0])
+	for _, want := range []string{
+		"This is a security release. It fixes 2 vulnerabilities;",
+		"Fixes two issues.",
+		"sudo systemctl restart dockmesh",
+		"rebuild it from the v0.4.0 tag",
+		"`dockmesh version` is 0.4.0",
+		"- Sign in again once.\n- Re-save each SFTP target.\n",
+		"- [GHSA-2xq8-c4fv-9m7w](https://github.com/Dockmesh/dockmesh/security/advisories/GHSA-2xq8-c4fv-9m7w) (critical): MFA could be disabled.",
+		"blob/v0.4.0/CHANGELOG.md#040---2026-10-29-security)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("body lacks %q\n%s", want, got)
+		}
+	}
+	for _, bad := range []string{"Long list entry", "### "} {
+		if strings.Contains(got, bad) {
+			t.Errorf("body contains %q", bad)
+		}
+	}
+}
+
+func TestRenderBodyNormalNoAdvisories(t *testing.T) {
+	sections, err := Parse("## [1.0.0] - 2026-01-01 [normal]\n\n### Fixed\n- A fix.\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := RenderBody(sections[0])
+	for _, bad := range []string{"security release", "After upgrading", "## Security"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("body contains %q\n%s", bad, got)
+		}
+	}
+	if !strings.Contains(got, "#100---2026-01-01-normal)") {
+		t.Errorf("anchor wrong\n%s", got)
+	}
+}
+
+func TestReleaseCommandWritesBody(t *testing.T) {
+	dir := t.TempDir()
+	cl := writeFile(t, dir, "CHANGELOG.md", sample)
+	body := filepath.Join(dir, "body.md")
+	args := []string{"release", "-changelog", cl, "-version", "v0.3.4", "-notes", filepath.Join(dir, "n"), "-body", body, "-manifest", filepath.Join(dir, "m")}
+	if err := run(args, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "## How to upgrade") {
+		t.Errorf("body = %s", b)
+	}
+}
+
 func writeFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
