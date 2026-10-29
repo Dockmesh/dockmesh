@@ -11,6 +11,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/clientip"
+	"github.com/dockmesh/dockmesh/internal/ratelimit"
 )
 
 func plural(n int) string {
@@ -34,7 +35,8 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	key := limitKey(ip)
 
-	// Brute-force guard (§1.5): 10 failures per minute → 5 min lockout.
+	// Per-IP limit, generous so users behind one proxy don't block each
+	// other; the per-account limit in auth.Service is the main guard.
 	if h.LoginLimiter != nil {
 		if ok, retry := h.LoginLimiter.Check(key); !ok {
 			w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
@@ -53,10 +55,19 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.Auth.Login(r.Context(), req.Username, req.Password, r.UserAgent(), ip)
+	var rateErr *auth.RateLimitError
+	if errors.As(err, &rateErr) {
+		writeRetryAfter(w, rateErr.Until)
+		writeError(w, http.StatusTooManyRequests, "too many login attempts — try again later")
+		return
+	}
 	if errors.Is(err, auth.ErrInvalidCredentials) {
 		if h.LoginLimiter != nil {
-			h.LoginLimiter.Fail(key)
+			if until, started := h.LoginLimiter.Fail(key); started {
+				h.auditBlock(r, "ip", key, "login", auth.BlockRateLimit, until)
+			}
 		}
+		h.auditAccountBlocks(r, err, "login")
 		if h.Audit != nil {
 			h.Audit.Write(r.Context(), "", audit.ActionLoginFailed, req.Username, map[string]string{"ip": ip})
 		}
@@ -69,32 +80,12 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 			h.Audit.Write(r.Context(), "", audit.ActionLoginFailed, req.Username,
 				map[string]string{"ip": ip, "reason": "locked"})
 		}
-		// Tell the user the actual unlock time so they can just wait.
-		// The previous "contact an administrator" copy was misleading —
-		// locks auto-expire via time.Now() >= locked_until, no admin
-		// action needed. Retry-After is the standard header for 423.
-		wait := time.Until(lockErr.Until)
-		if wait < 0 {
-			wait = 0
-		}
-		secs := int(wait.Round(time.Second).Seconds())
-		w.Header().Set("Retry-After", strconv.Itoa(secs))
-		var msg string
-		if secs < 60 {
-			msg = fmt.Sprintf("account temporarily locked — try again in %d seconds", secs)
-		} else {
-			mins := (secs + 59) / 60 // round up so "try in 1 minute" never becomes "0 minutes"
-			msg = fmt.Sprintf("account temporarily locked — try again in %d minute%s", mins, plural(mins))
-		}
-		writeError(w, http.StatusLocked, msg)
+		writeLocked(w, lockErr.Until)
 		return
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "login failed")
 		return
-	}
-	if h.LoginLimiter != nil {
-		h.LoginLimiter.Succeed(key)
 	}
 	// Don't audit MFA-pending state — audit happens after /auth/mfa succeeds.
 	if h.Audit != nil && res.User != nil {
@@ -104,6 +95,67 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	// doesn't have to round-trip /me after login to gate UI.
 	enrichUserWithRBAC(h.Roles, res.User)
 	writeJSON(w, http.StatusOK, res)
+}
+
+// Per-IP login limit.
+const (
+	loginIPMax    = 100
+	loginIPWindow = 15 * time.Minute
+)
+
+// NewLoginLimiter returns the per-IP limiter for password logins: loginIPMax
+// failures within loginIPWindow block the address for as long.
+func NewLoginLimiter() *ratelimit.Limiter {
+	return ratelimit.New(loginIPMax, loginIPWindow, loginIPWindow)
+}
+
+// writeLocked answers 423 with the actual unlock time: locks expire on
+// their own, so the user can just wait. Retry-After is the standard
+// header for 423.
+func writeLocked(w http.ResponseWriter, until time.Time) {
+	wait := time.Until(until)
+	if wait < 0 {
+		wait = 0
+	}
+	secs := int(wait.Round(time.Second).Seconds())
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	var msg string
+	if secs < 60 {
+		msg = fmt.Sprintf("account temporarily locked — try again in %d seconds", secs)
+	} else {
+		mins := (secs + 59) / 60 // round up so "try in 1 minute" never becomes "0 minutes"
+		msg = fmt.Sprintf("account temporarily locked — try again in %d minute%s", mins, plural(mins))
+	}
+	writeError(w, http.StatusLocked, msg)
+}
+
+func writeRetryAfter(w http.ResponseWriter, until time.Time) {
+	w.Header().Set("Retry-After", strconv.Itoa(int(time.Until(until).Seconds())+1))
+}
+
+// auditBlock records the start of a sign-in block, once per block.
+func (h *Handlers) auditBlock(r *http.Request, kind, key, endpoint, reason string, until time.Time) {
+	if h.Audit == nil {
+		return
+	}
+	h.Audit.Write(r.Context(), "", audit.ActionLoginBlocked, key, map[string]string{
+		"kind":     kind,
+		"key":      key,
+		"endpoint": endpoint,
+		"reason":   reason,
+		"until":    until.UTC().Format(time.RFC3339),
+	})
+}
+
+// auditAccountBlocks records the account blocks a failed attempt started.
+func (h *Handlers) auditAccountBlocks(r *http.Request, err error, endpoint string) {
+	var attempt *auth.AttemptError
+	if !errors.As(err, &attempt) {
+		return
+	}
+	for _, b := range attempt.Blocks {
+		h.auditBlock(r, "account", b.Key, endpoint, b.Reason, b.Until)
+	}
 }
 
 // limitKey normalises the IP so that different TCP source ports collapse

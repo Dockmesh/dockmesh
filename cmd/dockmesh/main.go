@@ -53,7 +53,6 @@ import (
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/scaling"
 	"github.com/dockmesh/dockmesh/internal/settings"
-	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/registries"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
@@ -794,7 +793,7 @@ func main() {
 	selfUpdateChk.SetNotifier(notifSvc)
 	migrationSvc.SetNotifier(notifSvc)
 
-	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
+	loginLimiter := handlers.NewLoginLimiter()
 
 	// P.14.2: install-wizard commit function. Built here because it
 	// needs auth.Service + settings.Store + the configured paths.

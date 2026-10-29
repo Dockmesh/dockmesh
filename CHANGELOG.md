@@ -62,6 +62,15 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - `X-Forwarded-For` and `X-Real-IP` are only believed from a trusted proxy (localhost unless
   configured). Before, anyone could set them to dodge the login rate limit and put a fake
   address into sessions and the audit log.
+- Failed logins are now limited per account: after 10 failures within 15 minutes the
+  username is blocked for 15 minutes, also when the lockout policy is turned off and also
+  for usernames that don't exist. The limit per client address is raised to 100 failures in
+  15 minutes, so users behind one proxy or NAT don't lock each other out. Wrong two-factor
+  codes now count toward the lockout and the account limit like wrong passwords, a locked
+  account can no longer finish a two-factor login, and a correct password alone no longer
+  resets the failed-attempt counter. Unlocking a user (in the UI or with
+  `dockmesh admin unlock`) clears the account limit too, and each block is written to the
+  audit log as `auth.lockout`.
 - Two-factor codes, LDAP sign-in, invite links and session refresh are now rate-limited per
   client address and, where there is one, per account. Each two-factor code works only once.
 - The web UI is served with a Content Security Policy that only allows Dockmesh's own
@@ -82,4 +91,5 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - [trusted-proxies, admins] If Dockmesh runs behind a reverse proxy on another machine or in
   a container, add the proxy's address under Settings → System → Trusted proxies. Until
   then every user appears with the proxy's address in sessions and the audit log, and they
-  share one login rate limit. Dockmesh shows a notice when it sees such a proxy.
+  share one per-address login limit of 100 failures in 15 minutes. Dockmesh shows a notice
+  when it sees such a proxy.

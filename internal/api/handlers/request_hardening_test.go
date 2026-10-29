@@ -73,40 +73,26 @@ func TestTOTPCodeAcceptedOnce(t *testing.T) {
 	}
 }
 
-func TestLoginMFARateLimits(t *testing.T) {
-	tests := []struct {
-		name              string
-		ipMax, accountMax int
-		remote            func(i int) string
-	}{
-		{name: "per account across IPs", ipMax: 100, accountMax: 3,
-			remote: func(i int) string { return "198.51.100." + strconv.Itoa(i+1) + ":1000" }},
-		{name: "per IP", ipMax: 3, accountMax: 100,
-			remote: func(int) string { return "198.51.100.1:1000" }},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			e := newAuthzEnv(t)
-			e.h.mfaLimits = newAuthLimits(tt.ipMax, tt.accountMax, time.Minute)
-			u := e.user("dave", "viewer")
-			secret := enrollTOTP(t, e, u.ID)
-			pending := e.login("dave").MFAToken
+func TestLoginMFARateLimitedPerIP(t *testing.T) {
+	e := newAuthzEnv(t)
+	e.h.mfaLimits = newAuthLimits(3, 0, time.Minute)
+	u := e.user("dave", "viewer")
+	secret := enrollTOTP(t, e, u.ID)
+	pending := e.login("dave").MFAToken
 
-			for i := range 3 {
-				rr := post(t, e.h.LoginMFA, "/auth/mfa", tt.remote(i), map[string]string{"mfa_token": pending, "code": "000000"})
-				if rr.Code != http.StatusUnauthorized {
-					t.Fatalf("attempt %d: %d, want 401", i+1, rr.Code)
-				}
-			}
-			code, _ := totp.GenerateCode(secret, time.Now())
-			rr := post(t, e.h.LoginMFA, "/auth/mfa", tt.remote(3), map[string]string{"mfa_token": pending, "code": code})
-			if rr.Code != http.StatusTooManyRequests {
-				t.Fatalf("after 3 wrong codes, a right one: %d, want 429", rr.Code)
-			}
-			if rr.Header().Get("Retry-After") == "" {
-				t.Error("429 without Retry-After")
-			}
-		})
+	for i := range 3 {
+		rr := post(t, e.h.LoginMFA, "/auth/mfa", "198.51.100.1:1000", map[string]string{"mfa_token": pending, "code": "000000"})
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: %d, want 401", i+1, rr.Code)
+		}
+	}
+	code, _ := totp.GenerateCode(secret, time.Now())
+	rr := post(t, e.h.LoginMFA, "/auth/mfa", "198.51.100.1:1000", map[string]string{"mfa_token": pending, "code": code})
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("after 3 wrong codes, a right one: %d, want 429", rr.Code)
+	}
+	if rr.Header().Get("Retry-After") == "" {
+		t.Error("429 without Retry-After")
 	}
 }
 

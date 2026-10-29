@@ -79,3 +79,34 @@ func TestLimiter_WindowExpiry(t *testing.T) {
 		t.Error("expired window should not lock (only 2 fails in current window)")
 	}
 }
+
+func TestLimiter_FailReportsLockStart(t *testing.T) {
+	now := time.Unix(0, 0)
+	l := &Limiter{
+		MaxFailures:  2,
+		Window:       time.Minute,
+		LockDuration: time.Minute,
+		buckets:      make(map[string]*bucket),
+		now:          func() time.Time { return now },
+	}
+	steps := []struct {
+		advance     time.Duration
+		wantStarted bool
+	}{
+		{0, false},
+		{0, true},                // threshold reached
+		{0, false},               // already locked: no new lock
+		{2 * time.Minute, false}, // lock and window expired: fresh bucket
+		{0, true},
+	}
+	for i, s := range steps {
+		now = now.Add(s.advance)
+		until, started := l.Fail("k")
+		if started != s.wantStarted {
+			t.Fatalf("step %d: started = %v, want %v", i, started, s.wantStarted)
+		}
+		if started && !until.Equal(now.Add(time.Minute)) {
+			t.Errorf("step %d: until = %v, want %v", i, until, now.Add(time.Minute))
+		}
+	}
+}

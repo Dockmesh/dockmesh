@@ -59,20 +59,26 @@ func (l *Limiter) Check(key string) (bool, time.Duration) {
 }
 
 // Fail records a failed attempt. If the threshold is reached, the key is
-// locked for LockDuration.
-func (l *Limiter) Fail(key string) {
+// locked for LockDuration and Fail returns the lock's end with started set.
+// Failures while the key is already locked don't extend the lock.
+func (l *Limiter) Fail(key string) (until time.Time, started bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
 	b, ok := l.buckets[key]
-	if !ok || now.Sub(b.firstFailAt) > l.Window {
-		l.buckets[key] = &bucket{failures: 1, firstFailAt: now}
-		return
+	if !ok || (now.Sub(b.firstFailAt) > l.Window && !now.Before(b.lockedUntil)) {
+		b = &bucket{firstFailAt: now}
+		l.buckets[key] = b
+	}
+	if now.Before(b.lockedUntil) {
+		return time.Time{}, false
 	}
 	b.failures++
-	if b.failures >= l.MaxFailures {
-		b.lockedUntil = now.Add(l.LockDuration)
+	if b.failures < l.MaxFailures {
+		return time.Time{}, false
 	}
+	b.lockedUntil = now.Add(l.LockDuration)
+	return b.lockedUntil, true
 }
 
 // Succeed clears the bucket for a key.

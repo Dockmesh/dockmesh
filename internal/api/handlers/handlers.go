@@ -218,7 +218,7 @@ func New(d Deps) *Handlers {
 		RBACv2Enforce:  d.RBACv2Enforce,
 
 		mfaDisableLimiter: ratelimit.New(5, 15*time.Minute, 15*time.Minute),
-		mfaLimits:         newAuthLimits(20, 5, 15*time.Minute),
+		mfaLimits:         newAuthLimits(20, 0, 15*time.Minute),
 		ldapLimits:        newAuthLimits(10, 10, 15*time.Minute),
 		inviteLimits:      newAuthLimits(10, 5, 15*time.Minute),
 		refreshLimits:     newAuthLimits(300, 0, 5*time.Minute),

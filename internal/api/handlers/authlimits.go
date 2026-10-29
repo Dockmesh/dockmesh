@@ -49,13 +49,15 @@ func (l authLimits) allow(w http.ResponseWriter, ip, account string) bool {
 	return false
 }
 
-func (l authLimits) fail(ip, account string) {
+// fail counts a failure; it returns the end of an IP block it started.
+func (l authLimits) fail(ip, account string) (ipBlockedUntil time.Time, started bool) {
 	if l.byIP != nil {
-		l.byIP.Fail(clientip.LimitKey(ip))
+		ipBlockedUntil, started = l.byIP.Fail(clientip.LimitKey(ip))
 	}
 	if l.byAccount != nil && account != "" {
 		l.byAccount.Fail(account)
 	}
+	return ipBlockedUntil, started
 }
 
 // limitBody caps request bodies on the unauthenticated sign-in endpoints;
