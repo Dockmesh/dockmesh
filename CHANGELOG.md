@@ -37,6 +37,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - The first-run setup wizard's state-changing calls (`/setup/commit` and the validation
   helpers) now require a header only the wizard sends, so a website opened in the same browser
   during setup cannot start the installation or probe URLs from your network.
+- Alert emails no longer let a rule or alert name inject extra headers (such as extra recipients)
+  into the message.
 
 ### Fixed
 
