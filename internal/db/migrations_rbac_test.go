@@ -171,3 +171,46 @@ func TestSAMLRekeyMarkerMigration(t *testing.T) {
 		}
 	}
 }
+
+func TestRBACSeedDriftMigration(t *testing.T) {
+	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := migrateUpTo(database, "074_saml_subject.sql"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO roles (name, display, builtin) VALUES ('custom', 'Custom', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO role_permissions (role_name, permission) VALUES ('custom', 'images.update'), ('custom', 'volumes.view')`); err != nil {
+		t.Fatal(err)
+	}
+	if hasPerm(t, database, "operator", "tokens.create") {
+		t.Fatal("precondition: operator lacks tokens.create before the migration")
+	}
+
+	if err := Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		role, perm string
+		want       bool
+	}{
+		{"operator", "tokens.create", true},
+		{"viewer", "tokens.create", false},
+		{"admin", "tokens.create", true},
+		{"admin", "images.update", false},
+		{"deployer", "volumes.update", false},
+		{"host-admin", "networks.update", false},
+		{"custom", "images.update", false},
+		{"custom", "volumes.view", true},
+		{"admin", "images.create", true},
+	} {
+		if got := hasPerm(t, database, tc.role, tc.perm); got != tc.want {
+			t.Errorf("%s holds %s = %v, want %v", tc.role, tc.perm, got, tc.want)
+		}
+	}
+}

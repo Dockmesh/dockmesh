@@ -54,6 +54,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ### Fixed
 
+- The Operator role can create its own API tokens again, as the permission list always
+  promised, and the permission counts no longer include image, volume and network update
+  permissions that do not exist.
 - dmctl: `containers list --all`, `--host all` and `alert list-active` now return results,
   `backup run` prints the finished run, `backup runs` shows the archive size, and long backups
   and stack deploys are no longer cut off after 60 seconds. `logs` only keeps streaming with
