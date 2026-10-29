@@ -840,7 +840,7 @@ export interface BackupTarget {
 }
 
 export interface BackupSource {
-  type: 'volume' | 'stack';
+  type: 'volume' | 'stack' | 'system';
   name: string;
 }
 

@@ -37,13 +37,8 @@
   function jobSourceLabel(j: BackupJob): string {
     if (j.sources.length === 0) return 'no source';
     const s = j.sources[0];
-    // Backend additionally accepts a 'system' source type for the
-    // dockmesh-system meta-bundle (DB + stacks + CA). The TS interface
-    // pre-dates that addition and only lists volume / stack — cast at
-    // the call site rather than widening the public type.
-    const t = s.type as string;
-    if (t === 'system') return 'dockmesh-system';
-    return `${t}: ${s.name}`;
+    if (s.type === 'system') return 'dockmesh-system';
+    return `${s.type}: ${s.name}`;
   }
   function jobSourceIcon(j: BackupJob) {
     const t = (j.sources[0]?.type as string | undefined) ?? '';
@@ -1047,7 +1042,7 @@
             <span class="font-mono bk-runs-cell right">{fmtDuration(r.started_at, r.finished_at)}</span>
             <span class="font-mono bk-runs-cell right">{fmtBytes(r.size_bytes)}</span>
             <span class="bk-runs-actions">
-              {#if r.status === 'success'}
+              {#if r.status === 'success' && !r.sources?.some((s) => s.type === 'system')}
                 <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" title="Restore" onclick={(e) => { e.stopPropagation(); openRestore(r); }}>
                   <Undo2 size={11} strokeWidth={1.5} />
                 </button>

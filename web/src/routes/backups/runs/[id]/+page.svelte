@@ -8,7 +8,7 @@
   import { goto } from '$app/navigation';
   import { api, ApiError, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
   import { Eyebrow } from '$lib/components/editorial';
-  import { allowed } from '$lib/rbac.svelte';
+  import { allowed, isAdmin } from '$lib/rbac.svelte';
   import { Skeleton, EmptyState } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
@@ -162,7 +162,11 @@
     { id: 'alongside', title: 'Restore alongside', blurb: 'Mount as new stacks with a -restored suffix. Original keeps running.' },
     { id: 'download', title: 'Download archive', blurb: 'Download the decrypted .tar.gz for offline inspection.' }
   ];
-  const restoreModes = allRestoreModes.filter((m) => m.id !== 'download' || allowed('backups.download'));
+  // System runs are restored with `dockmesh restore`; only an admin may download them.
+  const systemRun = $derived(run?.sources?.some((s) => s.type === 'system') ?? false);
+  const restoreModes = $derived(allRestoreModes.filter((m) =>
+    m.id === 'download' ? allowed('backups.download') && (!systemRun || isAdmin()) : !systemRun
+  ));
 </script>
 
 {#if loading && !run}
@@ -215,7 +219,7 @@
         <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={copyDetails}>
           <Copy size={11} strokeWidth={1.5} /> Copy details
         </button>
-        {#if run.status === 'success'}
+        {#if run.status === 'success' && !systemRun}
           <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => doRestore('alongside')}>
             <Undo2 size={11} strokeWidth={1.5} /> Restore
           </button>
@@ -313,7 +317,27 @@
 
       <!-- Right column — restore flow -->
       <div class="bk-detail-col">
-        {#if run.status === 'success'}
+        {#if run.status === 'success' && systemRun}
+          <section class="bk-detail-section dm-card">
+            <Eyebrow>Restore</Eyebrow>
+            <p class="bk-detail-block-body">
+              System backups are restored on the server with <code>dockmesh restore</code>.
+            </p>
+            {#if restoreModes.length > 0}
+              <div class="bk-detail-restore-list">
+                {#each restoreModes as m (m.id)}
+                  <button type="button" class="bk-detail-restore-row" onclick={() => doRestore(m.id)}>
+                    <div class="bk-detail-restore-text">
+                      <span class="bk-detail-restore-title">{m.title}</span>
+                      <span class="bk-detail-restore-blurb">{m.blurb}</span>
+                    </div>
+                    <ArrowRight size={12} strokeWidth={1.5} class="bk-detail-restore-arrow" />
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </section>
+        {:else if run.status === 'success'}
           <section class="bk-detail-section dm-card">
             <Eyebrow>Restore</Eyebrow>
             <p class="bk-detail-block-body">
