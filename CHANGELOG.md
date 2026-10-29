@@ -99,7 +99,9 @@ earlier, makes the installers more reliable on upgrade, and repairs volume brows
   log lines instead of printing "installed and running".
 - New agents keep their data in `/var/lib/dockmesh-agent` instead of `/var/lib/dockmesh`, so an
   agent on the same host as the server no longer mixes its files with the server's. Re-running
-  the installer on an existing agent keeps its current directory.
+  the installer on an existing agent keeps its current directory, unless that is the server's
+  data directory: then the agent's own files move to `/var/lib/dockmesh-agent` and the server's
+  directory keeps its owner and permissions.
 - `uninstall.sh --dry-run` no longer kills the processes of the `dockmesh` service user.
 - Linux release tarballs now include the agent for both amd64 and arm64, and the installer
   places both, so a server of one architecture can enroll hosts of the other.
