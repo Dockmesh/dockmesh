@@ -37,7 +37,7 @@ Set `DOCKMESH_METRICS_AUTH=false` to serve `/metrics` without authentication. On
 
 The counters start at zero when the server starts.
 
-No other `dockmesh_*` series are exported. In particular there are no stack, container, backup, deploy-duration or agent round-trip metrics, so you'll find no `dockmesh_stacks_total`, `dockmesh_containers_total` or `dockmesh_backup_*` series in the scrape. For backup failures, watch the bell feed or the backup runs list instead.
+No other `dockmesh_*` series are exported. In particular there are no stack, container, backup, deploy-duration or agent round-trip metrics, so you'll find no `dockmesh_stacks_total`, `dockmesh_containers_total` or `dockmesh_backup_*` series in the scrape. For backup failures, watch the notification feed or the backup runs list instead.
 
 A useful alert is a stale agent:
 
@@ -54,7 +54,7 @@ A useful alert is a stale agent:
 | `GET /healthz/live` | none | `200 ok` while the process runs |
 | `GET /healthz/ready` | none | `200 ready` when the database answers. `503` if it doesn't, or while the server is shutting down |
 | `GET /api/v1/health` | none | JSON with `status`, `version` and `docker` (whether the Docker daemon is connected) |
-| `GET /api/v1/system/health` | signed in | Checks shown in the UI: backups, proxy, agents, disk, Docker, scanner |
+| `GET /api/v1/system/health` | `system.view` | Checks shown in the UI: backups, proxy, agents, disk, Docker, scanner |
 
 Use `/healthz/ready` for load balancers and container health checks, and `/healthz/live` for liveness probes. During shutdown, `/healthz/ready` returns `503` with `Retry-After: 10`, so a load balancer can stop sending traffic before the process exits.
 

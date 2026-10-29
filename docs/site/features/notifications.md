@@ -18,7 +18,7 @@ Channels are managed on **Alerts** → **Channels**. Click **New channel**, pick
 | Type | Config fields (required in bold) |
 |---|---|
 | `webhook` | **`url`** |
-| `ntfy` | **`url`** (topic URL), `token`, `priority` (1–5, default 3) |
+| `ntfy` | **`url`** (topic URL), `token`, `priority` (1–5; unset follows the level: 5 critical, 4 warning, 3 otherwise) |
 | `discord` | **`url`** (webhook URL) |
 | `slack` | **`url`** (incoming webhook URL) |
 | `teams` | **`url`** (webhook URL) |
@@ -54,7 +54,6 @@ Entries come from these producers:
 | `image.update` | A running image has a newer version upstream |
 | `agent.offline` | An agent disconnects |
 | `migration.complete`, `migration.failed` | A stack migration ends |
-| `deploy.ok`, `deploy.fail` | A git-triggered deploy finishes |
 | `system.upgrade` | A newer Dockmesh release is available |
 | `invite.accepted` | Someone accepts an invite |
 

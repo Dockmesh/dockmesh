@@ -11,7 +11,7 @@ Each entry has a timestamp, the user, an action, a target and a JSON details fie
 
 | Area | Actions |
 |---|---|
-| Sign-in | `auth.login`, `auth.login_failed`, `auth.logout`, `auth.refresh` |
+| Sign-in | `auth.login`, `auth.login_failed` |
 | Users and roles | `user.create`, `user.update`, `user.delete`, `user.password`, `role.create`, `role.update`, `role.delete` |
 | Stacks | `stack.create`, `stack.update`, `stack.delete`, `stack.deploy`, `stack.stop`, `stack.adopt` |
 | Containers | `container.start`, `container.stop`, `container.restart`, `container.remove`, `container.update`, `container.rollback`, `container.exec_start`, `container.exec_end`, `container.browse`, `container.read_file`, `container.write_file` |
@@ -27,7 +27,7 @@ Every entry stores the hash of the previous entry and its own hash, SHA-256 over
 
 The first entry's previous hash is the genesis value, also stored in `audit-genesis.sha256` in the data directory (path set by `DOCKMESH_AUDIT_GENESIS_PATH`).
 
-Click **Verify chain** to recompute the chain (`GET /api/v1/audit/verify`). The result shows the number of broken links, or **Tamper detected**, and earlier runs are listed under **Verify history**. Entries written before the chain existed are reported as warnings and skipped.
+Click **Verify chain** to recompute the chain (`GET /api/v1/audit/verify`). The check stops at the first broken link and shows it (**Tamper detected**), or reports the chain intact, and earlier runs are listed under **Verify history**. Entries written before the chain existed are reported as warnings and skipped.
 
 Verification starts from the first chained entry in the table. It doesn't check that entry against the genesis file, so someone who can rewrite the whole table can rebuild a valid chain. To make the log tamper-evident in practice, copy `audit-genesis.sha256` somewhere the server can't write, and forward entries to an external system with the webhook below.
 
@@ -39,7 +39,7 @@ Set under **Retention policy** on the **Audit log** page:
 |---|---|
 | **Keep forever** | Nothing is pruned (default) |
 | **Prune after N days** | Older entries are deleted |
-| **Archive after N days** | Older entries are written to an NDJSON file in a local directory (default `./data/audit-archive`), then deleted |
+| **Archive after N days** | Older entries are written to an NDJSON file in a local directory (the page pre-fills `/var/lib/dockmesh/audit-archive`; without a directory the server uses `./data/audit-archive`), then deleted |
 | **Archive to backup target** | Older entries are written to a saved backup target, then deleted |
 
 Retention runs daily at 03:00 server time, or right away with the run-now button. The page shows how many entries would be pruned. After pruning, Dockmesh writes an `audit.chain_bridge` entry so the remaining chain still verifies.
@@ -48,9 +48,9 @@ Retention runs daily at 03:00 server time, or right away with the run-now button
 
 Under **Webhook receiver**, set a URL. Dockmesh then POSTs every new entry as JSON (`id`, `ts`, `user_id`, `username`, `action`, `target`, `details`, `row_hash`).
 
-- **Forward only** limits forwarding to certain actions. `stack` matches `stack` and every `stack.*` action, and a trailing `*` matches by prefix.
+- **Forward only** limits forwarding to certain actions. `stack` matches only the action `stack`, `stack.*` matches `stack` and every `stack.<x>` action, and any other trailing `*` matches by prefix.
 - If you set a secret, each request carries `X-Audit-Signature: sha256=<hex>`, an HMAC-SHA256 of the request body with that secret. Check it on the receiver.
-- Deliveries are retried up to 5 times with backoff starting at 500 ms, with a 10-second timeout per attempt. The queue holds 256 entries. When it's full, the oldest are dropped.
+- Each delivery is tried up to 5 times in total, with backoff starting at 500 ms, with a 10-second timeout per attempt. The queue holds 256 entries. When it's full, the oldest are dropped.
 - Use the test button to send a sample entry.
 
 The secret is stored unencrypted in the database. Use a dedicated secret for this webhook.

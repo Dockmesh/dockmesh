@@ -13,7 +13,7 @@ Dockmesh checks whether the images of your running containers have a newer versi
 <!-- update after: updater: recreate stack containers via compose, keep volumes -->
 - Every 30 minutes, Dockmesh lists the running containers on the local host and compares each image's local digest with the registry's current digest for the same tag.
 - The registry is queried without credentials. Images from private registries show an error instead of a result.
-- Images you built locally have no registry digest and can show up as updatable even when nothing changed.
+- Images you built locally show an error, or show up as updatable if an image with the same name and tag exists in the registry.
 - Results are kept in memory. After a server restart, the first check runs again and can post the same notifications again.
 - Containers on agent hosts aren't checked.
 
@@ -32,7 +32,7 @@ Dockmesh then:
 3. stops and removes the container and creates a new one with the same name, configuration, host config and networks, using the new image,
 4. records the change in the container's update history.
 
-If the pulled image is identical to the running one, nothing is recreated. If creating the new container fails, the old one is already gone and has to be restored by redeploying the stack or rolling back. There's no health check or scan gate before the swap.
+If the pulled image is identical to the running one, nothing is recreated. If creating the new container fails, the old one is already gone and its rollback tag is removed, so redeploy the stack to restore it. There's no health check or scan gate before the swap.
 
 Because the container is replaced outside compose, the stack's `compose.yaml` doesn't change. The next stack deploy recreates the container from `compose.yaml` again, with whatever image that tag resolves to.
 

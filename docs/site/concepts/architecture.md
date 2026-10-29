@@ -48,7 +48,7 @@ Dockmesh splits state between the filesystem and the database on purpose.
 **On the filesystem (source of truth for what runs):**
 
 - Stack definitions: `<stacks root>/<name>/compose.yaml`, the stack's `.env` or encrypted `.env.age`, optional `compose.<env>.yaml` override files and `.dockmesh.meta.json`. The stacks root is `DOCKMESH_STACKS_ROOT` (default `./stacks`). See [Stacks](./stacks.md).
-- The data directory, which is the directory containing the database file. It holds the internal CA and server certificate for agents and the git-source cache (`git-cache/`). The JWT secret (`secrets.env`, `DOCKMESH_SECRETS_PATH`), the age key used to encrypt stack secrets (`secrets.age-key`, `DOCKMESH_SECRETS_KEY_PATH`) and the default local backup target (`./data/backups`) are in `./data` by default too, but their paths do not follow `DOCKMESH_DB_PATH`.
+- The data directory, which is the directory containing the database file. It holds the internal CA and server certificate for agents and the git-source cache (`git-cache/`). The JWT secret (`secrets.env`, `DOCKMESH_SECRETS_PATH`) and the age key used to encrypt stack secrets (`secrets.age-key`, `DOCKMESH_SECRETS_KEY_PATH`) are in `./data` by default too, but their paths do not follow `DOCKMESH_DB_PATH`. The default local backup target `./data/backups` is relative to the server's working directory (see [Backups](../operations/backups.md)).
 
 **In SQLite (runtime and management state):**
 

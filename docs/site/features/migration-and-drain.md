@@ -27,9 +27,10 @@ The stack has to be deployed already, and the target must differ from its curren
 | `source_metrics` | The source host's CPU and memory can be read |
 | `target_capacity` | Free memory on the target is at least 1.2× the memory in use on the source host |
 | `target_disk` | Free disk on the target is at least 1.1× the disk in use on the source host |
-| `arch_match` | Source and target CPU architecture are the same, when both are known |
+| `images` | The stack's compose file can be read and parsed. Images missing on the target are listed but don't fail the check |
+| `arch_match` | Always passes: the architecture of agent hosts isn't read, so it is never actually compared |
 
-The capacity and disk checks compare against the whole source host, not just the stack. Migrating off a busy host onto a smaller one can fail them even when the stack itself is small. Ports, image availability and Docker version aren't checked up front. Problems there show up when the stack starts on the target.
+The capacity and disk checks compare against the whole source host, not just the stack. Migrating off a busy host onto a smaller one can fail them even when the stack itself is small. Ports and Docker version aren't checked up front, and missing images only produce a note. Problems there show up when the stack starts on the target.
 
 ### Phases
 
@@ -45,9 +46,9 @@ The capacity and disk checks compare against the whole source host, not just the
 | `health_check` | Waits up to 5 minutes for every container to be running |
 | `committing` | The stack is recorded as deployed on the target |
 
-The stack is down from `stopping` until the target containers are running. If `starting`, `post_restore` or `health_check` fails, Dockmesh redeploys the stack on the source automatically. A failure in an earlier phase leaves the stack stopped on the source. Deploy it again from the stack page.
+The stack is down from `stopping` until the target containers are running. If `starting`, `post_restore` or `health_check` fails, Dockmesh redeploys the stack on the source automatically. A failure before `stopping` leaves the stack running on the source. A failure in `stopping` or `syncing` leaves it stopped there; deploy it again from the stack page.
 
-Hooks are read from the `migration` section of the stack's `.dockmesh.meta.json` (`pre_dump`, `post_restore`). Their exit codes aren't checked, so a failing hook doesn't stop the migration.
+Hooks are read from the `migration` section of the stack's `.dockmesh.meta.json` (`pre_dump`, `post_restore`). A hook runs with `sh -c` in the first running container of the stack. Its exit code isn't checked, but the migration fails if no running container is found or the command can't be started.
 
 A server restart during a migration marks it failed. It doesn't resume.
 
@@ -65,7 +66,7 @@ A drain migrates every stack deployed on a host to the other online hosts.
 2. Review the plan: each stack with its proposed target.
 3. Click **Begin drain**. The button is only enabled when every stack in the plan is feasible.
 
-The local host can't be drained. Draining needs `hosts.update`, and each migration in it needs the same conditions as a manual one.
+The UI doesn't offer a drain for the local host. Draining needs `hosts.update`, and each migration in it needs the same conditions as a manual one.
 
 ### How the plan is made
 

@@ -44,7 +44,7 @@ On every SSO sign-in, Dockmesh works out the user's role and overwrites the role
 
 **SAML, OAuth2 and LDAP** use the group mapping list in the provider dialog: each entry maps a group value to a role. The user gets the default role, or the role of a mapped group they belong to. If a user is in several mapped groups, the last match in the order the provider sends them wins, so avoid overlapping mappings.
 
-**OIDC** ignores the group mapping list, even though the dialog shows it. Its role comes from three provider fields only:
+**OIDC** keeps only two entries of the group mapping list: on save, the first entry mapped to `admin` is stored as `admin_group` and the first mapped to `operator` as `operator_group`. Entries for other roles are discarded. The role comes from these fields:
 
 | Field | Result |
 |---|---|
@@ -52,12 +52,12 @@ On every SSO sign-in, Dockmesh works out the user's role and overwrites the role
 | `operator_group` | Members get `operator`, unless they're also in `admin_group` |
 | `default_role` | Everyone else (default `viewer`) |
 
-`admin_group` and `operator_group` aren't in the dialog. Set them through the API with `PUT /api/v1/oidc/providers/{id}`. Without them, every OIDC user gets the default role.
+Without an `admin` or `operator` mapping, every OIDC user gets the default role.
 
 ## Security notes
 
 <!-- update after: sso: link by email only when verified and allowed, keep manual roles -->
-When an SSO sign-in comes in, Dockmesh looks for an existing account with the same provider subject or the same e-mail address. It doesn't check whether the provider verified that address. If a provider lets users set their own e-mail, someone can sign in there with an admin's address and take over the matching Dockmesh account, including its role until the next mapping overwrites it. Accounts that don't exist yet are always created, regardless of the **Auto-create accounts on first SSO sign-in** toggle.
+When an SSO sign-in comes in, Dockmesh looks for an existing account with the same provider subject or the same e-mail address. It doesn't check whether the provider verified that address. If a provider lets users set their own e-mail, someone can sign in there with an admin's address and take over the matching Dockmesh account. Its role is replaced by the provider's mapped role on that sign-in, but the account, its host-tag scope and its history stay. Accounts that don't exist yet are always created, regardless of the **Auto-create accounts on first SSO sign-in** toggle.
 
 SSO sign-ins skip the Dockmesh second factor and the local account lockout. The provider is fully responsible for authenticating the user.
 
