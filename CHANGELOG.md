@@ -86,6 +86,21 @@ see Upgrade notes.
   restored. An interrupted rotation no longer leaves the server without a usable key.
 
 ### Security
+- GHSA-22fg-hmg7-9x6w (high): Half-finished two-factor login could turn two-factor authentication off
+- GHSA-hxmj-9372-56xx (high): WebSocket connections ignored the caller's role and host scope
+- GHSA-h34h-wr2v-w89h (moderate): Scope restrictions were not applied to several read endpoints
+- GHSA-m2fv-5hrc-8xjh (high): Users who may edit users, invites or roles could grant themselves any permission
+- GHSA-26g2-j8h2-jc69 (critical): A Host Admin could reach all secrets through the system backup
+- GHSA-6pcr-2hh4-gwg9 (moderate): Backup archives could be downloaded by every role
+- GHSA-62wv-8jrc-cww7 (high): Symlinks could lead volume browsing, restore and Git sources out of their directory
+- GHSA-9qxm-6p2m-77ch (high): Backup restore accepted a host path as its target
+- GHSA-8mf8-c6qw-xc7j (moderate): Git webhooks could be triggered without authentication
+- GHSA-46r3-rjv8-79g8 (high): The setup wizard could be reopened and misused after a reinstall
+- GHSA-7r93-wr7q-hv2p (high): Client address headers were trusted from anyone and several sign-in paths had no rate limit
+- GHSA-3p82-vprr-2m4p (high): Agents accepted any server during enrollment and did not verify self-upgrades
+- GHSA-j4wx-v546-r4fj (high): SFTP backup targets did not verify the server's host key
+- GHSA-x6v3-qvjw-56xq (high): Backup hooks could run commands in containers outside the creator's permissions
+- GHSA-q2m7-rqw3-3hrp (high): Single sign-on attached logins to existing accounts by email alone
 - Dockmesh is now built with Go 1.27.3, and its Go dependencies (including the SSH, HTTP/2,
   Git, JWT, SAML signature and Docker client libraries) are updated to versions that fix
   the known vulnerabilities in code Dockmesh calls. The previous release was built with Go
