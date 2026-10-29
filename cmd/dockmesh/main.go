@@ -637,6 +637,7 @@ func main() {
 		return syncSeededRootsNotice(ctx, n, settingsStore)
 	})
 	noticesSvc.Register(saml.RekeyNoticeKey, samlSvc.SyncRekeyNotice)
+	noticesSvc.RegisterRefresh(saml.RekeyNoticeKey, samlSvc.SyncRekeyNotice)
 	noticesSvc.Register("backups.system-job-path", func(ctx context.Context, n *notices.Service) error {
 		return raiseSystemPathNotice(ctx, n, sysPathFrom, sysPathTo)
 	})

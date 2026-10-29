@@ -54,6 +54,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ### Fixed
 
+- The notice about SAML accounts waiting for their re-key now disappears once the re-key
+  window has passed, without restarting the server.
 - Opening an image that was never scanned no longer logs a 404 error in the browser console;
   `GET /images/{id}/scan` now answers 200 with `{"scanned": false}`.
 - The agent logs the verified SHA-256 of a downloaded upgrade binary before replacing itself.
