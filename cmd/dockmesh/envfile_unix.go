@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
+	"strconv"
 	"syscall"
 )
 
@@ -26,11 +28,18 @@ func readTrustedEnvFile(path string) ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("%w: cannot determine owner", errUntrustedEnvFile)
 	}
-	if st.Uid != 0 && int(st.Uid) != os.Getuid() {
+	if st.Uid != 0 && int(st.Uid) != os.Getuid() && !isServiceUser(st.Uid) {
 		return nil, fmt.Errorf("%w: owned by uid %d", errUntrustedEnvFile, st.Uid)
 	}
 	if fi.Mode().Perm()&0o022 != 0 {
 		return nil, fmt.Errorf("%w: writable by group or others", errUntrustedEnvFile)
 	}
 	return io.ReadAll(f)
+}
+
+// isServiceUser lets root keep reading the file the installer wrote for the
+// dockmesh service account.
+func isServiceUser(uid uint32) bool {
+	u, err := user.Lookup("dockmesh")
+	return err == nil && u.Uid == strconv.FormatUint(uint64(uid), 10)
 }
