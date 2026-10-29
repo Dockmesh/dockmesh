@@ -71,6 +71,27 @@ import (
 //go:embed all:web_dist
 var webDist embed.FS
 
+// loadedEnvFile is the env file loadEnvFileFromArgs read, empty when the
+// environment came from elsewhere (systemd's EnvironmentFile=, a shell).
+var loadedEnvFile string
+
+// serverEnvFile names the env file this server most likely runs with: the
+// one loaded from --env-file or the default location, else the file
+// install.sh writes next to the data dir. Empty when neither is known.
+func serverEnvFile(dbPath string) string {
+	if loadedEnvFile != "" {
+		return loadedEnvFile
+	}
+	if dbPath == "" {
+		return ""
+	}
+	guess := filepath.Clean(filepath.Join(filepath.Dir(dbPath), "..", "dockmesh.env"))
+	if _, err := os.Stat(guess); err == nil {
+		return guess
+	}
+	return ""
+}
+
 // loadEnvFileFromArgs scans os.Args for --env-file=PATH or
 // --env-file PATH, loads that file as KEY=VALUE env vars (skipping
 // `#`-prefixed comments + blank lines), and strips the flag out of
@@ -134,6 +155,7 @@ func loadEnvFileFromArgs() error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
+	loadedEnvFile = path
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -296,20 +318,19 @@ func main() {
 		}
 	}
 
-	// P.14.1: setup-mode state. Active when no admin user exists in the
-	// DB, or when the force-flag pins it on. Used by the gating
+	// Setup-mode state. Active when no admin user exists in the
+	// DB; the force flag never reopens it over an admin. Used by the gating
 	// middleware to redirect a freshly-installed server's URL to /setup
 	// instead of the login screen.
-	setupState, err := setup.NewFromDB(ctx, database)
+	setupState, setupForceIgnored, err := setup.NewForBoot(ctx, database, cfg.SetupForce)
 	if err != nil {
 		slog.Error("setup state init failed", "err", err)
 		os.Exit(1)
 	}
-	if cfg.SetupForce {
-		// Pin active even if an admin exists (used during dev for the
-		// wizard, never normal-operation). Status output makes this
-		// visible.
-		setupState = setup.NewForced()
+	setupEnvFile := serverEnvFile(cfg.DBPath)
+	if setupForceIgnored {
+		slog.Warn("DOCKMESH_SETUP_FORCE ignored: an admin account exists, the setup wizard stays closed — remove the flag from the env file",
+			"env_file", setupEnvFile)
 	}
 	if setupState.Active() {
 		slog.Warn("server starting in setup-mode — finish the install wizard at /setup",
@@ -633,6 +654,7 @@ func main() {
 	})
 	noticesSvc.Register("api-tokens.legacy", apiTokensSvc.SyncLegacyNotice)
 	noticesSvc.Register("backups.job-name-collision", backupSvc.SyncNameCollisionNotice)
+	noticesSvc.Register(setup.ForceIgnoredNoticeKey, setup.ForceNoticeCheck(setupForceIgnored, setupEnvFile))
 
 	// Wire the registries service into every code path that pulls an
 	// image. Without this, compose deploys + the "update image" button
@@ -834,42 +856,28 @@ func main() {
 	// warnings for the user-create and admin-create steps.
 	setupCommit := func(commitCtx context.Context, in setup.CommitInput, emit func(step, msg, status string)) error {
 		// Step 1 — service user. Skips entirely when we're not root,
-		// because both useradd and usermod need root and the wizard
-		// usually runs as the dockmesh user (non-root). The install
-		// script that ships in P.14.5 creates the user BEFORE starting
-		// the service, so first-install operators never hit this path.
-		// During re-runs we also skip the docker-group add when the
-		// user is already in the group, instead of running usermod
-		// only to log a no-op or a permission failure.
+		// because useradd needs root and the wizard usually runs as the
+		// dockmesh user (non-root). The install script creates the user
+		// before starting the service, so first-install operators never
+		// hit this path. Only a user created right here is added to the
+		// docker group: the wizard is unauthenticated, and docker group
+		// membership is root-equivalent, so it never grants that to an
+		// account that already exists.
 		isRoot := os.Geteuid() == 0
 		if in.ServiceUser.Mode == "create" {
 			if !isRoot {
 				emit("user.create", "skipping — wizard process is not root, install script handles user creation", "warn")
 			} else {
 				emit("user.create", "creating system user '"+in.ServiceUser.Username+"'", "info")
-				if err := setup.CreateSystemUser(in.ServiceUser.Username, in.ServiceUser.AddDocker); err != nil {
+				if err := setup.CreateSystemUser(in.ServiceUser.Username, in.AddsToDockerGroup()); err != nil {
 					emit("user.create", err.Error(), "fail")
 					return err
 				}
 				emit("user.create", "system user created", "ok")
 			}
-		} else if in.ServiceUser.AddDocker {
-			// Existing-user path: only run usermod if the user isn't
-			// already a docker-group member, and only when root.
-			check := setup.CheckSystemUser(in.ServiceUser.Username)
-			switch {
-			case check.InDockerGroup:
-				emit("user.docker_group", in.ServiceUser.Username+" is already in docker group", "ok")
-			case !isRoot:
-				emit("user.docker_group", "skipping — wizard process is not root, add "+in.ServiceUser.Username+" to docker group manually if needed", "warn")
-			default:
-				emit("user.docker_group", "adding "+in.ServiceUser.Username+" to docker group", "info")
-				if err := setup.AddToDockerGroup(in.ServiceUser.Username); err != nil {
-					emit("user.docker_group", err.Error(), "warn")
-				} else {
-					emit("user.docker_group", "added to docker group", "ok")
-				}
-			}
+		} else if check := setup.CheckSystemUser(in.ServiceUser.Username); !check.InDockerGroup {
+			emit("user.docker_group", in.ServiceUser.Username+" is not in the docker group — run 'sudo usermod -aG docker "+
+				in.ServiceUser.Username+"' if it needs Docker access", "warn")
 		}
 
 		// Step 2 — data directory. We only ensure existence + ownership;
@@ -914,8 +922,12 @@ func main() {
 		// exists in the DB), the next service restart should NOT
 		// re-enter setup mode — drop the flag so a regular boot lands
 		// the operator on the login screen.
-		envPath := filepath.Join(filepath.Dir(cfg.DBPath), "..", "dockmesh.env")
-		if cleaned, derr := scrubEnvFlag(envPath, "DOCKMESH_SETUP_FORCE"); derr == nil && cleaned {
+		envPath := serverEnvFile(cfg.DBPath)
+		if envPath == "" {
+			if cfg.SetupForce {
+				emit("setup_flag", "env file not located — remove DOCKMESH_SETUP_FORCE from it manually (default "+setup.DefaultEnvFile+")", "warn")
+			}
+		} else if cleaned, derr := scrubEnvFlag(envPath, "DOCKMESH_SETUP_FORCE"); derr == nil && cleaned {
 			emit("setup_flag", "removed DOCKMESH_SETUP_FORCE from "+envPath+" — next boot will not re-enter setup mode", "ok")
 		} else if derr != nil {
 			emit("setup_flag", "could not scrub setup flag: "+derr.Error()+" (manual edit may be needed)", "warn")

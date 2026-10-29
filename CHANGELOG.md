@@ -175,6 +175,20 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   `compose.yaml` aren't copied to agents yet. A bind of the whole stack directory (`.:/app`)
   mounts it read-write like docker compose does, and the stack page warns that the container
   can change `compose.yaml` and `.env`.
+- The setup wizard's connection test only reaches public addresses and this server's own
+  address on its web port, 80 or 443, so it can no longer be used to probe the internal
+  network, local services or cloud metadata.
+  The wizard runs one install at a time, its check endpoints stop answering when the setup
+  window closes, and it reopens only when no account can administer Dockmesh (custom roles
+  included). It no longer adds an existing system account to the `docker` group; only an
+  account the wizard creates itself is added.
+- Reinstalling over an existing install no longer reopens the setup wizard to anyone who can
+  reach the server. `DOCKMESH_SETUP_FORCE=true` in the env file is now ignored once an admin
+  account exists, and admins get a notice to remove it; the wizard also refuses to finish if
+  an admin was created in the meantime. The installer only writes that flag on a host without
+  an earlier install, keeps a copy of an existing env file as `dockmesh.env.bak` (or
+  `dockmesh.env.bak.<timestamp>.<n>` if a backup is already there), and refuses to write
+  through symlinks in the data directory.
 
 ### Upgrade notes
 - [re-login, all] Everyone is signed out once by the upgrade and has to sign in again. The
@@ -220,3 +234,6 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   polling and manual sync keep working. A notice lists the affected stacks. To keep using a
   webhook, edit the stack's git source, set a webhook secret and enter the same secret in the
   webhook settings of your git provider.
+- [setup-force-flag, admins] If a notice says the setup flag was ignored, delete the
+  `DOCKMESH_SETUP_FORCE=true` line from the env file it names (by default
+  `/var/lib/dockmesh/dockmesh.env`) and restart Dockmesh. The notice goes away after the restart.
