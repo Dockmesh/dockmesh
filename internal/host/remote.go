@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"io"
 
+	dtypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/system"
-	dtypes "github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/volume"
 )
 
 // RemoteHost proxies operations to a connected agent over its WebSocket
@@ -158,7 +158,7 @@ type remoteExecSession struct {
 	stream *agents.Stream
 }
 
-func (s *remoteExecSession) Read(p []byte) (int, error)  { return s.stream.Read(p) }
+func (s *remoteExecSession) Read(p []byte) (int, error) { return s.stream.Read(p) }
 func (s *remoteExecSession) Write(p []byte) (int, error) {
 	if err := s.stream.WriteFrame(p); err != nil {
 		return 0, err
@@ -346,7 +346,9 @@ func (h *RemoteHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser,
 }
 
 // dockerMuxStripper demuxes docker's attach-stream format: repeating
-//   [stream_id(1), 0, 0, 0, size(4 BE)] + <size bytes>
+//
+//	[stream_id(1), 0, 0, 0, size(4 BE)] + <size bytes>
+//
 // across arbitrary chunk boundaries. Only stream_id=1 (stdout) is
 // forwarded; stderr (stream_id=2) is discarded. Used by RemoteHost
 // backup path.

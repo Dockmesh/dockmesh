@@ -4,9 +4,9 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"context"
 	"errors"
 	"io"
 	"os"
@@ -30,10 +30,10 @@ type fakeHost struct {
 func (f *fakeHost) Pick(string) (hostBackupTarget, error) { return f, nil }
 
 func (f *fakeHost) VolumeTar(_ context.Context, name string) (io.ReadCloser, error) {
-	if err := f.failVol[name]; err != nil {
+	if tarErr := f.failVol[name]; tarErr != nil {
 		// Half an archive, then the error a dying tar would produce.
 		data := f.volumes[name]
-		return io.NopCloser(io.MultiReader(bytes.NewReader(data[:len(data)/2]), errReader{err})), nil
+		return io.NopCloser(io.MultiReader(bytes.NewReader(data[:len(data)/2]), errReader{tarErr})), nil
 	}
 	data, ok := f.volumes[name]
 	if !ok {

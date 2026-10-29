@@ -10,19 +10,19 @@ import (
 
 // Job is one row of backup_jobs.
 type Job struct {
-	ID             int64      `json:"id"`
-	Name           string     `json:"name"`
-	HostID         string     `json:"host_id,omitempty"`
-	TargetType     string     `json:"target_type"`
-	TargetConfig   any        `json:"target_config"`
-	Sources        []Source   `json:"sources"`
-	Schedule       string     `json:"schedule"`
-	RetentionCount int        `json:"retention_count"`
-	RetentionDays  int        `json:"retention_days"`
-	Encrypt        bool       `json:"encrypt"`
-	PreHooks       []Hook     `json:"pre_hooks"`
-	PostHooks      []Hook     `json:"post_hooks"`
-	Enabled        bool       `json:"enabled"`
+	ID             int64    `json:"id"`
+	Name           string   `json:"name"`
+	HostID         string   `json:"host_id,omitempty"`
+	TargetType     string   `json:"target_type"`
+	TargetConfig   any      `json:"target_config"`
+	Sources        []Source `json:"sources"`
+	Schedule       string   `json:"schedule"`
+	RetentionCount int      `json:"retention_count"`
+	RetentionDays  int      `json:"retention_days"`
+	Encrypt        bool     `json:"encrypt"`
+	PreHooks       []Hook   `json:"pre_hooks"`
+	PostHooks      []Hook   `json:"post_hooks"`
+	Enabled        bool     `json:"enabled"`
 	// NeedsReview is true when the job was auto-created by an older
 	// version of dockmesh and the operator has not yet confirmed they
 	// want to keep it. New installs never set this. P.13.2.
@@ -31,11 +31,11 @@ type Job struct {
 	// ReviewAcked stays true forever once the operator clears the
 	// review (Keep / Disable). Used by the boot-time migration to
 	// skip jobs that were already reviewed in a previous boot.
-	ReviewAcked bool `json:"-"`
-	LastRunAt    *time.Time `json:"last_run_at,omitempty"`
-	NextRunAt    *time.Time `json:"next_run_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ReviewAcked bool       `json:"-"`
+	LastRunAt   *time.Time `json:"last_run_at,omitempty"`
+	NextRunAt   *time.Time `json:"next_run_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // JobInput is the create/update payload from the API.
@@ -130,5 +130,5 @@ var (
 	// ErrEncryptUnavailable refuses encrypted backups while the secrets
 	// service is disabled: the archive would be written in plaintext.
 	ErrEncryptUnavailable = errors.New("encryption needs secrets encryption enabled on the server (DOCKMESH_SECRETS_ENCRYPT_ENV)")
-	ErrRunNotFound       = errors.New("run not found")
+	ErrRunNotFound        = errors.New("run not found")
 )
