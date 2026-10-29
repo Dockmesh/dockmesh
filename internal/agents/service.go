@@ -45,8 +45,13 @@ type Agent struct {
 	CertFingerprint string     `json:"cert_fingerprint,omitempty"`
 	LastSeenAt      *time.Time `json:"last_seen_at,omitempty"`
 	OnlineSince     *time.Time `json:"online_since,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	CertExpiresAt   *time.Time `json:"cert_expires_at,omitempty"`
+	// ProtocolVersion and UpdateRecommended describe the live session
+	// and are only set while the agent is online.
+	ProtocolVersion   int       `json:"protocol_version,omitempty"`
+	UpdateRecommended bool      `json:"update_recommended,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // CreateResult is what the admin sees right after creating an agent — the
@@ -96,10 +101,15 @@ type ConnectedAgent struct {
 	Name     string
 	Hello    HelloPayload
 	JoinedAt time.Time
-	send     chan Frame
-	// closeConn closes the underlying socket; the read loop then exits
-	// and markOffline removes the agent from the registry.
+	// send is never closed: senders select on done instead, so a frame
+	// sent after the session ended fails rather than panics.
+	send      chan Frame
+	done      chan struct{}
+	closeOnce sync.Once
 	closeConn func()
+	// certNotAfter is the expiry of the client cert this session
+	// authenticated with.
+	certNotAfter time.Time
 
 	pendingMu sync.Mutex
 	pending   map[string]chan Frame
@@ -108,17 +118,112 @@ type ConnectedAgent struct {
 	streams   map[string]*Stream
 }
 
+var (
+	ErrAgentGone     = errors.New("agent disconnected")
+	ErrSendQueueFull = errors.New("agent send queue full")
+)
+
+// enqueueTimeout caps how long a sender waits for room in the outbound
+// queue of a live but stalled connection.
+var enqueueTimeout = 10 * time.Second
+
+func newConnectedAgent(id, name string, closeConn func()) *ConnectedAgent {
+	return &ConnectedAgent{
+		ID:        id,
+		Name:      name,
+		JoinedAt:  time.Now(),
+		send:      make(chan Frame, 32),
+		done:      make(chan struct{}),
+		closeConn: closeConn,
+	}
+}
+
+// Done is closed once the session has ended.
+func (c *ConnectedAgent) Done() <-chan struct{} { return c.done }
+
+// shutdown ends the session: senders and waiters unblock and the socket
+// closes, which makes the read loop return.
+func (c *ConnectedAgent) shutdown() {
+	c.closeOnce.Do(func() {
+		close(c.done)
+		if c.closeConn != nil {
+			c.closeConn()
+		}
+	})
+}
+
+// Supports reports whether the agent advertised capability name in its
+// hello. Agents that predate capability negotiation advertise none.
+func (c *ConnectedAgent) Supports(name string) bool {
+	for _, have := range c.Hello.Capabilities {
+		if have == name {
+			return true
+		}
+	}
+	return false
+}
+
+// UpdateRecommended is true for agents speaking an older protocol than
+// this server; features they lack are skipped or fail with a clear error.
+func (c *ConnectedAgent) UpdateRecommended() bool {
+	return c.Hello.ProtocolVersion < ProtocolVersion
+}
+
 func (c *ConnectedAgent) Send(f Frame) {
 	select {
+	case <-c.done:
 	case c.send <- f:
 	default:
 		// Drop on full — the agent will time out and reconnect.
 	}
 }
 
+// enqueue queues f for the outbound pump. It fails once the session has
+// ended, the context is done or the queue stayed full for enqueueTimeout.
+func (c *ConnectedAgent) enqueue(ctx context.Context, f Frame) error {
+	select {
+	case <-c.done:
+		return ErrAgentGone
+	default:
+	}
+	t := time.NewTimer(enqueueTimeout)
+	defer t.Stop()
+	select {
+	case c.send <- f:
+		return nil
+	case <-c.done:
+		return ErrAgentGone
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return ErrSendQueueFull
+	}
+}
+
+// requestTimeout bounds the wait for an agent's answer when the caller's
+// context has no earlier deadline. Deploys and scale-ups pull images and
+// exec_run carries backup pre-hooks such as database dumps, so they get
+// far more room than plain reads.
+func requestTimeout(frameType string) time.Duration {
+	switch frameType {
+	case FrameReqContainerExecRun:
+		return 30 * time.Minute
+	case FrameReqStackDeploy, FrameReqStackScale:
+		return 15 * time.Minute
+	case FrameReqAgentUpgrade:
+		return 11 * time.Minute
+	case FrameReqContainerStop, FrameReqContainerRestart, FrameReqContainerRemove,
+		FrameReqStackStop, FrameReqImageRemove, FrameReqImagePrune, FrameReqStackCheckScale:
+		return 3 * time.Minute
+	default:
+		return 30 * time.Second
+	}
+}
+
 // Request sends a request frame and blocks until a response with the
-// matching ID arrives, the context is cancelled, or the request times
-// out (30s). The frame's ID is overwritten with a fresh UUID.
+// matching ID arrives, the context is cancelled, the session ends or the
+// per-type timeout passes. On cancel or timeout the agent is told to
+// abandon the request. The frame's ID is overwritten with a fresh UUID.
 func (c *ConnectedAgent) Request(ctx context.Context, f Frame) (*ResponseEnvelope, error) {
 	ctx, span := rpcTracer.Start(ctx, "agent.rpc",
 		trace.WithSpanKind(trace.SpanKindClient),
@@ -128,6 +233,9 @@ func (c *ConnectedAgent) Request(ctx context.Context, f Frame) (*ResponseEnvelop
 			attribute.String("agent.name", c.Name),
 		))
 	defer span.End()
+
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout(f.Type))
+	defer cancel()
 
 	id := uuid.NewString()
 	f.ID = id
@@ -145,11 +253,9 @@ func (c *ConnectedAgent) Request(ctx context.Context, f Frame) (*ResponseEnvelop
 		c.pendingMu.Unlock()
 	}()
 
-	select {
-	case c.send <- f:
-	case <-ctx.Done():
-		span.SetStatus(codes.Error, ctx.Err().Error())
-		return nil, ctx.Err()
+	if err := c.enqueue(ctx, f); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("agent request %q: %w", f.Type, err)
 	}
 
 	select {
@@ -166,12 +272,30 @@ func (c *ConnectedAgent) Request(ctx context.Context, f Frame) (*ResponseEnvelop
 			return &env, fmt.Errorf("agent: %s", env.Error)
 		}
 		return &env, nil
+	case <-c.done:
+		span.SetStatus(codes.Error, ErrAgentGone.Error())
+		return nil, fmt.Errorf("agent request %q: %w", f.Type, ErrAgentGone)
 	case <-ctx.Done():
+		c.cancelRemote(id)
 		span.SetStatus(codes.Error, ctx.Err().Error())
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("agent request %q timed out: %w", f.Type, ctx.Err())
+		}
 		return nil, ctx.Err()
-	case <-time.After(30 * time.Second):
-		span.SetStatus(codes.Error, "timeout")
-		return nil, fmt.Errorf("agent request %q timed out", f.Type)
+	}
+}
+
+// cancelRemote asks the agent to abandon request id. Best effort: with a
+// full queue or an agent lacking the capability the request runs to the
+// end and its late response is discarded.
+func (c *ConnectedAgent) cancelRemote(id string) {
+	if !c.Supports(CapRequestCancel) {
+		return
+	}
+	select {
+	case <-c.done:
+	case c.send <- Frame{Type: FrameReqCancel, ID: id}:
+	default:
 	}
 }
 
@@ -323,6 +447,7 @@ func (s *Service) ReissueAllEnrollTokens(ctx context.Context) ([]CreateResult, e
 			   SET enrollment_token_hash = ?,
 			       enrollment_token_expires_at = ?,
 			       cert_fingerprint = NULL,
+			       pending_cert_fingerprint = NULL,
 			       status = 'pending',
 			       updated_at = CURRENT_TIMESTAMP
 			 WHERE id = ?`, hashToken(token), sqliteTime(expires), id); err != nil {
@@ -368,7 +493,7 @@ func (s *Service) createResult(a *Agent, token string, expires time.Time) *Creat
 func (s *Service) List(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, status, version, os, arch, hostname, docker_version,
-		       cert_fingerprint, last_seen_at, online_since, created_at, updated_at
+		       cert_fingerprint, last_seen_at, online_since, cert_expires_at, created_at, updated_at
 		  FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -389,7 +514,7 @@ func (s *Service) List(ctx context.Context) ([]Agent, error) {
 func (s *Service) Get(ctx context.Context, id string) (*Agent, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, status, version, os, arch, hostname, docker_version,
-		       cert_fingerprint, last_seen_at, online_since, created_at, updated_at
+		       cert_fingerprint, last_seen_at, online_since, cert_expires_at, created_at, updated_at
 		  FROM agents WHERE id = ?`, id)
 	a, err := scanAgent(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -422,10 +547,12 @@ func (s *Service) fillStatus(a *Agent) {
 		return
 	}
 	s.mu.RLock()
-	_, ok := s.connected[a.ID]
+	ag, ok := s.connected[a.ID]
 	s.mu.RUnlock()
 	if ok {
 		a.Status = "online"
+		a.ProtocolVersion = ag.Hello.ProtocolVersion
+		a.UpdateRecommended = ag.UpdateRecommended()
 	} else if a.Status != "pending" {
 		a.Status = "offline"
 	}
@@ -456,7 +583,7 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 		return nil, err
 	}
 
-	certPEM, keyPEM, fingerprint, err := s.pki.IssueClientCert(id, 365*24*time.Hour)
+	certPEM, keyPEM, fingerprint, err := s.pki.IssueClientCert(id, ClientCertValidity)
 	if err != nil {
 		return nil, err
 	}
@@ -468,6 +595,8 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 		   SET enrollment_token_hash = NULL,
 		       enrollment_token_expires_at = NULL,
 		       cert_fingerprint = ?,
+		       pending_cert_fingerprint = NULL,
+		       cert_expires_at = ?,
 		       status = 'offline',
 		       hostname = ?,
 		       os = ?,
@@ -479,7 +608,7 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 		   AND enrollment_token_hash = ?
 		   AND enrollment_token_expires_at > ?
 		   AND status != 'revoked'`,
-		fingerprint, req.Hostname, req.OS, req.Arch, req.Version, req.DockerVersion,
+		fingerprint, sqliteTime(s.now().Add(ClientCertValidity)), req.Hostname, req.OS, req.Arch, req.Version, req.DockerVersion,
 		id, tokenHash, now)
 	if err != nil {
 		return nil, err
@@ -489,7 +618,7 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 	}
 	// A re-enrolled host replaces its credential; a session still open
 	// with the old cert must not outlive it or block the new agent.
-	s.sever(id)
+	s.disconnect(id)
 
 	return &EnrollResponse{
 		AgentID:    id,
@@ -506,8 +635,8 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 func (s *Service) LookupByFingerprint(ctx context.Context, fingerprint string) (*Agent, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, status, version, os, arch, hostname, docker_version,
-		       cert_fingerprint, last_seen_at, online_since, created_at, updated_at
-		  FROM agents WHERE cert_fingerprint = ?`, fingerprint)
+		       cert_fingerprint, last_seen_at, online_since, cert_expires_at, created_at, updated_at
+		  FROM agents WHERE cert_fingerprint = ? OR pending_cert_fingerprint = ?`, fingerprint, fingerprint)
 	a, err := scanAgent(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -544,15 +673,30 @@ func (s *Service) markOnline(ctx context.Context, ag *ConnectedAgent, hello Hell
 		       updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ?`,
 		hello.Hostname, hello.OS, hello.Arch, hello.Version, hello.DockerVersion, ag.ID)
-	return err
+	if err != nil {
+		// The caller doesn't defer markOffline on failure, so the entry
+		// would otherwise refuse every later connection as a duplicate.
+		s.mu.Lock()
+		if s.connected[ag.ID] == ag {
+			delete(s.connected, ag.ID)
+		}
+		s.mu.Unlock()
+		return err
+	}
+	return nil
 }
 
 func (s *Service) markOffline(ag *ConnectedAgent) {
 	s.mu.Lock()
-	if cur, ok := s.connected[ag.ID]; ok && cur == ag {
+	cur, ok := s.connected[ag.ID]
+	if ok && cur == ag {
 		delete(s.connected, ag.ID)
 	}
 	s.mu.Unlock()
+	if ok && cur != ag {
+		// A newer session of the same agent is already online.
+		return
+	}
 	// Clear online_since on offline so the next online transition starts
 	// the uptime clock fresh. Compliance + UX both want this behaviour.
 	_, _ = s.db.Exec(`UPDATE agents SET status = 'offline', online_since = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, ag.ID)
@@ -571,26 +715,16 @@ func (s *Service) touchHeartbeat(ctx context.Context, id string) {
 	_, _ = s.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
 }
 
+// disconnect ends the live session of agent id, if any. The entry leaves
+// the registry right away so a replacement session isn't refused as a
+// duplicate while the old read loop winds down.
 func (s *Service) disconnect(id string) {
 	s.mu.Lock()
-	ag, ok := s.connected[id]
-	if ok {
-		delete(s.connected, id)
-	}
+	ag := s.connected[id]
+	delete(s.connected, id)
 	s.mu.Unlock()
 	if ag != nil {
-		close(ag.send)
-	}
-}
-
-// sever closes the live socket of agent id, if any, without touching
-// the send channel that in-flight requests may still write to.
-func (s *Service) sever(id string) {
-	s.mu.RLock()
-	ag := s.connected[id]
-	s.mu.RUnlock()
-	if ag != nil && ag.closeConn != nil {
-		ag.closeConn()
+		ag.shutdown()
 	}
 }
 
@@ -633,9 +767,9 @@ type rowScanner interface {
 func scanAgent(r rowScanner) (*Agent, error) {
 	var a Agent
 	var version, osName, arch, hostname, dockerVersion, fingerprint sql.NullString
-	var lastSeen, onlineSince sql.NullTime
+	var lastSeen, onlineSince, certExpires sql.NullTime
 	if err := r.Scan(&a.ID, &a.Name, &a.Status, &version, &osName, &arch, &hostname,
-		&dockerVersion, &fingerprint, &lastSeen, &onlineSince, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		&dockerVersion, &fingerprint, &lastSeen, &onlineSince, &certExpires, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if version.Valid {
@@ -663,6 +797,10 @@ func scanAgent(r rowScanner) (*Agent, error) {
 	if onlineSince.Valid {
 		t := onlineSince.Time
 		a.OnlineSince = &t
+	}
+	if certExpires.Valid {
+		t := certExpires.Time
+		a.CertExpiresAt = &t
 	}
 	return &a, nil
 }

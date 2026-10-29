@@ -327,7 +327,7 @@ func TestReenrollSeversOldSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	closed := false
-	svc.connected[res.Agent.ID] = &ConnectedAgent{ID: res.Agent.ID, closeConn: func() { closed = true }}
+	svc.connected[res.Agent.ID] = newConnectedAgent(res.Agent.ID, "edge-1", func() { closed = true })
 
 	rot, err := svc.RotateEnrollToken(ctx, res.Agent.ID)
 	if err != nil {

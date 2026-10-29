@@ -43,10 +43,10 @@ const (
 	FrameReqContainerKill    = "req.containers.kill"
 
 	// Resource listings + mutations (server → agent)
-	FrameReqImageList    = "req.images.list"
-	FrameReqImageInspect = "req.images.inspect"
-	FrameReqImageRemove  = "req.images.remove"
-	FrameReqImagePrune   = "req.images.prune"
+	FrameReqImageList      = "req.images.list"
+	FrameReqImageInspect   = "req.images.inspect"
+	FrameReqImageRemove    = "req.images.remove"
+	FrameReqImagePrune     = "req.images.prune"
 	FrameReqNetworkList    = "req.networks.list"
 	FrameReqNetworkInspect = "req.networks.inspect"
 	FrameReqVolumeList     = "req.volumes.list"
@@ -57,7 +57,7 @@ const (
 	// offers "too large, 5.2 MB" + a download button today.
 	FrameReqVolumeBrowse     = "req.volume.browse"
 	FrameReqVolumeBrowseFile = "req.volume.browse_file"
-	FrameReqDaemonInfo  = "req.daemon.info"
+	FrameReqDaemonInfo       = "req.daemon.info"
 
 	// Host-level system metrics (CPU / memory / disk / uptime) for the
 	// dashboard's all-mode System Health panel. Payload is empty; the
@@ -99,6 +99,15 @@ const (
 	FrameReqStackSync   = "req.stack.sync"
 	FrameReqStackDelete = "req.stack.delete"
 
+	// FrameReqCancel tells the agent to abandon the in-flight request
+	// carrying the same ID (the server stopped waiting for it).
+	FrameReqCancel = "req.cancel"
+
+	// FrameAgentCertRenew is the one agent → server request: the agent
+	// sends a CSR over its mTLS session and gets a fresh client cert for
+	// the same host ID back in a res frame.
+	FrameAgentCertRenew = "agent.cert_renew"
+
 	// Single response type. Errors set OK=false and put the message in Error.
 	FrameRes = "res"
 
@@ -111,6 +120,31 @@ const (
 	FrameStreamClose   = "stream.close"   // bidirectional: end the stream
 	FrameStreamControl = "stream.control" // bidirectional: out-of-band ops (resize, signals)
 )
+
+// ProtocolVersion is bumped whenever a frame or capability is added.
+// Agents that report an older version (or none) still work; the server
+// skips what they lack and recommends an update.
+const ProtocolVersion = 2
+
+// Capabilities exchanged in hello / welcome.
+const (
+	CapRequestCancel = "req.cancel"    // agent: honours FrameReqCancel
+	CapStreamCredit  = "stream.credit" // both: credit-based stream flow control
+	CapCertRenew     = "cert.renew"    // server: accepts FrameAgentCertRenew
+)
+
+// Stream control ops beyond the exec "resize".
+const (
+	// StreamOpCredit grants the peer Params["n"] more data frames.
+	StreamOpCredit = "credit"
+	// StreamOpEOF ends the server → agent data direction; the agent
+	// finishes and reports the result in its stream.close.
+	StreamOpEOF = "eof"
+)
+
+// StreamWindow is the number of data frames either side may have in
+// flight per stream before it has to wait for credit.
+const StreamWindow = 64
 
 // StreamOpen is the server → agent payload that requests a new stream.
 // Kind picks the data source on the agent side. Params are kind-specific
@@ -277,13 +311,30 @@ type HelloPayload struct {
 	Arch          string `json:"arch"`
 	Hostname      string `json:"hostname"`
 	DockerVersion string `json:"docker_version,omitempty"`
+	// ProtocolVersion and Capabilities are zero for agents that predate
+	// negotiation.
+	ProtocolVersion int      `json:"protocol_version,omitempty"`
+	Capabilities    []string `json:"capabilities,omitempty"`
 }
 
 // WelcomePayload is the server's reply confirming the agent is registered.
 type WelcomePayload struct {
-	AgentID       string `json:"agent_id"`
-	AgentName     string `json:"agent_name"`
-	ServerVersion string `json:"server_version"`
+	AgentID         string   `json:"agent_id"`
+	AgentName       string   `json:"agent_name"`
+	ServerVersion   string   `json:"server_version"`
+	ProtocolVersion int      `json:"protocol_version,omitempty"`
+	Capabilities    []string `json:"capabilities,omitempty"`
+}
+
+// CertRenewReq carries a PEM CSR for a new client key generated on the
+// agent. The server ignores the CSR subject and keeps the host ID.
+type CertRenewReq struct {
+	CSR string `json:"csr"`
+}
+
+// CertRenewRes is the renewed client cert.
+type CertRenewRes struct {
+	ClientCert string `json:"client_cert"` // PEM
 }
 
 // HeartbeatPayload is sent from the agent on a fixed interval (15s).

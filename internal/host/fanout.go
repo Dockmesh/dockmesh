@@ -79,7 +79,7 @@ func (r *Registry) PickAll(ctx context.Context) []Host {
 		if live == nil {
 			continue
 		}
-		out = append(out, NewRemote(live.ID, live.Name, live))
+		out = append(out, NewRemote(live.ID, live.Name, r.agents))
 	}
 	return out
 }

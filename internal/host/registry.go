@@ -42,7 +42,7 @@ func (r *Registry) Pick(id string) (Host, error) {
 	if live == nil {
 		return nil, ErrAgentOffline
 	}
-	return NewRemote(live.ID, live.Name, live), nil
+	return NewRemote(live.ID, live.Name, r.agents), nil
 }
 
 // List returns all known hosts (local + every registered agent, online or

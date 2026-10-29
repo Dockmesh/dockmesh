@@ -14,24 +14,42 @@ import (
 	"github.com/docker/docker/api/types/volume"
 )
 
-// RemoteHost proxies operations to a connected agent over its WebSocket
-// using the request/response protocol in internal/agents.
-type RemoteHost struct {
-	id    string
-	name  string
-	agent *agents.ConnectedAgent
+// LiveAgents resolves an agent id to its current session, or nil.
+type LiveAgents interface {
+	GetConnected(id string) *agents.ConnectedAgent
 }
 
-func NewRemote(id, name string, ag *agents.ConnectedAgent) *RemoteHost {
-	return &RemoteHost{id: id, name: name, agent: ag}
+// RemoteHost proxies operations to a connected agent over its WebSocket
+// using the request/response protocol in internal/agents. The session is
+// looked up on every call, so a RemoteHost held across a reconnect talks
+// to the new session instead of a dead one.
+type RemoteHost struct {
+	id     string
+	name   string
+	agents LiveAgents
+}
+
+func NewRemote(id, name string, live LiveAgents) *RemoteHost {
+	return &RemoteHost{id: id, name: name, agents: live}
+}
+
+func (h *RemoteHost) live() (*agents.ConnectedAgent, error) {
+	if h.agents == nil {
+		return nil, ErrAgentOffline
+	}
+	if ag := h.agents.GetConnected(h.id); ag != nil {
+		return ag, nil
+	}
+	return nil, ErrAgentOffline
 }
 
 func (h *RemoteHost) ID() string   { return h.id }
 func (h *RemoteHost) Name() string { return h.name }
 
 func (h *RemoteHost) request(ctx context.Context, frameType string, payload any) (json.RawMessage, error) {
-	if h.agent == nil {
-		return nil, ErrAgentOffline
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
 	}
 	var raw json.RawMessage
 	if payload != nil {
@@ -41,7 +59,7 @@ func (h *RemoteHost) request(ctx context.Context, frameType string, payload any)
 		}
 		raw = b
 	}
-	env, err := h.agent.Request(ctx, agents.Frame{Type: frameType, Payload: raw})
+	env, err := ag.Request(ctx, agents.Frame{Type: frameType, Payload: raw})
 	if err != nil {
 		return nil, err
 	}
@@ -111,10 +129,11 @@ func (h *RemoteHost) KillContainer(ctx context.Context, id, signal string) error
 }
 
 func (h *RemoteHost) ContainerLogs(ctx context.Context, id, tail string, follow bool) (io.ReadCloser, error) {
-	if h.agent == nil {
-		return nil, ErrAgentOffline
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
 	}
-	stream, err := h.agent.OpenStream(ctx, "logs", id, map[string]any{
+	stream, err := ag.OpenStream(ctx, "logs", id, map[string]any{
 		"tail":   tail,
 		"follow": follow,
 	})
@@ -125,17 +144,19 @@ func (h *RemoteHost) ContainerLogs(ctx context.Context, id, tail string, follow 
 }
 
 func (h *RemoteHost) ContainerStats(ctx context.Context, id string) (io.ReadCloser, error) {
-	if h.agent == nil {
-		return nil, ErrAgentOffline
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
 	}
-	return h.agent.OpenStream(ctx, "stats", id, nil)
+	return ag.OpenStream(ctx, "stats", id, nil)
 }
 
 func (h *RemoteHost) StartExec(ctx context.Context, id string, cmd []string) (ExecSession, error) {
-	if h.agent == nil {
-		return nil, ErrAgentOffline
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
 	}
-	stream, err := h.agent.OpenStream(ctx, "exec", id, map[string]any{
+	stream, err := ag.OpenStream(ctx, "exec", id, map[string]any{
 		"cmd": cmd,
 		// Sensible TTY defaults; the browser sends a resize as soon as it
 		// has measured xterm.fit so this rarely shows.
@@ -330,10 +351,11 @@ func (h *RemoteHost) VolumeBrowseEntries(ctx context.Context, name, subpath stri
 // The agent ships raw docker hijack bytes (with 8-byte mux headers)
 // so we wrap the stream in a demuxer to recover stdout-only content.
 func (h *RemoteHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser, error) {
-	if h.agent == nil {
-		return nil, fmt.Errorf("agent connection unavailable")
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
 	}
-	s, err := h.agent.OpenStream(ctx, "volume_export", "", map[string]any{"volume": name})
+	s, err := ag.OpenStream(ctx, "volume_export", "", map[string]any{"volume": name})
 	if err != nil {
 		return nil, fmt.Errorf("open volume_export stream: %w", err)
 	}
@@ -408,9 +430,6 @@ func (d *dockerMuxStripper) Close() error {
 // response semantics here; piggy-back on the existing exec-stream but
 // wait for it to close.
 func (h *RemoteHost) ContainerExec(ctx context.Context, containerID string, cmd []string) ([]byte, int, error) {
-	if h.agent == nil {
-		return nil, -1, fmt.Errorf("agent connection unavailable")
-	}
 	data, err := h.request(ctx, agents.FrameReqContainerExecRun,
 		agents.ContainerExecRunReq{Container: containerID, Cmd: cmd, MaxOutputBytes: 1 << 20})
 	if err != nil {
