@@ -310,7 +310,6 @@ type tappedReader struct {
 	io.Closer
 }
 
-
 func buildTarget(typ string, cfg any) (targets.Target, error) {
 	switch typ {
 	case "local":
