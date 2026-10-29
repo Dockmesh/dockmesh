@@ -479,6 +479,9 @@ func (h *Handlers) resolveJobTargetSecrets(ctx context.Context, in *backup.JobIn
 			return errors.New("backup target not found")
 		}
 		if stored.Type == in.TargetType {
+			if len(blank) > 0 && !sameLocation(in.TargetConfig, stored.Config) {
+				return redact.ErrReenter
+			}
 			if in.TargetConfig, err = keepConfig(in.TargetConfig, stored.Config, backupTargetSecrets); err != nil {
 				return err
 			}
@@ -511,4 +514,18 @@ func blankedSecrets(cfg any) []string {
 		}
 	}
 	return out
+}
+
+// targetLocationFields say where in the target data lands; a job that
+// borrows a saved target's secrets may not point them elsewhere.
+var targetLocationFields = []string{"path", "bucket", "prefix", "region", "use_ssl"}
+
+func sameLocation(next, stored any) bool {
+	n, s := redact.ToMap(next), redact.ToMap(stored)
+	for _, k := range targetLocationFields {
+		if fmt.Sprint(n[k]) != fmt.Sprint(s[k]) {
+			return false
+		}
+	}
+	return true
 }

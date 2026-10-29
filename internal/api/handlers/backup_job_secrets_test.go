@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/backup"
@@ -15,7 +14,7 @@ func TestJobFromRedactedTargetKeepsPassword(t *testing.T) {
 	store := targets.NewTargetStore(openRedactionTestDB(t))
 	saved, err := store.Create(ctx, targets.TargetInput{
 		Name: "nas", Type: "smb",
-		Config: map[string]any{"host": "nas", "share": "bk", "username": "u", "password": "s3cret"},
+		Config: map[string]any{"host": "nas", "share": "bk", "username": "u", "password": "s3cret", "path": "backups"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -39,6 +38,7 @@ func TestJobFromRedactedTargetKeepsPassword(t *testing.T) {
 		{"typed password wins", saved.ID, func(m map[string]any) { m["password"] = "new" }, "new", false},
 		{"no target id, redacted copy", 0, nil, "", true},
 		{"other server", saved.ID, func(m map[string]any) { m["host"] = "evil" }, "", true},
+		{"other path", saved.ID, func(m map[string]any) { m["path"] = "elsewhere" }, "", true},
 		{"unknown target", 999, nil, "", true},
 	}
 	for _, tc := range tests {

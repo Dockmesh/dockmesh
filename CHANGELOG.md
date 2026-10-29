@@ -337,15 +337,6 @@ see Upgrade notes.
 
 ### Fixed
 - The SQLite driver is updated. With the old version, a request that a client cancelled at an
-- Backups to an SMB share (for example a Synology NAS) from a Linux server no longer fail with
-  "file does not exist": the `jobs/<job name>` folder is now created on the share before the
-  archive is written, and a restore from SMB no longer hangs on closing the connection. (#53)
-- A backup job created from a saved target in the job wizard no longer fails with a login error
-  (for example "The attempted logon is invalid" on SMB) while the target's connection test
-  succeeds. Since 0.4.0 the wizard copied the target's hidden, empty password into the job; the
-  server now takes the password from the saved target. Jobs created that way on 0.4.0 keep the
-  empty password: open the job once, pick the target again and save (or retype the password
-  inline). (#54)
   unlucky moment (a closed browser tab, a dropped connection) could leave a database connection
   failing every later query until the restart.
 - Notices and other short database writes could fail with "database is locked" while other

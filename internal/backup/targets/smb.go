@@ -230,7 +230,7 @@ type smbWriter struct {
 func (w *smbWriter) Write(p []byte) (int, error) { return w.f.Write(p) }
 
 // Close reports the file's close (the last write reaching the share).
-// Logoff already closes the connection.
+// Logoff closes the connection, so net.ErrClosed from conn.Close is ignored.
 func (w *smbWriter) Close() error {
 	// go-smb2 blocks on a second logoff of the same session.
 	if w.closed {
