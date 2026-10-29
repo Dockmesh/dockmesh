@@ -83,6 +83,9 @@ func main() {
 		case "status":
 			runStatusCmd()
 			return
+		case "compose-spike":
+			runComposeSpike(os.Args[2:])
+			return
 		}
 	}
 

@@ -220,6 +220,9 @@ func main() {
 		case "init":
 			runInitCmd(os.Args[2:])
 			return
+		case "compose-spike":
+			runComposeSpike(os.Args[2:])
+			return
 		case "version", "--version", "-v":
 			fmt.Printf("dockmesh %s (commit %s, built %s)\n", version.Version, version.Commit, version.Date)
 			return
