@@ -153,6 +153,8 @@ type DeployResult struct {
 	Services []ServiceResult  `json:"services"`
 	Networks []ResourceResult `json:"networks,omitempty"`
 	Volumes  []ResourceResult `json:"volumes,omitempty"`
+	// BindCopies lists data moved out of old staging bind mounts.
+	BindCopies []BindCopy `json:"bind_copies,omitempty"`
 }
 
 type ServiceResult struct {
@@ -264,6 +266,15 @@ func (s *Service) DeployProject(ctx context.Context, proj *composetypes.Project)
 		span.RecordError(err)
 		deployErr = err
 		return nil, deployErr
+	}
+
+	// Only after the pull: a failed pull must leave the old containers
+	// and their data untouched.
+	copies, err := s.adoptStagedBindData(ctx, cli, proj)
+	result.BindCopies = copies
+	if err != nil {
+		deployErr = err
+		return result, deployErr
 	}
 
 	// Phase 2 — tear down + recreate per service. Pulls already happened

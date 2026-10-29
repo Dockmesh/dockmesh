@@ -182,6 +182,13 @@ export function allowed(perm: Perm, opts?: AllowOpts): boolean {
   return scopeOK(opts);
 }
 
+/** system.update with no role scope; the backend also rejects callers with user scope tags. */
+export function isAdmin(): boolean {
+  if (!userPerms().includes('system.update')) return false;
+  const s = auth.user?.scopes;
+  return !s || (s.stacks.length === 0 && s.hosts.length === 0 && s.host_tags.length === 0);
+}
+
 /**
  * Reactive helper: use inside $derived so the check re-runs when the user
  * changes. Example: `const canDeploy = $derived(can('stacks.deploy'));`

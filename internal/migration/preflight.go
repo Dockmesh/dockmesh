@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/host"
@@ -30,6 +31,14 @@ func (s *Service) runPreflight(ctx context.Context, m *Migration) (*PreflightRes
 		return result, nil
 	}
 	add("target_online", true, target.Name())
+
+	if vols, err := s.namedVolumes(ctx, m.StackName); err != nil {
+		add("named_volumes", false, err.Error())
+	} else if len(vols) > 0 {
+		add("named_volumes", false, fmt.Sprintf("%s: %s", ErrNamedVolumes.Error(), strings.Join(vols, ", ")))
+	} else {
+		add("named_volumes", true, "no named volumes")
+	}
 
 	// 2. No other active migration for this stack (already checked at
 	//    initiation, but re-verify since we may have been queued).

@@ -18,6 +18,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/hosttags"
 	"github.com/dockmesh/dockmesh/internal/invites"
+	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -250,7 +251,7 @@ func TestArchiveAccess(t *testing.T) {
 			}
 			req = req.WithContext(middleware.WithIdentity(req.Context(), middleware.Identity{UserID: claims.UserID, Role: claims.Role, ScopeTags: claims.ScopeTags}))
 			rr := httptest.NewRecorder()
-			if got := e.h.requireArchiveAccess(rr, req, tt.run); got != tt.want {
+			if got := e.h.requireRunAccess(rr, req, tt.run, rbac.PermBackupsDownload); got != tt.want {
 				var body map[string]any
 				_ = json.Unmarshal(rr.Body.Bytes(), &body)
 				t.Errorf("allowed=%v, want %v (%v)", got, tt.want, body)
@@ -369,5 +370,296 @@ func TestReviewFollowUps(t *testing.T) {
 	rr := e.do(http.MethodPost, "/invite/"+inv.Token+"/accept", "", map[string]any{"username": "mole", "password": testPassword})
 	if rr.Code != http.StatusGone {
 		t.Errorf("accept after creator demotion: %d %s", rr.Code, rr.Body)
+	}
+}
+
+func TestSystemBackupsStayAdminOnly(t *testing.T) {
+	e := newScopeEnv(t)
+	e.router.Group(func(r chi.Router) {
+		r.Use(middleware.NewAuth(e.h.Auth))
+		r.Use(e.h.StackScope)
+		r.With(middleware.RequirePerm(rbac.PermBackupsView)).Get("/backups/runs/{id}/log", e.h.GetBackupRunLog)
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Put("/backups/jobs/{id}", e.h.UpdateBackupJob)
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Post("/backups/jobs/{id}/run", e.h.RunBackupJob)
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Post("/backups/jobs/{id}/review/{mode}", e.h.AcknowledgeBackupJobReview)
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Post("/backups/jobs/{id}/accept-host-key", e.h.AcceptBackupHostKey)
+		r.With(middleware.RequirePerm(rbac.PermBackupsCreate)).Post("/backups/jobs", e.h.CreateBackupJob)
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Put("/backups/system/enabled", e.h.SetBackupEnabled)
+		r.With(middleware.RequirePerm(rbac.PermBackupsDelete)).Delete("/backups/jobs/{id}", e.h.DeleteBackupJob)
+		r.With(middleware.RequirePerm(rbac.PermBackupsRestore)).Post("/backups/runs/{id}/restore", e.h.RestoreBackup)
+		r.With(middleware.RequirePerm(rbac.PermBackupsRestore)).Post("/backups/runs/{id}/restore-stack", e.h.RestoreStackBackup)
+		r.With(middleware.RequirePerm(rbac.PermBackupsRestore)).Post("/backups/runs/{id}/verify", e.h.VerifyBackupRun)
+		r.With(middleware.RequirePerm(rbac.PermBackupsRestore)).Post("/restore/verify", e.h.VerifyUploadedBackup)
+	})
+	for _, stmt := range []string{
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (7, 'sys', 's3', 'local', '[{"type":"system","name":"system"}]')`,
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (1, 'web', 'local', 'local', '[{"type":"stack","name":"web"}]')`,
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (2, 'remote', 'local', 'agent-1', '[{"type":"stack","name":"web"}]')`,
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (3, 'spare', 'local', 'local', '[{"type":"volume","name":"v"}]')`,
+		`INSERT INTO backup_runs (id, job_id, job_name, status, sources_json) VALUES (10, 7, 'sys', 'success', '[{"type":"system","name":"system"}]')`,
+		`INSERT INTO backup_runs (id, job_id, job_name, status, sources_json) VALUES (11, 2, 'remote', 'success', '[{"type":"stack","name":"web"}]')`,
+		`INSERT INTO backup_runs (id, job_id, job_name, status, sources_json) VALUES (12, 1, 'web', 'success', '[{"type":"stack","name":"web"}]')`,
+		`INSERT INTO backup_runs (id, job_id, job_name, status, sources_json) VALUES (13, 1, 'web', 'success', '[{"type":"stack","name":"web"},{"type":"system","name":"system"}]')`,
+	} {
+		if _, err := e.db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.user("boss", "admin")
+	e.user("hadmin", "host-admin")
+	tagged := e.user("thadmin", "host-admin")
+	e.scopeUser(tagged.ID, "prod")
+	e.user("look", "viewer")
+	boss := e.login("boss").AccessToken
+	hadmin := e.login("hadmin").AccessToken
+	thadmin := e.login("thadmin").AccessToken
+	look := e.login("look").AccessToken
+	vol := map[string]string{"dest_volume": "loot"}
+	plainJob := map[string]any{"name": "sys", "target_type": "local", "host_id": "local", "sources": []map[string]string{{"type": "volume", "name": "v"}}}
+	pathJob := map[string]any{"name": "rootfs", "target_type": "s3", "sources": []map[string]string{{"type": "volume", "name": "/"}}}
+	hookJob := map[string]any{"name": "hooked", "target_type": "s3", "sources": []map[string]string{{"type": "volume", "name": "data"}}, "pre_hooks": []map[string]any{{"container": "db", "cmd": []string{"true"}}}}
+	e.role("backupper", []rbac.Perm{rbac.PermBackupsView, rbac.PermBackupsCreate, rbac.PermBackupsUpdate})
+	e.user("bk", "backupper")
+	bk := e.login("bk").AccessToken
+
+	tests := []struct {
+		name, method, path, bearer string
+		body                       any
+		want                       int
+	}{
+		{"host-admin restores system run", http.MethodPost, "/backups/runs/10/restore", hadmin, vol, http.StatusForbidden},
+		{"host-admin stack-restores system run", http.MethodPost, "/backups/runs/10/restore-stack", hadmin, nil, http.StatusForbidden},
+		{"admin restores system run into a volume", http.MethodPost, "/backups/runs/10/restore", boss, vol, http.StatusConflict},
+		{"admin stack-restores system run", http.MethodPost, "/backups/runs/10/restore-stack", boss, nil, http.StatusConflict},
+		{"system source behind a stack source", http.MethodPost, "/backups/runs/13/restore", boss, vol, http.StatusConflict},
+		{"out-of-scope stack restore", http.MethodPost, "/backups/runs/11/restore-stack", thadmin, nil, http.StatusForbidden},
+		{"host-admin toggles system backup", http.MethodPut, "/backups/system/enabled", hadmin, map[string]bool{"enabled": true}, http.StatusForbidden},
+		{"admin toggles system backup", http.MethodPut, "/backups/system/enabled", boss, map[string]bool{"enabled": false}, http.StatusOK},
+		{"host-admin rewrites system job", http.MethodPut, "/backups/jobs/7", hadmin, plainJob, http.StatusForbidden},
+		{"host-admin runs system job", http.MethodPost, "/backups/jobs/7/run", hadmin, nil, http.StatusForbidden},
+		{"host-admin reviews system job", http.MethodPost, "/backups/jobs/7/review/disable", hadmin, nil, http.StatusForbidden},
+		{"host-admin deletes system job", http.MethodDelete, "/backups/jobs/7", hadmin, nil, http.StatusForbidden},
+		{"host-admin deletes own job", http.MethodDelete, "/backups/jobs/3", hadmin, nil, http.StatusNoContent},
+		{"viewer reads system run log", http.MethodGet, "/backups/runs/10/log", look, nil, http.StatusForbidden},
+		{"admin reads system run log", http.MethodGet, "/backups/runs/10/log", boss, nil, http.StatusOK},
+		{"host-admin reads in-scope log", http.MethodGet, "/backups/runs/12/log", hadmin, nil, http.StatusOK},
+		{"scoped host-admin reads remote log", http.MethodGet, "/backups/runs/11/log", thadmin, nil, http.StatusForbidden},
+		{"host-admin verifies system run", http.MethodPost, "/backups/runs/10/verify", hadmin, nil, http.StatusForbidden},
+		{"host-admin verifies an upload", http.MethodPost, "/restore/verify", hadmin, nil, http.StatusForbidden},
+		{"admin verifies an empty upload", http.MethodPost, "/restore/verify", boss, nil, http.StatusBadRequest},
+		{"host-admin accepts system job host key", http.MethodPost, "/backups/jobs/7/accept-host-key", hadmin, nil, http.StatusForbidden},
+		{"admin accepts system job host key", http.MethodPost, "/backups/jobs/7/accept-host-key", boss, nil, http.StatusConflict},
+		{"scoped host-admin accepts remote job host key", http.MethodPost, "/backups/jobs/2/accept-host-key", thadmin, nil, http.StatusForbidden},
+		{"host-admin accepts own job host key", http.MethodPost, "/backups/jobs/1/accept-host-key", hadmin, nil, http.StatusConflict},
+		{"hooks without containers.exec", http.MethodPost, "/backups/jobs", bk, hookJob, http.StatusForbidden},
+		{"volume source is a path", http.MethodPost, "/backups/jobs", boss, pathJob, http.StatusBadRequest},
+		{"update to a path volume source", http.MethodPut, "/backups/jobs/1", boss, map[string]any{"name": "web", "target_type": "s3", "sources": []map[string]string{{"type": "volume", "name": "../etc"}}}, http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr := e.do(tt.method, tt.path, tt.bearer, tt.body)
+			if rr.Code != tt.want {
+				t.Errorf("%d, want %d: %s", rr.Code, tt.want, rr.Body)
+			}
+		})
+	}
+	if _, err := e.h.Backups.GetJob(context.Background(), 7); err != nil {
+		t.Errorf("system job after host-admin delete: %v", err)
+	}
+}
+
+func TestBackupJobsKeepTheirOwnArchives(t *testing.T) {
+	e := newScopeEnv(t)
+	ctx := context.Background()
+	svc := e.h.Backups
+	// A legacy non-system job carrying the default name, created before
+	// names were checked, must not stand in for the system job.
+	for _, stmt := range []string{
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources, enabled) VALUES (1, 'dockmesh-system', 's3', 'local', '[{"type":"volume","name":"v"}]', 1)`,
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources, enabled) VALUES (5, 'nightly', 's3', 'local', '[{"type":"system","name":"dockmesh"}]', 1)`,
+	} {
+		if _, err := e.db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vol := []backup.Source{{Type: "volume", Name: "data"}}
+	sys := []backup.Source{{Type: "system", Name: "dockmesh"}}
+	web, err := svc.CreateJob(ctx, backup.JobInput{Name: "web", TargetType: "s3", Sources: vol})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		id      int64
+		in      backup.JobInput
+		wantErr bool
+	}{
+		{"same folder as another job", 0, backup.JobInput{Name: "Web!", Sources: vol}, true},
+		{"name without letters or digits", 0, backup.JobInput{Name: "!!!", Sources: vol}, true},
+		{"system name on a volume job", 0, backup.JobInput{Name: "Dockmesh-System", Sources: vol}, true},
+		{"system name on a second system job", 0, backup.JobInput{Name: "Dockmesh System", Sources: sys}, true},
+		{"rename onto another job", web.ID, backup.JobInput{Name: "nightly", Sources: vol}, true},
+		{"keep own name", web.ID, backup.JobInput{Name: "web", Sources: vol}, false},
+		{"distinct name", 0, backup.JobInput{Name: "web-db", Sources: vol}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.in.TargetType = "s3"
+			var err error
+			if tt.id == 0 {
+				_, err = svc.CreateJob(ctx, tt.in)
+			} else {
+				_, err = svc.UpdateJob(ctx, tt.id, tt.in)
+			}
+			if (err != nil) != tt.wantErr {
+				t.Errorf("err = %v, want error %v", err, tt.wantErr)
+			}
+		})
+	}
+
+	if err := svc.SetDefaultJobEnabled(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[int64]bool{1: true, 5: false} {
+		j, err := svc.GetJob(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if j.Enabled != want {
+			t.Errorf("job %d enabled = %v, want %v", id, j.Enabled, want)
+		}
+	}
+	st, err := svc.LastSystemRun(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Exists || st.Enabled {
+		t.Errorf("system status = %+v, want the disabled system job", st)
+	}
+}
+
+func TestBackupNameCollisionNotice(t *testing.T) {
+	e := newScopeEnv(t)
+	ctx := context.Background()
+	n := notices.NewService(e.db)
+	for _, stmt := range []string{
+		`INSERT INTO backup_jobs (id, name, target_type, sources) VALUES (1, 'web', 'local', '[{"type":"volume","name":"a"}]')`,
+		`INSERT INTO backup_jobs (id, name, target_type, sources) VALUES (2, 'Web!', 'local', '[{"type":"volume","name":"b"}]')`,
+		`INSERT INTO backup_jobs (id, name, target_type, sources) VALUES (3, 'Dockmesh System', 'local', '[{"type":"volume","name":"c"}]')`,
+		`INSERT INTO backup_jobs (id, name, target_type, sources) VALUES (4, 'dockmesh-system', 'local', '[{"type":"system","name":"dockmesh"}]')`,
+	} {
+		if _, err := e.db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	notice := func() *notices.Notice {
+		t.Helper()
+		if err := e.h.Backups.SyncNameCollisionNotice(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+		open, err := n.Open(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range open {
+			if open[i].Key == "backups.job-name-collision" {
+				return &open[i]
+			}
+		}
+		return nil
+	}
+
+	steps := []struct {
+		name, rename string
+		id           int
+		want         []string
+	}{
+		{"both collisions listed", "", 0, []string{`"Web!", "web"`, `"Dockmesh System" is not a system backup`, `"Dockmesh System", "dockmesh-system"`}},
+		{"one group renamed", "web-old", 2, []string{`"Dockmesh System" is not a system backup`}},
+		{"all renamed", "misc", 3, nil},
+	}
+	for _, st := range steps {
+		t.Run(st.name, func(t *testing.T) {
+			if st.rename != "" {
+				if _, err := e.db.Exec(`UPDATE backup_jobs SET name = ? WHERE id = ?`, st.rename, st.id); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := notice()
+			if st.want == nil {
+				if got != nil {
+					t.Fatalf("notice still open: %s", got.Body)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("no notice")
+			}
+			for _, w := range st.want {
+				if !strings.Contains(got.Body, w) {
+					t.Errorf("body %q lacks %q", got.Body, w)
+				}
+			}
+			if st.id != 0 && strings.Contains(got.Body, `"web"`) {
+				t.Errorf("stale body after rename: %s", got.Body)
+			}
+		})
+	}
+}
+
+func TestLegacyBackupJobsCanBeDisabled(t *testing.T) {
+	e := newScopeEnv(t)
+	ctx := context.Background()
+	e.router.Group(func(r chi.Router) {
+		r.Use(middleware.NewAuth(e.h.Auth))
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Put("/backups/jobs/{id}", e.h.UpdateBackupJob)
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Post("/backups/jobs/{id}/review/{mode}", e.h.AcknowledgeBackupJobReview)
+	})
+	// Saved before names and volume sources were checked: a path source,
+	// and three names sharing one archive folder.
+	for _, stmt := range []string{
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources, schedule, enabled, needs_review) VALUES (20, 'Web', 's3', 'local', '[{"type":"volume","name":"/"}]', '0 3 * * *', 1, 1)`,
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources, schedule, enabled) VALUES (21, 'web!', 's3', 'local', '[{"type":"volume","name":"/"}]', '0 3 * * *', 1)`,
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources, schedule, enabled) VALUES (22, 'web', 's3', 'local', '[{"type":"system","name":"dockmesh"}]', '0 3 * * *', 1)`,
+	} {
+		if _, err := e.db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.user("boss", "admin")
+	boss := e.login("boss").AccessToken
+	job := func(enabled bool, schedule string) map[string]any {
+		return map[string]any{"name": "web!", "host_id": "local", "target_type": "s3", "target_config": map[string]any{},
+			"sources": []map[string]string{{"type": "volume", "name": "/"}}, "schedule": schedule, "encrypt": true, "enabled": enabled}
+	}
+
+	steps := []struct {
+		name, method, path string
+		body               any
+		want               int
+	}{
+		{"edit beyond the flag is still checked", http.MethodPut, "/backups/jobs/21", job(false, "0 4 * * *"), http.StatusBadRequest},
+		{"disable via job update", http.MethodPut, "/backups/jobs/21", job(false, "0 3 * * *"), http.StatusOK},
+		{"disable via review", http.MethodPost, "/backups/jobs/20/review/disable", nil, http.StatusNoContent},
+	}
+	for _, st := range steps {
+		t.Run(st.name, func(t *testing.T) {
+			if rr := e.do(st.method, st.path, boss, st.body); rr.Code != st.want {
+				t.Errorf("%d, want %d: %s", rr.Code, st.want, rr.Body)
+			}
+		})
+	}
+	if err := e.h.Backups.SetDefaultJobEnabled(ctx, false); err != nil {
+		t.Fatalf("disable system job: %v", err)
+	}
+	for _, id := range []int64{20, 21, 22} {
+		j, err := e.h.Backups.GetJob(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if j.Enabled {
+			t.Errorf("job %d still enabled", id)
+		}
 	}
 }

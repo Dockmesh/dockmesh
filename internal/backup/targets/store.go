@@ -65,7 +65,7 @@ func (s *TargetStore) Get(ctx context.Context, id int64) (*StoredTarget, error) 
 }
 
 func (s *TargetStore) Create(ctx context.Context, in TargetInput) (*StoredTarget, error) {
-	cfg, _ := json.Marshal(in.Config)
+	cfg, _ := json.Marshal(KeepHostKey("", nil, in.Type, in.Config))
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO backup_targets (name, type, config_json) VALUES (?, ?, ?)`,
 		in.Name, in.Type, string(cfg))
@@ -77,8 +77,12 @@ func (s *TargetStore) Create(ctx context.Context, in TargetInput) (*StoredTarget
 }
 
 func (s *TargetStore) Update(ctx context.Context, id int64, in TargetInput) (*StoredTarget, error) {
-	cfg, _ := json.Marshal(in.Config)
-	_, err := s.db.ExecContext(ctx, `
+	prev, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	cfg, _ := json.Marshal(KeepHostKey(prev.Type, prev.Config, in.Type, in.Config))
+	_, err = s.db.ExecContext(ctx, `
 		UPDATE backup_targets SET name = ?, type = ?, config_json = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`, in.Name, in.Type, string(cfg), id)
 	if err != nil {

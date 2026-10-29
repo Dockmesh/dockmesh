@@ -163,6 +163,10 @@ func (h *Handlers) SetBackupEnabled(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "backups unavailable")
 		return
 	}
+	if !h.callerIsAdmin(r) {
+		writeError(w, http.StatusForbidden, "only an admin can manage the system backup job")
+		return
+	}
 	var req SetBackupEnabledRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

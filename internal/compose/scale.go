@@ -109,6 +109,9 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 	if replicas < 0 || replicas > 100 {
 		return nil, errors.New("replicas must be between 0 and 100")
 	}
+	if err := s.refuseStagedMounts(ctx, proj); err != nil {
+		return nil, err
+	}
 	svc, ok := proj.Services[serviceName]
 	if !ok {
 		return nil, fmt.Errorf("service %q not found in project %s", serviceName, proj.Name)

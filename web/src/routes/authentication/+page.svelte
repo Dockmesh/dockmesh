@@ -232,10 +232,6 @@
     policy = { ...policy, require_upper: !both, require_lower: !both };
     policyDirty = true;
   }
-  function toggleRotation() {
-    if (!policy) return;
-    setPolicyField('rotation_days', policy.rotation_days > 0 ? 0 : 90);
-  }
   async function savePolicy() {
     if (!policy) return;
     policySaving = true;
@@ -463,11 +459,6 @@
               {#if policy.require_upper && policy.require_lower}, contain <em class="ed-accent">upper + lower</em> case{/if}
               {#if policy.require_digit}, include a <em class="ed-accent">digit</em>{/if}
               {#if policy.require_symbol}, include a <em class="ed-accent">symbol</em>{/if}.
-              {#if policy.rotation_days > 0}
-                Rotate every <em class="ed-accent">{policy.rotation_days}d</em>.
-              {:else}
-                No forced rotation.
-              {/if}
             </div>
 
             <div class="auth-chips">
@@ -498,17 +489,6 @@
               >
                 {policy.require_symbol ? '✓' : '○'} symbol
               </button>
-              <button type="button" class="auth-chip" disabled>
-                ○ no reuse
-              </button>
-              <button
-                type="button"
-                class="auth-chip"
-                class:auth-chip-active={policy.rotation_days > 0}
-                onclick={toggleRotation}
-              >
-                {policy.rotation_days > 0 ? `✓ rotate ${policy.rotation_days}d` : '○ no rotation'}
-              </button>
             </div>
 
             <div class="auth-policy-grid">
@@ -520,16 +500,6 @@
                   max="128"
                   value={policy.min_length}
                   oninput={(e) => setPolicyField('min_length', parseInt((e.target as HTMLInputElement).value) || 0)}
-                />
-              </Field>
-              <Field label="Rotation (days)" hint="0 = no forced rotation.">
-                <input
-                  type="number"
-                  class="dm-input acc-input-mono"
-                  min="0"
-                  max="365"
-                  value={policy.rotation_days}
-                  oninput={(e) => setPolicyField('rotation_days', parseInt((e.target as HTMLInputElement).value) || 0)}
                 />
               </Field>
               <Field label="Lockout · max attempts" hint="Failed sign-ins before lock.">
@@ -621,16 +591,6 @@
                   oninput={(e) => setSigninField('session_absolute_ttl_hr', parseInt((e.target as HTMLInputElement).value) || 1)}
                 />
               </Field>
-              <Field label="Remember-me (days)" hint="How long a 'stay signed in' session lives.">
-                <input
-                  type="number"
-                  class="dm-input acc-input-mono"
-                  min="0"
-                  max="365"
-                  value={signin.session_remember_me_days}
-                  oninput={(e) => setSigninField('session_remember_me_days', parseInt((e.target as HTMLInputElement).value) || 0)}
-                />
-              </Field>
               <Field label="Max sessions per user" hint="0 = unlimited. Oldest by last-seen gets evicted first.">
                 <input
                   type="number"
@@ -648,30 +608,6 @@
                 <input
                   type="checkbox"
                   class="auth-toggle-checkbox"
-                  checked={signin.require_tfa_for_admin}
-                  onchange={(e) => setSigninField('require_tfa_for_admin', (e.target as HTMLInputElement).checked)}
-                />
-                <div class="auth-toggle-text">
-                  <div class="auth-toggle-label">Require 2FA for admin role</div>
-                  <div class="auth-toggle-hint">Admin users must enrol TOTP. Block sign-in until then.</div>
-                </div>
-              </label>
-              <label class="auth-toggle">
-                <input
-                  type="checkbox"
-                  class="auth-toggle-checkbox"
-                  checked={signin.allow_local_password}
-                  onchange={(e) => setSigninField('allow_local_password', (e.target as HTMLInputElement).checked)}
-                />
-                <div class="auth-toggle-text">
-                  <div class="auth-toggle-label">Allow local password sign-in</div>
-                  <div class="auth-toggle-hint">If off, only OIDC/OAuth2/SAML/LDAP providers work.</div>
-                </div>
-              </label>
-              <label class="auth-toggle">
-                <input
-                  type="checkbox"
-                  class="auth-toggle-checkbox"
                   checked={signin.auto_create_on_sso}
                   onchange={(e) => setSigninField('auto_create_on_sso', (e.target as HTMLInputElement).checked)}
                 />
@@ -680,19 +616,12 @@
                   <div class="auth-toggle-hint">Lands new users in the per-provider default role.</div>
                 </div>
               </label>
-              <label class="auth-toggle">
-                <input
-                  type="checkbox"
-                  class="auth-toggle-checkbox"
-                  checked={signin.allow_self_register}
-                  onchange={(e) => setSigninField('allow_self_register', (e.target as HTMLInputElement).checked)}
-                />
-                <div class="auth-toggle-text">
-                  <div class="auth-toggle-label">Allow self-registration</div>
-                  <div class="auth-toggle-hint">A "create account" link on the sign-in page.</div>
-                </div>
-              </label>
             </div>
+
+            <p class="auth-callback-blurb">
+              Password rotation and reuse rules, remember-me, requiring 2FA for admins, turning off
+              local passwords and self-registration come in a later release.
+            </p>
 
             {#if signinDirty}
               <div class="auth-policy-actions">

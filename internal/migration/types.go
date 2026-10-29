@@ -1,9 +1,9 @@
-// Package migration implements stack migration between hosts (P.9).
-// Safe Mode: stop source → transfer volumes → start target → verify →
-// cleanup. No warm sync in Phase 1.
+// Package migration implements stack migration between hosts.
+// Safe Mode: stop source → start target → verify → cleanup.
 package migration
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
@@ -80,3 +80,5 @@ func (m *Migration) IsTerminal() bool {
 }
 
 var ErrNotCompleted = fmt.Errorf("migration not in completed state")
+
+var ErrNamedVolumes = errors.New("stack uses named volumes, whose data is not copied between hosts")

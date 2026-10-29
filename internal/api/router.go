@@ -508,8 +508,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			})
 
 			// -------------------------- DISASTER RECOVERY --------------------
-			// Backup verification (P.12.4) — destructive precursor to
-			// a real restore, so backups.restore is the right gate.
+			// Backup verification reads the whole archive like a restore
+			// would; the handlers add host scope and keep system backups
+			// admin-only.
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermBackupsRestore))
 				r.Post("/restore/verify", h.VerifyUploadedBackup)
@@ -717,9 +718,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Use(middleware.RequirePerm(rbac.PermBackupsUpdate))
 				r.Put("/backups/jobs/{id}", h.UpdateBackupJob)
 				r.Post("/backups/jobs/{id}/run", h.RunBackupJob)
+				r.Post("/backups/jobs/{id}/accept-host-key", h.AcceptBackupHostKey)
 				r.Post("/backups/jobs/{id}/review/{mode}", h.AcknowledgeBackupJobReview)
 				r.Put("/backups/targets/{id}", h.UpdateBackupTarget)
 				r.Post("/backups/targets/{id}/test", h.TestBackupTarget)
+				r.Post("/backups/targets/{id}/accept-host-key", h.AcceptBackupTargetHostKey)
 				r.Put("/backups/system/enabled", h.SetBackupEnabled)
 			})
 			r.Group(func(r chi.Router) {
