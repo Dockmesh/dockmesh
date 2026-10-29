@@ -24,8 +24,16 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-30 [security]
+
+Security and maintenance release. It fixes three authorization and sign-in problems in 0.4.0 and
+earlier, makes the installers more reliable on upgrade, and repairs volume browsing on agent hosts.
+
 ### Security
 
+- GHSA-2g85-893g-rppp (moderate): SSO sign-in put session tokens in the redirect URL
+- GHSA-9fwq-xwp6-x857 (high): Template deploy skipped host and role-scope checks
+- GHSA-mj64-3wx9-h457 (moderate): Host-scoped roles could read files of undeployed stacks
 - Updated the frontend framework (Svelte) to a release that fixes DOM clobbering and
   attribute-handling XSS issues.
 - SSO sign-in (OIDC, OAuth2, SAML) no longer puts session tokens in the redirect URL. The
@@ -107,6 +115,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - Saving changes that first read and then update the database, such as re-enrolling all
   agents or raising a notice, now waits for other writes to finish instead of failing with
   "database is locked" when several things write at the same time.
+
+### Upgrade notes
+
+- [update-agents, admins] Update your agents from the Hosts page. Volume browsing on agent hosts
+  only works with the 0.4.1 agent.
 
 ## [0.4.0] - 2026-10-29 [security]
 
