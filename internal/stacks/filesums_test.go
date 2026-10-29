@@ -108,19 +108,27 @@ func openNotices(t *testing.T, n *notices.Service, key string) []notices.Notice 
 func TestGitDeployHoldNotice(t *testing.T) {
 	ctx := context.Background()
 	tests := []struct {
-		name    string
-		release func(m *Manager) error
+		name     string
+		release  func(m *Manager) error
+		wantOpen bool
 	}{
-		{"deploy", func(m *Manager) error { m.Deployed(ctx, "web"); return nil }},
-		{"accept", func(m *Manager) error { return m.AcceptExternal("web") }},
-		{"delete", func(m *Manager) error { return m.Delete("web") }},
+		{"deploy with files still changed", func(m *Manager) error { m.Deployed(ctx, "web"); return nil }, true},
+		{"deploy after rewrite", func(m *Manager) error {
+			if _, err := m.Update("web", "services: {}\n", "A=1\n"); err != nil {
+				return err
+			}
+			m.Deployed(ctx, "web")
+			return nil
+		}, false},
+		{"accept", func(m *Manager) error { return m.AcceptExternal("web") }, false},
+		{"delete", func(m *Manager) error { return m.Delete("web") }, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := newSumManager(t)
 			n := notices.NewService(m.sums.db)
 			m.SetNotices(n)
-			key := GitDeployBlockedNoticeKey("web")
+			key := GitDeployHeldNoticeKey("web")
 			if _, err := m.Create("web", "services: {}\n", "A=1\n"); err != nil {
 				t.Fatal(err)
 			}
@@ -131,7 +139,10 @@ func TestGitDeployHoldNotice(t *testing.T) {
 				t.Fatalf("notice for unchanged stack: %v", got)
 			}
 
-			dir, _ := m.Dir("web")
+			dir, err := m.Dir("web")
+			if err != nil {
+				t.Fatal(err)
+			}
 			if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("B=2\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -160,8 +171,8 @@ func TestGitDeployHoldNotice(t *testing.T) {
 			if err := tt.release(m); err != nil {
 				t.Fatal(err)
 			}
-			if got := openNotices(t, n, key); len(got) != 0 {
-				t.Errorf("notice still open after %s", tt.name)
+			if got := openNotices(t, n, key); (len(got) == 1) != tt.wantOpen {
+				t.Errorf("open notices after %s = %d, want open %v", tt.name, len(got), tt.wantOpen)
 			}
 		})
 	}

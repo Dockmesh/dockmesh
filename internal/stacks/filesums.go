@@ -68,11 +68,9 @@ func (m *Manager) SetSumStore(s *SumStore) { m.sums = s }
 // SetNotices lets a held-back git deploy tell the stack's deployers.
 func (m *Manager) SetNotices(n *notices.Service) { m.notices = n }
 
-const gitDeployBlockedPrefix = "stacks.git-deploy-blocked:"
-
-// GitDeployBlockedNoticeKey is the notice raised while a git deploy of
-// stack waits for its outside changes to be confirmed.
-func GitDeployBlockedNoticeKey(stack string) string { return gitDeployBlockedPrefix + stack }
+// GitDeployHeldNoticeKey is the notice raised while a git deploy of stack
+// waits for its outside changes to be confirmed.
+func GitDeployHeldNoticeKey(stack string) string { return "stacks.git-deploy-held:" + stack }
 
 // CheckGitDeploy refuses an automatic deploy from stack files changed
 // outside Dockmesh. Nobody is there to confirm them, so it raises a
@@ -82,10 +80,10 @@ func (m *Manager) CheckGitDeploy(ctx context.Context, name string) error {
 	if err != nil || len(changed) == 0 {
 		return err
 	}
+	files := strings.Join(changed, ", ")
 	if m.notices != nil {
-		files := strings.Join(changed, ", ")
 		if nerr := m.notices.Raise(ctx, notices.RaiseInput{
-			Key:      GitDeployBlockedNoticeKey(name),
+			Key:      GitDeployHeldNoticeKey(name),
 			Audience: notices.WithPermission(string(rbac.PermStacksDeploy)),
 			Severity: notices.SevWarning,
 			Title:    "Git deploy of " + name + " is on hold",
@@ -97,18 +95,31 @@ func (m *Manager) CheckGitDeploy(ctx context.Context, name string) error {
 			slog.Warn("git deploy held back notice", "stack", name, "err", nerr)
 		}
 	}
-	return fmt.Errorf("%w: %s", ErrModifiedOutside, strings.Join(changed, ", "))
+	return fmt.Errorf("%w: %s", ErrModifiedOutside, files)
 }
 
-// Deployed clears the held-back git deploy notice of a stack once any
-// deploy of it went through.
-func (m *Manager) Deployed(ctx context.Context, name string) { m.releaseGitDeploy(ctx, name) }
-
-func (m *Manager) releaseGitDeploy(ctx context.Context, name string) {
+// Deployed clears the held-back git deploy notice after a deploy, unless
+// the stack files still differ from what Dockmesh recorded: a deploy that
+// skipped the confirmation (a migration, for one) leaves git deploys held.
+func (m *Manager) Deployed(ctx context.Context, name string) {
 	if m.notices == nil {
 		return
 	}
-	if err := m.notices.Resolve(ctx, GitDeployBlockedNoticeKey(name)); err != nil {
+	changed, err := m.ModifiedOutside(name)
+	if err != nil {
+		slog.Warn("check stack files after deploy", "stack", name, "err", err)
+		return
+	}
+	if len(changed) == 0 {
+		m.resolveGitDeployHold(ctx, name)
+	}
+}
+
+func (m *Manager) resolveGitDeployHold(ctx context.Context, name string) {
+	if m.notices == nil {
+		return
+	}
+	if err := m.notices.Resolve(ctx, GitDeployHeldNoticeKey(name)); err != nil {
 		slog.Warn("resolve git deploy held back notice", "stack", name, "err", err)
 	}
 }
@@ -210,7 +221,7 @@ func (m *Manager) AcceptExternal(name string) error {
 			return err
 		}
 	}
-	m.releaseGitDeploy(context.Background(), name)
+	m.resolveGitDeployHold(context.Background(), name)
 	return nil
 }
 

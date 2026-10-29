@@ -599,7 +599,7 @@ func (m *Manager) Delete(name string) error {
 			slog.Warn("forget stack file checksums", "stack", name, "err", err)
 		}
 	}
-	m.releaseGitDeploy(context.Background(), name)
+	m.resolveGitDeployHold(context.Background(), name)
 	return nil
 }
 
