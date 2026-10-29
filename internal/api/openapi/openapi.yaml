@@ -5671,6 +5671,8 @@ paths:
         `docker compose up -d` against the chosen host. The response
         echoes the rendered compose + the resolved values with secrets
         redacted as `<generated>`.
+        The caller needs access to the target host and a role scope that covers
+        the new stack; the deployment is recorded in the stack's deploy history.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       requestBody:

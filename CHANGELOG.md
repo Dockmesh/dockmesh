@@ -29,6 +29,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - SSO sign-in (OIDC, OAuth2, SAML) no longer puts session tokens in the redirect URL. The
   browser gets a one-time code that expires after a minute and only works in the browser that
   completed the sign-in, so a crafted link can no longer sign someone in to another account.
+- Deploying a template now applies the same host and role-scope checks as deploying a stack and
+  is recorded in the deploy history. Deploying a stack that pulls in dependency stacks also
+  checks the caller's role scope for each dependency.
 
 ### Fixed
 

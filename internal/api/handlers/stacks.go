@@ -810,6 +810,11 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 			if satisfied {
 				continue
 			}
+			depScope := h.stackScopeReq(r.Context(), target.ID(), depName)
+			if !h.checkRoleScope(r, depScope) {
+				h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, depScope, "dependency stack "+depName)
+				return
+			}
 			if !h.checkStackFiles(w, r, depName) {
 				return
 			}
