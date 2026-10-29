@@ -183,3 +183,29 @@ func TestExtractCaps(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractSkipsPremigrateSnapshots(t *testing.T) {
+	a := archive(t,
+		entry{name: "dockmesh.db", body: "x"},
+		entry{name: "data/secrets.env", body: "x"},
+		entry{name: "data/dockmesh.db.pre-migrate-20261029T101500.000Z.bak", body: "x"},
+		entry{name: "data/other.db.pre-migrate-20261029T101500.000Z.bak.tmp", body: "x"},
+	)
+	dir := t.TempDir()
+	cfg := &config.Config{DBPath: filepath.Join(dir, "dockmesh.db"), StacksRoot: filepath.Join(dir, "stacks")}
+	if _, err := Extract(context.Background(), a, cfg, Options{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, want := range map[string]bool{
+		"dockmesh.db": true,
+		"secrets.env": true,
+		"dockmesh.db.pre-migrate-20261029T101500.000Z.bak":  false,
+		"other.db.pre-migrate-20261029T101500.000Z.bak.tmp": false,
+	} {
+		_, err := os.Stat(filepath.Join(dir, name))
+		if got := err == nil; got != want {
+			t.Errorf("%s exists = %v, want %v", name, got, want)
+		}
+	}
+}
