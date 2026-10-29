@@ -122,6 +122,9 @@ func (e *Engine) Up(ctx context.Context, proj *types.Project, uo UpOptions, opts
 	}
 	return svc.Up(ctx, proj, api.UpOptions{
 		Create: api.CreateOptions{
+			// nil Build means "never build": services with only a build:
+			// section would fail with "No such image".
+			Build:                &api.BuildOptions{Progress: "plain", Out: logWriter(opts.Log)},
 			RemoveOrphans:        uo.RemoveOrphans,
 			Recreate:             recreate,
 			RecreateDependencies: api.RecreateDiverged,
@@ -204,12 +207,12 @@ type dmCli struct {
 	cfg *configfile.ConfigFile
 }
 
-func (c *dmCli) Client() client.APIClient            { return c.api }
-func (c *dmCli) ConfigFile() *configfile.ConfigFile  { return c.cfg }
-func (c *dmCli) CurrentContext() string              { return "default" }
-func (c *dmCli) DockerEndpoint() docker.Endpoint     { return docker.Endpoint{} }
-func (c *dmCli) BuildKitEnabled() (bool, error)      { return false, nil }
-func (c *dmCli) ServerInfo() command.ServerInfo      { return command.ServerInfo{OSType: "linux"} }
+func (c *dmCli) Client() client.APIClient           { return c.api }
+func (c *dmCli) ConfigFile() *configfile.ConfigFile { return c.cfg }
+func (c *dmCli) CurrentContext() string             { return "default" }
+func (c *dmCli) DockerEndpoint() docker.Endpoint    { return docker.Endpoint{} }
+func (c *dmCli) BuildKitEnabled() (bool, error)     { return false, nil }
+func (c *dmCli) ServerInfo() command.ServerInfo     { return command.ServerInfo{OSType: "linux"} }
 
 // contextInfo keeps builds on the API-only classic builder: with BuildKit
 // enabled and buildx installed the SDK shells out to `docker buildx bake`.

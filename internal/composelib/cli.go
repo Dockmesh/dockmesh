@@ -9,17 +9,23 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
+	composetypes "github.com/compose-spec/compose-go/v2/types"
+	dockerclient "github.com/docker/docker/client"
+
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
-// RunCLI implements `compose-spike <up|down|ps|pull|scale> -dir <stackdir>`.
+// RunCLI implements `compose-spike <up|adopt|down|ps|pull|scale|legacy-up> -dir <stackdir>`.
 // The stack is loaded exactly like a Dockmesh deploy (compose.yaml + the
 // given env file, no OS env), then handed to the SDK.
 func RunCLI(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: compose-spike <up|down|ps|pull|scale> -dir <stackdir> [-name n] [-env file] [-force-recreate] [-wait] [-replicas svc=N]")
+		fmt.Fprintln(os.Stderr, "usage: compose-spike <up|adopt|down|ps|pull|scale|legacy-up> -dir <stackdir> [-name n] [-env file] [-force-recreate] [-wait] [-replicas svc=N]")
 		os.Exit(2)
 	}
 	cmd := args[0]
@@ -81,6 +87,17 @@ func RunCLI(args []string) {
 		}
 		StampLabels(proj)
 		switch cmd {
+		case "adopt":
+			if err = eng.Pull(ctx, proj, opts); err != nil {
+				break
+			}
+			var removed []string
+			removed, err = eng.AdoptLegacy(ctx, proj)
+			fmt.Fprintln(os.Stderr, "removed legacy containers:", removed)
+			if err != nil {
+				break
+			}
+			fallthrough
 		case "up":
 			err = eng.Up(ctx, proj, UpOptions{
 				ForcePull:      *forcePull,
@@ -91,11 +108,13 @@ func RunCLI(args []string) {
 			}, opts)
 		case "pull":
 			err = eng.Pull(ctx, proj, opts)
+		case "legacy-up":
+			err = legacyUp(ctx, proj)
 		case "scale":
-			var svc string
-			var n int
-			if _, serr := fmt.Sscanf(*replicas, "%[^=]=%d", &svc, &n); serr != nil {
-				fail(fmt.Errorf("-replicas: %w", serr))
+			svc, count, ok := strings.Cut(*replicas, "=")
+			n, serr := strconv.Atoi(count)
+			if !ok || serr != nil {
+				fail(fmt.Errorf("-replicas: want service=N, got %q", *replicas))
 			}
 			err = eng.Scale(ctx, proj, map[string]int{svc: n}, opts)
 		default:
@@ -122,4 +141,16 @@ func printEvent(e Event) {
 func fail(err error) {
 	fmt.Fprintln(os.Stderr, "error:", err)
 	os.Exit(1)
+}
+
+// legacyUp deploys through the current reconciler so the upgrade path
+// (reconciler-created containers -> SDK) can be exercised.
+func legacyUp(ctx context.Context, proj *composetypes.Project) error {
+	cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+	_, err = compose.NewService(docker.Wrap(cli), nil).DeployProject(ctx, proj)
+	return err
 }
