@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/docker"
 	dtypes "github.com/docker/docker/api/types"
@@ -92,6 +94,9 @@ func (s *volumeTarStream) Read(p []byte) (int, error) {
 	}
 	var hdr [8]byte
 	if _, err := io.ReadFull(s.hijack, hdr[:]); err != nil {
+		if errors.Is(err, io.EOF) {
+			return 0, s.exitErr()
+		}
 		return 0, err
 	}
 	size := binary.BigEndian.Uint32(hdr[4:8])
@@ -111,6 +116,23 @@ func (s *volumeTarStream) Read(p []byte) (int, error) {
 		s.leftover = append(s.leftover, buf[n:]...)
 	}
 	return n, nil
+}
+
+// exitErr turns the end of the output into io.EOF only when tar exited 0;
+// otherwise the archive is incomplete and the reader must see an error.
+func (s *volumeTarStream) exitErr() error {
+	waitCtx, cancel := context.WithTimeout(s.ctx, time.Minute)
+	defer cancel()
+	waitCh, errCh := s.cli.ContainerWait(waitCtx, s.id, container.WaitConditionNotRunning)
+	select {
+	case w := <-waitCh:
+		if w.StatusCode != 0 {
+			return fmt.Errorf("tar exit %d", w.StatusCode)
+		}
+		return io.EOF
+	case err := <-errCh:
+		return fmt.Errorf("wait for tar: %w", err)
+	}
 }
 
 func (s *volumeTarStream) Close() error {

@@ -145,7 +145,7 @@ func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 // Pulled into its own helper so the type-dispatch in VerifyBackupRun
 // stays readable.
 func (h *Handlers) verifySystemRun(w http.ResponseWriter, r *http.Request, id int64) {
-	src, err := h.Backups.ReadRun(r.Context(), id)
+	src, hashCheck, err := h.Backups.OpenRunHashed(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -167,6 +167,11 @@ func (h *Handlers) verifySystemRun(w http.ResponseWriter, r *http.Request, id in
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	sum := hashCheck()
+	result.Checks = append(result.Checks, restore.SanityCheck{Name: sum.Name, Status: sum.Status, Message: sum.Message})
+	if sum.Status == "fail" {
+		result.Passed = false
 	}
 	h.audit(r, "backup.verify_run", strconv.FormatInt(id, 10), map[string]any{
 		"type":   "system",

@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"strings"
 )
@@ -43,16 +42,13 @@ type VerifyCounts struct {
 }
 
 // VerifyRun reads the archive for the given run, dispatches to the
-// type-specific verifier, and returns the structured result. The
-// handler at /backups/runs/{id}/verify is now a thin wrapper around
-// this — no more 501 stubs for non-system backups. P.13.4.
+// type-specific verifier, and returns the structured result. System runs
+// get their deep checks in the handler (internal/restore), which wraps
+// OpenRunHashed instead.
 func (s *Service) VerifyRun(ctx context.Context, runID int64) (*VerifyResult, error) {
 	run, err := s.store.getRun(ctx, runID)
 	if err != nil {
 		return nil, err
-	}
-	if run.Status != "success" {
-		return nil, errors.New("can only verify a successful run")
 	}
 	if len(run.Sources) == 0 {
 		return nil, errors.New("run has no sources — cannot determine backup type")
@@ -60,79 +56,122 @@ func (s *Service) VerifyRun(ctx context.Context, runID int64) (*VerifyResult, er
 	srcType := run.Sources[0].Type
 	res := &VerifyResult{RunID: runID, Type: srcType, Passed: true}
 
-	rc, err := s.ReadRun(ctx, runID)
+	rc, finish, err := s.openRunHashed(ctx, run)
 	if err != nil {
 		return nil, fmt.Errorf("open run archive: %w", err)
 	}
 	defer rc.Close()
 
-	// SHA256 is computed against the *plaintext* stream we read here.
-	// run.SHA256 was written at backup time over the same plaintext (we
-	// hash before encrypting on the way out), so a match means the
-	// archive content is byte-for-byte intact. Empty run.SHA256 means
-	// the run pre-dates the hash field and we skip the compare.
-	hasher := sha256.New()
-	teed := io.TeeReader(rc, hasher)
-
 	switch srcType {
 	case "system":
-		// System runs go through the same temp-extract + sanity flow
-		// the upload endpoint uses. The dispatch lives in the handler
-		// (it has access to internal/restore); here we just stream the
-		// archive into a buffer the handler can pass on. Easier: let
-		// the handler call the legacy path directly when type=system.
-		return verifySystemPlaceholder(res, teed, hasher, run.SHA256)
+		n, err := io.Copy(io.Discard, rc)
+		res.Counts.Bytes = n
+		if err != nil {
+			res.fail("stream", err.Error())
+		}
 	case "stack":
-		return verifyStackArchive(res, teed, hasher, run.SHA256)
+		verifyStackArchive(res, rc)
 	case "volume":
-		return verifyVolumeArchive(res, teed, hasher, run.SHA256)
+		verifyVolumeArchive(res, rc)
 	default:
 		return nil, fmt.Errorf("unknown source type %q", srcType)
 	}
-}
-
-// verifySystemPlaceholder drains the stream + hashes it but doesn't
-// run sanity (the handler does that via internal/restore.ExtractToTemp).
-// The result here is "stream is intact and hash matches" — sanity is
-// added by the handler caller.
-func verifySystemPlaceholder(res *VerifyResult, r io.Reader, h hash.Hash, expected string) (*VerifyResult, error) {
-	n, err := io.Copy(io.Discard, r)
-	if err != nil {
-		res.Passed = false
-		res.Checks = append(res.Checks, VerifyCheck{Name: "stream", Status: "fail", Message: err.Error()})
-		return res, nil
+	res.add(finish())
+	if res.Passed && res.Summary == "" {
+		res.Summary = "archive intact"
 	}
-	res.Counts.Bytes = n
-	finalizeSHA(res, h, expected)
 	return res, nil
 }
 
-// verifyStackArchive walks the outer tar (stack/<rel> + volumes/<vol>.tar.gz)
-// and gunzip-walks each volume entry to make sure they aren't corrupt.
-// Returns a list of stack files restored and volumes ready to restore.
-func verifyStackArchive(res *VerifyResult, r io.Reader, h hash.Hash, expected string) (*VerifyResult, error) {
+// OpenRunHashed opens a run's archive as plaintext. finish drains what
+// the caller left unread and compares the hash with the stored one.
+func (s *Service) OpenRunHashed(ctx context.Context, runID int64) (io.ReadCloser, func() VerifyCheck, error) {
+	run, err := s.store.getRun(ctx, runID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s.openRunHashed(ctx, run)
+}
+
+// openRunHashed hashes what the stored SHA256 covers: the plaintext, or
+// for encrypted runs made before that was fixed, the stored ciphertext.
+func (s *Service) openRunHashed(ctx context.Context, run *Run) (io.ReadCloser, func() VerifyCheck, error) {
+	h := sha256.New()
+	var (
+		rc  io.ReadCloser
+		err error
+	)
+	overCiphertext := run.Encrypted && !run.sha256Plain
+	if overCiphertext {
+		rc, err = s.openRun(ctx, run, h)
+	} else {
+		rc, err = s.openRun(ctx, run, nil)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	var plain io.Reader = rc
+	if !overCiphertext {
+		plain = io.TeeReader(rc, h)
+	}
+	wrapped := &tappedReader{Reader: plain, Closer: rc}
+	finish := func() VerifyCheck {
+		// Tar readers stop at the end-of-archive marker and gzip at its
+		// trailer; the padding after them is part of the hash.
+		if _, err := io.Copy(io.Discard, plain); err != nil {
+			return VerifyCheck{Name: "sha256", Status: "fail", Message: "read archive: " + err.Error()}
+		}
+		return shaCheck(hex.EncodeToString(h.Sum(nil)), run.SHA256)
+	}
+	return wrapped, finish, nil
+}
+
+func (r *VerifyResult) add(c VerifyCheck) {
+	r.Checks = append(r.Checks, c)
+	if c.Status == "fail" {
+		r.Passed = false
+	}
+	if c.Name == "sha256" && c.Status == "ok" {
+		r.SHA256OK = true
+	}
+}
+
+func (r *VerifyResult) fail(name, msg string) {
+	r.add(VerifyCheck{Name: name, Status: "fail", Message: msg})
+}
+
+// verifyStackArchive walks the outer tar (stack/<rel> + volumes/<vol>.tar.gz),
+// gunzip-walks each volume entry and compares the volumes found with the
+// list the backup recorded in its manifest.
+func verifyStackArchive(res *VerifyResult, r io.Reader) {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
-		res.Passed = false
-		res.Checks = append(res.Checks, VerifyCheck{Name: "gzip", Status: "fail", Message: err.Error()})
-		return res, nil
+		res.fail("gzip", err.Error())
+		return
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
 	hasCompose := false
+	var manifest *stackManifest
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			res.Passed = false
-			res.Checks = append(res.Checks, VerifyCheck{Name: "tar", Status: "fail", Message: err.Error()})
-			return res, nil
+			res.fail("tar", err.Error())
+			return
 		}
 		res.Counts.Entries++
 		name := hdr.Name
 		switch {
+		case name == stackManifestName:
+			m, err := readStackManifest(tr)
+			if err != nil {
+				res.fail("manifest", err.Error())
+				return
+			}
+			manifest = m
 		case strings.HasPrefix(name, "stack/"):
 			rel := strings.TrimPrefix(name, "stack/")
 			if rel == "" {
@@ -147,64 +186,74 @@ func verifyStackArchive(res *VerifyResult, r io.Reader, h hash.Hash, expected st
 			n, err := io.Copy(io.Discard, tr)
 			res.Counts.Bytes += n
 			if err != nil {
-				res.Passed = false
-				res.Checks = append(res.Checks, VerifyCheck{Name: "stack." + rel, Status: "fail", Message: err.Error()})
-				return res, nil
+				res.fail("stack."+rel, err.Error())
+				return
 			}
 		case strings.HasPrefix(name, "volumes/") && strings.HasSuffix(name, ".tar.gz"):
 			volName := strings.TrimSuffix(strings.TrimPrefix(name, "volumes/"), ".tar.gz")
 			if volName == "" {
-				res.Checks = append(res.Checks, VerifyCheck{Name: "volume.malformed", Status: "warn", Message: name})
+				res.add(VerifyCheck{Name: "volume.malformed", Status: "warn", Message: name})
 				continue
 			}
-			// Inner gzip walk — volume tar must itself be a valid
-			// gzipped tar so a future restore can extract it.
-			lr := io.LimitReader(tr, hdr.Size)
-			n, err := walkInnerTar(lr)
+			n, err := walkInnerTar(io.LimitReader(tr, hdr.Size))
 			res.Counts.Bytes += n
 			if err != nil {
-				res.Passed = false
-				res.Checks = append(res.Checks, VerifyCheck{Name: "volume." + volName, Status: "fail", Message: err.Error()})
-				return res, nil
+				res.fail("volume."+volName, err.Error())
+				return
 			}
 			res.Counts.Volumes = append(res.Counts.Volumes, volName)
-			res.Checks = append(res.Checks, VerifyCheck{Name: "volume." + volName, Status: "ok", Message: fmt.Sprintf("%d bytes", hdr.Size)})
+			res.add(VerifyCheck{Name: "volume." + volName, Status: "ok", Message: fmt.Sprintf("%d bytes", hdr.Size)})
 		default:
-			// Tolerate stray top-level entries from older versions.
 			n, _ := io.Copy(io.Discard, tr)
 			res.Counts.Bytes += n
 		}
 	}
 	if hasCompose {
-		res.Checks = append(res.Checks, VerifyCheck{Name: "stack.compose", Status: "ok", Message: "compose.yaml present"})
+		res.add(VerifyCheck{Name: "stack.compose", Status: "ok", Message: "compose.yaml present"})
 	} else {
-		res.Passed = false
-		res.Checks = append(res.Checks, VerifyCheck{Name: "stack.compose", Status: "fail", Message: "compose.yaml missing — restore would refuse"})
+		res.fail("stack.compose", "compose.yaml missing — restore would refuse")
 	}
-	finalizeSHA(res, h, expected)
+	res.add(volumeListCheck(manifest, res.Counts.Volumes))
 	if res.Passed {
 		res.Summary = fmt.Sprintf("%d files, %d volume(s), archive intact", len(res.Counts.StackFiles), len(res.Counts.Volumes))
 	}
-	return res, nil
+}
+
+func volumeListCheck(m *stackManifest, found []string) VerifyCheck {
+	if m == nil {
+		return VerifyCheck{Name: "volumes", Status: "warn",
+			Message: "archive has no volume list (made by an older version); completeness not checked"}
+	}
+	have := make(map[string]bool, len(found))
+	for _, v := range found {
+		have[v] = true
+	}
+	var missing []string
+	for _, v := range m.Volumes {
+		if !have[v] {
+			missing = append(missing, v)
+		}
+	}
+	if len(missing) > 0 {
+		return VerifyCheck{Name: "volumes", Status: "fail", Message: "missing volume(s): " + strings.Join(missing, ", ")}
+	}
+	return VerifyCheck{Name: "volumes", Status: "ok", Message: fmt.Sprintf("all %d volume(s) present", len(m.Volumes))}
 }
 
 // verifyVolumeArchive checks a volume-typed run: the archive should be
-// a valid gzipped tar with at least one entry. No structural rules
-// beyond that — volume contents are application-specific.
-func verifyVolumeArchive(res *VerifyResult, r io.Reader, h hash.Hash, expected string) (*VerifyResult, error) {
+// a valid gzipped tar. No structural rules beyond that — volume contents
+// are application-specific.
+func verifyVolumeArchive(res *VerifyResult, r io.Reader) {
 	n, err := walkInnerTar(r)
 	res.Counts.Bytes = n
 	if err != nil {
-		res.Passed = false
-		res.Checks = append(res.Checks, VerifyCheck{Name: "tar", Status: "fail", Message: err.Error()})
-		return res, nil
+		res.fail("tar", err.Error())
+		return
 	}
-	res.Checks = append(res.Checks, VerifyCheck{Name: "tar", Status: "ok", Message: fmt.Sprintf("%d entries, %d bytes", res.Counts.Entries+0, n)})
-	finalizeSHA(res, h, expected)
+	res.add(VerifyCheck{Name: "tar", Status: "ok", Message: fmt.Sprintf("%d bytes", n)})
 	if res.Passed {
 		res.Summary = fmt.Sprintf("volume archive intact (%d bytes)", n)
 	}
-	return res, nil
 }
 
 // walkInnerTar gunzip-walks a tar.gz stream, discarding payloads but
@@ -235,19 +284,15 @@ func walkInnerTar(r io.Reader) (int64, error) {
 	return total, nil
 }
 
-// finalizeSHA records whether the streamed-content hash matches the
-// stored run.SHA256. Empty stored hash means "unknown — pre-existed
-// the field" and we skip the compare without failing the verify.
-func finalizeSHA(res *VerifyResult, h hash.Hash, expected string) {
-	got := hex.EncodeToString(h.Sum(nil))
+// shaCheck compares the recomputed hash with the stored one. An empty
+// stored hash means the run predates the field.
+func shaCheck(got, expected string) VerifyCheck {
 	switch {
 	case expected == "":
-		res.Checks = append(res.Checks, VerifyCheck{Name: "sha256", Status: "warn", Message: "no stored hash to compare"})
+		return VerifyCheck{Name: "sha256", Status: "warn", Message: "no stored hash to compare"}
 	case got == expected:
-		res.SHA256OK = true
-		res.Checks = append(res.Checks, VerifyCheck{Name: "sha256", Status: "ok", Message: got})
+		return VerifyCheck{Name: "sha256", Status: "ok", Message: got}
 	default:
-		res.Passed = false
-		res.Checks = append(res.Checks, VerifyCheck{Name: "sha256", Status: "fail", Message: fmt.Sprintf("got %s, stored %s", got, expected)})
+		return VerifyCheck{Name: "sha256", Status: "fail", Message: fmt.Sprintf("got %s, stored %s", got, expected)}
 	}
 }

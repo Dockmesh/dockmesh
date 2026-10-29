@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/system"
 )
@@ -137,7 +138,7 @@ func (h *Handlers) BackupStatus(w http.ResponseWriter, r *http.Request) {
 	age := time.Since(ts)
 	resp.AgeSeconds = int64(age.Seconds())
 	switch {
-	case run.Status != "success":
+	case run.Status != backup.StatusSuccess && run.Status != backup.StatusSuccessWithWarnings:
 		resp.State = "failed"
 	case age > 36*time.Hour:
 		resp.State = "stale"
@@ -365,7 +366,11 @@ func (h *Handlers) healthBackup(ctx context.Context) HealthCheck {
 	}
 	age := time.Since(ts)
 	switch {
-	case st.Run.Status != "success":
+	case st.Run.Status == backup.StatusSuccessWithWarnings:
+		c.Status = "warn"
+		c.Detail = "last run finished with warnings"
+		c.Message = st.Run.Error
+	case st.Run.Status != backup.StatusSuccess:
 		c.Status = "fail"
 		c.Detail = "last run failed"
 		c.Message = st.Run.Error

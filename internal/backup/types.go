@@ -89,7 +89,7 @@ type Run struct {
 	ID         int64      `json:"id"`
 	JobID      int64      `json:"job_id"`
 	JobName    string     `json:"job_name"`
-	Status     string     `json:"status"`
+	Status     string     `json:"status"` // running | success | success_with_warnings | failed
 	StartedAt  time.Time  `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 	SizeBytes  int64      `json:"size_bytes"`
@@ -98,7 +98,29 @@ type Run struct {
 	Encrypted  bool       `json:"encrypted"`
 	Error      string     `json:"error,omitempty"`
 	Sources    []Source   `json:"sources"`
+	// PrunedAt is set once the archive was deleted from the target.
+	PrunedAt *time.Time `json:"pruned_at,omitempty"`
+	// sha256Plain is false for runs whose SHA256 covers the stored
+	// (possibly encrypted) bytes rather than the plaintext archive.
+	sha256Plain bool
 }
+
+// Run statuses. A post-hook failure leaves an intact archive, so it is
+// a success with warnings rather than a failure.
+const (
+	StatusRunning             = "running"
+	StatusSuccess             = "success"
+	StatusSuccessWithWarnings = "success_with_warnings"
+	StatusFailed              = "failed"
+)
+
+// Restorable reports whether a run's archive can be read back.
+func (r *Run) Restorable() bool {
+	return (r.Status == StatusSuccess || r.Status == StatusSuccessWithWarnings) && r.PrunedAt == nil
+}
+
+// ErrNotRestorable is returned when a run failed or its archive is gone.
+var ErrNotRestorable = errors.New("run has no restorable archive (failed, still running, or removed by retention)")
 
 // Common errors.
 var (

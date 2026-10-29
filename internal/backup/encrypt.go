@@ -3,6 +3,7 @@ package backup
 import (
 	"io"
 
+	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"filippo.io/age"
 )
@@ -19,10 +20,22 @@ func (e *encryptingWriter) Write(p []byte) (int, error) { return e.enc.Write(p) 
 
 func (e *encryptingWriter) Close() error {
 	if err := e.enc.Close(); err != nil {
-		_ = e.target.Close()
+		_ = abortWriter(e.target)
 		return err
 	}
 	return e.target.Close()
+}
+
+// Abort drops the upload without flushing the age stream.
+func (e *encryptingWriter) Abort() error { return abortWriter(e.target) }
+
+// abortWriter drops an unfinished upload where the target supports it and
+// otherwise just closes the file; the caller deletes what was written.
+func abortWriter(w io.WriteCloser) error {
+	if a, ok := w.(targets.Aborter); ok {
+		return a.Abort()
+	}
+	return w.Close()
 }
 
 // wrapEncrypt produces a writer that encrypts to the underlying target

@@ -72,6 +72,24 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   `compose.yaml` aren't copied to agents yet. A bind of the whole stack directory (`.:/app`)
   mounts it read-write like docker compose does, and the stack page warns that the container
   can change `compose.yaml` and `.env`.
+- Backup retention only deletes archives of the job it belongs to. Jobs whose names looked
+  alike (`DB Prod` and `db-prod`) shared a folder, and on S3 a job `db` also matched
+  `db-prod`, so one job's retention could delete another job's backups. New archives go to a
+  folder named after the job ID; existing archives are still managed where they are. The
+  newest archive of a job is never removed by retention.
+- A failed backup run deletes its partial archive and is no longer counted by retention, so
+  a few failed runs can't push the last good backups out.
+- A stack backup fails when the compose file can't be read or one of the stack's volumes
+  can't be archived, instead of reporting success without that volume. Volume archives from
+  remote hosts fail when `tar` exits with an error (needs the updated agent).
+- Backup verification works for encrypted backups (it reported a hash mismatch for every
+  one), checks the whole file, and for stack backups checks that every volume the stack had
+  is in the archive.
+- A failing post-hook marks the run "completed with warnings" instead of failed; the archive
+  can still be restored. Post-hooks also run when a later pre-hook or the upload fails, so a
+  service stopped by a pre-hook is started again.
+- Deleting a backup job keeps its runs restorable; runs whose archive was removed by
+  retention are shown as pruned.
 
 ### Upgrade notes
 - [redeploy-relative-bind-mounts, admins] Redeploy every stack that uses a relative bind mount

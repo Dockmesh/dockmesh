@@ -895,6 +895,12 @@ export interface BackupRun {
   encrypted: boolean;
   error?: string;
   sources: BackupSource[];
+  pruned_at?: string;
+}
+
+// runRestorable mirrors the server: the archive exists and is complete.
+export function runRestorable(r: BackupRun): boolean {
+  return (r.status === 'success' || r.status === 'success_with_warnings') && !r.pruned_at;
 }
 
 export interface NotificationChannel {

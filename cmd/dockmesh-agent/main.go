@@ -641,8 +641,28 @@ func runVolumeExportStream(ctx context.Context, conn *websocket.Conn, cli *clien
 			}
 		}
 		if rerr != nil {
+			if !errors.Is(rerr, io.EOF) {
+				sendStreamClose(conn, open.StreamID, "read helper output: "+rerr.Error())
+				return
+			}
 			break
 		}
+	}
+	// End of output alone doesn't mean tar succeeded: an unreadable file
+	// ends the stream early with a non-zero exit, and the server must
+	// not store that as a complete archive.
+	waitCtx, waitCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer waitCancel()
+	statusCh, errCh := cli.ContainerWait(waitCtx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case s := <-statusCh:
+		if s.StatusCode != 0 {
+			sendStreamClose(conn, open.StreamID, fmt.Sprintf("tar exit %d", s.StatusCode))
+			return
+		}
+	case e := <-errCh:
+		sendStreamClose(conn, open.StreamID, "wait for tar: "+e.Error())
+		return
 	}
 	sendStreamClose(conn, open.StreamID, "")
 }

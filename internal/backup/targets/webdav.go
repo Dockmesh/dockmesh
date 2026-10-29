@@ -105,6 +105,10 @@ type webdavWriter struct {
 }
 
 func (w *webdavWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
+func (w *webdavWriter) Abort() error {
+	w.buf.Reset()
+	return nil
+}
 func (w *webdavWriter) Close() error {
 	return w.client.WriteStream(w.path, &w.buf, 0o644)
 }
