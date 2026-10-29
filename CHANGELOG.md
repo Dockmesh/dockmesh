@@ -70,7 +70,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   account can no longer finish a two-factor login, and a correct password alone no longer
   resets the failed-attempt counter. Unlocking a user (in the UI or with
   `dockmesh admin unlock`) clears the account limit too, and each block is written to the
-  audit log as `auth.lockout`.
+  audit log as `auth.lockout`. The sign-in page now says how long to wait when a login is
+  blocked.
 - Two-factor codes, LDAP sign-in, invite links and session refresh are now rate-limited per
   client address and, where there is one, per account. Each two-factor code works only once.
 - The web UI is served with a Content Security Policy that only allows Dockmesh's own
