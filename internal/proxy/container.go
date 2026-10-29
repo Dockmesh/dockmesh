@@ -39,6 +39,11 @@ const specLabel = "dockmesh.proxy.spec"
 // the routes without waiting for Dockmesh.
 var proxyCmd = []string{"caddy", "run", "--config", "/config/caddy.json", "--resume"}
 
+const (
+	proxyNetworkMode   = "host"
+	proxyRestartPolicy = "unless-stopped"
+)
+
 var proxyBinds = []string{
 	"dockmesh-caddy-data:/data",
 	"dockmesh-caddy-config:/config",
@@ -46,7 +51,7 @@ var proxyBinds = []string{
 
 func (s *Service) specHash() string {
 	h := sha256.New()
-	for _, part := range [][]string{{s.image}, proxyCmd, proxyBinds, {"host", "unless-stopped"}} {
+	for _, part := range [][]string{{s.image}, proxyCmd, proxyBinds, {proxyNetworkMode, proxyRestartPolicy}} {
 		for _, p := range part {
 			h.Write([]byte(p))
 			h.Write([]byte{0})
@@ -131,8 +136,8 @@ func (s *Service) createProxy(ctx context.Context, old *dtypes.ContainerJSON) er
 		},
 	}
 	hostCfg := &container.HostConfig{
-		NetworkMode:   "host",
-		RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+		NetworkMode:   proxyNetworkMode,
+		RestartPolicy: container.RestartPolicy{Name: proxyRestartPolicy},
 		Binds:         proxyBinds,
 	}
 	resp, err := cli.ContainerCreate(ctx, cfg, hostCfg, &dnetwork.NetworkingConfig{}, nil, ProxyContainerName)

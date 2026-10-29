@@ -21,8 +21,7 @@ type Config struct {
 	ScannerBinary     string
 	ScannerEnabled    bool
 	ProxyEnabled      bool
-	// ProxyImage overrides the pinned Caddy image (DOCKMESH_PROXY_IMAGE).
-	ProxyImage string
+	ProxyImage        string
 	BaseURL           string
 	AgentListen       string
 	AgentPublicURL    string

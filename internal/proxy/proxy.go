@@ -122,7 +122,7 @@ func (s *Service) desiredConfig(ctx context.Context) (*caddyConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg, blocked := buildConfig(routes)
+	cfg, blocked := buildConfig(ctx, routes)
 	if s.notices != nil {
 		err := s.notices.Set(ctx, len(blocked) > 0, notices.RaiseInput{
 			Key:      noticeKeyBlocked,
@@ -150,7 +150,7 @@ func (s *Service) CreateRoute(ctx context.Context, host, upstream, tlsMode strin
 	if err := validateTLSMode(tlsMode); err != nil {
 		return nil, err
 	}
-	if err := checkUpstream(upstream); err != nil {
+	if err := checkUpstream(ctx, upstream); err != nil {
 		return nil, err
 	}
 	res, err := s.db.ExecContext(ctx,
@@ -176,7 +176,7 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode s
 	if err := validateTLSMode(tlsMode); err != nil {
 		return err
 	}
-	if err := checkUpstream(upstream); err != nil {
+	if err := checkUpstream(ctx, upstream); err != nil {
 		return err
 	}
 	_, err := s.db.ExecContext(ctx,

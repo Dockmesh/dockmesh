@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -13,7 +15,7 @@ func TestBuildConfigSplitsPlainAndTLS(t *testing.T) {
 		{Host: "off.lan", Upstream: "127.0.0.1:3002", TLSMode: "auto", Enabled: false},
 		{Host: "evil.lan", Upstream: "localhost:2019", TLSMode: "none", Enabled: true},
 	}
-	cfg, blocked := buildConfig(routes)
+	cfg, blocked := buildConfig(context.Background(), routes)
 
 	if len(blocked) != 1 || blocked[0] != "evil.lan" {
 		t.Fatalf("blocked = %v", blocked)
@@ -41,7 +43,7 @@ func TestBuildConfigSplitsPlainAndTLS(t *testing.T) {
 }
 
 func TestBuildConfigWithoutTLSRoutesHasNoHTTPSServer(t *testing.T) {
-	cfg, _ := buildConfig([]Route{{Host: "a.lan", Upstream: "10.0.0.2:80", TLSMode: "none", Enabled: true}})
+	cfg, _ := buildConfig(context.Background(), []Route{{Host: "a.lan", Upstream: "192.0.2.2:80", TLSMode: "none", Enabled: true}})
 	if _, ok := cfg.Apps.HTTP.Servers[serverHTTPS]; ok {
 		t.Fatal("HTTPS server present without TLS routes")
 	}
@@ -67,14 +69,14 @@ func TestCheckUpstream(t *testing.T) {
 		{"app.lan:3000", nil},
 		{"my_service:80", nil},
 		{"[::1]:8080", nil},
-		{"192.168.1.10:443", nil},
+		{"198.51.100.10:443", nil},
 		{"localhost:2019", ErrAdminUpstream},
 		{"127.0.0.1:2019", ErrAdminUpstream},
 		{"127.0.0.1:02019", ErrAdminUpstream},
 		{"0.0.0.0:2019", ErrAdminUpstream},
 		{"[::1]:2019", ErrAdminUpstream},
 		{"LOCALHOST.:2019", ErrInvalidUpstream},
-		{"10.0.0.5:2019", nil},
+		{"192.0.2.5:2019", nil},
 		{"http://app:80", ErrInvalidUpstream},
 		{"app", ErrInvalidUpstream},
 		{"app:0", ErrInvalidUpstream},
@@ -85,14 +87,14 @@ func TestCheckUpstream(t *testing.T) {
 		{"app/path:80", ErrInvalidUpstream},
 	}
 	for _, tt := range tests {
-		if got := checkUpstream(tt.in); got != tt.want {
+		if got := checkUpstream(context.Background(), tt.in); !errors.Is(got, tt.want) {
 			t.Errorf("checkUpstream(%q) = %v, want %v", tt.in, got, tt.want)
 		}
 	}
 }
 
 func TestSameConfig(t *testing.T) {
-	cfg, _ := buildConfig([]Route{{Host: "a.lan", Upstream: "10.0.0.2:80", TLSMode: "auto", Enabled: true}})
+	cfg, _ := buildConfig(context.Background(), []Route{{Host: "a.lan", Upstream: "192.0.2.2:80", TLSMode: "auto", Enabled: true}})
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +124,7 @@ func TestSpecHashFollowsImage(t *testing.T) {
 
 func TestTargetsAdminCatchesStoredForms(t *testing.T) {
 	for _, dial := range []string{"LOCALHOST.:2019", " localhost:2019", ":2019", "127.0.0.2:2019"} {
-		if !targetsAdmin(dial) {
+		if !targetsAdmin(context.Background(), dial) {
 			t.Errorf("targetsAdmin(%q) = false", dial)
 		}
 	}

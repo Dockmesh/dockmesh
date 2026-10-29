@@ -13,14 +13,15 @@ import (
 )
 
 const (
+	adminPort = 2019
 	adminAddr = "127.0.0.1:2019"
 	adminURL  = "http://" + adminAddr
 )
 
 // adminOrigins are the only Host/Origin values Caddy's admin API
 // accepts. Requests without a matching Origin (browsers on other sites,
-// DNS rebinding) are refused; see Service docs for what this does not
-// cover.
+// DNS rebinding) are refused; see the package docs for what this does
+// not cover.
 var adminOrigins = []string{adminAddr, "localhost:2019"}
 
 // caddyConfig is the subset of Caddy's JSON config we generate. Full
@@ -99,7 +100,7 @@ const (
 // on :80, which Caddy never applies automatic HTTPS to. TLS routes live
 // in the :443 server; Caddy adds their HTTP->HTTPS redirects to the :80
 // server after the host-matched plain routes.
-func buildConfig(routes []Route) (*caddyConfig, []string) {
+func buildConfig(ctx context.Context, routes []Route) (*caddyConfig, []string) {
 	cfg := &caddyConfig{
 		Admin: &caddyAdmin{Listen: adminAddr, Origins: adminOrigins, EnforceOrigin: true},
 		Apps:  caddyApps{HTTP: caddyHTTP{Servers: map[string]caddyServer{}}},
@@ -115,7 +116,7 @@ func buildConfig(routes []Route) (*caddyConfig, []string) {
 		if !r.Enabled {
 			continue
 		}
-		if targetsAdmin(r.Upstream) {
+		if targetsAdmin(ctx, r.Upstream) {
 			blocked = append(blocked, r.Host)
 			continue
 		}
