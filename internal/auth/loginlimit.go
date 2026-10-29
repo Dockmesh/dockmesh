@@ -29,8 +29,7 @@ const (
 	AccountLimitBlock  = 15 * time.Minute
 
 	// unknownNamesMax caps the in-memory counters for names that match no
-	// user. When it is reached, further unknown names are refused until
-	// counters expire.
+	// user; beyond it they share overflow buckets (see ratelimit.MaxKeys).
 	unknownNamesMax = 100_000
 )
 
@@ -124,59 +123,71 @@ func (s *Service) limitSubject(ctx context.Context, raw, key string) (string, er
 	return match, rows.Err()
 }
 
+// attempt is a sign-in attempt counted against the per-account limit,
+// remembering where it was counted so it can be settled or refunded.
+type attempt struct {
+	userID string // "" when key names no user
+	key    string
+	ticket ratelimit.Ticket
+	since  int64 // window start on the users row
+}
+
 // acquireAccount counts an attempt against the per-account limit. When the
-// account is blocked it returns false and the end of the block. userID ""
-// means key names no user.
-func (s *Service) acquireAccount(ctx context.Context, userID, key string) (bool, time.Time, error) {
+// account is blocked it returns false and the end of the block.
+func (s *Service) acquireAccount(ctx context.Context, userID, key string) (attempt, bool, time.Time, error) {
+	a := attempt{userID: userID, key: key}
 	if userID == "" {
-		ok, retry := s.unknownLimit.Acquire(unknownKey(key))
-		return ok, time.Now().Add(retry), nil
+		t, ok, retry := s.unknownLimit.Acquire(unknownKey(key))
+		a.ticket = t
+		return a, ok, time.Now().Add(retry), nil
 	}
 	now := time.Now().Unix()
 	window := int64(AccountLimitWindow / time.Second)
-	res, err := s.db.ExecContext(ctx,
+	err := s.db.QueryRowContext(ctx,
 		`UPDATE users SET
 		   login_limit_count = CASE WHEN ? - login_limit_since >= ? THEN 1 ELSE login_limit_count + 1 END,
 		   login_limit_since = CASE WHEN ? - login_limit_since >= ? THEN ? ELSE login_limit_since END
 		 WHERE id = ? AND login_limit_until <= ?
-		   AND (? - login_limit_since >= ? OR login_limit_count < ?)`,
-		now, window, now, window, now, userID, now, now, window, AccountLimitMax)
-	if err != nil {
-		return false, time.Time{}, err
+		   AND (? - login_limit_since >= ? OR login_limit_count < ?)
+		 RETURNING login_limit_since`,
+		now, window, now, window, now, userID, now, now, window, AccountLimitMax).Scan(&a.since)
+	if err == nil {
+		return a, true, time.Time{}, nil
 	}
-	if n, _ := res.RowsAffected(); n == 1 {
-		return true, time.Time{}, nil
+	if !errors.Is(err, sql.ErrNoRows) {
+		return a, false, time.Time{}, err
 	}
 	var until, since int64
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT login_limit_until, login_limit_since FROM users WHERE id = ?`, userID).
 		Scan(&until, &since); err != nil {
-		return false, time.Time{}, err
+		return a, false, time.Time{}, err
 	}
 	if until <= now {
 		// All slots are taken by attempts still being checked.
 		until = since + window
 	}
-	return false, time.Unix(until, 0), nil
+	return a, false, time.Unix(until, 0), nil
 }
 
 // refundAccount takes back an attempt that succeeded but did not complete
-// the sign-in, so only failures stay counted.
-func (s *Service) refundAccount(ctx context.Context, userID, key string) {
-	if userID == "" {
-		s.unknownLimit.Refund(unknownKey(key))
+// the sign-in, so only failures stay counted. An attempt from a window that
+// has since been replaced is left alone.
+func (s *Service) refundAccount(ctx context.Context, a attempt) {
+	if a.userID == "" {
+		s.unknownLimit.Refund(a.ticket)
 		return
 	}
 	_, _ = s.db.ExecContext(ctx,
 		`UPDATE users SET login_limit_count = login_limit_count - 1
-		  WHERE id = ? AND login_limit_count > 0`, userID)
+		  WHERE id = ? AND login_limit_count > 0 AND login_limit_since = ?`, a.userID, a.since)
 }
 
 // settleAccount records that an acquired attempt failed and returns the
 // block's end when this failure started one.
-func (s *Service) settleAccount(ctx context.Context, userID, key string) (time.Time, bool) {
-	if userID == "" {
-		return s.unknownLimit.Settle(unknownKey(key))
+func (s *Service) settleAccount(ctx context.Context, a attempt) (time.Time, bool) {
+	if a.userID == "" {
+		return s.unknownLimit.Settle(a.ticket)
 	}
 	now := time.Now().Unix()
 	until := now + int64(AccountLimitBlock/time.Second)
@@ -184,9 +195,9 @@ func (s *Service) settleAccount(ctx context.Context, userID, key string) (time.T
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE users SET login_limit_until = ?
 		  WHERE id = ? AND login_limit_count >= ? AND login_limit_until <= ?`,
-		until, userID, AccountLimitMax, now)
+		until, a.userID, AccountLimitMax, now)
 	if err != nil {
-		slog.Warn("auth: block account", "user", userID, "err", err)
+		slog.Warn("auth: block account", "user", a.userID, "err", err)
 		return time.Time{}, false
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
@@ -197,13 +208,13 @@ func (s *Service) settleAccount(ctx context.Context, userID, key string) (time.T
 
 // failedAttempt settles a failed attempt and returns the error for it;
 // lockout is a policy lockout the same failure started.
-func (s *Service) failedAttempt(ctx context.Context, userID, key string, lockout *Block) error {
+func (s *Service) failedAttempt(ctx context.Context, a attempt, lockout *Block) error {
 	var blocks []Block
 	if lockout != nil {
 		blocks = append(blocks, *lockout)
 	}
-	if until, ok := s.settleAccount(ctx, userID, key); ok {
-		blocks = append(blocks, Block{Reason: BlockRateLimit, Key: key, Until: until})
+	if until, ok := s.settleAccount(ctx, a); ok {
+		blocks = append(blocks, Block{Reason: BlockRateLimit, Key: a.key, Until: until})
 	}
 	if len(blocks) == 0 {
 		return ErrInvalidCredentials

@@ -1,12 +1,18 @@
 package handlers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
 )
+
+// accountKeysMax caps the per-account counters of one authLimits; account
+// names come from the client.
+const accountKeysMax = 100_000
 
 // authLimits throttles failed attempts at one sign-in step, both per client
 // IP (spraying many accounts) and per account (one account from many IPs).
@@ -21,39 +27,63 @@ func newAuthLimits(ipMax, accountMax int, window time.Duration) authLimits {
 	l := authLimits{byIP: ratelimit.New(ipMax, window, window)}
 	if accountMax > 0 {
 		l.byAccount = ratelimit.New(accountMax, window, window)
+		l.byAccount.MaxKeys = accountKeysMax
 	}
 	return l
 }
 
-// allow writes 429 with Retry-After and returns false while the IP or the
-// account is locked. An empty account skips the account check.
-func (l authLimits) allow(w http.ResponseWriter, ip, account string) bool {
-	ip = clientip.LimitKey(ip)
-	retry := time.Duration(0)
-	if l.byIP != nil {
-		if ok, d := l.byIP.Check(ip); !ok {
-			retry = d
-		}
-	}
-	if l.byAccount != nil && account != "" {
-		if ok, d := l.byAccount.Check(account); !ok && d > retry {
-			retry = d
-		}
-	}
-	if retry == 0 {
-		return true
-	}
-	writeRetryAfter(w, retry)
-	writeError(w, http.StatusTooManyRequests, "too many attempts — try again later")
-	return false
+// authAttempt is an attempt counted by authLimits.acquire.
+type authAttempt struct {
+	ip, account       ratelimit.Ticket
+	hasIP, hasAccount bool
+	accountKey        string
 }
 
-func (l authLimits) fail(ip, account string) {
-	if l.byIP != nil {
-		l.byIP.Fail(clientip.LimitKey(ip))
+// acquire counts an attempt from ip and for account before it is checked,
+// and writes 429 with Retry-After when either is blocked. An empty ip or
+// account skips that side. Every granted attempt must be finished.
+func (l authLimits) acquire(w http.ResponseWriter, ip, account string) (authAttempt, bool) {
+	var a authAttempt
+	if l.byIP != nil && ip != "" {
+		t, ok, retry := l.byIP.Acquire(clientip.LimitKey(ip))
+		if !ok {
+			writeTooMany(w, "too many attempts", retry)
+			return a, false
+		}
+		a.ip, a.hasIP = t, true
 	}
 	if l.byAccount != nil && account != "" {
-		l.byAccount.Fail(account)
+		sum := sha256.Sum256([]byte(account))
+		a.accountKey = hex.EncodeToString(sum[:])
+		t, ok, retry := l.byAccount.Acquire(a.accountKey)
+		if !ok {
+			l.finish(a, false)
+			writeTooMany(w, "too many attempts", retry)
+			return a, false
+		}
+		a.account, a.hasAccount = t, true
+	}
+	return a, true
+}
+
+// finish settles a failed attempt. Otherwise the IP side is refunded and
+// the account bucket cleared: a success on one account must not reset the
+// IP bucket another account is being guessed from.
+func (l authLimits) finish(a authAttempt, failed bool) {
+	if failed {
+		if a.hasIP {
+			l.byIP.Settle(a.ip)
+		}
+		if a.hasAccount {
+			l.byAccount.Settle(a.account)
+		}
+		return
+	}
+	if a.hasIP {
+		l.byIP.Refund(a.ip)
+	}
+	if a.hasAccount {
+		l.byAccount.Succeed(a.accountKey)
 	}
 }
 
@@ -61,12 +91,4 @@ func (l authLimits) fail(ip, account string) {
 // their keys and payloads come straight from the client.
 func limitBody(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-}
-
-// succeed clears the account bucket only: a success on one account must not
-// reset the IP bucket another account is being guessed from.
-func (l authLimits) succeed(account string) {
-	if l.byAccount != nil && account != "" {
-		l.byAccount.Succeed(account)
-	}
 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -33,11 +34,13 @@ func (h *Handlers) LoginMFA(w http.ResponseWriter, r *http.Request) {
 	// shared with wrong passwords.
 	ip := clientIP(r)
 	key := clientip.LimitKey(ip)
-	if !acquireIP(w, h.mfaLimiter, key, "too many attempts") {
+	ipTicket, ok := acquireIP(w, h.mfaLimiter, key, "too many attempts")
+	if !ok {
 		return
 	}
 	res, err := h.Auth.VerifyLoginMFA(r.Context(), req.MFAToken, req.Code, r.UserAgent(), ip)
-	h.settleIP(r, h.mfaLimiter, key, "mfa", errors.Is(err, auth.ErrInvalidCredentials))
+	h.settleIP(r, h.mfaLimiter, ipTicket, key, "mfa", errors.Is(err, auth.ErrInvalidCredentials))
+	ctx := context.WithoutCancel(r.Context())
 	var rateErr *auth.RateLimitError
 	if errors.As(err, &rateErr) {
 		writeTooMany(w, "too many attempts", time.Until(rateErr.Until))
@@ -51,7 +54,7 @@ func (h *Handlers) LoginMFA(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, auth.ErrInvalidCredentials) {
 		h.auditAccountBlocks(r, err, "mfa")
 		if h.Audit != nil {
-			h.Audit.Write(r.Context(), "", audit.ActionLoginFailed, "mfa", map[string]string{"ip": ip})
+			h.Audit.Write(ctx, "", audit.ActionLoginFailed, "mfa", map[string]string{"ip": ip})
 		}
 		writeError(w, http.StatusUnauthorized, "invalid code")
 		return
@@ -61,7 +64,7 @@ func (h *Handlers) LoginMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.Audit != nil && res.User != nil {
-		h.Audit.Write(r.Context(), res.User.ID, audit.ActionLogin, res.User.Username, map[string]string{"mfa": "true"})
+		h.Audit.Write(ctx, res.User.ID, audit.ActionLogin, res.User.Username, map[string]string{"mfa": "true"})
 	}
 	writeJSON(w, http.StatusOK, res)
 }

@@ -54,12 +54,13 @@ func (h *Handlers) LDAPLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	ip := clientIP(r)
 	account := "ldap:" + slug + ":" + strings.ToLower(strings.TrimSpace(in.Username))
-	if !h.ldapLimits.allow(w, ip, account) {
+	att, ok := h.ldapLimits.acquire(w, ip, account)
+	if !ok {
 		return
 	}
 	res, err := h.LDAP.Authenticate(r.Context(), slug, in.Username, in.Password, r.UserAgent(), ip)
+	h.ldapLimits.finish(att, errors.Is(err, ldapauth.ErrInvalidCredentials))
 	if errors.Is(err, ldapauth.ErrInvalidCredentials) {
-		h.ldapLimits.fail(ip, account)
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -71,7 +72,6 @@ func (h *Handlers) LDAPLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.ldapLimits.succeed(account)
 	if res.User != nil {
 		h.audit(r, "auth.sso_login", res.User.ID, map[string]string{"provider": slug, "kind": "ldap"})
 	}

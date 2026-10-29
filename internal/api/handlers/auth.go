@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -49,11 +50,14 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	key := limitKey(ip)
 	// Per-IP limit, generous so users behind one proxy don't block each
 	// other; the per-account limit in auth.Service is the main guard.
-	if !acquireIP(w, h.LoginLimiter, key, "too many login attempts") {
+	ipTicket, ok := acquireIP(w, h.LoginLimiter, key, "too many login attempts")
+	if !ok {
 		return
 	}
 	res, err := h.Auth.Login(r.Context(), req.Username, req.Password, r.UserAgent(), ip)
-	h.settleIP(r, h.LoginLimiter, key, "login", errors.Is(err, auth.ErrInvalidCredentials))
+	h.settleIP(r, h.LoginLimiter, ipTicket, key, "login", errors.Is(err, auth.ErrInvalidCredentials))
+	// The attempt is counted; record its outcome even if the client left.
+	ctx := context.WithoutCancel(r.Context())
 	var rateErr *auth.RateLimitError
 	if errors.As(err, &rateErr) {
 		writeTooMany(w, "too many login attempts", time.Until(rateErr.Until))
@@ -62,7 +66,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, auth.ErrInvalidCredentials) {
 		h.auditAccountBlocks(r, err, "login")
 		if h.Audit != nil {
-			h.Audit.Write(r.Context(), "", audit.ActionLoginFailed, req.Username, map[string]string{"ip": ip})
+			h.Audit.Write(ctx, "", audit.ActionLoginFailed, req.Username, map[string]string{"ip": ip})
 		}
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
@@ -70,7 +74,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	var lockErr *auth.LockoutError
 	if errors.As(err, &lockErr) {
 		if h.Audit != nil {
-			h.Audit.Write(r.Context(), "", audit.ActionLoginFailed, req.Username,
+			h.Audit.Write(ctx, "", audit.ActionLoginFailed, req.Username,
 				map[string]string{"ip": ip, "reason": "locked"})
 		}
 		writeLocked(w, lockErr.Until)
@@ -82,7 +86,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	// Don't audit MFA-pending state — audit happens after /auth/mfa succeeds.
 	if h.Audit != nil && res.User != nil {
-		h.Audit.Write(r.Context(), res.User.ID, audit.ActionLogin, req.Username, map[string]string{"ip": ip})
+		h.Audit.Write(ctx, res.User.ID, audit.ActionLogin, req.Username, map[string]string{"ip": ip})
 	}
 	// Enrich the response with v2.1 permissions + scopes so the frontend
 	// doesn't have to round-trip /me after login to gate UI.
@@ -134,28 +138,28 @@ func waitText(wait time.Duration) string {
 
 // acquireIP counts a sign-in attempt from key against l, answering 429
 // while the address is blocked. A nil limiter allows everything.
-func acquireIP(w http.ResponseWriter, l *ratelimit.Limiter, key, prefix string) bool {
+func acquireIP(w http.ResponseWriter, l *ratelimit.Limiter, key, prefix string) (ratelimit.Ticket, bool) {
 	if l == nil {
-		return true
+		return ratelimit.Ticket{}, true
 	}
-	if ok, retry := l.Acquire(key); !ok {
+	t, ok, retry := l.Acquire(key)
+	if !ok {
 		writeTooMany(w, prefix, retry)
-		return false
 	}
-	return true
+	return t, ok
 }
 
 // settleIP finishes an attempt acquired with acquireIP: a failure may start
 // a block, anything else is taken back so only failures count.
-func (h *Handlers) settleIP(r *http.Request, l *ratelimit.Limiter, key, endpoint string, failed bool) {
+func (h *Handlers) settleIP(r *http.Request, l *ratelimit.Limiter, t ratelimit.Ticket, key, endpoint string, failed bool) {
 	if l == nil {
 		return
 	}
 	if !failed {
-		l.Refund(key)
+		l.Refund(t)
 		return
 	}
-	if until, started := l.Settle(key); started {
+	if until, started := l.Settle(t); started {
 		h.auditBlock(r, "ip", key, endpoint, auth.BlockRateLimit, until)
 	}
 }
@@ -165,7 +169,7 @@ func (h *Handlers) auditBlock(r *http.Request, kind, key, endpoint, reason strin
 	if h.Audit == nil {
 		return
 	}
-	h.Audit.Write(r.Context(), "", audit.ActionLoginBlocked, key, map[string]string{
+	h.Audit.Write(context.WithoutCancel(r.Context()), "", audit.ActionLoginBlocked, key, map[string]string{
 		"kind":     kind,
 		"endpoint": endpoint,
 		"reason":   reason,
@@ -204,13 +208,12 @@ func (h *Handlers) Refresh(w http.ResponseWriter, r *http.Request) {
 	// keeps a client from hammering the endpoint. A token that fails
 	// verification names no account we could trust.
 	ip := clientIP(r)
-	if !h.refreshLimits.allow(w, ip, "") {
+	att, ok := h.refreshLimits.acquire(w, ip, "")
+	if !ok {
 		return
 	}
 	res, err := h.Auth.Refresh(r.Context(), req.RefreshToken)
-	if errors.Is(err, auth.ErrInvalidToken) {
-		h.refreshLimits.fail(ip, "")
-	}
+	h.refreshLimits.finish(att, errors.Is(err, auth.ErrInvalidToken))
 	switch {
 	case errors.Is(err, auth.ErrTokenReused):
 		writeError(w, http.StatusUnauthorized, "token reuse detected")

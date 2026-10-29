@@ -82,10 +82,11 @@ func TestLimiter_WindowExpiry(t *testing.T) {
 
 func TestLimiterAcquire(t *testing.T) {
 	type step struct {
-		op   string // acquire, settle, refund, advance
+		op   string // acquire, settle, refund, advance, len
 		key  string
 		d    time.Duration
 		want bool // acquire: granted; settle: lock started
+		n    int  // len: tracked buckets
 	}
 	tests := []struct {
 		name    string
@@ -109,12 +110,25 @@ func TestLimiterAcquire(t *testing.T) {
 			{op: "settle", key: "a", want: false},
 			{op: "acquire", key: "a", want: true},
 		}},
-		{name: "full limiter refuses new keys", maxKeys: 1, steps: []step{
-			{op: "acquire", key: "a", want: true},
-			{op: "acquire", key: "b", want: false},
-			{op: "acquire", key: "a", want: true},
+		{name: "refund after a window reset is ignored", steps: []step{
+			{op: "acquire", key: "a", want: true}, // ticket from the old window
 			{op: "advance", d: 2 * time.Minute},
-			{op: "acquire", key: "b", want: true}, // expired "a" swept
+			{op: "acquire", key: "b", want: true},
+			{op: "acquire", key: "a", want: true}, // new window, but keep the old ticket
+			{op: "refund-old", key: "a"},
+			{op: "acquire", key: "a", want: true},
+			{op: "acquire", key: "a", want: false}, // the old refund didn't free a slot
+		}},
+		{name: "full limiter shares overflow buckets", maxKeys: 1, steps: []step{
+			{op: "acquire", key: "a", want: true},
+			{op: "acquire", key: "b", want: true},
+			{op: "acquire", key: "b", want: true},
+			{op: "settle", key: "b", want: true},
+			{op: "acquire", key: "b", want: false}, // overflow bucket locked
+			{op: "len", n: 2},
+			{op: "advance", d: 2 * time.Minute},
+			{op: "acquire", key: "c", want: true}, // expired buckets swept, "c" tracked on its own
+			{op: "len", n: 1},
 		}},
 	}
 	for _, tt := range tests {
@@ -128,22 +142,52 @@ func TestLimiterAcquire(t *testing.T) {
 				buckets:      make(map[string]*bucket),
 				now:          func() time.Time { return now },
 			}
+			tickets := map[string][]Ticket{}
 			for i, s := range tt.steps {
 				switch s.op {
 				case "acquire":
-					if ok, _ := l.Acquire(s.key); ok != s.want {
+					tk, ok, _ := l.Acquire(s.key)
+					if ok != s.want {
 						t.Fatalf("step %d: acquire = %v, want %v", i, ok, s.want)
 					}
+					if ok {
+						tickets[s.key] = append(tickets[s.key], tk)
+					}
 				case "settle":
-					if _, started := l.Settle(s.key); started != s.want {
+					tk := tickets[s.key][len(tickets[s.key])-1]
+					if _, started := l.Settle(tk); started != s.want {
 						t.Fatalf("step %d: settle started = %v, want %v", i, started, s.want)
 					}
 				case "refund":
-					l.Refund(s.key)
+					l.Refund(tickets[s.key][len(tickets[s.key])-1])
+				case "refund-old":
+					l.Refund(tickets[s.key][0])
 				case "advance":
 					now = now.Add(s.d)
+				case "len":
+					if len(l.buckets) != s.n {
+						t.Fatalf("step %d: %d buckets, want %d", i, len(l.buckets), s.n)
+					}
 				}
 			}
 		})
+	}
+}
+
+func TestLimiterFailKeepsLock(t *testing.T) {
+	now := time.Unix(0, 0)
+	l := &Limiter{
+		MaxFailures:  2,
+		Window:       time.Minute,
+		LockDuration: 5 * time.Minute,
+		buckets:      make(map[string]*bucket),
+		now:          func() time.Time { return now },
+	}
+	l.Fail("k")
+	l.Fail("k")
+	now = now.Add(2 * time.Minute) // window over, lock still running
+	l.Fail("k")
+	if ok, _ := l.Check("k"); ok {
+		t.Fatal("a failure after the window reset a running lock")
 	}
 }

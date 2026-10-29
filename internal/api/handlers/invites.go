@@ -173,31 +173,35 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 	limitBody(w, r)
 	token := chi.URLParam(r, "token")
 	ip := clientIP(r)
-	if !h.inviteLimits.allow(w, ip, "") {
+	ipAtt, ok := h.inviteLimits.acquire(w, ip, "")
+	if !ok {
 		return
 	}
+	failed := false
+	defer func() { h.inviteLimits.finish(ipAtt, failed) }()
 	inv, err := h.Invites.Get(r.Context(), token)
 	switch {
 	case errors.Is(err, invites.ErrNotFound):
-		h.inviteLimits.fail(ip, "")
+		failed = true
 		writeError(w, http.StatusNotFound, "invite not found")
 		return
 	case errors.Is(err, invites.ErrExpired):
-		h.inviteLimits.fail(ip, "")
+		failed = true
 		writeError(w, http.StatusGone, "invite expired")
 		return
 	case errors.Is(err, invites.ErrUsed):
-		h.inviteLimits.fail(ip, "")
+		failed = true
 		writeError(w, http.StatusGone, "invite already used")
 		return
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	account := "invite:" + strconv.FormatInt(inv.ID, 10)
-	if !h.inviteLimits.allow(w, ip, account) {
+	accountAtt, ok := h.inviteLimits.acquire(w, "", "invite:"+strconv.FormatInt(inv.ID, 10))
+	if !ok {
 		return
 	}
+	defer func() { h.inviteLimits.finish(accountAtt, failed) }()
 
 	var in AcceptInviteInput
 	if err := decodeJSON(r, &in); err != nil {
@@ -213,7 +217,7 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.Auth.CreateUser(r.Context(), in.Username, in.Email, in.Password, inv.Role)
 	if err != nil {
-		h.inviteLimits.fail(ip, account)
+		failed = true
 		switch {
 		case errors.Is(err, auth.ErrUsernameTaken):
 			writeError(w, http.StatusConflict, "username taken")

@@ -85,6 +85,9 @@ type Service struct {
 	unknownLimit *ratelimit.Limiter
 	// lockoutMu serializes policy-lockout updates so a lockout starts once.
 	lockoutMu sync.Mutex
+	// afterAcquire runs once an attempt is counted; tests use it to hang up
+	// mid-request.
+	afterAcquire func()
 }
 
 // NewService panics if secret is shorter than 32 bytes; config always
@@ -577,16 +580,24 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 	if found && lockedUntil.Valid && time.Now().Before(lockedUntil.Time) {
 		return nil, &LockoutError{Until: lockedUntil.Time}
 	}
-	if ok, until, err := s.acquireAccount(ctx, subject, key); err != nil {
+	att, ok, until, err := s.acquireAccount(ctx, subject, key)
+	if err != nil {
 		return nil, err
-	} else if !ok {
+	}
+	if !ok {
 		return nil, &RateLimitError{Until: until}
+	}
+	// The attempt is counted; a client that hangs up must not keep the
+	// outcome from being recorded.
+	ctx = context.WithoutCancel(ctx)
+	if s.afterAcquire != nil {
+		s.afterAcquire()
 	}
 	if !found {
 		// Same argon2 work as a wrong password, so response time doesn't
 		// tell which usernames exist.
 		_, _ = VerifyPassword(password, dummyHash())
-		return nil, s.failedAttempt(ctx, subject, key, nil)
+		return nil, s.failedAttempt(ctx, att, nil)
 	}
 	if email.Valid {
 		u.Email = email.String
@@ -599,16 +610,16 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 		u.PasswordChangedAt = &t
 	}
 	u.ScopeTags = parseScopeTags(scope)
-	ok, err := VerifyPassword(password, hash)
+	ok, err = VerifyPassword(password, hash)
 	if err != nil || !ok {
 		lockout := s.recordFailedLogin(ctx, u.ID, key)
-		return nil, s.failedAttempt(ctx, subject, key, lockout)
+		return nil, s.failedAttempt(ctx, att, lockout)
 	}
 	if totpVerified == 1 {
 		// Password OK but MFA required — return a pending token. The
 		// earlier failures stay counted until the second step succeeds,
 		// so wrong codes add up with wrong passwords.
-		s.refundAccount(ctx, subject, key)
+		s.refundAccount(ctx, att)
 		token, err := s.issueMFAPending(u.ID)
 		if err != nil {
 			return nil, err
@@ -641,15 +652,21 @@ func (s *Service) VerifyLoginMFA(ctx context.Context, mfaToken, code, userAgent,
 		return nil, &LockoutError{Until: lockedUntil.Time}
 	}
 	key := NormalizeUsername(username)
-	if ok, until, err := s.acquireAccount(ctx, claims.UserID, key); err != nil {
+	att, ok, until, err := s.acquireAccount(ctx, claims.UserID, key)
+	if err != nil {
 		return nil, err
-	} else if !ok {
+	}
+	if !ok {
 		return nil, &RateLimitError{Until: until}
 	}
-	ok, err := s.verifyMFACode(ctx, claims.UserID, code)
+	ctx = context.WithoutCancel(ctx)
+	if s.afterAcquire != nil {
+		s.afterAcquire()
+	}
+	ok, err = s.verifyMFACode(ctx, claims.UserID, code)
 	if err != nil || !ok {
 		lockout := s.recordFailedLogin(ctx, claims.UserID, key)
-		return nil, s.failedAttempt(ctx, claims.UserID, key, lockout)
+		return nil, s.failedAttempt(ctx, att, lockout)
 	}
 	s.clearFailures(ctx, claims.UserID)
 	u, err := s.GetUser(ctx, claims.UserID)
