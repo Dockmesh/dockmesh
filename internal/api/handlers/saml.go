@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/saml"
 	"github.com/go-chi/chi/v5"
@@ -57,9 +58,13 @@ func (h *Handlers) SAMLLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.setStateCookie(w, r, samlStateCookie, token, 300)
+	h.setSAMLStateCookie(w, r, token, 300)
 	http.Redirect(w, r, url, http.StatusFound)
 }
+
+// errSAMLNeedsHTTPS explains the usual reason the state cookie is missing.
+const errSAMLNeedsHTTPS = "SAML sign-in did not return to the browser session it started from. " +
+	"With an identity provider on another domain, Dockmesh must be reached over HTTPS."
 
 // SAMLACS handles the assertion-consumer POST from the IdP. Validates
 // the response, finds/creates the user, issues Dockmesh session tokens,
@@ -71,11 +76,15 @@ func (h *Handlers) SAMLACS(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := r.Cookie(samlStateCookie)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "missing state cookie")
+		msg := "SAML sign-in session expired or missing; sign in again."
+		if !h.cookiesSecure(r) {
+			msg = errSAMLNeedsHTTPS
+		}
+		ssoErrorRedirect(w, r, msg)
 		return
 	}
 	// Clear the cookie immediately — single-use.
-	h.setStateCookie(w, r, samlStateCookie, "", -1)
+	h.setSAMLStateCookie(w, r, "", -1)
 	claims := &samlStateClaims{}
 	if err := h.Auth.TokenKeys().Parse(auth.KindSAMLState, c.Value, claims); err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid state cookie")
@@ -91,10 +100,13 @@ func (h *Handlers) SAMLACS(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?sso_error="+encodeQuery(err.Error()), http.StatusFound)
 		return
 	}
-	if res.User != nil {
-		h.audit(r, "auth.sso_login", res.User.ID, map[string]string{"provider": claims.Pending.Slug, "kind": "saml"})
+	if res.RekeyedUser != "" {
+		h.audit(r, audit.ActionSAMLRekey, res.RekeyedUser, map[string]string{"provider": claims.Pending.Slug})
 	}
-	loc := "/login#sso_access=" + res.AccessToken + "&sso_refresh=" + res.RefreshToken
+	if res.Login.User != nil {
+		h.audit(r, "auth.sso_login", res.Login.User.ID, map[string]string{"provider": claims.Pending.Slug, "kind": "saml"})
+	}
+	loc := "/login#sso_access=" + res.Login.AccessToken + "&sso_refresh=" + res.Login.RefreshToken
 	http.Redirect(w, r, loc, http.StatusFound)
 }
 

@@ -181,6 +181,7 @@
             display_name: p.display_name,
             idp_metadata_xml: '', // keep existing
             nameid_format: p.nameid_format,
+            subject_attribute: p.subject_attribute ?? '',
             username_attribute: p.username_attribute,
             email_attribute: p.email_attribute,
             groups_attribute: p.groups_attribute,

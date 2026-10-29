@@ -24,13 +24,29 @@ func (h *Handlers) cookiesSecure(r *http.Request) bool {
 // setStateCookie sets (maxAge > 0) or clears (maxAge < 0) an SSO state
 // cookie.
 func (h *Handlers) setStateCookie(w http.ResponseWriter, r *http.Request, name, value string, maxAge int) {
+	h.writeStateCookie(w, r, name, value, maxAge, http.SameSiteLaxMode)
+}
+
+// setSAMLStateCookie is setStateCookie for SAML, whose IdP answers with a
+// cross-site POST: a Lax cookie isn't sent with it, so over HTTPS it is
+// SameSite=None. Browsers accept that only with Secure, so over plain
+// HTTP it stays Lax and works only with an IdP on the same site.
+func (h *Handlers) setSAMLStateCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
+	mode := http.SameSiteLaxMode
+	if h.cookiesSecure(r) {
+		mode = http.SameSiteNoneMode
+	}
+	h.writeStateCookie(w, r, samlStateCookie, value, maxAge, mode)
+}
+
+func (h *Handlers) writeStateCookie(w http.ResponseWriter, r *http.Request, name, value string, maxAge int, mode http.SameSite) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,
 		Value:    value,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   h.cookiesSecure(r),
-		SameSite: http.SameSiteLaxMode,
+		SameSite: mode,
 		MaxAge:   maxAge,
 	})
 }
