@@ -84,7 +84,7 @@ func reportBindCopies(ctx context.Context, n *notices.Service, hostID, stack str
 		Severity: notices.SevCritical,
 		Title:    "Data from an old bind mount of " + stack + " was not copied",
 		Body: "The redeploy could not copy files the old container wrote into its temporary bind " +
-			"mount: " + strings.Join(failed, "; ") + ". The old container is gone; check the " +
+			"mount:" + notices.Bullets(failed) + "The old container is gone; check the " +
 			"server log and restore the data from a backup if needed.",
 		Link: "/stacks/" + stack,
 	})

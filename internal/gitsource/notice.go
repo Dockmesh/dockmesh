@@ -2,7 +2,6 @@ package gitsource
 
 import (
 	"context"
-	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/notices"
 )
@@ -54,8 +53,8 @@ func (s *Service) SyncWebhookNotice(ctx context.Context, n *notices.Service) err
 		Severity: notices.SevWarning,
 		Title:    "Git webhooks disabled: no webhook secret",
 		Body: "Git webhooks now require a secret. These stacks have a git source without one, " +
-			"so pushes no longer trigger a sync (polling and manual sync still work): " +
-			strings.Join(names, ", ") + ". Open each stack, edit the git source, set a webhook " +
+			"so pushes no longer trigger a sync (polling and manual sync still work):" +
+			notices.Bullets(names) + "Open each stack, edit the git source, set a webhook " +
 			"secret and enter the same secret in the webhook settings of your git provider.",
 		Link: link,
 	})

@@ -98,7 +98,7 @@ func syncSeededRootsNotice(ctx context.Context, n *notices.Service, st *settings
 		Severity: notices.SevInfo,
 		Title:    "Review allowed local backup directories",
 		Body: "Local backup targets may now only write below allowed directories. These were " +
-			"added because existing jobs use them: " + strings.Join(extras, ", ") + ". Keep or " +
+			"added because existing jobs use them:" + notices.Bullets(extras) + "Keep or " +
 			"remove them in the " + targets.LocalRootsSetting + " setting.",
 		Link: "/settings",
 	})
@@ -136,8 +136,8 @@ func syncUnencryptableNotice(ctx context.Context, n *notices.Service, svc *backu
 		Severity: notices.SevCritical,
 		Title:    "Encrypted backup jobs can't run",
 		Body: "Secrets encryption is turned off on this server, so these jobs, which are set to " +
-			"encrypt, fail instead of writing unencrypted archives: " + strings.Join(jobs, ", ") +
-			". Turn secrets encryption back on (DOCKMESH_SECRETS_ENCRYPT_ENV) or switch off " +
+			"encrypt, fail instead of writing unencrypted archives:" + notices.Bullets(jobs) +
+			"Turn secrets encryption back on (DOCKMESH_SECRETS_ENCRYPT_ENV) or switch off " +
 			"encryption for each job.",
 		Link: "/backups",
 	})

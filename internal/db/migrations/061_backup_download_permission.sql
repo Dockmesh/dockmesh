@@ -10,9 +10,9 @@ INSERT INTO notices (key, audience, audience_value, severity, title, body, link)
 SELECT 'rbac-custom-roles-narrowed', 'admins', '', 'warning',
        'Custom roles lost permissions in this update',
        'Backup archive downloads now need "Download backups", container file access needs "Shell into container", and system backups and the backup key are admin-only. Review these custom roles and grant the new permissions where intended.'
-       || CASE WHEN dl <> '' THEN char(10) || 'No longer download backup archives: ' || dl ELSE '' END
-       || CASE WHEN files <> '' THEN char(10) || 'No longer read container files: ' || files ELSE '' END
-       || CASE WHEN sys <> '' THEN char(10) || 'No longer download system backups or export the backup key: ' || sys ELSE '' END,
+       || CASE WHEN dl <> '' THEN char(10) || '- No longer download backup archives: ' || dl ELSE '' END
+       || CASE WHEN files <> '' THEN char(10) || '- No longer read container files: ' || files ELSE '' END
+       || CASE WHEN sys <> '' THEN char(10) || '- No longer download system backups or export the backup key: ' || sys ELSE '' END,
        '/users'
   FROM (
     SELECT
