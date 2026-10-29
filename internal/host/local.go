@@ -2,9 +2,7 @@ package host
 
 import (
 	"context"
-	"errors"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -325,11 +323,6 @@ func (h *LocalHost) InspectVolume(ctx context.Context, name string) (volume.Volu
 	return h.cli.InspectVolume(ctx, name)
 }
 
-// VolumeBrowseEntries first tries direct filesystem access via the
-// volume's mountpoint. On EACCES (common — Docker volumes are
-// root:root 0700 and Dockmesh runs as an unprivileged user) we fall
-// back to spawning a short-lived alpine container with the volume
-// mounted, which sees everything as root inside its own namespace.
 func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath string) ([]VolumeEntry, error) {
 	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
@@ -342,16 +335,7 @@ func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath strin
 	if err != nil {
 		return nil, err
 	}
-	// The helper container resolves links inside its own mount of the
-	// volume, so absolute in-volume symlinks work there safely.
-	entries, err := BrowseVolume(mp, subpath)
-	if errors.Is(err, ErrVolumePathEscape) {
-		return BrowseDirViaHelper(ctx, h.cli, name, subpath)
-	}
-	if err != nil && errors.Is(err, fs.ErrPermission) {
-		return BrowseDirViaHelper(ctx, h.cli, name, subpath)
-	}
-	return entries, err
+	return BrowseVolumeOnHost(ctx, h.cli.Raw(), name, mp, subpath)
 }
 
 func (h *LocalHost) VolumeReadFile(ctx context.Context, name, subpath string, maxBytes int64) (*VolumeFileResult, error) {
@@ -366,14 +350,7 @@ func (h *LocalHost) VolumeReadFile(ctx context.Context, name, subpath string, ma
 	if err != nil {
 		return nil, err
 	}
-	res, err := ReadVolumeFile(mp, subpath, maxBytes)
-	if errors.Is(err, ErrVolumePathEscape) {
-		return ReadFileViaHelper(ctx, h.cli, name, subpath, maxBytes)
-	}
-	if err != nil && errors.Is(err, fs.ErrPermission) {
-		return ReadFileViaHelper(ctx, h.cli, name, subpath, maxBytes)
-	}
-	return res, err
+	return ReadVolumeFileOnHost(ctx, h.cli.Raw(), name, mp, subpath, maxBytes)
 }
 
 // VolumeTar spawns a busybox helper against the docker socket and

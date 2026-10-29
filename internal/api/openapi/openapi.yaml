@@ -3073,7 +3073,9 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/VolumeEntry" }
         "400":
-          description: Path escapes volume root or is too long.
+          description: |
+            Path leaves the volume root (`..` or a symlink pointing outside
+            the volume), is too long, or is not a directory.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -3112,10 +3114,21 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/VolumeFileResult" }
-        "400": { $ref: "#/components/responses/BadRequest" }
+        "400":
+          description: |
+            `path` is missing, leaves the volume root (`..` or a symlink
+            pointing outside the volume), is too long, or is not a regular file.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Volume driver doesn't expose a host-filesystem mountpoint.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   # -----------------------------------------------------------------------
   # networks — CRUD + topology view + prune

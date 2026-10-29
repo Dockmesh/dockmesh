@@ -69,6 +69,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   download (set `DOCKMESH_SKIP_CHECKSUM=1` to override) instead of continuing with a warning.
 - The `dockmesh` command-line tools (`dockmesh admin ...`) also find the settings file in
   `/data/dockmesh.env`, where the installer puts it on hosts with a separate `/data` volume.
+- Browsing a volume on an agent host works again. The agent now reads the volume through a
+  short-lived read-only helper container, like the server does, instead of failing with
+  "permission denied" on every folder.
+- Opening a path that leaves the volume (`..` or a symlink pointing outside) now answers with a
+  400 error on every host instead of a server error, and a missing file answers 404.
 
 ## [0.4.0] - 2026-10-29 [security]
 
