@@ -98,7 +98,7 @@ Encrypted archives (`.tar.gz.age`) are refused. Decrypt them first with `age -d`
 sudo -u dockmesh dockmesh doctor
 ```
 
-Checks, in this order, that the configuration loads (warning if `DOCKMESH_AGENT_PUBLIC_URL` is unset), the database opens and answers, the data directory exists, the Docker daemon answers (warning only), the agent CA and server certificate load, and the data directory is writable. Exits with status 1 if any check fails; warnings alone do not fail. No flags besides the global `--env-file`.
+Checks, in this order, that the configuration loads (warning if `DOCKMESH_AGENT_PUBLIC_URL` is unset), the database opens and answers, the data directory exists (warning only), the Docker daemon answers (warning only), the agent CA and server certificate load, and the data directory is writable. Exits with status 1 if any check fails; warnings alone do not fail. No flags besides the global `--env-file`.
 
 ## ca
 
@@ -140,7 +140,7 @@ sudo -u dockmesh dockmesh admin unlock --user admin
 
 | Subcommand | Flags | Effect |
 |---|---|---|
-| `create` | `--username` (required), `--email`, `--role` (default `viewer`), `--password` | Creates a local user. Role is a built-in (`admin`, `host-admin`, `deployer`, `operator`, `viewer`) or a custom role ID |
+| `create` | `--username` (required), `--email`, `--role` (default `viewer`), `--password` | Creates a local user. Role is a built-in (`admin`, `host-admin`, `deployer`, `operator`, `viewer`) or the name of a custom role. The value is stored without validation, so check the spelling |
 | `reset-password` | `--user` (username or ID, required), `--password` | Sets a new password and signs out all of the user's sessions |
 | `unlock` | `--user` (required) | Clears a login lockout and the failed-attempt counter; the password stays |
 | `list-users` | none | Prints ID, username, role, email and MFA status |

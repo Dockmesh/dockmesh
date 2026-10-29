@@ -44,12 +44,12 @@ If you picked a non-default port in `dockmesh init` and the server still listens
 ### Run `dockmesh doctor`
 
 ```bash
-sudo dockmesh doctor
+sudo -u dockmesh dockmesh doctor
 ```
 
-It checks, in this order: that the configuration loads (and warns when `DOCKMESH_AGENT_PUBLIC_URL` is unset), that the database opens and answers, that the data directory exists, that the Docker daemon answers (a warning, not a failure, if it doesn't), that the agent CA and server certificate load, and that the data directory is writable. It exits non-zero if any check fails.
+It checks, in this order: that the configuration loads (and warns when `DOCKMESH_AGENT_PUBLIC_URL` is unset), that the database opens and answers, that the data directory exists (a warning only), that the Docker daemon answers (a warning, not a failure, if it doesn't), that the agent CA and server certificate load, and that the data directory is writable. It exits non-zero if any check fails.
 
-Like the other `dockmesh` subcommands, `doctor` loads `/var/lib/dockmesh/dockmesh.env` (macOS: `/usr/local/var/dockmesh/dockmesh.env`) automatically unless `DOCKMESH_DB_PATH` is already set in your shell. If your data lives elsewhere, for example `/data`, pass the file explicitly: `sudo dockmesh doctor --env-file /data/dockmesh.env`. Run it with `sudo`, because the data directory belongs to the `dockmesh` user.
+Like the other `dockmesh` subcommands, `doctor` loads `/var/lib/dockmesh/dockmesh.env` (macOS: `/usr/local/var/dockmesh/dockmesh.env`) automatically unless `DOCKMESH_DB_PATH` is already set in your shell. If your data lives elsewhere, for example `/data`, pass the file explicitly: `sudo -u dockmesh dockmesh doctor --env-file /data/dockmesh.env`. Run it as the service user (`sudo -u dockmesh`) so files it creates keep the right owner.
 
 ## Lost admin password or locked out
 
@@ -58,17 +58,17 @@ After five failed sign-ins the account is locked for 15 minutes and the login pa
 To clear a lock without changing the password:
 
 ```bash
-sudo dockmesh admin unlock --user admin
+sudo -u dockmesh dockmesh admin unlock --user admin
 ```
 
 To set a new password:
 
 ```bash
-sudo dockmesh admin reset-password --user admin
+sudo -u dockmesh dockmesh admin reset-password --user admin
 # prompts for the password; or pass --password '<new>' (it then ends up in shell history)
 ```
 
-`--user` takes a username or user ID. `reset-password` signs out every session of that user, but it does not clear an active lockout, so run `admin unlock` too if the account is locked. `sudo dockmesh admin list-users` shows all accounts with role and MFA state. If the browser keeps getting locked out, delete the saved password for the Dockmesh URL; autofill replaying an old password is the usual cause.
+`--user` takes a username or user ID. `reset-password` signs out every session of that user, but it does not clear an active lockout, so run `admin unlock` too if the account is locked. `sudo -u dockmesh dockmesh admin list-users` shows all accounts with role and MFA state. If the browser keeps getting locked out, delete the saved password for the Dockmesh URL; autofill replaying an old password is the usual cause.
 
 ## Setup wizard not showing or expired
 
@@ -111,7 +111,7 @@ Common causes:
 - **Port 8443 not reachable.** The agent listener (`DOCKMESH_AGENT_LISTEN`, default `:8443`) must be reachable from the agent host, directly and not through a proxy that terminates TLS. Test with `openssl s_client -connect <server>:8443`.
 - **Certificate name mismatch.** The agent log shows `certificate is valid for ... not <name>`. The server certificate covers `localhost`, `127.0.0.1`, `::1` and whatever is in `DOCKMESH_AGENT_SANS` (comma-separated hostnames and IPs; `dockmesh init` fills it in). Add the name the agent dials, then restart the server. The certificate is re-issued from the same CA, so agents don't need to re-enroll.
 - **Wrong server URL on the agent.** Edit `DOCKMESH_AGENT_URL` in `/etc/dockmesh-agent/agent.env` and run `sudo systemctl restart dockmesh-agent`. The environment value takes precedence over the URL saved at enrollment.
-- **Docker not running on the agent host.** The agent then only answers pings (`docker client init failed`).
+- **Docker not running on the agent host.** The agent stays connected, but every container and stack request fails with a Docker connection error. Check `systemctl status docker` on the agent host. The log line `docker client init failed` means the Docker client settings (for example `DOCKER_HOST`) are invalid, not that the daemon is down.
 
 ### Certificate expired after a year
 
@@ -123,11 +123,11 @@ Agent certificates are valid for 365 days from enrollment and are not renewed au
 <!-- update after: agents: pin the CA at enrollment and verify self-upgrades -->
 **Re-issue** on the host detail page creates a new token, but a host that has enrolled before cannot use it: the server accepts enrollment tokens only for hosts in `pending` state, and the agent's enroll request fails with `invalid token`. To re-enroll a single host (expired certificate, reinstalled machine), remove it and add it again:
 
-1. On the host detail page, click **Revoke &lt;name&gt;…** (or run `sudo dockmesh enroll revoke --name <name>` on the server).
+1. On the host detail page, click **Revoke &lt;name&gt;…** (or run `sudo -u dockmesh dockmesh enroll revoke --name <name>` on the server).
 2. On **Hosts**, click **Add host** with the same name and copy the install command.
 3. Run the command on the agent host. The installer stops the agent, deletes the old certificate and enrolls again.
 
-Containers on the host keep running. The new entry gets a new host ID, so redeploy stacks that were deployed to the old entry. To re-enroll every host at once, for example after a CA compromise, `sudo dockmesh ca rotate` issues a new CA and puts all agents back into `pending` with fresh tokens it prints.
+Containers on the host keep running. The new entry gets a new host ID, so redeploy stacks that were deployed to the old entry. To re-enroll every host at once, for example after a CA compromise, `sudo -u dockmesh dockmesh ca rotate` issues a new CA and puts all agents back into `pending` with fresh tokens it prints.
 
 ## Deploy fails
 
@@ -148,7 +148,7 @@ On remote hosts, private registry credentials are not passed to the agent, and s
 
 ### Compose options are ignored
 
-Dockmesh does not run `docker compose`. It reads the file with compose-go and creates containers through the Docker API, and it supports only a subset of service fields. Fields such as `depends_on`, `deploy`, `devices`, `extra_hosts`, `dns`, `ulimits`, `logging`, `secrets` and `configs` are dropped without a warning. The full list is in [How stacks work](../concepts/stacks.md).
+Dockmesh does not run `docker compose`. It reads the file with compose-go and creates containers through the Docker API, and it supports only a subset of service fields. Fields such as `depends_on`, `deploy` (except `deploy.update_config`, which rolling updates read), `devices`, `extra_hosts`, `dns`, `ulimits`, `logging`, `secrets` and `configs` are dropped without a warning. The full list is in [How stacks work](../concepts/stacks.md).
 
 ### Relative bind mounts lose their data
 

@@ -41,7 +41,7 @@ With username and password:
 dmctl login http://dockmesh.lan:8080 --user admin
 ```
 
-dmctl prompts for the password (hidden) and, if the account has two-factor authentication, for the TOTP or recovery code. The MFA prompt needs a terminal. dmctl saves the access and refresh token and, when a request returns 401, refreshes once and retries. The session is still bound by the server's session limits (24 hours absolute and 60 minutes idle by default), so use an API token for anything unattended.
+dmctl prompts for the password (hidden) and, if the account has two-factor authentication, for the TOTP or recovery code. The MFA prompt needs a terminal. dmctl saves the access and refresh token and, when a request returns 401, refreshes once and retries. The session ends when dmctl has not refreshed it for 60 minutes (the default idle limit; each refresh also renews the 24-hour lifetime), so use an API token for anything unattended.
 
 | Command | Flags | Effect |
 |---|---|---|
@@ -92,7 +92,7 @@ dmctl stacks deploy web
 | `stacks logs <name>` | `--service`, `--tail` (100), `-f/--follow` | status + log WebSocket | `stacks.view`, `containers.logs` |
 | `stacks adopt [path]` | see below | `GET /stacks/discovered`, `POST /stacks/adopt` | `stacks.view`, `stacks.adopt` |
 
-`stacks get` prints `compose.yaml` and the decrypted `.env`. `stacks deploy` uses the overlay `compose.<NAME>.yaml` when `--environment` is set, otherwise the stack's active environment; dependencies are deployed first. The command waits until the server finishes the deploy. `stacks logs` follows the first container of each service and prefixes lines with `[service]` when there is more than one.
+`stacks get` prints `compose.yaml` and the decrypted `.env`. `stacks deploy` uses the overlay `compose.<NAME>.yaml` when `--environment` is set, otherwise the stack's active environment; dependencies are deployed first. The command waits until the server finishes the deploy, but dmctl gives up after 60 seconds and the server then cancels the deploy part-way; deploy stacks with slow image pulls from the UI. `stacks logs` follows the first container of each service and prefixes lines with `[service]` when there is more than one.
 
 `stacks adopt` takes over a compose project that is already running, without restarting its containers. It looks for the compose file in `path` (default `.`), finds the running project on the target host by its `com.docker.compose.project` label, packs the directory into a bundle and uploads it.
 
@@ -127,7 +127,7 @@ Known issues: `containers list --all` still lists only running containers (the s
 | `backup runs` | `--limit` (20) | `backups.view` |
 
 <!-- update after: backups: run in the background, set the time zone, use saved targets -->
-`backup run` waits for the backup to finish. dmctl gives up on any request after 60 seconds, and the server ties the run to that request, so a longer backup is cancelled. Start long jobs from the UI or let the schedule run them. The **TYPE** column of `backup jobs` and the **BYTES** column of `backup runs` stay empty because dmctl reads field names the server does not send; use `-o json` for the full data.
+`backup run` waits for the backup to finish. dmctl gives up on any request after 60 seconds, and the server ties the run to that request, so a longer backup is cancelled. Start long jobs from the UI or let the schedule run them. The **TYPE** column of `backup jobs` stays empty and the **BYTES** column of `backup runs` always shows `0`, because dmctl reads field names the server does not send; use `-o json` for the full data.
 
 ## alert
 

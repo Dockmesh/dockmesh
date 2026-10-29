@@ -13,7 +13,7 @@ The web UI is a client of the same REST API you can call yourself. Everything is
 | `GET /api/v1/openapi.yaml` | The same spec as YAML |
 | `GET /api/v1/docs` | Swagger UI for the spec |
 
-All three are public and cached for five minutes. Swagger UI loads its JavaScript and CSS from `cdn.jsdelivr.net`, so the browser needs internet access; use the **Authorize** button to paste a token before you try requests. The spec is maintained by hand next to the router, and a CI test fails when a route is missing from it. Request and response schemas are not checked by that test, so treat field lists as documentation, not a guarantee.
+All three are public; the JSON and YAML spec are cached for five minutes. Swagger UI loads its JavaScript and CSS from `cdn.jsdelivr.net`, so the browser needs internet access; use the **Authorize** button to paste a token before you try requests. The spec is maintained by hand next to the router, and a CI test fails when a route is missing from it. Request and response schemas are not checked by that test, so treat field lists as documentation, not a guarantee.
 
 ```bash
 curl -s https://dockmesh.example.com/api/v1/openapi.json -o dockmesh-openapi.json
@@ -57,7 +57,7 @@ curl -s -X POST https://dockmesh.example.com/api/v1/auth/logout \
   -H 'Content-Type: application/json' -d '{"refresh_token":"..."}'
 ```
 
-Refresh returns a new token pair; always store both. Presenting a refresh token that was already used counts as theft and revokes the whole session (`401`, `token reuse detected`), so never refresh the same token from two processes. Sessions end after 24 hours or 60 minutes of inactivity by default, whatever you refresh. Logout returns `204`.
+Refresh returns a new token pair; always store both. Presenting a refresh token that was already used counts as theft and revokes the whole session (`401`, `token reuse detected`), so never refresh the same token from two processes. Sessions end after 60 minutes without a refresh by default. The 24-hour session lifetime starts again on every refresh, so a client that keeps refreshing stays signed in. Logout returns `204`.
 
 ### API tokens
 
@@ -154,7 +154,7 @@ The client address is taken from `X-Forwarded-For`, `X-Real-IP` or `True-Client-
 
 ## Public endpoints
 
-These need no token: `GET /api/v1/health`, `GET /healthz/live`, `GET /healthz/ready` (503 while shutting down), the OpenAPI paths above, `/api/v1/auth/*` sign-in routes (login, MFA, refresh, logout, SSO), `/api/v1/setup/*` during setup, `POST /api/v1/agents/enroll`, `/api/v1/invite/{token}`, `POST /api/v1/stacks/{name}/git/webhook`, and `/install/agent.sh` and `/install/{name}`. `/metrics` is public only with `DOCKMESH_METRICS_AUTH=false`; otherwise it needs a token with `metrics.view`. See [Monitoring](../features/monitoring.md).
+These need no token: `GET /api/v1/health`, `GET /healthz/live`, `GET /healthz/ready` (503 while shutting down or when the database does not answer), the OpenAPI paths above, `/api/v1/auth/*` sign-in routes (login, MFA, refresh, logout, SSO), `/api/v1/setup/*` during setup, `POST /api/v1/agents/enroll`, `/api/v1/invite/{token}`, `POST /api/v1/stacks/{name}/git/webhook`, and `/install/agent.sh` and `/install/{name}`. `/metrics` is public only with `DOCKMESH_METRICS_AUTH=false`; otherwise it needs a token with `metrics.view`. See [Monitoring](../features/monitoring.md).
 
 ## dmctl
 

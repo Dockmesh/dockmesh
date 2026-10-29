@@ -46,7 +46,7 @@ Agents verify the listener certificate against the names in `DOCKMESH_AGENT_SANS
 | `DOCKMESH_SECRETS_KEY_PATH` | `./data/secrets.age-key` | age key that encrypts stack `.env` files and stored credentials |
 | `DOCKMESH_AUDIT_GENESIS_PATH` | `./data/audit-genesis.sha256` | Genesis hash of the audit log chain |
 | `DOCKMESH_INSTALL_SCRIPT` | `./scripts/install-agent.sh` | Template served at `/install/agent.sh` |
-| `DOCKMESH_BINARY_DIR` | `./bin` | Directory served at `/install/{name}` (agent and dmctl binaries) |
+| `DOCKMESH_BINARY_DIR` | `./bin` | Directory served at `/install/{name}`. `install.sh` puts only the agent binary for the server's own platform there; dmctl binaries are served only if you copy them in |
 
 Relative defaults resolve against the server's working directory. The installers write absolute paths. See [Filesystem layout](./filesystem-layout.md).
 
