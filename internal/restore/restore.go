@@ -1,7 +1,7 @@
 // Package restore extracts Dockmesh system-backup tarballs back onto
 // disk + runs post-restore sanity checks. Shared code path for the
 // `dockmesh restore` CLI (cmd_restore.go) and the
-// `POST /api/v1/restore/upload` HTTP handler (P.12.4). Kept package-
+// `POST /api/v1/restore/upload` HTTP handler. Kept package-
 // free of CLI concerns (flag parsing, stdout progress) so both
 // callers can plug their own presentation.
 package restore
@@ -29,13 +29,20 @@ import (
 type Counts struct {
 	Files int   `json:"files"`
 	Bytes int64 `json:"bytes"`
+	// SkippedLinks counts symlink/hardlink entries. Dockmesh's own
+	// backups never contain links, so they are dropped, not followed.
+	SkippedLinks int `json:"skipped_links,omitempty"`
 }
 
 // Options controls Extract behaviour.
 type Options struct {
-	Force    bool
-	DryRun   bool
-	TmpBase  string // where to stage the DB temp file; default: same dir as cfg.DBPath
+	Force  bool
+	DryRun bool
+	// MaxBytes and MaxEntries cap what an archive may unpack to (0 = no
+	// limit). Set for verification, where the archive comes from outside.
+	MaxBytes   int64
+	MaxEntries int
+	TmpBase    string // where to stage the DB temp file; default: same dir as cfg.DBPath
 }
 
 // SanityResult is the structured output of the post-restore checks.
@@ -92,7 +99,7 @@ func Extract(ctx context.Context, r io.Reader, cfg *config.Config, opts Options)
 	dbTmp := filepath.Join(tmpBase, filepath.Base(cfg.DBPath)+".restore.tmp")
 	_ = os.Remove(dbTmp)
 
-	counts, err := extractAll(ctx, tr, cfg, dbTmp)
+	counts, err := extractAll(ctx, tr, cfg, dbTmp, opts)
 	if err != nil {
 		_ = os.Remove(dbTmp)
 		return nil, err
@@ -116,6 +123,17 @@ func Extract(ctx context.Context, r io.Reader, cfg *config.Config, opts Options)
 // tree instead of the live paths. Used by Verify — extract a backup
 // into /tmp/verify-<id>/ and run Sanity against those paths without
 // touching production. Caller must os.RemoveAll the returned dir.
+// Verification unpacks archives into the system temp dir; a small gzip
+// stream can expand to far more than it, so the result is capped.
+const (
+	verifyMaxBytes   = 8 << 30
+	verifyMaxEntries = 200_000
+)
+
+// ErrTooLarge is returned when an archive exceeds Options.MaxBytes or
+// Options.MaxEntries.
+var ErrTooLarge = errors.New("archive unpacks to more than the allowed size")
+
 func ExtractToTemp(ctx context.Context, r io.Reader, label string) (dir string, cfg *config.Config, _ *Counts, err error) {
 	dir, err = os.MkdirTemp("", "dockmesh-verify-"+label+"-")
 	if err != nil {
@@ -129,7 +147,7 @@ func ExtractToTemp(ctx context.Context, r io.Reader, label string) (dir string, 
 		SecretsKeyPath:   filepath.Join(dir, "secrets.age-key"),
 		AuditGenesisPath: filepath.Join(dir, "audit-genesis.sha256"),
 	}
-	counts, err := Extract(ctx, r, cfg, Options{Force: true})
+	counts, err := Extract(ctx, r, cfg, Options{Force: true, MaxBytes: verifyMaxBytes, MaxEntries: verifyMaxEntries})
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return "", nil, nil, err
@@ -251,9 +269,13 @@ func walkTarDryRun(tr *tar.Reader) (*Counts, error) {
 	return c, nil
 }
 
-func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp string) (*Counts, error) {
+func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp string, opts Options) (*Counts, error) {
 	c := &Counts{}
 	dataDir := filepath.Dir(cfg.DBPath)
+	liveDB := filepath.Base(cfg.DBPath)
+	entries := 0
+	roots := rootSet{}
+	defer roots.close()
 	for {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -265,58 +287,127 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 		if err != nil {
 			return nil, err
 		}
+		entries++
+		if opts.MaxEntries > 0 && entries > opts.MaxEntries {
+			return nil, ErrTooLarge
+		}
 		clean := filepath.ToSlash(filepath.Clean(hdr.Name))
 		if strings.Contains(clean, "..") {
 			return nil, fmt.Errorf("archive entry escapes root: %q", hdr.Name)
 		}
-		var targetPath string
+		if hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink {
+			c.SkippedLinks++
+			continue
+		}
+		var root, rel string
 		switch {
 		case clean == "dockmesh.db":
-			targetPath = dbTmp
 		case strings.HasPrefix(clean, "stacks/"):
-			targetPath = filepath.Join(cfg.StacksRoot, strings.TrimPrefix(clean, "stacks/"))
+			root, rel = cfg.StacksRoot, strings.TrimPrefix(clean, "stacks/")
+		case strings.HasPrefix(clean, "data/") && db.IsSnapshotName("", filepath.Base(clean)):
+			// Archives written before backups excluded them can carry
+			// pre-migration snapshots with stale secrets.
+			continue
 		case strings.HasPrefix(clean, "data/"):
-			targetPath = filepath.Join(dataDir, strings.TrimPrefix(clean, "data/"))
+			root, rel = dataDir, strings.TrimPrefix(clean, "data/")
+			// The live DB is never part of data/ (it is restored from the
+			// top-level snapshot via dbTmp); writing it here would bypass
+			// the safety check and the atomic swap.
+			if base := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(rel, "-wal"), "-shm"), "-journal"); base == liveDB || rel == filepath.Base(dbTmp) {
+				continue
+			}
 		default:
 			// Unknown prefix — skip silently (future-version archive
 			// fields we don't understand).
 			continue
 		}
+		fsys, name := hostFS(), dbTmp
+		if root != "" {
+			r, err := roots.open(root)
+			if err != nil {
+				return nil, err
+			}
+			fsys, name = rootFS(r), filepath.FromSlash(rel)
+		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(targetPath, 0o755); err != nil {
-				return nil, fmt.Errorf("mkdir %q: %w", targetPath, err)
+			if err := fsys.mkdirAll(name, 0o755); err != nil {
+				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
 			}
 		case tar.TypeReg, tar.TypeRegA:
-			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-				return nil, err
+			if err := fsys.mkdirAll(filepath.Dir(name), 0o755); err != nil {
+				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
 			}
 			// DR bootstrap: the user has to pre-seed secrets.age-key (0400)
 			// before running restore so we can decrypt the tarball. The
 			// tarball also contains secrets.age-key, and overwriting a
 			// 0400 file via O_TRUNC fails with EACCES — unlink-then-create
 			// makes this idempotent.
-			_ = os.Remove(targetPath)
-			out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&0o777)
+			_ = fsys.remove(name)
+			out, err := fsys.openFile(name, os.O_CREATE|os.O_WRONLY|os.O_EXCL, os.FileMode(hdr.Mode&0o777)) //nolint:gosec // masked to permission bits
 			if err != nil {
-				return nil, fmt.Errorf("create %q: %w", targetPath, err)
+				return nil, fmt.Errorf("archive entry %q: %w", hdr.Name, err)
 			}
-			n, err := io.Copy(out, tr)
+			src := io.Reader(tr)
+			if opts.MaxBytes > 0 {
+				src = io.LimitReader(tr, opts.MaxBytes-c.Bytes+1)
+			}
+			n, err := io.Copy(out, src)
 			out.Close()
 			if err != nil {
-				return nil, fmt.Errorf("write %q: %w", targetPath, err)
+				return nil, fmt.Errorf("write %q: %w", hdr.Name, err)
 			}
-			_ = os.Chtimes(targetPath, hdr.ModTime, hdr.ModTime)
+			if opts.MaxBytes > 0 && c.Bytes+n > opts.MaxBytes {
+				return nil, ErrTooLarge
+			}
+			_ = fsys.chtimes(name, hdr.ModTime, hdr.ModTime)
 			c.Files++
 			c.Bytes += n
-		case tar.TypeSymlink:
-			_ = os.MkdirAll(filepath.Dir(targetPath), 0o755)
-			_ = os.Remove(targetPath)
-			if err := os.Symlink(hdr.Linkname, targetPath); err != nil {
-				return nil, fmt.Errorf("symlink %q → %q: %w", targetPath, hdr.Linkname, err)
-			}
-			c.Files++
 		}
 	}
 	return c, nil
+}
+
+// rootSet opens one os.Root per destination directory. Writing through
+// it lets the kernel refuse any path, symlinks already on disk included,
+// that would leave the directory.
+type rootSet map[string]*os.Root
+
+func (rs rootSet) open(dir string) (*os.Root, error) {
+	if r, ok := rs[dir]; ok {
+		return r, nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	rs[dir] = r
+	return r, nil
+}
+
+func (rs rootSet) close() {
+	for _, r := range rs {
+		r.Close()
+	}
+}
+
+// entryFS is the subset of file operations extraction needs, either on
+// an os.Root or (for the DB temp file this package names itself) on the
+// host filesystem.
+type entryFS struct {
+	mkdirAll func(string, os.FileMode) error
+	remove   func(string) error
+	openFile func(string, int, os.FileMode) (*os.File, error)
+	chtimes  func(string, time.Time, time.Time) error
+}
+
+func rootFS(r *os.Root) entryFS {
+	return entryFS{r.MkdirAll, r.Remove, r.OpenFile, r.Chtimes}
+}
+
+func hostFS() entryFS {
+	return entryFS{os.MkdirAll, os.Remove, os.OpenFile, os.Chtimes}
 }

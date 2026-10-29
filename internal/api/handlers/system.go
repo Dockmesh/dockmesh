@@ -39,7 +39,7 @@ func (h *Handlers) SystemMetrics(w http.ResponseWriter, r *http.Request) {
 
 	// All-mode fan-out: collect one Metrics sample per online host.
 	if host.IsAll(hostID) && h.Hosts != nil {
-		targets := h.Hosts.PickAll(r.Context())
+		targets := h.hostsInReadScope(r, h.Hosts.PickAll(r.Context()))
 		res := host.FanOut(r.Context(), targets, func(ctx context.Context, hh host.Host) ([]systemMetricsRow, error) {
 			m, err := hh.SystemMetrics(ctx)
 			if err != nil {
@@ -55,6 +55,10 @@ func (h *Handlers) SystemMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.inReadScope(r, hostIDFromRequest(r), "") {
+		writeError(w, http.StatusForbidden, "out of scope: your role does not include this host")
+		return
+	}
 	// Single-host path. For local we call the system package directly
 	// to avoid the host.Host interface overhead; for remote we go
 	// through the agent protocol via pickHost.
@@ -157,6 +161,10 @@ type SetBackupEnabledRequest struct {
 func (h *Handlers) SetBackupEnabled(w http.ResponseWriter, r *http.Request) {
 	if h.Backups == nil {
 		writeError(w, http.StatusServiceUnavailable, "backups unavailable")
+		return
+	}
+	if !h.callerIsAdmin(r) {
+		writeError(w, http.StatusForbidden, "only an admin can manage the system backup job")
 		return
 	}
 	var req SetBackupEnabledRequest

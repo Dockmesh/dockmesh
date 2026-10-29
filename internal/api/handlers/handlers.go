@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log/slog"
@@ -101,6 +102,9 @@ type Handlers struct {
 	// RBACv2Enforce gates per-host + per-stack scope checks on typed-
 	// resource handlers. Wired from cfg.RBACv2Enforce.
 	RBACv2Enforce bool
+
+	// gitWebhookTrigger replaces GitSource.TriggerSync in tests.
+	gitWebhookTrigger func(ctx context.Context, stackName string)
 }
 
 type Deps struct {

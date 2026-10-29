@@ -20,6 +20,8 @@ type RemoteHost struct {
 	id    string
 	name  string
 	agent *agents.ConnectedAgent
+
+	afterDeploy DeployHook
 }
 
 func NewRemote(id, name string, ag *agents.ConnectedAgent) *RemoteHost {
@@ -184,6 +186,9 @@ func (h *RemoteHost) DeployStack(ctx context.Context, name, composeYAML, envCont
 	var out compose.DeployResult
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("decode deploy result: %w", err)
+	}
+	if h.afterDeploy != nil {
+		h.afterDeploy(ctx, h.id, name, &out)
 	}
 	return &out, nil
 }

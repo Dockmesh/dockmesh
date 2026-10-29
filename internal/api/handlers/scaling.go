@@ -241,6 +241,9 @@ func (h *Handlers) GetScale(w http.ResponseWriter, r *http.Request) {
 	}
 	name := chi.URLParam(r, "name")
 	service := chi.URLParam(r, "service")
+	if !h.requireStackScope(w, r, rbac.PermStacksDeploy, target.ID(), name) {
+		return
+	}
 
 	detail, err := h.Stacks.Get(name)
 	if err != nil {
@@ -266,6 +269,9 @@ func (h *Handlers) ListServiceScale(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	if !h.requireStackScope(w, r, rbac.PermStacksDeploy, target.ID(), name) {
+		return
+	}
 
 	status, err := target.StackStatus(r.Context(), name)
 	if err != nil {

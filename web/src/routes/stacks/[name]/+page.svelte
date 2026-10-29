@@ -119,6 +119,20 @@
   }
 
   let externalChange = $state<{ file: string; type: string } | null>(null);
+  let modifiedOutside = $state<string[]>([]);
+  let mountsStackDir = $state(false);
+
+  // A deploy of stack files changed outside Dockmesh needs an explicit OK.
+  async function confirmExternalChanges(err: unknown): Promise<boolean> {
+    if (!(err instanceof ApiError) || err.status !== 409 || err.body?.code !== 'modified_outside') return false;
+    const files: string = (err.body.files as string[] | undefined)?.join(', ') || 'compose.yaml or .env';
+    return confirm.ask({
+      title: 'Stack files changed outside Dockmesh',
+      message: `${files} of "${err.body.stack ?? name}" changed since Dockmesh last wrote them.`,
+      body: 'Something other than Dockmesh changed these files, for example a container that mounts the stack directory. Review them in the editor before you deploy them as they are.',
+      confirmLabel: 'Deploy anyway', danger: true,
+    });
+  }
   let dirty = $state(false);
 
   // Tab state. P.12.6 introduced overview+history; the editorial detail
@@ -735,7 +749,14 @@
     if (!rollbackEntry) return;
     rollbackBusy = true;
     try {
-      const res = await api.stacks.rollback(name, rollbackEntry.id, stackHost);
+      const entryId = rollbackEntry.id;
+      let res;
+      try {
+        res = await api.stacks.rollback(name, entryId, stackHost);
+      } catch (err) {
+        if (!(await confirmExternalChanges(err))) throw err;
+        res = await api.stacks.rollback(name, entryId, stackHost, true);
+      }
       toast.success(
         `Rolled back to #${res.rolled_back_to}`,
         `${res.result.services.length} service(s) redeployed`
@@ -1163,6 +1184,11 @@
     showGitDialog = true;
   }
 
+  function generateWebhookSecret() {
+    const bytes = crypto.getRandomValues(new Uint8Array(24));
+    gitForm.webhook_secret = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
   async function saveGitSource(e: Event) {
     e.preventDefault();
     if (!gitForm.repo_url.trim()) return;
@@ -1225,6 +1251,8 @@
       const detail = await api.stacks.get(name);
       compose = detail.compose;
       env = detail.env ?? '';
+      modifiedOutside = detail.modified_outside ?? [];
+      mountsStackDir = !!detail.mounts_stack_dir;
       stackStatus = detail.status === 'needs_recovery' ? 'needs_recovery' : 'ok';
       if (stackStatus === 'needs_recovery') {
         latestBackupRun = undefined;
@@ -1287,7 +1315,15 @@
     if (anyBusy) return;
     busy = true;
     try {
-      const res = await stackOps.run(stackHost, name, () => api.stacks.deploy(name, stackHost));
+      const res = await stackOps.run(stackHost, name, async () => {
+        try {
+          return await api.stacks.deploy(name, stackHost);
+        } catch (err) {
+          if (!(await confirmExternalChanges(err))) throw err;
+          return api.stacks.deploy(name, stackHost, undefined, true);
+        }
+      });
+      modifiedOutside = [];
       toast.success('Deployed', `${res.services.length} service(s) on ${hosts.selected?.name ?? 'local'}`);
       await refreshStatus();
       // If the user has opened History at least once, freshen it so
@@ -1641,6 +1677,33 @@
     </div>
   {/if}
 
+  {#if modifiedOutside.length > 0}
+    <div class="dm-card p-4 border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] flex items-start gap-3">
+      <AlertTriangle class="w-5 h-5 text-[var(--color-warning-400)] shrink-0 mt-0.5" />
+      <div class="flex-1 text-sm">
+        <div class="font-medium text-[var(--color-warning-400)]">
+          Modified outside Dockmesh: {modifiedOutside.join(', ')}
+        </div>
+        <div class="text-xs text-[var(--fg-muted)] mt-1">
+          These files changed since Dockmesh last wrote them. Review them before deploying; the next deploy asks for confirmation.
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if mountsStackDir}
+    <div class="dm-card p-4 border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] flex items-start gap-3">
+      <AlertTriangle class="w-5 h-5 text-[var(--color-warning-400)] shrink-0 mt-0.5" />
+      <div class="flex-1 text-sm">
+        <div class="font-medium text-[var(--color-warning-400)]">A service mounts the stack directory</div>
+        <div class="text-xs text-[var(--fg-muted)] mt-1">
+          Its containers can change compose.yaml and .env. Dockmesh flags such changes and asks before the next deploy.
+          Mount a subdirectory (<code>./data:/app/data</code>) or add <code>:ro</code> to avoid this.
+        </div>
+      </div>
+    </div>
+  {/if}
+
   <!-- Git source (P.11.11) — Editorial treatment -->
   {#if !gitLoading}
     <section class="gs-section">
@@ -1720,6 +1783,18 @@
               </div>
             {/if}
           </div>
+          {#if !gitSource.has_webhook_secret}
+            <div class="gs-drift">
+              <div class="gs-drift-title">
+                <AlertTriangle size={12} strokeWidth={1.5} />
+                Webhook disabled — set a secret
+              </div>
+              <div class="gs-drift-hint">
+                Pushes to the repository only reach this stack through polling or <em>Sync now</em>.
+                Set a webhook secret under <em>Edit</em> and enter the same secret in your git provider's webhook settings.
+              </div>
+            </div>
+          {/if}
           {#if gitSource.last_env_drift && ((gitSource.last_env_drift.new_from_repo?.length ?? 0) + (gitSource.last_env_drift.new_from_compose?.length ?? 0) > 0)}
             <div class="gs-drift">
               <div class="gs-drift-title">
@@ -2948,7 +3023,7 @@
             {/if}
             <span class="font-medium">{check.name.replace(/_/g, ' ')}</span>
             {#if check.detail}
-              <span class="text-[var(--fg-muted)] truncate">{check.detail}</span>
+              <span class="text-[var(--fg-muted)] {check.passed ? 'truncate' : 'break-words'}">{check.detail}</span>
             {/if}
           </div>
         {/each}
@@ -3049,19 +3124,26 @@
       <div>
         <label class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5" for="git-webhook">
           Webhook secret (HMAC)
-          {#if gitSource?.has_webhook_secret}<span class="font-normal normal-case">— set to keep</span>{/if}
+          {#if gitSource?.has_webhook_secret}<span class="font-normal normal-case">— leave blank to keep existing</span>{/if}
         </label>
-        <input id="git-webhook" type="password" class="dm-input" bind:value={gitForm.webhook_secret as any} />
+        <div class="flex gap-2">
+          <input id="git-webhook" type="text" autocomplete="off" class="dm-input font-mono text-xs" bind:value={gitForm.webhook_secret as any} />
+          <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={generateWebhookSecret}>Generate</button>
+        </div>
+        <p class="text-xs text-[var(--fg-muted)] mt-1">Required for webhooks. Copy it into your git provider; it is not shown again.</p>
       </div>
     </div>
     <label class="flex items-center gap-2 text-sm">
       <input type="checkbox" bind:checked={gitForm.auto_deploy as any} />
       Auto-deploy on new commits
     </label>
-    {#if gitSource?.has_webhook_secret || (gitSource && !gitSource.has_webhook_secret)}
+    {#if gitSource}
       <div class="text-xs text-[var(--fg-muted)] bg-[var(--bg-muted)] rounded p-2 border border-[var(--border)]">
         <p class="font-medium text-[var(--fg)] mb-1">Webhook URL</p>
-        <code class="text-[11px] font-mono break-all">POST /api/v1/stacks/{name}/git/webhook</code>
+        <code class="text-[11px] font-mono break-all">POST {location.origin}/api/v1/stacks/{name}/git/webhook</code>
+        {#if !gitSource.has_webhook_secret && !gitForm.webhook_secret}
+          <p class="mt-1 text-[var(--color-warning-400)]">Disabled until a webhook secret is set.</p>
+        {/if}
       </div>
     {/if}
   </form>
