@@ -131,10 +131,17 @@ func (s *Stream) Read(p []byte) (int, error) {
 // Send writes a stream.data frame and waits for room in the agent's send
 // queue instead of failing when it is full, so bulk uploads (volume
 // restores) keep their order and lose nothing.
-func (s *Stream) Send(ctx context.Context, data []byte) error {
+func (s *Stream) Send(ctx context.Context, data []byte) (err error) {
 	if s.closed.Load() {
 		return io.ErrClosedPipe
 	}
+	// A disconnect closes the agent's send channel while a bulk upload
+	// may be blocked on it.
+	defer func() {
+		if recover() != nil {
+			err = errors.New("agent disconnected")
+		}
+	}()
 	payload, err := json.Marshal(StreamData{StreamID: s.ID, Data: data})
 	if err != nil {
 		return err

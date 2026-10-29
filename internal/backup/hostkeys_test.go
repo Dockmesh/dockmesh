@@ -157,3 +157,28 @@ func hasKey(ns []notices.Notice, key string) bool {
 	}
 	return false
 }
+
+func TestInlineUpdateKeepsHostKey(t *testing.T) {
+	svc, _ := newTestService(t, false)
+	ctx := context.Background()
+	job, err := svc.CreateJob(ctx, sftpJob())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.store.db.Exec(`UPDATE backup_targets SET config_json = json_set(config_json, '$.host_key', 'ssh-ed25519 PINNED') WHERE id = ?`, job.TargetID); err != nil {
+		t.Fatal(err)
+	}
+	in := sftpJob()
+	in.Schedule = "0 4 * * *"
+	got, err := svc.UpdateJob(ctx, job.ID, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgt, err := targets.NewTargetStore(svc.store.db).Get(ctx, got.TargetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _ := configMap(tgt.Config); cfg["host_key"] != "ssh-ed25519 PINNED" {
+		t.Fatalf("pinned host key lost on update: %v", cfg)
+	}
+}

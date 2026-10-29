@@ -59,7 +59,7 @@ func TestRestoreVolume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := svc.RunNow(ctx, job.ID)
+	run, err := svc.runNow(ctx, job.ID)
 	if err != nil || run.Status != StatusSuccess {
 		t.Fatalf("%v %+v", err, run)
 	}
@@ -130,8 +130,13 @@ func TestRestoreStack(t *testing.T) {
 	if err != nil || string(got) != compose {
 		t.Fatalf("compose not restored: %v", err)
 	}
-	if !bytes.Equal(host.imported["shop_pg"], vol) || len(rep.VolumesRestored) != 1 {
-		t.Fatalf("volume not restored: %+v", rep)
+	// Restored as another stack: the copy gets its own volume, the
+	// original's stays untouched.
+	if !bytes.Equal(host.imported["shop-copy_pg"], vol) || len(rep.VolumesRestored) != 1 {
+		t.Fatalf("volume not restored as shop-copy_pg: %+v", rep)
+	}
+	if _, ok := host.imported["shop_pg"]; ok {
+		t.Fatal("restoring as a copy wrote into the original stack's volume")
 	}
 
 	// The archive misses a volume its manifest lists: nothing is written.

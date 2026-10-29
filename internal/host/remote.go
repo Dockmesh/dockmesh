@@ -392,7 +392,12 @@ func (h *RemoteHost) VolumeImport(ctx context.Context, name string, src io.Reade
 	for {
 		n, rerr := src.Read(buf)
 		if n > 0 {
-			if err := s.Send(ctx, append([]byte(nil), buf[:n]...)); err != nil {
+			// An agent that stops reading fails the restore instead of
+			// holding it open forever.
+			sendCtx, cancel := context.WithTimeout(ctx, importStall)
+			err := s.Send(sendCtx, append([]byte(nil), buf[:n]...))
+			cancel()
+			if err != nil {
 				return fmt.Errorf("send archive: %w", err)
 			}
 		}
@@ -408,11 +413,26 @@ func (h *RemoteHost) VolumeImport(ctx context.Context, name string, src io.Reade
 	}
 	// The agent closes the stream once tar has exited; its error, if
 	// any, is what Read returns.
-	if _, err := io.Copy(io.Discard, s); err != nil {
-		return fmt.Errorf("volume import on agent: %w", err)
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.Discard, s)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("volume import on agent: %w", err)
+		}
+		return nil
+	case <-time.After(importStall):
+		return errors.New("volume import on agent: no result from tar")
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	return nil
 }
+
+// importStall bounds how long a volume import may make no progress.
+const importStall = 5 * time.Minute
 
 // dockerMuxStripper demuxes docker's attach-stream format: repeating
 //

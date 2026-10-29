@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -180,8 +181,7 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 
 func untarScript(replace bool) string {
 	if replace {
-		// Globs cover dotfiles too; unmatched patterns are ignored by rm -f.
-		return "rm -rf /dest/..?* /dest/.[!.]* /dest/* && tar xzf - -C /dest"
+		return agents.VolumeReplaceScript
 	}
 	return "tar xzf - -C /dest"
 }

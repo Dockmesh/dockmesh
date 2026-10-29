@@ -115,7 +115,10 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 
 	volumes := []string{opts.Target}
 	if kind == "stack" {
-		volumes = check.Counts.Volumes
+		volumes = volumes[:0]
+		for _, v := range check.Counts.Volumes {
+			volumes = append(volumes, stackVolumeName(run.Sources[0].Name, opts.Target, v))
+		}
 	}
 	if opts.Replace {
 		for _, v := range volumes {
@@ -133,21 +136,42 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 	if opts.Replace {
 		report.Mode = "replace"
 	}
-	rc, err := s.ReadRun(ctx, runID)
+	// The archive is read a second time to restore it; hashing that read
+	// too catches a file swapped on the target after the check.
+	rc, sum, err := s.openRunHashed(ctx, run)
 	if err != nil {
 		return nil, err
 	}
 	defer rc.Close()
 	if kind == "volume" {
-		if err := host.VolumeImport(ctx, opts.Target, rc, opts.Replace); err != nil {
-			return report, fmt.Errorf("restore volume %s: %w", opts.Target, err)
+		err = host.VolumeImport(ctx, opts.Target, rc, opts.Replace)
+		if err == nil {
+			report.VolumesRestored = append(report.VolumesRestored, opts.Target)
+		} else {
+			err = fmt.Errorf("restore volume %s: %w", opts.Target, err)
 		}
-		report.VolumesRestored = append(report.VolumesRestored, opts.Target)
-		return report, nil
+	} else {
+		report.StackName = opts.Target
+		err = s.restoreStackInto(ctx, run.Sources[0].Name, opts.Target, rc, host, opts.Replace, report)
 	}
-	report.StackName = opts.Target
-	err = s.restoreStackInto(ctx, opts.Target, rc, host, opts.Replace, report)
-	return report, err
+	if err != nil {
+		return report, err
+	}
+	if c := sum(); c.Status == "fail" {
+		return report, fmt.Errorf("the archive changed on the target during the restore, restored data may not match the backup: %s", c.Message)
+	}
+	return report, nil
+}
+
+// stackVolumeName maps a backed-up volume onto the target stack. Compose
+// names a stack's volumes <stack>_<key>, so restoring as another stack
+// must not write into the original's volumes. Explicitly named volumes
+// keep their name.
+func stackVolumeName(source, target, vol string) string {
+	if source == target || !strings.HasPrefix(vol, source+"_") {
+		return vol
+	}
+	return target + "_" + strings.TrimPrefix(vol, source+"_")
 }
 
 func failedChecks(r *VerifyResult) string {
@@ -165,7 +189,7 @@ func failedChecks(r *VerifyResult) string {
 // volumes/<vol>.tar.gz is streamed into that volume on host. The stack
 // name comes from the caller, so restoring under another name works.
 // Links in the archive are skipped; writes go through an os.Root.
-func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io.Reader, host hostBackupTarget, replace bool, report *RestoreReport) error {
+func (s *Service) restoreStackInto(ctx context.Context, source, stackName string, src io.Reader, host hostBackupTarget, replace bool, report *RestoreReport) error {
 	if s.stacks == nil {
 		return errors.New("stacks manager not configured")
 	}
@@ -232,10 +256,14 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 			if err := docker.CheckVolumeName(volName); err != nil {
 				return fmt.Errorf("archive entry %s: %w", name, err)
 			}
-			if err := host.VolumeImport(ctx, volName, io.LimitReader(tr, hdr.Size), replace); err != nil {
-				return fmt.Errorf("restore volume %s: %w", volName, err)
+			dest := stackVolumeName(source, stackName, volName)
+			if dest == volName && source != stackName {
+				report.Warnings = append(report.Warnings, fmt.Sprintf("volume %s has a fixed name and was restored under it, not as part of %s", volName, stackName))
 			}
-			report.VolumesRestored = append(report.VolumesRestored, volName)
+			if err := host.VolumeImport(ctx, dest, io.LimitReader(tr, hdr.Size), replace); err != nil {
+				return fmt.Errorf("restore volume %s: %w", dest, err)
+			}
+			report.VolumesRestored = append(report.VolumesRestored, dest)
 		}
 	}
 	if composeContent == "" {
@@ -268,7 +296,7 @@ func restoreStackEntry(root *os.Root, tr *tar.Reader, hdr *tar.Header, rel strin
 		if err := root.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return nil, fmt.Errorf("mkdir parent for %s: %w", rel, err)
 		}
-		buf, err := io.ReadAll(io.LimitReader(tr, stackRestoreFileSizeCap+1))
+		buf, err := io.ReadAll(tr)
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", rel, err)
 		}
