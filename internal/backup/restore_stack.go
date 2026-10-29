@@ -226,7 +226,7 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 			}
 		case strings.HasPrefix(name, "volumes/") && strings.HasSuffix(name, ".tar.gz"):
 			volName := strings.TrimSuffix(strings.TrimPrefix(name, "volumes/"), ".tar.gz")
-			if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+			if hdr.Typeflag != tar.TypeReg {
 				return fmt.Errorf("archive entry %s is not a regular file", name)
 			}
 			if err := docker.CheckVolumeName(volName); err != nil {
@@ -260,7 +260,7 @@ func restoreStackEntry(root *os.Root, tr *tar.Reader, hdr *tar.Header, rel strin
 		if err := root.MkdirAll(dst, 0o755); err != nil {
 			return nil, fmt.Errorf("mkdir %s: %w", rel, err)
 		}
-	case tar.TypeReg, tar.TypeRegA:
+	case tar.TypeReg:
 		if hdr.Size > stackRestoreFileSizeCap {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("skipped oversize file (%d bytes): %s", hdr.Size, rel))
 			return nil, nil

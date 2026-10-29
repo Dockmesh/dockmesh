@@ -721,7 +721,7 @@ func runVolumeImportStream(ctx context.Context, conn *websocket.Conn, cli *clien
 		sendStreamClose(conn, open.StreamID, "create helper: "+err.Error())
 		return
 	}
-	defer func() { _ = cli.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{Force: true}) }()
+	defer func() { _ = cli.ContainerRemove(context.WithoutCancel(ctx), resp.ID, container.RemoveOptions{Force: true}) }()
 
 	hijack, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
 		Stream: true, Stdin: true,
@@ -758,7 +758,7 @@ func runVolumeImportStream(ctx context.Context, conn *websocket.Conn, cli *clien
 	}
 	_ = hijack.CloseWrite()
 
-	waitCtx, waitCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	waitCtx, waitCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
 	defer waitCancel()
 	statusCh, errCh := cli.ContainerWait(waitCtx, resp.ID, container.WaitConditionNotRunning)
 	select {
