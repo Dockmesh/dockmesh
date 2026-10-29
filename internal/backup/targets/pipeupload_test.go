@@ -62,3 +62,20 @@ func TestPipeUpload(t *testing.T) {
 		}
 	})
 }
+
+func TestPipeUploadClosedBody(t *testing.T) {
+	// net/http closes the request body after sending it.
+	u := startPipeUpload(func(r io.Reader) error {
+		if _, err := io.Copy(io.Discard, r); err != nil {
+			return err
+		}
+		if c, ok := r.(io.Closer); ok {
+			_ = c.Close()
+		}
+		return nil
+	}, nil)
+	_, _ = u.Write([]byte("archive"))
+	if err := u.Close(); err != nil {
+		t.Fatalf("complete upload reported as %v", err)
+	}
+}
