@@ -78,6 +78,10 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   restored. An interrupted rotation no longer leaves the server without a usable key.
 
 ### Security
+- Dockmesh is now built with Go 1.27.3, and its Go dependencies (including the SSH, HTTP/2,
+  Git, JWT, SAML signature and Docker client libraries) are updated to versions that fix
+  the known vulnerabilities in code Dockmesh calls. The previous release was built with Go
+  1.25.0, which no longer receives security fixes.
 - Each kind of signed token (session, refresh, two-factor challenge, WebSocket ticket, single
   sign-on state) now has its own key and is only accepted for its own purpose. Before, a
   half-finished two-factor login could be used to turn two-factor authentication off.

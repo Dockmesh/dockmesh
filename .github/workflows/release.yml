@@ -114,6 +114,13 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: check Go toolchain
+        run: |
+          want=$(awk '$1 == "toolchain" { print $2 }' go.mod)
+          got=$(go env GOVERSION)
+          echo "building with $got, go.mod toolchain $want"
+          [ "$got" = "$want" ]
+
       - name: build frontend
         run: |
           cd web
