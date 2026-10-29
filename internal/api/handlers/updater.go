@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/updater"
 	"github.com/go-chi/chi/v5"
@@ -27,12 +28,13 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 		h.writeRoleScopeDenied(w, r, rbac.PermContainersUpdate, scopeReq, "container "+id)
 		return
 	}
-	res, err := h.Updater.Update(r.Context(), id)
+	res, err := h.Updater.Update(r.Context(), id, middleware.UserID(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if res.Updated {
+		h.UpdateWatcher.MarkUpdated(r.Context(), res.Image)
 		h.audit(r, audit.ActionContainerUpdate, res.ContainerName, map[string]string{
 			"image":     res.Image,
 			"from":      trim(res.OldDigest),
@@ -59,13 +61,17 @@ func (h *Handlers) RollbackContainer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "history_id required")
 		return
 	}
-	res, err := h.Updater.Rollback(r.Context(), req.HistoryID)
+	res, err := h.Updater.Rollback(r.Context(), req.HistoryID, middleware.UserID(r.Context()))
 	if errors.Is(err, updater.ErrHistoryNotFound) {
 		writeError(w, http.StatusNotFound, "history entry not found")
 		return
 	}
 	if errors.Is(err, updater.ErrAlreadyRolledBack) {
 		writeError(w, http.StatusConflict, "already rolled back")
+		return
+	}
+	if errors.Is(err, updater.ErrRollbackImageGone) {
+		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	if err != nil {

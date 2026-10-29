@@ -417,13 +417,13 @@ func main() {
 	// DB-backed `proxy_enabled` setting outranks the env var default.
 	proxySvc := proxy.NewService(database, dockerCli, false)
 	updaterSvc := updater.NewService(dockerCli, database)
+	updaterSvc.SetRollbackKeep(cfg.UpdateRollbackKeep)
 	// Background image-update watcher: every 30 minutes asks each
 	// running container's registry for a fresher manifest. Result is
 	// surfaced via /api/v1/images/updates and as image_update_available
-	// on the container list. Local-host only — remote agents would need
-	// their own watcher; deferred.
-	updateWatcher := updater.NewWatcher(dockerCli, 30*time.Minute)
-	updateWatcher.Start(ctx)
+	// on the container list. Local host only. Started once the notifier
+	// and registry credentials are wired.
+	updateWatcher := updater.NewWatcher(dockerCli, database, 30*time.Minute)
 	defer updateWatcher.Stop()
 	oidcSvc := oidc.NewService(database, authSvc, secretsSvc, cfg.BaseURL)
 	samlSvc := saml.NewService(database, authSvc, secretsSvc, cfg.BaseURL)
@@ -613,6 +613,7 @@ func main() {
 	// private registries (GHCR, ECR, Quay, …) reply 401.
 	composeSvc.SetAuthResolver(registriesSvc)
 	updaterSvc.SetAuthResolver(registriesSvc)
+	updateWatcher.SetAuthResolver(registriesSvc)
 	hostRegistry.Local().SetAuthResolver(registriesSvc)
 
 	// Deploy progress tracker — same propagation pattern as the auth
@@ -626,6 +627,7 @@ func main() {
 	// auto-deploy closure below can write an entry per git-triggered
 	// deploy — without that, /deployments only ever shows manual ones.
 	deployHistoryStore := stacks.NewHistoryStore(database)
+	updaterSvc.SetStacks(stacksMgr, deployHistoryStore)
 
 	// Git-backed stacks (P.11.11). Cache dir sits under the DB data
 	// dir so operators who override DOCKMESH_DB_PATH get the matching
@@ -788,6 +790,7 @@ func main() {
 	alertsSvc.SetNotifier(notifSvc)
 	backupSvc.SetNotifier(notifSvc)
 	updateWatcher.SetNotifier(notifSvc)
+	updateWatcher.Start(ctx)
 	agentsSvc.SetNotifier(notifSvc)
 	selfUpdateChk.SetNotifier(notifSvc)
 	migrationSvc.SetNotifier(notifSvc)

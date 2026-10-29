@@ -210,14 +210,7 @@ func (s *Service) RollingReplace(ctx context.Context, proj *composetypes.Project
 	res.PreviousImage = existing[0].Image
 
 	// Resolve networks once — reused for every new-container create.
-	netNames := make(map[string]string, len(proj.Networks))
-	for key, net := range proj.Networks {
-		actual := net.Name
-		if actual == "" {
-			actual = proj.Name + "_" + key
-		}
-		netNames[key] = actual
-	}
+	netNames := projectNetworkNames(proj)
 
 	// Track which (replicaIndex → containerID) we've already replaced so
 	// rollback knows what to revert. Only populated on successful replace.

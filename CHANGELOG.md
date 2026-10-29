@@ -44,6 +44,21 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   or with `dockmesh admin reset-password`) signs out all of the user's sessions.
 - A role or scope change now applies to a signed-in user's next request instead of after up
   to 15 minutes.
+- Updating the image of a container that belongs to a stack now rebuilds it from the
+  stack's compose.yaml, together with the other replicas of its service, and records the
+  new image in the stack's deploy history.
+- Only the newest three rollback images per image tag are kept after an update
+  (`DOCKMESH_UPDATE_ROLLBACK_KEEP` changes the number).
+- Update checks for private images use the credentials saved under Registries, and an
+  update that was already announced isn't announced again after a restart.
+
+### Fixed
+- Updating a container's image no longer loses its anonymous volumes (`-v /data` or a
+  `VOLUME` in the image); the new container gets the old volumes.
+- A failed image update no longer leaves the container deleted: the old container is kept
+  until the new one runs, and is started again if the new one fails. The previous image stays
+  tagged for a rollback.
+- Locally built images no longer always show "update available".
 
 ### Security
 - Each kind of signed token (session, refresh, two-factor challenge, WebSocket ticket, single
