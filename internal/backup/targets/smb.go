@@ -220,6 +220,7 @@ func ListSMBShares(host string, port int, username, password string) ([]string, 
 }
 
 type smbWriter struct {
+	closed  bool
 	f       *smb2.File
 	share   *smb2.Share
 	session *smb2.Session
@@ -231,6 +232,11 @@ func (w *smbWriter) Write(p []byte) (int, error) { return w.f.Write(p) }
 // Close reports the file's close (the last write reaching the share).
 // Logoff already closes the connection.
 func (w *smbWriter) Close() error {
+	// go-smb2 blocks on a second logoff of the same session.
+	if w.closed {
+		return nil
+	}
+	w.closed = true
 	err := w.f.Close()
 	_ = w.share.Umount()
 	_ = w.session.Logoff()
@@ -241,6 +247,7 @@ func (w *smbWriter) Close() error {
 }
 
 type smbReader struct {
+	closed  bool
 	f       *smb2.File
 	share   *smb2.Share
 	session *smb2.Session
@@ -249,6 +256,11 @@ type smbReader struct {
 
 func (r *smbReader) Read(p []byte) (int, error) { return r.f.Read(p) }
 func (r *smbReader) Close() error {
+	// go-smb2 blocks on a second logoff of the same session.
+	if r.closed {
+		return nil
+	}
+	r.closed = true
 	err := r.f.Close()
 	_ = r.share.Umount()
 	_ = r.session.Logoff()
