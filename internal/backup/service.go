@@ -145,7 +145,7 @@ func (s *Service) CreateJob(ctx context.Context, in JobInput) (*Job, error) {
 	if err := s.checkJobInput(in); err != nil {
 		return nil, err
 	}
-	if err := s.attachTarget(ctx, &in); err != nil {
+	if err := s.attachTarget(ctx, &in, nil); err != nil {
 		return nil, err
 	}
 	id, err := s.store.createJob(ctx, in)
@@ -167,10 +167,11 @@ func (s *Service) UpdateJob(ctx context.Context, id int64, in JobInput) (*Job, e
 	if err := s.checkJobInput(in); err != nil {
 		return nil, err
 	}
-	if _, err := s.store.getJob(ctx, id); err != nil {
+	prev, err := s.store.getJob(ctx, id)
+	if err != nil {
 		return nil, err
 	}
-	if err := s.attachTarget(ctx, &in); err != nil {
+	if err := s.attachTarget(ctx, &in, prev); err != nil {
 		return nil, err
 	}
 	if err := s.store.updateJob(ctx, id, in); err != nil {
@@ -189,8 +190,8 @@ func (s *Service) DeleteJob(ctx context.Context, id int64) error {
 	return s.store.deleteJob(ctx, id)
 }
 
-// RunNow runs a job and blocks until it finishes.
-func (s *Service) RunNow(ctx context.Context, id int64) (*Run, error) {
+// runNow runs a job and blocks until it finishes.
+func (s *Service) runNow(ctx context.Context, id int64) (*Run, error) {
 	j, err := s.store.getJob(ctx, id)
 	if err != nil {
 		return nil, err
@@ -482,11 +483,8 @@ func validateJob(in JobInput) error {
 		return errors.New("at least one source required")
 	}
 	if len(in.Sources) > 1 {
-		// P.13.5: rather than letting jobs land in the DB with multiple
-		// sources and silently truncating to the first one at run time
-		// (the old behaviour, which produced incomplete backups under
-		// the radar), reject up front. Operators who need to back up
-		// several things create one job per source.
+		// The executor handles exactly one source; operators who need to
+		// back up several things create one job per source.
 		return errors.New("exactly one source per job — create one job per stack/volume/system you want to back up")
 	}
 	if in.Schedule != "" {

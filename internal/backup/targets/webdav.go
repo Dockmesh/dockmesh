@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"path"
 	"time"
@@ -41,6 +42,7 @@ func NewWebDAV(raw any) (*WebDAV, error) {
 	client := gowebdav.NewClient(cfg.URL, cfg.Username, cfg.Password)
 	client.SetTimeout(30 * time.Second)
 	upload := gowebdav.NewAuthClient(cfg.URL, gowebdav.NewPreemptiveAuth(&basicAuth{user: cfg.Username, pw: cfg.Password}))
+	upload.SetTransport(stallTransport())
 	return &WebDAV{cfg: cfg, client: client, upload: upload}, nil
 }
 
@@ -95,6 +97,33 @@ func walkWebDAV(client *gowebdav.Client, dir, base string, out *[]Entry) {
 
 func (w *WebDAV) Delete(ctx context.Context, p string) error {
 	return w.client.Remove(path.Join(w.cfg.Path, p))
+}
+
+// uploadStall is how long an upload may make no progress before it fails;
+// a hung server would otherwise block the job, and every later run of it.
+const uploadStall = 5 * time.Minute
+
+// stallTransport fails a request when a write or the response stalls,
+// without capping how long a large upload may take overall.
+func stallTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.ResponseHeaderTimeout = uploadStall
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		c, err := dialer.DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		return &stallConn{Conn: c}, nil
+	}
+	return t
+}
+
+type stallConn struct{ net.Conn }
+
+func (c *stallConn) Write(p []byte) (int, error) {
+	_ = c.Conn.SetWriteDeadline(time.Now().Add(uploadStall))
+	return c.Conn.Write(p)
 }
 
 // basicAuth sends credentials with every request. gowebdav's negotiating

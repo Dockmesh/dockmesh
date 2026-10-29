@@ -14,8 +14,9 @@ import (
 
 // attachTarget makes the input reference a saved target. An inline target
 // is saved first, under the job's name, so every job's credentials live
-// in exactly one place.
-func (s *Service) attachTarget(ctx context.Context, in *JobInput) error {
+// in exactly one place. prev is the job being updated, if any: its SFTP
+// host key carries over while the server stays the same.
+func (s *Service) attachTarget(ctx context.Context, in *JobInput, prev *Job) error {
 	if in.TargetID > 0 {
 		t, err := targets.NewTargetStore(s.store.db).Get(ctx, in.TargetID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -30,7 +31,16 @@ func (s *Service) attachTarget(ctx context.Context, in *JobInput) error {
 	if _, err := buildTarget(in.TargetType, in.TargetConfig); err != nil {
 		return err
 	}
-	cfg := targets.KeepHostKey("", nil, in.TargetType, in.TargetConfig)
+	prevType, prevCfg := "", any(nil)
+	if prev != nil {
+		prevType, prevCfg = prev.TargetType, prev.TargetConfig
+		if prev.TargetID > 0 {
+			if t, err := targets.NewTargetStore(s.store.db).Get(ctx, prev.TargetID); err == nil {
+				prevType, prevCfg = t.Type, t.Config
+			}
+		}
+	}
+	cfg := targets.KeepHostKey(prevType, prevCfg, in.TargetType, in.TargetConfig)
 	id, err := s.store.insertTarget(ctx, in.Name, in.TargetType, cfg)
 	if err != nil {
 		return err
@@ -147,7 +157,9 @@ func (s *store) findTarget(ctx context.Context, typ string, cfg any) (int64, err
 }
 
 // jobTarget builds the job's target. For SFTP it records the host key on
-// first contact and parks a changed key until an admin accepts it.
+// first contact and parks a changed key until an admin accepts it. Jobs
+// the startup migration couldn't move (unreadable config) still run from
+// their inline config.
 func jobTarget(ctx context.Context, st *store, n *notices.Service, job *Job) (targets.Target, error) {
 	if job.TargetID > 0 {
 		ts := targets.NewTargetStore(st.db)

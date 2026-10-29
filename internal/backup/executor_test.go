@@ -136,7 +136,7 @@ func TestRetentionKeepsNewestAndIgnoresOtherJobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherRun, err := svc.RunNow(ctx, other.ID)
+	otherRun, err := svc.runNow(ctx, other.ID)
 	if err != nil || otherRun.Status != StatusSuccess {
 		t.Fatalf("other job run: %v %+v", err, otherRun)
 	}
@@ -146,7 +146,7 @@ func TestRetentionKeepsNewestAndIgnoresOtherJobs(t *testing.T) {
 		if i == 2 {
 			fake.failVol["data"] = errors.New("tar exit 1")
 		}
-		r, err := svc.RunNow(ctx, job.ID)
+		r, err := svc.runNow(ctx, job.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -198,7 +198,7 @@ func TestRetentionCleansLegacyPartials(t *testing.T) {
 		VALUES (?, 'vol', 'failed', 'jobs/vol/old.tar.gz', '[]')`, job.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.RunNow(ctx, job.ID); err != nil {
+	if _, err := svc.runNow(ctx, job.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(legacy); !errors.Is(err, os.ErrNotExist) {
@@ -274,7 +274,7 @@ func TestVerifyHash(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			run, err := svc.RunNow(ctx, job.ID)
+			run, err := svc.runNow(ctx, job.ID)
 			if err != nil || run.Status != StatusSuccess {
 				t.Fatalf("%v %+v", err, run)
 			}
@@ -309,7 +309,7 @@ func TestVerifyLegacyCiphertextHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := svc.RunNow(ctx, job.ID)
+	run, err := svc.runNow(ctx, job.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +335,7 @@ func TestDeletedJobRunsStayRestorable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := svc.RunNow(ctx, job.ID)
+	run, err := svc.runNow(ctx, job.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
