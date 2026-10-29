@@ -2,11 +2,15 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/ratelimit"
 )
 
 // Per-account sign-in limit: password and two-factor failures for one
@@ -15,10 +19,19 @@ import (
 // clears them, including `dockmesh admin unlock`, which writes the database
 // without going through the server. Names that match no user are counted in
 // memory under the same rules, so they answer the same way.
+//
+// An attempt is counted before the credential is checked and taken back
+// when it succeeds, so a burst of parallel requests gets no more than
+// AccountLimitMax guesses.
 const (
 	AccountLimitMax    = 10
 	AccountLimitWindow = 15 * time.Minute
 	AccountLimitBlock  = 15 * time.Minute
+
+	// unknownNamesMax caps the in-memory counters for names that match no
+	// user. When it is reached, further unknown names are refused until
+	// counters expire.
+	unknownNamesMax = 100_000
 )
 
 // ErrTooManyAttempts is returned while an account is blocked by the
@@ -33,7 +46,6 @@ type RateLimitError struct {
 func (e *RateLimitError) Error() string        { return ErrTooManyAttempts.Error() }
 func (e *RateLimitError) Is(target error) bool { return target == ErrTooManyAttempts }
 
-// Block reasons.
 const (
 	BlockRateLimit = "rate_limit"
 	BlockLockout   = "lockout_policy"
@@ -60,6 +72,18 @@ func NormalizeUsername(u string) string {
 	return strings.ToLower(strings.TrimSpace(u))
 }
 
+func newUnknownNameLimiter() *ratelimit.Limiter {
+	l := ratelimit.New(AccountLimitMax, AccountLimitWindow, AccountLimitBlock)
+	l.MaxKeys = unknownNamesMax
+	return l
+}
+
+// unknownKey keeps attacker-chosen names out of the limiter's memory.
+func unknownKey(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])
+}
+
 // ClearLockout resets the policy lockout and the per-account limit of a
 // user. It reports whether a user row was updated.
 func ClearLockout(ctx context.Context, db *sql.DB, userID string) (bool, error) {
@@ -76,65 +100,91 @@ func ClearLockout(ctx context.Context, db *sql.DB, userID string) (bool, error) 
 }
 
 // limitSubject returns the user whose normalized name is key, preferring an
-// exact match of raw, or "" when there is none.
+// exact match of raw, or "" when there is none. The comparison runs in Go
+// because SQLite's lower() and trim() only handle ASCII spaces and letters.
 func (s *Service) limitSubject(ctx context.Context, raw, key string) (string, error) {
-	var id string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id FROM users WHERE lower(trim(username)) = ?
-		  ORDER BY username = ? DESC LIMIT 1`, key, raw).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+	rows, err := s.db.QueryContext(ctx, `SELECT id, username FROM users`)
+	if err != nil {
+		return "", err
 	}
-	return id, err
-}
-
-// accountBlockedUntil returns the end of an active per-account block, or
-// the zero time. userID "" means key names no user.
-func (s *Service) accountBlockedUntil(ctx context.Context, userID, key string) (time.Time, error) {
-	if userID == "" {
-		if ok, retry := s.unknownLimit.Check(key); !ok {
-			return time.Now().Add(retry), nil
+	defer rows.Close()
+	var match string
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return "", err
 		}
-		return time.Time{}, nil
+		if name == raw {
+			return id, nil
+		}
+		if match == "" && NormalizeUsername(name) == key {
+			match = id
+		}
 	}
-	var until int64
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT login_limit_until FROM users WHERE id = ?`, userID).Scan(&until); err != nil {
-		return time.Time{}, err
-	}
-	if until > time.Now().Unix() {
-		return time.Unix(until, 0), nil
-	}
-	return time.Time{}, nil
+	return match, rows.Err()
 }
 
-// failAccount counts one failure against the per-account limit and returns
-// the block's end when this failure started one.
-func (s *Service) failAccount(ctx context.Context, userID, key string) (time.Time, bool) {
+// acquireAccount counts an attempt against the per-account limit. When the
+// account is blocked it returns false and the end of the block. userID ""
+// means key names no user.
+func (s *Service) acquireAccount(ctx context.Context, userID, key string) (bool, time.Time, error) {
 	if userID == "" {
-		return s.unknownLimit.Fail(key)
+		ok, retry := s.unknownLimit.Acquire(unknownKey(key))
+		return ok, time.Now().Add(retry), nil
 	}
 	now := time.Now().Unix()
 	window := int64(AccountLimitWindow / time.Second)
-	var count int
-	err := s.db.QueryRowContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`UPDATE users SET
 		   login_limit_count = CASE WHEN ? - login_limit_since >= ? THEN 1 ELSE login_limit_count + 1 END,
 		   login_limit_since = CASE WHEN ? - login_limit_since >= ? THEN ? ELSE login_limit_since END
-		 WHERE id = ? RETURNING login_limit_count`,
-		now, window, now, window, now, userID).Scan(&count)
+		 WHERE id = ? AND login_limit_until <= ?
+		   AND (? - login_limit_since >= ? OR login_limit_count < ?)`,
+		now, window, now, window, now, userID, now, now, window, AccountLimitMax)
 	if err != nil {
-		slog.Warn("auth: count failed sign-in", "user", userID, "err", err)
-		return time.Time{}, false
+		return false, time.Time{}, err
 	}
-	if count < AccountLimitMax {
-		return time.Time{}, false
+	if n, _ := res.RowsAffected(); n == 1 {
+		return true, time.Time{}, nil
 	}
+	var until, since int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT login_limit_until, login_limit_since FROM users WHERE id = ?`, userID).
+		Scan(&until, &since); err != nil {
+		return false, time.Time{}, err
+	}
+	if until <= now {
+		// All slots are taken by attempts still being checked.
+		until = since + window
+	}
+	return false, time.Unix(until, 0), nil
+}
+
+// refundAccount takes back an attempt that succeeded but did not complete
+// the sign-in, so only failures stay counted.
+func (s *Service) refundAccount(ctx context.Context, userID, key string) {
+	if userID == "" {
+		s.unknownLimit.Refund(unknownKey(key))
+		return
+	}
+	_, _ = s.db.ExecContext(ctx,
+		`UPDATE users SET login_limit_count = login_limit_count - 1
+		  WHERE id = ? AND login_limit_count > 0`, userID)
+}
+
+// settleAccount records that an acquired attempt failed and returns the
+// block's end when this failure started one.
+func (s *Service) settleAccount(ctx context.Context, userID, key string) (time.Time, bool) {
+	if userID == "" {
+		return s.unknownLimit.Settle(unknownKey(key))
+	}
+	now := time.Now().Unix()
 	until := now + int64(AccountLimitBlock/time.Second)
 	// Conditional so concurrent failures start the block only once.
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE users SET login_limit_until = ? WHERE id = ? AND login_limit_until <= ?`,
-		until, userID, now)
+		`UPDATE users SET login_limit_until = ?
+		  WHERE id = ? AND login_limit_count >= ? AND login_limit_until <= ?`,
+		until, userID, AccountLimitMax, now)
 	if err != nil {
 		slog.Warn("auth: block account", "user", userID, "err", err)
 		return time.Time{}, false
@@ -145,14 +195,14 @@ func (s *Service) failAccount(ctx context.Context, userID, key string) (time.Tim
 	return time.Unix(until, 0), true
 }
 
-// failedAttempt counts a failure against the per-account limit and returns
-// the error for it; lockout is a policy lockout the same failure started.
+// failedAttempt settles a failed attempt and returns the error for it;
+// lockout is a policy lockout the same failure started.
 func (s *Service) failedAttempt(ctx context.Context, userID, key string, lockout *Block) error {
 	var blocks []Block
 	if lockout != nil {
 		blocks = append(blocks, *lockout)
 	}
-	if until, ok := s.failAccount(ctx, userID, key); ok {
+	if until, ok := s.settleAccount(ctx, userID, key); ok {
 		blocks = append(blocks, Block{Reason: BlockRateLimit, Key: key, Until: until})
 	}
 	if len(blocks) == 0 {

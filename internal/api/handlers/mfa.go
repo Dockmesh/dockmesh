@@ -3,7 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
-	"strconv"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
@@ -32,14 +32,15 @@ func (h *Handlers) LoginMFA(w http.ResponseWriter, r *http.Request) {
 	// The per-account limit and lockout are applied in VerifyLoginMFA,
 	// shared with wrong passwords.
 	ip := clientIP(r)
-	if !h.mfaLimits.allow(w, ip, "") {
+	key := clientip.LimitKey(ip)
+	if !acquireIP(w, h.mfaLimiter, key, "too many attempts") {
 		return
 	}
 	res, err := h.Auth.VerifyLoginMFA(r.Context(), req.MFAToken, req.Code, r.UserAgent(), ip)
+	h.settleIP(r, h.mfaLimiter, key, "mfa", errors.Is(err, auth.ErrInvalidCredentials))
 	var rateErr *auth.RateLimitError
 	if errors.As(err, &rateErr) {
-		writeRetryAfter(w, rateErr.Until)
-		writeError(w, http.StatusTooManyRequests, "too many attempts — try again later")
+		writeTooMany(w, "too many attempts", time.Until(rateErr.Until))
 		return
 	}
 	var lockErr *auth.LockoutError
@@ -48,9 +49,6 @@ func (h *Handlers) LoginMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, auth.ErrInvalidCredentials) {
-		if until, started := h.mfaLimits.fail(ip, ""); started {
-			h.auditBlock(r, "ip", clientip.LimitKey(ip), "mfa", auth.BlockRateLimit, until)
-		}
 		h.auditAccountBlocks(r, err, "mfa")
 		if h.Audit != nil {
 			h.Audit.Write(r.Context(), "", audit.ActionLoginFailed, "mfa", map[string]string{"ip": ip})
@@ -133,7 +131,7 @@ func (h *Handlers) MFADisable(w http.ResponseWriter, r *http.Request) {
 	limitKey := "mfa-disable:" + uid
 	if h.mfaDisableLimiter != nil {
 		if ok, retry := h.mfaDisableLimiter.Check(limitKey); !ok {
-			w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
+			writeRetryAfter(w, retry)
 			writeError(w, http.StatusTooManyRequests, "too many wrong codes, try again later")
 			return
 		}

@@ -32,19 +32,6 @@ type refreshRequest struct {
 
 func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	limitBody(w, r)
-	ip := clientIP(r)
-	key := limitKey(ip)
-
-	// Per-IP limit, generous so users behind one proxy don't block each
-	// other; the per-account limit in auth.Service is the main guard.
-	if h.LoginLimiter != nil {
-		if ok, retry := h.LoginLimiter.Check(key); !ok {
-			w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
-			writeError(w, http.StatusTooManyRequests, "too many login attempts — try again later")
-			return
-		}
-	}
-
 	var req loginRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
@@ -54,19 +41,25 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "username and password required")
 		return
 	}
+	if len(req.Username) > 256 {
+		writeError(w, http.StatusBadRequest, "username too long")
+		return
+	}
+	ip := clientIP(r)
+	key := limitKey(ip)
+	// Per-IP limit, generous so users behind one proxy don't block each
+	// other; the per-account limit in auth.Service is the main guard.
+	if !acquireIP(w, h.LoginLimiter, key, "too many login attempts") {
+		return
+	}
 	res, err := h.Auth.Login(r.Context(), req.Username, req.Password, r.UserAgent(), ip)
+	h.settleIP(r, h.LoginLimiter, key, "login", errors.Is(err, auth.ErrInvalidCredentials))
 	var rateErr *auth.RateLimitError
 	if errors.As(err, &rateErr) {
-		writeRetryAfter(w, rateErr.Until)
-		writeError(w, http.StatusTooManyRequests, "too many login attempts — try again later")
+		writeTooMany(w, "too many login attempts", time.Until(rateErr.Until))
 		return
 	}
 	if errors.Is(err, auth.ErrInvalidCredentials) {
-		if h.LoginLimiter != nil {
-			if until, started := h.LoginLimiter.Fail(key); started {
-				h.auditBlock(r, "ip", key, "login", auth.BlockRateLimit, until)
-			}
-		}
 		h.auditAccountBlocks(r, err, "login")
 		if h.Audit != nil {
 			h.Audit.Write(r.Context(), "", audit.ActionLoginFailed, req.Username, map[string]string{"ip": ip})
@@ -97,7 +90,6 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// Per-IP login limit.
 const (
 	loginIPMax    = 100
 	loginIPWindow = 15 * time.Minute
@@ -117,20 +109,55 @@ func writeLocked(w http.ResponseWriter, until time.Time) {
 	if wait < 0 {
 		wait = 0
 	}
-	secs := int(wait.Round(time.Second).Seconds())
-	w.Header().Set("Retry-After", strconv.Itoa(secs))
-	var msg string
-	if secs < 60 {
-		msg = fmt.Sprintf("account temporarily locked — try again in %d seconds", secs)
-	} else {
-		mins := (secs + 59) / 60 // round up so "try in 1 minute" never becomes "0 minutes"
-		msg = fmt.Sprintf("account temporarily locked — try again in %d minute%s", mins, plural(mins))
-	}
-	writeError(w, http.StatusLocked, msg)
+	w.Header().Set("Retry-After", strconv.Itoa(int(wait.Round(time.Second).Seconds())))
+	writeError(w, http.StatusLocked, "account temporarily locked — try again in "+waitText(wait))
 }
 
-func writeRetryAfter(w http.ResponseWriter, until time.Time) {
-	w.Header().Set("Retry-After", strconv.Itoa(int(time.Until(until).Seconds())+1))
+func writeRetryAfter(w http.ResponseWriter, wait time.Duration) {
+	w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+}
+
+// writeTooMany answers 429 with the wait in the header and the message.
+func writeTooMany(w http.ResponseWriter, prefix string, wait time.Duration) {
+	writeRetryAfter(w, wait)
+	writeError(w, http.StatusTooManyRequests, prefix+" — try again in "+waitText(wait))
+}
+
+func waitText(wait time.Duration) string {
+	secs := int(wait.Round(time.Second).Seconds())
+	if secs < 60 {
+		return fmt.Sprintf("%d second%s", secs, plural(secs))
+	}
+	mins := (secs + 59) / 60 // round up so "try in 1 minute" never becomes "0 minutes"
+	return fmt.Sprintf("%d minute%s", mins, plural(mins))
+}
+
+// acquireIP counts a sign-in attempt from key against l, answering 429
+// while the address is blocked. A nil limiter allows everything.
+func acquireIP(w http.ResponseWriter, l *ratelimit.Limiter, key, prefix string) bool {
+	if l == nil {
+		return true
+	}
+	if ok, retry := l.Acquire(key); !ok {
+		writeTooMany(w, prefix, retry)
+		return false
+	}
+	return true
+}
+
+// settleIP finishes an attempt acquired with acquireIP: a failure may start
+// a block, anything else is taken back so only failures count.
+func (h *Handlers) settleIP(r *http.Request, l *ratelimit.Limiter, key, endpoint string, failed bool) {
+	if l == nil {
+		return
+	}
+	if !failed {
+		l.Refund(key)
+		return
+	}
+	if until, started := l.Settle(key); started {
+		h.auditBlock(r, "ip", key, endpoint, auth.BlockRateLimit, until)
+	}
 }
 
 // auditBlock records the start of a sign-in block, once per block.
@@ -140,7 +167,6 @@ func (h *Handlers) auditBlock(r *http.Request, kind, key, endpoint, reason strin
 	}
 	h.Audit.Write(r.Context(), "", audit.ActionLoginBlocked, key, map[string]string{
 		"kind":     kind,
-		"key":      key,
 		"endpoint": endpoint,
 		"reason":   reason,
 		"until":    until.UTC().Format(time.RFC3339),

@@ -63,7 +63,7 @@ type Handlers struct {
 	LoginLimiter *ratelimit.Limiter
 	// mfaDisableLimiter caps wrong codes on DELETE /mfa per user.
 	mfaDisableLimiter *ratelimit.Limiter
-	mfaLimits         authLimits
+	mfaLimiter        *ratelimit.Limiter // per IP; per account in auth.Service
 	ldapLimits        authLimits
 	inviteLimits      authLimits
 	refreshLimits     authLimits
@@ -218,7 +218,7 @@ func New(d Deps) *Handlers {
 		RBACv2Enforce:  d.RBACv2Enforce,
 
 		mfaDisableLimiter: ratelimit.New(5, 15*time.Minute, 15*time.Minute),
-		mfaLimits:         newAuthLimits(20, 0, 15*time.Minute),
+		mfaLimiter:        ratelimit.New(20, 15*time.Minute, 15*time.Minute),
 		ldapLimits:        newAuthLimits(10, 10, 15*time.Minute),
 		inviteLimits:      newAuthLimits(10, 5, 15*time.Minute),
 		refreshLimits:     newAuthLimits(300, 0, 5*time.Minute),

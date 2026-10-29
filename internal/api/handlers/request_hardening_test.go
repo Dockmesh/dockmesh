@@ -20,6 +20,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/invites"
 	"github.com/dockmesh/dockmesh/internal/oidc"
+	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/settings"
 )
 
@@ -75,7 +76,7 @@ func TestTOTPCodeAcceptedOnce(t *testing.T) {
 
 func TestLoginMFARateLimitedPerIP(t *testing.T) {
 	e := newAuthzEnv(t)
-	e.h.mfaLimits = newAuthLimits(3, 0, time.Minute)
+	e.h.mfaLimiter = ratelimit.New(3, time.Minute, time.Minute)
 	u := e.user("dave", "viewer")
 	secret := enrollTOTP(t, e, u.ID)
 	pending := e.login("dave").MFAToken

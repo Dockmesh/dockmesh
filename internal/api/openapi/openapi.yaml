@@ -394,7 +394,7 @@ paths:
               type: object
               required: [username, password]
               properties:
-                username: { type: string, example: admin }
+                username: { type: string, maxLength: 256, example: admin }
                 password: { type: string, format: password }
       responses:
         "200":
@@ -812,12 +812,13 @@ paths:
     post:
       operationId: users.unlock
       tags: [users]
-      summary: "Admin: clear a user's lockout state (P.12.1)"
+      summary: "Admin: clear a user's lockout state"
       description: |
         After too many failed logins a user's account is locked. This
         endpoint clears the lockout, the failed-attempts counter and the
-        per-account login limit so they can log in again. Admin-only — call after verifying via another
-        channel that the real user is who asked for the unlock.
+        per-account login limit so they can log in again. Admin-only —
+        call after verifying via another channel that the real user is
+        who asked for the unlock.
       parameters:
         - $ref: "#/components/parameters/UserIDPath"
       responses:

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/clientip"
@@ -44,20 +43,18 @@ func (l authLimits) allow(w http.ResponseWriter, ip, account string) bool {
 	if retry == 0 {
 		return true
 	}
-	w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
+	writeRetryAfter(w, retry)
 	writeError(w, http.StatusTooManyRequests, "too many attempts — try again later")
 	return false
 }
 
-// fail counts a failure; it returns the end of an IP block it started.
-func (l authLimits) fail(ip, account string) (ipBlockedUntil time.Time, started bool) {
+func (l authLimits) fail(ip, account string) {
 	if l.byIP != nil {
-		ipBlockedUntil, started = l.byIP.Fail(clientip.LimitKey(ip))
+		l.byIP.Fail(clientip.LimitKey(ip))
 	}
 	if l.byAccount != nil && account != "" {
 		l.byAccount.Fail(account)
 	}
-	return ipBlockedUntil, started
 }
 
 // limitBody caps request bodies on the unauthenticated sign-in endpoints;

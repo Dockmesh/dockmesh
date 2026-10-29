@@ -80,33 +80,70 @@ func TestLimiter_WindowExpiry(t *testing.T) {
 	}
 }
 
-func TestLimiter_FailReportsLockStart(t *testing.T) {
-	now := time.Unix(0, 0)
-	l := &Limiter{
-		MaxFailures:  2,
-		Window:       time.Minute,
-		LockDuration: time.Minute,
-		buckets:      make(map[string]*bucket),
-		now:          func() time.Time { return now },
+func TestLimiterAcquire(t *testing.T) {
+	type step struct {
+		op   string // acquire, settle, refund, advance
+		key  string
+		d    time.Duration
+		want bool // acquire: granted; settle: lock started
 	}
-	steps := []struct {
-		advance     time.Duration
-		wantStarted bool
+	tests := []struct {
+		name    string
+		maxKeys int
+		steps   []step
 	}{
-		{0, false},
-		{0, true},                // threshold reached
-		{0, false},               // already locked: no new lock
-		{2 * time.Minute, false}, // lock and window expired: fresh bucket
-		{0, true},
+		{name: "counts before the check", steps: []step{
+			{op: "acquire", key: "a", want: true},
+			{op: "acquire", key: "a", want: true},
+			{op: "acquire", key: "a", want: false}, // in flight: both slots taken
+			{op: "settle", key: "a", want: true},
+			{op: "settle", key: "a", want: false}, // already locked
+			{op: "acquire", key: "a", want: false},
+			{op: "advance", d: 2 * time.Minute},
+			{op: "acquire", key: "a", want: true},
+		}},
+		{name: "refund frees the slot", steps: []step{
+			{op: "acquire", key: "a", want: true},
+			{op: "acquire", key: "a", want: true},
+			{op: "refund", key: "a"},
+			{op: "settle", key: "a", want: false},
+			{op: "acquire", key: "a", want: true},
+		}},
+		{name: "full limiter refuses new keys", maxKeys: 1, steps: []step{
+			{op: "acquire", key: "a", want: true},
+			{op: "acquire", key: "b", want: false},
+			{op: "acquire", key: "a", want: true},
+			{op: "advance", d: 2 * time.Minute},
+			{op: "acquire", key: "b", want: true}, // expired "a" swept
+		}},
 	}
-	for i, s := range steps {
-		now = now.Add(s.advance)
-		until, started := l.Fail("k")
-		if started != s.wantStarted {
-			t.Fatalf("step %d: started = %v, want %v", i, started, s.wantStarted)
-		}
-		if started && !until.Equal(now.Add(time.Minute)) {
-			t.Errorf("step %d: until = %v, want %v", i, until, now.Add(time.Minute))
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := time.Unix(0, 0)
+			l := &Limiter{
+				MaxFailures:  2,
+				Window:       time.Minute,
+				LockDuration: time.Minute,
+				MaxKeys:      tt.maxKeys,
+				buckets:      make(map[string]*bucket),
+				now:          func() time.Time { return now },
+			}
+			for i, s := range tt.steps {
+				switch s.op {
+				case "acquire":
+					if ok, _ := l.Acquire(s.key); ok != s.want {
+						t.Fatalf("step %d: acquire = %v, want %v", i, ok, s.want)
+					}
+				case "settle":
+					if _, started := l.Settle(s.key); started != s.want {
+						t.Fatalf("step %d: settle started = %v, want %v", i, started, s.want)
+					}
+				case "refund":
+					l.Refund(s.key)
+				case "advance":
+					now = now.Add(s.d)
+				}
+			}
+		})
 	}
 }

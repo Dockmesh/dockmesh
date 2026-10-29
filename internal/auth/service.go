@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
@@ -81,6 +83,8 @@ type Service struct {
 	// unknownLimit is the per-account sign-in limit for names that match
 	// no user.
 	unknownLimit *ratelimit.Limiter
+	// lockoutMu serializes policy-lockout updates so a lockout starts once.
+	lockoutMu sync.Mutex
 }
 
 // NewService panics if secret is shorter than 32 bytes; config always
@@ -91,12 +95,11 @@ func NewService(db *sql.DB, secret []byte) *Service {
 		panic(fmt.Sprintf("auth: %v", err))
 	}
 	return &Service{
-		db:         db,
-		keys:       keys,
-		tickets:    newTicketStore(),
-		refreshTTL: 30 * 24 * time.Hour,
-
-		unknownLimit: ratelimit.New(AccountLimitMax, AccountLimitWindow, AccountLimitBlock),
+		db:           db,
+		keys:         keys,
+		tickets:      newTicketStore(),
+		refreshTTL:   30 * 24 * time.Hour,
+		unknownLimit: newUnknownNameLimiter(),
 	}
 }
 
@@ -505,20 +508,34 @@ func (e *LockoutError) Is(target error) bool {
 
 // recordFailedLogin bumps the counter and — if the threshold is hit —
 // sets locked_until to (now + LockoutDurationMins) and returns that lockout.
-// When the lockout config is zero, it still increments the counter
-// (harmless) but never sets locked_until.
-func (s *Service) recordFailedLogin(ctx context.Context, userID, key string, newCount int) *Block {
+// When the lockout config is zero, it never sets locked_until.
+func (s *Service) recordFailedLogin(ctx context.Context, userID, key string) *Block {
+	s.lockoutMu.Lock()
+	defer s.lockoutMu.Unlock()
+	var count int
+	if err := s.db.QueryRowContext(ctx,
+		`UPDATE users SET failed_login_attempts = failed_login_attempts + 1
+		  WHERE id = ? RETURNING failed_login_attempts`, userID).Scan(&count); err != nil {
+		slog.Warn("auth: count failed login", "user", userID, "err", err)
+		return nil
+	}
 	policy := s.policy()
-	if policy.LockoutMaxAttempts <= 0 || newCount < policy.LockoutMaxAttempts {
-		_, _ = s.db.ExecContext(ctx,
-			`UPDATE users SET failed_login_attempts = ? WHERE id = ?`,
-			newCount, userID)
+	if policy.LockoutMaxAttempts <= 0 || count < policy.LockoutMaxAttempts {
+		return nil
+	}
+	// A request that passed the lockout check before the lock was set can
+	// fail after it; that must not restart the lock.
+	var lockedUntil sql.NullTime
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT locked_until FROM users WHERE id = ?`, userID).Scan(&lockedUntil); err != nil {
+		return nil
+	}
+	if lockedUntil.Valid && time.Now().Before(lockedUntil.Time) {
 		return nil
 	}
 	lockUntil := time.Now().Add(time.Duration(policy.LockoutDurationMins) * time.Minute)
 	if _, err := s.db.ExecContext(ctx,
-		`UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?`,
-		newCount, lockUntil, userID); err != nil {
+		`UPDATE users SET locked_until = ? WHERE id = ?`, lockUntil, userID); err != nil {
 		return nil
 	}
 	return &Block{Reason: BlockLockout, Key: key, Until: lockUntil}
@@ -538,39 +555,38 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 	if err != nil {
 		return nil, err
 	}
-	if until, err := s.accountBlockedUntil(ctx, subject, key); err != nil {
-		return nil, err
-	} else if !until.IsZero() {
-		return nil, &RateLimitError{Until: until}
-	}
 	var u User
 	var email, scope, displayName sql.NullString
 	var hash string
 	var totpVerified int
-	var failedAttempts, limitCount int
 	var lockedUntil, pwChangedAt sql.NullTime
 	err = s.db.QueryRowContext(ctx,
 		`SELECT id, username, email, role, scope_tags, password, totp_verified,
-		        failed_login_attempts, locked_until, display_name, password_changed_at,
-		        login_limit_count
+		        locked_until, display_name, password_changed_at
 		   FROM users WHERE username = ?`, username).
 		Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &hash, &totpVerified,
-			&failedAttempts, &lockedUntil, &displayName, &pwChangedAt, &limitCount)
-	if errors.Is(err, sql.ErrNoRows) {
-		// Same argon2 work as a wrong password, so response time doesn't
-		// tell which usernames exist.
-		_, _ = VerifyPassword(password, dummyHash())
-		return nil, s.failedAttempt(ctx, subject, key, nil)
-	}
-	if err != nil {
+			&lockedUntil, &displayName, &pwChangedAt)
+	found := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	// Per-user lockout: if the lockout window is active, refuse fast
 	// without verifying the password (so a correct-password-too-late
 	// attempt still gets rejected — matches what every competent auth
 	// system does).
-	if lockedUntil.Valid && time.Now().Before(lockedUntil.Time) {
+	if found && lockedUntil.Valid && time.Now().Before(lockedUntil.Time) {
 		return nil, &LockoutError{Until: lockedUntil.Time}
+	}
+	if ok, until, err := s.acquireAccount(ctx, subject, key); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, &RateLimitError{Until: until}
+	}
+	if !found {
+		// Same argon2 work as a wrong password, so response time doesn't
+		// tell which usernames exist.
+		_, _ = VerifyPassword(password, dummyHash())
+		return nil, s.failedAttempt(ctx, subject, key, nil)
 	}
 	if email.Valid {
 		u.Email = email.String
@@ -585,25 +601,21 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 	u.ScopeTags = parseScopeTags(scope)
 	ok, err := VerifyPassword(password, hash)
 	if err != nil || !ok {
-		// Record the failure and trip the lockout if we hit the
-		// threshold. Errors on the increment itself are logged but
-		// don't block the 401 response.
-		lockout := s.recordFailedLogin(ctx, u.ID, key, failedAttempts+1)
+		lockout := s.recordFailedLogin(ctx, u.ID, key)
 		return nil, s.failedAttempt(ctx, subject, key, lockout)
 	}
 	if totpVerified == 1 {
 		// Password OK but MFA required — return a pending token. The
-		// failure counters stay until the second step succeeds, so wrong
-		// codes add up with wrong passwords.
+		// earlier failures stay counted until the second step succeeds,
+		// so wrong codes add up with wrong passwords.
+		s.refundAccount(ctx, subject, key)
 		token, err := s.issueMFAPending(u.ID)
 		if err != nil {
 			return nil, err
 		}
 		return &LoginResult{MFARequired: true, MFAToken: token}, nil
 	}
-	if failedAttempts > 0 || lockedUntil.Valid || limitCount > 0 {
-		s.clearFailures(ctx, u.ID)
-	}
+	s.clearFailures(ctx, u.ID)
 	return s.startSession(ctx, u, userAgent, ip)
 }
 
@@ -615,13 +627,10 @@ func (s *Service) VerifyLoginMFA(ctx context.Context, mfaToken, code, userAgent,
 		return nil, ErrInvalidCredentials
 	}
 	var username string
-	var failedAttempts int
 	var lockedUntil sql.NullTime
-	var limitUntil int64
 	err = s.db.QueryRowContext(ctx,
-		`SELECT username, failed_login_attempts, locked_until, login_limit_until
-		   FROM users WHERE id = ?`, claims.UserID).
-		Scan(&username, &failedAttempts, &lockedUntil, &limitUntil)
+		`SELECT username, locked_until FROM users WHERE id = ?`, claims.UserID).
+		Scan(&username, &lockedUntil)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrInvalidCredentials
 	}
@@ -631,13 +640,15 @@ func (s *Service) VerifyLoginMFA(ctx context.Context, mfaToken, code, userAgent,
 	if lockedUntil.Valid && time.Now().Before(lockedUntil.Time) {
 		return nil, &LockoutError{Until: lockedUntil.Time}
 	}
-	if limitUntil > time.Now().Unix() {
-		return nil, &RateLimitError{Until: time.Unix(limitUntil, 0)}
-	}
 	key := NormalizeUsername(username)
+	if ok, until, err := s.acquireAccount(ctx, claims.UserID, key); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, &RateLimitError{Until: until}
+	}
 	ok, err := s.verifyMFACode(ctx, claims.UserID, code)
 	if err != nil || !ok {
-		lockout := s.recordFailedLogin(ctx, claims.UserID, key, failedAttempts+1)
+		lockout := s.recordFailedLogin(ctx, claims.UserID, key)
 		return nil, s.failedAttempt(ctx, claims.UserID, key, lockout)
 	}
 	s.clearFailures(ctx, claims.UserID)

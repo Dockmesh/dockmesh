@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -77,6 +79,16 @@ func blockEntries(t *testing.T, e *authzEnv) []blockEntry {
 	return out
 }
 
+func unlockAs(t *testing.T, e *authzEnv, userID string) {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	chiRouterFor(http.MethodPost, "/users/{id}/unlock", e.h.UnlockUser).
+		ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/"+userID+"/unlock", nil))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("unlock: %d", rr.Code)
+	}
+}
+
 func failedAttempts(t *testing.T, e *authzEnv, userID string) int {
 	t.Helper()
 	var n int
@@ -90,27 +102,29 @@ func TestLoginAccountLimit(t *testing.T) {
 	tests := []struct {
 		name     string
 		lockout  int
-		create   bool
+		user     string // created before the attempts; "" for none
 		attempt  string // username typed for the failures
-		wantKey  string
+		final    string // username of the last, correct attempt
 		finalPwd string
+		wantKey  string
 	}{
-		{name: "known user, lockout off", create: true, attempt: "alice", wantKey: "alice", finalPwd: testPassword},
-		{name: "known user, other case and spaces", lockout: 5, create: true, attempt: "  ALICE ", wantKey: "alice", finalPwd: testPassword},
-		{name: "unknown username", attempt: "Nobody", wantKey: "nobody", finalPwd: "whatever"},
+		{name: "known user, lockout off", user: "alice", attempt: "alice", final: "alice", finalPwd: testPassword, wantKey: "alice"},
+		{name: "known user, other case and spaces", lockout: 5, user: "alice", attempt: "  ALICE ", final: "alice", finalPwd: testPassword, wantKey: "alice"},
+		{name: "non-ASCII case", lockout: 5, user: "Émile", attempt: "émile", final: "Émile", finalPwd: testPassword, wantKey: "émile"},
+		{name: "unknown username", attempt: "Nobody", final: "nobody", finalPwd: "whatever", wantKey: "nobody"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newLoginEnv(t, tt.lockout)
-			if tt.create {
-				e.user("alice", "viewer")
+			if tt.user != "" {
+				e.user(tt.user, "viewer")
 			}
 			for i := range auth.AccountLimitMax {
 				if rr := loginAs(t, e, remoteN(i), tt.attempt, "wrong"); rr.Code != http.StatusUnauthorized {
 					t.Fatalf("attempt %d: %d %s, want 401", i+1, rr.Code, rr.Body)
 				}
 			}
-			rr := loginAs(t, e, remoteN(auth.AccountLimitMax), tt.wantKey, tt.finalPwd)
+			rr := loginAs(t, e, remoteN(auth.AccountLimitMax), tt.final, tt.finalPwd)
 			if rr.Code != http.StatusTooManyRequests {
 				t.Fatalf("after %d failures: %d %s, want 429", auth.AccountLimitMax, rr.Code, rr.Body)
 			}
@@ -122,8 +136,8 @@ func TestLoginAccountLimit(t *testing.T) {
 			if len(blocks) != 1 {
 				t.Fatalf("lockout audit entries = %d, want 1: %+v", len(blocks), blocks)
 			}
-			if d := blocks[0].Details; d["kind"] != "account" || d["key"] != tt.wantKey || d["endpoint"] != "login" || d["until"] == "" {
-				t.Errorf("audit details = %v", d)
+			if b := blocks[0]; b.Target != tt.wantKey || b.Details["kind"] != "account" || b.Details["endpoint"] != "login" || b.Details["until"] == "" {
+				t.Errorf("audit entry = %+v", b)
 			}
 		})
 	}
@@ -161,8 +175,8 @@ func TestLoginIPLimit(t *testing.T) {
 	if len(blocks) != 1 {
 		t.Fatalf("lockout audit entries = %d, want 1: %+v", len(blocks), blocks)
 	}
-	if d := blocks[0].Details; d["kind"] != "ip" || d["key"] != "203.0.113.9" || d["endpoint"] != "login" {
-		t.Errorf("audit details = %v", d)
+	if b := blocks[0]; b.Target != "203.0.113.9" || b.Details["kind"] != "ip" || b.Details["endpoint"] != "login" {
+		t.Errorf("audit entry = %+v", b)
 	}
 }
 
@@ -212,17 +226,11 @@ func TestLoginMFAFailuresCount(t *testing.T) {
 			if len(blocks) != 1 {
 				t.Fatalf("lockout audit entries = %d, want 1: %+v", len(blocks), blocks)
 			}
-			if d := blocks[0].Details; d["kind"] != "account" || d["key"] != "dave" || d["endpoint"] != "mfa" || d["reason"] != tt.wantKind {
-				t.Errorf("audit details = %v", d)
+			if b := blocks[0]; b.Target != "dave" || b.Details["kind"] != "account" || b.Details["endpoint"] != "mfa" || b.Details["reason"] != tt.wantKind {
+				t.Errorf("audit entry = %+v", b)
 			}
 
-			unlock := chiRouterFor(http.MethodPost, "/users/{id}/unlock", e.h.UnlockUser)
-			req := httptest.NewRequest(http.MethodPost, "/users/"+u.ID+"/unlock", nil)
-			rr := httptest.NewRecorder()
-			unlock.ServeHTTP(rr, req)
-			if rr.Code != http.StatusNoContent {
-				t.Fatalf("unlock: %d", rr.Code)
-			}
+			unlockAs(t, e, u.ID)
 			if rr := mfaAs(t, e, remoteN(100), pending.MFAToken, code); rr.Code != http.StatusOK {
 				t.Fatalf("correct code after unlock: %d %s", rr.Code, rr.Body)
 			}
@@ -237,22 +245,39 @@ func TestLoginMFAFailuresCount(t *testing.T) {
 	}
 }
 
-func TestUnlockClearsAccountLimit(t *testing.T) {
+func TestLoginMFAParallelGuesses(t *testing.T) {
 	e := newLoginEnv(t, 0)
-	u := e.user("erin", "viewer")
-	for i := range auth.AccountLimitMax {
-		loginAs(t, e, remoteN(i), "erin", "wrong")
+	u := e.user("gina", "viewer")
+	enrollTOTP(t, e, u.ID)
+	pending := e.login("gina").MFAToken
+
+	const n = 50
+	codes := make(chan int, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes <- mfaAs(t, e, remoteN(i), pending, "000000").Code
+		}()
 	}
-	if rr := loginAs(t, e, remoteN(50), "erin", testPassword); rr.Code != http.StatusTooManyRequests {
-		t.Fatalf("blocked account: %d, want 429", rr.Code)
+	wg.Wait()
+	close(codes)
+	counts := map[int]int{}
+	for c := range codes {
+		counts[c]++
 	}
-	unlock := chiRouterFor(http.MethodPost, "/users/{id}/unlock", e.h.UnlockUser)
-	rr := httptest.NewRecorder()
-	unlock.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/"+u.ID+"/unlock", nil))
-	if rr.Code != http.StatusNoContent {
-		t.Fatalf("unlock: %d", rr.Code)
+	if counts[http.StatusUnauthorized] > auth.AccountLimitMax || counts[http.StatusUnauthorized]+counts[http.StatusTooManyRequests] != n {
+		t.Fatalf("responses = %v, want at most %d checked codes and the rest 429", counts, auth.AccountLimitMax)
 	}
-	if rr := loginAs(t, e, remoteN(51), "erin", testPassword); rr.Code != http.StatusOK {
-		t.Fatalf("after unlock: %d %s, want 200", rr.Code, rr.Body)
+	if got := failedAttempts(t, e, u.ID); got > auth.AccountLimitMax {
+		t.Errorf("failed_login_attempts = %d, want at most %d", got, auth.AccountLimitMax)
+	}
+}
+
+func TestLoginRejectsLongUsername(t *testing.T) {
+	e := newLoginEnv(t, 0)
+	if rr := loginAs(t, e, remoteN(0), strings.Repeat("a", 257), "x"); rr.Code != http.StatusBadRequest {
+		t.Fatalf("257-byte username: %d, want 400", rr.Code)
 	}
 }
