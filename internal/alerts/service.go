@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/notifications"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/notify"
 )
 
@@ -603,6 +604,7 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, container string, value
 			Title:    "Alert firing: " + r.Name,
 			Body:     msg,
 			Link:     "/alerts",
+			Perm:     rbac.PermAlertsView,
 		})
 	}
 }

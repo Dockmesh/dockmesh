@@ -730,6 +730,9 @@ func main() {
 					Title:    "Git auto-deploy failed: " + stackName,
 					Body:     deployErr.Error(),
 					Link:     "/stacks/" + stackName,
+					Perm:      rbac.PermStacksView,
+					HostID:    "local",
+					StackName: stackName,
 				})
 			} else if res != nil {
 				shaShort := ""
@@ -746,6 +749,9 @@ func main() {
 					Title:    "Git auto-deploy: " + stackName,
 					Body:     body,
 					Link:     "/stacks/" + stackName,
+					Perm:      rbac.PermStacksView,
+					HostID:    "local",
+					StackName: stackName,
 				})
 			}
 		}
@@ -824,6 +830,7 @@ func main() {
 	// Host tags (P.11.2). In-memory cache loaded once at startup; kept
 	// fresh after every mutation via Load() inside the service.
 	hostTagsSvc := hosttags.New(database)
+	notifSvc.SetAccessChecker(&notifications.RBACAccess{Users: authSvc, Roles: rolesStore, Tags: hostTagsSvc})
 	if err := hostTagsSvc.Load(ctx); err != nil {
 		slog.Warn("host tags load", "err", err)
 	}

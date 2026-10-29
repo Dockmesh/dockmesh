@@ -41,6 +41,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   into the message.
 - Two simultaneous requests to refresh a session with the same token can no longer both
   succeed; only the first one rotates the session.
+- Notifications sent to everyone (alerts, backups, agent offline, deploys, image and version
+  updates, migrations) now reach only users whose role has the matching permission and whose
+  host and stack scope covers the event, instead of every user.
 
 ### Fixed
 

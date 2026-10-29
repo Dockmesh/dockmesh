@@ -9,6 +9,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notifications"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	dtypes "github.com/docker/docker/api/types"
 )
 
@@ -205,6 +206,7 @@ func (w *Watcher) poll(ctx context.Context) {
 				Title:    "Image update available: " + ref,
 				Body:     "A newer manifest is published upstream",
 				Link:     "/resources?tab=images",
+				Perm:     rbac.PermImagesView,
 			})
 		}
 	}

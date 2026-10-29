@@ -17,6 +17,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	dtypes "github.com/docker/docker/api/types"
@@ -175,6 +176,7 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 				Title:    "Backup completed: " + job.Name,
 				Body:     fmt.Sprintf("Wrote %d bytes", teeW.size),
 				Link:     runLink,
+				Perm:     rbac.PermBackupsView,
 			})
 		} else {
 			body := "Run failed"
@@ -187,6 +189,7 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 				Title:    "Backup failed: " + job.Name,
 				Body:     body,
 				Link:     runLink,
+				Perm:     rbac.PermBackupsView,
 			})
 		}
 	}

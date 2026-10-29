@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/notifications"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
@@ -563,6 +564,8 @@ func (s *Service) markOffline(ag *ConnectedAgent) {
 			Title:    "Agent offline: " + ag.Name,
 			Body:     "Heartbeat lost — checking again in a few seconds",
 			Link:     "/hosts/" + ag.ID,
+			Perm:     rbac.PermHostsView,
+			HostID:   ag.ID,
 		})
 	}
 }

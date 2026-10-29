@@ -333,6 +333,16 @@ func (s *Service) ListActiveUserIDs(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
+// UserAccess returns the role and host-tag scope of one user, for
+// deciding who a notification may reach.
+func (s *Service) UserAccess(ctx context.Context, userID string) (string, []string, error) {
+	u, err := s.GetUser(ctx, userID)
+	if err != nil {
+		return "", nil, err
+	}
+	return u.Role, u.ScopeTags, nil
+}
+
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, username, email, role, scope_tags, totp_verified,

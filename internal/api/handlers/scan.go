@@ -68,6 +68,7 @@ func (h *Handlers) ScanImage(w http.ResponseWriter, r *http.Request) {
 			Title:    fmt.Sprintf("CVE scan: %s", ref),
 			Body:     fmt.Sprintf("%d critical, %d high", rep.Summary.Critical, rep.Summary.High),
 			Link:     "/resources?tab=images",
+			Perm:     rbac.PermImagesView,
 		})
 	}
 	writeJSON(w, http.StatusOK, rep)
