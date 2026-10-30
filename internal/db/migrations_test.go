@@ -92,3 +92,39 @@ func TestAPITokenOwnerMigration(t *testing.T) {
 		t.Error("owner not cleared when the user was deleted")
 	}
 }
+
+// Enrollment tokens issued before expiry existed must stay usable for a
+// grace window after the upgrade; enrolled agents get no expiry.
+func TestAgentEnrollTokenExpiryMigration(t *testing.T) {
+	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := migrateUpTo(database, "063_totp_last_step.sql"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO agents (id, name, enrollment_token_hash, status) VALUES
+		('a1', 'pending-host', 'hash', 'pending'),
+		('a2', 'enrolled-host', NULL, 'offline')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+	var grace sql.NullFloat64
+	if err := database.QueryRow(`SELECT (julianday(enrollment_token_expires_at) - julianday('now')) * 24
+		FROM agents WHERE id = 'a1'`).Scan(&grace); err != nil {
+		t.Fatal(err)
+	}
+	if !grace.Valid || grace.Float64 < 23 || grace.Float64 > 24.1 {
+		t.Errorf("pending token grace = %v hours, want ~24", grace)
+	}
+	var enrolled sql.NullString
+	if err := database.QueryRow(`SELECT enrollment_token_expires_at FROM agents WHERE id = 'a2'`).Scan(&enrolled); err != nil {
+		t.Fatal(err)
+	}
+	if enrolled.Valid {
+		t.Errorf("enrolled agent got an expiry: %v", enrolled.String)
+	}
+}

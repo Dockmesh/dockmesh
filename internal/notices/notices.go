@@ -72,8 +72,9 @@ type Notice struct {
 	audience Audience
 }
 
-// RaiseInput describes a notice. Body is plain text; Link is an in-app path
-// ("/stacks/foo") the UI turns into a button.
+// RaiseInput describes a notice. Body is plain text: the UI keeps its line
+// breaks and shows lines starting with "- " as a list (see Bullets). Link
+// is an in-app path ("/stacks/foo") the UI turns into a button.
 type RaiseInput struct {
 	Key      string
 	Audience Audience
@@ -81,6 +82,18 @@ type RaiseInput struct {
 	Title    string
 	Body     string
 	Link     string
+}
+
+// Bullets formats items as list lines for a notice body, each on its own
+// line so it can sit between two sentences of the body.
+func Bullets(items []string) string {
+	var b strings.Builder
+	for _, it := range items {
+		b.WriteString("\n- ")
+		b.WriteString(it)
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 // Viewer is the reading user. Allowed answers permission checks for the
@@ -105,6 +118,8 @@ type Service struct {
 
 	mu     sync.Mutex
 	checks []namedCheck
+	// refreshes re-evaluate a time-limited notice while it is listed.
+	refreshes map[string]Check
 }
 
 type namedCheck struct {
@@ -186,31 +201,41 @@ func (s *Service) Raise(ctx context.Context, in RaiseInput) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var id int64
-	var resolved sql.NullTime
-	err = tx.QueryRowContext(ctx, `SELECT id, resolved_at FROM notices WHERE key = ?`, in.Key).Scan(&id, &resolved)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO notices (key, audience, audience_value, severity, title, body, link)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			in.Key, string(in.Audience.Kind), value, string(in.Severity), in.Title, in.Body, in.Link); err != nil {
-			return err
-		}
-	case err != nil:
+	// The first statement is a write: a transaction that reads first and
+	// upgrades later fails at once with SQLITE_BUSY when another writer
+	// committed in between, without waiting for busy_timeout.
+	res, err := tx.ExecContext(ctx, `
+		UPDATE notices SET audience = ?, audience_value = ?, severity = ?, title = ?, body = ?, link = ?,
+		       created_at = CURRENT_TIMESTAMP, resolved_at = NULL
+		 WHERE key = ? AND resolved_at IS NOT NULL`,
+		string(in.Audience.Kind), value, string(in.Severity), in.Title, in.Body, in.Link, in.Key)
+	if err != nil {
 		return err
-	case !resolved.Valid:
-		return nil
-	default:
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE notices SET audience = ?, audience_value = ?, severity = ?, title = ?, body = ?, link = ?,
-			       created_at = CURRENT_TIMESTAMP, resolved_at = NULL
-			 WHERE id = ?`,
-			string(in.Audience.Kind), value, string(in.Severity), in.Title, in.Body, in.Link, id); err != nil {
+	}
+	reopened, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if reopened > 0 {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM notice_dismissals WHERE notice_id = (SELECT id FROM notices WHERE key = ?)`, in.Key); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM notice_dismissals WHERE notice_id = ?`, id); err != nil {
+	} else {
+		res, err = tx.ExecContext(ctx, `
+			INSERT INTO notices (key, audience, audience_value, severity, title, body, link)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(key) DO NOTHING`,
+			in.Key, string(in.Audience.Kind), value, string(in.Severity), in.Title, in.Body, in.Link)
+		if err != nil {
 			return err
+		}
+		inserted, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if inserted == 0 {
+			return nil
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -288,6 +313,7 @@ func (a Audience) includes(v Viewer) bool {
 // ForViewer returns the open notices v is in the audience of, with
 // Dismissed set from v's dismissals.
 func (s *Service) ForViewer(ctx context.Context, v Viewer) ([]Notice, error) {
+	s.refreshOpen(ctx)
 	open, err := s.Open(ctx)
 	if err != nil {
 		return nil, err
@@ -343,6 +369,37 @@ func (s *Service) Dismiss(ctx context.Context, v Viewer, id int64) error {
 		return err
 	}
 	return ErrNotFound
+}
+
+// RegisterRefresh adds a check that runs whenever notices are listed and
+// one with key is open, for notices that end on their own (a deadline
+// passing) rather than through an event.
+func (s *Service) RegisterRefresh(key string, fn Check) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refreshes == nil {
+		s.refreshes = map[string]Check{}
+	}
+	s.refreshes[key] = fn
+}
+
+func (s *Service) refreshOpen(ctx context.Context) {
+	s.mu.Lock()
+	refreshes := make(map[string]Check, len(s.refreshes))
+	for k, fn := range s.refreshes {
+		refreshes[k] = fn
+	}
+	s.mu.Unlock()
+	for key, fn := range refreshes {
+		var n int
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM notices WHERE key = ? AND resolved_at IS NULL`, key).Scan(&n); err != nil || n == 0 {
+			continue
+		}
+		if err := fn(ctx, s); err != nil {
+			slog.Warn("notice refresh failed", "key", key, "err", err)
+		}
+	}
 }
 
 // Register adds a startup check. Call before RunChecks.

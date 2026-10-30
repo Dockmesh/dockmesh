@@ -82,6 +82,10 @@ type Service struct {
 	mu        sync.Mutex
 	metrics   *metricsState
 	acme      *acmeBuffer
+
+	// containerState reports whether the managed container exists and runs;
+	// nil means ask Docker.
+	containerState func(ctx context.Context) (exists, running bool)
 }
 
 func NewService(db *sql.DB, dockerCli *docker.Client, enabled bool) *Service {

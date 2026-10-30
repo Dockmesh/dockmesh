@@ -313,7 +313,7 @@
         <div>
           <div class="reg-perm-title">Admin-only</div>
           <p class="ed-subtitle reg-perm-blurb">
-            Registry configuration requires the <em>user.manage</em> permission.
+            Registry configuration requires the <em>registries.update</em> permission.
           </p>
         </div>
       </div>

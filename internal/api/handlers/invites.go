@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -45,6 +46,14 @@ func (h *Handlers) CreateInvite(w http.ResponseWriter, r *http.Request) {
 	in.Role = strings.TrimSpace(in.Role)
 	if in.Role == "" {
 		writeError(w, http.StatusBadRequest, "role required")
+		return
+	}
+	if !h.isValidRole(in.Role) {
+		writeError(w, http.StatusBadRequest, "invalid role")
+		return
+	}
+	if err := h.checkGrant(r, in.Role, in.ScopeTags); err != nil {
+		writeGrantError(w, err)
 		return
 	}
 	ttl := time.Duration(in.TTLHours) * time.Hour
@@ -170,22 +179,38 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "invites not configured")
 		return
 	}
+	limitBody(w, r)
 	token := chi.URLParam(r, "token")
+	ip := clientIP(r)
+	ipAtt, ok := h.inviteLimits.acquire(w, ip, "")
+	if !ok {
+		return
+	}
+	failed := false
+	defer func() { h.inviteLimits.finish(ipAtt, failed) }()
 	inv, err := h.Invites.Get(r.Context(), token)
 	switch {
 	case errors.Is(err, invites.ErrNotFound):
+		failed = true
 		writeError(w, http.StatusNotFound, "invite not found")
 		return
 	case errors.Is(err, invites.ErrExpired):
+		failed = true
 		writeError(w, http.StatusGone, "invite expired")
 		return
 	case errors.Is(err, invites.ErrUsed):
+		failed = true
 		writeError(w, http.StatusGone, "invite already used")
 		return
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	accountAtt, ok := h.inviteLimits.acquire(w, "", "invite:"+strconv.FormatInt(inv.ID, 10))
+	if !ok {
+		return
+	}
+	defer func() { h.inviteLimits.finish(accountAtt, failed) }()
 
 	var in AcceptInviteInput
 	if err := decodeJSON(r, &in); err != nil {
@@ -198,9 +223,36 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "username and password required")
 		return
 	}
+	if !h.isValidRole(inv.Role) {
+		writeError(w, http.StatusGone, "the role of this invite no longer exists")
+		return
+	}
+	// The creator must still be allowed to grant what the invite carries.
+	creator, err := h.Auth.GetUser(r.Context(), inv.CreatedBy)
+	if err != nil {
+		writeError(w, http.StatusGone, "the user who created this invite can no longer grant it")
+		return
+	}
+	asCreator := r.WithContext(middleware.WithIdentity(r.Context(), middleware.Identity{
+		UserID: creator.ID, Role: creator.Role, ScopeTags: creator.ScopeTags,
+	}))
+	if err := h.checkGrant(asCreator, inv.Role, inv.ScopeTags); err != nil {
+		writeError(w, http.StatusGone, "the user who created this invite can no longer grant it")
+		return
+	}
+	// Claim the token before creating the account so two concurrent
+	// accepts can't both succeed; a failed create hands it back.
+	if err := h.Invites.MarkUsed(r.Context(), token); err != nil {
+		writeError(w, http.StatusGone, "invite already used")
+		return
+	}
 
 	user, err := h.Auth.CreateUser(r.Context(), in.Username, in.Email, in.Password, inv.Role)
 	if err != nil {
+		failed = true
+		if rerr := h.Invites.Unclaim(r.Context(), token); rerr != nil {
+			slog.Warn("invite: release claim after failed accept", "err", rerr)
+		}
 		switch {
 		case errors.Is(err, auth.ErrUsernameTaken):
 			writeError(w, http.StatusConflict, "username taken")
@@ -212,20 +264,17 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply scope tags if the invite carries any.
+	// A scoped invite must never leave an unscoped account behind.
 	if len(inv.ScopeTags) > 0 {
 		if _, err := h.Auth.UpdateUserScope(r.Context(), user.ID, inv.ScopeTags); err != nil {
-			// User exists but scope failed to apply. Surface the
-			// error rather than silently leaving them unscoped.
-			writeError(w, http.StatusInternalServerError, "user created but scope failed: "+err.Error())
+			if derr := h.Auth.DeleteUser(r.Context(), user.ID); derr != nil {
+				slog.Error("invite: remove account after scope failure", "user", user.ID, "err", derr)
+			}
+			writeError(w, http.StatusInternalServerError, "could not apply the invite's scope: "+err.Error())
 			return
 		}
+		user.ScopeTags = inv.ScopeTags
 	}
-
-	// Burn the token after the user is fully provisioned. Race-loss
-	// here is OK: the token was bound to one role, two simultaneous
-	// accepts would conflict on the username UNIQUE constraint above.
-	_ = h.Invites.MarkUsed(r.Context(), token)
 
 	h.audit(r, audit.ActionUserCreate, user.Username, map[string]any{
 		"via":       "invite",
@@ -249,7 +298,7 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 	// Sign the new user in immediately so they land in the dashboard.
 	// StartSessionForSSO mints a fresh token pair without password /
 	// MFA — same shape we use after a verified SSO callback.
-	result, err := h.Auth.StartSessionForSSO(r.Context(), *user, r.UserAgent(), inviteClientIP(r))
+	result, err := h.Auth.StartSessionForSSO(r.Context(), *user, r.UserAgent(), ip)
 	if err != nil {
 		// User exists but session minting failed — they can log in
 		// manually. Return 201 + user so the UI can redirect to /login.
@@ -261,21 +310,4 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		"access_token":  result.AccessToken,
 		"refresh_token": result.RefreshToken,
 	})
-}
-
-// inviteClientIP extracts the caller's IP for the invite session.
-// Mirrors middleware.clientIP — duplicated here to avoid cross-package
-// dependency on an internal helper.
-func inviteClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i > 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
-	}
-	addr := r.RemoteAddr
-	if i := strings.LastIndexByte(addr, ':'); i > 0 {
-		return addr[:i]
-	}
-	return addr
 }

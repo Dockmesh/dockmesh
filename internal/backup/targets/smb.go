@@ -2,20 +2,24 @@ package targets
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 
-	"github.com/hirochachacha/go-smb2"
+	"github.com/cloudsoda/go-smb2"
 )
 
 type SMBConfig struct {
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	Share    string `json:"share"`
+	Host  string `json:"host"`
+	Port  int    `json:"port"`
+	Share string `json:"share"`
+	// Username may carry the domain (backslash or @ form); Domain overrides it.
 	Username string `json:"username"`
+	Domain   string `json:"domain,omitempty"`
 	Password string `json:"password"`
 	Path     string `json:"path"` // path within the share
 }
@@ -41,20 +45,17 @@ func NewSMB(raw any) (*SMB, error) {
 	return &SMB{cfg: cfg}, nil
 }
 
-func (s *SMB) connect() (*smb2.Share, *smb2.Session, net.Conn, error) {
+func (s *SMB) connect(ctx context.Context) (*smb2.Share, *smb2.Session, net.Conn, error) {
 	addr := net.JoinHostPort(s.cfg.Host, fmt.Sprintf("%d", s.cfg.Port))
-	conn, err := net.Dial("tcp", addr)
+	conn, err := dialTCP(addr)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("smb: dial: %w", err)
 	}
 
 	d := &smb2.Dialer{
-		Initiator: &smb2.NTLMInitiator{
-			User:     s.cfg.Username,
-			Password: s.cfg.Password,
-		},
+		Initiator: ntlmFor(s.cfg.Username, s.cfg.Domain, s.cfg.Password),
 	}
-	session, err := d.Dial(conn)
+	session, err := d.DialConn(ctx, conn, addr)
 	if err != nil {
 		conn.Close()
 		return nil, nil, nil, fmt.Errorf("smb: session: %w", err)
@@ -70,14 +71,21 @@ func (s *SMB) connect() (*smb2.Share, *smb2.Session, net.Conn, error) {
 }
 
 func (s *SMB) Open(ctx context.Context, path string) (io.WriteCloser, error) {
-	share, session, conn, err := s.connect()
+	share, session, conn, err := s.connect(ctx)
 	if err != nil {
 		return nil, err
 	}
 	full := filepath.Join(s.cfg.Path, filepath.FromSlash(path))
 	full = strings.ReplaceAll(full, "/", "\\")
-	dir := filepath.Dir(full)
-	_ = share.MkdirAll(dir, 0o755)
+	// filepath.Dir doesn't split on backslashes on Linux, so the parent
+	// comes from the slash form.
+	dir := strings.ReplaceAll(pathpkg.Dir(filepath.ToSlash(filepath.Join(s.cfg.Path, path))), "/", "\\")
+	if err := share.MkdirAll(dir, 0o755); err != nil {
+		_ = share.Umount()
+		_ = session.Logoff()
+		_ = conn.Close()
+		return nil, fmt.Errorf("smb: create %s: %w", dir, err)
+	}
 	f, err := share.Create(full)
 	if err != nil {
 		share.Umount()
@@ -89,7 +97,7 @@ func (s *SMB) Open(ctx context.Context, path string) (io.WriteCloser, error) {
 }
 
 func (s *SMB) Read(ctx context.Context, path string) (io.ReadCloser, error) {
-	share, session, conn, err := s.connect()
+	share, session, conn, err := s.connect(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -102,11 +110,19 @@ func (s *SMB) Read(ctx context.Context, path string) (io.ReadCloser, error) {
 		conn.Close()
 		return nil, err
 	}
-	return &smbReader{f: f, share: share, session: session, conn: conn}, nil
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		_ = share.Umount()
+		_ = session.Logoff()
+		conn.Close()
+		return nil, fmt.Errorf("smb: stat %s: %w", full, err)
+	}
+	return &smbReader{r: sizedReader{r: f, remaining: fi.Size()}, f: f, share: share, session: session, conn: conn}, nil
 }
 
 func (s *SMB) List(ctx context.Context, prefix string) ([]Entry, error) {
-	share, session, conn, err := s.connect()
+	share, session, conn, err := s.connect(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +158,7 @@ func walkSMB(share *smb2.Share, dir, base string, out *[]Entry) {
 }
 
 func (s *SMB) Delete(ctx context.Context, path string) error {
-	share, session, conn, err := s.connect()
+	share, session, conn, err := s.connect(ctx)
 	if err != nil {
 		return err
 	}
@@ -154,7 +170,7 @@ func (s *SMB) Delete(ctx context.Context, path string) error {
 }
 
 func (s *SMB) StorageInfo() (total, used int64, err error) {
-	share, session, conn, err := s.connect()
+	share, session, conn, err := s.connect(context.Background())
 	if err != nil {
 		return 0, 0, err
 	}
@@ -177,19 +193,16 @@ func ListSMBShares(host string, port int, username, password string) ([]string, 
 		port = 445
 	}
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	conn, err := net.Dial("tcp", addr)
+	conn, err := dialTCP(addr)
 	if err != nil {
 		return nil, fmt.Errorf("smb: dial: %w", err)
 	}
 	defer conn.Close()
 
 	d := &smb2.Dialer{
-		Initiator: &smb2.NTLMInitiator{
-			User:     username,
-			Password: password,
-		},
+		Initiator: ntlmFor(username, "", password),
 	}
-	session, err := d.Dial(conn)
+	session, err := d.DialConn(context.Background(), conn, addr)
 	if err != nil {
 		return nil, fmt.Errorf("smb: auth failed: %w", err)
 	}
@@ -211,6 +224,7 @@ func ListSMBShares(host string, port int, username, password string) ([]string, 
 }
 
 type smbWriter struct {
+	closed  bool
 	f       *smb2.File
 	share   *smb2.Share
 	session *smb2.Session
@@ -218,24 +232,93 @@ type smbWriter struct {
 }
 
 func (w *smbWriter) Write(p []byte) (int, error) { return w.f.Write(p) }
+
+// Close reports the file's close (the last write reaching the share).
+// Logoff closes the connection, so net.ErrClosed from conn.Close is ignored.
 func (w *smbWriter) Close() error {
-	w.f.Close()
-	w.share.Umount()
-	w.session.Logoff()
-	return w.conn.Close()
+	// go-smb2 blocks on a second logoff of the same session.
+	if w.closed {
+		return nil
+	}
+	w.closed = true
+	err := w.f.Close()
+	_ = w.share.Umount()
+	_ = w.session.Logoff()
+	if cerr := w.conn.Close(); err == nil && !errors.Is(cerr, net.ErrClosed) {
+		err = cerr
+	}
+	return err
 }
 
 type smbReader struct {
+	closed  bool
+	r       sizedReader
 	f       *smb2.File
 	share   *smb2.Share
 	session *smb2.Session
 	conn    net.Conn
 }
 
-func (r *smbReader) Read(p []byte) (int, error) { return r.f.Read(p) }
+func (r *smbReader) Read(p []byte) (int, error) { return r.r.Read(p) }
 func (r *smbReader) Close() error {
-	r.f.Close()
-	r.share.Umount()
-	r.session.Logoff()
-	return r.conn.Close()
+	// go-smb2 blocks on a second logoff of the same session.
+	if r.closed {
+		return nil
+	}
+	r.closed = true
+	err := r.f.Close()
+	_ = r.share.Umount()
+	_ = r.session.Logoff()
+	if cerr := r.conn.Close(); err == nil && !errors.Is(cerr, net.ErrClosed) {
+		err = cerr
+	}
+	return err
+}
+
+// sizedReader stops at the size the file had when it was opened instead
+// of asking the server for the end of file. ksmbd's reply to a READ at
+// the end of a file carries a signature go-smb2 rejects, so the final
+// read fails instead of returning io.EOF and age then drops the last
+// chunk of an encrypted archive.
+type sizedReader struct {
+	r         io.Reader
+	remaining int64
+}
+
+func (s *sizedReader) Read(p []byte) (int, error) {
+	if s.remaining <= 0 {
+		return 0, io.EOF
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if int64(len(p)) > s.remaining {
+		p = p[:s.remaining]
+	}
+	n, err := s.r.Read(p)
+	s.remaining -= int64(n)
+	if errors.Is(err, io.EOF) && s.remaining > 0 {
+		return n, io.ErrUnexpectedEOF
+	}
+	return n, err
+}
+
+// splitSMBUser separates the NTLM domain from a login written as
+// DOMAIN\user or user@domain.
+func splitSMBUser(login string) (domain, user string) {
+	if i := strings.Index(login, `\`); i >= 0 {
+		return login[:i], login[i+1:]
+	}
+	if i := strings.LastIndex(login, "@"); i > 0 && i < len(login)-1 {
+		return login[i+1:], login[:i]
+	}
+	return "", login
+}
+
+func ntlmFor(login, domain, password string) *smb2.NTLMInitiator {
+	d, user := splitSMBUser(login)
+	if domain != "" {
+		d = domain
+	}
+	return &smb2.NTLMInitiator{User: user, Domain: d, Password: password}
 }

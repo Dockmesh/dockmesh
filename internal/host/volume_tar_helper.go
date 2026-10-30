@@ -19,6 +19,9 @@ const volumeTarHelperImage = "busybox:latest"
 // cleans up the helper container on Close. Shared between LocalHost's
 // VolumeTar (backup path) and callers that want a raw tar stream.
 func tarVolumeHelper(ctx context.Context, dc *docker.Client, volumeName string) (io.ReadCloser, error) {
+	if err := docker.CheckVolumeName(volumeName); err != nil {
+		return nil, err
+	}
 	cli := dc.Raw()
 	// ensure helper image present
 	if _, _, err := cli.ImageInspectWithRaw(ctx, volumeTarHelperImage); err != nil {

@@ -15,8 +15,10 @@ import (
 const (
 	adminPort = 2019
 	adminAddr = "127.0.0.1:2019"
-	adminURL  = "http://" + adminAddr
 )
+
+// adminURL is a variable so tests can point it at a fake admin API.
+var adminURL = "http://" + adminAddr
 
 // adminOrigins are the only Host/Origin values Caddy's admin API
 // accepts. Requests without a matching Origin (browsers on other sites,

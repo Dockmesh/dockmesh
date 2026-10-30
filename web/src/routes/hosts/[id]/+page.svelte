@@ -257,19 +257,20 @@
     open: boolean;
     token: string;
     install: string;
-  }>({ open: false, token: '', install: '' });
+    expiresAt: string;
+  }>({ open: false, token: '', install: '', expiresAt: '' });
 
   async function rotateToken() {
     if (isLocal) return;
     if (!(await confirm.ask({
       title: `Re-issue token for ${hostName}`,
       message: 'Generate a new enrollment token?',
-      body: 'The old certificate stays valid until the new one is presented. Use this if the agent’s mTLS cert is suspect.',
+      body: 'Running the new install command re-enrolls this host under the same ID. The old certificate stays valid until then. Use this if the agent’s certificate is suspect or the host needs a reinstall.',
       confirmLabel: 'Re-issue'
     }))) return;
     try {
       const data = await api.agents.rotateToken(id);
-      tokenModal = { open: true, token: data.token, install: data.install_hint };
+      tokenModal = { open: true, token: data.token, install: data.install_hint, expiresAt: data.token_expires_at };
       toast.success('Token re-issued', 'New install command is shown below — paste on the agent host');
     } catch (err) {
       toast.error('Re-issue failed', err instanceof ApiError ? err.message : undefined);
@@ -614,7 +615,7 @@
         <div class="ed-host-card" style="grid-column: span 7;">
           <div class="ed-host-card-title">Tags on this host</div>
           <p class="ed-host-empty" style="margin-top: 0;">
-            Tags drive stack <span class="ed-accent-mono">host-affinity</span> rules. A stack with selector <code>tag:gpu</code> can only be deployed on hosts carrying that tag.
+            Tags group hosts for filtering and limit which hosts a user or role can see and manage (host scope).
           </p>
           <div class="ed-host-tags-edit">
             {#each tagsDraft as t (t)}
@@ -666,7 +667,7 @@
         <div class="ed-host-card" style="grid-column: span 6;">
           <div class="ed-host-card-title">Drain</div>
           <p class="ed-host-empty" style="margin-top: 0;">
-            Migrates every stack off <span class="ed-accent-mono">{hostName}</span> to other matching hosts, then marks it cordoned. Use before reboots, kernel upgrades, or pulling the plug.
+            Migrates every stack off <span class="ed-accent-mono">{hostName}</span> to other matching hosts. The host stays available for new deployments. Use before reboots, kernel upgrades, or pulling the plug.
           </p>
           <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={isLocal} onclick={openDrain}>
             <ArrowDownToLine size={11} strokeWidth={1.5} /> Plan drain…
@@ -694,15 +695,17 @@
           </button>
         </div>
 
-        <div class="ed-host-card" style="grid-column: span 6;">
-          <div class="ed-host-card-title">Re-issue token</div>
-          <p class="ed-host-empty" style="margin-top: 0;">
-            If the agent's mTLS cert is suspect — leaked from CI logs, host wiped, etc. — generate a new enrollment token. The old cert is revoked the moment the new one is presented.
-          </p>
-          <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={isLocal} onclick={rotateToken}>
-            <RefreshCw size={11} strokeWidth={1.5} /> Re-issue
-          </button>
-        </div>
+        {#if allowed('hosts.create')}
+          <div class="ed-host-card" style="grid-column: span 6;">
+            <div class="ed-host-card-title">Re-issue token</div>
+            <p class="ed-host-empty" style="margin-top: 0;">
+              If the agent's mTLS cert is suspect — leaked from CI logs, host wiped, etc. — generate a new enrollment token. The old cert is revoked the moment the new one is presented.
+            </p>
+            <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={isLocal} onclick={rotateToken}>
+              <RefreshCw size={11} strokeWidth={1.5} /> Re-issue
+            </button>
+          </div>
+        {/if}
 
         <div class="ed-host-card ed-host-card-danger" style="grid-column: span 6;">
           <div class="ed-host-card-title ed-host-card-danger-title">Revoke</div>
@@ -736,7 +739,7 @@
           <p class="ed-host-empty"><RefreshCw size={12} strokeWidth={1.5} class="ed-spin" /> Generating drain plan…</p>
         {:else if drainPlan}
           {#if drainPlan.entries.length === 0}
-            <p class="ed-host-empty">No stacks running here. Drain is a no-op — host will be cordoned and ready for maintenance.</p>
+            <p class="ed-host-empty">No stacks running here. Drain is a no-op — nothing to move.</p>
           {:else}
             {@const stuck = drainPlan.entries.filter((e) => !e.feasible)}
             {#if stuck.length > 0}
@@ -794,6 +797,7 @@
   <p class="ed-host-token-warn">
     The raw token is shown only once — copy now if you need it for an
     external installer. After closing this modal it will not be retrievable.
+    It expires {tokenModal.expiresAt ? new Date(tokenModal.expiresAt).toLocaleString() : '—'}.
   </p>
   <div class="ed-host-token-raw">
     <span class="ed-host-token-label">token</span>

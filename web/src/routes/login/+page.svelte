@@ -44,25 +44,28 @@
     }
   }
 
-  async function handleSSOHash() {
+  let ssoCodeHandled = false;
+  async function handleSSOCode() {
     if (typeof window === 'undefined') return;
-    const hash = window.location.hash.slice(1);
-    if (!hash) return;
-    const params = new URLSearchParams(hash);
-    const access = params.get('sso_access');
-    const refresh = params.get('sso_refresh');
-    if (!access || !refresh) return;
-
-    history.replaceState(null, '', window.location.pathname + window.location.search);
-    auth.setSession({ id: '', username: '', role: '' } as any, access, refresh);
+    // Tokens are never accepted from the URL; drop a stale-style fragment.
+    if (window.location.hash) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+    const p = new URLSearchParams(window.location.search);
+    const code = p.get('sso_code');
+    if (!code || ssoCodeHandled) return;
+    ssoCodeHandled = true;
+    p.delete('sso_code');
+    const qs = p.toString();
+    history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
     try {
-      const me = await api.users.me();
-      auth.setSession(me as any, access, refresh);
-      toast.success('Signed in via SSO', me.username);
+      const res = await api.auth.ssoExchange(code);
+      auth.setSession(res.user as any, res.access_token, res.refresh_token);
+      toast.success('Signed in via SSO', res.user.username);
       goto('/');
     } catch {
       auth.clear();
-      error = 'SSO callback failed to load profile';
+      error = 'SSO sign-in failed or expired, please try again';
     }
   }
 
@@ -71,7 +74,7 @@
     const p = new URLSearchParams(window.location.search);
     const e = p.get('sso_error');
     if (e) {
-      error = 'SSO failed: ' + decodeURIComponent(e);
+      error = 'SSO failed: ' + e;
       history.replaceState(null, '', window.location.pathname);
     }
   }
@@ -80,7 +83,7 @@
     if (consumeSignOutReason() === 'session_outdated') {
       notice = 'You were signed out because of a security update. Please sign in again.';
     }
-    handleSSOHash();
+    handleSSOCode();
     handleSSOErrorParam();
     loadProviders();
   });
@@ -101,10 +104,7 @@
         goto('/');
       }
     } catch (err) {
-      error =
-        err instanceof ApiError && err.status === 401
-          ? 'Invalid username or password'
-          : 'Login failed';
+      error = signInError(err, 'Invalid username or password', 'Login failed');
     } finally {
       loading = false;
     }
@@ -120,13 +120,18 @@
       auth.setSession(res.user, res.access_token, res.refresh_token);
       goto('/');
     } catch (err) {
-      error =
-        err instanceof ApiError && err.status === 401
-          ? 'Invalid code'
-          : 'Verification failed';
+      error = signInError(err, 'Invalid code', 'Verification failed');
     } finally {
       loading = false;
     }
+  }
+
+  // 423 and 429 carry the server's message with the wait time.
+  function signInError(err: unknown, invalid: string, fallback: string): string {
+    if (!(err instanceof ApiError)) return fallback;
+    if (err.status === 401) return invalid;
+    if (err.status === 423 || err.status === 429) return err.message;
+    return fallback;
   }
 
   function cancelMFA() {

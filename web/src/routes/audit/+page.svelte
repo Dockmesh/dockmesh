@@ -32,7 +32,7 @@
   // the backend ships a new action class.
   type GroupKey = 'auth' | 'user' | 'stack' | 'container' | 'image' | 'network' | 'volume' | 'system';
   const ACTION_GROUPS: Record<GroupKey, { label: string; actions: string[] }> = {
-    auth:      { label: 'Auth',       actions: ['auth.login', 'auth.login_failed', 'auth.logout', 'auth.refresh'] },
+    auth:      { label: 'Auth',       actions: ['auth.login', 'auth.login_failed', 'auth.lockout', 'auth.logout', 'auth.refresh'] },
     user:      { label: 'User',       actions: ['user.create', 'user.update', 'user.delete', 'user.password'] },
     stack:     { label: 'Stack',      actions: ['stack.create', 'stack.update', 'stack.delete', 'stack.deploy', 'stack.stop', 'stack.adopt'] },
     container: { label: 'Container',  actions: ['container.start', 'container.stop', 'container.restart', 'container.remove', 'container.update', 'container.rollback'] },
@@ -497,7 +497,7 @@
         <div class="audit-cfg-fields" class:disabled={!webhookEnabled}>
           <div>
             <div class="audit-field-label">URL</div>
-            <input type="text" class="dm-input audit-cfg-input audit-cfg-input-mono" placeholder="https://splunk.haus.lan/services/collector/event" bind:value={webhookURL} />
+            <input type="text" class="dm-input audit-cfg-input audit-cfg-input-mono" placeholder="https://siem.example.com/services/collector/event" bind:value={webhookURL} />
           </div>
           <div>
             <div class="audit-field-label">

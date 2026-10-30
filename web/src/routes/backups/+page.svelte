@@ -5,6 +5,7 @@
   // grids per the mockup, runs as a cleaner editorial table. Wizards
   // and the restore modal stay on the legacy `Modal` component for now —
   // they're functional and the editorial rebuild of those is a follow-up.
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { api, ApiError } from '$lib/api';
@@ -37,16 +38,11 @@
   function jobSourceLabel(j: BackupJob): string {
     if (j.sources.length === 0) return 'no source';
     const s = j.sources[0];
-    // Backend additionally accepts a 'system' source type for the
-    // dockmesh-system meta-bundle (DB + stacks + CA). The TS interface
-    // pre-dates that addition and only lists volume / stack — cast at
-    // the call site rather than widening the public type.
-    const t = s.type as string;
-    if (t === 'system') return 'dockmesh-system';
-    return `${t}: ${s.name}`;
+    if (s.type === 'system') return 'dockmesh-system';
+    return `${s.type}: ${s.name}`;
   }
   function jobSourceIcon(j: BackupJob) {
-    const t = (j.sources[0]?.type as string | undefined) ?? '';
+    const t = j.sources[0]?.type;
     if (t === 'stack') return Layers;
     if (t === 'volume') return HardDrive;
     if (t === 'system') return LayoutDashboard;
@@ -167,7 +163,14 @@
   // Structured form fields
   let jName = $state('');
   let jTargetType = $state<'local' | 's3'>('local');
-  let jLocalPath = $state('./data/backups');
+  let jLocalPath = $state('');
+  let defaultLocalPath = $state('');
+  onMount(() => {
+    void api.backups.localPath().then((p) => {
+      defaultLocalPath = p;
+      if (!jLocalPath) jLocalPath = p;
+    });
+  });
   let jS3Endpoint = $state('');
   let jS3Bucket = $state('');
   let jS3AccessKey = $state('');
@@ -229,7 +232,7 @@
   let tSaving = $state(false);
 
   const targetTypes = [
-    { value: 'local', label: 'Local Directory', icon: '💾', fields: [{ key: 'path', label: 'Path', placeholder: './data/backups' }] },
+    { value: 'local', label: 'Local Directory', icon: '💾', fields: [{ key: 'path', label: 'Path', placeholder: '/srv/backups' }] },
     { value: 'sftp', label: 'SFTP (SSH)', icon: '🔐', fields: [{ key: 'host', label: 'Host', placeholder: 'nas.local' }, { key: 'port', label: 'Port', placeholder: '22' }, { key: 'username', label: 'Username', placeholder: '' }, { key: 'password', label: 'Password', placeholder: '' }, { key: 'path', label: 'Remote path', placeholder: '/backups' }] },
     { value: 'smb', label: 'SMB / NAS', icon: '📁', fields: [{ key: 'host', label: 'Server', placeholder: '192.168.1.100' }, { key: 'port', label: 'Port', placeholder: '445' }, { key: 'share', label: 'Share name', placeholder: 'backups' }, { key: 'username', label: 'Username', placeholder: '' }, { key: 'password', label: 'Password', placeholder: '' }, { key: 'path', label: 'Path within share', placeholder: 'dockmesh' }] },
     { value: 'webdav', label: 'WebDAV (Nextcloud)', icon: '☁️', fields: [{ key: 'url', label: 'WebDAV URL', placeholder: 'https://nextcloud.example.com/remote.php/dav/files/user/' }, { key: 'username', label: 'Username', placeholder: '' }, { key: 'password', label: 'Password', placeholder: '' }, { key: 'path', label: 'Path', placeholder: '/backups' }] },
@@ -287,7 +290,7 @@
     const config: Record<string, any> = { ...tConfig };
     if (config.port) config.port = parseInt(config.port) || 0;
     try {
-      testResult = await api.backups.testTargetConfig(tType, config);
+      testResult = await api.backups.testTargetConfig(tType, config, editingTarget?.id);
     } catch (err) {
       testResult = { status: 'error', error: err instanceof ApiError ? err.message : String(err) };
     } finally { testBusy = false; }
@@ -510,7 +513,7 @@
 
   // Job CRUD
   function resetForm() {
-    jName = ''; jTargetType = 'local'; jLocalPath = './data/backups';
+    jName = ''; jTargetType = 'local'; jLocalPath = defaultLocalPath;
     jS3Endpoint = ''; jS3Bucket = ''; jS3AccessKey = ''; jS3SecretKey = ''; jS3Region = ''; jS3SSL = true;
     jSources = []; jSchedule = '0 3 * * *';
     jRetentionCount = 7; jRetentionDays = 0; jEncrypt = false; jEnabled = true;
@@ -585,7 +588,7 @@
       jS3AccessKey = cfg.access_key ?? ''; jS3SecretKey = cfg.secret_key ?? '';
       jS3Region = cfg.region ?? ''; jS3SSL = cfg.use_ssl !== false;
     } else {
-      jLocalPath = cfg.path ?? './data/backups';
+      jLocalPath = cfg.path ?? defaultLocalPath;
     }
     // P.13.5: keep at most one source on edit. Older multi-source
     // jobs that pre-date the validation are reduced to their first
@@ -640,6 +643,46 @@
     try { await api.backups.deleteJob(j.id); toast.success('Deleted'); await loadJobs(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
   }
 
+  function pendingHostKey(j: BackupJob): boolean {
+    return j.target_type === 'sftp' && !!(j.target_config as { host_key_pending?: string } | null)?.host_key_pending;
+  }
+
+  function targetPendingHostKey(t: BackupTarget): boolean {
+    return t.type === 'sftp' && !!(t.config as { host_key_pending?: string } | null)?.host_key_pending;
+  }
+
+  async function acceptTargetHostKey(t: BackupTarget) {
+    if (!(await confirm.ask({
+      title: 'Accept new SFTP host key',
+      message: `Trust the new host key for target "${t.name}"?`,
+      body: 'Only do this if you know why the server key changed (server reinstalled, key rotated). Otherwise someone may be intercepting the connection.',
+      confirmLabel: 'Accept key', danger: true,
+    }))) return;
+    try {
+      await api.backups.acceptTargetHostKey(t.id);
+      toast.success('Host key accepted');
+      await loadTargets();
+    } catch (err) {
+      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
+  async function acceptHostKey(j: BackupJob) {
+    if (!(await confirm.ask({
+      title: 'Accept new SFTP host key',
+      message: `Trust the new host key for "${j.name}"?`,
+      body: 'Only do this if you know why the server key changed (server reinstalled, key rotated). Otherwise someone may be intercepting the connection.',
+      confirmLabel: 'Accept key', danger: true,
+    }))) return;
+    try {
+      await api.backups.acceptHostKey(j.id);
+      toast.success('Host key accepted');
+      await loadJobs();
+    } catch (err) {
+      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
   async function runJob(j: BackupJob) {
     if (!(await confirm.ask({ title: 'Run backup now', message: `Run "${j.name}" now?`, body: 'The backup starts in the background. Progress appears under the Runs tab.', confirmLabel: 'Run' }))) return;
     try { await api.backups.runJob(j.id); toast.success('Backup started'); await loadJobs(); } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
@@ -647,7 +690,7 @@
 
   async function toggleJob(j: BackupJob) {
     try {
-      const input: BackupJobInput = { name: j.name, target_type: j.target_type, target_config: j.target_config, sources: j.sources, schedule: j.schedule, retention_count: j.retention_count, retention_days: j.retention_days, encrypt: j.encrypt, pre_hooks: j.pre_hooks, post_hooks: j.post_hooks, enabled: !j.enabled };
+      const input: BackupJobInput = { name: j.name, host_id: j.host_id, target_type: j.target_type, target_config: j.target_config, sources: j.sources, schedule: j.schedule, retention_count: j.retention_count, retention_days: j.retention_days, encrypt: j.encrypt, pre_hooks: j.pre_hooks, post_hooks: j.post_hooks, enabled: !j.enabled };
       await api.backups.updateJob(j.id, input);
       await loadJobs();
     } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
@@ -839,6 +882,11 @@
               </button>
               <div class="bk-job-card-actions">
                 {#if !j.enabled}<span class="dm-pill dm-pill-neutral bk-mini-pill">disabled</span>{/if}
+                {#if pendingHostKey(j)}
+                  <button type="button" class="dm-btn dm-btn-danger dm-btn-xs" onclick={(e) => { e.stopPropagation(); acceptHostKey(j); }} title="The SFTP server presented a different host key">
+                    Accept new host key
+                  </button>
+                {/if}
                 <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs bk-icon-btn" onclick={(e) => { e.stopPropagation(); runJob(j); }} title="Run now" disabled={!j.enabled}>
                   <Play size={11} strokeWidth={1.5} />
                 </button>
@@ -1047,7 +1095,7 @@
             <span class="font-mono bk-runs-cell right">{fmtDuration(r.started_at, r.finished_at)}</span>
             <span class="font-mono bk-runs-cell right">{fmtBytes(r.size_bytes)}</span>
             <span class="bk-runs-actions">
-              {#if r.status === 'success'}
+              {#if r.status === 'success' && !r.sources?.some((s) => s.type === 'system')}
                 <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" title="Restore" onclick={(e) => { e.stopPropagation(); openRestore(r); }}>
                   <Undo2 size={11} strokeWidth={1.5} />
                 </button>
@@ -1141,6 +1189,11 @@
                 tested {fmtTime(t.last_checked_at)}
               </span>
               <span class="bk-target-card-foot-spacer"></span>
+              {#if targetPendingHostKey(t)}
+                <button type="button" class="dm-btn dm-btn-danger dm-btn-xs" onclick={() => acceptTargetHostKey(t)} title="The SFTP server presented a different host key">
+                  Accept new host key
+                </button>
+              {/if}
               <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => openTargetDrawer(t)} title="Open detail">
                 Detail
               </button>
@@ -1444,7 +1497,7 @@
           </select>
         </div>
         {#if jTargetType === 'local'}
-          <Input label="Path" bind:value={jLocalPath} placeholder="./data/backups" />
+          <Input label="Path" bind:value={jLocalPath} placeholder={defaultLocalPath || '/srv/backups'} />
         {:else if jTargetType === 's3'}
           <div class="grid grid-cols-2 gap-3">
             <Input label="Endpoint" bind:value={jS3Endpoint} placeholder="s3.amazonaws.com" />

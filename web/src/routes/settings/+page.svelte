@@ -364,6 +364,19 @@
           />
         </Field>
 
+        <Field
+          label="Trusted proxies"
+          hint="Comma-separated IPs or CIDRs of reverse proxies in front of Dockmesh. Only these may set the client address and HTTPS headers (X-Forwarded-For, X-Real-IP, X-Forwarded-Proto). Empty = localhost only."
+        >
+          <input
+            type="text"
+            class="dm-input set-input"
+            placeholder="10.0.0.5, 172.16.0.0/12"
+            value={getSetting('trusted_proxies')}
+            onchange={(e) => setSetting('trusted_proxies', (e.target as HTMLInputElement).value)}
+          />
+        </Field>
+
         <div class="set-config-actions">
           <button
             type="button"

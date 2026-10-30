@@ -15,6 +15,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/pki"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -53,11 +54,13 @@ type Agent struct {
 // install command they have to run on the remote host. The plaintext token
 // is shown exactly once.
 type CreateResult struct {
-	Agent       Agent  `json:"agent"`
-	Token       string `json:"token"`
-	EnrollURL   string `json:"enroll_url"`
-	AgentURL    string `json:"agent_url"`
-	InstallHint string `json:"install_hint"`
+	Agent          Agent     `json:"agent"`
+	Token          string    `json:"token"`
+	TokenExpiresAt time.Time `json:"token_expires_at"`
+	EnrollURL      string    `json:"enroll_url"`
+	AgentURL       string    `json:"agent_url"`
+	CAFingerprint  string    `json:"ca_fingerprint"`
+	InstallHint    string    `json:"install_hint"`
 }
 
 var (
@@ -74,6 +77,8 @@ type Service struct {
 	publicURL string // public HTTPS URL of the main dockmesh server
 	agentURL  string // wss URL of the mTLS agent listener (e.g. wss://host:8443)
 	notifs    *notifications.Service
+	enrollTTL time.Duration
+	now       func() time.Time
 
 	mu        sync.RWMutex
 	connected map[string]*ConnectedAgent // keyed by agent id
@@ -93,6 +98,9 @@ type ConnectedAgent struct {
 	Hello    HelloPayload
 	JoinedAt time.Time
 	send     chan Frame
+	// closeConn closes the underlying socket; the read loop then exits
+	// and markOffline removes the agent from the registry.
+	closeConn func()
 
 	pendingMu sync.Mutex
 	pending   map[string]chan Frame
@@ -191,12 +199,32 @@ func NewService(db *sql.DB, p *pki.Manager, publicURL, agentURL string) *Service
 		pki:       p,
 		publicURL: publicURL,
 		agentURL:  agentURL,
+		enrollTTL: DefaultEnrollTokenTTL,
+		now:       time.Now,
 		connected: make(map[string]*ConnectedAgent),
+	}
+}
+
+// DefaultEnrollTokenTTL is how long an enrollment token stays valid when
+// DOCKMESH_AGENT_ENROLL_TOKEN_TTL is not set.
+const DefaultEnrollTokenTTL = 24 * time.Hour
+
+// SetEnrollTokenTTL overrides the enrollment-token lifetime. Non-positive
+// values keep the default.
+func (s *Service) SetEnrollTokenTTL(d time.Duration) {
+	if d > 0 {
+		s.enrollTTL = d
 	}
 }
 
 func (s *Service) PublicURL() string { return s.publicURL }
 func (s *Service) AgentURL() string  { return s.agentURL }
+
+// CAFingerprint is the SHA-256 of the agents CA the installer pins.
+func (s *Service) CAFingerprint() string { return s.pki.CAFingerprint() }
+
+// CACertPEM is the agents CA certificate handed to the installer.
+func (s *Service) CACertPEM() []byte { return s.pki.CACertPEM() }
 
 // -----------------------------------------------------------------------------
 // CRUD
@@ -211,11 +239,11 @@ func (s *Service) Create(ctx context.Context, name string) (*CreateResult, error
 	if err != nil {
 		return nil, err
 	}
-	tokenHash := hashToken(token)
+	expires := s.now().Add(s.enrollTTL)
 
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO agents (id, name, enrollment_token_hash, status)
-		VALUES (?, ?, ?, 'pending')`, id, name, tokenHash)
+		INSERT INTO agents (id, name, enrollment_token_hash, enrollment_token_expires_at, status)
+		VALUES (?, ?, ?, ?, 'pending')`, id, name, hashToken(token), sqliteTime(expires))
 	if err != nil {
 		return nil, ErrNameTaken
 	}
@@ -223,37 +251,25 @@ func (s *Service) Create(ctx context.Context, name string) (*CreateResult, error
 	if err != nil {
 		return nil, err
 	}
-	// One-line installer command — runs on the remote host as root,
-	// creates a dedicated dockmesh-agent service user, installs Docker
-	// if missing, drops a hardened systemd unit and starts the agent.
-	installHint := fmt.Sprintf(
-		"curl -fsSL %s/install/agent.sh?token=%s | sudo bash",
-		s.publicURL, token)
-
-	return &CreateResult{
-		Agent:       *a,
-		Token:       token,
-		EnrollURL:   s.publicURL + "/api/v1/agents/enroll",
-		AgentURL:    s.agentURL,
-		InstallHint: installHint,
-	}, nil
+	return s.createResult(a, token, expires), nil
 }
 
 // RotateEnrollToken generates a fresh enrollment token for an existing
-// agent, invalidating the previous one. Used when the original token
-// was leaked or lost — the agent DB row + cert chain are preserved.
-// Only allowed for agents that haven't yet completed enrollment OR for
-// explicit token rotation triggered by the operator. Returns the same
-// CreateResult shape so the UI can reuse the "install command" modal.
+// agent, invalidating the previous one. The host keeps its ID, so stacks,
+// tags and backup jobs bound to it survive a re-enroll; the old client
+// cert stops working once the new enrollment replaces its fingerprint.
 func (s *Service) RotateEnrollToken(ctx context.Context, id string) (*CreateResult, error) {
 	token, err := newToken()
 	if err != nil {
 		return nil, err
 	}
-	tokenHash := hashToken(token)
+	expires := s.now().Add(s.enrollTTL)
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE agents SET enrollment_token_hash = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?`, tokenHash, id)
+		UPDATE agents
+		   SET enrollment_token_hash = ?,
+		       enrollment_token_expires_at = ?,
+		       updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND status != 'revoked'`, hashToken(token), sqliteTime(expires), id)
 	if err != nil {
 		return nil, err
 	}
@@ -265,16 +281,89 @@ func (s *Service) RotateEnrollToken(ctx context.Context, id string) (*CreateResu
 	if err != nil {
 		return nil, err
 	}
+	return s.createResult(a, token, expires), nil
+}
+
+// ReissueAllEnrollTokens gives every non-revoked agent a fresh
+// enrollment token and drops its client cert, in one transaction. Used
+// after a CA rotation, when every agent has to enroll again.
+func (s *Service) ReissueAllEnrollTokens(ctx context.Context) ([]CreateResult, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM agents WHERE status != 'revoked' ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	expires := s.now().Add(s.enrollTTL)
+	tokens := make(map[string]string, len(ids))
+	for _, id := range ids {
+		token, err := newToken()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE agents
+			   SET enrollment_token_hash = ?,
+			       enrollment_token_expires_at = ?,
+			       cert_fingerprint = NULL,
+			       status = 'pending',
+			       updated_at = CURRENT_TIMESTAMP
+			 WHERE id = ?`, hashToken(token), sqliteTime(expires), id); err != nil {
+			return nil, err
+		}
+		tokens[id] = token
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	out := make([]CreateResult, 0, len(ids))
+	for _, id := range ids {
+		a, err := s.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *s.createResult(a, tokens[id], expires))
+	}
+	return out, nil
+}
+
+func (s *Service) createResult(a *Agent, token string, expires time.Time) *CreateResult {
+	fp := s.pki.CAFingerprint()
+	// The installer runs as root on the remote host: it creates a
+	// dedicated service user, installs Docker if missing and drops a
+	// hardened systemd unit. The ca= fingerprint lets the server refuse
+	// to render the script once the agents CA has rotated.
 	installHint := fmt.Sprintf(
-		"curl -fsSL %s/install/agent.sh?token=%s | sudo bash",
-		s.publicURL, token)
+		"curl -fsSL '%s/install/agent.sh?token=%s&ca=%s' | sudo bash",
+		s.publicURL, token, fp)
 	return &CreateResult{
-		Agent:       *a,
-		Token:       token,
-		EnrollURL:   s.publicURL + "/api/v1/agents/enroll",
-		AgentURL:    s.agentURL,
-		InstallHint: installHint,
-	}, nil
+		Agent:          *a,
+		Token:          token,
+		TokenExpiresAt: expires.UTC(),
+		EnrollURL:      s.EnrollURL(),
+		AgentURL:       s.agentURL,
+		CAFingerprint:  fp,
+		InstallHint:    installHint,
+	}
 }
 
 func (s *Service) List(ctx context.Context) ([]Agent, error) {
@@ -352,11 +441,15 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 		return nil, ErrInvalidToken
 	}
 	tokenHash := hashToken(req.Token)
+	now := sqliteTime(s.now())
 
 	var id, name string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name FROM agents WHERE enrollment_token_hash = ? AND status = 'pending'`,
-		tokenHash).Scan(&id, &name)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, name FROM agents
+		 WHERE enrollment_token_hash = ?
+		   AND enrollment_token_expires_at > ?
+		   AND status != 'revoked'`,
+		tokenHash, now).Scan(&id, &name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrInvalidToken
 	}
@@ -369,9 +462,12 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 		return nil, err
 	}
 
-	_, err = s.db.ExecContext(ctx, `
+	// The token predicate makes the claim atomic: of two concurrent
+	// enrollments with the same token only one UPDATE matches a row.
+	res, err := s.db.ExecContext(ctx, `
 		UPDATE agents
 		   SET enrollment_token_hash = NULL,
+		       enrollment_token_expires_at = NULL,
 		       cert_fingerprint = ?,
 		       status = 'offline',
 		       hostname = ?,
@@ -380,11 +476,21 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 		       version = ?,
 		       docker_version = ?,
 		       updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ?`,
-		fingerprint, req.Hostname, req.OS, req.Arch, req.Version, req.DockerVersion, id)
+		 WHERE id = ?
+		   AND enrollment_token_hash = ?
+		   AND enrollment_token_expires_at > ?
+		   AND status != 'revoked'`,
+		fingerprint, req.Hostname, req.OS, req.Arch, req.Version, req.DockerVersion,
+		id, tokenHash, now)
 	if err != nil {
 		return nil, err
 	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return nil, ErrInvalidToken
+	}
+	// A re-enrolled host replaces its credential; a session still open
+	// with the old cert must not outlive it or block the new agent.
+	s.sever(id)
 
 	return &EnrollResponse{
 		AgentID:    id,
@@ -458,6 +564,8 @@ func (s *Service) markOffline(ag *ConnectedAgent) {
 			Title:    "Agent offline: " + ag.Name,
 			Body:     "Heartbeat lost — checking again in a few seconds",
 			Link:     "/hosts/" + ag.ID,
+			Perm:     rbac.PermHostsView,
+			HostID:   ag.ID,
 		})
 	}
 }
@@ -475,6 +583,17 @@ func (s *Service) disconnect(id string) {
 	s.mu.Unlock()
 	if ag != nil {
 		close(ag.send)
+	}
+}
+
+// sever closes the live socket of agent id, if any, without touching
+// the send channel that in-flight requests may still write to.
+func (s *Service) sever(id string) {
+	s.mu.RLock()
+	ag := s.connected[id]
+	s.mu.RUnlock()
+	if ag != nil && ag.closeConn != nil {
+		ag.closeConn()
 	}
 }
 
@@ -557,6 +676,12 @@ func newToken() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// sqliteTime renders t in the layout SQLite's CURRENT_TIMESTAMP and
+// datetime() use, so stored expiry values compare correctly as text.
+func sqliteTime(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05")
 }
 
 func hashToken(token string) string {

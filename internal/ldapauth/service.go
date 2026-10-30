@@ -57,6 +57,7 @@ type Provider struct {
 	GroupSearchBase          string         `json:"group_search_base,omitempty"`
 	GroupMembershipAttribute string         `json:"group_membership_attribute"`
 	DefaultRole              string         `json:"default_role"`
+	AllowEmailLink           bool           `json:"allow_email_link"`
 	GroupMappings            []GroupMapping `json:"group_mappings"`
 	Enabled                  bool           `json:"enabled"`
 	IsDefault                bool           `json:"is_default"`
@@ -83,6 +84,7 @@ type ProviderInput struct {
 	GroupSearchBase          string         `json:"group_search_base"`
 	GroupMembershipAttribute string         `json:"group_membership_attribute"`
 	DefaultRole              string         `json:"default_role"`
+	AllowEmailLink           bool           `json:"allow_email_link"`
 	GroupMappings            []GroupMapping `json:"group_mappings,omitempty"`
 	Enabled                  bool           `json:"enabled"`
 	IsDefault                bool           `json:"is_default,omitempty"`
@@ -138,6 +140,13 @@ func (s *Service) ListProviders(ctx context.Context) ([]Provider, error) {
 			return nil, err
 		}
 	}
+	links, err := s.auth.EmailLinkingByID(ctx, "ldap")
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].AllowEmailLink = links[out[i].ID]
+	}
 	return out, nil
 }
 
@@ -171,6 +180,11 @@ func (s *Service) GetProvider(ctx context.Context, id int64) (*Provider, error) 
 	if err := s.loadGroupMappings(ctx, p); err != nil {
 		return nil, err
 	}
+	links, err := s.auth.EmailLinkingByID(ctx, "ldap")
+	if err != nil {
+		return nil, err
+	}
+	p.AllowEmailLink = links[p.ID]
 	return p, nil
 }
 
@@ -244,6 +258,9 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 			return nil, err
 		}
 	}
+	if err := s.auth.SetEmailLinking(ctx, "ldap", id, in.AllowEmailLink); err != nil {
+		return nil, err
+	}
 	return s.GetProvider(ctx, id)
 }
 
@@ -296,6 +313,9 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 		if err := s.SetGroupMappings(ctx, id, in.GroupMappings); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.auth.SetEmailLinking(ctx, "ldap", id, in.AllowEmailLink); err != nil {
+		return nil, err
 	}
 	return s.GetProvider(ctx, id)
 }
@@ -480,40 +500,12 @@ func (s *Service) Authenticate(ctx context.Context, slug, username, password str
 	return s.auth.StartSessionForSSO(ctx, *user, userAgent, ip)
 }
 
-func (s *Service) jitProvision(ctx context.Context, p *Provider, subjectDN, name, email, role string) (*auth.User, error) {
-	var userID, username string
-	err := s.db.QueryRowContext(ctx, `
-		SELECT id, username FROM users
-		 WHERE (ldap_provider = ? AND ldap_subject = ?)
-		    OR email = ?
-		 LIMIT 1`, p.Slug, subjectDN, email).Scan(&userID, &username)
-	if err != nil {
-		u, cerr := s.auth.CreateSSOUser(ctx, name, email, role, p.Slug, subjectDN)
-		if cerr != nil {
-			for i := 2; i < 100; i++ {
-				u, cerr = s.auth.CreateSSOUser(ctx, fmt.Sprintf("%s%d", name, i), email, role, p.Slug, subjectDN)
-				if cerr == nil {
-					break
-				}
-			}
-			if cerr != nil {
-				return nil, fmt.Errorf("create sso user: %w", cerr)
-			}
-		}
-		_, _ = s.db.ExecContext(ctx,
-			`UPDATE users SET ldap_provider = ?, ldap_subject = ?,
-			                  oidc_provider = NULL, oidc_subject = NULL
-			   WHERE id = ?`, p.Slug, subjectDN, u.ID)
-		return u, nil
-	}
-	_, err = s.db.ExecContext(ctx, `
-		UPDATE users SET ldap_provider = ?, ldap_subject = ?, role = ?,
-		                 updated_at = CURRENT_TIMESTAMP
-		   WHERE id = ?`, p.Slug, subjectDN, role, userID)
-	if err != nil {
-		return nil, err
-	}
-	return &auth.User{ID: userID, Username: username, Email: email, Role: role}, nil
+func (s *Service) jitProvision(ctx context.Context, p *Provider, subject, name, email, role string) (*auth.User, error) {
+	return s.auth.ProvisionSSOUser(ctx, auth.SSOIdentity{
+		Kind: "ldap", Provider: p.Slug, Subject: subject,
+		Email: email, EmailVerified: false,
+		Username: name, Role: role,
+	})
 }
 
 // -----------------------------------------------------------------------------

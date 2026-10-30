@@ -90,6 +90,7 @@ const (
 	PermBackupsUpdate  Perm = "backups.update"  // edit existing jobs / targets
 	PermBackupsDelete  Perm = "backups.delete"
 	PermBackupsRestore Perm = "backups.restore" // sensitive — overwrites data
+	PermBackupsDownload Perm = "backups.download" // decrypted archive incl. stack .env; system archives need admin
 
 	// ─── Reverse proxy ───
 	PermProxyView   Perm = "proxy.view"
@@ -165,6 +166,7 @@ var rolePerms = map[Role]map[Perm]bool{
 		PermRolesView: true, PermRolesCreate: true, PermRolesUpdate: true, PermRolesDelete: true,
 		PermTokensView: true, PermTokensCreate: true, PermTokensDelete: true, PermTokensManageOthers: true,
 		PermBackupsView: true, PermBackupsCreate: true, PermBackupsUpdate: true, PermBackupsDelete: true, PermBackupsRestore: true,
+		PermBackupsDownload: true,
 		PermProxyView: true, PermProxyCreate: true, PermProxyUpdate: true, PermProxyDelete: true,
 		PermAlertsView: true, PermAlertsCreate: true, PermAlertsUpdate: true, PermAlertsDelete: true,
 		PermTemplatesView: true, PermTemplatesCreate: true, PermTemplatesUpdate: true, PermTemplatesDelete: true,
@@ -173,8 +175,8 @@ var rolePerms = map[Role]map[Perm]bool{
 		PermMetricsView: true,
 	},
 	RoleHostAdmin: {
-		// Full control of assigned hosts; everything except user/role/
-		// audit-config/system-upgrade.
+		// Full control of assigned hosts; nothing global: no user/role,
+		// audit-config, system settings or upgrade.
 		PermContainersView: true, PermContainersUpdate: true, PermContainersDelete: true,
 		PermContainersExec: true, PermContainersLogs: true,
 		PermStacksView: true, PermStacksCreate: true, PermStacksUpdate: true,
@@ -189,11 +191,12 @@ var rolePerms = map[Role]map[Perm]bool{
 		PermUsersView: true, PermRolesView: true,
 		PermTokensView: true, PermTokensCreate: true, PermTokensDelete: true,
 		PermBackupsView: true, PermBackupsCreate: true, PermBackupsUpdate: true, PermBackupsDelete: true, PermBackupsRestore: true,
+		PermBackupsDownload: true,
 		PermProxyView: true, PermProxyCreate: true, PermProxyUpdate: true, PermProxyDelete: true,
 		PermAlertsView: true, PermAlertsCreate: true, PermAlertsUpdate: true, PermAlertsDelete: true,
 		PermTemplatesView: true, PermTemplatesCreate: true, PermTemplatesUpdate: true, PermTemplatesDelete: true,
 		PermAuditView: true, PermAuditExport: true,
-		PermSystemView: true, PermSystemUpdate: true,
+		PermSystemView:  true,
 		PermMetricsView: true,
 	},
 	RoleDeployer: {
