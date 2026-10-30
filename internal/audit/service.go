@@ -69,7 +69,7 @@ const (
 	ActionGenesis            = "audit.genesis"
 	ActionBackupDownload     = "backup.download"
 	ActionBackupKeyExport    = "backup.key_export"
-	ActionBackupJobSecret    = "backup.job_secret_restored"
+	ActionBackupJobRepaired  = "backup.job_repaired"
 
 	// ActionScopeDenied is fired by the RBAC v2 scope-check helper when
 	// a request is rejected because the caller's role-scope doesn't

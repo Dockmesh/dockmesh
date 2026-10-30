@@ -15,8 +15,8 @@ const (
 	repairedNoticeKey = "backups.job-secrets-repaired"
 	missingNoticeKey  = "backups.job-secret-missing"
 
-	// SecretRepairNoticeKey names the startup check that runs RepairJobSecrets.
-	SecretRepairNoticeKey = "backups.job-secrets"
+	// RepairNoticeKey names the startup check that runs RepairJobSecrets.
+	RepairNoticeKey = "backups.job-repair"
 )
 
 // targetIdentity names the config fields that say which server and
