@@ -47,7 +47,7 @@ func LoadEnv(t testing.TB) Env {
 	return e
 }
 
-// Gap keys name the checks a variant cannot pass yet.
+// Gap keys name the checks a variant is known to fail.
 const (
 	GapAll            = "all"              // the whole variant
 	GapList           = "list"             // listing paths and anything built on it
@@ -61,7 +61,6 @@ type Config struct {
 	Type   string
 	Config map[string]any
 	Secret string
-	// Gaps maps a gap key to why the variant fails that check today.
 	Gaps map[string]string
 }
 

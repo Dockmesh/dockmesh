@@ -67,8 +67,6 @@ func TestTargets(t *testing.T) {
 			ctx := context.Background()
 			tg := build(t, c, c.Config)
 
-			// What the "test connection" button does, on a folder that
-			// does not exist yet.
 			t.Run("connection on a new folder", func(t *testing.T) {
 				c.SkipGap(t, GapStorageInfoNew)
 				if sq, ok := tg.(interface{ StorageInfo() (int64, int64, error) }); ok {

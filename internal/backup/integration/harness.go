@@ -17,8 +17,6 @@ import (
 )
 
 // NewService returns a backup service backed by a throwaway database.
-// Only system sources are used, which need no volumes or stacks: the
-// archive is a real tar.gz of the throwaway database.
 func NewService(t testing.TB) (*backup.Service, *sql.DB) {
 	t.Helper()
 	dir := t.TempDir()

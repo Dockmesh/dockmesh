@@ -48,7 +48,6 @@ func TestJobs(t *testing.T) {
 				t.Fatalf("run %s: %s", run.Status, run.Error)
 			}
 
-			// The job folder does not exist before the first run.
 			if !strings.HasPrefix(run.TargetPath, "jobs/nightly/") {
 				t.Fatalf("archive path %q is not below jobs/nightly/", run.TargetPath)
 			}
@@ -87,6 +86,7 @@ func TestJobs(t *testing.T) {
 						sawDB = true
 					}
 				}
+				// Drain the stream so the hash covers every stored byte.
 				_, _ = io.Copy(io.Discard, rc)
 				if !sawDB {
 					t.Fatal("archive has no dockmesh.db")
