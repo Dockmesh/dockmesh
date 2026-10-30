@@ -5,8 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path"
-	"time"
 
 	"github.com/studio-b12/gowebdav"
 )
@@ -35,7 +35,7 @@ func NewWebDAV(raw any) (*WebDAV, error) {
 		cfg.Path = "/backups"
 	}
 	client := gowebdav.NewClient(cfg.URL, cfg.Username, cfg.Password)
-	client.SetTimeout(30 * time.Second)
+	client.SetTransport(newTransferTransport())
 	return &WebDAV{cfg: cfg, client: client}, nil
 }
 
@@ -96,15 +96,34 @@ func (w *WebDAV) StorageInfo() (total, used int64, err error) {
 	return 0, 0, nil
 }
 
-// webdavWriter buffers the entire write and flushes on Close because
-// gowebdav doesn't support streaming writes (WriteStream takes a reader).
+// webdavWriter spools the archive to a temp file and uploads it on Close:
+// gowebdav only writes from a reader, and a large archive must not sit in
+// memory.
 type webdavWriter struct {
 	client *gowebdav.Client
 	path   string
-	buf    bytes.Buffer
+	file   *os.File
 }
 
-func (w *webdavWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
+func (w *webdavWriter) Write(p []byte) (int, error) {
+	if w.file == nil {
+		f, err := os.CreateTemp("", "dockmesh-webdav-")
+		if err != nil {
+			return 0, err
+		}
+		w.file = f
+	}
+	return w.file.Write(p)
+}
+
 func (w *webdavWriter) Close() error {
-	return w.client.WriteStream(w.path, &w.buf, 0o644)
+	if w.file == nil {
+		return w.client.WriteStream(w.path, bytes.NewReader(nil), 0o644)
+	}
+	defer os.Remove(w.file.Name())
+	defer w.file.Close()
+	if _, err := w.file.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	return w.client.WriteStream(w.path, w.file, 0o644)
 }

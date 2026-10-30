@@ -45,7 +45,7 @@ func NewSMB(raw any) (*SMB, error) {
 
 func (s *SMB) connect() (*smb2.Share, *smb2.Session, net.Conn, error) {
 	addr := net.JoinHostPort(s.cfg.Host, fmt.Sprintf("%d", s.cfg.Port))
-	conn, err := net.Dial("tcp", addr)
+	conn, err := dialTCP(addr)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("smb: dial: %w", err)
 	}
@@ -186,7 +186,7 @@ func ListSMBShares(host string, port int, username, password string) ([]string, 
 		port = 445
 	}
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	conn, err := net.Dial("tcp", addr)
+	conn, err := dialTCP(addr)
 	if err != nil {
 		return nil, fmt.Errorf("smb: dial: %w", err)
 	}
