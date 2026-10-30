@@ -24,6 +24,29 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ## [Unreleased]
 
+### Changed
+- Updating the image of a container that belongs to a stack now rebuilds it from the
+  stack's compose.yaml, together with the other replicas of its service, and records the
+  new image in the stack's deploy history. Because that applies the stack's current
+  compose.yaml, it also needs the `stacks.deploy` permission.
+- Only the newest three rollback images per image tag are kept after an update
+  (`DOCKMESH_UPDATE_ROLLBACK_KEEP` changes the number).
+- Update checks for private images use the credentials saved under Registries, and an
+  update that was already announced isn't announced again after a restart.
+
+### Fixed
+- Updating a container's image no longer loses its anonymous volumes (`-v /data` or a
+  `VOLUME` in the image); the new container gets the old volumes.
+- A failed image update no longer leaves the container deleted: the old container is kept
+  until the new one runs, and is started again if the new one fails. The previous image stays
+  tagged for a rollback.
+- Locally built images no longer always show "update available".
+
+### Security
+- A rollback now only accepts update-history entries of the container it is called for, and
+  the update history is limited to containers in the caller's scope. Before, a user scoped to
+  one stack could roll back containers of other stacks.
+
 ## [0.4.2] - 2026-10-30 [recommended]
 
 Fixes the backup target wizard (Continue stayed disabled in 0.4.1), the reverse proxy turning

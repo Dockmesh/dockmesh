@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -58,6 +59,9 @@ type Config struct {
 	// can flip it on early via DOCKMESH_RBAC_V2_ENFORCE=true to test
 	// scope behaviour ahead of the cutover.
 	RBACv2Enforce bool
+	// UpdateRollbackKeep is how many rollback tags per image the
+	// container updater keeps (DOCKMESH_UPDATE_ROLLBACK_KEEP).
+	UpdateRollbackKeep int
 }
 
 func Load() (*Config, error) {
@@ -90,6 +94,15 @@ func Load() (*Config, error) {
 		OTelInsecure:   envOr("DOCKMESH_OTEL_INSECURE", "false") == "true",
 		SetupForce:     envOr("DOCKMESH_SETUP_FORCE", "false") == "true",
 		RBACv2Enforce:  envOr("DOCKMESH_RBAC_V2_ENFORCE", "true") != "false",
+	}
+	// Mirrors updater.DefaultRollbackKeep; config can't import updater.
+	cfg.UpdateRollbackKeep = 3
+	if v := os.Getenv("DOCKMESH_UPDATE_ROLLBACK_KEEP"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return nil, fmt.Errorf("DOCKMESH_UPDATE_ROLLBACK_KEEP must be a positive number, got %q", v)
+		}
+		cfg.UpdateRollbackKeep = n
 	}
 	ttl, err := parseEnrollTokenTTL(os.Getenv("DOCKMESH_AGENT_ENROLL_TOKEN_TTL"))
 	if err != nil {

@@ -1480,49 +1480,74 @@ paths:
       tags: [containers]
       summary: Pull a newer image tag and recreate the container
       description: |
-        Checks for a newer image matching the container's tag, pulls it,
-        stops the old container, creates a new one with the same config,
-        and starts it. Rollback history is retained for
-        `/containers/{id}/rollback`.
+        Pulls the container's image tag and, when it resolves to a new
+        image, replaces the container. A container that belongs to a
+        managed stack is rebuilt from the stack's compose.yaml (all
+        replicas of its service) and the change is recorded in the stack's
+        deploy history; other containers are rebuilt from their own config.
+        Volumes, including anonymous ones, are carried over. The old
+        container is only removed once the new one is running; on failure
+        the old one is restored and the old image stays tagged as the
+        rollback target. Older rollback tags beyond the configured count
+        (`DOCKMESH_UPDATE_ROLLBACK_KEEP`, default 3) are pruned.
+        Because a stack container is rebuilt from compose.yaml, updating
+        one also needs `stacks.deploy`.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
       responses:
         "200":
-          description: Update complete.
+          description: Update complete, or `updated=false` when already up to date.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  old_image: { type: string }
-                  new_image: { type: string }
-                  container_id: { type: string }
+              schema: { $ref: "#/components/schemas/ContainerUpdateResult" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: An update of this container or its stack is already running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: Pull or swap failed; the previous container is kept.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /containers/{id}/rollback:
     post:
       operationId: containers.rollback
       tags: [containers]
       summary: Roll a container back to its previous image
+      description: |
+        Recreates the container from the rollback tag stored in the given
+        update-history entry of this container, with the same swap and volume handling as
+        `/containers/{id}/update`. Stack containers keep their compose.yaml
+        config; the stack's deploy history notes that the next deploy uses
+        the image compose.yaml names again.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [history_id]
+              properties:
+                history_id: { type: integer, format: int64 }
       responses:
         "200":
           description: Rolled back.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  image: { type: string }
-                  container_id: { type: string }
+              schema: { $ref: "#/components/schemas/ContainerUpdateResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: No previous image to roll back to.
+          description: Already rolled back, the rollback image was pruned or removed, or an update of this container or its stack is running.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2745,9 +2770,13 @@ paths:
       summary: Map of cached image-update availability
       description: |
         Returns the snapshot of the background update watcher: for every
-        running container's image reference seen since startup, whether
-        a newer manifest is available upstream. Refreshed every 30
-        minutes. Map key is the normalized image ref (e.g. `nginx:1.27`).
+        image reference a running container on the local host used in the
+        last 30 days, whether a newer manifest is available upstream.
+        Refreshed every 30 minutes and kept across restarts. Private
+        images are checked with the matching registry credential. Images
+        without a registry digest (built or loaded locally) report an
+        `error` instead of an update. Map key is the normalized image ref
+        (e.g. `nginx:1.27`).
       responses:
         "200":
           description: Update info per image ref.
@@ -7993,6 +8022,19 @@ components:
           type: string
           enum: [pause, continue, rollback]
 
+    ContainerUpdateResult:
+      type: object
+      required: [container_id, container_name, image, old_digest, new_digest, updated]
+      properties:
+        container_id: { type: string, description: ID of the container now running under the name. }
+        container_name: { type: string }
+        image: { type: string, description: Image ref that was pulled (update) or the rollback tag (rollback). }
+        old_digest: { type: string, description: Image ID before the change. }
+        new_digest: { type: string, description: Image ID after the change. }
+        updated: { type: boolean }
+        rollback_tag: { type: string, description: Tag that keeps the previous image for a rollback. }
+        history_id: { type: integer, format: int64 }
+        stack: { type: string, description: Set when the container belongs to a managed stack and was rebuilt from its compose.yaml. }
     RollingUpdateResult:
       type: object
       required: [service, total_replicas, updated, failed, skipped, rolled_back, new_image]
