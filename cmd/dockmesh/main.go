@@ -863,6 +863,11 @@ func main() {
 	alertsSvc.SetNotifier(notifSvc)
 	backupSvc.SetNotifier(notifSvc)
 	backupSvc.SetNotices(noticesSvc)
+	noticesSvc.Register(backup.SecretRepairNoticeKey, func(ctx context.Context, n *notices.Service) error {
+		return backupSvc.RepairJobSecrets(ctx, backupTargetStore, n, func(j backup.Job, target string) {
+			auditSvc.Write(ctx, "", audit.ActionBackupJobSecret, j.Name, map[string]any{"job_id": j.ID, "target": target})
+		})
+	})
 	updateWatcher.SetNotifier(notifSvc)
 	agentsSvc.SetNotifier(notifSvc)
 	selfUpdateChk.SetNotifier(notifSvc)

@@ -323,3 +323,13 @@ func (s *store) clearJobReview(ctx context.Context, id int64) error {
 		id)
 	return err
 }
+
+func (s *store) setJobTargetConfig(ctx context.Context, id int64, cfg any) error {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE backup_jobs SET target_config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, string(b), id)
+	return err
+}

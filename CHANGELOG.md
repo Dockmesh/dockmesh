@@ -75,9 +75,10 @@ earlier, makes the installers more reliable on upgrade, and repairs volume brows
 - A backup job created from a saved target in the job wizard no longer fails with a login error
   (for example "The attempted logon is invalid" on SMB) while the target's connection test
   succeeds. Since 0.4.0 the wizard copied the target's hidden, empty password into the job; the
-  server now takes the password from the saved target. Jobs created that way on 0.4.0 keep the
-  empty password: open the job once, pick the target again and save (or retype the password
-  inline). (#54)
+  server now takes the password from the saved target. Jobs created that way on 0.4.0 are repaired
+  on the first start: when exactly one saved target has the same type, server and location, the job
+  takes its password and an info notice lists the repaired jobs. Jobs without a unique match raise a
+  notice asking you to enter the password again in the job. (#54)
 - `dockmesh init` now writes `DOCKMESH_HTTP_ADDR` to the env file, so the listen address
   you chose takes effect instead of being ignored.
 - The Operator role can create its own API tokens again, as the permission list always
