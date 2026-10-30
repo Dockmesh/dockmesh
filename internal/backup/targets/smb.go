@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hirochachacha/go-smb2"
+	"github.com/cloudsoda/go-smb2"
 )
 
 type SMBConfig struct {
@@ -43,7 +43,7 @@ func NewSMB(raw any) (*SMB, error) {
 	return &SMB{cfg: cfg}, nil
 }
 
-func (s *SMB) connect() (*smb2.Share, *smb2.Session, net.Conn, error) {
+func (s *SMB) connect(ctx context.Context) (*smb2.Share, *smb2.Session, net.Conn, error) {
 	addr := net.JoinHostPort(s.cfg.Host, fmt.Sprintf("%d", s.cfg.Port))
 	conn, err := dialTCP(addr)
 	if err != nil {
@@ -56,7 +56,7 @@ func (s *SMB) connect() (*smb2.Share, *smb2.Session, net.Conn, error) {
 			Password: s.cfg.Password,
 		},
 	}
-	session, err := d.Dial(conn)
+	session, err := d.DialConn(ctx, conn, addr)
 	if err != nil {
 		conn.Close()
 		return nil, nil, nil, fmt.Errorf("smb: session: %w", err)
@@ -72,7 +72,7 @@ func (s *SMB) connect() (*smb2.Share, *smb2.Session, net.Conn, error) {
 }
 
 func (s *SMB) Open(ctx context.Context, path string) (io.WriteCloser, error) {
-	share, session, conn, err := s.connect()
+	share, session, conn, err := s.connect(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +98,7 @@ func (s *SMB) Open(ctx context.Context, path string) (io.WriteCloser, error) {
 }
 
 func (s *SMB) Read(ctx context.Context, path string) (io.ReadCloser, error) {
-	share, session, conn, err := s.connect()
+	share, session, conn, err := s.connect(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +123,7 @@ func (s *SMB) Read(ctx context.Context, path string) (io.ReadCloser, error) {
 }
 
 func (s *SMB) List(ctx context.Context, prefix string) ([]Entry, error) {
-	share, session, conn, err := s.connect()
+	share, session, conn, err := s.connect(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +159,7 @@ func walkSMB(share *smb2.Share, dir, base string, out *[]Entry) {
 }
 
 func (s *SMB) Delete(ctx context.Context, path string) error {
-	share, session, conn, err := s.connect()
+	share, session, conn, err := s.connect(ctx)
 	if err != nil {
 		return err
 	}
@@ -171,7 +171,7 @@ func (s *SMB) Delete(ctx context.Context, path string) error {
 }
 
 func (s *SMB) StorageInfo() (total, used int64, err error) {
-	share, session, conn, err := s.connect()
+	share, session, conn, err := s.connect(context.Background())
 	if err != nil {
 		return 0, 0, err
 	}
@@ -206,7 +206,7 @@ func ListSMBShares(host string, port int, username, password string) ([]string, 
 			Password: password,
 		},
 	}
-	session, err := d.Dial(conn)
+	session, err := d.DialConn(context.Background(), conn, addr)
 	if err != nil {
 		return nil, fmt.Errorf("smb: auth failed: %w", err)
 	}

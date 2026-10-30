@@ -176,12 +176,14 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
+      # LGPL-3.0 is GPLv3 plus permissions, so it combines with AGPL-3.0;
+      # github.com/cloudsoda/sddl (pulled in by the SMB client) uses it.
       - name: go dependencies
         run: |
           go install github.com/google/go-licenses/v2@v2.0.1
           go-licenses check ./cmd/dockmesh ./cmd/dockmesh-agent ./cmd/dmctl \
             --ignore github.com/dockmesh/dockmesh \
-            --allowed_licenses="${ALLOWED//;/,}"
+            --allowed_licenses="${ALLOWED//;/,},LGPL-3.0"
       - name: npm production dependencies
         run: |
           cd web
