@@ -61,7 +61,7 @@ type Config struct {
 	Type   string
 	Config map[string]any
 	Secret string
-	Gaps map[string]string
+	Gaps   map[string]string
 }
 
 // SkipGap skips the test when the variant has a known gap for key.
