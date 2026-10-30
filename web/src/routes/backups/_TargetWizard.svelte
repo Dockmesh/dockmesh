@@ -6,6 +6,7 @@
   import { api, ApiError, type BackupTarget } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
   import { Eyebrow } from '$lib/components/editorial';
+  import { stepValid, type TargetType } from '$lib/backupTargetForm';
   import WizardShell from './_WizardShell.svelte';
   import { Check, X, RefreshCw, AlertTriangle } from 'lucide-svelte';
 
@@ -25,7 +26,6 @@
   let step = $state(0);
   let busy = $state(false);
 
-  type TargetType = 'local' | 'sftp' | 'smb' | 'webdav' | 's3';
   let type = $state<TargetType>('local');
   let name = $state('new-target');
   let cfg = $state<Record<string, any>>({ path: '' });
@@ -124,19 +124,7 @@
     }
   }
 
-  // Validation per step
-  const step0Valid = $derived(name.trim().length > 0);
-  const step1Valid = $derived.by(() => {
-    if (type === 'local') return !!cfg.path;
-    if (type === 'sftp') return !!cfg.host && !!cfg.username;
-    if (type === 'smb') return !!cfg.host && !!cfg.share;
-    if (type === 'webdav') return !!cfg.url && !!cfg.username;
-    if (type === 's3') return !!cfg.endpoint && !!cfg.bucket && !!cfg.access_key;
-    return false;
-  });
-  const step2Valid = $derived(true); // Save Anyway is always allowed
-  const stepValidities = [step0Valid, step1Valid, step2Valid];
-  const canContinue = $derived(stepValidities[step]);
+  const canContinue = $derived(stepValid(step, name, type, cfg));
 
   async function finish() {
     busy = true;

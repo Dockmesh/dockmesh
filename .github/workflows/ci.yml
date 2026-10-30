@@ -99,6 +99,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm run check
+      - run: npm run test:unit
       - run: npm run build
 
   build:
