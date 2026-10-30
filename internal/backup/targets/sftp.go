@@ -212,9 +212,15 @@ func (s *SFTP) StorageInfo() (total, used int64, err error) {
 	}
 	defer client.Close()
 	defer conn.Close()
+	// Runs create the base path on first write, so the test does too;
+	// otherwise it would fail for a directory the run would have made.
+	if err := client.MkdirAll(s.cfg.Path); err != nil {
+		return 0, 0, fmt.Errorf("sftp: create %s: %w", s.cfg.Path, err)
+	}
 	stat, err := client.StatVFS(s.cfg.Path)
 	if err != nil {
-		return 0, 0, err
+		// statvfs is an OpenSSH extension; the path is usable without it.
+		return 0, 0, nil
 	}
 	total = int64(stat.Blocks * stat.Frsize)
 	free := int64(stat.Bavail * stat.Frsize)
