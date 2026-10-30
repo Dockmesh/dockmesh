@@ -24,6 +24,24 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
 
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Real SMB, SFTP, WebDAV and S3 servers; the script prints the
+      # DM_IT_* variables the tests read.
+      - name: start backup targets
+        run: internal/backup/integration/testdata/up.sh >> "$GITHUB_ENV"
+      - name: backup targets
+        run: go test -tags integration -count=1 -v ./internal/backup/integration/
+      - name: jobs from saved targets
+        run: go test -tags integration -count=1 -v -run AgainstRealServers ./internal/api/handlers/
+
   lint:
     name: lint
     runs-on: ubuntu-latest
