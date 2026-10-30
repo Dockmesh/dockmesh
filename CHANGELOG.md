@@ -33,6 +33,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   (`DOCKMESH_UPDATE_ROLLBACK_KEEP` changes the number).
 - Update checks for private images use the credentials saved under Registries, and an
   update that was already announced isn't announced again after a restart.
+- The proxy now runs a pinned Caddy version (2.11.7, pinned by digest) instead of whatever `caddy:2` pointed
+  to; set `DOCKMESH_PROXY_IMAGE` to use another. The proxy container is recreated once after
+  this upgrade and then kept across Dockmesh restarts instead of being replaced on every start.
+- Proxy route upstreams must be `host:port` and may not point at the proxy's own admin API,
+  and a route's host may not be `localhost`, a loopback address or a bare `*`. Existing routes
+  that break these rules stop being served and are listed in a notice for admins.
 
 ### Fixed
 - Updating a container's image no longer loses its anonymous volumes (`-v /data` or a
@@ -41,11 +47,18 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   until the new one runs, and is started again if the new one fails. The previous image stays
   tagged for a rollback.
 - Locally built images no longer always show "update available".
+- Proxy routes keep working after the Caddy container restarts; before, it came back with no
+  routes until Dockmesh pushed them again.
+- Proxy routes with TLS set to "none" are now served over plain HTTP instead of getting a
+  certificate and an HTTPS redirect anyway.
 
 ### Security
 - A rollback now only accepts update-history entries of the container it is called for, and
   the update history is limited to containers in the caller's scope. Before, a user scoped to
   one stack could roll back containers of other stacks.
+- A proxy route can no longer forward to the proxy's own admin API, which would have let anyone
+  reaching the proxy change its configuration. The admin API now also refuses requests from
+  browsers on other sites.
 
 ## [0.4.2] - 2026-10-30 [recommended]
 

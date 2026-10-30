@@ -20,41 +20,36 @@ type SettingsStore interface {
 const KeyEnabled = "proxy_enabled"
 
 // Reconcile brings the proxy into the state the operator chose before the
-// restart and pushes the stored routes. envDefault is the fallback when the
-// setting was never saved.
-//
-// When the setting is unset but a managed container exists that carries
-// routes or has routes waiting in the database, the proxy was in use: it is
-// treated as enabled and that choice is saved.
+// restart: when it should run, EnableProxy keeps or recreates the Caddy
+// container and pushes the stored routes. envDefault is the fallback when
+// the setting was never saved.
 func (s *Service) Reconcile(ctx context.Context, st SettingsStore, envDefault bool) (bool, error) {
-	enabled := envDefault
-	if raw := st.Get(KeyEnabled, ""); raw != "" {
-		enabled = raw == "true" || raw == "1" || raw == "yes"
-	} else if !envDefault && s.inUse(ctx) {
-		enabled = true
-		if err := st.Set(ctx, KeyEnabled, "true"); err != nil {
-			slog.Warn("proxy: saving adopted proxy_enabled failed", "err", err)
-		} else {
-			slog.Info("proxy: managed container found with routes, treating the proxy as enabled")
-		}
-	}
-	if !enabled {
+	if !s.wanted(ctx, st, envDefault) {
 		return false, nil
 	}
-	_, running := s.state(ctx)
-	if running {
-		if ok, _ := adminStatus(ctx); ok {
-			s.mu.Lock()
-			s.enabled = true
-			routes, err := s.listRoutes(ctx)
-			if err == nil {
-				err = s.pushConfig(ctx, routes)
-			}
-			s.mu.Unlock()
-			return true, err
-		}
-	}
 	return true, s.EnableProxy(ctx)
+}
+
+// wanted reads the operator's choice. When the setting is unset but a
+// managed container exists that carries routes or has routes waiting in
+// the database, the proxy was in use: it is treated as enabled and that
+// choice is saved.
+func (s *Service) wanted(ctx context.Context, st SettingsStore, envDefault bool) bool {
+	if raw := st.Get(KeyEnabled, ""); raw != "" {
+		return raw == "true" || raw == "1" || raw == "yes"
+	}
+	if envDefault {
+		return true
+	}
+	if !s.inUse(ctx) {
+		return false
+	}
+	if err := st.Set(ctx, KeyEnabled, "true"); err != nil {
+		slog.Warn("proxy: saving adopted proxy_enabled failed", "err", err)
+	} else {
+		slog.Info("proxy: managed container found with routes, treating the proxy as enabled")
+	}
+	return true
 }
 
 func (s *Service) state(ctx context.Context) (exists, running bool) {
@@ -87,7 +82,7 @@ func (s *Service) inUse(ctx context.Context) bool {
 }
 
 func caddyHasRoutes(ctx context.Context) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, adminURL+"/config/apps/http/servers", nil)
+	req, err := adminRequest(ctx, http.MethodGet, "/config/apps/http/servers", nil)
 	if err != nil {
 		return false
 	}
