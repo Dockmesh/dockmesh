@@ -597,16 +597,11 @@ func main() {
 	selfUpdateChk := selfupdate.New(settingsStore, version.Version)
 	selfUpdateChk.Start(ctx)
 
-	// Proxy: the boot-time config flag is just the *default* — the
-	// DB-backed `proxy_enabled` setting overrides it so an admin
-	// flipping the toggle persists across restarts without env-var
-	// edits. If enabled, bring the Caddy container up now (idempotent
-	// — EnableProxy removes any stale container + reseeds bootstrap
-	// config + pushes the current routes).
-	if settingsStore.GetBool("proxy_enabled", cfg.ProxyEnabled) {
-		if err := proxySvc.EnableProxy(ctx); err != nil {
-			slog.Warn("proxy boot-up failed — toggle off/on in Settings once Docker is reachable", "err", err)
-		}
+	// Proxy: the boot-time config flag is just the *default*; the DB-backed
+	// `proxy_enabled` setting overrides it so the toggle survives restarts.
+	// Reconcile brings an enabled proxy up and pushes the stored routes.
+	if _, err := proxySvc.Reconcile(ctx, settingsStore, cfg.ProxyEnabled); err != nil {
+		slog.Warn("proxy boot-up failed — toggle off/on in Settings once Docker is reachable", "err", err)
 	}
 	// Start the ACME event tailer regardless of current proxy state —
 	// the loop is dormant when the proxy is disabled and reconnects

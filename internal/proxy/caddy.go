@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const adminURL = "http://127.0.0.1:2019"
+var adminURL = "http://127.0.0.1:2019"
 
 // caddyConfig is the subset of Caddy's JSON config we generate. Full
 // schema: https://caddyserver.com/docs/json/
