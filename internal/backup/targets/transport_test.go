@@ -3,6 +3,7 @@ package targets
 import (
 	"bytes"
 	"context"
+	"encoding/pem"
 	"io"
 	"net"
 	"net/http"
@@ -91,5 +92,34 @@ func TestWebDAVUploadRoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(got, payload) {
 		t.Fatalf("read back %d bytes, want %d identical", len(got), len(payload))
+	}
+}
+
+func TestCustomCATrust(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	pemCert := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
+
+	get := func(caPEM string) error {
+		tr, err := transferTransportWithCA(caPEM)
+		if err != nil {
+			return err
+		}
+		resp, err := (&http.Client{Transport: tr}).Get(srv.URL)
+		if err == nil {
+			resp.Body.Close()
+		}
+		return err
+	}
+	if err := get(pemCert); err != nil {
+		t.Fatalf("with the server CA: %v", err)
+	}
+	if err := get(""); err == nil {
+		t.Fatal("unknown CA was trusted without ca_cert")
+	}
+	if _, err := transferTransportWithCA("not a pem"); err == nil {
+		t.Fatal("garbage ca_cert accepted")
 	}
 }

@@ -2,8 +2,12 @@ package targets
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -56,4 +60,22 @@ func (c *idleConn) Write(p []byte) (int, error) {
 // notices a dead peer through keepalives.
 func dialTCP(addr string) (net.Conn, error) {
 	return (&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}).Dial("tcp", addr)
+}
+
+// transferTransportWithCA is newTransferTransport trusting an extra PEM CA
+// bundle on top of the system roots; empty pem means system roots only.
+func transferTransportWithCA(pem string) (*http.Transport, error) {
+	t := newTransferTransport()
+	if strings.TrimSpace(pem) == "" {
+		return t, nil
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM([]byte(pem)) {
+		return nil, errors.New("ca_cert holds no valid PEM certificate")
+	}
+	t.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	return t, nil
 }

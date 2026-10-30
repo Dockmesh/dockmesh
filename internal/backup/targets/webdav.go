@@ -16,6 +16,8 @@ type WebDAVConfig struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Path     string `json:"path"`
+	// CACert is an optional PEM bundle trusted in addition to the system roots.
+	CACert string `json:"ca_cert,omitempty"`
 }
 
 type WebDAV struct {
@@ -35,7 +37,11 @@ func NewWebDAV(raw any) (*WebDAV, error) {
 		cfg.Path = "/backups"
 	}
 	client := gowebdav.NewClient(cfg.URL, cfg.Username, cfg.Password)
-	client.SetTransport(newTransferTransport())
+	tr, err := transferTransportWithCA(cfg.CACert)
+	if err != nil {
+		return nil, fmt.Errorf("webdav: %w", err)
+	}
+	client.SetTransport(tr)
 	return &WebDAV{cfg: cfg, client: client}, nil
 }
 
