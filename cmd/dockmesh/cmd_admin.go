@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"os"
@@ -64,28 +65,31 @@ func adminUnlock(args []string) error {
 	}
 	defer database.Close()
 
-	var userID string
-	row := database.QueryRow(`SELECT id FROM users WHERE id = ? OR username = ?`, *userFlag, *userFlag)
-	if err := row.Scan(&userID); err != nil {
-		return fmt.Errorf("lookup user: %w", err)
-	}
-
-	// Wipe both fields — failed_login_attempts resets the counter so
-	// the NEXT wrong attempt starts at 1, not N+1 which would re-lock
-	// after one mistake.
-	res, err := database.Exec(
-		`UPDATE users SET locked_until = NULL, failed_login_attempts = 0 WHERE id = ?`,
-		userID,
-	)
+	userID, err := unlockUser(context.Background(), database, *userFlag)
 	if err != nil {
 		return err
 	}
-	rows, _ := res.RowsAffected()
-	if rows == 0 {
-		return fmt.Errorf("no user updated (id %s)", userID)
-	}
 	fmt.Printf("unlocked user %s (id=%s) — failed-attempt counter reset\n", *userFlag, userID)
 	return nil
+}
+
+// unlockUser clears the lockout and the sign-in limit of the user named by
+// id or username. Resetting the counters too means the next wrong attempt
+// starts at 1 instead of re-locking after one mistake.
+func unlockUser(ctx context.Context, database *sql.DB, user string) (string, error) {
+	var userID string
+	row := database.QueryRowContext(ctx, `SELECT id FROM users WHERE id = ? OR username = ?`, user, user)
+	if err := row.Scan(&userID); err != nil {
+		return "", fmt.Errorf("lookup user: %w", err)
+	}
+	ok, err := auth.ClearLockout(ctx, database, userID)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("no user updated (id %s)", userID)
+	}
+	return userID, nil
 }
 
 func adminCreate(args []string) error {

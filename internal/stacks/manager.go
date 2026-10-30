@@ -1,6 +1,7 @@
 package stacks
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/fsnotify/fsnotify"
 )
@@ -47,6 +49,9 @@ type Manager struct {
 	// compose.yaml.
 	selfWritesMu sync.Mutex
 	selfWrites   map[string]time.Time
+
+	sums    *SumStore
+	notices *notices.Service
 }
 
 // Event is emitted when a stack file changes on disk from outside Dockmesh
@@ -66,6 +71,12 @@ type Detail struct {
 	Name    string `json:"name"`
 	Compose string `json:"compose"`
 	Env     string `json:"env,omitempty"`
+	// ModifiedOutside lists the stack files changed outside Dockmesh
+	// since it last wrote them; the next deploy needs a confirmation.
+	ModifiedOutside []string `json:"modified_outside,omitempty"`
+	// MountsStackDir is set when a service bind-mounts the stack
+	// directory itself and so can rewrite compose.yaml and .env.
+	MountsStackDir bool `json:"mounts_stack_dir,omitempty"`
 	// Status is "ok" when compose.yaml exists and is non-empty.
 	// "needs_recovery" means the stack record exists (filesystem entry
 	// or deployment row) but the compose file is empty / missing — the
@@ -199,7 +210,11 @@ func (m *Manager) isSelfWrite(absPath string) bool {
 // suppressed.
 func (m *Manager) writeFileSelf(path string, data []byte, perm os.FileMode) error {
 	m.markSelfWrite(path)
-	return os.WriteFile(path, data, perm)
+	if err := os.WriteFile(path, data, perm); err != nil {
+		return err
+	}
+	m.recordSum(path)
+	return nil
 }
 
 // removeSelf is the manager's wrapper around os.Remove that records
@@ -207,7 +222,9 @@ func (m *Manager) writeFileSelf(path string, data []byte, perm os.FileMode) erro
 // suppressed.
 func (m *Manager) removeSelf(path string) error {
 	m.markSelfWrite(path)
-	return os.Remove(path)
+	err := os.Remove(path)
+	m.recordSum(path)
+	return err
 }
 
 func (m *Manager) publish(ev Event) {
@@ -555,7 +572,7 @@ func (m *Manager) ReencryptAllBetween(oldSvc, newSvc *secrets.Service) (int, err
 		if err != nil {
 			return count, fmt.Errorf("encrypt %s: %w", agePath, err)
 		}
-		if err := os.WriteFile(agePath, newCT, 0o600); err != nil {
+		if err := m.writeFileSelf(agePath, newCT, 0o600); err != nil {
 			return count, err
 		}
 		count++
@@ -577,6 +594,12 @@ func (m *Manager) Delete(name string) error {
 	m.mu.Lock()
 	delete(m.stacks, name)
 	m.mu.Unlock()
+	if m.sums != nil {
+		if err := m.sums.deleteStack(name); err != nil {
+			slog.Warn("forget stack file checksums", "stack", name, "err", err)
+		}
+	}
+	m.resolveGitDeployHold(context.Background(), name)
 	return nil
 }
 

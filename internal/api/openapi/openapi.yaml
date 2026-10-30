@@ -157,6 +157,8 @@ paths:
       tags: [setup]
       summary: Live-validate Step 2's data-directory input
       security: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
       requestBody:
         required: true
         content:
@@ -167,6 +169,7 @@ paths:
               properties:
                 path: { type: string }
       responses:
+        "403": { description: "Missing the `X-Dockmesh-Setup` header." }
         "200":
           description: Check result.
           content:
@@ -185,6 +188,11 @@ paths:
                   parent_writable: { type: boolean }
                   status: { type: string, enum: [ok, warn, fail] }
                   message: { type: string }
+        "410":
+          description: Setup window expired or setup already complete.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /setup/validate-user:
     post:
@@ -192,6 +200,8 @@ paths:
       tags: [setup]
       summary: Validate Step 3's service-user choice
       security: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
       requestBody:
         required: true
         content:
@@ -203,6 +213,7 @@ paths:
                 mode: { type: string, enum: [existing, create] }
                 username: { type: string }
       responses:
+        "403": { description: "Missing the `X-Dockmesh-Setup` header." }
         "200":
           description: Check result.
           content:
@@ -218,13 +229,26 @@ paths:
                   in_docker_group: { type: boolean }
                   status: { type: string, enum: [ok, warn, fail] }
                   message: { type: string }
+        "410":
+          description: Setup window expired or setup already complete.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /setup/test-url:
     post:
       operationId: setup.test_url
       tags: [setup]
       summary: Reachability probe for Step 5's public URL
+      description: |
+        Connects only to public addresses and to this server's own LAN
+        addresses on the port it is served on, 80 or 443. Loopback,
+        link-local, cloud metadata, NAT64 and other private addresses
+        are refused after DNS resolution and on every redirect hop; the
+        result is then `status: fail` with a "not tested" message.
       security: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
       requestBody:
         required: true
         content:
@@ -236,6 +260,7 @@ paths:
                 url: { type: string, format: uri }
                 expect_health: { type: boolean }
       responses:
+        "403": { description: "Missing the `X-Dockmesh-Setup` header." }
         "200":
           description: Probe result.
           content:
@@ -248,6 +273,11 @@ paths:
                   latency_ms: { type: integer }
                   status: { type: string, enum: [ok, warn, fail] }
                   message: { type: string }
+        "410":
+          description: Setup window expired or setup already complete.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /setup/commit:
     post:
@@ -257,9 +287,13 @@ paths:
       description: |
         Returns 202 Accepted with a `run_id`. The actual install runs
         in the background; subscribe to `/setup/stream/{run_id}` (SSE)
-        to read each step's status as it happens. Idempotent — a
-        re-submit emits "already exists" warnings instead of failing.
+        to read each step's status as it happens. Only one install runs
+        at a time. The service user is added to the `docker` group only
+        when the wizard creates it (`mode: create`); existing accounts
+        are never changed.
       security: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
       requestBody:
         required: true
         content:
@@ -285,6 +319,7 @@ paths:
                     password: { type: string }
                 public_url: { type: string, format: uri }
       responses:
+        "403": { description: "Missing the `X-Dockmesh-Setup` header." }
         "202":
           description: Run accepted.
           content:
@@ -295,6 +330,14 @@ paths:
                   run_id: { type: string }
                   stream_url: { type: string }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: |
+            Another install is already running or has just finished, or an
+            account that can administer Dockmesh already exists (setup then
+            closes).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "410":
           description: Setup window expired or setup already complete.
           content:
@@ -374,8 +417,17 @@ paths:
         `mfa_token` — clients must then call `POST /auth/mfa` with the
         token plus the 6-digit code to finish the login.
 
-        Rate-limited per source IP — 10 failures / minute, 5 min lockout
-        after that threshold. A 429 response includes `Retry-After`.
+        Failed attempts are limited per account: 10 failures within 15
+        minutes block the username for 15 minutes, whether or not it exists
+        and independent of the lockout policy. Wrong codes at
+        `POST /auth/mfa` count toward the same limit. Per client IP (IPv6 by
+        /64) the limit is 100 failures within 15 minutes, blocking for 15
+        minutes. A successful login clears the account counter, never the IP
+        one. Each block that starts is written to the audit log as
+        `auth.lockout`. A 429 response includes `Retry-After`.
+
+        The lockout policy (`/auth/policy`) additionally locks an existing
+        account after its configured number of failures; that answers 423.
       security: []
       requestBody:
         required: true
@@ -385,7 +437,7 @@ paths:
               type: object
               required: [username, password]
               properties:
-                username: { type: string, example: admin }
+                username: { type: string, maxLength: 256, example: admin }
                 password: { type: string, format: password }
       responses:
         "200":
@@ -400,12 +452,23 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-        "429":
-          description: Too many failed attempts — try again later.
+        "423":
+          description: Account locked by the lockout policy.
           headers:
             Retry-After:
               schema: { type: integer }
-              description: Seconds until lockout expires.
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: |
+            Too many failed attempts for this account (10 per 15 minutes) or
+            from this IP (100 per 15 minutes).
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until the block expires.
 
   /auth/logout:
     post:
@@ -433,7 +496,8 @@ paths:
       description: |
         Exchanges a refresh token for a fresh access+refresh pair. Refresh
         tokens are rotated on every use. Reusing a previously-rotated token
-        revokes the whole session family.
+        revokes the whole session family. Invalid tokens are rate-limited
+        per client IP.
       security: []
       requestBody:
         required: true
@@ -464,6 +528,48 @@ paths:
                 properties:
                   error: { type: string }
                   code: { type: string, enum: [session_outdated] }
+        "429":
+          description: Too many invalid refresh tokens from this IP (300 per 5 minutes).
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/sso/exchange:
+    post:
+      operationId: auth.ssoExchange
+      tags: [auth]
+      summary: Exchange an SSO one-time code for a session
+      description: |
+        Final step of OIDC, OAuth2 and SAML sign-in. The callback redirects
+        to `/login?sso_code=...` and sets an httpOnly cookie with the same
+        code; this call needs both. A code works once and expires after
+        60 seconds, so a code from a link someone else sends signs nobody in.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        "200":
+          description: Session tokens and user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Unknown, expired, already used code, or the cookie is missing or does not match.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /auth/mfa:
     post:
@@ -472,7 +578,12 @@ paths:
       summary: Complete a two-factor login
       description: |
         Second step of the login flow when the user has MFA enabled.
-        Accepts a 6-digit TOTP code or a recovery code.
+        Accepts a 6-digit TOTP code or a recovery code. Each TOTP code is
+        accepted once. Wrong codes count as failed logins of the account:
+        they raise the lockout-policy counter and the per-account limit of
+        `POST /auth/login` (10 per 15 minutes), and the counters are only
+        reset once this step succeeds. Per client IP, 20 wrong codes within
+        15 minutes block for 15 minutes.
       security: []
       requestBody:
         required: true
@@ -498,6 +609,24 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401":
           description: Invalid or expired MFA token / code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "423":
+          description: Account locked by the lockout policy.
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: Too many failed attempts for this account or wrong codes from this IP.
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until the lock expires.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -568,7 +697,7 @@ paths:
           schema: { type: string }
       responses:
         "302":
-          description: Redirect to the UI with the session token fragment.
+          description: Redirect to `/login?sso_code=...`; the SPA exchanges the one-time code at `/auth/sso/exchange`.
         "400": { $ref: "#/components/responses/BadRequest" }
         "401":
           description: State mismatch or code exchange failed.
@@ -759,12 +888,13 @@ paths:
     post:
       operationId: users.unlock
       tags: [users]
-      summary: "Admin: clear a user's lockout state (P.12.1)"
+      summary: "Admin: clear a user's lockout state"
       description: |
         After too many failed logins a user's account is locked. This
-        endpoint clears the lockout + failed-attempts counter so they
-        can log in again. Admin-only — call after verifying via another
-        channel that the real user is who asked for the unlock.
+        endpoint clears the lockout, the failed-attempts counter and the
+        per-account login limit so they can log in again. Admin-only —
+        call after verifying via another channel that the real user is
+        who asked for the unlock.
       parameters:
         - $ref: "#/components/parameters/UserIDPath"
       responses:
@@ -994,8 +1124,11 @@ paths:
       summary: Trigger a self-upgrade on a connected agent
       description: |
         The agent downloads a fresh `dockmesh-agent-linux-<arch>` binary
-        from the server's `/install/` path and restarts its systemd unit.
-        Agent must be currently connected.
+        from the agent listener over mTLS (agents older than this release
+        use the server's `/install/` path), verifies it against the SHA-256
+        sent over the mTLS channel and restarts its systemd unit. Agent
+        must be currently connected. Automatic upgrades back off after
+        three attempts per target binary; this endpoint always dispatches.
       parameters:
         - name: id
           in: path
@@ -1014,8 +1147,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: Agent is too old to self-upgrade; re-run the installer once.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "503":
-          description: Agent is not currently connected.
+          description: Agent is not currently connected, or no agent binary for its architecture is bundled.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1026,9 +1164,13 @@ paths:
       tags: [agents]
       summary: Rotate the enrollment token of an existing agent
       description: |
-        Generates a new bootstrap token so the old one (which may have
-        leaked or been committed to git) cannot re-enroll. The connected
-        agent keeps its mTLS cert — only future fresh enrollments change.
+        Generates a new enrollment token (the previous one stops working)
+        with the configured lifetime. Running the returned install command
+        re-enrolls the host under the same ID: stacks, tags and backup jobs
+        stay attached; when the new enrollment completes the old client
+        cert stops working and its live session is closed. Requires
+        `hosts.create` and host scope for the host, for pending and enrolled
+        hosts alike. Revoked hosts return 404.
       parameters:
         - name: id
           in: path
@@ -1036,14 +1178,10 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
-          description: New enrollment token.
+          description: New enrollment token and install command.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  enroll_token: { type: string }
-                  enroll_url:   { type: string }
+              schema: { $ref: "#/components/schemas/AgentCreateResult" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -1104,10 +1242,13 @@ paths:
     post:
       operationId: agents.enroll
       tags: [agents]
-      summary: "Public: swap a one-time token for an agent client cert"
+      summary: "Public: swap a one-time token for an agent client cert (legacy)"
       description: |
-        Called by the agent binary on first boot. There is NO Bearer auth
-        on this route — the one-time token IS the authentication.
+        Kept for agents installed by older installers. Current agents enroll
+        at `/enroll` on the agent listener (the `enroll_url` of
+        `AgentCreateResult`), where the TLS chain is signed by the pinned
+        agents CA. There is NO Bearer auth on this route — the one-time
+        token IS the authentication. Tokens are single-use and expire.
       security: []
       requestBody:
         required: true
@@ -1122,7 +1263,7 @@ paths:
               schema: { $ref: "#/components/schemas/AgentEnrollResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401":
-          description: Invalid or already-used token.
+          description: Invalid, expired or already-used token.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1210,6 +1351,7 @@ paths:
       operationId: containers.inspect
       tags: [containers]
       summary: Inspect one container
+      description: The container must be within the caller's host scope and role scope (403 otherwise).
       responses:
         "200":
           description: Full ContainerJSON from the Docker daemon.
@@ -1217,6 +1359,7 @@ paths:
             application/json:
               schema: { type: object, description: Passthrough of the Docker SDK ContainerJSON. }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: containers.remove
@@ -1337,49 +1480,74 @@ paths:
       tags: [containers]
       summary: Pull a newer image tag and recreate the container
       description: |
-        Checks for a newer image matching the container's tag, pulls it,
-        stops the old container, creates a new one with the same config,
-        and starts it. Rollback history is retained for
-        `/containers/{id}/rollback`.
+        Pulls the container's image tag and, when it resolves to a new
+        image, replaces the container. A container that belongs to a
+        managed stack is rebuilt from the stack's compose.yaml (all
+        replicas of its service) and the change is recorded in the stack's
+        deploy history; other containers are rebuilt from their own config.
+        Volumes, including anonymous ones, are carried over. The old
+        container is only removed once the new one is running; on failure
+        the old one is restored and the old image stays tagged as the
+        rollback target. Older rollback tags beyond the configured count
+        (`DOCKMESH_UPDATE_ROLLBACK_KEEP`, default 3) are pruned.
+        Because a stack container is rebuilt from compose.yaml, updating
+        one also needs `stacks.deploy`.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
       responses:
         "200":
-          description: Update complete.
+          description: Update complete, or `updated=false` when already up to date.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  old_image: { type: string }
-                  new_image: { type: string }
-                  container_id: { type: string }
+              schema: { $ref: "#/components/schemas/ContainerUpdateResult" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: An update of this container or its stack is already running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: Pull or swap failed; the previous container is kept.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /containers/{id}/rollback:
     post:
       operationId: containers.rollback
       tags: [containers]
       summary: Roll a container back to its previous image
+      description: |
+        Recreates the container from the rollback tag stored in the given
+        update-history entry of this container, with the same swap and volume handling as
+        `/containers/{id}/update`. Stack containers keep their compose.yaml
+        config; the stack's deploy history notes that the next deploy uses
+        the image compose.yaml names again.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [history_id]
+              properties:
+                history_id: { type: integer, format: int64 }
       responses:
         "200":
           description: Rolled back.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  image: { type: string }
-                  container_id: { type: string }
+              schema: { $ref: "#/components/schemas/ContainerUpdateResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: No previous image to roll back to.
+          description: Already rolled back, the rollback image was pruned or removed, or an update of this container or its stack is running.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1778,6 +1946,7 @@ paths:
           required: false
           schema: { type: string }
           description: Optional overlay name — overrides the stack's default `active_environment`.
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
       responses:
         "200":
           description: Deploy result with created/updated/unchanged services.
@@ -1787,6 +1956,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/StackModifiedOutside" }
         "422":
           description: Compose validation failed — see message.
           content:
@@ -1854,6 +2024,8 @@ paths:
         row and re-runs Deploy. Env is deliberately kept as-is so current
         secrets aren't clobbered. The rollback itself becomes a new
         history row tagged "rollback to #ID".
+      parameters:
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
       responses:
         "200":
           description: Rollback completed.
@@ -1869,6 +2041,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/StackModifiedOutside" }
         "500":
           description: Redeploy failed — the compose.yaml has already been swapped, inspect and retry or roll forward.
           content:
@@ -2270,6 +2443,15 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            The stack uses named volumes. Volume data can't be transferred
+            yet, so the migration is refused instead of starting the stack
+            with empty volumes on the target. Preflight reports the same
+            as the failing `named_volumes` check.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /stacks/{name}/migrate/preflight:
     post:
@@ -2464,6 +2646,10 @@ paths:
         Pulls the configured branch, copies compose.yaml (+ optional .env)
         into the stack FS, and if the source has `auto_deploy: true` AND
         the SHA changed, kicks off a deploy of the stack as well.
+
+        If the stack's compose.yaml or .env changed outside Dockmesh, the
+        new commit is not copied (409) until a deploy with
+        `confirm_external=1` accepts the changes.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
       responses:
@@ -2479,6 +2665,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "409": { $ref: "#/components/responses/StackModifiedOutside" }
         "502":
           description: "Sync failed — see message (auth rejected, branch not found, compose missing in repo, …)."
           content:
@@ -2492,16 +2679,17 @@ paths:
       summary: "Public: provider-triggered sync (GitHub / GitLab / Gitea)"
       description: |
         Public endpoint — no Bearer auth, since GitHub / GitLab / Gitea
-        can't send Authorization headers. When `webhook_secret` is set
-        on the source, the handler verifies the HMAC signature:
+        can't send Authorization headers. The source must have a
+        `webhook_secret`, and the request must carry a matching signature:
 
         * **GitHub** / **Gitea** — `X-Hub-Signature-256` / `X-Gitea-Signature` (`sha256=<hex>`)
         * **GitLab** — plain shared secret on `X-Gitlab-Token`
 
-        When no secret is configured the endpoint accepts any body — the
-        caller just has to know the stack name. Always returns 202 on
-        success; the actual sync runs in the background so providers don't
-        time out on slow clones.
+        Without a secret the webhook is disabled; polling and manual sync
+        keep working. Returns 202 on success; the sync runs in the
+        background, detached from the request, so providers don't time out
+        on slow clones. Syncs of one stack run one at a time, and deliveries
+        arriving during a sync are merged into a single follow-up sync.
       security: []
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
@@ -2523,12 +2711,7 @@ paths:
                   status: { type: string, example: "sync queued" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401":
-          description: Signature mismatch.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "404":
-          description: No git source configured.
+          description: Webhook rejected — unknown stack or no git source, no webhook secret set, or signature mismatch. The reasons share one response.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2587,9 +2770,13 @@ paths:
       summary: Map of cached image-update availability
       description: |
         Returns the snapshot of the background update watcher: for every
-        running container's image reference seen since startup, whether
-        a newer manifest is available upstream. Refreshed every 30
-        minutes. Map key is the normalized image ref (e.g. `nginx:1.27`).
+        image reference a running container on the local host used in the
+        last 30 days, whether a newer manifest is available upstream.
+        Refreshed every 30 minutes and kept across restarts. Private
+        images are checked with the matching registry credential. Images
+        without a registry digest (built or loaded locally) report an
+        `error` instead of an update. Map key is the normalized image ref
+        (e.g. `nginx:1.27`).
       responses:
         "200":
           description: Update info per image ref.
@@ -2761,12 +2948,13 @@ paths:
       summary: Fetch the latest scan result for an image
       responses:
         "200":
-          description: Scan summary.
+          description: "Scan summary, or just {\"scanned\": false} when the image has not been scanned yet."
           content:
             application/json:
               schema:
                 type: object
                 properties:
+                  scanned: { type: boolean, description: Present and false only when no scan exists. }
                   image: { type: string }
                   scanned_at: { type: string, format: date-time }
                   critical: { type: integer }
@@ -2778,11 +2966,6 @@ paths:
                     type: array
                     items: { type: object }
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "404":
-          description: No scan has been run for this image.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
 
   # -----------------------------------------------------------------------
   # volumes — CRUD + prune + content browse (P.11.8)
@@ -2915,7 +3098,9 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/VolumeEntry" }
         "400":
-          description: Path escapes volume root or is too long.
+          description: |
+            Path leaves the volume root (`..` or a symlink pointing outside
+            the volume), is too long, or is not a directory.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2932,7 +3117,7 @@ paths:
     get:
       operationId: volumes.browse_file
       tags: [volumes]
-      summary: Read a single file inside a volume, capped at 1 MiB (P.11.8)
+      summary: Read a single file inside a volume, capped at 1 MiB
       description: |
         Returns up to 1 MiB of content. `truncated: true` signals the file
         is larger — the UI then offers a download link instead of an inline
@@ -2954,10 +3139,21 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/VolumeFileResult" }
-        "400": { $ref: "#/components/responses/BadRequest" }
+        "400":
+          description: |
+            `path` is missing, leaves the volume root (`..` or a symlink
+            pointing outside the volume), is too long, or is not a regular file.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Volume driver doesn't expose a host-filesystem mountpoint.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   # -----------------------------------------------------------------------
   # networks — CRUD + topology view + prune
@@ -3109,6 +3305,10 @@ paths:
       operationId: backups.create_job
       tags: [backups]
       summary: Create a new backup job
+      description: >-
+        Jobs with a `system` source are admin-only (`system.update` with no
+        host or role scope); other jobs need their host, before and after
+        the change, in the caller's scope (403).
       requestBody:
         required: true
         content:
@@ -3143,6 +3343,10 @@ paths:
       operationId: backups.update_job
       tags: [backups]
       summary: Update a backup job
+      description: >-
+        Same access rules as create. Target secrets sent empty keep the
+        stored value; changing the server, URL or user while keeping a
+        stored secret returns 400.
       requestBody:
         required: true
         content:
@@ -3162,6 +3366,10 @@ paths:
       operationId: backups.delete_job
       tags: [backups]
       summary: Delete a backup job (does not delete existing runs)
+      description: >-
+        Jobs with a `system` source are admin-only (`system.update` with no
+        host or role scope); other jobs need their host in the caller's
+        scope (403).
       responses:
         "204": { description: Deleted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -3179,6 +3387,8 @@ paths:
         preserves the job's current enabled state; mode `disable`
         also flips `enabled = false` so the scheduler stops firing
         it. Idempotent: clearing an already-cleared flag is a no-op.
+        Jobs with a `system` source are admin-only; other jobs need
+        their host in the caller's scope (403).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
         - in: path
@@ -3194,11 +3404,41 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /backups/jobs/{id}/accept-host-key:
+    post:
+      operationId: backups.accept_host_key
+      tags: [backups]
+      summary: Trust the changed SFTP host key a job last saw
+      description: |
+        SFTP jobs record the server's host key on their first connection
+        and fail when it later changes; the new key is kept as
+        `target_config.host_key_pending`. This moves it to `host_key`.
+
+        Jobs with a `system` source are admin-only (`system.update` with no
+        host or role scope); other jobs need their host in the caller's
+        scope (403).
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "204": { description: Accepted; the next run uses the new key. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: No changed host key is waiting for approval.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /backups/jobs/{id}/run:
     post:
       operationId: backups.run_job
       tags: [backups]
       summary: Trigger a job to run immediately
+      description: >-
+        Jobs with a `system` source are admin-only (`system.update` with no
+        host or role scope); other jobs need their host in the caller's
+        scope (403).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       responses:
@@ -3257,6 +3497,11 @@ paths:
         original — useful for "restore as a copy". Defaults to the
         archive's source stack name. Existing files at the destination
         are overwritten; existing volumes have their contents replaced.
+
+        Requires the job's host within the caller's scope (403). System
+        runs, and runs whose job was deleted, are admin-only
+        (`system.update` with no host or role scope). System runs are
+        never restored here (409); use `dockmesh restore` on the server.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       requestBody:
@@ -3285,6 +3530,11 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Run is a system backup.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: Archive corrupt / decryption failed / disk write error.
           content:
@@ -3295,11 +3545,17 @@ paths:
     post:
       operationId: backups.restore_run
       tags: [backups]
-      summary: Restore a specific backup run onto a target
+      summary: Restore a volume or stack backup run
       description: |
-        For volume/stack backups this extracts the tar into a fresh volume
-        or stack directory; for system backups it writes the snapshot DB
-        + stacks tree to a specified path for the operator to swap in.
+        For volume backups this extracts the archive into the Docker volume
+        named by `dest_volume`; for stack backups `dest_volume` carries the
+        target stack name.
+
+        Requires the job's host within the caller's scope (403). System
+        runs, and runs whose job was deleted, are admin-only
+        (`system.update` with no host or role scope).
+        System backups are never restored here (409); they are restored
+        with `dockmesh restore` on the server.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       requestBody:
@@ -3308,39 +3564,40 @@ paths:
           application/json:
             schema:
               type: object
+              required: [dest_volume]
               properties:
-                target_host_id: { type: string }
-                target_volume: { type: string }
-                target_stack: { type: string }
-                target_path: { type: string, description: "For system backups — filesystem destination." }
+                dest_volume:
+                  type: string
+                  description: |
+                    Docker volume name (`[a-zA-Z0-9][a-zA-Z0-9_.-]+`), or the
+                    stack name for stack backups. Paths are rejected with 400.
       responses:
-        "200":
-          description: Restore started.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status: { type: string }
-                  extracted_paths:
-                    type: array
-                    items: { type: string }
+        "204":
+          description: Restored.
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Run is a system backup.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /backups/runs/{id}/verify:
     post:
       operationId: backups.verify_run
       tags: [backups]
-      summary: Verify that a saved system-backup run is restorable (P.12.4)
+      summary: Verify that a saved backup run is restorable
       description: |
-        Streams the run's archive into a temp directory, applies the
-        same post-restore sanity checks as `dockmesh restore`, then
-        throws the temp dir away. Never touches the live install.
-        Only system-backup runs are supported; volume / stack runs
-        need ephemeral-stack verification (future slice).
+        System runs are streamed into a temp directory and checked with
+        the same post-restore sanity checks as `dockmesh restore`; stack
+        and volume runs get a structural check of the archive. Never
+        touches the live install.
+
+        Requires the job's host within the caller's scope (403). System
+        runs, and runs whose job was deleted, are admin-only
+        (`system.update` with no host or role scope).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       responses:
@@ -3362,7 +3619,7 @@ paths:
     post:
       operationId: restore.verify_upload
       tags: [backups]
-      summary: Upload a backup tarball and verify it's restorable (P.12.4)
+      summary: Upload a system backup tarball and verify it's restorable
       description: |
         Multipart upload with a single `file` part containing a gzipped
         tar produced by the `dockmesh-system` backup job. Server
@@ -3373,7 +3630,10 @@ paths:
 
         Rejects age-encrypted tarballs — the server's own age key is
         inside the tarball, so self-encrypted system backups can't
-        self-verify.
+        self-verify. Uploads are limited to 1 GiB. Symlink and hardlink
+        entries are never extracted (Dockmesh backups contain none).
+
+        Admin-only (`system.update` with no host or role scope; 403).
       requestBody:
         required: true
         content:
@@ -3395,11 +3655,38 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "413":
+          description: Upload larger than 1 GiB, or the archive unpacks to more than 8 GiB or 200,000 entries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "422":
           description: Verification failed, sanity check broke, or tarball is encrypted.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BackupVerifyResult" }
+
+  /backups/local-path:
+    get:
+      operationId: backups.local_path
+      tags: [backups]
+      summary: Suggested directory for a new local backup target
+      description: |
+        The data directory's `backups` folder when it lies inside an allowed
+        local root, otherwise the first allowed root. Empty when none is
+        configured.
+      responses:
+        "200":
+          description: Suggested path.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [path]
+                properties:
+                  path: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /backups/targets:
     get:
@@ -3441,6 +3728,9 @@ paths:
       operationId: backups.update_target
       tags: [backups]
       summary: Update a backup target
+      description: >-
+        Secrets sent empty keep the stored value; changing the server, URL
+        or user while keeping a stored secret returns 400 (re-enter it).
       requestBody:
         required: true
         content:
@@ -3493,16 +3783,47 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/BackupTargetTestResult" }
 
+  /backups/targets/{id}/accept-host-key:
+    post:
+      operationId: backups.accept_target_host_key
+      tags: [backups]
+      summary: Trust the changed SFTP host key a saved target last saw
+      description: |
+        Saved SFTP targets record the server's host key on their first
+        connection and refuse a different key later; the new key is kept
+        as `config.host_key_pending`. This moves it to `host_key`.
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "204": { description: Accepted; the next connection uses the new key. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: No changed host key is waiting for approval.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /backups/targets/test-config:
     post:
       operationId: backups.test_target_config
       tags: [backups]
       summary: Verify an unsaved target config (pre-create smoke test)
+      description: |
+        `host_key` fields in the config are ignored. With `target_id`
+        set to the saved target being edited, an SFTP server must present
+        that target's recorded host key.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/BackupTargetInput" }
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/BackupTargetInput"
+                - type: object
+                  properties:
+                    target_id: { type: integer, format: int64 }
       responses:
         "200":
           description: Connection OK.
@@ -3555,7 +3876,9 @@ paths:
     put:
       operationId: backups.toggle_system
       tags: [backups]
-      summary: Enable / disable the default daily system backup (P.6.5)
+      summary: Enable / disable the default daily system backup
+      description: >-
+        Admin-only (`system.update` with no host or role scope; 403).
       requestBody:
         required: true
         content:
@@ -3707,6 +4030,9 @@ paths:
       operationId: notifications.update_channel
       tags: [alerts]
       summary: Update a notification channel
+      description: >-
+        Secrets sent empty keep the stored value; changing the server, URL
+        or user while keeping a stored secret returns 400 (re-enter it).
       requestBody:
         required: true
         content:
@@ -4089,7 +4415,8 @@ paths:
         Returns the age private key used to encrypt system backups, so the
         admin can store it offline for disaster recovery. Without this
         key, an encrypted system backup cannot be restored on a fresh
-        host. Admin-only.
+        host. Requires `backups.restore` plus admin (`system.update` with
+        no host or role scope); every export is audited.
       responses:
         "200":
           description: age key file (text/plain).
@@ -4133,6 +4460,11 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Another key rotation is already running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "503":
           description: Secrets or stacks service not configured.
           content:
@@ -4185,6 +4517,9 @@ paths:
       tags: [users]
       summary: Mint a one-time invite link
       description: |
+        The role must exist (400) and may not exceed the caller's rights;
+        a caller with host scope tags must give the invite tags within
+        its own (403).
         Returns the raw token + accept URL exactly once. The admin
         copies the URL out and shares it manually. No SMTP dependency.
       requestBody:
@@ -4208,6 +4543,7 @@ paths:
             application/json:
               schema: { type: object, additionalProperties: true }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /invites/{id}:
     parameters:
@@ -4256,6 +4592,9 @@ paths:
       operationId: invites.accept
       tags: [auth]
       summary: Redeem an invite — create the user + return a session
+      description: >-
+        Returns 410 when the invite is used or expired, its role no longer
+        exists, or its creator can no longer grant its role and scope.
       security: []
       requestBody:
         required: true
@@ -4282,6 +4621,15 @@ paths:
         "404": { description: invite not found }
         "409": { description: username or email already taken }
         "410": { description: expired or already used }
+        "429":
+          description: Too many failed attempts from this IP (10 per 15 minutes) or for this invite (5).
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /users:
     get:
@@ -4302,6 +4650,7 @@ paths:
       operationId: users.create
       tags: [users]
       summary: Create a new local user
+      description: The role may not exceed the caller's rights, and callers with host scope tags create users through scoped invites instead (403).
       requestBody:
         required: true
         content:
@@ -4338,6 +4687,11 @@ paths:
       operationId: users.update
       tags: [users]
       summary: Update user email, role, and scope tags
+      description: |
+        The caller must hold every permission of both the user's current
+        role and the new one, and a scoped caller can only assign scope
+        tags within its own (403). Demoting the last account that holds
+        `system.update` and all `users.*` permissions returns 409.
       requestBody:
         required: true
         content:
@@ -4346,11 +4700,12 @@ paths:
               type: object
               properties:
                 email: { type: string, format: email }
-                role: { type: string }
+                role: { type: string, description: Omitted or empty keeps the current role. }
+                display_name: { type: string }
                 scope_tags:
                   type: array
                   items: { type: string }
-                  description: Host tag scope. Empty = access to all hosts.
+                  description: Host tag scope. Omitted keeps the current tags; empty = access to all hosts.
       responses:
         "200":
           description: Updated.
@@ -4361,15 +4716,18 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
     delete:
       operationId: users.delete
       tags: [users]
       summary: Delete a local user
+      description: Same rules as update; deleting the last admin-capable account returns 409.
       responses:
         "204": { description: Deleted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /users/{id}/password:
     put:
@@ -4434,6 +4792,7 @@ paths:
       operationId: roles.create
       tags: [roles]
       summary: Create a custom role
+      description: Permissions and scopes may not exceed the caller's own (403).
       requestBody:
         required: true
         content:
@@ -4524,6 +4883,10 @@ paths:
       operationId: roles.update
       tags: [roles]
       summary: Update a custom role's display name + permissions
+      description: |
+        The caller must be unscoped (no host scope tags, no role scope) and
+        hold every permission of the role before and after the change (403). Taking admin rights from a role whose holders
+        are the last admins returns 409.
       requestBody:
         required: true
         content:
@@ -4548,7 +4911,10 @@ paths:
       operationId: roles.delete
       tags: [roles]
       summary: Delete a custom role
-      description: Built-in roles cannot be deleted — returns 409.
+      description: |
+        Built-in roles cannot be deleted — returns 409, as does deleting
+        the role of the last admins. The caller must be unscoped and hold
+        every permission of the role (403).
       responses:
         "204": { description: Deleted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -4930,6 +5296,10 @@ paths:
       operationId: settings.list
       tags: [settings]
       summary: Effective server settings (runtime-overridable key/value pairs)
+      description: |
+        The audit webhook keys (`audit.webhook_url`,
+        `audit.webhook_hmac_secret`, `audit.webhook_filter_actions`) are
+        omitted; read them through `GET /audit/webhook`.
       responses:
         "200":
           description: Settings.
@@ -4950,17 +5320,41 @@ paths:
       operationId: settings.update
       tags: [settings]
       summary: Update one or more settings
+      description: |
+        `trusted_proxies` is a comma-separated list of IPs or CIDRs whose
+        X-Forwarded-For / X-Real-IP / X-Forwarded-Proto headers are
+        believed (empty = loopback only); invalid entries are rejected with
+        400 and nothing is saved.
+
+        The audit webhook keys are rejected with 400; configure them via
+        `PUT /audit/webhook`. The response omits them like `GET /settings`.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: { type: string }
+              type: array
+              items:
+                type: object
+                required: [key, value]
+                properties:
+                  key: { type: string }
+                  value: { type: string }
               example:
-                DOCKMESH_BASE_URL: "https://dockmesh.example.com"
+                - { key: base_url, value: "https://dockmesh.example.com" }
+                - { key: trusted_proxies, value: "10.0.0.5, 172.16.0.0/12" }
       responses:
-        "204": { description: Saved. }
+        "200":
+          description: Saved; all settings.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    key: { type: string }
+                    value: { type: string }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -5356,6 +5750,8 @@ paths:
         `docker compose up -d` against the chosen host. The response
         echoes the rendered compose + the resolved values with secrets
         redacted as `<generated>`.
+        The caller needs access to the target host and a role scope that covers
+        the new stack; the deployment is recorded in the stack's deploy history.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       requestBody:
@@ -5441,7 +5837,14 @@ paths:
     post:
       operationId: proxy.enable
       tags: [proxy]
-      summary: Start the embedded Caddy container + begin serving routes
+      summary: Start the managed Caddy container + begin serving routes
+      description: |
+        Reconciles the `dockmesh-proxy` container: one created with the
+        current spec (image, command, mounts) is kept and started if needed;
+        an outdated or foreign one is replaced. The image is pinned by digest
+        (`caddy:2.11.7@sha256:…`, override with `DOCKMESH_PROXY_IMAGE`). Caddy resumes its last pushed
+        config after a restart, and Dockmesh re-pushes the routes when the
+        running config drifts from them.
       responses:
         "204": { description: Enabled. }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -5836,8 +6239,9 @@ paths:
       summary: List one directory level inside a container's filesystem
       description: |
         Tar-streams the requested path out of the container and walks
-        the archive at depth 1. Path must be absolute. Audited on every
-        call because reading container files is a sensitive operation.
+        the archive at depth 1. Path must be absolute. Requires
+        `containers.exec`, like every container file endpoint, and is
+        audited on every call.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
         - $ref: "#/components/parameters/HostQuery"
@@ -5911,6 +6315,7 @@ paths:
       tags: [containers]
       summary: Read a file inside the container as a text/binary preview
       description: |
+        Requires `containers.exec`; audited.
         Returns up to 1 MiB of content. `truncated: true` signals the
         file is larger — the UI then offers a download link. `binary:
         true` is set when a NUL byte appears in the first 8 KiB (same
@@ -5941,7 +6346,8 @@ paths:
       description: |
         Streams `application/octet-stream` with `Content-Disposition:
         attachment` so the browser triggers a file save. Used for binary
-        files and files larger than the preview cap.
+        files and files larger than the preview cap. Requires
+        `containers.exec`; audited.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
         - $ref: "#/components/parameters/HostQuery"
@@ -5971,7 +6377,13 @@ paths:
     get:
       operationId: auth.signin_config_get
       tags: [auth]
-      summary: Read the sign-in policy (allow_local_password, TTLs, MFA gating)
+      summary: Read the sign-in policy (session TTLs and limits)
+      description: |
+        `session_idle_ttl_min`, `session_absolute_ttl_hr` and
+        `session_max_per_user` are enforced. `allow_local_password`,
+        `require_tfa_for_admin`, `allow_self_register`,
+        `session_remember_me_days` and `password_forbid_reuse_count` are
+        stored and returned, not enforced.
       responses:
         "200":
           description: Current sign-in policy.
@@ -6286,6 +6698,10 @@ paths:
         `info` / `warn` / `error` / `hook_stdout` / `hook_stderr`. Hook
         output is verbatim and capped at 16 KB per hook to keep the
         table from growing without bound on noisy hooks.
+
+        Requires the job's host within the caller's scope (403). System
+        runs, and runs whose job was deleted, are admin-only
+        (`system.update` with no host or role scope).
       parameters:
         - in: path
           name: id
@@ -6308,12 +6724,20 @@ paths:
                       type: string
                       enum: [info, warn, error, hook_stdout, hook_stderr]
                     line: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /backups/runs/{id}/archive:
     get:
       operationId: backups.run_archive
       tags: [backups]
       summary: Download the archive for a successful run (tar.gz stream, transparent decryption)
+      description: |
+        Requires `backups.download` and the job's host within the caller's
+        scope. System archives, and runs whose job was deleted, are
+        admin-only (`system.update` with no host or role scope). Every
+        download is audited as `backup.download`.
       parameters:
         - in: path
           name: id
@@ -6325,6 +6749,8 @@ paths:
           content:
             application/gzip:
               schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "409":
           description: Run not in success state.
         "404": { $ref: "#/components/responses/NotFound" }
@@ -6368,6 +6794,12 @@ paths:
       operationId: saml.acs
       tags: [auth]
       summary: Assertion-consumer endpoint — receives the signed SAMLResponse
+      description: |
+        Needs the state cookie set by `/auth/saml/{slug}/login` and a response to a sign-in
+        request this server issued; each request can be answered once.
+        Over HTTPS the state cookie is `SameSite=None; Secure` so the
+        identity provider's cross-site POST carries it. Over plain HTTP it
+        stays `Lax` and only an identity provider on the same site works.
       security: []
       parameters:
         - in: path
@@ -6375,7 +6807,11 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        "302": { description: Redirect to SPA with session tokens in fragment. }
+        "302":
+          description: |
+            Redirect to `/login?sso_code=...` (one-time code for `/auth/sso/exchange`), or to
+            `/login?sso_error=...` when the sign-in failed (for example no
+            state cookie, a reused response, or no stable subject).
 
   /auth/saml/{slug}/metadata:
     get:
@@ -6416,7 +6852,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: true }
+            schema: { $ref: "#/components/schemas/SAMLProviderInput" }
       responses:
         "201":
           description: Created.
@@ -6453,7 +6889,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: true }
+            schema: { $ref: "#/components/schemas/SAMLProviderInput" }
       responses:
         "200":
           description: Updated.
@@ -6488,6 +6924,48 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
+
+  /saml/rekey:
+    get:
+      operationId: saml.rekey_pending
+      tags: [oidc]
+      summary: Admin — accounts still waiting for their one-time SAML re-key
+      description: |
+        Accounts created through SAML before stable subjects may take their
+        new subject once, at a sign-in from the same provider with the same
+        email, until the date in `until` (30 days after the upgrade).
+      responses:
+        "200":
+          description: Pending re-keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accounts:
+                    type: array
+                    items: { type: string }
+                  until: { type: string, format: date-time, description: Latest end of the re-key window. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /saml/rekey/end:
+    post:
+      operationId: saml.rekey_end
+      tags: [oidc]
+      summary: Admin — end the one-time SAML re-key for all remaining accounts
+      description: Clears every re-key mark and writes `auth.saml_rekey_end` to the audit log.
+      responses:
+        "200":
+          description: Number of accounts whose re-key was ended.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ended: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   # ---------------------- LDAP -------------------------------------------
   /auth/ldap/providers:
@@ -6538,6 +7016,15 @@ paths:
               schema: { type: object, additionalProperties: true }
         "401":
           description: Bad credentials.
+        "429":
+          description: Too many failed logins from this IP or for this username (10 per 15 minutes each).
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /ldap/providers:
     get:
@@ -6875,7 +7362,7 @@ components:
         rotation_days:
           type: integer
           minimum: 0
-          description: 0 = disabled. When > 0, logins after this many days since the last password change trigger a reminder on /me.
+          description: Stored and returned, not enforced.
         lockout_max_attempts:
           type: integer
           minimum: 0
@@ -6898,6 +7385,10 @@ components:
           items: { type: string }
           description: Host tags this user is scoped to. Empty / omitted = access to all hosts.
         mfa_enabled: { type: boolean }
+        locked_until:
+          type: string
+          format: date-time
+          description: Only in the user list, while the account is blocked by failed sign-ins. Clear it with the unlock endpoint.
 
     StackInput:
       type: object
@@ -6919,6 +7410,13 @@ components:
         name: { type: string }
         compose: { type: string }
         env: { type: string }
+        modified_outside:
+          type: array
+          items: { type: string }
+          description: Stack files changed outside Dockmesh since it last wrote them; the next deploy needs `confirm_external=1`.
+        mounts_stack_dir:
+          type: boolean
+          description: A service bind-mounts the stack directory writable and can change compose.yaml and .env.
 
     StackDeployment:
       type: object
@@ -7127,12 +7625,55 @@ components:
         admin_group: { type: string }
         operator_group: { type: string }
         default_role: { type: string }
+        allow_email_link:
+          type: boolean
+          description: Attach a login to an existing account with the same email when the IdP marks the email verified. Off by default.
         default_scope_tags:
           type: array
           items: { type: string }
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    SAMLProviderInput:
+      type: object
+      required: [slug, display_name]
+      properties:
+        slug: { type: string }
+        display_name: { type: string }
+        idp_metadata_xml:
+          type: string
+          description: IdP metadata XML. Required on create; empty on update keeps the stored metadata.
+        nameid_format:
+          type: string
+          enum:
+            - urn:oasis:names:tc:SAML:2.0:nameid-format:persistent
+            - urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified
+            - urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress
+          description: |
+            NameID format requested from the IdP; the NameID keys the account
+            unless `subject_attribute` is set. Empty means persistent.
+            emailAddress changes when the user's email does.
+        subject_attribute:
+          type: string
+          description: |
+            Attribute whose value keys the account instead of the NameID, for
+            example `http://schemas.microsoft.com/identity/claims/objectidentifier`
+            for Microsoft Entra ID. Empty uses the NameID.
+        username_attribute: { type: string }
+        email_attribute: { type: string }
+        groups_attribute: { type: string }
+        default_role: { type: string }
+        group_mappings:
+          type: array
+          items:
+            type: object
+            properties:
+              group: { type: string }
+              role: { type: string }
+        allow_email_link: { type: boolean }
+        enabled: { type: boolean }
+        is_default: { type: boolean }
 
     OIDCProviderInput:
       type: object
@@ -7151,6 +7692,9 @@ components:
         admin_group: { type: string }
         operator_group: { type: string }
         default_role: { type: string }
+        allow_email_link:
+          type: boolean
+          description: Attach a login to an existing account with the same email when the IdP marks the email verified. Off by default.
         enabled: { type: boolean }
 
     ApiToken:
@@ -7225,11 +7769,13 @@ components:
       properties:
         id: { type: integer, format: int64 }
         key: { type: string }
-        value: { type: string }
+        value:
+          type: string
+          description: Empty for secret (`encrypted`) variables; their value is never returned.
         group_name: { type: string }
         encrypted:
           type: boolean
-          description: True when the value is age-encrypted at rest.
+          description: True when the variable is marked secret; its value is write-only.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -7238,8 +7784,13 @@ components:
       required: [key, value, group_name]
       properties:
         key: { type: string }
-        value: { type: string }
+        value:
+          type: string
+          description: On update of a secret variable, empty keeps the stored value.
         group_name: { type: string, example: production }
+        encrypted:
+          type: boolean
+          description: Marks the value as secret so it is never returned by the API.
 
     CustomRole:
       type: object
@@ -7318,7 +7869,8 @@ components:
         target_type: { type: string, enum: [local, sftp, smb, webdav, s3] }
         target_config:
           type: object
-          description: Target-specific credentials/paths. Secrets redacted in responses.
+          description: >-
+            Target-specific credentials/paths. Secret fields (`password`, `secret_key`, `private_key`) are returned as `""` with a sibling `<field>_set: true` when a value is stored. On update an empty or omitted secret keeps the stored value.
         sources:
           type: array
           items: { $ref: "#/components/schemas/BackupSource" }
@@ -7345,6 +7897,13 @@ components:
         name: { type: string }
         target_type: { type: string, enum: [local, sftp, smb, webdav, s3] }
         target_config: { type: object }
+        target_id:
+          type: integer
+          description: |
+            Saved backup target the config was picked from. Its stored
+            secrets fill the redacted fields of target_config. A config
+            that still carries a redacted secret without a matching
+            target_id is rejected.
         sources:
           type: array
           minItems: 1
@@ -7400,6 +7959,7 @@ components:
           properties:
             files: { type: integer }
             bytes: { type: integer, format: int64 }
+            skipped_links: { type: integer, description: Symlink/hardlink entries that were not extracted. }
         sanity:
           type: object
           required: [passed, checks]
@@ -7469,6 +8029,19 @@ components:
           type: string
           enum: [pause, continue, rollback]
 
+    ContainerUpdateResult:
+      type: object
+      required: [container_id, container_name, image, old_digest, new_digest, updated]
+      properties:
+        container_id: { type: string, description: ID of the container now running under the name. }
+        container_name: { type: string }
+        image: { type: string, description: Image ref that was pulled (update) or the rollback tag (rollback). }
+        old_digest: { type: string, description: Image ID before the change. }
+        new_digest: { type: string, description: Image ID after the change. }
+        updated: { type: boolean }
+        rollback_tag: { type: string, description: Tag that keeps the previous image for a rollback. }
+        history_id: { type: integer, format: int64 }
+        stack: { type: string, description: Set when the container belongs to a managed stack and was rebuilt from its compose.yaml. }
     RollingUpdateResult:
       type: object
       required: [service, total_replicas, updated, failed, skipped, rolled_back, new_image]
@@ -7494,7 +8067,8 @@ components:
         type: { type: string, enum: [local, sftp, smb, webdav, s3] }
         config:
           type: object
-          description: Credentials redacted.
+          description: >-
+            Target-specific settings. Secret fields (`password`, `secret_key`, `private_key`) are returned as `""` with a sibling `<field>_set: true` when a value is stored. On update an empty or omitted secret keeps the stored value.
         status: { type: string, enum: [unknown, ok, degraded, unreachable] }
         total_bytes: { type: integer, format: int64 }
         used_bytes: { type: integer, format: int64 }
@@ -7598,7 +8172,12 @@ components:
           enum: [webhook, email, slack, discord, ntfy, gotify, teams, pagerduty, pushover]
         config:
           type: object
-          description: Channel-type-specific. Secrets redacted.
+          description: >-
+            Channel-type-specific. Secret fields (`password`, `token`,
+            `integration_key`, `app_token`, `user_key`, and `url` for slack,
+            discord, teams, webhook, ntfy and gotify) are returned as `""` with a sibling
+            `<field>_set: true` when stored; an empty or omitted secret on
+            update keeps the stored value.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -7792,7 +8371,9 @@ components:
           type: integer
           minimum: 60
           description: 0 = do not poll (webhook / manual sync only).
-        has_webhook_secret: { type: boolean }
+        has_webhook_secret:
+          type: boolean
+          description: Whether a webhook secret is set. Without one, `POST /stacks/{name}/git/webhook` is rejected.
         last_sync_sha: { type: string }
         last_sync_at: { type: string, format: date-time }
         last_sync_error: { type: string }
@@ -7805,7 +8386,12 @@ components:
       properties:
         repo_url: { type: string }
         branch: { type: string }
-        path_in_repo: { type: string }
+        path_in_repo:
+          type: string
+          description: |
+            Relative path inside the repository (directory or compose file).
+            Absolute paths and ".." are rejected with 400; symlinks that
+            lead outside the repository are not followed.
         auth_kind:
           type: string
           enum: [none, http, ssh]
@@ -7825,8 +8411,8 @@ components:
           minimum: 60
         webhook_secret:
           type: string
-          description: Shared secret for HMAC verification of incoming webhook pushes.
-        clear_webhook_secret: { type: boolean }
+          description: Shared secret for HMAC verification of incoming webhook pushes. At least 16 characters when set or changed (shorter secrets stored earlier keep working). Empty keeps the stored secret. Webhooks are rejected while no secret is set.
+        clear_webhook_secret: { type: boolean, description: "Removes the secret, which disables the webhook." }
 
     StackGitSyncResult:
       type: object
@@ -7845,36 +8431,44 @@ components:
 
     ProxyRoute:
       type: object
-      required: [id, hostname, upstream, enabled]
+      required: [id, host, upstream, tls_mode, enabled]
       properties:
         id: { type: integer, format: int64 }
-        hostname: { type: string, example: app.example.com }
+        host: { type: string, example: app.example.com }
         upstream:
           type: string
-          description: Target URL like `http://container-name:8080` or `unix:///path.sock`.
-        tls:
+          description: Dial address `host:port` the proxy forwards to, e.g. `127.0.0.1:8080`.
+        tls_mode:
           type: string
-          enum: [auto, off, internal]
-          description: "`auto` provisions a Let's Encrypt cert; `internal` uses the Caddy-signed CA."
-        basic_auth_username: { type: string }
+          enum: [auto, internal, none]
+          description: "`auto` gets a certificate via ACME, `internal` uses Caddy's own CA, `none` serves plain HTTP on port 80 only (no certificate, no redirect)."
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        cert_issuer: { type: string }
+        cert_valid_from: { type: string, format: date-time }
+        cert_valid_to: { type: string, format: date-time }
+        cert_days_left: { type: integer }
 
     ProxyRouteInput:
       type: object
-      required: [hostname, upstream]
+      required: [upstream]
       properties:
-        hostname: { type: string }
-        upstream: { type: string }
-        tls:
+        host:
           type: string
-          enum: [auto, off, internal]
-        basic_auth_username: { type: string }
-        basic_auth_password:
+          description: Required on create; ignored on update. A domain name (optionally `*.` wildcard) or a non-loopback IP; `localhost`, `*.localhost`, loopback addresses and a bare `*` are rejected (400).
+        upstream:
           type: string
-          format: password
-          description: Omit to keep existing. Cleared when explicitly empty on update.
+          description: |
+            `host:port` with a hostname or IP and a port from 1 to 65535. Schemes,
+            paths, placeholders and unix sockets are rejected (400), as is the
+            proxy's own admin API (port 2019 on a loopback address or any name).
+            Stored routes that fail these checks are not served, raise an admin
+            notice, and can't be re-enabled until edited.
+        tls_mode:
+          type: string
+          enum: [auto, internal, none]
+          description: Defaults to `auto` on create.
         enabled: { type: boolean }
 
     DrainPlan:
@@ -8050,21 +8644,31 @@ components:
 
     AgentCreateResult:
       type: object
-      required: [agent, token, install_hint]
+      required: [agent, token, token_expires_at, enroll_url, agent_url, ca_fingerprint, install_hint]
       description: |
-        Returned ONCE on agent creation. `token` is shown only here —
-        losing it means you have to delete and recreate the agent.
+        Returned on agent creation and token rotation. `token` is shown
+        only here; a lost or expired token is replaced via
+        `POST /agents/{id}/rotate-token`.
       properties:
         agent: { $ref: "#/components/schemas/Agent" }
         token:
           type: string
           description: One-time enrollment token. Paste into the install command on the agent host.
+        token_expires_at:
+          type: string
+          format: date-time
+          description: When the token stops working (DOCKMESH_AGENT_ENROLL_TOKEN_TTL, default 24h).
         enroll_url:
           type: string
           format: uri
+          description: https URL of the enrollment endpoint on the agent listener.
         agent_url:
           type: string
           description: wss:// URL the agent will dial after enrollment.
+        ca_fingerprint:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: SHA-256 of the agents CA certificate; the agent refuses to enroll with any other CA.
         install_hint:
           type: string
           description: Single-line install command to run on the agent host as root.
@@ -8149,6 +8753,12 @@ components:
           description: "Short-lived challenge token for the `/auth/mfa` completion."
 
   parameters:
+    SetupHeader:
+      name: X-Dockmesh-Setup
+      in: header
+      required: true
+      description: Any non-empty value. Sent by the install wizard so other websites cannot trigger setup calls from a visitor's browser.
+      schema: { type: string }
     HostQuery:
       name: host
       in: query
@@ -8201,6 +8811,12 @@ components:
         type: string
         format: uuid
       description: User id (UUID).
+    ConfirmExternalQuery:
+      name: confirm_external
+      in: query
+      required: false
+      schema: { type: string, enum: ["1"] }
+      description: Deploy stack files changed outside Dockmesh as they are and record them as reviewed.
     DrainIDPath:
       name: drain_id
       in: path
@@ -8211,6 +8827,20 @@ components:
       description: Drain run id.
 
   responses:
+    StackModifiedOutside:
+      description: compose.yaml or .env changed outside Dockmesh; repeat with `confirm_external=1` after reviewing them.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error, code, files]
+            properties:
+              error: { type: string }
+              code: { type: string, enum: [modified_outside] }
+              stack: { type: string }
+              files:
+                type: array
+                items: { type: string }
     Unauthorized:
       description: Missing or invalid bearer token.
       content:

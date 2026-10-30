@@ -291,6 +291,19 @@ func boolInt(b bool) int {
 	return 0
 }
 
+func (s *store) setJobEnabled(ctx context.Context, id int64, enabled bool) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE backup_jobs SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		boolInt(enabled), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrJobNotFound
+	}
+	return nil
+}
+
 // markJobNeedsReview flags a job for operator review with a reason.
 // Used by MarkAutoCreatedJobsForReview when a legacy default job is
 // found on an existing install. P.13.2.
@@ -308,5 +321,15 @@ func (s *store) clearJobReview(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE backup_jobs SET needs_review = 0, review_reason = '', review_acked = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		id)
+	return err
+}
+
+func (s *store) setJobTargetConfig(ctx context.Context, id int64, cfg any) error {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE backup_jobs SET target_config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, string(b), id)
 	return err
 }

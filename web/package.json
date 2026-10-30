@@ -10,6 +10,7 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "test": "vitest run",
+    "test:unit": "node --test unit/*.test.ts",
     "test:e2e": "playwright test --project=v1-regression",
     "test:e2e:headed": "playwright test --project=v1-regression --headed",
     "test:e2e:report": "playwright show-report"

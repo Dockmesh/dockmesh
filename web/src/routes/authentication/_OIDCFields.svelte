@@ -136,6 +136,7 @@
   bind:defaultRole={config.default_role}
   {roles}
   groupClaim={config.group_claim}
+  hint="OIDC applies one group for admin and one for operator (the first of each is kept; admin wins); other roles are not stored."
 />
 
 <Field label="Callback URL" hint="Configure this on the provider side.">

@@ -207,6 +207,7 @@
       case 'auth.login': return 'signed in';
       case 'auth.logout': return 'signed out';
       case 'auth.login_failed': return `failed sign-in${tgt ? ' for ' + tgt : ''}`;
+      case 'auth.lockout': return `sign-in blocked for ${tgt}`;
       case 'auth.sso_login': return 'signed in via SSO';
       case 'stack.create': return `created stack ${tgt}`;
       case 'stack.update': return `updated stack ${tgt}`;

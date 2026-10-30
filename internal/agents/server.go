@@ -66,10 +66,11 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	ag := &ConnectedAgent{
-		ID:       agent.ID,
-		Name:     agent.Name,
-		JoinedAt: time.Now(),
-		send:     make(chan Frame, 32),
+		ID:        agent.ID,
+		Name:      agent.Name,
+		JoinedAt:  time.Now(),
+		send:      make(chan Frame, 32),
+		closeConn: func() { _ = conn.Close() },
 	}
 
 	// Wait for the hello frame before marking the agent online so the DB
@@ -193,7 +194,11 @@ func errorFrame(msg string) []byte {
 	return b
 }
 
-// ServerTLSConfig builds the *tls.Config for the mTLS listener.
+// ServerTLSConfig builds the *tls.Config for the agent listener. Client
+// certs are verified against the agents CA whenever one is presented but
+// are not required at the TLS layer, because enrollment happens before
+// the agent has a cert. ServeHTTP rejects /connect without a verified
+// client cert.
 func ServerTLSConfig(p *pki.Manager) (*tls.Config, error) {
 	cert, err := tls.X509KeyPair(p.ServerCertPEM(), p.ServerKeyPEM())
 	if err != nil {
@@ -202,7 +207,7 @@ func ServerTLSConfig(p *pki.Manager) (*tls.Config, error) {
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		ClientCAs:    p.CACertPool(),
-		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientAuth:   tls.VerifyClientCertIfGiven,
 		MinVersion:   tls.VersionTLS12,
 	}, nil
 }
