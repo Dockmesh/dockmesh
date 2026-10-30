@@ -25,6 +25,7 @@ key="$(garage key create dm-it-key)"
 access="$(sed -n 's/^Key ID: *//p' <<<"$key")"
 secret="$(sed -n 's/^Secret key: *//p' <<<"$key")"
 [[ $access =~ ^[A-Za-z0-9]+$ && $secret =~ ^[A-Za-z0-9]+$ ]] || { echo "unexpected garage key output" >&2; exit 1; }
+echo "::add-mask::$secret" >&2
 garage bucket allow --read --write --owner dm-it --key dm-it-key >/dev/null
 
 {
