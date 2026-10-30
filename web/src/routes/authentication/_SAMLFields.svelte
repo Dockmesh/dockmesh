@@ -211,7 +211,7 @@
   {roles}
   groupClaim={config.groups_attribute}
   title="SAML attribute → role mappings"
-  hint="Match values from the configured groups attribute. First match wins."
+  hint="Match values from the configured groups attribute. If a user has several mapped values, the one listed last decides."
 />
 
 <style>

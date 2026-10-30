@@ -283,11 +283,8 @@ func (h *Handlers) roleIsUnscoped(r *http.Request) bool {
 	return true
 }
 
-// StackScope guards every /stacks/{name}/... route: once a stack is
-// deployed, only callers whose host scope and role scope include it on its
-// deployment host reach the handler. For an undeployed stack only roles
-// scoped to stacks are checked here; host scope is up to the handler,
-// which knows the host it is asked to act on.
+// StackScope checks /stacks/{name}/... requests against the caller's scope
+// on the stack's deployment host, or by stack name before it is deployed.
 func (h *Handlers) StackScope(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
@@ -306,12 +303,49 @@ func (h *Handlers) StackScope(next http.Handler) http.Handler {
 			if !h.requireStackScope(w, r, rbac.PermStacksView, d.HostID, name) {
 				return
 			}
-		} else if !h.stackRolesAllow(r, name) {
+		} else if !h.stackRolesAllow(r, name) ||
+			(isReadMethod(r) && !undeployedProbe(rctx.RoutePattern()) && !h.undeployedReadAllowed(r, name)) {
 			h.writeRoleScopeDenied(w, r, rbac.PermStacksView, rbac.ScopeRequest{StackName: name}, "")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isReadMethod(r *http.Request) bool {
+	return r.Method == http.MethodGet || r.Method == http.MethodHead
+}
+
+// undeployedProbe matches the two read routes that expose no stack files,
+// which clients poll right after creating a stack.
+func undeployedProbe(pattern string) bool {
+	return strings.HasSuffix(pattern, "/status") || strings.HasSuffix(pattern, "/deploy/progress")
+}
+
+// undeployedReadAllowed reports whether a caller restricted by host or
+// host tag may read the files of a stack that has no deployment host yet.
+// Unrestricted callers pass; so do roles whose stack scope lists name.
+func (h *Handlers) undeployedReadAllowed(r *http.Request, name string) bool {
+	if len(middleware.ScopeTags(r.Context())) > 0 {
+		return false
+	}
+	if !h.RBACv2Enforce || h.Roles == nil {
+		return true
+	}
+	for _, role := range middleware.Roles(r.Context()) {
+		rd, ok := h.Roles.Get(role)
+		if !ok || len(rd.Scopes) == 0 {
+			continue
+		}
+		listed := false
+		for _, sc := range rd.Scopes {
+			listed = listed || (sc.ScopeType == "stack" && sc.ScopeValue == name)
+		}
+		if !listed {
+			return false
+		}
+	}
+	return true
 }
 
 // stackRolesAllow reports whether every role of the caller that is scoped

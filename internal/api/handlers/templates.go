@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/templates"
 	"github.com/go-chi/chi/v5"
@@ -169,6 +172,19 @@ func (h *Handlers) DeployTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	target, err := h.resolveHost(req.HostID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if !h.requireHostAccess(w, r, target.ID()) {
+		return
+	}
+	scopeReq := h.stackScopeReq(r.Context(), target.ID(), req.StackName)
+	if !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+req.StackName)
+		return
+	}
 	composeYAML, envContent, resolved, err := h.Templates.Materialize(r.Context(), id, req.Values)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -185,15 +201,6 @@ func (h *Handlers) DeployTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Deploy on the target host.
-	target, err := h.resolveHost(req.HostID)
-	if err != nil {
-		// Clean up the stack we just wrote so a failed deploy doesn't
-		// leave an orphaned stack behind.
-		_ = h.Stacks.Delete(req.StackName)
-		writeError(w, http.StatusServiceUnavailable, err.Error())
-		return
-	}
 	deployRes, err := target.DeployStack(r.Context(), req.StackName, composeYAML, h.mergeGlobalEnv(r.Context(), envContent))
 	if err != nil {
 		// Leave the stack on disk — the operator might want to
@@ -203,6 +210,23 @@ func (h *Handlers) DeployTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, deployErrorStatus(err), friendlyDeployError(err))
 		return
 	}
+
+	if h.Deployments != nil {
+		if err := h.Deployments.Set(r.Context(), req.StackName, target.ID(), "deployed"); err != nil {
+			slog.Warn("set stack deployment", "stack", req.StackName, "host", target.ID(), "err", err)
+		}
+	}
+	if h.DeployHistory != nil {
+		services := make([]stacks.DeployHistoryService, 0, len(deployRes.Services))
+		for _, svc := range deployRes.Services {
+			services = append(services, stacks.DeployHistoryService{Service: svc.Name, Image: svc.Image})
+		}
+		note := "template: " + tpl.Name
+		if _, err := h.DeployHistory.Record(r.Context(), req.StackName, target.ID(), composeYAML, note, middleware.UserID(r.Context()), services); err != nil {
+			slog.Warn("record deploy history", "stack", req.StackName, "err", err)
+		}
+	}
+	h.syncStackToAgent(r.Context(), target.ID(), req.StackName, composeYAML, envContent)
 
 	// Bump deploys_count so the "popular" sort + badge stay accurate.
 	h.Templates.IncrementDeployCount(r.Context(), id)

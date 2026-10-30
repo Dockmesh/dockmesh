@@ -61,8 +61,8 @@ jobs:
           VERSION: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           go run ./scripts/relmanifest release -version "$VERSION" \
-            -notes release-notes.md -manifest release-manifest.json
-          cat release-notes.md release-manifest.json
+            -notes release-notes.md -body release-body.md -manifest release-manifest.json
+          cat release-body.md release-manifest.json
 
       - name: upload notes
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -70,6 +70,7 @@ jobs:
           name: release-notes
           path: |
             release-notes.md
+            release-body.md
             release-manifest.json
 
   build:
@@ -144,7 +145,14 @@ jobs:
                    -X github.com/dockmesh/dockmesh/pkg/version.Date=${DATE}"
           mkdir -p dist
           go build -trimpath -ldflags "$LDFLAGS" -o dist/dockmesh        ./cmd/dockmesh
-          go build -trimpath -ldflags "$LDFLAGS" -o dist/dockmesh-agent  ./cmd/dockmesh-agent
+          if [ "$GOOS" = linux ]; then
+            # Both linux agents ship in every linux tarball so a server can enroll hosts of either architecture.
+            for a in amd64 arm64; do
+              GOARCH=$a go build -trimpath -ldflags "$LDFLAGS" -o "dist/dockmesh-agent-linux-$a" ./cmd/dockmesh-agent
+            done
+          else
+            go build -trimpath -ldflags "$LDFLAGS" -o dist/dockmesh-agent ./cmd/dockmesh-agent
+          fi
           go build -trimpath -ldflags "$LDFLAGS" -o dist/dmctl           ./cmd/dmctl
 
       - name: package tarball
@@ -154,7 +162,9 @@ jobs:
           cp ../LICENSE .
           cp ../README.md .
           cp ../scripts/install-agent.sh .
-          tar -czf "../$TARBALL" dockmesh dockmesh-agent dmctl LICENSE README.md install-agent.sh
+          AGENTS="dockmesh-agent"
+          [ "${{ matrix.goos }}" = linux ] && AGENTS="dockmesh-agent-linux-amd64 dockmesh-agent-linux-arm64"
+          tar -czf "../$TARBALL" dockmesh $AGENTS dmctl LICENSE README.md install-agent.sh
           cd ..
           sha256sum "$TARBALL" > "${TARBALL}.sha256"
 
@@ -208,7 +218,7 @@ jobs:
           name: Dockmesh ${{ steps.v.outputs.version }}
           draft: false
           prerelease: ${{ contains(steps.v.outputs.version, '-') }}
-          body_path: artifacts/release-notes/release-notes.md
+          body_path: artifacts/release-notes/release-body.md
           files: |
             release/*.tar.gz
             release/install.sh

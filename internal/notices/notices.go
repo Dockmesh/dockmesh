@@ -118,6 +118,8 @@ type Service struct {
 
 	mu     sync.Mutex
 	checks []namedCheck
+	// refreshes re-evaluate a time-limited notice while it is listed.
+	refreshes map[string]Check
 }
 
 type namedCheck struct {
@@ -311,6 +313,7 @@ func (a Audience) includes(v Viewer) bool {
 // ForViewer returns the open notices v is in the audience of, with
 // Dismissed set from v's dismissals.
 func (s *Service) ForViewer(ctx context.Context, v Viewer) ([]Notice, error) {
+	s.refreshOpen(ctx)
 	open, err := s.Open(ctx)
 	if err != nil {
 		return nil, err
@@ -366,6 +369,37 @@ func (s *Service) Dismiss(ctx context.Context, v Viewer, id int64) error {
 		return err
 	}
 	return ErrNotFound
+}
+
+// RegisterRefresh adds a check that runs whenever notices are listed and
+// one with key is open, for notices that end on their own (a deadline
+// passing) rather than through an event.
+func (s *Service) RegisterRefresh(key string, fn Check) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refreshes == nil {
+		s.refreshes = map[string]Check{}
+	}
+	s.refreshes[key] = fn
+}
+
+func (s *Service) refreshOpen(ctx context.Context) {
+	s.mu.Lock()
+	refreshes := make(map[string]Check, len(s.refreshes))
+	for k, fn := range s.refreshes {
+		refreshes[k] = fn
+	}
+	s.mu.Unlock()
+	for key, fn := range refreshes {
+		var n int
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM notices WHERE key = ? AND resolved_at IS NULL`, key).Scan(&n); err != nil || n == 0 {
+			continue
+		}
+		if err := fn(ctx, s); err != nil {
+			slog.Warn("notice refresh failed", "key", key, "err", err)
+		}
+	}
 }
 
 // Register adds a startup check. Call before RunChecks.

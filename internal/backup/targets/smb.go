@@ -2,9 +2,11 @@ package targets
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 
@@ -76,8 +78,15 @@ func (s *SMB) Open(ctx context.Context, path string) (io.WriteCloser, error) {
 	}
 	full := filepath.Join(s.cfg.Path, filepath.FromSlash(path))
 	full = strings.ReplaceAll(full, "/", "\\")
-	dir := filepath.Dir(full)
-	_ = share.MkdirAll(dir, 0o755)
+	// filepath.Dir doesn't split on backslashes on Linux, so the parent
+	// comes from the slash form.
+	dir := strings.ReplaceAll(pathpkg.Dir(filepath.ToSlash(filepath.Join(s.cfg.Path, path))), "/", "\\")
+	if err := share.MkdirAll(dir, 0o755); err != nil {
+		_ = share.Umount()
+		_ = session.Logoff()
+		_ = conn.Close()
+		return nil, fmt.Errorf("smb: create %s: %w", dir, err)
+	}
 	f, err := share.Create(full)
 	if err != nil {
 		share.Umount()
@@ -211,6 +220,7 @@ func ListSMBShares(host string, port int, username, password string) ([]string, 
 }
 
 type smbWriter struct {
+	closed  bool
 	f       *smb2.File
 	share   *smb2.Share
 	session *smb2.Session
@@ -218,14 +228,26 @@ type smbWriter struct {
 }
 
 func (w *smbWriter) Write(p []byte) (int, error) { return w.f.Write(p) }
+
+// Close reports the file's close (the last write reaching the share).
+// Logoff closes the connection, so net.ErrClosed from conn.Close is ignored.
 func (w *smbWriter) Close() error {
-	w.f.Close()
-	w.share.Umount()
-	w.session.Logoff()
-	return w.conn.Close()
+	// go-smb2 blocks on a second logoff of the same session.
+	if w.closed {
+		return nil
+	}
+	w.closed = true
+	err := w.f.Close()
+	_ = w.share.Umount()
+	_ = w.session.Logoff()
+	if cerr := w.conn.Close(); err == nil && !errors.Is(cerr, net.ErrClosed) {
+		err = cerr
+	}
+	return err
 }
 
 type smbReader struct {
+	closed  bool
 	f       *smb2.File
 	share   *smb2.Share
 	session *smb2.Session
@@ -234,8 +256,16 @@ type smbReader struct {
 
 func (r *smbReader) Read(p []byte) (int, error) { return r.f.Read(p) }
 func (r *smbReader) Close() error {
-	r.f.Close()
-	r.share.Umount()
-	r.session.Logoff()
-	return r.conn.Close()
+	// go-smb2 blocks on a second logoff of the same session.
+	if r.closed {
+		return nil
+	}
+	r.closed = true
+	err := r.f.Close()
+	_ = r.share.Umount()
+	_ = r.session.Logoff()
+	if cerr := r.conn.Close(); err == nil && !errors.Is(cerr, net.ErrClosed) {
+		err = cerr
+	}
+	return err
 }

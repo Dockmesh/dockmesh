@@ -98,9 +98,8 @@ func serverEnvFile(dbPath string) string {
 // os.Args so the rest of the process never sees it.
 //
 // If no --env-file was passed, we also try the default location where
-// `dockmesh init` writes its env file (/var/lib/dockmesh/dockmesh.env
-// on Linux, /usr/local/var/dockmesh/dockmesh.env on macOS). This lets
-// CLI commands like `sudo dockmesh admin list-users` find the DB + PKI
+// install.sh and `dockmesh init` write the env file (see defaultEnvFiles).
+// This lets CLI commands like `sudo dockmesh admin list-users` find the DB + PKI
 // without the operator having to source the file or pass --env-file
 // every time.
 //
@@ -129,29 +128,32 @@ func loadEnvFileFromArgs() error {
 		keep = append(keep, arg)
 		i++
 	}
-	if path == "" {
+	explicit := path != ""
+	if !explicit {
 		// Auto-detect a well-known env file location. Only load if the
 		// operator hasn't already set DOCKMESH_DB_PATH in their shell —
 		// an explicit env var always wins over the auto-loaded file.
 		if _, already := os.LookupEnv("DOCKMESH_DB_PATH"); already {
 			return nil
 		}
-		for _, candidate := range []string{
-			"/var/lib/dockmesh/dockmesh.env",      // Linux default
-			"/usr/local/var/dockmesh/dockmesh.env", // macOS default
-		} {
-			if _, err := os.Stat(candidate); err == nil {
-				path = candidate
-				break
-			}
-		}
+		path = firstExistingFile(defaultEnvFiles)
 		if path == "" {
 			return nil
 		}
 	} else {
 		os.Args = keep
 	}
-	data, err := os.ReadFile(path)
+	var data []byte
+	var err error
+	if explicit {
+		data, err = os.ReadFile(path) // #nosec G703 -- explicit --env-file chosen by the operator running the CLI
+	} else {
+		data, err = readTrustedEnvFile(path)
+		if errors.Is(err, errUntrustedEnvFile) {
+			fmt.Fprintf(os.Stderr, "dockmesh: not loading %s (%v); pass --env-file to use it\n", path, err)
+			return nil
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
@@ -646,6 +648,7 @@ func main() {
 		return syncSeededRootsNotice(ctx, n, settingsStore)
 	})
 	noticesSvc.Register(saml.RekeyNoticeKey, samlSvc.SyncRekeyNotice)
+	noticesSvc.RegisterRefresh(saml.RekeyNoticeKey, samlSvc.SyncRekeyNotice)
 	noticesSvc.Register("backups.system-job-path", func(ctx context.Context, n *notices.Service) error {
 		return raiseSystemPathNotice(ctx, n, sysPathFrom, sysPathTo)
 	})
@@ -739,6 +742,9 @@ func main() {
 					Title:    "Git auto-deploy failed: " + stackName,
 					Body:     deployErr.Error(),
 					Link:     "/stacks/" + stackName,
+					Perm:      rbac.PermStacksView,
+					HostID:    "local",
+					StackName: stackName,
 				})
 			} else if res != nil {
 				shaShort := ""
@@ -755,6 +761,9 @@ func main() {
 					Title:    "Git auto-deploy: " + stackName,
 					Body:     body,
 					Link:     "/stacks/" + stackName,
+					Perm:      rbac.PermStacksView,
+					HostID:    "local",
+					StackName: stackName,
 				})
 			}
 		}
@@ -833,6 +842,7 @@ func main() {
 	// Host tags (P.11.2). In-memory cache loaded once at startup; kept
 	// fresh after every mutation via Load() inside the service.
 	hostTagsSvc := hosttags.New(database)
+	notifSvc.SetAccessChecker(&notifications.RBACAccess{Users: authSvc, Roles: rolesStore, Tags: hostTagsSvc})
 	if err := hostTagsSvc.Load(ctx); err != nil {
 		slog.Warn("host tags load", "err", err)
 	}
@@ -853,6 +863,11 @@ func main() {
 	alertsSvc.SetNotifier(notifSvc)
 	backupSvc.SetNotifier(notifSvc)
 	backupSvc.SetNotices(noticesSvc)
+	noticesSvc.Register(backup.RepairNoticeKey, func(ctx context.Context, n *notices.Service) error {
+		return repairJobSecretsOnce(ctx, settingsStore, backupSvc, backupTargetStore, n, func(j backup.Job, target string) {
+			auditSvc.Write(ctx, "", audit.ActionBackupJobRepaired, j.Name, map[string]any{"job_id": j.ID, "target": target})
+		})
+	})
 	updateWatcher.SetNotifier(notifSvc)
 	agentsSvc.SetNotifier(notifSvc)
 	selfUpdateChk.SetNotifier(notifSvc)

@@ -157,6 +157,8 @@ paths:
       tags: [setup]
       summary: Live-validate Step 2's data-directory input
       security: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
       requestBody:
         required: true
         content:
@@ -167,6 +169,7 @@ paths:
               properties:
                 path: { type: string }
       responses:
+        "403": { description: "Missing the `X-Dockmesh-Setup` header." }
         "200":
           description: Check result.
           content:
@@ -197,6 +200,8 @@ paths:
       tags: [setup]
       summary: Validate Step 3's service-user choice
       security: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
       requestBody:
         required: true
         content:
@@ -208,6 +213,7 @@ paths:
                 mode: { type: string, enum: [existing, create] }
                 username: { type: string }
       responses:
+        "403": { description: "Missing the `X-Dockmesh-Setup` header." }
         "200":
           description: Check result.
           content:
@@ -241,6 +247,8 @@ paths:
         are refused after DNS resolution and on every redirect hop; the
         result is then `status: fail` with a "not tested" message.
       security: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
       requestBody:
         required: true
         content:
@@ -252,6 +260,7 @@ paths:
                 url: { type: string, format: uri }
                 expect_health: { type: boolean }
       responses:
+        "403": { description: "Missing the `X-Dockmesh-Setup` header." }
         "200":
           description: Probe result.
           content:
@@ -283,6 +292,8 @@ paths:
         when the wizard creates it (`mode: create`); existing accounts
         are never changed.
       security: []
+      parameters:
+        - $ref: "#/components/parameters/SetupHeader"
       requestBody:
         required: true
         content:
@@ -308,6 +319,7 @@ paths:
                     password: { type: string }
                 public_url: { type: string, format: uri }
       responses:
+        "403": { description: "Missing the `X-Dockmesh-Setup` header." }
         "202":
           description: Run accepted.
           content:
@@ -526,6 +538,39 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /auth/sso/exchange:
+    post:
+      operationId: auth.ssoExchange
+      tags: [auth]
+      summary: Exchange an SSO one-time code for a session
+      description: |
+        Final step of OIDC, OAuth2 and SAML sign-in. The callback redirects
+        to `/login?sso_code=...` and sets an httpOnly cookie with the same
+        code; this call needs both. A code works once and expires after
+        60 seconds, so a code from a link someone else sends signs nobody in.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        "200":
+          description: Session tokens and user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Unknown, expired, already used code, or the cookie is missing or does not match.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /auth/mfa:
     post:
       operationId: auth.login_mfa
@@ -652,7 +697,7 @@ paths:
           schema: { type: string }
       responses:
         "302":
-          description: Redirect to the UI with the session token fragment.
+          description: Redirect to `/login?sso_code=...`; the SPA exchanges the one-time code at `/auth/sso/exchange`.
         "400": { $ref: "#/components/responses/BadRequest" }
         "401":
           description: State mismatch or code exchange failed.
@@ -2874,12 +2919,13 @@ paths:
       summary: Fetch the latest scan result for an image
       responses:
         "200":
-          description: Scan summary.
+          description: "Scan summary, or just {\"scanned\": false} when the image has not been scanned yet."
           content:
             application/json:
               schema:
                 type: object
                 properties:
+                  scanned: { type: boolean, description: Present and false only when no scan exists. }
                   image: { type: string }
                   scanned_at: { type: string, format: date-time }
                   critical: { type: integer }
@@ -2891,11 +2937,6 @@ paths:
                     type: array
                     items: { type: object }
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "404":
-          description: No scan has been run for this image.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
 
   # -----------------------------------------------------------------------
   # volumes — CRUD + prune + content browse (P.11.8)
@@ -3028,7 +3069,9 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/VolumeEntry" }
         "400":
-          description: Path escapes volume root or is too long.
+          description: |
+            Path leaves the volume root (`..` or a symlink pointing outside
+            the volume), is too long, or is not a directory.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -3067,10 +3110,21 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/VolumeFileResult" }
-        "400": { $ref: "#/components/responses/BadRequest" }
+        "400":
+          description: |
+            `path` is missing, leaves the volume root (`..` or a symlink
+            pointing outside the volume), is too long, or is not a regular file.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Volume driver doesn't expose a host-filesystem mountpoint.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   # -----------------------------------------------------------------------
   # networks — CRUD + topology view + prune
@@ -3582,6 +3636,28 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BackupVerifyResult" }
+
+  /backups/local-path:
+    get:
+      operationId: backups.local_path
+      tags: [backups]
+      summary: Suggested directory for a new local backup target
+      description: |
+        The data directory's `backups` folder when it lies inside an allowed
+        local root, otherwise the first allowed root. Empty when none is
+        configured.
+      responses:
+        "200":
+          description: Suggested path.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [path]
+                properties:
+                  path: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /backups/targets:
     get:
@@ -5191,6 +5267,10 @@ paths:
       operationId: settings.list
       tags: [settings]
       summary: Effective server settings (runtime-overridable key/value pairs)
+      description: |
+        The audit webhook keys (`audit.webhook_url`,
+        `audit.webhook_hmac_secret`, `audit.webhook_filter_actions`) are
+        omitted; read them through `GET /audit/webhook`.
       responses:
         "200":
           description: Settings.
@@ -5216,6 +5296,9 @@ paths:
         X-Forwarded-For / X-Real-IP / X-Forwarded-Proto headers are
         believed (empty = loopback only); invalid entries are rejected with
         400 and nothing is saved.
+
+        The audit webhook keys are rejected with 400; configure them via
+        `PUT /audit/webhook`. The response omits them like `GET /settings`.
       requestBody:
         required: true
         content:
@@ -5638,6 +5721,8 @@ paths:
         `docker compose up -d` against the chosen host. The response
         echoes the rendered compose + the resolved values with secrets
         redacted as `<generated>`.
+        The caller needs access to the target host and a role scope that covers
+        the new stack; the deployment is recorded in the stack's deploy history.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       requestBody:
@@ -6688,7 +6773,7 @@ paths:
       responses:
         "302":
           description: |
-            Redirect to the SPA with session tokens in the fragment, or to
+            Redirect to `/login?sso_code=...` (one-time code for `/auth/sso/exchange`), or to
             `/login?sso_error=...` when the sign-in failed (for example no
             state cookie, a reused response, or no stable subject).
 
@@ -7264,6 +7349,10 @@ components:
           items: { type: string }
           description: Host tags this user is scoped to. Empty / omitted = access to all hosts.
         mfa_enabled: { type: boolean }
+        locked_until:
+          type: string
+          format: date-time
+          description: Only in the user list, while the account is blocked by failed sign-ins. Clear it with the unlock endpoint.
 
     StackInput:
       type: object
@@ -7644,11 +7733,13 @@ components:
       properties:
         id: { type: integer, format: int64 }
         key: { type: string }
-        value: { type: string }
+        value:
+          type: string
+          description: Empty for secret (`encrypted`) variables; their value is never returned.
         group_name: { type: string }
         encrypted:
           type: boolean
-          description: True when the value is age-encrypted at rest.
+          description: True when the variable is marked secret; its value is write-only.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -7657,8 +7748,13 @@ components:
       required: [key, value, group_name]
       properties:
         key: { type: string }
-        value: { type: string }
+        value:
+          type: string
+          description: On update of a secret variable, empty keeps the stored value.
         group_name: { type: string, example: production }
+        encrypted:
+          type: boolean
+          description: Marks the value as secret so it is never returned by the API.
 
     CustomRole:
       type: object
@@ -7765,6 +7861,13 @@ components:
         name: { type: string }
         target_type: { type: string, enum: [local, sftp, smb, webdav, s3] }
         target_config: { type: object }
+        target_id:
+          type: integer
+          description: |
+            Saved backup target the config was picked from. Its stored
+            secrets fill the redacted fields of target_config. A config
+            that still carries a redacted secret without a matching
+            target_id is rejected.
         sources:
           type: array
           minItems: 1
@@ -8593,6 +8696,12 @@ components:
           description: "Short-lived challenge token for the `/auth/mfa` completion."
 
   parameters:
+    SetupHeader:
+      name: X-Dockmesh-Setup
+      in: header
+      required: true
+      description: Any non-empty value. Sent by the install wizard so other websites cannot trigger setup calls from a visitor's browser.
+      schema: { type: string }
     HostQuery:
       name: host
       in: query

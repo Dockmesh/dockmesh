@@ -342,3 +342,31 @@ func TestBullets(t *testing.T) {
 		})
 	}
 }
+
+func TestRefreshRunsOnlyWhileOpen(t *testing.T) {
+	s, _ := newTestService(t)
+	ctx := context.Background()
+	calls := 0
+	s.RegisterRefresh("timed", func(ctx context.Context, s *Service) error {
+		calls++
+		return s.Resolve(ctx, "timed")
+	})
+
+	if _, err := s.ForViewer(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatalf("refresh ran %d times with no open notice", calls)
+	}
+
+	if err := s.Raise(ctx, RaiseInput{Key: "timed", Audience: Admins(), Severity: SevInfo, Title: "ends soon"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ForViewer(ctx, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || len(got) != 0 {
+		t.Fatalf("calls = %d, listed = %v; want the refresh to resolve the notice before listing", calls, keys(got))
+	}
+}

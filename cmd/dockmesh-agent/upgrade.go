@@ -139,6 +139,7 @@ func upgradeBinary(client *http.Client, binURL, wantSHA, exePath string) error {
 	if got := hex.EncodeToString(h.Sum(nil)); got != want {
 		return fmt.Errorf("checksum mismatch: expected %s, got %s", want, got)
 	}
+	slog.Info("agent upgrade: checksum verified", "sha256", want, "bytes", n)
 	if err := tmp.Chmod(0o755); err != nil {
 		return fmt.Errorf("chmod: %w", err)
 	}

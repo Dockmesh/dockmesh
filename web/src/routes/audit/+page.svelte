@@ -497,7 +497,7 @@
         <div class="audit-cfg-fields" class:disabled={!webhookEnabled}>
           <div>
             <div class="audit-field-label">URL</div>
-            <input type="text" class="dm-input audit-cfg-input audit-cfg-input-mono" placeholder="https://splunk.haus.lan/services/collector/event" bind:value={webhookURL} />
+            <input type="text" class="dm-input audit-cfg-input audit-cfg-input-mono" placeholder="https://siem.example.com/services/collector/event" bind:value={webhookURL} />
           </div>
           <div>
             <div class="audit-field-label">

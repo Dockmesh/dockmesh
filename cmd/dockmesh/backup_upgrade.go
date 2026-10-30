@@ -142,3 +142,18 @@ func syncUnencryptableNotice(ctx context.Context, n *notices.Service, svc *backu
 		Link: "/backups",
 	})
 }
+
+const jobRepairDoneSetting = "backups.job_repair_done"
+
+// repairJobSecretsOnce runs the job secret repair for the first start
+// after the upgrade that fixed the wizard and never again, so a secret
+// left blank on purpose later is not filled in behind the owner's back.
+func repairJobSecretsOnce(ctx context.Context, st *settings.Store, svc *backup.Service, ts *targets.TargetStore, n *notices.Service, onRepair func(backup.Job, string)) error {
+	if st.Get(jobRepairDoneSetting, "") != "" {
+		return nil
+	}
+	if err := svc.RepairJobSecrets(ctx, ts, n, onRepair); err != nil {
+		return err
+	}
+	return st.Set(ctx, jobRepairDoneSetting, "done")
+}

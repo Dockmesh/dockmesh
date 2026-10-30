@@ -891,9 +891,8 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		respond(conn, f.ID, list.Volumes, nil)
 
 	case agents.FrameReqVolumeBrowse:
-		// P.11.8. Resolve volume mountpoint, sanitize sub-path, list dir.
-		// All path sanitization goes through the shared host helpers so
-		// the agent can't drift from the server's validation rules.
+		// Path checks and the helper-container fallback are shared with the
+		// server so the agent cannot drift from its containment rules.
 		var req agents.VolumeBrowseReq
 		_ = json.Unmarshal(f.Payload, &req)
 		if err := dockerwrap.CheckVolumeName(req.Volume); err != nil {
@@ -910,7 +909,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 			respond(conn, f.ID, nil, err)
 			return
 		}
-		entries, err := host.BrowseVolume(mp, req.SubPath)
+		entries, err := host.BrowseVolumeOnHost(ctx, cli, req.Volume, mp, req.SubPath)
 		respond(conn, f.ID, entries, err)
 
 	case agents.FrameReqVolumeBrowseFile:
@@ -930,7 +929,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 			respond(conn, f.ID, nil, err)
 			return
 		}
-		res, err := host.ReadVolumeFile(mp, req.SubPath, req.MaxBytes)
+		res, err := host.ReadVolumeFileOnHost(ctx, cli, req.Volume, mp, req.SubPath, req.MaxBytes)
 		respond(conn, f.ID, res, err)
 
 	case agents.FrameReqDaemonInfo:

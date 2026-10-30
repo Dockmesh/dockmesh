@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
@@ -316,12 +318,12 @@ func (h *RemoteHost) InspectVolume(ctx context.Context, name string) (volume.Vol
 }
 
 // VolumeBrowseEntries / VolumeReadFile proxy to the agent via the
-// browse frames. The agent runs the same BrowseDir / ReadFile helpers
-// locally against its own mounted volume fs. P.11.8.
+// browse frames. The agent runs the same BrowseVolumeOnHost /
+// ReadVolumeFileOnHost helpers against its own docker daemon.
 func (h *RemoteHost) VolumeBrowseEntries(ctx context.Context, name, subpath string) ([]VolumeEntry, error) {
 	data, err := h.request(ctx, agents.FrameReqVolumeBrowse, agents.VolumeBrowseReq{Volume: name, SubPath: subpath})
 	if err != nil {
-		return nil, err
+		return nil, agentBrowseError(err)
 	}
 	var out []VolumeEntry
 	if err := json.Unmarshal(data, &out); err != nil {
@@ -432,13 +434,48 @@ func (h *RemoteHost) VolumeReadFile(ctx context.Context, name, subpath string, m
 	data, err := h.request(ctx, agents.FrameReqVolumeBrowseFile,
 		agents.VolumeBrowseReq{Volume: name, SubPath: subpath, MaxBytes: maxBytes})
 	if err != nil {
-		return nil, err
+		return nil, agentBrowseError(err)
 	}
 	var out VolumeFileResult
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("decode volume browse file: %w", err)
 	}
 	return &out, nil
+}
+
+// agentError keeps the agent's message but matches the sentinel it
+// carried, so errors.Is works across the wire.
+type agentError struct {
+	err  error
+	kind error
+}
+
+func (e *agentError) Error() string   { return e.err.Error() }
+func (e *agentError) Unwrap() []error { return []error{e.kind, e.err} }
+
+// agentBrowseError recovers the browse sentinels from the plain-text
+// error an agent returns. Matching on the message works with every agent
+// version, since all of them send err.Error() of the same sentinels.
+func agentBrowseError(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	for _, kind := range []error{
+		ErrVolumePathEscape,
+		ErrVolumePathTooLong,
+		ErrVolumeNotDir,
+		ErrVolumeNotFile,
+		ErrVolumeMountpointMissing,
+	} {
+		if strings.Contains(msg, kind.Error()) {
+			return &agentError{err: err, kind: kind}
+		}
+	}
+	if strings.Contains(msg, fs.ErrNotExist.Error()) || strings.Contains(msg, "no such file or directory") {
+		return &agentError{err: err, kind: fs.ErrNotExist}
+	}
+	return err
 }
 
 func (h *RemoteHost) RemoveImage(ctx context.Context, id string, force bool) ([]dtypes.ImageDeleteResponseItem, error) {

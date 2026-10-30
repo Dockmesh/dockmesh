@@ -2679,8 +2679,8 @@
           <h3>Delete this stack</h3>
           <p>
             Stops all <strong>{services.length}</strong> service{services.length === 1 ? '' : 's'},
-            removes containers and named volumes, deletes <code>stacks/{name}/</code> on disk and
-            forgets compose history. <strong>Cannot be undone.</strong>
+            removes its containers, deletes <code>stacks/{name}/</code> on disk and forgets
+            compose history. Networks, volumes and images are only removed if you choose so in the next step. <strong>Cannot be undone.</strong>
           </p>
         </div>
         <div class="stack-setting-control">

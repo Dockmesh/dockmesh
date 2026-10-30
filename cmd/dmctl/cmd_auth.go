@@ -32,7 +32,7 @@ Two auth modes:
      Prompts for password (hidden). If MFA is enabled on the account,
      prompts for the TOTP code too. Gets a JWT pair — dmctl auto-refreshes
      the access token as it expires so sessions last as long as the
-     refresh token (30 days by default).`,
+     refresh token (set by the server's session lifetime).`,
 		Example: `  # Interactive password login on the local server
   dmctl login http://localhost:8080 --user admin
 

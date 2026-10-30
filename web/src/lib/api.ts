@@ -15,6 +15,7 @@ export interface ScanVuln {
 }
 
 export interface ScanReport {
+  scanned?: boolean;
   image: string;
   scanner: string;
   scanner_version?: string;
@@ -880,6 +881,7 @@ export interface BackupJobInput {
   host_id?: string;
   target_type: string;
   target_config: any;
+  target_id?: number;
   sources: BackupSource[];
   schedule: string;
   retention_count: number;
@@ -1264,6 +1266,12 @@ export const api = {
         refresh_token: string;
         user: { id: string; username: string; role: string; mfa_enabled?: boolean };
       }>('/auth/mfa', { method: 'POST', body: JSON.stringify({ mfa_token: mfaToken, code }) }),
+    ssoExchange: (code: string) =>
+      request<{
+        access_token: string;
+        refresh_token: string;
+        user: { id: string; username: string; role: string; mfa_enabled?: boolean };
+      }>('/auth/sso/exchange', { method: 'POST', body: JSON.stringify({ code }) }),
     logout: () => {
       const body = auth.refreshToken ? JSON.stringify({ refresh_token: auth.refreshToken }) : '{}';
       return request<void>('/auth/logout', { method: 'POST', body }).finally(() => auth.clear());
@@ -1550,7 +1558,7 @@ export const api = {
     list: () => request<Array<{ id: number; key: string; value: string; group_name: string; encrypted: boolean; created_at: string; updated_at: string }>>('/global-env'),
     create: (data: { key: string; value: string; group_name: string }) =>
       request<any>('/global-env', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
-    update: (id: number, data: { key: string; value: string; group_name: string }) =>
+    update: (id: number, data: { key: string; value: string; group_name: string; encrypted?: boolean }) =>
       request<any>(`/global-env/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
     delete: (id: number) => request<void>(`/global-env/${id}`, { method: 'DELETE' }),
     groups: () => request<string[]>('/global-env/groups')
@@ -1823,6 +1831,7 @@ export const api = {
       request<BackupTarget>('/backups/targets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
     updateTarget: (id: number, input: { name: string; type: string; config: any }) =>
       request<BackupTarget>(`/backups/targets/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+    localPath: () => request<{ path: string }>('/backups/local-path').then((r) => r.path).catch(() => ''),
     deleteTarget: (id: number) => request<void>(`/backups/targets/${id}`, { method: 'DELETE' }),
     testTarget: (id: number) => request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string }>(`/backups/targets/${id}/test`, { method: 'POST' }),
     testTargetConfig: (type: string, config: any, targetId?: number) =>
@@ -1926,7 +1935,7 @@ export const api = {
 
   users: {
     me: () => request<{ id: string; username: string; email?: string; role: string; scope_tags?: string[] }>('/me'),
-    list: () => request<Array<{ id: string; username: string; email?: string; role: string; scope_tags?: string[] }>>('/users'),
+    list: () => request<Array<{ id: string; username: string; email?: string; role: string; scope_tags?: string[]; locked_until?: string }>>('/users'),
     create: (username: string, password: string, role: string, email?: string) =>
       request<{ id: string; username: string; role: string }>('/users', {
         method: 'POST',

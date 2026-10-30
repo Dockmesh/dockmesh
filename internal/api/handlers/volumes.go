@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http"
-	"os"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
@@ -227,7 +227,7 @@ func mapBrowseStatus(err error) int {
 	case errors.Is(err, host.ErrVolumeMountpointMissing):
 		return http.StatusConflict
 	default:
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return http.StatusNotFound
 		}
 		return http.StatusInternalServerError

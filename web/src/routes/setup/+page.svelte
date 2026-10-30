@@ -165,7 +165,7 @@
     try {
       const r = await fetch('/api/v1/setup/validate-data-dir', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Dockmesh-Setup': '1' },
         body: JSON.stringify({ path })
       });
       if (!r.ok) {
@@ -203,7 +203,7 @@
     try {
       const r = await fetch('/api/v1/setup/validate-user', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Dockmesh-Setup': '1' },
         body: JSON.stringify({ mode: mode === 'new' ? 'create' : 'existing', username })
       });
       if (!r.ok) {
@@ -279,7 +279,7 @@
     try {
       const r = await fetch('/api/v1/setup/test-url', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Dockmesh-Setup': '1' },
         body: JSON.stringify({ url: publicUrl, expect_health: true })
       });
       if (!r.ok) {
@@ -336,7 +336,7 @@
     try {
       const r = await fetch('/api/v1/setup/commit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Dockmesh-Setup': '1' },
         body: JSON.stringify({
           data_dir: dataDir,
           service_user: {

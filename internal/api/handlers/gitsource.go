@@ -165,6 +165,7 @@ func (h *Handlers) GitWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "webhook rejected")
 		return
 	case err != nil:
+		slog.Warn("git webhook secret lookup failed", "stack", name, "err", err)
 		writeError(w, http.StatusInternalServerError, "webhook lookup failed")
 		return
 	case secret == "":

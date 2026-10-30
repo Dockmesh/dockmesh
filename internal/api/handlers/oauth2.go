@@ -98,8 +98,7 @@ func (h *Handlers) OAuth2Callback(w http.ResponseWriter, r *http.Request) {
 	if res.User != nil {
 		h.audit(r, "auth.sso_login", res.User.ID, map[string]string{"provider": claims.Pending.Slug, "kind": "oauth2"})
 	}
-	loc := "/login#sso_access=" + res.AccessToken + "&sso_refresh=" + res.RefreshToken
-	http.Redirect(w, r, loc, http.StatusFound)
+	h.finishSSOLogin(w, r, res)
 }
 
 // -----------------------------------------------------------------------------

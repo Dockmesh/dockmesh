@@ -153,6 +153,11 @@ func (s *Service) GetJob(ctx context.Context, id int64) (*Job, error) {
 	return s.store.getJob(ctx, id)
 }
 
+// DefaultLocalPath is the directory the wizards suggest for a local target.
+func (s *Service) DefaultLocalPath() string {
+	return targets.DefaultLocalDir(s.paths.DataDir)
+}
+
 func (s *Service) canEncrypt() bool { return canEncrypt(s.secrets) }
 
 func canEncrypt(sec *secrets.Service) bool { return sec != nil && sec.Enabled() }
