@@ -1203,25 +1203,32 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(init.headers as Record<string, string> ?? {})
+// Sends a request with the current access token. On 401 it waits for the
+// shared session refresh and retries once.
+async function authFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const send = (token: string | null) => {
+    const headers = new Headers(init.headers);
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    return fetch(url, { ...init, headers });
   };
-  if (auth.accessToken) {
-    headers['Authorization'] = `Bearer ${auth.accessToken}`;
+  const used = auth.accessToken;
+  const userId = auth.user?.id;
+  const res = await send(used);
+  if (res.status !== 401 || !auth.refreshToken) return res;
+  // Another caller may already have renewed the token while this one was in flight.
+  if (auth.accessToken === used && !(await auth.refresh())) {
+    if (auth.isAuthenticated) throw new ApiError('Cannot reach the server to renew the session', 0);
+    return res;
   }
+  // Never replay a request under a different account.
+  if (auth.user?.id !== userId) return res;
+  return send(auth.accessToken);
+}
 
-  let res = await fetch(`${BASE}${path}`, { ...init, headers });
-
-  // On 401, try one refresh then retry.
-  if (res.status === 401 && auth.refreshToken) {
-    const ok = await auth.refresh();
-    if (ok && auth.accessToken) {
-      headers['Authorization'] = `Bearer ${auth.accessToken}`;
-      res = await fetch(`${BASE}${path}`, { ...init, headers });
-    }
-  }
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  const res = await authFetch(`${BASE}${path}`, { ...init, headers });
 
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
@@ -1720,9 +1727,7 @@ export const api = {
       downloadBlob: async (id: string, path: string, host = 'local') => {
         const qs = new URLSearchParams({ path });
         if (host && host !== 'local') qs.set('host', host);
-        const headers: Record<string, string> = {};
-        if (auth.accessToken) headers['Authorization'] = `Bearer ${auth.accessToken}`;
-        const res = await fetch(`${BASE}/containers/${id}/files/download?${qs.toString()}`, { headers });
+        const res = await authFetch(`${BASE}/containers/${id}/files/download?${qs.toString()}`);
         if (!res.ok) {
           let msg = `${res.status} ${res.statusText}`;
           try { const j = await res.json(); if (j.error) msg = j.error; } catch { /* ignore */ }
@@ -1874,16 +1879,7 @@ export const api = {
     // user always gets plaintext bytes. We auth via bearer token then
     // hand the user a Blob URL — same pattern as audit-log export.
     downloadArchive: async (runId: number): Promise<void> => {
-      const headers: Record<string, string> = {};
-      if (auth.accessToken) headers['Authorization'] = `Bearer ${auth.accessToken}`;
-      let res = await fetch(`${BASE}/backups/runs/${runId}/archive`, { headers });
-      if (res.status === 401 && auth.refreshToken) {
-        const ok = await auth.refresh();
-        if (ok && auth.accessToken) {
-          headers['Authorization'] = `Bearer ${auth.accessToken}`;
-          res = await fetch(`${BASE}/backups/runs/${runId}/archive`, { headers });
-        }
-      }
+      const res = await authFetch(`${BASE}/backups/runs/${runId}/archive`);
       if (!res.ok) {
         let msg = `${res.status} ${res.statusText}`;
         try { const body = await res.json(); if (body.error) msg = body.error; } catch { /* ignore */ }
@@ -1919,12 +1915,7 @@ export const api = {
     verifyUpload: async (file: File): Promise<BackupVerifyResult> => {
       const form = new FormData();
       form.append('file', file);
-      const token = auth.accessToken;
-      const res = await fetch(`${BASE}/restore/verify`, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        body: form
-      });
+      const res = await authFetch(`${BASE}/restore/verify`, { method: 'POST', body: form });
       const data = await res.json();
       if (!res.ok && res.status !== 422) throw new ApiError(data?.error ?? res.statusText, res.status);
       return data as BackupVerifyResult;

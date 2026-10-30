@@ -155,12 +155,17 @@
   let logServiceFilter = $state<Set<string>>(new Set());
   let logEl = $state<HTMLDivElement | null>(null);
   const LOG_BUFFER_MAX = 1500;
+  // Bumped when all streams close, so a ticket that resolves afterwards
+  // (tab left, page destroyed) does not open an orphaned socket.
+  let logGen = 0;
 
   async function openLogStreamForService(svc: { service: string; container_id: string }) {
     if (!svc.container_id) return;
     if (logSockets.has(svc.service)) return;
+    const gen = logGen;
     try {
       const { ticket } = await api.ws.ticket('containers.logs');
+      if (gen !== logGen || logSockets.has(svc.service)) return;
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const hostQs = isRemote ? `&host=${encodeURIComponent(stackHost)}` : '';
       const ws = new WebSocket(
@@ -192,7 +197,11 @@
           if (logEl) logEl.scrollTop = logEl.scrollHeight;
         });
       };
-      ws.onclose = () => { logSockets.delete(svc.service); logSockets = new Map(logSockets); };
+      ws.onclose = () => {
+        if (logSockets.get(svc.service) !== ws) return;
+        logSockets.delete(svc.service);
+        logSockets = new Map(logSockets);
+      };
       ws.onerror = () => { /* close handler will clean up */ };
       logSockets.set(svc.service, ws);
       logSockets = new Map(logSockets);
@@ -202,6 +211,7 @@
   }
 
   function closeAllLogStreams() {
+    logGen++;
     for (const ws of logSockets.values()) {
       try { ws.close(); } catch { /* ignore */ }
     }
@@ -424,12 +434,15 @@
   type NetPrev = { rx: number; tx: number; ts: number; rate?: { rx: number; tx: number } };
   const statsPrev: Map<string, NetPrev> = new Map();
   let netRate = $state<{ rx: number; tx: number }>({ rx: 0, tx: 0 });
+  let statsGen = 0;
 
   async function openStatsForService(svc: { service: string; container_id: string; state: string }) {
     if (statsSockets.has(svc.service)) return;
     if (!svc.container_id || svc.state !== 'running') return;
+    const gen = statsGen;
     try {
       const { ticket } = await api.ws.ticket('containers.view');
+      if (gen !== statsGen || statsSockets.has(svc.service)) return;
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const hostQs = isRemote ? `&host=${encodeURIComponent(stackHost)}` : '';
       const ws = new WebSocket(
@@ -467,6 +480,7 @@
         } catch { /* ignore malformed sample */ }
       };
       ws.onclose = () => {
+        if (statsSockets.get(svc.service) !== ws) return;
         statsSockets.delete(svc.service);
         statsSockets = new Map(statsSockets);
       };
@@ -475,6 +489,7 @@
     } catch { /* single-service failure shouldn't break the rollup */ }
   }
   function closeAllStatsStreams() {
+    statsGen++;
     for (const ws of statsSockets.values()) {
       try { ws.close(); } catch { /* ignore */ }
     }
@@ -1106,13 +1121,26 @@
     }
   }
 
+  let migrationPoll: ReturnType<typeof setInterval> | null = null;
+  function stopMigrationPoll() {
+    if (migrationPoll) clearInterval(migrationPoll);
+    migrationPoll = null;
+  }
+  $effect(() => {
+    name;
+    return stopMigrationPoll;
+  });
+
   function pollMigration(id: string) {
+    stopMigrationPoll();
+    const stack = name;
     const iv = setInterval(async () => {
       try {
-        const m = await api.migrations.get(name, id);
+        const m = await api.migrations.get(stack, id);
+        if (migrationPoll !== iv) return;
         activeMigration = m;
         if (['completed', 'failed', 'rolled_back'].includes(m.status)) {
-          clearInterval(iv);
+          stopMigrationPoll();
           if (m.status === 'completed') {
             toast.success('Migration completed');
             await load();
@@ -1121,9 +1149,10 @@
           }
         }
       } catch {
-        clearInterval(iv);
+        if (migrationPoll === iv) stopMigrationPoll();
       }
     }, 3000);
+    migrationPoll = iv;
   }
 
   const stream = new EventStream({

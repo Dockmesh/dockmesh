@@ -6,7 +6,8 @@
   // agents.get; many actions (drain/upgrade/revoke) are disabled.
   // See project_hosts_open_punch_list.md for deferred features
   // (per-container metrics, host-affinity panel).
-  import { onMount, onDestroy } from 'svelte';
+  import { untrack } from 'svelte';
+  import { latest } from '$lib/latest';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import {
@@ -68,7 +69,9 @@
   let upgradeBusy = $state(false);
   let revokeBusy = $state(false);
 
+  const nextLoad = latest();
   async function loadAll() {
+    const current = nextLoad();
     loading = true;
     loadError = null;
     try {
@@ -81,6 +84,7 @@
           api.hosts.list().catch(() => []),
           api.agents.getUpgradePolicy().catch(() => null)
         ]);
+        if (!current()) return;
         const local = hostList.find((h) => h.kind === 'local');
         localName = local?.name ?? 'local';
         agent = null;
@@ -90,12 +94,13 @@
         upgradePolicyVersion = polRes?.server_version ?? '';
       } else {
         const [a, m, ctrRes, stk, polRes] = await Promise.all([
-          api.agents.get(id).catch((e) => { loadError = e instanceof ApiError ? e.message : 'Load failed'; return null; }),
+          api.agents.get(id).catch((e) => { if (current()) loadError = e instanceof ApiError ? e.message : 'Load failed'; return null; }),
           api.system.metrics(id).catch(() => null),
           api.containers.list(false, id).catch(() => []),
           api.stacks.list().catch(() => []),
           api.agents.getUpgradePolicy().catch(() => null)
         ]);
+        if (!current()) return;
         agent = a;
         if (m && !('hosts' in m)) metrics = m;
         containers = Array.isArray(ctrRes) ? ctrRes : [];
@@ -108,6 +113,7 @@
         api.hosts.allTags().catch(() => []),
         api.migrations.list(50).catch(() => [])
       ]);
+      if (!current()) return;
       tags = t;
       tagsDraft = [...t];
       allFleetTags = allT;
@@ -117,20 +123,29 @@
         metricsHistory = [...metricsHistory.slice(-15), metrics];
       }
     } catch (err) {
-      loadError = err instanceof ApiError ? err.message : 'Load failed';
+      if (current()) loadError = err instanceof ApiError ? err.message : 'Load failed';
     } finally {
-      loading = false;
+      if (current()) loading = false;
     }
   }
 
-  let refreshTimer: ReturnType<typeof setInterval> | null = null;
-  onMount(() => {
-    loadAll();
-    refreshTimer = setInterval(() => {
+  $effect(() => {
+    id;
+    untrack(() => {
+      agent = null;
+      metrics = null;
+      metricsHistory = [];
+      containers = [];
+      migrations = [];
+      tags = [];
+      tagsDraft = [];
+      loadAll();
+    });
+    const timer = setInterval(() => {
       if (document.visibilityState === 'visible') loadAll();
     }, 10_000);
+    return () => clearInterval(timer);
   });
-  onDestroy(() => { if (refreshTimer) clearInterval(refreshTimer); });
 
   // ─── Stacks deployed on this host ─────────────────────────────────────
   // We don't have a "deployed-on" field on StackListEntry — Deployments

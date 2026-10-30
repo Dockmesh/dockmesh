@@ -4,6 +4,7 @@
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
   import { autoRefresh } from '$lib/autorefresh';
+  import { latest } from '$lib/latest';
   import { Skeleton } from '$lib/components/ui';
   import {
     EdMetric,
@@ -50,7 +51,9 @@
   const isAll = $derived(hosts.isAll);
   const isRemote = $derived(hosts.id !== 'local' && hosts.id !== 'all');
 
+  const nextLoad = latest();
   async function load() {
+    const current = nextLoad();
     const isFirstLoad = untrack(
       () => !sysMetrics && perHostMetrics.length === 0 && stackCards.length === 0
     );
@@ -75,6 +78,7 @@
         allowed('audit.view') ? api.audit.list(10).catch(() => []) : Promise.resolve([]),
         api.hosts.list().catch(() => []),
       ]);
+      if (!current()) return;
       health = h;
 
       if (sysRaw && isFanOut(sysRaw)) {
@@ -129,26 +133,20 @@
       agentCount.total = hostListRaw.length;
       agentCount.online = hostListRaw.filter((x: any) => x.status === 'online').length;
     } catch (err: any) {
-      error = err.message ?? 'Failed to load';
+      if (current()) error = err.message ?? 'Failed to load';
     } finally {
-      loading = false;
+      if (current()) loading = false;
     }
   }
 
-  let prevHost = hosts.id;
   $effect(() => {
-    const cur = hosts.id;
-    if (cur !== prevHost) {
-      prevHost = cur;
+    hosts.id;
+    untrack(() => {
       cpuHistory = [];
       memHistory = [];
       diskHistory = [];
       load();
-    }
-  });
-
-  $effect(() => {
-    load();
+    });
   });
 
   $effect(() => autoRefresh(load, 10_000));
