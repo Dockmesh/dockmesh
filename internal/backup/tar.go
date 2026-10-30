@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 
 	"github.com/dockmesh/dockmesh/internal/docker"
 	dtypes "github.com/docker/docker/api/types"
@@ -158,21 +159,31 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 	}
 
 	// Stream the archive into stdin and close the write side so tar exits.
+	copyDone := make(chan error, 1)
 	go func() {
-		_, _ = io.Copy(hijack.Conn, src)
+		_, err := io.Copy(hijack.Conn, src)
 		_ = hijack.CloseWrite()
+		copyDone <- err
 	}()
 
 	statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	var exitCode int64
 	select {
 	case s := <-statusCh:
-		if s.StatusCode != 0 {
-			return fmt.Errorf("restore tar exit %d", s.StatusCode)
-		}
+		exitCode = s.StatusCode
 	case e := <-errCh:
 		return e
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+	// A failing source is the real cause behind a tar exit code, and tar
+	// does not notice every stream that breaks off, so check it first.
+	_ = hijack.Conn.Close()
+	if err := <-copyDone; err != nil && !errors.Is(err, net.ErrClosed) {
+		return fmt.Errorf("restore stream: %w", err)
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("restore tar exit %d", exitCode)
 	}
 	return nil
 }

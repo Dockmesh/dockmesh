@@ -89,16 +89,13 @@ func (e Env) Targets(base string) []Config {
 		return m
 	}
 	smbList := "listing an SMB share on Linux returns mangled paths (backslash and base folder leak into them)"
-	sftpNew := "testing an SFTP target whose folder does not exist yet fails with 'file does not exist'"
 	return []Config{
 		{Name: "smb", Type: "smb", Config: smb(e.SMBUser), Secret: "password",
 			Gaps: map[string]string{GapList: smbList}},
 		{Name: "smb-domain-user", Type: "smb", Config: smb("WORKGROUP\\" + e.SMBUser), Secret: "password",
-			Gaps: map[string]string{GapAll: "the SMB target sends DOMAIN\\user as the plain user name instead of splitting it"}},
-		{Name: "sftp-password", Type: "sftp", Config: sftp("pw", map[string]any{"password": e.SFTPPass}), Secret: "password",
-			Gaps: map[string]string{GapStorageInfoNew: sftpNew}},
-		{Name: "sftp-key", Type: "sftp", Config: sftp("key", map[string]any{"private_key": e.SFTPKey}), Secret: "private_key",
-			Gaps: map[string]string{GapStorageInfoNew: sftpNew}},
+			Gaps: map[string]string{GapList: smbList}},
+		{Name: "sftp-password", Type: "sftp", Config: sftp("pw", map[string]any{"password": e.SFTPPass}), Secret: "password"},
+		{Name: "sftp-key", Type: "sftp", Config: sftp("key", map[string]any{"private_key": e.SFTPKey}), Secret: "private_key"},
 		{Name: "webdav", Type: "webdav", Config: map[string]any{"url": e.WebDAVURL, "username": e.WebDAVUser,
 			"password": e.WebDAVPass, "path": "/" + base + "-webdav"}, Secret: "password"},
 		{Name: "s3", Type: "s3", Config: map[string]any{"endpoint": e.S3Endpoint, "region": e.S3Region,

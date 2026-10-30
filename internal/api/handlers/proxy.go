@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -18,6 +19,18 @@ type proxyRouteRequest struct {
 	// Enabled is *bool so PUT bodies that omit the field keep the
 	// existing state; only an explicit false disables the route.
 	Enabled  *bool  `json:"enabled,omitempty"`
+}
+
+// persistProxyEnabled stores the operator's choice so it is applied again
+// after a restart. A failed write is logged: the container is already in
+// the requested state and the toggle can be repeated.
+func (h *Handlers) persistProxyEnabled(r *http.Request, value string) {
+	if h.Settings == nil {
+		return
+	}
+	if err := h.Settings.Set(r.Context(), proxy.KeyEnabled, value); err != nil {
+		slog.Error("proxy: saving proxy_enabled failed", "err", err)
+	}
 }
 
 func (h *Handlers) ProxyStatus(w http.ResponseWriter, r *http.Request) {
@@ -37,6 +50,7 @@ func (h *Handlers) ProxyEnable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.persistProxyEnabled(r, "true")
 	h.audit(r, "proxy.enable", "", nil)
 	writeJSON(w, http.StatusOK, h.Proxy.GetStatus(r.Context()))
 }
@@ -50,6 +64,7 @@ func (h *Handlers) ProxyDisable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.persistProxyEnabled(r, "false")
 	h.audit(r, "proxy.disable", "", nil)
 	w.WriteHeader(http.StatusNoContent)
 }

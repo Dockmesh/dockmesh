@@ -24,6 +24,62 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-30 [recommended]
+
+Fixes the backup target wizard (Continue stayed disabled in 0.4.1), the reverse proxy turning
+itself off after a restart, and several problems found while testing backups against real SMB,
+SFTP, S3 and WebDAV servers.
+
+### Added
+
+- The target wizard can set S3 TLS and a custom CA certificate (also for WebDAV), an S3 prefix with
+  nested folders, and an SFTP private key. The key is stored like passwords and never shown again.
+- When an SFTP server presents a new host key, the wizard's test step offers "Accept new host key".
+- `dockmesh ca reissue-server --add-san <name-or-ip>` issues a new server certificate for the agent
+  connection with extra names or addresses, signed by the same CA, so agents trust a restored
+  server on a new address without being enrolled again.
+- SMB logins written as `DOMAIN\user` or `user@domain` work; an optional `domain` field overrides them.
+
+### Changed
+
+- Every backup run now reads the archive back from the target and compares size and checksum; a
+  mismatch or read error fails the run. This transfers each archive a second time, which counts
+  against metered S3 traffic.
+- Restoring a volume or stack first checks the downloaded archive against the recorded checksum and
+  extracts nothing if it differs. This needs temporary disk space as large as the archive.
+- Verify checks the archive as stored (before decryption), which is what the recorded checksum covers.
+- The SMB client is now the maintained `cloudsoda/go-smb2` fork, which also fixes a known
+  vulnerability in the previous library.
+
+### Fixed
+
+- The target wizard's Continue button never enabled (regression in 0.4.1).
+- The reverse proxy stays enabled after a restart: enabling or disabling it is now saved, an enabled
+  proxy is brought up on start and its routes are loaded, and the page shows the real state. Installs
+  where the proxy was enabled through the button in earlier versions (container running, setting
+  never saved) are detected on the first start and saved as enabled. Fixes #58.
+- Large archives no longer fail uploading to WebDAV with a client timeout; transfers use dial, TLS,
+  header and idle timeouts instead of an overall limit. WebDAV uploads no longer hold the archive in memory.
+- Encrypted backups on a ksmbd SMB server restored incomplete data because the final read was
+  rejected; the restore now succeeds and a failed read can no longer pass for a complete archive.
+- Verify failed on every encrypted backup because it hashed the decrypted data.
+- SMB writes no longer fail intermittently with "signing required" when the server requires signing.
+- Testing an SFTP target whose base folder does not exist yet now creates it, as a run does.
+- Server certificate files that did not match each other (after a failed re-issue) are repaired on
+  start instead of silently disabling the agent connection.
+
+### Upgrade notes
+
+- [move-to-new-address, admins] Only needed if you restore Dockmesh onto a server with a different
+  address. (1) Install Dockmesh on the new host and run `dockmesh restore --from <backup.tar.gz>`.
+  (2) Run `dockmesh ca reissue-server --add-san <new-ip> [--add-san <new-name>]`; skip this when
+  agents connect by a name the certificate already covers and you only update DNS. (3) Set
+  `DOCKMESH_AGENT_PUBLIC_URL=wss://<new-address>:8443/connect` (and `DOCKMESH_BASE_URL` if it names
+  the old address) in `dockmesh.env` and restart Dockmesh. (4) On each agent set
+  `DOCKMESH_AGENT_URL=wss://<new-address>:8443/connect` in `/etc/dockmesh-agent/agent.env` and
+  restart `dockmesh-agent`; agents keep their certificates, no new token is needed. (5) Check that
+  every agent shows online.
+
 ## [0.4.1] - 2026-10-30 [security]
 
 Security and maintenance release. It fixes three authorization and sign-in problems in 0.4.0 and

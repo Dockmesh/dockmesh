@@ -558,6 +558,11 @@ func main() {
 		// agent listener port. Operator should override via env in prod.
 		agentPublic = deriveAgentURL(cfg.BaseURL, cfg.AgentListen)
 	}
+	if h := urlHostname(agentPublic); cfg.AgentListen != "" && h != "" && !pkiMgr.ServerCertCovers(h) {
+		slog.Warn("agent server certificate does not cover the agent public host; agents dialing it will fail TLS verification",
+			"host", h, "cert_sans", pkiMgr.ServerCertSANs(),
+			"fix", "dockmesh ca reissue-server --add-san "+h+", then restart")
+	}
 	agentsSvc := agents.NewService(database, pkiMgr, cfg.BaseURL, agentPublic)
 	agentsSvc.SetEnrollTokenTTL(cfg.AgentEnrollTokenTTL)
 	hostRegistry := host.NewRegistry(dockerCli, agentsSvc)
@@ -597,16 +602,10 @@ func main() {
 	selfUpdateChk := selfupdate.New(settingsStore, version.Version)
 	selfUpdateChk.Start(ctx)
 
-	// Proxy: the boot-time config flag is just the *default* — the
-	// DB-backed `proxy_enabled` setting overrides it so an admin
-	// flipping the toggle persists across restarts without env-var
-	// edits. If enabled, bring the Caddy container up now (idempotent
-	// — EnableProxy removes any stale container + reseeds bootstrap
-	// config + pushes the current routes).
-	if settingsStore.GetBool("proxy_enabled", cfg.ProxyEnabled) {
-		if err := proxySvc.EnableProxy(ctx); err != nil {
-			slog.Warn("proxy boot-up failed — toggle off/on in Settings once Docker is reachable", "err", err)
-		}
+	// Proxy: the boot-time config flag is just the *default*; the DB-backed
+	// `proxy_enabled` setting overrides it so the toggle survives restarts.
+	if _, err := proxySvc.Reconcile(ctx, settingsStore, cfg.ProxyEnabled); err != nil {
+		slog.Warn("proxy boot-up failed — toggle off/on in Settings once Docker is reachable", "err", err)
 	}
 	// Start the ACME event tailer regardless of current proxy state —
 	// the loop is dormant when the proxy is disabled and reconnects
@@ -1222,6 +1221,14 @@ func scrubEnvFlag(path, key string) (bool, error) {
 		return false, nil
 	}
 	return true, os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o600)
+}
+
+func urlHostname(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }
 
 func deriveAgentURL(baseURL, listen string) string {

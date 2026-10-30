@@ -3,10 +3,11 @@
 // enrolled agent's client cert. Concept §15.3.
 //
 // Files persisted under data/:
-//   agents-ca.crt          public CA cert  — bundled into agent at enrollment
-//   agents-ca.key          CA private key  — root of trust, 0400
-//   agents-server.crt      server cert for the mTLS listener
-//   agents-server.key      server private key, 0400
+//
+//	agents-ca.crt          public CA cert  — bundled into agent at enrollment
+//	agents-ca.key          CA private key  — root of trust, 0400
+//	agents-server.crt      server cert for the mTLS listener
+//	agents-server.key      server private key, 0600
 //
 // The package only uses crypto/x509, no external dependencies.
 package pki
@@ -23,9 +24,9 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -38,7 +39,15 @@ type Manager struct {
 	caCertPEM  []byte
 	serverCert []byte // PEM
 	serverKey  []byte // PEM
+	serverX509 *x509.Certificate
 }
+
+const (
+	caCertFile     = "agents-ca.crt"
+	caKeyFile      = "agents-ca.key"
+	serverCertFile = "agents-server.crt"
+	serverKeyFile  = "agents-server.key"
+)
 
 // New loads or creates the CA and the server cert. dir is the directory
 // where the cert/key files live (typically ./data). hosts is the list of
@@ -69,6 +78,23 @@ func (m *Manager) CAFingerprint() string { return certFingerprint(m.caCert.Raw) 
 // build a tls.Config in the caller (so we don't import net/http here).
 func (m *Manager) ServerCertPEM() []byte { return m.serverCert }
 func (m *Manager) ServerKeyPEM() []byte  { return m.serverKey }
+
+// ServerCertCovers reports whether the listener cert is valid for host
+// (a DNS name or IP, as an agent would put it in its dial URL).
+func (m *Manager) ServerCertCovers(host string) bool {
+	if m.serverX509 == nil {
+		return false
+	}
+	return m.serverX509.VerifyHostname(strings.Trim(host, "[]")) == nil
+}
+
+// ServerCertSANs lists the DNS names and IPs in the listener cert.
+func (m *Manager) ServerCertSANs() []string {
+	if m.serverX509 == nil {
+		return nil
+	}
+	return certSANs(m.serverX509)
+}
 
 // CACertPool returns an x509.CertPool with just the CA cert in it. Use
 // this as ClientCAs / RootCAs in tls.Config.
@@ -126,25 +152,39 @@ func certFingerprint(der []byte) string {
 // CA management
 // -----------------------------------------------------------------------------
 
-func (m *Manager) ensureCA() error {
-	certPath := filepath.Join(m.dir, "agents-ca.crt")
-	keyPath := filepath.Join(m.dir, "agents-ca.key")
+// loadCA reads an existing CA. Returns an error wrapping os.ErrNotExist
+// when either file is missing.
+func (m *Manager) loadCA() error {
+	certBytes, err := os.ReadFile(filepath.Join(m.dir, caCertFile))
+	if err != nil {
+		return err
+	}
+	keyBytes, err := os.ReadFile(filepath.Join(m.dir, caKeyFile))
+	if err != nil {
+		return err
+	}
+	cert, err := parseCertPEM(certBytes)
+	if err != nil {
+		return fmt.Errorf("%s: %w", caCertFile, err)
+	}
+	key, err := parseECKeyPEM(keyBytes)
+	if err != nil {
+		return fmt.Errorf("%s: %w", caKeyFile, err)
+	}
+	m.caCert = cert
+	m.caKey = key
+	m.caCertPEM = certBytes
+	return nil
+}
 
-	certBytes, certErr := os.ReadFile(certPath)
-	keyBytes, keyErr := os.ReadFile(keyPath)
+func (m *Manager) ensureCA() error {
+	certPath := filepath.Join(m.dir, caCertFile)
+	keyPath := filepath.Join(m.dir, caKeyFile)
+
+	_, certErr := os.Stat(certPath)
+	_, keyErr := os.Stat(keyPath)
 	if certErr == nil && keyErr == nil {
-		cert, err := parseCertPEM(certBytes)
-		if err != nil {
-			return err
-		}
-		key, err := parseECKeyPEM(keyBytes)
-		if err != nil {
-			return err
-		}
-		m.caCert = cert
-		m.caKey = key
-		m.caCertPEM = certBytes
-		return nil
+		return m.loadCA()
 	}
 	if certErr != nil && !errors.Is(certErr, os.ErrNotExist) {
 		return certErr
@@ -198,114 +238,6 @@ func (m *Manager) ensureCA() error {
 	m.caKey = key
 	m.caCertPEM = certPEM
 	return nil
-}
-
-// -----------------------------------------------------------------------------
-// Server cert (for the :8443 mTLS listener)
-// -----------------------------------------------------------------------------
-
-func (m *Manager) ensureServerCert(hosts []string) error {
-	certPath := filepath.Join(m.dir, "agents-server.crt")
-	keyPath := filepath.Join(m.dir, "agents-server.key")
-
-	certBytes, cErr := os.ReadFile(certPath)
-	keyBytes, kErr := os.ReadFile(keyPath)
-	if cErr == nil && kErr == nil {
-		// Reuse if it covers all the requested hosts; otherwise re-issue.
-		cert, err := parseCertPEM(certBytes)
-		if err == nil && coversHosts(cert, hosts) {
-			m.serverCert = certBytes
-			m.serverKey = keyBytes
-			return nil
-		}
-	} else {
-		if cErr != nil && !errors.Is(cErr, os.ErrNotExist) {
-			return cErr
-		}
-		if kErr != nil && !errors.Is(kErr, os.ErrNotExist) {
-			return kErr
-		}
-	}
-
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return err
-	}
-	serial, err := randomSerial()
-	if err != nil {
-		return err
-	}
-	template := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "dockmesh-agent-server", Organization: []string{"Dockmesh"}},
-		NotBefore:    time.Now().Add(-1 * time.Minute),
-		NotAfter:     time.Now().AddDate(5, 0, 0),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	for _, h := range hosts {
-		if ip := net.ParseIP(h); ip != nil {
-			template.IPAddresses = append(template.IPAddresses, ip)
-		} else {
-			template.DNSNames = append(template.DNSNames, h)
-		}
-	}
-	// Always include localhost / 127.0.0.1 / ::1 so on-host operators can
-	// dial the server even when their public DNS doesn't resolve.
-	template.DNSNames = append(template.DNSNames, "localhost")
-	template.IPAddresses = append(template.IPAddresses, net.ParseIP("127.0.0.1"), net.ParseIP("::1"))
-
-	der, err := x509.CreateCertificate(rand.Reader, template, m.caCert, &key.PublicKey, m.caKey)
-	if err != nil {
-		return err
-	}
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return err
-	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(keyPath, keyPEM, 0o400); err != nil {
-		return err
-	}
-	m.serverCert = certPEM
-	m.serverKey = keyPEM
-	return nil
-}
-
-func coversHosts(cert *x509.Certificate, hosts []string) bool {
-	for _, h := range hosts {
-		if h == "" {
-			continue
-		}
-		if ip := net.ParseIP(h); ip != nil {
-			found := false
-			for _, c := range cert.IPAddresses {
-				if c.Equal(ip) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return false
-			}
-			continue
-		}
-		found := false
-		for _, d := range cert.DNSNames {
-			if d == h {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
 }
 
 // -----------------------------------------------------------------------------

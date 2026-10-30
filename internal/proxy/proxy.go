@@ -57,6 +57,10 @@ type Service struct {
 	docker  *docker.Client
 	enabled bool
 
+	// containerState reports whether the managed container exists and runs;
+	// nil means ask Docker.
+	containerState func(ctx context.Context) (exists, running bool)
+
 	mu      sync.Mutex
 	metrics *metricsState
 	acme    *acmeBuffer

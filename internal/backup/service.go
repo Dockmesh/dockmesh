@@ -415,7 +415,7 @@ func (s *Service) Restore(ctx context.Context, runID int64, destVolume string) e
 	if err != nil {
 		return err
 	}
-	src, err := target.Read(ctx, run.TargetPath)
+	src, err := fetchArchive(ctx, target, run)
 	if err != nil {
 		return err
 	}
@@ -501,7 +501,7 @@ func (s *Service) RestoreStack(ctx context.Context, runID int64, targetStack str
 	if err != nil {
 		return nil, err
 	}
-	src, err := target.Read(ctx, run.TargetPath)
+	src, err := fetchArchive(ctx, target, run)
 	if err != nil {
 		return nil, err
 	}
