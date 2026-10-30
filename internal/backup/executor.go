@@ -127,8 +127,13 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 
 	written, copyErr := e.streamSources(ctx, job.Sources, hostTarget, encWriter)
 	closeErr := encWriter.Close()
+	var readErr error
 	if copyErr == nil && closeErr == nil {
 		e.logf(ctx, runID, "info", "wrote %d bytes", teeW.size)
+		readErr = readBack(ctx, target, relPath, teeW.size, hex.EncodeToString(hasher.Sum(nil)))
+		if readErr == nil {
+			e.logf(ctx, runID, "info", "read back %d bytes, sha256 matches", teeW.size)
+		}
 	}
 	hookErr := e.runHooks(ctx, runID, "post", hostTarget, job.PostHooks)
 
@@ -143,6 +148,10 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 		e.logf(ctx, runID, "error", "close encrypted writer: %s", closeErr)
 		_ = e.store.finishRun(ctx, runID, "failed", teeW.size, relPath, "", closeErr)
 		finalStatus, finalErr = "failed", closeErr
+	case readErr != nil:
+		e.logf(ctx, runID, "error", "%s", readErr)
+		_ = e.store.finishRun(ctx, runID, "failed", teeW.size, relPath, "", readErr)
+		finalStatus, finalErr = "failed", readErr
 	case hookErr != nil:
 		// Backup itself succeeded; surface hook failure but keep the file.
 		sum := hex.EncodeToString(hasher.Sum(nil))

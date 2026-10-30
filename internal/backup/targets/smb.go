@@ -111,7 +111,15 @@ func (s *SMB) Read(ctx context.Context, path string) (io.ReadCloser, error) {
 		conn.Close()
 		return nil, err
 	}
-	return &smbReader{f: f, share: share, session: session, conn: conn}, nil
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		share.Umount()
+		session.Logoff()
+		conn.Close()
+		return nil, fmt.Errorf("smb: stat %s: %w", full, err)
+	}
+	return &smbReader{r: sizedReader{r: f, remaining: fi.Size()}, f: f, share: share, session: session, conn: conn}, nil
 }
 
 func (s *SMB) List(ctx context.Context, prefix string) ([]Entry, error) {
@@ -248,13 +256,14 @@ func (w *smbWriter) Close() error {
 
 type smbReader struct {
 	closed  bool
+	r       sizedReader
 	f       *smb2.File
 	share   *smb2.Share
 	session *smb2.Session
 	conn    net.Conn
 }
 
-func (r *smbReader) Read(p []byte) (int, error) { return r.f.Read(p) }
+func (r *smbReader) Read(p []byte) (int, error) { return r.r.Read(p) }
 func (r *smbReader) Close() error {
 	// go-smb2 blocks on a second logoff of the same session.
 	if r.closed {
@@ -268,4 +277,35 @@ func (r *smbReader) Close() error {
 		err = cerr
 	}
 	return err
+}
+
+// sizedReader stops at the size the file had when it was opened instead
+// of asking the server for the end of file. ksmbd's reply to a READ at
+// the end of a file carries a signature go-smb2 rejects, so the final
+// read fails instead of returning io.EOF and age then drops the last
+// chunk of an encrypted archive.
+type sizedReader struct {
+	r         io.Reader
+	remaining int64
+}
+
+func (s *sizedReader) Read(p []byte) (int, error) {
+	if s.remaining <= 0 {
+		return 0, io.EOF
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if int64(len(p)) > s.remaining {
+		p = p[:s.remaining]
+	}
+	n, err := s.r.Read(p)
+	if n < 0 {
+		n = 0
+	}
+	s.remaining -= int64(n)
+	if errors.Is(err, io.EOF) && s.remaining > 0 {
+		return n, io.ErrUnexpectedEOF
+	}
+	return n, err
 }
