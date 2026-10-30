@@ -141,6 +141,9 @@ func (s *Service) RollingReplace(ctx context.Context, proj *composetypes.Project
 	if s.docker == nil {
 		return nil, errors.New("docker unavailable")
 	}
+	if err := s.refuseStagedMounts(ctx, proj); err != nil {
+		return nil, err
+	}
 	svc, ok := proj.Services[serviceName]
 	if !ok {
 		return nil, fmt.Errorf("service %q not found in project %s", serviceName, proj.Name)

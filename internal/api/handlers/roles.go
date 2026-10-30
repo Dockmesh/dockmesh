@@ -16,7 +16,7 @@ func (h *Handlers) ListRoles(w http.ResponseWriter, r *http.Request) {
 		// Fallback: return hardcoded roles.
 		writeJSON(w, http.StatusOK, []rbac.CustomRole{
 			{Name: "admin", Display: "Admin", Description: "Full control of the platform: users, roles, audit config, system updates. The only role that can manage other admins.", Builtin: true, Permissions: rbac.RolePerms("admin")},
-			{Name: "host-admin", Display: "Host Admin", Description: "Full control of assigned hosts: manage proxy, backups, alerts, registries. No user, role, or audit-config access.", Builtin: true, Permissions: rbac.RolePerms("host-admin")},
+			{Name: "host-admin", Display: "Host Admin", Description: "Full control of assigned hosts: manage proxy, backups, alerts, registries. No user, role, audit-config or system-settings access.", Builtin: true, Permissions: rbac.RolePerms("host-admin")},
 			{Name: "deployer", Display: "Deployer", Description: "Operate stacks and ship code: deploy + edit compose + pull images. No host or user management.", Builtin: true, Permissions: rbac.RolePerms("deployer")},
 			{Name: "operator", Display: "Operator", Description: "Day-to-day operations: start/stop containers, view logs and exec into them. No deploy, no destroy.", Builtin: true, Permissions: rbac.RolePerms("operator")},
 			{Name: "viewer", Display: "Viewer", Description: "Read-only across the fleet. View dashboards, logs, audit log, metrics — no mutations.", Builtin: true, Permissions: rbac.RolePerms("viewer")},
@@ -60,6 +60,10 @@ func (h *Handlers) CreateRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name and display required")
 		return
 	}
+	if err := h.checkRoleInput(r, in); err != nil {
+		writeGrantError(w, err)
+		return
+	}
 	if err := h.Roles.Create(r.Context(), in); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -85,6 +89,17 @@ func (h *Handlers) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !h.requireManageRole(w, r, name) {
+		return
+	}
+	if err := h.checkRoleInput(r, in); err != nil {
+		writeGrantError(w, err)
+		return
+	}
+	if err := h.checkRoleKeepsAdmin(r.Context(), name, hasAdminPerms(permSet(in.Permissions)) && len(in.Scopes) == 0); err != nil {
+		writeLastAdminError(w, err)
+		return
+	}
 	if err := h.Roles.Update(r.Context(), name, in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -105,6 +120,13 @@ func (h *Handlers) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	if !h.requireManageRole(w, r, name) {
+		return
+	}
+	if err := h.checkRoleKeepsAdmin(r.Context(), name, false); err != nil {
+		writeLastAdminError(w, err)
+		return
+	}
 	if err := h.Roles.Delete(r.Context(), name); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -151,7 +173,7 @@ func (h *Handlers) AllPermissions(w http.ResponseWriter, r *http.Request) {
 		{"containers.view", "View containers", "List containers, inspect their config, see status and resource usage.", "Containers", "view", "low", false},
 		{"containers.update", "Lifecycle (start / stop / restart)", "Start, stop, restart, pause, kill running containers. Operates on existing containers — does NOT create new ones (containers come from stack deploys).", "Containers", "update", "medium", false},
 		{"containers.delete", "Remove containers", "Delete containers (data inside the container is lost; volumes are preserved).", "Containers", "delete", "medium", false},
-		{"containers.exec", "Shell into container", "Open an interactive terminal inside a running container — equivalent to SSH access on that container.", "Containers", "exec", "high", true},
+		{"containers.exec", "Shell into container", "Open an interactive terminal inside a running container and browse, download or upload its files — equivalent to SSH access on that container.", "Containers", "exec", "high", true},
 		{"containers.logs", "Stream container logs", "Read live + historical logs. Sensitive because logs may contain secrets, PII, or customer data.", "Containers", "logs", "medium", true},
 
 		// ── Stacks ─────────────────────────────────────────────────────
@@ -218,11 +240,12 @@ func (h *Handlers) AllPermissions(w http.ResponseWriter, r *http.Request) {
 		{"tokens.manage_others", "Manage all tokens (admin)", "View and revoke API tokens created by any user. For incident response.", "API tokens", "manage_others", "high", true},
 
 		// ── Backups ────────────────────────────────────────────────────
-		{"backups.view", "View backup status", "List backup targets, jobs, and recent runs.", "Backups", "view", "low", false},
+		{"backups.view", "View backup status", "List backup targets, jobs, and recent runs. Target credentials are never shown.", "Backups", "view", "low", false},
 		{"backups.create", "Create backup config", "Add new backup targets or jobs. Trigger manual runs of new jobs.", "Backups", "create", "medium", false},
 		{"backups.update", "Edit backup config", "Edit existing backup targets or jobs.", "Backups", "update", "medium", false},
 		{"backups.delete", "Remove backup configs", "Delete backup targets and jobs (does not delete backups already on the target).", "Backups", "delete", "medium", false},
 		{"backups.restore", "Restore from backup", "Restore a stack or volume from a backup run. Overwrites current data.", "Backups", "restore", "high", true},
+		{"backups.download", "Download backups", "Download decrypted backup archives of in-scope hosts. Stack archives contain the stack's secrets; system backups and the backup key stay admin-only.", "Backups", "download", "high", true},
 
 		// ── Reverse proxy ──────────────────────────────────────────────
 		{"proxy.view", "View proxy routes", "List Caddy reverse-proxy routes and their TLS modes.", "Reverse proxy", "view", "low", false},
@@ -249,7 +272,7 @@ func (h *Handlers) AllPermissions(w http.ResponseWriter, r *http.Request) {
 
 		// ── System ─────────────────────────────────────────────────────
 		{"system.view", "View system settings", "View global env variables, system-wide configuration, server health.", "System", "view", "low", false},
-		{"system.update", "Edit system settings", "Modify global env variables and platform settings.", "System", "update", "medium", false},
+		{"system.update", "Edit system settings", "Modify global env variables, platform settings, sign-in policy and SSO providers. Together with an unscoped role this makes the holder an admin.", "System", "update", "medium", false},
 		{"system.upgrade", "Upgrade Dockmesh server", "Trigger a self-update of the Dockmesh server binary. The most destructive operation in the platform — highest risk class.", "System", "upgrade", "high", true},
 
 		// ── Metrics ────────────────────────────────────────────────────

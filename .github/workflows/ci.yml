@@ -24,6 +24,24 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
 
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Real SMB, SFTP, WebDAV and S3 servers; the script prints the
+      # DM_IT_* variables the tests read.
+      - name: start backup targets
+        run: internal/backup/integration/testdata/up.sh >> "$GITHUB_ENV"
+      - name: backup targets
+        run: go test -tags integration -count=1 -v ./internal/backup/integration/
+      - name: jobs from saved targets
+        run: go test -tags integration -count=1 -v -run AgainstRealServers ./internal/api/handlers/
+
   lint:
     name: lint
     runs-on: ubuntu-latest
@@ -32,13 +50,39 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # The prebuilt v1 binaries are built with an older Go than go.mod
-      # requires, so build golangci-lint with the job's toolchain instead.
-      - uses: golangci/golangci-lint-action@55c2c1448f86e01eaae002a5a3a9624417608d84 # v6.5.2
+      # Prebuilt binaries can lag behind the toolchain in go.mod, so build
+      # golangci-lint with the job's toolchain instead.
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v1.64.8
+          version: v2.15.0
           install-mode: goinstall
           only-new-issues: true
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go version
+      - run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+      # Only vulnerabilities our code actually calls count. Those with a fixed
+      # version fail the job; those without one are reported as notices.
+      - name: scan
+        run: |
+          govulncheck -format json ./... > vuln.json
+          jq -r 'select(.finding) | .finding | select(.trace[0].function)
+                 | [.osv, (.fixed_version // "")] | @tsv' vuln.json | sort -u > called.tsv
+          while IFS=$'\t' read -r id fixed; do
+            if [ -z "$fixed" ]; then
+              echo "::notice::$id is reachable but has no fix yet: https://pkg.go.dev/vuln/$id"
+            else
+              echo "::error::$id is reachable, fixed in $fixed: https://pkg.go.dev/vuln/$id"
+            fi
+          done < called.tsv
+          ! awk -F'\t' '$2 != "" { found = 1 } END { exit !found }' called.tsv
 
   web:
     name: web
@@ -55,6 +99,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm run check
+      - run: npm run test:unit
       - run: npm run build
 
   build:
@@ -78,6 +123,12 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: check Go toolchain
+        run: |
+          want=$(awk '$1 == "toolchain" { print $2 }' go.mod)
+          got=$(go env GOVERSION)
+          echo "building with $got, go.mod toolchain $want"
+          [ "$got" = "$want" ]
       - name: build frontend
         run: |
           cd web
@@ -125,12 +176,14 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
+      # LGPL-3.0 is GPLv3 plus permissions, so it combines with AGPL-3.0;
+      # github.com/cloudsoda/sddl (pulled in by the SMB client) uses it.
       - name: go dependencies
         run: |
           go install github.com/google/go-licenses/v2@v2.0.1
           go-licenses check ./cmd/dockmesh ./cmd/dockmesh-agent ./cmd/dmctl \
             --ignore github.com/dockmesh/dockmesh \
-            --allowed_licenses="${ALLOWED//;/,}"
+            --allowed_licenses="${ALLOWED//;/,},LGPL-3.0"
       - name: npm production dependencies
         run: |
           cd web

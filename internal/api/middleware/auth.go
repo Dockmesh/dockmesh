@@ -8,6 +8,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/apitokens"
 	"github.com/dockmesh/dockmesh/internal/auth"
+	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
@@ -257,20 +258,4 @@ func RequirePerm(perm rbac.Perm) func(http.Handler) http.Handler {
 	}
 }
 
-// clientIP best-effort extracts the caller's IP. Prefers X-Forwarded-For
-// when present (behind a reverse proxy), falls back to RemoteAddr.
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// First entry in the comma-separated list is the original client.
-		if i := strings.IndexByte(xff, ','); i > 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
-	}
-	// RemoteAddr is "ip:port" — strip the port.
-	addr := r.RemoteAddr
-	if i := strings.LastIndexByte(addr, ':'); i > 0 {
-		return addr[:i]
-	}
-	return addr
-}
+func clientIP(r *http.Request) string { return clientip.IP(r) }

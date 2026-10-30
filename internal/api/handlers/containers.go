@@ -163,7 +163,11 @@ func (h *Handlers) InspectContainer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	info, err := target.InspectContainer(r.Context(), chi.URLParam(r, "id"))
+	id := chi.URLParam(r, "id")
+	if !h.requireContainerScope(w, r, rbac.PermContainersView, target.ID(), id) {
+		return
+	}
+	info, err := target.InspectContainer(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -210,13 +214,8 @@ func (h *Handlers) KillContainer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	if !h.requireHostAccess(w, r, target.ID()) {
-		return
-	}
 	id := chi.URLParam(r, "id")
-	scopeReq := h.containerScopeReq(r.Context(), target.ID(), id)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermContainersUpdate, scopeReq, "container "+id)
+	if !h.requireContainerScope(w, r, rbac.PermContainersUpdate, target.ID(), id) {
 		return
 	}
 	var body struct {
@@ -246,13 +245,8 @@ func (h *Handlers) RemoveContainer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	if !h.requireHostAccess(w, r, target.ID()) {
-		return
-	}
 	id := chi.URLParam(r, "id")
-	scopeReq := h.containerScopeReq(r.Context(), target.ID(), id)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermContainersDelete, scopeReq, "container "+id)
+	if !h.requireContainerScope(w, r, rbac.PermContainersDelete, target.ID(), id) {
 		return
 	}
 	force := r.URL.Query().Get("force") == "true"
@@ -272,13 +266,8 @@ func (h *Handlers) containerAction(w http.ResponseWriter, r *http.Request, op st
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	if !h.requireHostAccess(w, r, target.ID()) {
-		return
-	}
 	id := chi.URLParam(r, "id")
-	scopeReq := h.containerScopeReq(r.Context(), target.ID(), id)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermContainersUpdate, scopeReq, "container "+id)
+	if !h.requireContainerScope(w, r, rbac.PermContainersUpdate, target.ID(), id) {
 		return
 	}
 	switch op {

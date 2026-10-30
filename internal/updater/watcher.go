@@ -8,9 +8,10 @@ import (
 	"sync"
 	"time"
 
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notifications"
+	"github.com/dockmesh/dockmesh/internal/rbac"
+	dtypes "github.com/docker/docker/api/types"
 )
 
 // UpdateInfo describes whether a newer image is available for one image
@@ -249,6 +250,7 @@ func (w *Watcher) poll(ctx context.Context) {
 				Title:    "Image update available: " + ref,
 				Body:     "A newer manifest is published upstream",
 				Link:     "/resources?tab=images",
+				Perm:     rbac.PermImagesView,
 			})
 		}
 	}

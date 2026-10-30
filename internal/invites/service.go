@@ -204,6 +204,13 @@ func (s *Service) MarkUsed(ctx context.Context, rawToken string) error {
 	return nil
 }
 
+// Unclaim reverts MarkUsed after the accept it was claimed for failed.
+func (s *Service) Unclaim(ctx context.Context, rawToken string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE invite_tokens SET used_at = NULL WHERE token_hash = ?`, sha256Hex(rawToken))
+	return err
+}
+
 // List returns recent invites (admin overview). Includes expired +
 // used rows that are still inside the cleanup retention window.
 func (s *Service) List(ctx context.Context, limit int) ([]Invite, error) {

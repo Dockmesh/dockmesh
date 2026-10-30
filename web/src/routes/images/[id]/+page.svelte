@@ -96,7 +96,7 @@
     return inspect?.Id ?? id;
   }
   function normalizeReport(rep: ScanReport | null): ScanReport | null {
-    if (!rep) return null;
+    if (!rep || rep.scanned === false) return null;
     if (!rep.vulnerabilities) rep.vulnerabilities = [];
     return rep;
   }
@@ -104,7 +104,6 @@
     try {
       scanReport = normalizeReport(await api.images.getScan(id));
     } catch {
-      /* 404 = never scanned */
       scanReport = null;
     }
   }

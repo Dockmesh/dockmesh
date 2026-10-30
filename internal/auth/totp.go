@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -13,9 +14,13 @@ import (
 	"fmt"
 	"image/png"
 	"strings"
+	"time"
 
+	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 )
+
+const totpPeriod = 30
 
 var (
 	ErrMFAAlreadyEnrolled = errors.New("mfa already enrolled")
@@ -97,7 +102,8 @@ func (s *Service) VerifyTOTPEnrollment(ctx context.Context, userID, code string)
 	if verified == 1 {
 		return nil, ErrMFAAlreadyEnrolled
 	}
-	if !totp.Validate(code, secret.String) {
+	step, ok := matchTOTPStep(code, secret.String, time.Now())
+	if !ok {
 		return nil, ErrMFAInvalidCode
 	}
 
@@ -119,8 +125,8 @@ func (s *Service) VerifyTOTPEnrollment(ctx context.Context, userID, code string)
 		return nil, err
 	}
 	if _, err := s.db.ExecContext(ctx,
-		`UPDATE users SET totp_verified = 1, totp_recovery = ? WHERE id = ?`,
-		string(hashJSON), userID); err != nil {
+		`UPDATE users SET totp_verified = 1, totp_recovery = ?, totp_last_step = ? WHERE id = ?`,
+		string(hashJSON), step, userID); err != nil {
 		return nil, err
 	}
 	return codes, nil
@@ -177,8 +183,18 @@ func (s *Service) verifyMFACode(ctx context.Context, userID, code string) (bool,
 	if err != nil {
 		return false, err
 	}
-	if secret.Valid && totp.Validate(code, secret.String) {
-		return true, nil
+	if secret.Valid {
+		if step, ok := matchTOTPStep(code, secret.String, time.Now()); ok {
+			// Conditional on the stored step: a code (or an older one) that
+			// was already accepted is refused, also when two requests race.
+			res, err := s.db.ExecContext(ctx,
+				`UPDATE users SET totp_last_step = ? WHERE id = ? AND totp_last_step < ?`, step, userID, step)
+			if err != nil {
+				return false, err
+			}
+			n, _ := res.RowsAffected()
+			return n == 1, nil
+		}
 	}
 	// Try recovery code.
 	if recovery.Valid {
@@ -204,6 +220,21 @@ func (s *Service) verifyMFACode(ctx context.Context, userID, code string) (bool,
 		}
 	}
 	return false, nil
+}
+
+// matchTOTPStep returns the 30-second time step a six-digit code belongs
+// to, allowing one step of clock skew either way.
+func matchTOTPStep(code, secret string, now time.Time) (int64, bool) {
+	code = strings.TrimSpace(code)
+	opts := totp.ValidateOpts{Period: totpPeriod, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1}
+	cur := now.Unix() / totpPeriod
+	for _, step := range []int64{cur - 1, cur, cur + 1} {
+		want, err := totp.GenerateCodeCustom(secret, time.Unix(step*totpPeriod, 0).UTC(), opts)
+		if err == nil && subtle.ConstantTimeCompare([]byte(want), []byte(code)) == 1 {
+			return step, true
+		}
+	}
+	return 0, false
 }
 
 func hashRecoveryCode(code string) string {
