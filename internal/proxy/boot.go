@@ -23,11 +23,9 @@ const KeyEnabled = "proxy_enabled"
 // restart and pushes the stored routes. envDefault is the fallback when the
 // setting was never saved.
 //
-// Before 0.4.2 the Enable button did not save the setting, so such installs
-// have a running proxy container and no setting. When the setting is unset
-// and a managed container exists that either carries routes or has routes
-// waiting in the database, the proxy was clearly in use: it is treated as
-// enabled and the choice is saved.
+// When the setting is unset but a managed container exists that carries
+// routes or has routes waiting in the database, the proxy was in use: it is
+// treated as enabled and that choice is saved.
 func (s *Service) Reconcile(ctx context.Context, st SettingsStore, envDefault bool) (bool, error) {
 	enabled := envDefault
 	if raw := st.Get(KeyEnabled, ""); raw != "" {

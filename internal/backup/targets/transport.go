@@ -59,7 +59,11 @@ func (c *idleConn) Write(p []byte) (int, error) {
 // dialTCP opens a connection that fails fast on an unreachable host and
 // notices a dead peer through keepalives.
 func dialTCP(addr string) (net.Conn, error) {
-	return (&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}).Dial("tcp", addr)
+	c, err := (&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}).Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	return &idleConn{Conn: c, idle: transferIdleTimeout}, nil
 }
 
 // transferTransportWithCA is newTransferTransport trusting an extra PEM CA

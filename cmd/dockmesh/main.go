@@ -604,7 +604,6 @@ func main() {
 
 	// Proxy: the boot-time config flag is just the *default*; the DB-backed
 	// `proxy_enabled` setting overrides it so the toggle survives restarts.
-	// Reconcile brings an enabled proxy up and pushes the stored routes.
 	if _, err := proxySvc.Reconcile(ctx, settingsStore, cfg.ProxyEnabled); err != nil {
 		slog.Warn("proxy boot-up failed — toggle off/on in Settings once Docker is reachable", "err", err)
 	}

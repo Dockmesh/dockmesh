@@ -296,9 +296,6 @@ func (s *sizedReader) Read(p []byte) (int, error) {
 		p = p[:s.remaining]
 	}
 	n, err := s.r.Read(p)
-	if n < 0 {
-		n = 0
-	}
 	s.remaining -= int64(n)
 	if errors.Is(err, io.EOF) && s.remaining > 0 {
 		return n, io.ErrUnexpectedEOF
