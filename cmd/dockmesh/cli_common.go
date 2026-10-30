@@ -85,6 +85,8 @@ Database:
 Agent PKI:
   ca export              Export the agent CA public cert (--out ca.pem)
   ca rotate              Rotate the agent CA (new key; all agents must re-enroll)
+  ca reissue-server      Add names/IPs to the agent listener cert, same CA
+                         (--add-san <name-or-ip>; use when moving to a new address)
 
 Agent enrollment:
   enroll create          Generate a new enrollment token (--name)

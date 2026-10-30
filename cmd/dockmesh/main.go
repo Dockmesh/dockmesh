@@ -558,6 +558,11 @@ func main() {
 		// agent listener port. Operator should override via env in prod.
 		agentPublic = deriveAgentURL(cfg.BaseURL, cfg.AgentListen)
 	}
+	if h := urlHostname(agentPublic); cfg.AgentListen != "" && h != "" && !pkiMgr.ServerCertCovers(h) {
+		slog.Warn("agent server certificate does not cover the agent public host; agents dialing it will fail TLS verification",
+			"host", h, "cert_sans", pkiMgr.ServerCertSANs(),
+			"fix", "dockmesh ca reissue-server --add-san "+h+", then restart")
+	}
 	agentsSvc := agents.NewService(database, pkiMgr, cfg.BaseURL, agentPublic)
 	agentsSvc.SetEnrollTokenTTL(cfg.AgentEnrollTokenTTL)
 	hostRegistry := host.NewRegistry(dockerCli, agentsSvc)
@@ -1217,6 +1222,14 @@ func scrubEnvFlag(path, key string) (bool, error) {
 		return false, nil
 	}
 	return true, os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o600)
+}
+
+func urlHostname(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }
 
 func deriveAgentURL(baseURL, listen string) string {
