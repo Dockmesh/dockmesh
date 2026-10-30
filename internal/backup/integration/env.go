@@ -92,8 +92,7 @@ func (e Env) Targets(base string) []Config {
 	return []Config{
 		{Name: "smb", Type: "smb", Config: smb(e.SMBUser), Secret: "password",
 			Gaps: map[string]string{GapList: smbList}},
-		{Name: "smb-domain-user", Type: "smb", Config: smb("WORKGROUP\\" + e.SMBUser), Secret: "password",
-			Gaps: map[string]string{GapAll: "the SMB target sends DOMAIN\\user as the plain user name instead of splitting it"}},
+		{Name: "smb-domain-user", Type: "smb", Config: smb("WORKGROUP\\" + e.SMBUser), Secret: "password"},
 		{Name: "sftp-password", Type: "sftp", Config: sftp("pw", map[string]any{"password": e.SFTPPass}), Secret: "password"},
 		{Name: "sftp-key", Type: "sftp", Config: sftp("key", map[string]any{"private_key": e.SFTPKey}), Secret: "private_key"},
 		{Name: "webdav", Type: "webdav", Config: map[string]any{"url": e.WebDAVURL, "username": e.WebDAVUser,

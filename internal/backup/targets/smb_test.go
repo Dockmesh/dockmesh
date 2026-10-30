@@ -73,3 +73,27 @@ func TestSizedReaderReportsTruncation(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestSplitSMBUser(t *testing.T) {
+	tests := []struct{ in, domain, user string }{
+		{"matrix", "", "matrix"},
+		{`LAB\matrix`, "LAB", "matrix"},
+		{"matrix@lab.example", "lab.example", "matrix"},
+		{`LAB\first.last@corp`, "LAB", "first.last@corp"},
+		{"@odd", "", "@odd"},
+		{`dom\`, "dom", ""},
+	}
+	for _, tt := range tests {
+		d, u := splitSMBUser(tt.in)
+		if d != tt.domain || u != tt.user {
+			t.Errorf("splitSMBUser(%q) = %q, %q; want %q, %q", tt.in, d, u, tt.domain, tt.user)
+		}
+	}
+}
+
+func TestNTLMForExplicitDomainWins(t *testing.T) {
+	n := ntlmFor(`A\u`, "B", "pw")
+	if n.Domain != "B" || n.User != "u" {
+		t.Fatalf("got domain %q user %q", n.Domain, n.User)
+	}
+}

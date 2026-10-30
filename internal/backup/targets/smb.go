@@ -14,10 +14,12 @@ import (
 )
 
 type SMBConfig struct {
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	Share    string `json:"share"`
+	Host  string `json:"host"`
+	Port  int    `json:"port"`
+	Share string `json:"share"`
+	// Username may carry the domain (backslash or @ form); Domain overrides it.
 	Username string `json:"username"`
+	Domain   string `json:"domain,omitempty"`
 	Password string `json:"password"`
 	Path     string `json:"path"` // path within the share
 }
@@ -51,10 +53,7 @@ func (s *SMB) connect(ctx context.Context) (*smb2.Share, *smb2.Session, net.Conn
 	}
 
 	d := &smb2.Dialer{
-		Initiator: &smb2.NTLMInitiator{
-			User:     s.cfg.Username,
-			Password: s.cfg.Password,
-		},
+		Initiator: ntlmFor(s.cfg.Username, s.cfg.Domain, s.cfg.Password),
 	}
 	session, err := d.DialConn(ctx, conn, addr)
 	if err != nil {
@@ -201,10 +200,7 @@ func ListSMBShares(host string, port int, username, password string) ([]string, 
 	defer conn.Close()
 
 	d := &smb2.Dialer{
-		Initiator: &smb2.NTLMInitiator{
-			User:     username,
-			Password: password,
-		},
+		Initiator: ntlmFor(username, "", password),
 	}
 	session, err := d.DialConn(context.Background(), conn, addr)
 	if err != nil {
@@ -308,4 +304,24 @@ func (s *sizedReader) Read(p []byte) (int, error) {
 		return n, io.ErrUnexpectedEOF
 	}
 	return n, err
+}
+
+// splitSMBUser separates the NTLM domain from a login written as
+// DOMAIN\user or user@domain.
+func splitSMBUser(login string) (domain, user string) {
+	if i := strings.Index(login, `\`); i >= 0 {
+		return login[:i], login[i+1:]
+	}
+	if i := strings.LastIndex(login, "@"); i > 0 && i < len(login)-1 {
+		return login[i+1:], login[:i]
+	}
+	return "", login
+}
+
+func ntlmFor(login, domain, password string) *smb2.NTLMInitiator {
+	d, user := splitSMBUser(login)
+	if domain != "" {
+		d = domain
+	}
+	return &smb2.NTLMInitiator{User: user, Domain: d, Password: password}
 }
