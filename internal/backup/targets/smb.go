@@ -113,8 +113,8 @@ func (s *SMB) Read(ctx context.Context, path string) (io.ReadCloser, error) {
 	fi, err := f.Stat()
 	if err != nil {
 		f.Close()
-		share.Umount()
-		session.Logoff()
+		_ = share.Umount()
+		_ = session.Logoff()
 		conn.Close()
 		return nil, fmt.Errorf("smb: stat %s: %w", full, err)
 	}

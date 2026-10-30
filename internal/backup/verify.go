@@ -77,7 +77,7 @@ func (s *Service) VerifyRun(ctx context.Context, runID int64) (*VerifyResult, er
 	// run.SHA256 covers the bytes as stored on the target (ciphertext for
 	// encrypted runs), so the hash is taken below the decryption.
 	hasher := sha256.New()
-	var teed io.Reader = io.TeeReader(src, hasher)
+	teed := io.TeeReader(src, hasher)
 	if run.Encrypted {
 		dec, err := wrapDecrypt(io.NopCloser(teed), s.secrets)
 		if err != nil {
