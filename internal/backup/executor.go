@@ -88,7 +88,9 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 		slog.Warn("backup finish run", "run", runID, "err", err)
 	}
 	if target != nil {
-		e.applyRetention(ctx, runID, job, target)
+		rctx, cancel := context.WithTimeout(ctx, cleanupTimeout)
+		e.applyRetention(rctx, runID, job, target)
+		cancel()
 	}
 
 	now := time.Now()
@@ -139,8 +141,8 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	}
 
 	relPath := relativePath(job, runID)
-	// Recorded up front so a crash mid-upload still leaves a pointer to
-	// the partial file for the cleanup at startup.
+	// Recorded up front so the partial file of a crashed run stays
+	// traceable.
 	if err := e.store.setRunPath(ctx, runID, relPath); err != nil {
 		slog.Warn("backup record run path", "run", runID, "err", err)
 	}
@@ -156,7 +158,7 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	if err != nil {
 		_ = abortWriter(stored)
 		out = fail("encrypt", err)
-		out.path = e.removePartial(ctx, runID, target, w, relPath)
+		out.path = e.removePartial(ctx, runID, target, w, relPath, false)
 		return out, nil
 	}
 
@@ -164,12 +166,12 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	if _, err := e.streamSources(ctx, job.Sources, hostTarget, encW); err != nil {
 		_ = abortWriter(encW)
 		out = fail("stream sources", err)
-		out.path = e.removePartial(ctx, runID, target, w, relPath)
+		out.path = e.removePartial(ctx, runID, target, w, relPath, false)
 		return out, nil
 	}
 	if err := encW.Close(); err != nil {
 		out = fail("finish upload", err)
-		out.path = e.removePartial(ctx, runID, target, w, relPath)
+		out.path = e.removePartial(ctx, runID, target, w, relPath, true)
 		return out, nil
 	}
 	sum := hex.EncodeToString(hasher.Sum(nil))
@@ -177,7 +179,7 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	if err := readBack(ctx, target, relPath, stored.n, sum); err != nil {
 		e.logf(ctx, runID, "error", "%s", err)
 		out = runOutcome{status: StatusFailed, size: stored.n, err: err}
-		out.path = e.removePartial(ctx, runID, target, w, relPath)
+		out.path = e.removePartial(ctx, runID, target, w, relPath, true)
 		return out, nil
 	}
 	e.logf(ctx, runID, "info", "read back %d bytes, sha256 matches", stored.n)
@@ -197,14 +199,22 @@ func (e *Executor) runPostHooks(ctx context.Context, runID int64, hostTarget hos
 	return out
 }
 
-// removePartial deletes what a failed run wrote; targets that upload on
-// Close never published anything. Returns the path to keep on the run
-// when the file could not be deleted, so the retention pass retries.
-func (e *Executor) removePartial(ctx context.Context, runID int64, target targets.Target, w io.WriteCloser, relPath string) string {
-	if _, ok := w.(targets.Aborter); ok {
+// cleanupTimeout bounds retention and partial-file deletes, which run
+// after the caller may have gone away; a stalled target must not keep
+// them alive forever.
+const cleanupTimeout = 10 * time.Minute
+
+// removePartial deletes what a failed run wrote. Targets that upload on
+// Close published nothing when the run was aborted before Close (closed
+// false). Returns the path to keep on the run when the file could not be
+// deleted, so the retention pass retries.
+func (e *Executor) removePartial(ctx context.Context, runID int64, target targets.Target, w io.WriteCloser, relPath string, closed bool) string {
+	if _, ok := w.(targets.Aborter); ok && !closed {
 		return ""
 	}
-	err := target.Delete(context.WithoutCancel(ctx), relPath)
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+	defer cancel()
+	err := target.Delete(dctx, relPath)
 	if err == nil || errors.Is(err, fs.ErrNotExist) {
 		return ""
 	}
@@ -451,7 +461,7 @@ func (e *Executor) deleteArchive(ctx context.Context, target targets.Target, r R
 // helpers
 // -----------------------------------------------------------------------------
 
-// countingWriter counts the bytes stored on the target.
+// countingWriter counts and hashes the bytes stored on the target.
 type countingWriter struct {
 	w io.WriteCloser
 	h hash.Hash

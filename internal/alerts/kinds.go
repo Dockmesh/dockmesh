@@ -640,9 +640,10 @@ func (s *Service) evalBackupMissed(ctx context.Context, r *Rule, now time.Time) 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT j.name, j.schedule, j.enabled, j.created_at,
 		       (SELECT r.finished_at FROM backup_runs r
-		         WHERE r.job_id = j.id AND r.status = 'success' AND r.finished_at IS NOT NULL
+		         WHERE r.job_id = j.id AND r.status IN ('success', 'success_with_warnings') AND r.finished_at IS NOT NULL
 		         ORDER BY r.id DESC LIMIT 1)
-		  FROM backup_jobs j`)
+		  FROM backup_jobs j
+		 WHERE j.deleted_at IS NULL`)
 	if err != nil {
 		return err
 	}
