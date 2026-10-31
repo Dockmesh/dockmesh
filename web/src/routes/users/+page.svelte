@@ -1024,7 +1024,7 @@
                 type="button"
                 class="ed-seg-radio-item ed-seg-radio-item-disabled"
                 disabled
-                title="OIDC ships with the SSO slice — see memory."
+                title="Invites create local accounts. SSO users get theirs the first time they sign in, if sign-in settings allow it."
               >OIDC</button>
             </div>
           </div>

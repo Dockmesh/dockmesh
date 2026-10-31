@@ -41,6 +41,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   that break these rules stop being served and are listed in a notice for admins.
 
 ### Fixed
+- `dockmesh-agent --version` works for users other than root: the agent's data directory is
+  now traversable (not listable) and its `bin/` readable, so the `/usr/local/bin` link resolves.
+  Existing agents apply this when they start after the upgrade; keys stay readable only by the agent.
+- Versions are no longer shown as "vv0.4.2" on the host pages and in the host switcher.
+- The disabled OIDC option in the invite dialog explains that SSO users get their account at
+  their first sign-in, instead of showing an internal note.
 - Updating a container's image no longer loses its anonymous volumes (`-v /data` or a
   `VOLUME` in the image); the new container gets the old volumes.
 - A failed image update no longer leaves the container deleted: the old container is kept

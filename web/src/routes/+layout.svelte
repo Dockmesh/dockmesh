@@ -6,6 +6,7 @@
   import { hosts } from '$lib/stores/host.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import { api } from '$lib/api';
+  import { fmtVersion } from '$lib/version';
   import { toast } from '$lib/stores/toast.svelte';
   import { Toaster, ConfirmDialog, UpdateBanner, HealthDot } from '$lib/components/ui';
   import NotificationCenter from '$lib/components/ui/NotificationCenter.svelte';
@@ -156,7 +157,7 @@
     if (h.id === 'local') {
       if (!serverInfo) return 'local';
       const up = fmtUptimeShort(serverInfo.uptime_seconds);
-      return `v${serverInfo.version} · ${up}`;
+      return `${fmtVersion(serverInfo.version)} · ${up}`;
     }
     const a = agentsByID[h.id];
     if (!a) return h.status;
@@ -164,8 +165,8 @@
     const up = fmtUptimeFromISO(a.online_since);
     if (!a.version && !up) return 'online';
     if (!a.version) return up ?? 'online';
-    if (!up) return `v${a.version}`;
-    return `v${a.version} · ${up}`;
+    if (!up) return fmtVersion(a.version);
+    return `${fmtVersion(a.version)} · ${up}`;
   }
 
   // Setup-mode probe (P.14.3).

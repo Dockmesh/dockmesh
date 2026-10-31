@@ -281,7 +281,7 @@ ensure_dir_owner "$DATA_DIR" "$RUN_USER"
 if [[ -n "$OLD_DATA_DIR" && -d "$OLD_DATA_DIR" ]]; then
   systemctl stop dockmesh-agent 2>/dev/null || true
   log "moving agent files out of the server's data directory $OLD_DATA_DIR to $DATA_DIR"
-  install -d -m 0700 -o "$RUN_USER" -g "$RUN_GROUP" "$DATA_DIR"
+  install -d -m 0711 -o "$RUN_USER" -g "$RUN_GROUP" "$DATA_DIR"
   migrate_agent_files "$OLD_DATA_DIR" "$DATA_DIR"
   if [[ $AS_ROOT -eq 0 ]]; then
     usermod -d "$DATA_DIR" "$RUN_USER" 2>/dev/null || true
@@ -308,7 +308,7 @@ fi
 # Filesystem layout
 # -----------------------------------------------------------------------------
 log "creating directories"
-install -d -m 0700 -o "$RUN_USER" -g "$RUN_GROUP" "$DATA_DIR"
+install -d -m 0711 -o "$RUN_USER" -g "$RUN_GROUP" "$DATA_DIR"
 install -d -m 0750 -o root -g "$RUN_GROUP" "$ENV_DIR"
 
 # -----------------------------------------------------------------------------
@@ -320,7 +320,7 @@ install -d -m 0750 -o root -g "$RUN_GROUP" "$ENV_DIR"
 # in the Linux world and non-root users can't create siblings there.
 BIN_DIR="$DATA_DIR/bin"
 AGENT_BIN="$BIN_DIR/dockmesh-agent"
-install -d -m 0750 -o "$RUN_USER" -g "$RUN_GROUP" "$BIN_DIR"
+install -d -m 0755 -o "$RUN_USER" -g "$RUN_GROUP" "$BIN_DIR"
 
 TMP_BIN="$(mktemp)"
 log "downloading agent binary from $BINARY_URL"
@@ -336,7 +336,8 @@ rm -f "$TMP_BIN"
 
 # Keep a symlink at /usr/local/bin/dockmesh-agent for convenience —
 # `dockmesh-agent --version` on a user shell still works, but the
-# systemd unit runs the real path in $DATA_DIR/bin.
+# systemd unit runs the real path in $DATA_DIR/bin. $DATA_DIR is 0711 so
+# other users can reach the binary without listing the keys next to it.
 ln -sf "$AGENT_BIN" /usr/local/bin/dockmesh-agent
 
 log "installed: $($AGENT_BIN --version 2>&1 | head -1 || echo dockmesh-agent)"

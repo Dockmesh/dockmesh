@@ -168,3 +168,46 @@ func fileSHA256(p string) (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
+
+// openBinDir lets other users run the agent binary through the
+// /usr/local/bin symlink (for `dockmesh-agent --version`): the data dir
+// becomes traversable without being listable, and bin/ readable. Older
+// installers created them as 0700 and 0750; other modes are left alone.
+// The keys in the data dir keep their own 0600. Nothing changes unless the
+// running binary lives in <dataDir>/bin, and a data dir shared with a
+// server on the same host is never touched.
+func openBinDir(dataDir string) {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	openBinDirFor(dataDir, exe)
+}
+
+func openBinDirFor(dataDir, exe string) {
+	exe, err := filepath.EvalSymlinks(exe)
+	bin, berr := filepath.EvalSymlinks(filepath.Join(dataDir, "bin"))
+	if err != nil || berr != nil || filepath.Dir(exe) != bin {
+		return
+	}
+	for _, f := range []string{"dockmesh.db", "dockmesh.env", filepath.Join("data", "dockmesh.db")} {
+		if _, err := os.Stat(filepath.Join(dataDir, f)); err == nil {
+			return
+		}
+	}
+	for _, d := range []struct {
+		path     string
+		old, new os.FileMode
+	}{
+		{dataDir, 0o700, 0o711},
+		{filepath.Join(dataDir, "bin"), 0o750, 0o755},
+	} {
+		fi, err := os.Stat(d.path)
+		if err != nil || !fi.IsDir() || fi.Mode().Perm() != d.old {
+			continue
+		}
+		if err := os.Chmod(d.path, d.new); err != nil {
+			slog.Warn("open agent binary dir", "path", d.path, "err", err)
+		}
+	}
+}
