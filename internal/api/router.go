@@ -757,6 +757,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/proxy/status", h.ProxyStatus)
 				r.Get("/proxy/routes", h.ListProxyRoutes)
 				r.Get("/proxy/routes/{id}/metrics", h.GetProxyRouteMetrics)
+				r.Get("/proxy/routes/{id}/config", h.GetProxyRouteConfig)
 				r.Get("/proxy/metrics", h.GetProxyMetrics)
 				r.Get("/proxy/acme-events", h.ListACMEEvents)
 			})

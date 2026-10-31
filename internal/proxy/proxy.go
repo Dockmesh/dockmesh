@@ -13,7 +13,9 @@ package proxy
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -34,15 +36,29 @@ type Route struct {
 	// Enabled gates whether this route is included in the generated
 	// Caddyfile. Disabled routes stay in the table for editing but
 	// traffic stops flowing. Default true on new rows (migration 054).
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Enabled bool `json:"enabled"`
+	// Options are returned without basic-auth hashes (see Public).
+	Options   SiteOptions `json:"options"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
 	// Cert metadata — populated by Service.EnrichWithCertInfo() for
 	// routes whose TLS is managed by Caddy. Empty for tls_mode=none.
 	CertIssuer    string     `json:"cert_issuer,omitempty"`
 	CertValidFrom *time.Time `json:"cert_valid_from,omitempty"`
 	CertValidTo   *time.Time `json:"cert_valid_to,omitempty"`
 	CertDaysLeft  *int       `json:"cert_days_left,omitempty"`
+
+	// optionsErr is set when the stored options can't be read; such a
+	// route is not served rather than served without its access rules.
+	optionsErr error
+}
+
+// RouteSpec is the input for a new route. Nil Options means defaults.
+type RouteSpec struct {
+	Host     string
+	Upstream string
+	TLSMode  string
+	Options  *SiteOptions
 }
 
 // Status reports whether the proxy container is running and whether the
@@ -59,6 +75,8 @@ var (
 	ErrProxyNotConfigured = errors.New("proxy not enabled")
 	ErrInvalidTLSMode     = errors.New("invalid tls mode")
 	ErrDuplicateHost      = errors.New("host already has a route")
+	ErrRouteNotFound      = errors.New("route not found")
+	ErrWWWConflict        = errors.New("the www. name of this host is a site of its own")
 )
 
 // noticeKeyBlocked is raised while routes are left out of the Caddy
@@ -148,32 +166,57 @@ func (s *Service) desiredConfig(ctx context.Context) (*caddyConfig, error) {
 	return cfg, nil
 }
 
-// ListRoutes returns all configured routes.
+// ListRoutes returns all configured routes, without password hashes.
 func (s *Service) ListRoutes(ctx context.Context) ([]Route, error) {
-	return s.listRoutes(ctx)
+	routes, err := s.listRoutes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range routes {
+		routes[i].Options = routes[i].Options.Public()
+	}
+	return routes, nil
+}
+
+// GetRoute returns one route without password hashes.
+func (s *Service) GetRoute(ctx context.Context, id int64) (*Route, error) {
+	r, err := s.getRoute(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	r.Options = r.Options.Public()
+	return r, nil
 }
 
 // CreateRoute adds a new host → upstream mapping.
-func (s *Service) CreateRoute(ctx context.Context, host, upstream, tlsMode string) (*Route, error) {
-	if err := validateTLSMode(tlsMode); err != nil {
+func (s *Service) CreateRoute(ctx context.Context, spec RouteSpec) (*Route, error) {
+	if err := validateTLSMode(spec.TLSMode); err != nil {
 		return nil, err
 	}
-	if err := checkRouteHost(host); err != nil {
+	if err := checkRouteHost(spec.Host); err != nil {
 		return nil, err
 	}
-	if err := checkUpstream(upstream); err != nil {
+	if err := checkUpstream(spec.Upstream); err != nil {
+		return nil, err
+	}
+	var opts SiteOptions
+	if spec.Options != nil {
+		opts = *spec.Options
+	}
+	raw, err := s.prepareOptions(ctx, 0, spec.Host, spec.TLSMode, &opts, nil)
+	if err != nil {
 		return nil, err
 	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO proxy_routes (host, upstream, tls_mode, enabled) VALUES (?, ?, ?, 1)`,
-		host, upstream, tlsMode)
+		`INSERT INTO proxy_routes (host, upstream, tls_mode, enabled, options) VALUES (?, ?, ?, 1, ?)`,
+		spec.Host, spec.Upstream, spec.TLSMode, raw)
 	if err != nil {
 		// SQLite unique constraint code is vendor-specific; the string
 		// "UNIQUE constraint" is stable enough.
 		return nil, ErrDuplicateHost
 	}
 	id, _ := res.LastInsertId()
-	route := &Route{ID: id, Host: host, Upstream: upstream, TLSMode: tlsMode, Enabled: true}
+	route := &Route{ID: id, Host: spec.Host, Upstream: spec.Upstream, TLSMode: spec.TLSMode, Enabled: true, Options: opts.Public()}
 	if err := s.SyncFromDB(ctx); err != nil {
 		return route, err
 	}
@@ -181,22 +224,119 @@ func (s *Service) CreateRoute(ctx context.Context, host, upstream, tlsMode strin
 }
 
 // UpdateRoute replaces the upstream, TLS mode and enabled state of an
-// existing route. enabled=false keeps the row but excludes it from the
-// generated Caddyfile so traffic stops flowing without losing config.
-func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode string, enabled bool) error {
+// existing route, and its options unless opts is nil. enabled=false
+// keeps the row but excludes it from the generated config so traffic
+// stops flowing without losing config.
+func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode string, enabled bool, opts *SiteOptions) error {
 	if err := validateTLSMode(tlsMode); err != nil {
 		return err
 	}
 	if err := checkUpstream(upstream); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE proxy_routes SET upstream = ?, tls_mode = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		upstream, tlsMode, boolToInt(enabled), id)
+	cur, err := s.getRoute(ctx, id)
+	if err != nil {
+		return err
+	}
+	next := cur.Options
+	prev := &cur.Options
+	if opts != nil {
+		next = *opts
+	} else if cur.optionsErr != nil {
+		return fmt.Errorf("%w: stored options can't be read (%w); send new options", ErrInvalidOptions, cur.optionsErr)
+	}
+	raw, err := s.prepareOptions(ctx, id, cur.Host, tlsMode, &next, prev)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE proxy_routes SET upstream = ?, tls_mode = ?, enabled = ?, options = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		upstream, tlsMode, boolToInt(enabled), raw, id)
 	if err != nil {
 		return err
 	}
 	return s.SyncFromDB(ctx)
+}
+
+// prepareOptions hashes new passwords, validates the options of the
+// site with id (0 for a new one) and returns them encoded for storage.
+func (s *Service) prepareOptions(ctx context.Context, id int64, host, tlsMode string, o, prev *SiteOptions) (string, error) {
+	if err := o.applyPasswords(prev); err != nil {
+		return "", err
+	}
+	o.normalize()
+	if err := o.validate(host, tlsMode); err != nil {
+		return "", err
+	}
+	if err := s.checkWWWConflict(ctx, id, host, o.Routing.WWWRedirect); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(o)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+// checkWWWConflict refuses a www redirect onto a name that is a site of
+// its own, and a site whose name another site redirects.
+func (s *Service) checkWWWConflict(ctx context.Context, id int64, host string, www bool) error {
+	routes, err := s.listRoutes(ctx)
+	if err != nil {
+		return err
+	}
+	h := strings.ToLower(host)
+	for _, r := range routes {
+		if r.ID == id {
+			continue
+		}
+		other := strings.ToLower(r.Host)
+		if www && other == "www."+h {
+			return ErrWWWConflict
+		}
+		if r.Options.Routing.WWWRedirect && h == "www."+other {
+			return fmt.Errorf("%w: %s redirects it", ErrWWWConflict, r.Host)
+		}
+	}
+	return nil
+}
+
+// SitePreview is the Caddy config Dockmesh generates for one site.
+type SitePreview struct {
+	RouteID int64 `json:"route_id"`
+	Enabled bool  `json:"enabled"`
+	// Blocked is true when the stored route fails validation and is
+	// left out of the proxy.
+	Blocked bool         `json:"blocked"`
+	Config  *caddyConfig `json:"config"`
+}
+
+// SiteConfig returns the config the site gets when enabled, with
+// basic-auth hashes redacted and without the admin section.
+func (s *Service) SiteConfig(ctx context.Context, id int64) (*SitePreview, error) {
+	routes, err := s.listRoutes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var site *Route
+	for i := range routes {
+		if routes[i].ID == id {
+			site = &routes[i]
+		}
+	}
+	if site == nil {
+		return nil, ErrRouteNotFound
+	}
+	one := *site
+	one.Enabled = true
+	for _, o := range routes {
+		if o.ID != id && o.Enabled && strings.EqualFold(o.Host, "www."+site.Host) {
+			one.Options.Routing.WWWRedirect = false
+		}
+	}
+	cfg, blocked := buildConfigWith([]Route{one}, true)
+	cfg.Admin = nil
+	return &SitePreview{RouteID: id, Enabled: site.Enabled, Blocked: len(blocked) > 0, Config: cfg}, nil
 }
 
 // SetRouteEnabled toggles only the enabled flag — used by the row-level
@@ -204,16 +344,21 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode s
 // upstream + tls_mode unchanged.
 func (s *Service) SetRouteEnabled(ctx context.Context, id int64, enabled bool) error {
 	if enabled {
-		var host, upstream string
-		err := s.db.QueryRowContext(ctx, `SELECT host, upstream FROM proxy_routes WHERE id = ?`, id).Scan(&host, &upstream)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		r, err := s.getRoute(ctx, id)
+		if err != nil && !errors.Is(err, ErrRouteNotFound) {
 			return err
 		}
 		if err == nil {
-			if err := checkRouteHost(host); err != nil {
+			if err := checkRouteHost(r.Host); err != nil {
 				return err
 			}
-			if err := checkUpstream(upstream); err != nil {
+			if err := checkUpstream(r.Upstream); err != nil {
+				return err
+			}
+			if r.optionsErr != nil {
+				return fmt.Errorf("%w: stored options can't be read; edit the site", ErrInvalidOptions)
+			}
+			if err := r.Options.validate(r.Host, r.TLSMode); err != nil {
 				return err
 			}
 		}
@@ -235,24 +380,46 @@ func (s *Service) DeleteRoute(ctx context.Context, id int64) error {
 	return s.SyncFromDB(ctx)
 }
 
+const routeColumns = `id, host, upstream, tls_mode, enabled, options, created_at, updated_at`
+
 func (s *Service) listRoutes(ctx context.Context) ([]Route, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, host, upstream, tls_mode, enabled, created_at, updated_at FROM proxy_routes ORDER BY host`)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+routeColumns+` FROM proxy_routes ORDER BY host`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []Route{}
 	for rows.Next() {
-		var r Route
-		var enabledInt int
-		if err := rows.Scan(&r.ID, &r.Host, &r.Upstream, &r.TLSMode, &enabledInt, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		r, err := scanRoute(rows)
+		if err != nil {
 			return nil, err
 		}
-		r.Enabled = enabledInt != 0
-		out = append(out, r)
+		out = append(out, *r)
 	}
 	return out, rows.Err()
+}
+
+func (s *Service) getRoute(ctx context.Context, id int64) (*Route, error) {
+	r, err := scanRoute(s.db.QueryRowContext(ctx, `SELECT `+routeColumns+` FROM proxy_routes WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrRouteNotFound
+	}
+	return r, err
+}
+
+func scanRoute(row interface{ Scan(...any) error }) (*Route, error) {
+	var r Route
+	var enabledInt int
+	var raw string
+	if err := row.Scan(&r.ID, &r.Host, &r.Upstream, &r.TLSMode, &enabledInt, &raw, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		return nil, err
+	}
+	r.Enabled = enabledInt != 0
+	r.Options, r.optionsErr = decodeOptions([]byte(raw))
+	if r.optionsErr != nil {
+		slog.Warn("proxy: stored route options unreadable, route not served", "host", r.Host, "err", r.optionsErr)
+	}
+	return &r, nil
 }
 
 func boolToInt(b bool) int {
