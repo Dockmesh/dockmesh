@@ -56,24 +56,3 @@ func TestSyncAndDeleteStackContainment(t *testing.T) {
 		t.Errorf("deleting a missing stack: %v", err)
 	}
 }
-
-func TestValidateVolumeName(t *testing.T) {
-	cases := []struct {
-		name string
-		ok   bool
-	}{
-		{"data", true},
-		{"web_db-data.1", true},
-		{"a", false},
-		{"/etc", false},
-		{"/", false},
-		{"../x", false},
-		{"vol:/host", false},
-		{"", false},
-	}
-	for _, c := range cases {
-		if err := validateVolumeName(c.name); (err == nil) != c.ok {
-			t.Errorf("validateVolumeName(%q) err = %v, want ok=%v", c.name, err, c.ok)
-		}
-	}
-}

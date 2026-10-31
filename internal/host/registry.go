@@ -13,6 +13,8 @@ import (
 type Registry struct {
 	local  *LocalHost
 	agents *agents.Service
+
+	afterDeploy DeployHook
 }
 
 func NewRegistry(dockerCli *docker.Client, agentSvc *agents.Service) *Registry {
@@ -42,7 +44,9 @@ func (r *Registry) Pick(id string) (Host, error) {
 	if live == nil {
 		return nil, ErrAgentOffline
 	}
-	return NewRemote(live.ID, live.Name, r.agents), nil
+	rh := NewRemote(live.ID, live.Name, r.agents)
+	rh.afterDeploy = r.afterDeploy
+	return rh, nil
 }
 
 // List returns all known hosts (local + every registered agent, online or

@@ -18,6 +18,8 @@ import (
 	"errors"
 	"log/slog"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // UserDirectory is the subset of auth.Service that Emit needs for
@@ -81,13 +83,24 @@ type EmitInput struct {
 	Title    string
 	Body     string
 	Link     string
+
+	// Fan-out only (UserID empty): the permission a user needs to receive
+	// the notification, and the host and stack it is about, if any, which
+	// the user's scope must cover. Without Perm nobody receives it.
+	Perm      rbac.Perm
+	HostID    string
+	StackName string
+	// Unscoped further limits fan-out to users bound to no host tag and
+	// whose role has no scope, the rule the API applies to admin-only data.
+	Unscoped bool
 }
 
 var ErrNotFound = errors.New("notification not found")
 
 type Service struct {
-	db    *sql.DB
-	users UserDirectory
+	db     *sql.DB
+	users  UserDirectory
+	access AccessChecker
 }
 
 func NewService(db *sql.DB) *Service { return &Service{db: db} }
@@ -98,6 +111,11 @@ func NewService(db *sql.DB) *Service { return &Service{db: db} }
 // cycle. Nil = degrade Emit to "ignore fan-out, log a warning".
 func (s *Service) SetUserDirectory(d UserDirectory) {
 	s.users = d
+}
+
+// SetAccessChecker wires in the permission and scope filter for fan-out.
+func (s *Service) SetAccessChecker(a AccessChecker) {
+	s.access = a
 }
 
 // Emit drops a notification. If UserID is set, one row is written. If
@@ -121,15 +139,22 @@ func (s *Service) Emit(ctx context.Context, in EmitInput) (int64, error) {
 	// loop continues — losing one fan-out row is better than dropping
 	// the entire emit.
 	if s.users == nil {
-		slog.Warn("notification fan-out skipped — user directory not wired", "kind", in.Kind, "title", in.Title)
+		slog.Warn("notification fan-out skipped: user directory not wired", "kind", in.Kind, "title", in.Title)
 		return 0, nil
 	}
 	ids, err := s.users.ListActiveUserIDs(ctx)
 	if err != nil {
 		return 0, err
 	}
+	if s.access == nil {
+		slog.Warn("notification fan-out skipped: access checker not wired", "kind", in.Kind, "title", in.Title)
+		return 0, nil
+	}
 	var firstID int64
 	for _, uid := range ids {
+		if !s.access.CanReceive(ctx, uid, in) {
+			continue
+		}
 		id, err := s.insertOne(ctx, uid, in)
 		if err != nil {
 			slog.Warn("notification fan-out insert failed", "user", uid, "err", err)

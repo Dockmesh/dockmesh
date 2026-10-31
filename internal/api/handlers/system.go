@@ -39,7 +39,7 @@ func (h *Handlers) SystemMetrics(w http.ResponseWriter, r *http.Request) {
 
 	// All-mode fan-out: collect one Metrics sample per online host.
 	if host.IsAll(hostID) && h.Hosts != nil {
-		targets := h.Hosts.PickAll(r.Context())
+		targets := h.hostsInReadScope(r, h.Hosts.PickAll(r.Context()))
 		res := host.FanOut(r.Context(), targets, func(ctx context.Context, hh host.Host) ([]systemMetricsRow, error) {
 			m, err := hh.SystemMetrics(ctx)
 			if err != nil {
@@ -55,11 +55,15 @@ func (h *Handlers) SystemMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.inReadScope(r, hostIDFromRequest(r), "") {
+		writeError(w, http.StatusForbidden, "out of scope: your role does not include this host")
+		return
+	}
 	// Single-host path. For local we call the system package directly
 	// to avoid the host.Host interface overhead; for remote we go
 	// through the agent protocol via pickHost.
 	if hostID == "" || hostID == "local" {
-		writeJSON(w, http.StatusOK, system.Collect())
+		writeJSON(w, http.StatusOK, system.CollectWithMounts(r.Context()))
 		return
 	}
 	target, err := h.pickHost(r)
@@ -159,6 +163,10 @@ func (h *Handlers) SetBackupEnabled(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "backups unavailable")
 		return
 	}
+	if !h.callerIsAdmin(r) {
+		writeError(w, http.StatusForbidden, "only an admin can manage the system backup job")
+		return
+	}
 	var req SetBackupEnabledRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -255,8 +263,13 @@ func (h *Handlers) SystemHealth(w http.ResponseWriter, r *http.Request) {
 		checks = append(checks, c)
 	}
 
-	// ---- disk: warn >80%, fail >95%, data directory is the critical one.
-	if m := system.Collect(); m.DiskTotal > 0 {
+	// ---- disk: warn >80%, fail >95%. Only for callers who may see the
+	// server host, since the detail names its mount.
+	var m system.Metrics
+	if h.inReadScope(r, "local", "") {
+		m = system.CollectWithMounts(r.Context())
+	}
+	if m.DiskTotal > 0 {
 		pct := m.DiskPercent
 		c := HealthCheck{Name: "disk", Label: "Disk", LinkTo: "/"}
 		c.Detail = fmt.Sprintf("%.0f%% used (%s)", pct, m.DiskPath)

@@ -9,10 +9,9 @@ import (
 	"strings"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	dtypes "github.com/docker/docker/api/types"
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
 )
 
 // Known database image prefixes — used to warn about scaling stateful
@@ -109,6 +108,9 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 	if replicas < 0 || replicas > 100 {
 		return nil, errors.New("replicas must be between 0 and 100")
 	}
+	if err := s.refuseStagedMounts(ctx, proj); err != nil {
+		return nil, err
+	}
 	svc, ok := proj.Services[serviceName]
 	if !ok {
 		return nil, fmt.Errorf("service %q not found in project %s", serviceName, proj.Name)
@@ -139,8 +141,8 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 	sortByReplicaIndex(allContainers, proj.Name, serviceName)
 	// Separate running from non-running. Non-running ones get cleaned
 	// up before we create replacements so the replica names are free.
-	var existing []dtypes.Container
-	var stale []dtypes.Container
+	var existing []container.Summary
+	var stale []container.Summary
 	for _, c := range allContainers {
 		if c.State == "running" || c.State == "restarting" || c.State == "paused" {
 			existing = append(existing, c)
@@ -212,7 +214,7 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 		for i := current - 1; i >= replicas; i-- {
 			c := existing[i]
 			_ = cli.ContainerStop(ctx, c.ID, container.StopOptions{})
-			if err := cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+			if err := cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 				return nil, fmt.Errorf("remove replica %s: %w", c.ID[:12], err)
 			}
 			result.Removed++
@@ -225,12 +227,12 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 
 // listServiceContainers returns containers belonging to a specific
 // service within a stack project.
-func listServiceContainers(ctx context.Context, cli *client.Client, stackName, serviceName string) ([]dtypes.Container, error) {
-	all, err := listProjectContainers(ctx, cli, stackName, true)
+func listServiceContainers(ctx context.Context, cli *client.Client, stackName, serviceName string) ([]container.Summary, error) {
+	all, err := listProjectContainers(ctx, cli, stackName)
 	if err != nil {
 		return nil, err
 	}
-	var out []dtypes.Container
+	var out []container.Summary
 	for _, c := range all {
 		if c.Labels[LabelService] == serviceName {
 			out = append(out, c)
@@ -241,14 +243,14 @@ func listServiceContainers(ctx context.Context, cli *client.Client, stackName, s
 
 // sortByReplicaIndex sorts containers by their replica index suffix
 // (e.g. mystack-web-1 < mystack-web-2 < mystack-web-3).
-func sortByReplicaIndex(cs []dtypes.Container, stack, service string) {
+func sortByReplicaIndex(cs []container.Summary, stack, service string) {
 	prefix := stack + "-" + service + "-"
 	sort.Slice(cs, func(i, j int) bool {
 		return replicaIndex(cs[i], prefix) < replicaIndex(cs[j], prefix)
 	})
 }
 
-func replicaIndex(c dtypes.Container, prefix string) int {
+func replicaIndex(c container.Summary, prefix string) int {
 	for _, name := range c.Names {
 		name = strings.TrimPrefix(name, "/")
 		if strings.HasPrefix(name, prefix) {

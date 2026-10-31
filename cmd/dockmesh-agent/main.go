@@ -44,9 +44,12 @@ import (
 
 	dockerwrap "github.com/dockmesh/dockmesh/internal/docker"
 
-	dtypes "github.com/docker/docker/api/types"
+	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/dockmesh/dockmesh/internal/agents"
@@ -315,6 +318,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 		defer wrapped.Close()
 		cs = compose.NewService(wrapped, nil)
 	}
+	system.SetRolePathsFn(agentRolePaths(dockerCli))
 
 	for {
 		_, raw, err := conn.ReadMessage()
@@ -601,6 +605,8 @@ func startStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpe
 		err = runVolumeExportStream(conn, cli, open, reg)
 	case "volume_import":
 		err = runVolumeImportStream(conn, cli, open, reg)
+	case "events":
+		err = runEventsStream(conn, cli, open, reg)
 	default:
 		err = errors.New("unknown stream kind: " + open.Kind)
 	}
@@ -613,6 +619,30 @@ func startStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpe
 		msg = err.Error()
 	}
 	sendStreamClose(conn, open.StreamID, msg)
+}
+
+// runEventsStream forwards Docker container events, one JSON object per
+// chunk, for the server's event alerts.
+func runEventsStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) error {
+	msgs, errs := cli.Events(reg.ctx, events.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("type", string(events.ContainerEventType))),
+	})
+	for {
+		select {
+		case <-reg.ctx.Done():
+			return nil
+		case err := <-errs:
+			return err
+		case m := <-msgs:
+			data, err := json.Marshal(m)
+			if err != nil {
+				continue
+			}
+			if err := reg.sendData(conn, data); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func runStatsStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) error {
@@ -639,7 +669,7 @@ func runExecStream(conn *websocket.Conn, cli *client.Client, open agents.StreamO
 		}
 	}
 
-	createResp, err := cli.ContainerExecCreate(ctx, open.Container, dtypes.ExecConfig{
+	createResp, err := cli.ContainerExecCreate(ctx, open.Container, container.ExecOptions{
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -649,7 +679,7 @@ func runExecStream(conn *websocket.Conn, cli *client.Client, open agents.StreamO
 	if err != nil {
 		return err
 	}
-	hijack, err := cli.ContainerExecAttach(ctx, createResp.ID, dtypes.ExecStartCheck{Tty: true})
+	hijack, err := cli.ContainerExecAttach(ctx, createResp.ID, container.ExecStartOptions{Tty: true})
 	if err != nil {
 		return err
 	}
@@ -704,10 +734,10 @@ const helperImage = "busybox:latest"
 const helperTimeout = 60 * time.Second
 
 func ensureHelperImage(ctx context.Context, cli *client.Client) error {
-	if _, _, err := cli.ImageInspectWithRaw(ctx, helperImage); err == nil {
+	if _, err := cli.ImageInspect(ctx, helperImage); err == nil {
 		return nil
 	}
-	rc, err := cli.ImagePull(ctx, helperImage, dtypes.ImagePullOptions{})
+	rc, err := cli.ImagePull(ctx, helperImage, image.PullOptions{})
 	if err != nil {
 		return fmt.Errorf("pull busybox: %w", err)
 	}
@@ -749,7 +779,7 @@ func helperExit(cli *client.Client, id string) error {
 func runVolumeExportStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) error {
 	ctx := reg.ctx
 	volumeName, _ := open.Params["volume"].(string)
-	if err := validateVolumeName(volumeName); err != nil {
+	if err := dockerwrap.CheckVolumeName(volumeName); err != nil {
 		return err
 	}
 	if err := ensureHelperImage(ctx, cli); err != nil {
@@ -793,7 +823,7 @@ func runVolumeExportStream(conn *websocket.Conn, cli *client.Client, open agents
 func runVolumeImportStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) error {
 	ctx := reg.ctx
 	volumeName, _ := open.Params["volume"].(string)
-	if err := validateVolumeName(volumeName); err != nil {
+	if err := dockerwrap.CheckVolumeName(volumeName); err != nil {
 		return err
 	}
 	if err := ensureHelperImage(ctx, cli); err != nil {
@@ -884,7 +914,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		if maxOut <= 0 {
 			maxOut = 1 << 20
 		}
-		exec, err := cli.ContainerExecCreate(ctx, req.Container, dtypes.ExecConfig{
+		exec, err := cli.ContainerExecCreate(ctx, req.Container, container.ExecOptions{
 			Cmd:          req.Cmd,
 			AttachStdout: true,
 			AttachStderr: true,
@@ -893,7 +923,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 			respond(conn, f.ID, nil, err)
 			break
 		}
-		attach, err := cli.ContainerExecAttach(ctx, exec.ID, dtypes.ExecStartCheck{})
+		attach, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecStartOptions{})
 		if err != nil {
 			respond(conn, f.ID, nil, err)
 			break
@@ -928,19 +958,19 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		respond(conn, f.ID, struct{}{}, err)
 
 	case agents.FrameReqImageList:
-		list, err := cli.ImageList(ctx, dtypes.ImageListOptions{All: false})
+		list, err := cli.ImageList(ctx, image.ListOptions{All: false})
 		respond(conn, f.ID, list, err)
 
 	case agents.FrameReqImageInspect:
 		var req agents.ResourceIDReq
 		_ = json.Unmarshal(f.Payload, &req)
-		info, _, err := cli.ImageInspectWithRaw(ctx, req.ID)
+		info, err := cli.ImageInspect(ctx, req.ID)
 		respond(conn, f.ID, info, err)
 
 	case agents.FrameReqImageRemove:
 		var req agents.ImageRemoveReq
 		_ = json.Unmarshal(f.Payload, &req)
-		deleted, err := cli.ImageRemove(ctx, req.ID, dtypes.ImageRemoveOptions{Force: req.Force, PruneChildren: true})
+		deleted, err := cli.ImageRemove(ctx, req.ID, image.RemoveOptions{Force: req.Force, PruneChildren: true})
 		respond(conn, f.ID, deleted, err)
 
 	case agents.FrameReqImagePrune:
@@ -948,13 +978,13 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		respond(conn, f.ID, report, err)
 
 	case agents.FrameReqNetworkList:
-		list, err := cli.NetworkList(ctx, dtypes.NetworkListOptions{})
+		list, err := cli.NetworkList(ctx, network.ListOptions{})
 		respond(conn, f.ID, list, err)
 
 	case agents.FrameReqNetworkInspect:
 		var req agents.ResourceIDReq
 		_ = json.Unmarshal(f.Payload, &req)
-		net, err := cli.NetworkInspect(ctx, req.ID, dtypes.NetworkInspectOptions{})
+		net, err := cli.NetworkInspect(ctx, req.ID, network.InspectOptions{})
 		respond(conn, f.ID, net, err)
 
 	case agents.FrameReqVolumeInspect:
@@ -974,12 +1004,11 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		respond(conn, f.ID, list.Volumes, nil)
 
 	case agents.FrameReqVolumeBrowse:
-		// P.11.8. Resolve volume mountpoint, sanitize sub-path, list dir.
-		// All path sanitization goes through the shared host helpers so
-		// the agent can't drift from the server's validation rules.
+		// Path checks and the helper-container fallback are shared with the
+		// server so the agent cannot drift from its containment rules.
 		var req agents.VolumeBrowseReq
 		_ = json.Unmarshal(f.Payload, &req)
-		if err := validateVolumeName(req.Volume); err != nil {
+		if err := dockerwrap.CheckVolumeName(req.Volume); err != nil {
 			respond(conn, f.ID, nil, err)
 			return
 		}
@@ -993,18 +1022,13 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 			respond(conn, f.ID, nil, err)
 			return
 		}
-		abs, err := host.SanitizeVolumePath(mp, req.SubPath)
-		if err != nil {
-			respond(conn, f.ID, nil, err)
-			return
-		}
-		entries, err := host.BrowseDir(abs)
+		entries, err := host.BrowseVolumeOnHost(ctx, cli, req.Volume, mp, req.SubPath)
 		respond(conn, f.ID, entries, err)
 
 	case agents.FrameReqVolumeBrowseFile:
 		var req agents.VolumeBrowseReq
 		_ = json.Unmarshal(f.Payload, &req)
-		if err := validateVolumeName(req.Volume); err != nil {
+		if err := dockerwrap.CheckVolumeName(req.Volume); err != nil {
 			respond(conn, f.ID, nil, err)
 			return
 		}
@@ -1018,12 +1042,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 			respond(conn, f.ID, nil, err)
 			return
 		}
-		abs, err := host.SanitizeVolumePath(mp, req.SubPath)
-		if err != nil {
-			respond(conn, f.ID, nil, err)
-			return
-		}
-		res, err := host.ReadFile(abs, req.MaxBytes)
+		res, err := host.ReadVolumeFileOnHost(ctx, cli, req.Volume, mp, req.SubPath, req.MaxBytes)
 		respond(conn, f.ID, res, err)
 
 	case agents.FrameReqDaemonInfo:
@@ -1036,6 +1055,9 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		// the central server uses for its local host, just executed on
 		// the agent side via the protocol. Slice P.6.
 		respond(conn, f.ID, system.Collect(), nil)
+
+	case agents.FrameReqSystemDisks:
+		respond(conn, f.ID, system.LocalMounts(ctx), nil)
 
 	case agents.FrameReqStackDeploy:
 		var req agents.StackDeployReq
@@ -1125,9 +1147,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 }
 
 // agentDeployStack stages compose+env into a tmpdir, parses, and runs the
-// shared executor against the local docker daemon. Same code path the
-// central server uses for a local deploy — code from internal/compose is
-// fully reusable thanks to the Service.DeployProject extraction.
+// shared executor against the local docker daemon.
 func agentDeployStack(ctx context.Context, cs *compose.Service, req agents.StackDeployReq) (*compose.DeployResult, error) {
 	if err := stacks.ValidateName(req.Name); err != nil {
 		return nil, err
@@ -1151,11 +1171,35 @@ func agentDeployStack(ctx context.Context, cs *compose.Service, req agents.Stack
 		}
 	}
 
-	proj, err := compose.LoadProject(ctx, dir, req.Name, req.Env)
+	proj, err := agentLoadStaged(ctx, dir, req.Name, req.Env)
 	if err != nil {
 		return nil, err
 	}
 	return cs.DeployProject(ctx, proj)
+}
+
+// agentLoadStaged parses the staged compose file and points relative bind
+// mounts at the agent's persistent copy of the stack directory.
+func agentLoadStaged(ctx context.Context, dir, name, env string) (*composetypes.Project, error) {
+	if err := stacks.ValidateName(name); err != nil {
+		return nil, err
+	}
+	proj, err := compose.LoadProject(ctx, dir, name, env)
+	if err != nil {
+		return nil, err
+	}
+	// Created through an os.Root on the stacks directory, so the name can
+	// only ever create a directory inside it.
+	root, err := openStacksRoot(dataDir())
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	if err := root.MkdirAll(name, 0o750); err != nil {
+		return nil, err
+	}
+	compose.RebaseBindSources(proj, dir, filepath.Join(root.Name(), name))
+	return proj, nil
 }
 
 func agentScaleService(ctx context.Context, cs *compose.Service, req agents.StackScaleReq) (*compose.ScaleResult, error) {
@@ -1167,7 +1211,7 @@ func agentScaleService(ctx context.Context, cs *compose.Service, req agents.Stac
 		return nil, err
 	}
 	defer cleanup()
-	proj, err := compose.LoadProject(ctx, dir, req.Name, req.Env)
+	proj, err := agentLoadStaged(ctx, dir, req.Name, req.Env)
 	if err != nil {
 		return nil, err
 	}
@@ -1183,11 +1227,33 @@ func agentCheckScale(ctx context.Context, cs *compose.Service, req agents.StackC
 		return nil, err
 	}
 	defer cleanup()
-	proj, err := compose.LoadProject(ctx, dir, req.Name, req.Env)
+	proj, err := agentLoadStaged(ctx, dir, req.Name, req.Env)
 	if err != nil {
 		return nil, err
 	}
 	return cs.CheckScale(ctx, proj, req.Service)
+}
+
+// agentRolePaths labels the filesystems holding Docker, containerd, the
+// stacks dir and the agent's data dir in the disk report.
+func agentRolePaths(cli *client.Client) system.RolePathsFn {
+	return func(ctx context.Context) []system.RolePath {
+		dir := dataDir()
+		paths := []system.RolePath{
+			{Role: system.RoleContainerdRoot, Path: system.ContainerdRoot()},
+			{Role: system.RoleData, Path: dir},
+			{Role: system.RoleStacks, Path: filepath.Join(dir, "stacks")},
+		}
+		if cli == nil {
+			return paths
+		}
+		ictx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		if info, err := cli.Info(ictx); err == nil && info.DockerRootDir != "" {
+			paths = append(paths, system.RolePath{Role: system.RoleDockerRoot, Path: info.DockerRootDir})
+		}
+		return paths
+	}
 }
 
 func respond(conn *websocket.Conn, id string, data any, err error) {

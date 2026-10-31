@@ -33,6 +33,12 @@ type Metrics struct {
 	DiskPath    string  `json:"disk_path"`
 	Uptime      int64   `json:"uptime_seconds"`
 
+	// Mounts is the per-filesystem breakdown, fullest first. When set,
+	// the Disk* fields above describe its fullest Docker-relevant mount.
+	Mounts []Mount `json:"mounts,omitempty"`
+	// MountsUnsupported is set for agents too old to report mounts.
+	MountsUnsupported bool `json:"mounts_unsupported,omitempty"`
+
 	// DockerLimited signals that CPUCores / MemTotal reflect Docker's
 	// configured resource limits (Docker Desktop VM caps on macOS/Windows,
 	// cgroup limits on constrained Linux hosts) rather than raw host

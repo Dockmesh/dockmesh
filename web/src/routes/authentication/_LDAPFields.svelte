@@ -186,7 +186,7 @@
   {roles}
   groupClaim="group DN or CN"
   title="Group → role mappings"
-  hint="Match group DNs or CNs returned by the membership lookup. First match wins."
+  hint="Match group DNs or CNs returned by the membership lookup. If a user is in several mapped groups, the one listed last decides."
 />
 
 <style>

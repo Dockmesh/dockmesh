@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
-	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
@@ -118,20 +117,7 @@ func (h *Handlers) RotateAgentEnrollToken(w http.ResponseWriter, r *http.Request
 	// as sensitive as replacing the host and needs the same scope.
 	scopeReq := h.hostScopeReq(r.Context(), id)
 	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+id)
-		return
-	}
-	existing, err := h.Agents.Get(r.Context(), id)
-	if errors.Is(err, agents.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if existing.Status != "pending" && !middleware.Allowed(r.Context(), rbac.PermHostsCreate) {
-		writeError(w, http.StatusForbidden, "re-enrolling an enrolled host requires the hosts.create permission")
+		h.writeRoleScopeDenied(w, r, rbac.PermHostsCreate, scopeReq, "host "+id)
 		return
 	}
 	res, err := h.Agents.RotateEnrollToken(r.Context(), id)

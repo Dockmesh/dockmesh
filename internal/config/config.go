@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -22,6 +23,7 @@ type Config struct {
 	ScannerBinary     string
 	ScannerEnabled    bool
 	ProxyEnabled      bool
+	ProxyImage        string
 	BaseURL           string
 	AgentListen       string
 	AgentPublicURL    string
@@ -44,11 +46,12 @@ type Config struct {
 	OTelEndpoint string
 	OTelInsecure bool
 	JWTSecret    []byte
-	// SetupForce disables the auto-bootstrap admin and forces the
-	// server into setup-mode on every boot until the wizard runs.
+	// SetupForce disables the auto-bootstrap admin and keeps the
+	// server in setup-mode until the wizard runs. It is ignored once an
+	// admin exists.
 	// Set by the install script for the wizard install path; off by
 	// default so existing installs and `dockmesh init --yes` keep
-	// working unchanged. P.14.1.
+	// working unchanged.
 	SetupForce bool
 	// RBACv2Enforce gates the new role-scope (per-host + per-stack)
 	// enforcement on typed-resource handlers. Default false during the
@@ -57,6 +60,9 @@ type Config struct {
 	// can flip it on early via DOCKMESH_RBAC_V2_ENFORCE=true to test
 	// scope behaviour ahead of the cutover.
 	RBACv2Enforce bool
+	// UpdateRollbackKeep is how many rollback tags per image the
+	// container updater keeps (DOCKMESH_UPDATE_ROLLBACK_KEEP).
+	UpdateRollbackKeep int
 }
 
 func Load() (*Config, error) {
@@ -72,6 +78,7 @@ func Load() (*Config, error) {
 		ScannerEnabled:    envOr("DOCKMESH_SCANNER_ENABLED", "true") != "false",
 		// Proxy is opt-in: many users already run Traefik or NPM.
 		ProxyEnabled: envOr("DOCKMESH_PROXY_ENABLED", "false") == "true",
+		ProxyImage:   envOr("DOCKMESH_PROXY_IMAGE", ""),
 		// BaseURL is used to build the OIDC redirect URL. Providers must
 		// have <baseURL>/api/v1/auth/oidc/{slug}/callback whitelisted.
 		BaseURL: envOr("DOCKMESH_BASE_URL", "http://localhost:8080"),
@@ -89,6 +96,15 @@ func Load() (*Config, error) {
 		OTelInsecure:   envOr("DOCKMESH_OTEL_INSECURE", "false") == "true",
 		SetupForce:     envOr("DOCKMESH_SETUP_FORCE", "false") == "true",
 		RBACv2Enforce:  envOr("DOCKMESH_RBAC_V2_ENFORCE", "true") != "false",
+	}
+	// Mirrors updater.DefaultRollbackKeep; config can't import updater.
+	cfg.UpdateRollbackKeep = 3
+	if v := os.Getenv("DOCKMESH_UPDATE_ROLLBACK_KEEP"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return nil, fmt.Errorf("DOCKMESH_UPDATE_ROLLBACK_KEEP must be a positive number, got %q", v)
+		}
+		cfg.UpdateRollbackKeep = n
 	}
 	ttl, err := parseEnrollTokenTTL(os.Getenv("DOCKMESH_AGENT_ENROLL_TOKEN_TTL"))
 	if err != nil {

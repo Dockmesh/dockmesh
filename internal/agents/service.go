@@ -16,6 +16,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/pki"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -157,17 +158,6 @@ func (c *ConnectedAgent) shutdown() {
 	})
 }
 
-// Supports reports whether the agent advertised capability name in its
-// hello. Agents that predate capability negotiation advertise none.
-func (c *ConnectedAgent) Supports(name string) bool {
-	for _, have := range c.Hello.Capabilities {
-		if have == name {
-			return true
-		}
-	}
-	return false
-}
-
 // UpdateRecommended is true for agents speaking an older protocol than
 // this server; features they lack are skipped or fail with a clear error.
 func (c *ConnectedAgent) UpdateRecommended() bool {
@@ -294,7 +284,7 @@ func (c *ConnectedAgent) Request(ctx context.Context, f Frame) (*ResponseEnvelop
 // full queue or an agent lacking the capability the request runs to the
 // end and its late response is discarded.
 func (c *ConnectedAgent) cancelRemote(id string) {
-	if !c.Supports(CapRequestCancel) {
+	if !c.Hello.Has(CapRequestCancel) {
 		return
 	}
 	select {
@@ -712,6 +702,8 @@ func (s *Service) markOffline(ag *ConnectedAgent) {
 			Title:    "Agent offline: " + ag.Name,
 			Body:     "Heartbeat lost — checking again in a few seconds",
 			Link:     "/hosts/" + ag.ID,
+			Perm:     rbac.PermHostsView,
+			HostID:   ag.ID,
 		})
 	}
 }

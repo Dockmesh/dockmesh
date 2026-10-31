@@ -4,7 +4,7 @@
   // /images/{id} returns the full Docker ImageInspect; on remote agents
   // it currently 501s (agent protocol gap) and we fall back to data
   // already on hand from the list payload + a banner.
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api, ApiError, isFanOut, type ScanReport, type Severity } from '$lib/api';
   import { Skeleton, EmptyState, Badge } from '$lib/components/ui';
@@ -19,11 +19,11 @@
     AlertTriangle, RefreshCw, Download
   } from 'lucide-svelte';
 
-  const id = $derived($page.params.id);
-  const hostId = $derived($page.url.searchParams.get('host') || 'local');
+  const id = $derived(page.params.id);
+  const hostId = $derived(page.url.searchParams.get('host') || 'local');
 
   type Tab = 'overview' | 'cve' | 'layers' | 'history' | 'containers';
-  let tab = $state<Tab>(((new URLSearchParams($page.url.search).get('tab')) as Tab) || 'overview');
+  let tab = $state<Tab>(((new URLSearchParams(page.url.search).get('tab')) as Tab) || 'overview');
 
   let inspect = $state<any>(null);
   let inspectLoading = $state(true);
@@ -96,7 +96,7 @@
     return inspect?.Id ?? id;
   }
   function normalizeReport(rep: ScanReport | null): ScanReport | null {
-    if (!rep) return null;
+    if (!rep || rep.scanned === false) return null;
     if (!rep.vulnerabilities) rep.vulnerabilities = [];
     return rep;
   }
@@ -104,7 +104,6 @@
     try {
       scanReport = normalizeReport(await api.images.getScan(id));
     } catch {
-      /* 404 = never scanned */
       scanReport = null;
     }
   }

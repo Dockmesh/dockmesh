@@ -67,7 +67,7 @@ Everything is included in the single binary. There is no paid tier.
 - Outbound-only mTLS agents (no inbound ports on remote hosts)
 - Per-host picker + `all` mode fan-out views
 - Deploy stacks to any host from the same UI
-- Stack migration across hosts (P.9 preflight + volume stream)
+- Stack migration across hosts (preflight check + volume transfer)
 - Host-tag RBAC scopes (per-team isolation)
 - Fleet-wide agent auto-upgrade on server version change
 
@@ -107,12 +107,12 @@ Everything is included in the single binary. There is no paid tier.
 </td><td>
 
 **Networking & Extras**
-- Embedded Caddy reverse proxy with automatic HTTPS
+- Optional reverse proxy with automatic HTTPS (Caddy in a managed `dockmesh-proxy` container)
 - Per-host port-conflict detection at deploy time
-- Grype CVE scanner integration (image-level + fix-in column)
+- CVE scanning with Grype (image-level + fix-in column)
 - Private registry credentials (age-encrypted at rest)
 - `dmctl` CLI for CI/CD + scripted deploys
-- Single binary — runs on a Raspberry Pi or a 500-host fleet
+- `dockmesh import compose-dir` adopts existing compose directories as stacks
 
 </td></tr>
 </table>
@@ -135,7 +135,7 @@ hero shots.
   <img src=".github/architecture.svg" alt="dockmesh architecture" width="880"/>
 </p>
 
-- **Single binary**. Go 1.23+, SvelteKit UI embedded via `go:embed`. No sidecars, no helm-chart, no external runtime deps beyond Docker itself.
+- **Single binary**. Go, with the SvelteKit UI embedded via `go:embed`. The optional reverse proxy runs Caddy as a separate `dockmesh-proxy` container, which Dockmesh pulls (`caddy:2`) when you enable the proxy and configures through Caddy's admin API. CVE scanning uses Grype, a separate binary that `scripts/install.sh` installs unless `DOCKMESH_NO_SCANNER=1` is set.
 - **Filesystem as source of truth**. Stacks live at `stacks/<name>/compose.yaml`. The DB indexes deployment state; the actual config is always on disk where you can grep, `git log`, and `vim` it.
 - **Outbound-only agents**. Remote hosts open a WebSocket to the server — no inbound port to firewall, no VPN, no reverse tunnel. mTLS client certs per agent, revokable.
 - **No Kubernetes**. Docker + Compose + a spine of management tooling. If you want K8s, use Rancher. If you want zero-config Docker across a fleet, use dockmesh.
@@ -152,21 +152,16 @@ sudo systemctl enable --now dockmesh
 
 ### Docker Compose
 
-```yaml
-services:
-  dockmesh:
-    image: ghcr.io/dockmesh/dockmesh:latest
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-      - "8443:8443"  # agent mTLS listener
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./data:/var/lib/dockmesh/data
-      - ./stacks:/var/lib/dockmesh/stacks
-    environment:
-      DOCKMESH_BASE_URL: https://dockmesh.example.com
+No container image is published yet. Build it from a checkout with the
+bundled `docker-compose.yml`:
+
+```bash
+git clone https://github.com/dockmesh/dockmesh && cd dockmesh
+docker compose up -d --build
 ```
+
+The UI is then on port 8080. The container needs the Docker socket
+mounted, as in the compose file.
 
 ### Install an agent on a remote host
 
@@ -182,7 +177,7 @@ After `dockmesh init`:
 3. **(Optional) Enroll a second host**: `Agents → New agent` → run the
    install one-liner on the remote host
 4. **(Optional) Set up backups**: `Backups → New job` → pick a target (SMB / S3 / SFTP / local) → pick sources → save
-5. **(Optional) Turn on the reverse proxy**: `Proxy → Enable` → add a route → Caddy handles the Let's Encrypt dance
+5. **(Optional) Turn on the reverse proxy**: `Proxy → Enable` → add a route. Dockmesh starts the Caddy container, which requests the certificates
 
 ## Documentation
 
@@ -208,12 +203,13 @@ make dev
 # Build single binary with embedded UI
 make build
 
-# Run E2E tests
+# Run unit tests and svelte-check
 make test
 ```
 
-Tech stack: Go 1.23+, SvelteKit 2 with Svelte 5 runes, Tailwind v4, SQLite
-(default) / Postgres, Caddy (embedded), Grype (embedded).
+Tech stack: Go, SvelteKit 2 with Svelte 5 runes, Tailwind v4, SQLite.
+Caddy (reverse proxy container) and Grype (scanner binary) are separate
+components, not part of the Dockmesh binary.
 
 ### A note on AI
 

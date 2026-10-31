@@ -60,19 +60,31 @@ func (s *Service) VerifyRun(ctx context.Context, runID int64) (*VerifyResult, er
 	srcType := run.Sources[0].Type
 	res := &VerifyResult{RunID: runID, Type: srcType, Passed: true}
 
-	rc, err := s.ReadRun(ctx, runID)
+	job, err := s.store.getJob(ctx, run.JobID)
+	if err != nil {
+		return nil, err
+	}
+	target, err := jobTarget(ctx, s.store, s.notices, job)
+	if err != nil {
+		return nil, err
+	}
+	src, err := target.Read(ctx, run.TargetPath)
 	if err != nil {
 		return nil, fmt.Errorf("open run archive: %w", err)
 	}
-	defer rc.Close()
+	defer src.Close()
 
-	// SHA256 is computed against the *plaintext* stream we read here.
-	// run.SHA256 was written at backup time over the same plaintext (we
-	// hash before encrypting on the way out), so a match means the
-	// archive content is byte-for-byte intact. Empty run.SHA256 means
-	// the run pre-dates the hash field and we skip the compare.
+	// run.SHA256 covers the bytes as stored on the target (ciphertext for
+	// encrypted runs), so the hash is taken below the decryption.
 	hasher := sha256.New()
-	teed := io.TeeReader(rc, hasher)
+	teed := io.TeeReader(src, hasher)
+	if run.Encrypted {
+		dec, err := wrapDecrypt(io.NopCloser(teed), s.secrets)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt run archive: %w", err)
+		}
+		teed = dec
+	}
 
 	switch srcType {
 	case "system":
@@ -103,7 +115,7 @@ func verifySystemPlaceholder(res *VerifyResult, r io.Reader, h hash.Hash, expect
 		return res, nil
 	}
 	res.Counts.Bytes = n
-	finalizeSHA(res, h, expected)
+	finalizeSHA(res, r, h, expected)
 	return res, nil
 }
 
@@ -181,7 +193,7 @@ func verifyStackArchive(res *VerifyResult, r io.Reader, h hash.Hash, expected st
 		res.Passed = false
 		res.Checks = append(res.Checks, VerifyCheck{Name: "stack.compose", Status: "fail", Message: "compose.yaml missing — restore would refuse"})
 	}
-	finalizeSHA(res, h, expected)
+	finalizeSHA(res, r, h, expected)
 	if res.Passed {
 		res.Summary = fmt.Sprintf("%d files, %d volume(s), archive intact", len(res.Counts.StackFiles), len(res.Counts.Volumes))
 	}
@@ -200,7 +212,7 @@ func verifyVolumeArchive(res *VerifyResult, r io.Reader, h hash.Hash, expected s
 		return res, nil
 	}
 	res.Checks = append(res.Checks, VerifyCheck{Name: "tar", Status: "ok", Message: fmt.Sprintf("%d entries, %d bytes", res.Counts.Entries+0, n)})
-	finalizeSHA(res, h, expected)
+	finalizeSHA(res, r, h, expected)
 	if res.Passed {
 		res.Summary = fmt.Sprintf("volume archive intact (%d bytes)", n)
 	}
@@ -238,7 +250,15 @@ func walkInnerTar(r io.Reader) (int64, error) {
 // finalizeSHA records whether the streamed-content hash matches the
 // stored run.SHA256. Empty stored hash means "unknown — pre-existed
 // the field" and we skip the compare without failing the verify.
-func finalizeSHA(res *VerifyResult, h hash.Hash, expected string) {
+func finalizeSHA(res *VerifyResult, r io.Reader, h hash.Hash, expected string) {
+	// The walkers stop at the end of the tar; the rest of the stream still
+	// has to be read for the hash and for errors the target or decryption
+	// only reports at the very end.
+	if _, err := io.Copy(io.Discard, r); err != nil {
+		res.Passed = false
+		res.Checks = append(res.Checks, VerifyCheck{Name: "stream", Status: "fail", Message: err.Error()})
+		return
+	}
 	got := hex.EncodeToString(h.Sum(nil))
 	switch {
 	case expected == "":

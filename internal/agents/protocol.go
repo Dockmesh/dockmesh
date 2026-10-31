@@ -64,6 +64,8 @@ const (
 	// agent reads its local /proc and /var/lib/docker via the system
 	// package and returns the Metrics struct as JSON. Slice P.6.
 	FrameReqSystemMetrics = "req.system.metrics"
+	// Per-mount disk usage; only sent to agents advertising CapDiskMounts.
+	FrameReqSystemDisks = "req.system.disks"
 
 	// Stack operations (slice 3.1.3) — server ships compose YAML + .env
 	// content with the deploy request, agent runs the same compose
@@ -131,6 +133,8 @@ const (
 	CapRequestCancel = "req.cancel"    // agent: honours FrameReqCancel
 	CapStreamCredit  = "stream.credit" // both: credit-based stream flow control
 	CapCertRenew     = "cert.renew"    // server: accepts FrameAgentCertRenew
+	CapDiskMounts    = "disk_mounts"   // agent: answers FrameReqSystemDisks
+	CapDockerEvents  = "docker_events" // agent: serves the "events" stream kind
 )
 
 // Stream control ops beyond the exec "resize".
@@ -315,6 +319,16 @@ type HelloPayload struct {
 	// negotiation.
 	ProtocolVersion int      `json:"protocol_version,omitempty"`
 	Capabilities    []string `json:"capabilities,omitempty"`
+}
+
+// Has reports whether the agent advertised capability c.
+func (h HelloPayload) Has(c string) bool {
+	for _, x := range h.Capabilities {
+		if x == c {
+			return true
+		}
+	}
+	return false
 }
 
 // WelcomePayload is the server's reply confirming the agent is registered.

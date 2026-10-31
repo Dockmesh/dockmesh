@@ -59,7 +59,7 @@ func (c *ConnectedAgent) OpenStream(ctx context.Context, kind, container string,
 		incoming: make(chan []byte, StreamWindow),
 		done:     make(chan struct{}),
 	}
-	if c.Supports(CapStreamCredit) {
+	if c.Hello.Has(CapStreamCredit) {
 		s.credit = true
 		s.sendCredit = NewCredit(StreamWindow)
 		withWindow := make(map[string]any, len(params)+1)

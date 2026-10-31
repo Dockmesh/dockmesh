@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -331,5 +332,35 @@ func TestLoginUnknownUserDoesArgonWork(t *testing.T) {
 	s, _ := newTestService(t)
 	if _, err := s.Login(context.Background(), "nobody", "pw", "", ""); !errors.Is(err, ErrInvalidCredentials) {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestRefreshParallelOnlyOneWins(t *testing.T) {
+	s, _ := newTestService(t)
+	ctx := context.Background()
+	mustUser(ctx, t, s, "dave", "viewer")
+	res := mustLogin(ctx, t, s, "dave")
+
+	const n = 8
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	wins := 0
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if _, err := s.Refresh(ctx, res.RefreshToken); err == nil {
+				mu.Lock()
+				wins++
+				mu.Unlock()
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if wins != 1 {
+		t.Fatalf("%d of %d parallel refreshes with one token succeeded, want exactly 1", wins, n)
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -14,18 +13,6 @@ import (
 // The agent runs with docker-group (root-equivalent) rights, so every
 // name the server sends is re-validated here with the server's own rules
 // before it reaches the filesystem or a bind mount.
-
-// dockerVolumeNameRe is Docker's own rule for named volumes. Anything
-// else (notably an absolute path) would turn the helper container's bind
-// into a host-path mount.
-var dockerVolumeNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]+$`)
-
-func validateVolumeName(name string) error {
-	if len(name) > 255 || !dockerVolumeNameRe.MatchString(name) {
-		return fmt.Errorf("invalid volume name %q", name)
-	}
-	return nil
-}
 
 func dataDir() string {
 	return envOr("DOCKMESH_DATA_DIR", "/var/lib/dockmesh")

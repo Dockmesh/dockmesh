@@ -8,7 +8,6 @@ import (
 	"time"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"go.opentelemetry.io/otel/attribute"
@@ -166,7 +165,7 @@ func healthWaitTimeout(svc *composetypes.ServiceConfig) time.Duration {
 // lastHealthcheckOutput picks the most-recent probe output from the
 // docker health log so we can surface it in the error message. Docker
 // returns newest-last, so we take the tail.
-func lastHealthcheckOutput(logs []*dtypes.HealthcheckResult) string {
+func lastHealthcheckOutput(logs []*container.HealthcheckResult) string {
 	if len(logs) == 0 {
 		return ""
 	}

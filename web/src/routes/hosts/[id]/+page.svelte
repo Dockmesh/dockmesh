@@ -6,8 +6,9 @@
   // agents.get; many actions (drain/upgrade/revoke) are disabled.
   // See project_hosts_open_punch_list.md for deferred features
   // (per-container metrics, host-affinity panel).
-  import { onMount, onDestroy } from 'svelte';
-  import { page } from '$app/stores';
+  import { untrack } from 'svelte';
+  import { latest } from '$lib/latest';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import {
     api, ApiError,
@@ -21,14 +22,15 @@
   import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
+  import MountTable from '$lib/components/MountTable.svelte';
   import {
     ChevronLeft, RefreshCw, ArrowDownToLine, Trash2, Terminal,
     X, Check, AlertTriangle, Info
   } from 'lucide-svelte';
 
-  const id = $derived($page.params.id);
+  const id = $derived(page.params.id);
   const isLocal = $derived(id === 'local');
-  const tabFromQuery = $derived(($page.url.searchParams.get('tab') ?? 'overview') as TabId);
+  const tabFromQuery = $derived((page.url.searchParams.get('tab') ?? 'overview') as TabId);
 
   type TabId = 'overview' | 'containers' | 'stacks' | 'migrations' | 'tags' | 'maintenance';
   let tab = $state<TabId>('overview');
@@ -68,7 +70,9 @@
   let upgradeBusy = $state(false);
   let revokeBusy = $state(false);
 
+  const nextLoad = latest();
   async function loadAll() {
+    const current = nextLoad();
     loading = true;
     loadError = null;
     try {
@@ -81,6 +85,7 @@
           api.hosts.list().catch(() => []),
           api.agents.getUpgradePolicy().catch(() => null)
         ]);
+        if (!current()) return;
         const local = hostList.find((h) => h.kind === 'local');
         localName = local?.name ?? 'local';
         agent = null;
@@ -90,12 +95,13 @@
         upgradePolicyVersion = polRes?.server_version ?? '';
       } else {
         const [a, m, ctrRes, stk, polRes] = await Promise.all([
-          api.agents.get(id).catch((e) => { loadError = e instanceof ApiError ? e.message : 'Load failed'; return null; }),
+          api.agents.get(id).catch((e) => { if (current()) loadError = e instanceof ApiError ? e.message : 'Load failed'; return null; }),
           api.system.metrics(id).catch(() => null),
           api.containers.list(false, id).catch(() => []),
           api.stacks.list().catch(() => []),
           api.agents.getUpgradePolicy().catch(() => null)
         ]);
+        if (!current()) return;
         agent = a;
         if (m && !('hosts' in m)) metrics = m;
         containers = Array.isArray(ctrRes) ? ctrRes : [];
@@ -108,6 +114,7 @@
         api.hosts.allTags().catch(() => []),
         api.migrations.list(50).catch(() => [])
       ]);
+      if (!current()) return;
       tags = t;
       tagsDraft = [...t];
       allFleetTags = allT;
@@ -117,20 +124,29 @@
         metricsHistory = [...metricsHistory.slice(-15), metrics];
       }
     } catch (err) {
-      loadError = err instanceof ApiError ? err.message : 'Load failed';
+      if (current()) loadError = err instanceof ApiError ? err.message : 'Load failed';
     } finally {
-      loading = false;
+      if (current()) loading = false;
     }
   }
 
-  let refreshTimer: ReturnType<typeof setInterval> | null = null;
-  onMount(() => {
-    loadAll();
-    refreshTimer = setInterval(() => {
+  $effect(() => {
+    id;
+    untrack(() => {
+      agent = null;
+      metrics = null;
+      metricsHistory = [];
+      containers = [];
+      migrations = [];
+      tags = [];
+      tagsDraft = [];
+      loadAll();
+    });
+    const timer = setInterval(() => {
       if (document.visibilityState === 'visible') loadAll();
     }, 10_000);
+    return () => clearInterval(timer);
   });
-  onDestroy(() => { if (refreshTimer) clearInterval(refreshTimer); });
 
   // ─── Stacks deployed on this host ─────────────────────────────────────
   // We don't have a "deployed-on" field on StackListEntry — Deployments
@@ -465,6 +481,13 @@
           </div>
         </div>
 
+        {#if metrics && (metrics.mounts?.length || metrics.mounts_unsupported)}
+          <div class="ed-host-card ed-host-mounts">
+            <div class="ed-host-card-title">Disks</div>
+            <MountTable mounts={metrics.mounts} unsupported={metrics.mounts_unsupported} />
+          </div>
+        {/if}
+
         <!-- Stacks deployed here (Overview block) -->
         <div class="ed-host-card ed-host-stacks-block">
           <div class="ed-host-card-title">Stacks deployed here</div>
@@ -617,7 +640,7 @@
         <div class="ed-host-card" style="grid-column: span 7;">
           <div class="ed-host-card-title">Tags on this host</div>
           <p class="ed-host-empty" style="margin-top: 0;">
-            Tags drive stack <span class="ed-accent-mono">host-affinity</span> rules. A stack with selector <code>tag:gpu</code> can only be deployed on hosts carrying that tag.
+            Tags group hosts for filtering and limit which hosts a user or role can see and manage (host scope).
           </p>
           <div class="ed-host-tags-edit">
             {#each tagsDraft as t (t)}
@@ -669,7 +692,7 @@
         <div class="ed-host-card" style="grid-column: span 6;">
           <div class="ed-host-card-title">Drain</div>
           <p class="ed-host-empty" style="margin-top: 0;">
-            Migrates every stack off <span class="ed-accent-mono">{hostName}</span> to other matching hosts, then marks it cordoned. Use before reboots, kernel upgrades, or pulling the plug.
+            Migrates every stack off <span class="ed-accent-mono">{hostName}</span> to other matching hosts. The host stays available for new deployments. Use before reboots, kernel upgrades, or pulling the plug.
           </p>
           <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={isLocal} onclick={openDrain}>
             <ArrowDownToLine size={11} strokeWidth={1.5} /> Plan drain…
@@ -697,15 +720,17 @@
           </button>
         </div>
 
-        <div class="ed-host-card" style="grid-column: span 6;">
-          <div class="ed-host-card-title">Re-issue token</div>
-          <p class="ed-host-empty" style="margin-top: 0;">
-            If the agent's mTLS cert is suspect — leaked from CI logs, host wiped, etc. — generate a new enrollment token. The old cert is revoked the moment the new one is presented.
-          </p>
-          <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={isLocal} onclick={rotateToken}>
-            <RefreshCw size={11} strokeWidth={1.5} /> Re-issue
-          </button>
-        </div>
+        {#if allowed('hosts.create')}
+          <div class="ed-host-card" style="grid-column: span 6;">
+            <div class="ed-host-card-title">Re-issue token</div>
+            <p class="ed-host-empty" style="margin-top: 0;">
+              If the agent's mTLS cert is suspect — leaked from CI logs, host wiped, etc. — generate a new enrollment token. The old cert is revoked the moment the new one is presented.
+            </p>
+            <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={isLocal} onclick={rotateToken}>
+              <RefreshCw size={11} strokeWidth={1.5} /> Re-issue
+            </button>
+          </div>
+        {/if}
 
         <div class="ed-host-card ed-host-card-danger" style="grid-column: span 6;">
           <div class="ed-host-card-title ed-host-card-danger-title">Revoke</div>
@@ -739,7 +764,7 @@
           <p class="ed-host-empty"><RefreshCw size={12} strokeWidth={1.5} class="ed-spin" /> Generating drain plan…</p>
         {:else if drainPlan}
           {#if drainPlan.entries.length === 0}
-            <p class="ed-host-empty">No stacks running here. Drain is a no-op — host will be cordoned and ready for maintenance.</p>
+            <p class="ed-host-empty">No stacks running here. Drain is a no-op — nothing to move.</p>
           {:else}
             {@const stuck = drainPlan.entries.filter((e) => !e.feasible)}
             {#if stuck.length > 0}
@@ -938,6 +963,7 @@
     padding: 16px 18px;
   }
   .ed-host-identity { grid-column: span 7; }
+  .ed-host-mounts { grid-column: 1 / -1; }
   .ed-host-snapshot { grid-column: span 5; display: flex; flex-direction: column; gap: 12px; }
   .ed-host-stacks-block { grid-column: span 7; }
   .ed-host-mig-block { grid-column: span 5; }
