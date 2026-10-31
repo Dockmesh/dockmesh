@@ -25,6 +25,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 ## [Unreleased]
 
 ### Changed
+- New look for the web UI: a calmer, flat design with equal light and dark themes that
+  follow the system setting until you pick one. The sidebar is grouped into Workloads,
+  Infrastructure, Operations and Admin, shows counts, and collapses to an icon rail.
+  Authentication, registries and the global environment now sit under Settings with their
+  own sub-navigation. Ctrl+K (⌘K) searches pages, stacks, containers, hosts and settings.
 - Updating the image of a container that belongs to a stack now rebuilds it from the
   stack's compose.yaml, together with the other replicas of its service, and records the
   new image in the stack's deploy history. Because that applies the stack's current

@@ -22,6 +22,9 @@ export interface ConfirmOptions {
 	// background, white text) and the modal header gets a warning icon.
 	// Use for truly destructive actions (delete, kill).
 	danger?: boolean;
+	// Name the user must type before the confirm button unlocks. Used for
+	// deleting stacks, users and hosts.
+	typeToConfirm?: string;
 }
 
 interface PendingRequest extends ConfirmOptions {
