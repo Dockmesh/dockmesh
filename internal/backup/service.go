@@ -339,6 +339,11 @@ func (s *Service) ListRuns(ctx context.Context, limit int) ([]Run, error) {
 	return s.store.listRuns(ctx, limit)
 }
 
+// LatestRuns returns the most recent run of every job that has run.
+func (s *Service) LatestRuns(ctx context.Context) ([]Run, error) {
+	return s.store.latestRuns(ctx)
+}
+
 // GetRun returns a single run by id. Used by the run-detail drawer and
 // the archive-download endpoint; the latter needs to assert the run
 // succeeded (and exists) before streaming bytes.

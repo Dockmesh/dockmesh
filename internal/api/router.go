@@ -165,6 +165,10 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Get("/notices", h.ListNotices)
 			r.Post("/notices/{id}/dismiss", h.DismissNotice)
 
+			// Needs-attention feed; each source is gated on its own view
+			// permission and the caller's scope inside the handler.
+			r.Get("/attention", h.Attention)
+
 			// -------------------------- READ ROUTES --------------------------
 			// Per-resource *.view permissions (RBAC v2). Each group gates
 			// its own listing + inspect endpoints. Built-in viewer role
