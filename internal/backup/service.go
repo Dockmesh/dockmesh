@@ -283,9 +283,9 @@ func normalizeInput(in JobInput) JobInput {
 }
 
 // checkJobName rejects names that would share an archive directory with
-// another job: retention deletes whatever is under the job's directory, so
-// a shared one lets one job delete another's backups. The system job's
-// directory is reserved for jobs with a system source. id is 0 on create.
+// another job, which keeps folders on the target unambiguous for people
+// browsing them. The system job's directory is reserved for jobs with a
+// system source. id is 0 on create.
 func (s *Service) checkJobName(ctx context.Context, id int64, in JobInput) error {
 	dir := sanitize(in.Name)
 	if dir == "" {

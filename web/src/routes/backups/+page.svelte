@@ -1100,7 +1100,7 @@
             <span class="font-mono bk-runs-cell right">{fmtBytes(r.size_bytes)}</span>
             <span class="bk-runs-actions">
               {#if r.pruned_at}
-                <span class="bk-runs-cell" title="Archive removed by retention">pruned</span>
+                <span class="bk-runs-cell" title="Archive removed">pruned</span>
               {:else if runRestorable(r) && !r.sources?.some((s) => s.type === 'system')}
                 <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" title="Restore" onclick={(e) => { e.stopPropagation(); openRestore(r); }}>
                   <Undo2 size={11} strokeWidth={1.5} />

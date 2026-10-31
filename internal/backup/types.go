@@ -25,7 +25,7 @@ type Job struct {
 	Enabled        bool     `json:"enabled"`
 	// NeedsReview is true when the job was auto-created by an older
 	// version of dockmesh and the operator has not yet confirmed they
-	// want to keep it. New installs never set this. P.13.2.
+	// want to keep it. New installs never set this.
 	NeedsReview  bool   `json:"needs_review,omitempty"`
 	ReviewReason string `json:"review_reason,omitempty"`
 	// ReviewAcked stays true forever once the operator clears the
@@ -105,7 +105,6 @@ type Run struct {
 // Run statuses. A post-hook failure leaves an intact archive, so it is
 // a success with warnings rather than a failure.
 const (
-	StatusRunning             = "running"
 	StatusSuccess             = "success"
 	StatusSuccessWithWarnings = "success_with_warnings"
 	StatusFailed              = "failed"

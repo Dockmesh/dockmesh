@@ -206,7 +206,7 @@ func (s *store) setRunPath(ctx context.Context, runID int64, path string) error 
 	return err
 }
 
-// finishRun records the outcome; sha always covers the plaintext archive.
+// finishRun records the outcome; sha covers the archive as stored on the target.
 func (s *store) finishRun(ctx context.Context, runID int64, status string, size int64, path, sha string, runErr error) error {
 	now := time.Now()
 	var errStr string
@@ -250,9 +250,9 @@ func (s *store) keptRuns(ctx context.Context, jobID int64) ([]Run, error) {
 	return out, rows.Err()
 }
 
-// partialRuns lists failed runs that still point at a file. Partial
-// archives are deleted when a run fails; this catches leftovers from
-// older versions (no hash means the archive never completed).
+// partialRuns lists failed runs that still point at a file: partials that
+// could not be deleted when the run failed (no hash means the archive
+// never completed).
 func (s *store) partialRuns(ctx context.Context, jobID int64) ([]Run, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, target_path FROM backup_runs

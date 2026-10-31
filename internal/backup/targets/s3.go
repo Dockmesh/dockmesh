@@ -112,11 +112,6 @@ func (s *S3) Read(ctx context.Context, path string) (io.ReadCloser, error) {
 func (s *S3) List(ctx context.Context, prefix string) ([]Entry, error) {
 	var out []Entry
 	full := s.objectKey(prefix)
-	// S3 prefixes are plain string matches: without the separator
-	// "jobs/db" would also list "jobs/db-prod/…".
-	if full != "" && !strings.HasSuffix(full, "/") {
-		full += "/"
-	}
 	for obj := range s.client.ListObjects(ctx, s.cfg.Bucket, minio.ListObjectsOptions{
 		Prefix:    full,
 		Recursive: true,

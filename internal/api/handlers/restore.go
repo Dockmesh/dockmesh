@@ -88,8 +88,8 @@ func (h *Handlers) VerifyUploadedBackup(w http.ResponseWriter, r *http.Request) 
 //   - system runs: stream-extract to temp + run sanity;
 //     the temp dir is deleted as soon as sanity is done.
 //   - stack runs:  walk the outer tar, validate every volumes/<v>.tar.gz
-//     decompresses cleanly, confirm stack/compose.yaml is present, hash
-//     the plaintext stream against run.SHA256.
+//     decompresses cleanly, confirm stack/compose.yaml is present, check
+//     the stored bytes against run.SHA256.
 //   - volume runs: gunzip-walk the archive; sha256 match.
 //
 // System runs are admin-only; other runs need the job's host in scope.

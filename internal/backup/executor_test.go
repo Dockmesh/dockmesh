@@ -122,7 +122,7 @@ func TestRetentionKeepsNewestAndIgnoresOtherJobs(t *testing.T) {
 	svc, fake, root := newExecTest(t, false)
 	ctx := context.Background()
 
-	// A name that prefixes another: prefix-listing targets used to mix them.
+	// A name that prefixes another must not share its archives.
 	in := volumeJob("db", root)
 	in.RetentionCount = 2
 	job, err := svc.CreateJob(ctx, in)
@@ -183,7 +183,7 @@ func TestRetentionCleansLegacyPartials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A failed run of an older version: file left behind, no hash.
+	// A failed run that left its file behind, no hash.
 	legacy := filepath.Join(root, "jobs", "vol", "old.tar.gz")
 	if err := os.MkdirAll(filepath.Dir(legacy), 0o700); err != nil {
 		t.Fatal(err)
@@ -389,7 +389,7 @@ func TestStackArchiveVolumes(t *testing.T) {
 		t.Fatalf("complete archive: %+v", res)
 	}
 
-	// A volume that can't be read fails the backup instead of being skipped.
+	// A volume that can't be read fails the backup.
 	delete(fake.volumes, "web_cache")
 	if _, err := tarStackWithVolumes(ctx, fake, dir, "web", io.Discard); err == nil || !strings.Contains(err.Error(), "web_cache") {
 		t.Fatalf("missing volume: %v", err)

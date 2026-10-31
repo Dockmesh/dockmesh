@@ -2,8 +2,8 @@
 -- the row stays as history but can no longer be restored.
 ALTER TABLE backup_runs ADD COLUMN pruned_at DATETIME;
 
--- A failed post-hook used to mark an intact archive as failed. Those
--- runs carry a hash (only written once the archive was complete).
+-- Runs failed only by a post-hook have an intact archive (the hash is
+-- written only once it is complete).
 UPDATE backup_runs SET status = 'success_with_warnings'
  WHERE status = 'failed' AND error LIKE 'post-hooks:%' AND COALESCE(sha256, '') != '';
 

@@ -1391,7 +1391,6 @@
   async function loadLatestBackupRun() {
     try {
       const runs = await api.backups.listRuns(200);
-      // Find the newest successful stack-typed run for THIS stack.
       const match = runs.find(r =>
         runRestorable(r) &&
         r.sources?.some(s => s.type === 'stack' && s.name === name)
