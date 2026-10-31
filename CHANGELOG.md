@@ -25,6 +25,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 ## [Unreleased]
 
 ### Added
+- Every audit log entry has a category (`changes`, `access`, `auth` or `system`), and the audit
+  API filters by it with `?category=`.
 - `GET /api/v1/attention` lists what needs attention in your scope: offline hosts, restarting,
   unhealthy or failed containers, failed backup jobs, firing alerts, proxy certificates
   expiring within 30 days and open action-required notices. Agents on a different build than
