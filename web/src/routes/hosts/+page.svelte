@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fmtVersion } from '$lib/version';
   // Hosts list — editorial rebuild based on `Dockmesh Wizard (6)/hosts.jsx`.
   // Sticky upgrade-policy strip when connected_pending > 0; filter pills
   // (All/Online/Offline/Pending/Agents) + name/hostname/tag search; table
@@ -349,17 +350,17 @@
             {#if upgradePolicy.connected_pending > 0}
               <span class="ed-accent-mono">{upgradePolicy.connected_pending}</span>
               {upgradePolicy.connected_pending === 1 ? 'host is' : 'hosts are'}
-              behind server v{upgradePolicy.server_version}.
+              behind server {fmtVersion(upgradePolicy.server_version)}.
               <span class="ed-hosts-policy-detail">
                 {upgradePolicy.connected_up_to_date} of {upgradePolicy.connected_total} up-to-date.
               </span>
             {:else}
-              All <span class="ed-accent-mono">{upgradePolicy.connected_total}</span> connected agents on v{upgradePolicy.server_version}.
+              All <span class="ed-accent-mono">{upgradePolicy.connected_total}</span> connected agents on {fmtVersion(upgradePolicy.server_version)}.
             {/if}
           </div>
           {#if upgradePolicy.last_run_at}
             <div class="ed-hosts-policy-footnote font-mono">
-              last run {fmtAgo(upgradePolicy.last_run_at)} · server v{upgradePolicy.server_version}
+              last run {fmtAgo(upgradePolicy.last_run_at)} · server {fmtVersion(upgradePolicy.server_version)}
             </div>
           {/if}
         </div>
@@ -523,9 +524,9 @@
             </div>
             <span class="ed-hosts-row-num font-mono">{ctrCount ?? '—'}</span>
             <div class="ed-hosts-row-version">
-              <span class="font-mono">{r.version ? `v${r.version}` : '—'}</span>
+              <span class="font-mono">{r.version ? fmtVersion(r.version) : '—'}</span>
               {#if needsUpgrade}
-                <span class="ed-hosts-row-upgrade font-mono">↑ v{upgradePolicy?.server_version}</span>
+                <span class="ed-hosts-row-upgrade font-mono">↑ {fmtVersion(upgradePolicy?.server_version)}</span>
               {/if}
             </div>
             <span class="font-mono ed-hosts-row-seen">

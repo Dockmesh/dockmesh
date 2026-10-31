@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -84,5 +85,51 @@ func TestBinaryURL(t *testing.T) {
 		if (err == nil) != (c.want != "") || got != c.want {
 			t.Errorf("binaryURL(%q) = %q, %v; want %q", c.dial, got, err, c.want)
 		}
+	}
+}
+
+func TestOpenBinDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permissions")
+	}
+	tests := []struct {
+		name              string
+		dataMode, binMode os.FileMode
+		serverFile        string
+		wantData, wantBin os.FileMode
+	}{
+		{"old installer modes", 0o700, 0o750, "", 0o711, 0o755},
+		{"custom modes kept", 0o750, 0o700, "", 0o750, 0o700},
+		{"shared with a server", 0o700, 0o750, "dockmesh.env", 0o700, 0o750},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "agent")
+			bin := filepath.Join(dir, "bin")
+			if err := os.MkdirAll(bin, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if tt.serverFile != "" {
+				if err := os.WriteFile(filepath.Join(dir, tt.serverFile), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Chmod(bin, tt.binMode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(dir, tt.dataMode); err != nil {
+				t.Fatal(err)
+			}
+			openBinDir(dir)
+			for path, want := range map[string]os.FileMode{dir: tt.wantData, bin: tt.wantBin} {
+				fi, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := fi.Mode().Perm(); got != want {
+					t.Errorf("%s: mode %o, want %o", path, got, want)
+				}
+			}
+		})
 	}
 }

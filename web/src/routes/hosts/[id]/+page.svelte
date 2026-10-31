@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fmtVersion } from '$lib/version';
   // Host Detail — editorial rebuild based on `Dockmesh Wizard (6)/
   // host-detail.jsx`. Header strip + 6 tabs (Overview / Containers /
   // Stacks / Migrations / Tags / Maintenance) + drain modal preview.
@@ -366,8 +367,8 @@
 
       <div class="ed-host-header-actions">
         <div class="ed-host-version-line font-mono">
-          {#if hostVersion}<span>v{hostVersion}</span>{/if}
-          {#if needsUpgrade}<span class="dm-pill dm-pill-warning ed-host-version-pill">↑ v{upgradePolicyVersion} avail.</span>{/if}
+          {#if hostVersion}<span>{fmtVersion(hostVersion)}</span>{/if}
+          {#if needsUpgrade}<span class="dm-pill dm-pill-warning ed-host-version-pill">↑ {fmtVersion(upgradePolicyVersion)} avail.</span>{/if}
         </div>
         <div class="ed-actions">
           <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={isLocal || status !== 'online'} onclick={openDrain} title={isLocal ? "Local server can't be drained" : ''}>
@@ -422,7 +423,7 @@
               <dt>agent version</dt>
               <dd class="font-mono">
                 {agent.version || '—'}
-                {#if needsUpgrade}<span class="ed-host-kv-warn">· server is on v{upgradePolicyVersion}</span>{/if}
+                {#if needsUpgrade}<span class="ed-host-kv-warn">· server is on {fmtVersion(upgradePolicyVersion)}</span>{/if}
               </dd>
               <dt>cert fingerprint</dt><dd class="font-mono ed-host-kv-fingerprint">{agent.cert_fingerprint || '—'}</dd>
               <dt>last seen</dt><dd class="font-mono">{fmtAgo(agent.last_seen_at)}</dd>
@@ -702,7 +703,7 @@
             {:else if !needsUpgrade}
               {hostVersion ? `Already on v${hostVersion}.` : 'Version unknown.'} Nothing to do.
             {:else}
-              This host is on <span class="ed-accent-mono">v{hostVersion}</span>. Server is on v{upgradePolicyVersion}. Upgrades are zero-downtime — agent reconnects within ~10s.
+              This host is on <span class="ed-accent-mono">{fmtVersion(hostVersion)}</span>. Server is on {fmtVersion(upgradePolicyVersion)}. Upgrades are zero-downtime — agent reconnects within ~10s.
             {/if}
           </p>
           <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" disabled={isLocal || !needsUpgrade || upgradeBusy} onclick={upgradeAgent}>
