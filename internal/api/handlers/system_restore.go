@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -9,22 +8,26 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"filippo.io/age"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/restore"
 	"github.com/dockmesh/dockmesh/internal/secrets"
+	"github.com/dockmesh/dockmesh/internal/setup"
 )
 
 // stageMu keeps staging, applying and discarding from running at once.
 var stageMu sync.Mutex
 
-// setupRestoreHeader must be set on POST /setup/restore.
-const setupRestoreHeader = "X-Dockmesh-Setup"
-
 // GetStagedRestore reports a system restore waiting for the next start.
 //
 //	GET /restore/system
 func (h *Handlers) GetStagedRestore(w http.ResponseWriter, r *http.Request) {
+	if !h.callerIsAdmin(r) {
+		writeError(w, http.StatusForbidden, "only an admin can restore the whole system")
+		return
+	}
 	if h.RestoreConfig == nil {
 		writeError(w, http.StatusServiceUnavailable, "system restore not configured")
 		return
@@ -45,6 +48,10 @@ func (h *Handlers) GetStagedRestore(w http.ResponseWriter, r *http.Request) {
 //
 //	POST /restore/system
 func (h *Handlers) StageSystemRestore(w http.ResponseWriter, r *http.Request) {
+	if !h.callerIsAdmin(r) {
+		writeError(w, http.StatusForbidden, "only an admin can restore the whole system")
+		return
+	}
 	if h.RestoreConfig == nil {
 		writeError(w, http.StatusServiceUnavailable, "system restore not configured")
 		return
@@ -81,6 +88,9 @@ func (h *Handlers) StageSystemRestore(w http.ResponseWriter, r *http.Request) {
 		run, err := h.Backups.GetRun(r.Context(), req.RunID)
 		if err != nil {
 			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		if !h.requireRunAccess(w, r, run, rbac.PermBackupsRestore) {
 			return
 		}
 		if len(run.Sources) == 0 || run.Sources[0].Type != "system" {
@@ -120,6 +130,10 @@ var errHashMismatch = errors.New("archive hash mismatch")
 //
 //	POST /restore/system/apply
 func (h *Handlers) ApplySystemRestore(w http.ResponseWriter, r *http.Request) {
+	if !h.callerIsAdmin(r) {
+		writeError(w, http.StatusForbidden, "only an admin can restore the whole system")
+		return
+	}
 	if h.RestoreConfig == nil || h.RequestRestart == nil {
 		writeError(w, http.StatusServiceUnavailable, "system restore not configured")
 		return
@@ -147,6 +161,10 @@ func (h *Handlers) ApplySystemRestore(w http.ResponseWriter, r *http.Request) {
 //
 //	DELETE /restore/system
 func (h *Handlers) DiscardSystemRestore(w http.ResponseWriter, r *http.Request) {
+	if !h.callerIsAdmin(r) {
+		writeError(w, http.StatusForbidden, "only an admin can restore the whole system")
+		return
+	}
 	if h.RestoreConfig == nil {
 		writeError(w, http.StatusServiceUnavailable, "system restore not configured")
 		return
@@ -174,24 +192,28 @@ func (h *Handlers) DiscardSystemRestore(w http.ResponseWriter, r *http.Request) 
 //
 //	POST /setup/restore
 func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
-	if h.SetupState == nil || !h.SetupState.Active() {
-		writeError(w, http.StatusGone, "setup mode is no longer active")
-		return
-	}
-	if h.SetupState.Expired() {
-		writeError(w, http.StatusGone, "setup window expired — restart the dockmesh service to start a fresh window")
-		return
-	}
-	// The setup endpoints have no session yet. A browser only sends this
-	// header from a same-origin script (a cross-site one needs a CORS
-	// preflight, which is not answered), so a page the operator happens to
-	// visit can't post a backup of its own here.
-	if r.Header.Get(setupRestoreHeader) != "1" || r.Header.Get("Sec-Fetch-Site") == "cross-site" {
-		writeError(w, http.StatusForbidden, "missing "+setupRestoreHeader+" header")
+	if !h.setupWindowOpen(w) {
 		return
 	}
 	if h.RestoreConfig == nil || h.RequestRestart == nil {
 		writeError(w, http.StatusServiceUnavailable, "system restore not configured")
+		return
+	}
+	// The install slot keeps this and the wizard's own install apart, and
+	// the upload may take long: the setup has to still be open, without
+	// an admin, once the archive is in.
+	if !h.SetupState.TryBeginCommit() {
+		writeError(w, http.StatusConflict, "an install is already running, or setup has finished or expired")
+		return
+	}
+	done := false
+	defer func() {
+		if !done {
+			h.SetupState.EndCommit(false)
+		}
+	}()
+	if !h.setupStillFree(w, r) {
+		done = true
 		return
 	}
 	if !stageMu.TryLock() {
@@ -199,6 +221,7 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer stageMu.Unlock()
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(setupUploadTime))
 	rc, name, ok := h.openUploadedSystemBackup(w, r)
 	if !ok {
 		return
@@ -209,6 +232,14 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 		writeStageError(w, err, result)
 		return
 	}
+	if h.SetupState.Expired() || !h.setupStillFree(w, r) {
+		_ = restore.DiscardStaged(h.RestoreConfig)
+		if h.SetupState.Expired() {
+			writeError(w, http.StatusGone, "setup window expired — restart the dockmesh service to start a fresh window")
+		}
+		done = true
+		return
+	}
 	if h.FinishSetup != nil {
 		if err := h.FinishSetup(); err != nil {
 			_ = restore.DiscardStaged(h.RestoreConfig)
@@ -216,8 +247,35 @@ func (h *Handlers) SetupRestore(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	h.SetupState.EndCommit(true)
+	done = true
 	writeJSON(w, http.StatusAccepted, map[string]any{"restarting": true, "counts": counts, "sanity": result})
 	h.RequestRestart()
+}
+
+// setupUploadTime bounds how long the setup restore may take to receive
+// its archive.
+const setupUploadTime = 30 * time.Minute
+
+// setupStillFree answers 409 once an account that can administer Dockmesh
+// exists, since the setup restore would replace it, and ends setup mode.
+// It releases the install slot whenever it returns false.
+func (h *Handlers) setupStillFree(w http.ResponseWriter, r *http.Request) bool {
+	if h.DB == nil {
+		return true
+	}
+	exists, err := setup.AdminExists(r.Context(), h.DB)
+	if err != nil {
+		h.SetupState.EndCommit(false)
+		writeError(w, http.StatusInternalServerError, "could not check for existing admins")
+		return false
+	}
+	if exists {
+		h.SetupState.EndCommit(true)
+		writeError(w, http.StatusConflict, "an account that can administer Dockmesh already exists, sign in instead")
+		return false
+	}
+	return true
 }
 
 func writeStageError(w http.ResponseWriter, err error, result *restore.SanityResult) {
@@ -240,19 +298,8 @@ func writeStageError(w http.ResponseWriter, err error, result *restore.SanityRes
 // decrypted with the uploaded key file and, when this install has
 // secrets, its own keys.
 func (h *Handlers) openUploadedSystemBackup(w http.ResponseWriter, r *http.Request) (io.ReadCloser, string, bool) {
-	r.Body = http.MaxBytesReader(w, r.Body, uploadLimit+(1<<20))
-	if err := r.ParseMultipartForm(32 << 20); err != nil { //nolint:gosec // the body is capped by MaxBytesReader above
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			writeError(w, http.StatusRequestEntityTooLarge, "backup larger than 1 GiB")
-			return nil, "", false
-		}
-		writeError(w, http.StatusBadRequest, "parse multipart: "+err.Error())
-		return nil, "", false
-	}
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "missing 'file' part in form")
+	file, header, ok := parseBackupUpload(w, r)
+	if !ok {
 		return nil, "", false
 	}
 	var ids []age.Identity
@@ -277,22 +324,18 @@ func (h *Handlers) openUploadedSystemBackup(w http.ResponseWriter, r *http.Reque
 			ids = append(ids, own...)
 		}
 	}
-	br := bufio.NewReaderSize(file, 64*1024)
-	if !restore.IsAgeEncrypted(br) {
-		return readCloser{Reader: br, Closer: file}, header.Filename, true
-	}
-	if len(ids) == 0 {
+	plain, err := restore.Plaintext(file, ids)
+	switch {
+	case errors.Is(err, restore.ErrEncryptedBackup):
 		file.Close()
 		writeError(w, http.StatusUnprocessableEntity, "the backup is encrypted; add the backup key file exported from the original install")
 		return nil, "", false
-	}
-	dec, err := age.Decrypt(br, ids...)
-	if err != nil {
+	case err != nil:
 		file.Close()
 		writeError(w, http.StatusUnprocessableEntity, "decrypt backup: "+err.Error()+" (wrong key file?)")
 		return nil, "", false
 	}
-	return readCloser{Reader: dec, Closer: file}, header.Filename, true
+	return readCloser{Reader: plain, Closer: file}, header.Filename, true
 }
 
 type readCloser struct {

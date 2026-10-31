@@ -172,6 +172,10 @@ func ApplyStaged(cfg *config.Config) (bool, error) {
 			return false, err
 		}
 	}
+	if !strings.HasPrefix(info.PrevDir, filepath.Join(dataDir, PreRestoreDir)+string(filepath.Separator)) ||
+		!strings.HasPrefix(info.PrevStacks, filepath.Clean(cfg.StacksRoot)+PreRestoreDir+"-") {
+		return false, fmt.Errorf("restore: staging marker names unexpected paths %q, %q", info.PrevDir, info.PrevStacks)
+	}
 	if err := os.MkdirAll(info.PrevDir, 0o700); err != nil {
 		return false, err
 	}
