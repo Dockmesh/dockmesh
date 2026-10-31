@@ -111,7 +111,7 @@ func ParseOptions(raw []byte) (*SiteOptions, error) {
 	}
 	o, err := decodeOptions(raw)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidOptions, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidOptions, err)
 	}
 	return &o, nil
 }
