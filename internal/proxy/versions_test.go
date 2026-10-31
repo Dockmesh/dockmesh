@@ -73,11 +73,18 @@ func TestTestedVersions(t *testing.T) {
 			t.Errorf("%s is not pinned by tag and digest: %s", v.Version, v.Image)
 		}
 	}
-	if got := digestRef("caddy:2.11.6@sha256:abc"); got != "caddy@sha256:abc" {
-		t.Errorf("digestRef = %s", got)
+}
+
+func TestDigestRef(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"caddy:2.11.6@sha256:abc", "caddy@sha256:abc"},
+		{"registry:5000/caddy:2@sha256:abc", "registry:5000/caddy@sha256:abc"},
+		{"caddy:2.11.6", "caddy:2.11.6"},
 	}
-	if got := digestRef("registry:5000/caddy:2@sha256:abc"); got != "registry:5000/caddy@sha256:abc" {
-		t.Errorf("digestRef with registry port = %s", got)
+	for _, tt := range tests {
+		if got := digestRef(tt.in); got != tt.want {
+			t.Errorf("digestRef(%s) = %s, want %s", tt.in, got, tt.want)
+		}
 	}
 }
 
@@ -106,9 +113,13 @@ func TestSwitchVersion(t *testing.T) {
 
 	s, st, started := versionService(t, "")
 	s.enabled.Store(true)
-	info, err := s.SwitchVersion(ctx, older.Version)
+	ch, err := s.SwitchVersion(ctx, older.Version)
 	if err != nil {
 		t.Fatal(err)
+	}
+	info := ch.Info
+	if ch.From != newer.Version || ch.To != older.Version {
+		t.Fatalf("change = %+v", ch)
 	}
 	if info.Current != older.Version || info.Previous != newer.Version || st[KeyCaddyVersion] != older.Version {
 		t.Fatalf("after switch: %+v, settings %v", info, st)
@@ -116,11 +127,11 @@ func TestSwitchVersion(t *testing.T) {
 	if len(*started) != 1 || (*started)[0] != older.Image {
 		t.Fatalf("started = %v", *started)
 	}
-	info, err = s.RollbackVersion(ctx)
+	ch, err = s.RollbackVersion(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Current != newer.Version || info.Previous != older.Version {
+	if info = ch.Info; info.Current != newer.Version || info.Previous != older.Version {
 		t.Fatalf("after rollback: %+v", info)
 	}
 	if _, err := s.SwitchVersion(ctx, "9.9.9"); !errors.Is(err, ErrUnknownVersion) {
@@ -142,6 +153,43 @@ func TestSwitchVersionRollsBackWhenCaddyFails(t *testing.T) {
 	}
 	if len(*started) != 2 || (*started)[1] != newer.Image {
 		t.Fatalf("started = %v", *started)
+	}
+}
+
+func TestSwitchVersionSurvivesCancelledRequest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	older := TestedVersions[0]
+	s := newServiceDB(t)
+	st := memSettings{}
+	s.SetSettings(st)
+	s.enabled.Store(true)
+	s.startProxy = func(ctx context.Context) error { return ctx.Err() }
+	if _, err := s.SwitchVersion(ctx, older.Version); err != nil {
+		t.Fatalf("switch with a cancelled request: %v", err)
+	}
+	if s.currentImage() != older.Image || st[KeyCaddyVersion] != older.Version {
+		t.Fatalf("image %s, settings %v", s.currentImage(), st)
+	}
+}
+
+func TestSwitchVersionRollbackFails(t *testing.T) {
+	ctx := context.Background()
+	older, newer := TestedVersions[0], TestedVersions[len(TestedVersions)-1]
+	s := newServiceDB(t)
+	st := memSettings{KeyCaddyPrevious: older.Version}
+	s.SetSettings(st)
+	s.enabled.Store(true)
+	s.startProxy = func(context.Context) error { return errors.New("docker gone") }
+	_, err := s.SwitchVersion(ctx, older.Version)
+	if !errors.Is(err, ErrVersionSwitchFailed) || !errors.Is(err, ErrVersionRollbackFailed) {
+		t.Fatalf("err = %v", err)
+	}
+	if s.Enabled() {
+		t.Fatal("still marked enabled, so the watchdog won't start the proxy again")
+	}
+	if s.currentImage() != newer.Image || st[KeyCaddyVersion] != "" || st[KeyCaddyPrevious] != older.Version {
+		t.Fatalf("not restored: image %s, settings %v", s.currentImage(), st)
 	}
 }
 

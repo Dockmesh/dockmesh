@@ -118,8 +118,12 @@ func (s *Service) SaveSettings(ctx context.Context, g Settings) error {
 		return err
 	}
 	if s.settings == nil {
-		return errors.New("settings store unavailable")
+		return errSettingsUnavailable
 	}
+	// Serialised with version switches, whose check compares Caddy's
+	// config with the one built from these settings.
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
 	prev := s.ProxySettings()
 	if err := s.storeSettings(ctx, g); err != nil {
 		return err

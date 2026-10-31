@@ -430,7 +430,12 @@ func (h *Handlers) GetProxyVersion(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "proxy not configured")
 		return
 	}
-	writeJSON(w, http.StatusOK, h.Proxy.VersionInfo())
+	info := h.Proxy.VersionInfo()
+	// A custom image can name a private registry.
+	if !info.Managed && !canEditProxy(r) {
+		info.Image = ""
+	}
+	writeJSON(w, http.StatusOK, info)
 }
 
 // SetProxyVersion switches Caddy to another tested version; the switch
@@ -449,9 +454,8 @@ func (h *Handlers) SetProxyVersion(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	from := h.Proxy.VersionInfo().Current
-	info, err := h.Proxy.SwitchVersion(r.Context(), req.Version)
-	h.writeVersionSwitch(w, r, "proxy.version_update", from, req.Version, info, err)
+	ch, err := h.Proxy.SwitchVersion(r.Context(), req.Version)
+	h.writeVersionSwitch(w, r, "proxy.version_update", ch, err)
 }
 
 // RollbackProxyVersion switches back to the version before the last
@@ -463,12 +467,13 @@ func (h *Handlers) RollbackProxyVersion(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, "proxy not configured")
 		return
 	}
-	before := h.Proxy.VersionInfo()
-	info, err := h.Proxy.RollbackVersion(r.Context())
-	h.writeVersionSwitch(w, r, "proxy.version_rollback", before.Current, before.Previous, info, err)
+	ch, err := h.Proxy.RollbackVersion(r.Context())
+	h.writeVersionSwitch(w, r, "proxy.version_rollback", ch, err)
 }
 
-func (h *Handlers) writeVersionSwitch(w http.ResponseWriter, r *http.Request, action, from, to string, info *proxy.VersionInfo, err error) {
+// writeVersionSwitch audits detached from the request, which may have
+// been cancelled while the container was replaced.
+func (h *Handlers) writeVersionSwitch(w http.ResponseWriter, r *http.Request, action string, ch proxy.VersionChange, err error) {
 	switch {
 	case errors.Is(err, proxy.ErrVersionReadOnly):
 		writeError(w, http.StatusConflict, err.Error())
@@ -477,20 +482,25 @@ func (h *Handlers) writeVersionSwitch(w http.ResponseWriter, r *http.Request, ac
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	case errors.Is(err, proxy.ErrVersionSwitchFailed):
-		h.audit(r, action, to, map[string]string{"from": from, "to": to, "result": "rolled back", "error": err.Error()})
+		result := "rolled back"
+		if errors.Is(err, proxy.ErrVersionRollbackFailed) {
+			result = "rollback failed"
+		}
+		h.auditDetached(r, action, ch.To, map[string]string{"from": ch.From, "to": ch.To, "result": result, "error": err.Error()})
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if from != info.Current {
-		h.audit(r, action, info.Current, map[string]string{"from": from, "to": info.Current})
+	if ch.From != ch.To {
+		h.auditDetached(r, action, ch.To, map[string]string{"from": ch.From, "to": ch.To})
 	}
-	writeJSON(w, http.StatusOK, info)
+	writeJSON(w, http.StatusOK, ch.Info)
 }
 
-// GetProxySettings returns the proxy-wide options.
+// GetProxySettings returns the proxy-wide options. Without proxy.update
+// the ACME email is shown with its local part hidden.
 //
 //	GET /api/v1/proxy/settings
 func (h *Handlers) GetProxySettings(w http.ResponseWriter, r *http.Request) {
@@ -498,7 +508,19 @@ func (h *Handlers) GetProxySettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "proxy not configured")
 		return
 	}
-	writeJSON(w, http.StatusOK, h.Proxy.ProxySettings())
+	st := h.Proxy.ProxySettings()
+	if !canEditProxy(r) {
+		st.ACMEEmail = maskEmail(st.ACMEEmail)
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func maskEmail(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	_, domain, _ := strings.Cut(addr, "@")
+	return "***@" + domain
 }
 
 // UpdateProxySettings stores and applies the proxy-wide options.
@@ -524,6 +546,7 @@ func (h *Handlers) UpdateProxySettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, "proxy.settings_update", "", map[string]any{"before": before, "after": h.Proxy.ProxySettings()})
-	writeJSON(w, http.StatusOK, h.Proxy.ProxySettings())
+	after := h.Proxy.ProxySettings()
+	h.audit(r, "proxy.settings_update", "", map[string]any{"before": before, "after": after})
+	writeJSON(w, http.StatusOK, after)
 }

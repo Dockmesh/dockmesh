@@ -98,17 +98,15 @@ type Service struct {
 	settings SettingsStore
 
 	// image is the Caddy image to run; imageOverride is set when it
-	// comes from DOCKMESH_PROXY_IMAGE. switchMu serialises version
-	// switches.
+	// comes from DOCKMESH_PROXY_IMAGE.
 	imageMu       sync.RWMutex
 	image         string
 	imageOverride bool
-	switchMu      sync.Mutex
 	// startProxy replaces startAndVerify in tests.
 	startProxy func(ctx context.Context) error
 
-	// lifecycle serialises EnableProxy/DisableProxy; mu guards config
-	// pushes and metrics.
+	// lifecycle serialises EnableProxy/DisableProxy, version switches
+	// and settings saves; mu guards config pushes and metrics.
 	lifecycle sync.Mutex
 	mu        sync.Mutex
 	metrics   *metricsState

@@ -7649,6 +7649,7 @@ paths:
       operationId: proxy.version
       tags: [proxy]
       summary: Running Caddy version and the tested versions to switch to
+      description: Without `proxy.update`, `image` is empty while a custom image runs.
       responses:
         "200":
           description: Version info.
@@ -7666,7 +7667,8 @@ paths:
         config; if it doesn't, the previous image is started again and 502 is
         returned. The image of the version left behind is kept for a rollback,
         older tested images are removed. While the proxy is off only the
-        selection is stored. 409 while `DOCKMESH_PROXY_IMAGE` is set.
+        selection is stored. 409 while `DOCKMESH_PROXY_IMAGE` is set. The switch
+        finishes even when the client disconnects.
       requestBody:
         required: true
         content:
@@ -7691,7 +7693,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "502":
-          description: The new version did not come up with the config and was rolled back.
+          description: The new version did not come up with the config. It was rolled back, or the error says that starting the previous version failed too.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -7727,6 +7729,7 @@ paths:
       operationId: proxy.settings
       tags: [proxy]
       summary: Proxy-wide options (ACME account, CA, trusted proxies)
+      description: Without `proxy.update` the ACME email is returned as `***@<domain>`.
       responses:
         "200":
           description: Settings.

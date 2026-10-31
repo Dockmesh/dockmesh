@@ -83,7 +83,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   `DOCKMESH_PROXY_IMAGE` is set the version can't be changed.
 - Proxy settings for the ACME account email, the certificate authority (Let's Encrypt,
   its staging environment, or ZeroSSL) and trusting Cloudflare as a proxy in front of
-  Caddy (`/api/v1/proxy/settings`).
+  Caddy (`/api/v1/proxy/settings`). Both need `proxy.update` to change; users without it see
+  the ACME email with its local part hidden.
 
 ### Changed
 - New look for the web UI: a calmer, flat design with equal light and dark themes that
