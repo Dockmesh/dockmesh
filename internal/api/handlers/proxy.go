@@ -25,6 +25,9 @@ type proxyRouteRequest struct {
 	Options json.RawMessage `json:"options,omitempty"`
 }
 
+// maxProxyRouteBody bounds route create/update bodies; options are small.
+const maxProxyRouteBody = 256 << 10
+
 // writeProxyRouteError maps validation errors of route writes to 4xx.
 // It reports false when err is not one of them.
 func writeProxyRouteError(w http.ResponseWriter, err error) bool {
@@ -148,6 +151,7 @@ func (h *Handlers) CreateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "proxy not configured")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxProxyRouteBody)
 	var req proxyRouteRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
@@ -190,6 +194,7 @@ func (h *Handlers) UpdateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxProxyRouteBody)
 	var req proxyRouteRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
