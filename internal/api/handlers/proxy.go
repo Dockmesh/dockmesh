@@ -9,7 +9,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/proxy"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -47,6 +49,12 @@ func writeProxyRouteError(w http.ResponseWriter, err error) bool {
 		return false
 	}
 	return true
+}
+
+// canEditProxy reports whether the caller may see header values and the
+// full forward-auth URL; viewers get them masked.
+func canEditProxy(r *http.Request) bool {
+	return middleware.Allowed(r.Context(), rbac.PermProxyUpdate)
 }
 
 // persistProxyEnabled stores the operator's choice so it is applied again
@@ -143,6 +151,11 @@ func (h *Handlers) ListProxyRoutes(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 	defer cancel()
 	routes = h.Proxy.EnrichWithCertInfo(ctx, routes)
+	if !canEditProxy(r) {
+		for i := range routes {
+			routes[i].Options = routes[i].Options.Masked()
+		}
+	}
 	writeJSON(w, http.StatusOK, routes)
 }
 
@@ -330,7 +343,7 @@ func (h *Handlers) GetProxyRouteConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	preview, err := h.Proxy.SiteConfig(r.Context(), id)
+	preview, err := h.Proxy.SiteConfig(r.Context(), id, !canEditProxy(r))
 	if errors.Is(err, proxy.ErrRouteNotFound) {
 		writeError(w, http.StatusNotFound, "route not found")
 		return

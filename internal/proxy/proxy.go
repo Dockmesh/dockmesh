@@ -317,8 +317,9 @@ type SitePreview struct {
 }
 
 // SiteConfig returns the config the site gets when enabled, with
-// basic-auth hashes redacted and without the admin section.
-func (s *Service) SiteConfig(ctx context.Context, id int64) (*SitePreview, error) {
+// basic-auth hashes redacted and without the admin section. With mask
+// it is built from Masked options.
+func (s *Service) SiteConfig(ctx context.Context, id int64, mask bool) (*SitePreview, error) {
 	routes, err := s.listRoutes(ctx)
 	if err != nil {
 		return nil, err
@@ -338,6 +339,9 @@ func (s *Service) SiteConfig(ctx context.Context, id int64) (*SitePreview, error
 		if o.ID != id && o.Enabled && strings.EqualFold(o.Host, "www."+site.Host) {
 			one.Options.Routing.WWWRedirect = false
 		}
+	}
+	if mask {
+		one.Options = one.Options.Masked()
 	}
 	cfg, blocked := buildConfigWith([]Route{one}, true)
 	cfg.Admin = nil

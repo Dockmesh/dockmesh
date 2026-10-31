@@ -71,7 +71,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   serving HTTP alongside HTTPS, HSTS, basic auth, IP allow and deny lists, forward auth,
   security headers, request and response headers, and an access log. Basic-auth passwords
   are stored as bcrypt hashes and never returned. `GET /api/v1/proxy/routes/{id}/config`
-  shows the Caddy config a site gets. Existing routes keep their current behaviour.
+  shows the Caddy config a site gets. Users without `proxy.update` see header values masked
+  and the forward-auth URL without its query. Existing routes keep their current behaviour.
 
 ### Changed
 - New look for the web UI: a calmer, flat design with equal light and dark themes that

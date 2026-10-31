@@ -6139,6 +6139,10 @@ paths:
       operationId: proxy.list_routes
       tags: [proxy]
       summary: List configured proxy routes
+      description: |
+        Callers without `proxy.update` get the values of `headers.request_set`
+        and `headers.response_set` replaced by `********` and
+        `access.forward_auth.url` without its query.
       responses:
         "200":
           description: Routes.
@@ -6241,7 +6245,9 @@ paths:
         The Caddy JSON config Dockmesh generates for this site alone, as it
         would be served when enabled. Basic-auth password hashes are replaced
         by `REDACTED`; the admin section is left out. `blocked` is true when
-        the stored route fails validation and is not served.
+        the stored route fails validation and is not served. For callers
+        without `proxy.update` the config is built with header values masked
+        and the forward-auth URL's query removed, as in the route list.
       responses:
         "200":
           description: Preview.

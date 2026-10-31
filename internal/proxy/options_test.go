@@ -315,7 +315,7 @@ func TestRouteOptionsLifecycle(t *testing.T) {
 		}
 	}
 
-	preview, err := s.SiteConfig(ctx, r.ID)
+	preview, err := s.SiteConfig(ctx, r.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestRouteOptionsLifecycle(t *testing.T) {
 	if strings.Contains(string(b), hash) || !strings.Contains(string(b), redactedHash) || strings.Contains(string(b), adminAddr) {
 		t.Fatalf("preview leaks the hash or admin section: %s", b)
 	}
-	if _, err := s.SiteConfig(ctx, 999); !errors.Is(err, ErrRouteNotFound) {
+	if _, err := s.SiteConfig(ctx, 999, false); !errors.Is(err, ErrRouteNotFound) {
 		t.Fatalf("preview of missing route: err = %v", err)
 	}
 }
@@ -372,4 +372,62 @@ func jsonEqual(t *testing.T, a, b any) bool {
 		t.Fatal(err)
 	}
 	return bytes.Equal(x, y)
+}
+
+func TestMaskedHidesCredentials(t *testing.T) {
+	o := SiteOptions{
+		Access: AccessOptions{ForwardAuth: &ForwardAuth{URL: "http://authelia:9091/api/verify?token=s3cret", CopyHeaders: []string{"Remote-User"}}},
+		Headers: HeaderOptions{
+			RequestSet:    []Header{{Name: "Authorization", Value: "Bearer s3cret"}},
+			ResponseSet:   []Header{{Name: "X-Frame-Options", Value: "DENY"}},
+			RequestRemove: []string{"Cookie"},
+		},
+	}
+	m := o.Masked()
+	if got := m.Access.ForwardAuth.URL; got != "http://authelia:9091/api/verify" {
+		t.Errorf("forward-auth URL = %q", got)
+	}
+	if m.Access.ForwardAuth.CopyHeaders[0] != "Remote-User" || m.Headers.RequestRemove[0] != "Cookie" {
+		t.Errorf("names lost: %+v", m)
+	}
+	for _, h := range append(m.Headers.RequestSet, m.Headers.ResponseSet...) {
+		if h.Value != maskedValue {
+			t.Errorf("%s = %q, want masked", h.Name, h.Value)
+		}
+	}
+	if m.Headers.RequestSet[0].Name != "Authorization" {
+		t.Errorf("header name lost: %+v", m.Headers.RequestSet)
+	}
+	if o.Headers.RequestSet[0].Value != "Bearer s3cret" || !strings.Contains(o.Access.ForwardAuth.URL, "token=") {
+		t.Fatal("Masked modified the original")
+	}
+	if (SiteOptions{}).Masked().Access.ForwardAuth != nil {
+		t.Error("Masked added a forward-auth block")
+	}
+}
+
+func TestSiteConfigMasked(t *testing.T) {
+	ctx := context.Background()
+	s := newServiceDB(t)
+	opts := SiteOptions{
+		Access:  AccessOptions{ForwardAuth: &ForwardAuth{URL: "http://authelia:9091/api/verify?token=s3cret"}},
+		Headers: HeaderOptions{RequestSet: []Header{{Name: "Authorization", Value: "Bearer s3cret"}}},
+	}
+	r, err := s.CreateRoute(ctx, RouteSpec{Host: "app.example.com", Upstream: "10.0.0.2:80", TLSMode: "auto", Options: &opts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mask := range []bool{false, true} {
+		preview, err := s.SiteConfig(ctx, r.ID, mask)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := json.Marshal(preview)
+		if leaked := strings.Contains(string(b), "s3cret"); leaked == mask {
+			t.Errorf("mask=%v: secret in preview = %v: %s", mask, leaked, b)
+		}
+		if mask && (!strings.Contains(string(b), maskedValue) || !strings.Contains(string(b), "/api/verify")) {
+			t.Errorf("masked preview lost the header or the auth path: %s", b)
+		}
+	}
 }
