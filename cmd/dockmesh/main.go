@@ -21,6 +21,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 
+	"github.com/dockmesh/dockmesh"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/api"
@@ -66,6 +67,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/telemetry"
 	"github.com/dockmesh/dockmesh/internal/templates"
 	"github.com/dockmesh/dockmesh/internal/updater"
+	"github.com/dockmesh/dockmesh/internal/userprefs"
 	"github.com/dockmesh/dockmesh/pkg/version"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
@@ -1101,6 +1103,8 @@ func main() {
 		AgentUpgrade:   agentUpgrade,
 		Prom:           promMetrics,
 		SelfUpdate:     selfUpdateChk,
+		UserPrefs:      userprefs.New(database),
+		Changelog:      dockmesh.Changelog,
 		SetupState:     setupState,
 		SetupCommit_:   setupCommit,
 		RestoreConfig:  cfg,

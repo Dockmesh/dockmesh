@@ -14,8 +14,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   `[Unreleased]` to the new header and add a fresh empty `[Unreleased]` above it.
 - Text between the header and the first `###` is the release summary. An optional line
   `Minimum upgrade from: X.Y.Z` there names the oldest version that can upgrade directly.
-- Subsections are `### Added`, `### Changed`, `### Fixed`, `### Security` and
+- Subsections are `### Highlights`, `### Added`, `### Changed`, `### Fixed`, `### Security` and
   `### Upgrade notes`; each holds `- ` bullets (indented lines continue a bullet).
+- `### Highlights` holds three or four plain-language lines the app shows first in its
+  "what's new" notes. They summarise entries that are also listed in the other subsections.
+  A minor release (`X.Y.0`) must have them; patch releases and `[Unreleased]` may leave them out.
 - A Security bullet of the form `- GHSA-xxxx-xxxx-xxxx (critical|high|moderate|low): Title`
   is published as an advisory.
 - Every Upgrade notes bullet is something a person has to do after upgrading and starts with
@@ -57,6 +60,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   files first; the server then restarts and swaps the restored files in before it opens the
   database. The replaced files are kept in `<data>/.pre-restore/<time>` and
   `<stacks>.pre-restore-<time>`.
+- `GET /api/v1/system/whats-new` returns the release notes of the running version and of a
+  newer release, and `POST /api/v1/system/whats-new/seen` remembers per user that they were
+  read. Changelog sections may start with a `### Highlights` list, which the release notes and
+  `release-manifest.json` now include; the changelog check requires three or four of them in
+  every minor release.
 
 ### Changed
 - New look for the web UI: a calmer, flat design with equal light and dark themes that

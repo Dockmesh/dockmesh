@@ -4610,6 +4610,53 @@ paths:
                   error:            { type: string }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /system/whats-new:
+    get:
+      operationId: system.whats_new
+      tags: [metrics]
+      summary: Release notes of the running version and of a newer release
+      description: |
+        `current` is the running version's section of the changelog embedded
+        in the binary; null for builds that are not a release. `latest` is
+        the newer release found by the update check, read from its
+        `release-manifest.json`; null when there is none, it has no
+        manifest, or the caller lacks `system.view`. `highlights` is empty when the changelog section has no
+        `### Highlights` list. `unseen` is true while the caller has not
+        marked the running version as seen; API tokens always get false.
+        Any authenticated caller.
+      responses:
+        "200":
+          description: Release notes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [current, latest, last_seen_version, unseen]
+                properties:
+                  current:
+                    oneOf:
+                      - $ref: "#/components/schemas/ReleaseNotes"
+                      - type: "null"
+                  latest:
+                    oneOf:
+                      - $ref: "#/components/schemas/ReleaseNotes"
+                      - type: "null"
+                  last_seen_version: { type: string, description: Empty when the caller never marked a version as seen. }
+                  unseen: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /system/whats-new/seen:
+    post:
+      operationId: system.whats_new_seen
+      tags: [metrics]
+      summary: Mark the running version's release notes as seen
+      description: Per user. Requires a user session; API tokens get 404.
+      responses:
+        "204": { description: Marked (idempotent). }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   /system/update-check:
     post:
       operationId: system.update_check
@@ -7565,6 +7612,19 @@ components:
           type: string
           example: invalid credentials
 
+    ReleaseNotes:
+      type: object
+      required: [version, highlights, added, changed, fixed, security]
+      properties:
+        version: { type: string, example: 0.5.0 }
+        date: { type: string, format: date }
+        severity: { type: string, enum: [security, recommended, normal] }
+        summary: { type: string }
+        highlights: { type: array, items: { type: string }, description: 3-4 plain-language lines; may be empty. }
+        added: { type: array, items: { type: string } }
+        changed: { type: array, items: { type: string } }
+        fixed: { type: array, items: { type: string } }
+        security: { type: array, items: { type: string }, description: Security entries, advisories as "GHSA-… (severity): title". }
     AttentionItem:
       type: object
       required: [id, kind, severity, title, link, object]

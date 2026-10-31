@@ -165,6 +165,10 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Get("/notices", h.ListNotices)
 			r.Post("/notices/{id}/dismiss", h.DismissNotice)
 
+			// Any signed-in user may read the release notes.
+			r.Get("/system/whats-new", h.GetWhatsNew)
+			r.Post("/system/whats-new/seen", h.MarkWhatsNewSeen)
+
 			// Needs-attention feed; each source is gated on its own view
 			// permission and the caller's scope inside the handler.
 			r.Get("/attention", h.Attention)

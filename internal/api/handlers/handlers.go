@@ -16,6 +16,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/changelog"
 	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/config"
@@ -47,6 +48,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/templates"
 	"github.com/dockmesh/dockmesh/internal/updater"
+	"github.com/dockmesh/dockmesh/internal/userprefs"
 )
 
 type Handlers struct {
@@ -102,6 +104,7 @@ type Handlers struct {
 	AgentUpgrade      *agents.UpgradeController
 	Prom              *metrics.PromMetrics
 	SelfUpdate        *selfupdate.Checker
+	UserPrefs         *userprefs.Store
 	SetupState        *setup.State     // first-run wizard state; nil = setup never active
 	SetupCommit_      setup.CommitFunc // wizard's commit-runner — wired by main; nil = wizard cannot commit
 	ssoCodes          ssoCodes
@@ -119,6 +122,8 @@ type Handlers struct {
 	// router mounts its middleware.
 	ClientIPs   *clientip.Resolver
 	proxyNotice *proxyNotice
+	// releaseSections is the embedded changelog, parsed once.
+	releaseSections []*changelog.Section
 	// attentionRows replaces the container fan-out of GET /attention in tests.
 	attentionRows func(ctx context.Context) []containerRow
 	// attentionCertRoutes replaces the proxy certificate probe of GET /attention in tests.
@@ -174,6 +179,9 @@ type Deps struct {
 	AgentUpgrade   *agents.UpgradeController
 	Prom           *metrics.PromMetrics
 	SelfUpdate     *selfupdate.Checker
+	UserPrefs      *userprefs.Store
+	// Changelog is CHANGELOG.md as embedded in the binary.
+	Changelog      string
 	SetupState     *setup.State
 	SetupCommit_   setup.CommitFunc
 	RestoreConfig  *config.Config
@@ -230,6 +238,7 @@ func New(d Deps) *Handlers {
 		AgentUpgrade:   d.AgentUpgrade,
 		Prom:           d.Prom,
 		SelfUpdate:     d.SelfUpdate,
+		UserPrefs:      d.UserPrefs,
 		SetupState:     d.SetupState,
 		SetupCommit_:   d.SetupCommit_,
 		RestoreConfig:  d.RestoreConfig,
@@ -251,6 +260,13 @@ func New(d Deps) *Handlers {
 		return d.Settings.Get(settings.KeyTrustedProxies, "")
 	})
 	h.ClientIPs.OnUntrustedForward = h.proxyNotice.observe
+	if d.Changelog != "" {
+		sections, err := changelog.Parse(d.Changelog)
+		if err != nil {
+			slog.Warn("embedded changelog unreadable; what's new stays empty", "err", err)
+		}
+		h.releaseSections = sections
+	}
 	return h
 }
 
