@@ -5,13 +5,12 @@ import (
 	"io"
 	"testing"
 
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 )
 
-func managedContainer(s *Service, imageID string) *dtypes.ContainerJSON {
-	return &dtypes.ContainerJSON{
-		ContainerJSONBase: &dtypes.ContainerJSONBase{
+func managedContainer(s *Service, imageID string) *container.InspectResponse {
+	return &container.InspectResponse{
+		ContainerJSONBase: &container.ContainerJSONBase{
 			Image: imageID,
 			HostConfig: &container.HostConfig{
 				NetworkMode: proxyNetworkMode,
@@ -33,16 +32,16 @@ func TestMatchesSpec(t *testing.T) {
 	}
 	tamper := []struct {
 		name string
-		mod  func(*dtypes.ContainerJSON)
+		mod  func(*container.InspectResponse)
 	}{
-		{"other image", func(c *dtypes.ContainerJSON) { c.Image = "sha256:evil" }},
-		{"privileged", func(c *dtypes.ContainerJSON) { c.HostConfig.Privileged = true }},
-		{"cap add", func(c *dtypes.ContainerJSON) { c.HostConfig.CapAdd = []string{"SYS_ADMIN"} }},
-		{"extra bind", func(c *dtypes.ContainerJSON) { c.HostConfig.Binds = append(c.HostConfig.Binds, "/:/host") }},
-		{"entrypoint", func(c *dtypes.ContainerJSON) { c.Config.Entrypoint = []string{"/evil"} }},
-		{"cmd", func(c *dtypes.ContainerJSON) { c.Config.Cmd = []string{"caddy", "run"} }},
-		{"bridge", func(c *dtypes.ContainerJSON) { c.HostConfig.NetworkMode = "bridge" }},
-		{"no label", func(c *dtypes.ContainerJSON) { delete(c.Config.Labels, specLabel) }},
+		{"other image", func(c *container.InspectResponse) { c.Image = "sha256:evil" }},
+		{"privileged", func(c *container.InspectResponse) { c.HostConfig.Privileged = true }},
+		{"cap add", func(c *container.InspectResponse) { c.HostConfig.CapAdd = []string{"SYS_ADMIN"} }},
+		{"extra bind", func(c *container.InspectResponse) { c.HostConfig.Binds = append(c.HostConfig.Binds, "/:/host") }},
+		{"entrypoint", func(c *container.InspectResponse) { c.Config.Entrypoint = []string{"/evil"} }},
+		{"cmd", func(c *container.InspectResponse) { c.Config.Cmd = []string{"caddy", "run"} }},
+		{"bridge", func(c *container.InspectResponse) { c.HostConfig.NetworkMode = "bridge" }},
+		{"no label", func(c *container.InspectResponse) { delete(c.Config.Labels, specLabel) }},
 	}
 	for _, tt := range tamper {
 		c := managedContainer(s, img)

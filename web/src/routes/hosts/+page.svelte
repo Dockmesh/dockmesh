@@ -527,6 +527,8 @@
               <span class="font-mono">{r.version ? fmtVersion(r.version) : '—'}</span>
               {#if needsUpgrade}
                 <span class="ed-hosts-row-upgrade font-mono">↑ {fmtVersion(upgradePolicy?.server_version)}</span>
+              {:else if r.update_recommended}
+                <span class="ed-hosts-row-upgrade font-mono" title="This agent speaks an older protocol; some features are unavailable until it is upgraded">update recommended</span>
               {/if}
             </div>
             <span class="font-mono ed-hosts-row-seen">

@@ -22,23 +22,14 @@ func jobTOFU(st *store, n *notices.Service, job *Job) targets.TOFU {
 	}
 }
 
-// jobTarget builds the job's target. For SFTP it records the host key on
-// first contact and parks a changed key until an admin accepts it, so
-// existing jobs keep running after the upgrade without anyone re-saving
-// them, while a swapped server is refused.
-func jobTarget(ctx context.Context, st *store, n *notices.Service, job *Job) (targets.Target, error) {
-	t, err := buildTarget(job.TargetType, job.TargetConfig)
-	if err != nil {
-		return nil, err
-	}
-	jobTOFU(st, n, job).Attach(ctx, t)
-	return t, nil
-}
-
 // AcceptHostKey trusts the changed host key an SFTP job last saw.
 func (s *Service) AcceptHostKey(ctx context.Context, jobID int64) error {
-	if _, err := s.store.getJob(ctx, jobID); err != nil {
+	job, err := s.store.getJob(ctx, jobID)
+	if err != nil {
 		return err
+	}
+	if job.TargetID > 0 {
+		return targets.NewTargetStore(s.store.db).AcceptHostKey(ctx, job.TargetID, s.notices)
 	}
 	if err := targets.JobKeyRecorder(s.store.db, jobID).AcceptPendingHostKey(ctx); err != nil {
 		return err

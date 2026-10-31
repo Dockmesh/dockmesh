@@ -281,7 +281,7 @@ ensure_dir_owner "$DATA_DIR" "$RUN_USER"
 if [[ -n "$OLD_DATA_DIR" && -d "$OLD_DATA_DIR" ]]; then
   systemctl stop dockmesh-agent 2>/dev/null || true
   log "moving agent files out of the server's data directory $OLD_DATA_DIR to $DATA_DIR"
-  install -d -m 0711 -o "$RUN_USER" -g "$RUN_GROUP" "$DATA_DIR"
+  install -d -m 0700 -o "$RUN_USER" -g "$RUN_GROUP" "$DATA_DIR"
   migrate_agent_files "$OLD_DATA_DIR" "$DATA_DIR"
   if [[ $AS_ROOT -eq 0 ]]; then
     usermod -d "$DATA_DIR" "$RUN_USER" 2>/dev/null || true
@@ -304,11 +304,23 @@ if [[ -f "$DATA_DIR/agent.crt" ]] || [[ -f "$DATA_DIR/agent.key" ]] || [[ -d "$D
   rm -rf "$DATA_DIR/certs" "$DATA_DIR/staging"
 fi
 
+# install_path_copy replaces dest (a file or an old symlink) with a
+# root-owned copy of src, leaving the symlink's target alone.
+install_path_copy() {
+  local src="$1" dest="$2"
+  rm -f "$dest"
+  install -m 0755 -o root -g root "$src" "$dest"
+}
+# end install_path_copy
+
 # -----------------------------------------------------------------------------
 # Filesystem layout
 # -----------------------------------------------------------------------------
 log "creating directories"
-install -d -m 0711 -o "$RUN_USER" -g "$RUN_GROUP" "$DATA_DIR"
+install -d -m 0700 -o "$RUN_USER" -g "$RUN_GROUP" "$DATA_DIR"
+# An agent that finds the old /usr/local/bin symlink opens its data dir
+# to 0711; the copy below doesn't need that.
+chmod 0700 "$DATA_DIR"
 install -d -m 0750 -o root -g "$RUN_GROUP" "$ENV_DIR"
 
 # -----------------------------------------------------------------------------
@@ -320,7 +332,8 @@ install -d -m 0750 -o root -g "$RUN_GROUP" "$ENV_DIR"
 # in the Linux world and non-root users can't create siblings there.
 BIN_DIR="$DATA_DIR/bin"
 AGENT_BIN="$BIN_DIR/dockmesh-agent"
-install -d -m 0755 -o "$RUN_USER" -g "$RUN_GROUP" "$BIN_DIR"
+install -d -m 0750 -o "$RUN_USER" -g "$RUN_GROUP" "$BIN_DIR"
+chmod 0750 "$BIN_DIR"
 
 TMP_BIN="$(mktemp)"
 log "downloading agent binary from $BINARY_URL"
@@ -334,11 +347,13 @@ chmod 0755 "$TMP_BIN"
 install -m 0755 -o "$RUN_USER" -g "$RUN_GROUP" "$TMP_BIN" "$AGENT_BIN"
 rm -f "$TMP_BIN"
 
-# Keep a symlink at /usr/local/bin/dockmesh-agent for convenience —
-# `dockmesh-agent --version` on a user shell still works, but the
-# systemd unit runs the real path in $DATA_DIR/bin. $DATA_DIR is 0711 so
-# other users can reach the binary without listing the keys next to it.
-ln -sf "$AGENT_BIN" /usr/local/bin/dockmesh-agent
+# A root-owned copy at /usr/local/bin/dockmesh-agent lets any user run
+# `dockmesh-agent --version` without reaching into $DATA_DIR. The systemd
+# unit runs the real path in $DATA_DIR/bin and refreshes the copy at every
+# start, so it follows self-upgrades.
+PATH_BIN=/usr/local/bin/dockmesh-agent
+INSTALL_CMD="$(command -v install)"
+install_path_copy "$AGENT_BIN" "$PATH_BIN"
 
 log "installed: $($AGENT_BIN --version 2>&1 | head -1 || echo dockmesh-agent)"
 
@@ -391,6 +406,7 @@ Requires=docker.service
 Type=simple
 $USER_LINES
 EnvironmentFile=$ENV_FILE
+ExecStartPre=-+$INSTALL_CMD -m 0755 -o root -g root $AGENT_BIN $PATH_BIN
 ExecStart=$AGENT_BIN
 Restart=always
 RestartSec=10s

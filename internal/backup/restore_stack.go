@@ -11,8 +11,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
-	dvolume "github.com/docker/docker/api/types/volume"
+	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
@@ -27,33 +28,267 @@ const stackRestoreFileSizeCap = 32 * 1024 * 1024
 // guarding against zip-bomb-style inflation.
 const stackRestoreMaxEntries = 50_000
 
-// restoreStackInto extracts a stack-type backup tarball into the named
-// stack. Layout produced by tarStackWithVolumes:
-//
-//	stack/<rel>            → /stacks/<name>/<rel>
-//	volumes/<vol>.tar.gz   → docker volume <vol>, untarred via the same
-//	                         helper container the volume backup uses.
-//
-// The compose file content is captured during the walk and Update'd via
-// the manager at the end so the in-memory cache and fsnotify watchers
-// see a consistent post-restore state. Volumes are recreated on demand
-// (VolumeCreate is idempotent — already-present volumes are reused).
-//
-// Safety:
-//   - Path traversal: the relative path inside the tar is cleaned and
-//     rejected if it contains "..".
-//   - Symlinks inside the archive are skipped with a warning rather
-//     than followed.
-//   - The destination stack name comes from the caller, not the tar —
-//     restore-as-other-name is supported.
-func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io.Reader, report *StackRestoreReport) error {
-	if err := stacks.ValidateName(stackName); err != nil {
-		return fmt.Errorf("invalid stack name: %w", err)
+// RestoreOptions picks where and how a run is restored.
+type RestoreOptions struct {
+	// Target is the volume (volume runs) or stack (stack runs) to restore
+	// into; empty means the one the backup was taken from.
+	Target string
+	// HostID is the Docker host the volumes go to; empty means the host
+	// the backup was taken on.
+	HostID string
+	// Replace empties each volume before extracting. Otherwise the
+	// archive is merged: its files overwrite, other files stay.
+	Replace bool
+}
+
+// RestoreReport says what a restore did.
+type RestoreReport struct {
+	Kind            string   `json:"kind"` // "volume" | "stack"
+	StackName       string   `json:"stack_name,omitempty"`
+	HostID          string   `json:"host_id"`
+	Mode            string   `json:"mode"` // "replace" | "merge"
+	FilesRestored   []string `json:"files_restored"`
+	VolumesRestored []string `json:"volumes_restored"`
+	Warnings        []string `json:"warnings,omitempty"`
+}
+
+// ErrArchiveInvalid is returned when the pre-restore check of the archive
+// fails; nothing was changed.
+var ErrArchiveInvalid = errors.New("backup archive failed verification, nothing was restored")
+
+var (
+	// ErrRestoreBusy refuses a restore while another one writes the same
+	// volume or stack, or too many restores run.
+	ErrRestoreBusy = errors.New("another restore is in progress")
+	// ErrUnverifiedReplace refuses emptying volumes for a run with no
+	// recorded checksum: nothing ties its archive to what was backed up.
+	ErrUnverifiedReplace = errors.New("this backup has no recorded checksum, so it can only be merged, not replace the volume's contents")
+)
+
+const (
+	maxConcurrentRestores = 2
+	restoreTimeout        = 6 * time.Hour
+)
+
+// VolumeInUseError refuses replacing a volume that running containers use.
+type VolumeInUseError struct {
+	Volume     string
+	Containers []string
+}
+
+func (e *VolumeInUseError) Error() string {
+	return fmt.Sprintf("volume %s is used by running containers (%s); stop them before replacing its contents",
+		e.Volume, strings.Join(e.Containers, ", "))
+}
+
+// Restore restores a volume or stack run. The archive is downloaded once,
+// checked against the recorded size and hash, verified completely and
+// then extracted from that same copy, so a damaged or swapped backup
+// never overwrites anything.
+func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions) (*RestoreReport, error) {
+	ctx, cancel := context.WithTimeout(ctx, restoreTimeout)
+	defer cancel()
+	run, err := s.store.getRun(ctx, runID)
+	if err != nil {
+		return nil, err
 	}
+	if HasSystemSource(run.Sources) {
+		return nil, ErrSystemRestore
+	}
+	if !run.Restorable() {
+		return nil, ErrNotRestorable
+	}
+	if len(run.Sources) == 0 {
+		return nil, errors.New("run has no sources")
+	}
+	kind := run.Sources[0].Type
+	if kind != "volume" && kind != "stack" {
+		return nil, fmt.Errorf("cannot restore a %q backup into a volume or stack", kind)
+	}
+	if opts.Replace && run.SHA256 == "" {
+		return nil, ErrUnverifiedReplace
+	}
+	source := run.Sources[0].Name
+	if opts.Target == "" {
+		opts.Target = source
+	}
+	if kind == "volume" {
+		if err := docker.CheckVolumeName(opts.Target); err != nil {
+			return nil, err
+		}
+	} else if err := stacks.ValidateName(opts.Target); err != nil {
+		return nil, fmt.Errorf("invalid stack name: %w", err)
+	}
+	job, err := s.store.getJobForRun(ctx, run.JobID)
+	if err != nil {
+		return nil, err
+	}
+	if opts.HostID == "" {
+		opts.HostID = defaultStr(job.HostID, "local")
+	}
+	host, err := s.exec.resolveHost(opts.HostID)
+	if err != nil {
+		return nil, fmt.Errorf("restore host: %w", err)
+	}
+	target, err := jobTarget(ctx, s.store, s.notices, job)
+	if err != nil {
+		return nil, err
+	}
+	stored, err := fetchArchive(ctx, target, run)
+	if err != nil {
+		return nil, err
+	}
+	defer stored.Close()
+
+	check := &VerifyResult{RunID: runID, Type: kind, Passed: true}
+	plain, err := s.plaintext(stored, run)
+	if err != nil {
+		return nil, err
+	}
+	if kind == "stack" {
+		verifyStackArchive(check, plain)
+	} else {
+		verifyVolumeArchive(check, plain)
+	}
+	if !check.Passed {
+		return nil, fmt.Errorf("%w: %s", ErrArchiveInvalid, failedChecks(check))
+	}
+
+	report := &RestoreReport{Kind: kind, HostID: opts.HostID, Mode: "merge", FilesRestored: []string{}, VolumesRestored: []string{}}
+	if opts.Replace {
+		report.Mode = "replace"
+	}
+	// Volumes the verified archive holds, mapped onto the target. A volume
+	// with a fixed name belongs to whatever else uses that name, so a
+	// restore under another stack name leaves it alone.
+	plan := map[string]string{}
+	if kind == "volume" {
+		plan[source] = opts.Target
+	} else {
+		for _, v := range check.Counts.Volumes {
+			dest := stackVolumeName(source, opts.Target, v)
+			if dest == v && source != opts.Target {
+				report.Warnings = append(report.Warnings, fmt.Sprintf("volume %s has a fixed name and was not restored into the copy %s", v, opts.Target))
+				continue
+			}
+			plan[v] = dest
+		}
+	}
+	keys := []string{"stack:" + opts.Target}
+	for _, dest := range plan {
+		keys = append(keys, "volume:"+opts.HostID+"/"+dest)
+	}
+	release, err := s.claimRestore(keys)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if opts.Replace {
+		for _, dest := range plan {
+			if err := checkVolumeFree(ctx, host, dest); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if _, err := stored.(io.Seeker).Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	if plain, err = s.plaintext(stored, run); err != nil {
+		return nil, err
+	}
+	if kind == "volume" {
+		if err := host.VolumeImport(ctx, opts.Target, plain, opts.Replace); err != nil {
+			return report, fmt.Errorf("restore volume %s: %w", opts.Target, err)
+		}
+		report.VolumesRestored = append(report.VolumesRestored, opts.Target)
+		return report, nil
+	}
+	report.StackName = opts.Target
+	return report, s.restoreStackInto(ctx, opts.Target, plain, host, plan, opts.Replace, report)
+}
+
+// plaintext reads a fetched archive, decrypting encrypted runs. The
+// returned reader doesn't close stored.
+func (s *Service) plaintext(stored io.Reader, run *Run) (io.Reader, error) {
+	if !run.Encrypted {
+		return stored, nil
+	}
+	return wrapDecrypt(io.NopCloser(stored), s.secrets)
+}
+
+// checkVolumeFree refuses replacing a volume that containers use.
+func checkVolumeFree(ctx context.Context, host hostBackupTarget, volume string) error {
+	users, err := host.VolumeInUse(ctx, volume)
+	if err != nil {
+		return fmt.Errorf("check volume %s: %w", volume, err)
+	}
+	if len(users) > 0 {
+		return &VolumeInUseError{Volume: volume, Containers: users}
+	}
+	return nil
+}
+
+// claimRestore takes the named volumes and stack for one restore, and a
+// slot of the few restores that may run at once; each holds a temp copy
+// of its archive.
+func (s *Service) claimRestore(keys []string) (func(), error) {
+	s.restoreMu.Lock()
+	defer s.restoreMu.Unlock()
+	if s.restoring == nil {
+		s.restoring = map[string]bool{}
+	}
+	if s.restoreSlots >= maxConcurrentRestores {
+		return nil, fmt.Errorf("%w: %d restores are already running", ErrRestoreBusy, s.restoreSlots)
+	}
+	for _, k := range keys {
+		if s.restoring[k] {
+			return nil, fmt.Errorf("%w: %s", ErrRestoreBusy, strings.TrimPrefix(strings.TrimPrefix(k, "stack:"), "volume:"))
+		}
+	}
+	for _, k := range keys {
+		s.restoring[k] = true
+	}
+	s.restoreSlots++
+	return func() {
+		s.restoreMu.Lock()
+		defer s.restoreMu.Unlock()
+		for _, k := range keys {
+			delete(s.restoring, k)
+		}
+		s.restoreSlots--
+	}, nil
+}
+
+// stackVolumeName maps a backed-up volume onto the target stack. Compose
+// names a stack's volumes <stack>_<key>, so restoring as another stack
+// must not write into the original's volumes. Explicitly named volumes
+// keep their name.
+func stackVolumeName(source, target, vol string) string {
+	if source == target || !strings.HasPrefix(vol, source+"_") {
+		return vol
+	}
+	return target + "_" + strings.TrimPrefix(vol, source+"_")
+}
+
+func failedChecks(r *VerifyResult) string {
+	var out []string
+	for _, c := range r.Checks {
+		if c.Status == "fail" {
+			out = append(out, c.Name+": "+c.Message)
+		}
+	}
+	return strings.Join(out, "; ")
+}
+
+// restoreStackInto extracts a stack archive (layout in tarStackWithVolumes):
+// stack/<rel> goes to the stack directory on the server, each
+// volumes/<vol>.tar.gz named in plan is streamed into plan[vol] on host.
+// Links in the archive are skipped; writes go through an os.Root.
+func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io.Reader, host hostBackupTarget, plan map[string]string, replace bool, report *RestoreReport) error {
 	if s.stacks == nil {
 		return errors.New("stacks manager not configured")
 	}
-
 	stackDir, err := s.stacks.Dir(stackName)
 	if err != nil {
 		return fmt.Errorf("resolve stack dir: %w", err)
@@ -61,8 +296,6 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 	if err := os.MkdirAll(stackDir, 0o755); err != nil {
 		return fmt.Errorf("create stack dir: %w", err)
 	}
-	// Writing through an os.Root lets the kernel refuse any path, links
-	// already in the stack dir included, that would leave it.
 	root, err := os.OpenRoot(stackDir)
 	if err != nil {
 		return fmt.Errorf("open stack dir: %w", err)
@@ -74,13 +307,9 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 		return fmt.Errorf("decompress: %w", err)
 	}
 	defer gz.Close()
-
 	tr := tar.NewReader(gz)
 
-	// Compose + env extracted from the archive — used to call manager
-	// Update at the end so the cache stays consistent.
 	var composeContent, envContent string
-
 	entries := 0
 	for {
 		hdr, err := tr.Next()
@@ -94,7 +323,6 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 		if entries > stackRestoreMaxEntries {
 			return fmt.Errorf("archive has too many entries (>%d)", stackRestoreMaxEntries)
 		}
-
 		name := filepath.ToSlash(hdr.Name)
 		switch {
 		case strings.HasPrefix(name, "stack/"):
@@ -106,119 +334,79 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 				report.Warnings = append(report.Warnings, fmt.Sprintf("skipped path traversal attempt: %s", name))
 				continue
 			}
-			dst := filepath.FromSlash(rel)
-			switch hdr.Typeflag {
-			case tar.TypeDir:
-				if err := root.MkdirAll(dst, 0o755); err != nil {
-					return fmt.Errorf("mkdir %s: %w", rel, err)
-				}
-			case tar.TypeReg, tar.TypeRegA:
-				if hdr.Size > stackRestoreFileSizeCap {
-					report.Warnings = append(report.Warnings, fmt.Sprintf("skipped oversize file (%d bytes): %s", hdr.Size, rel))
-					continue
-				}
-				if err := root.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-					return fmt.Errorf("mkdir parent for %s: %w", rel, err)
-				}
-				buf, err := io.ReadAll(io.LimitReader(tr, stackRestoreFileSizeCap+1))
-				if err != nil {
-					return fmt.Errorf("read %s: %w", rel, err)
-				}
-				if int64(len(buf)) > stackRestoreFileSizeCap {
-					report.Warnings = append(report.Warnings, fmt.Sprintf("skipped oversize file: %s", rel))
-					continue
-				}
-				if err := root.WriteFile(dst, buf, 0o644); err != nil {
-					return fmt.Errorf("write %s: %w", rel, err)
-				}
-				report.FilesRestored = append(report.FilesRestored, rel)
-				switch rel {
-				case "compose.yaml":
-					composeContent = string(buf)
-				case ".env":
-					envContent = string(buf)
-				}
-			case tar.TypeSymlink, tar.TypeLink:
-				report.Warnings = append(report.Warnings, fmt.Sprintf("skipped symlink: %s", rel))
-			default:
-				// Unknown / device / fifo entries — silently skip,
-				// they have no place in a stack dir.
+			buf, err := restoreStackEntry(root, tr, hdr, rel, report)
+			if err != nil {
+				return err
 			}
-
+			switch rel {
+			case "compose.yaml":
+				composeContent = string(buf)
+			case ".env":
+				envContent = string(buf)
+			}
 		case strings.HasPrefix(name, "volumes/") && strings.HasSuffix(name, ".tar.gz"):
 			volName := strings.TrimSuffix(strings.TrimPrefix(name, "volumes/"), ".tar.gz")
-			if volName == "" {
-				report.Warnings = append(report.Warnings, fmt.Sprintf("skipped malformed volume entry: %s", name))
+			if hdr.Typeflag != tar.TypeReg {
+				return fmt.Errorf("archive entry %s is not a regular file", name)
+			}
+			dest, ok := plan[volName]
+			if !ok {
 				continue
 			}
-			if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
-				report.Warnings = append(report.Warnings, fmt.Sprintf("skipped non-regular volume entry: %s", name))
-				continue
+			if replace {
+				if err := checkVolumeFree(ctx, host, dest); err != nil {
+					return err
+				}
 			}
-			if err := s.restoreOneVolume(ctx, volName, tr, hdr.Size); err != nil {
-				report.Warnings = append(report.Warnings, fmt.Sprintf("volume %s restore failed: %v", volName, err))
-				continue
+			if err := host.VolumeImport(ctx, dest, io.LimitReader(tr, hdr.Size), replace); err != nil {
+				return fmt.Errorf("restore volume %s: %w", dest, err)
 			}
-			report.VolumesRestored = append(report.VolumesRestored, volName)
-
-		default:
-			// Ignore unexpected top-level entries silently. Tarballs
-			// from older versions might carry stray files.
+			report.VolumesRestored = append(report.VolumesRestored, dest)
 		}
 	}
-
 	if composeContent == "" {
-		return errors.New("archive does not contain stack/compose.yaml — refusing to mark a stack record without a compose file")
+		return errors.New("archive does not contain stack/compose.yaml")
 	}
-
-	// Make sure the stacks manager picks up the restored compose. Update
-	// rewrites the file (idempotent — same bytes) and refreshes the
-	// in-memory cache + watcher so /stacks list reflects the restore.
+	// Update rewrites the same bytes but refreshes the manager's cache
+	// and the recorded checksums.
 	if _, err := s.stacks.Update(stackName, composeContent, envContent); err != nil {
 		return fmt.Errorf("register restored stack with manager: %w", err)
 	}
-	slog.Info("stack restored from backup",
-		"stack", stackName,
-		"files", len(report.FilesRestored),
-		"volumes", len(report.VolumesRestored),
-		"warnings", len(report.Warnings),
-	)
+	slog.Info("stack restored from backup", "stack", stackName, "files", len(report.FilesRestored),
+		"volumes", len(report.VolumesRestored), "warnings", len(report.Warnings))
 	return nil
 }
 
-// restoreOneVolume buffers a single volumes/<name>.tar.gz entry to a
-// temp file (untarVolume needs an io.Reader it can rewind, and the
-// outer tar's Reader can't be split mid-stream) then untars it into
-// the named docker volume, creating it if needed. Idempotent: an
-// existing volume's contents are overwritten, which is what restore
-// is supposed to do.
-func (s *Service) restoreOneVolume(ctx context.Context, volName string, src io.Reader, size int64) error {
-	if s.docker == nil || !s.docker.Connected() {
-		return errors.New("docker unavailable")
+// restoreStackEntry writes one stack/<rel> entry and returns the content
+// of regular files.
+func restoreStackEntry(root *os.Root, tr *tar.Reader, hdr *tar.Header, rel string, report *RestoreReport) ([]byte, error) {
+	dst := filepath.FromSlash(rel)
+	switch hdr.Typeflag {
+	case tar.TypeDir:
+		if err := root.MkdirAll(dst, 0o755); err != nil {
+			return nil, fmt.Errorf("mkdir %s: %w", rel, err)
+		}
+	case tar.TypeReg:
+		if hdr.Size > stackRestoreFileSizeCap {
+			report.Warnings = append(report.Warnings, fmt.Sprintf("skipped oversize file (%d bytes): %s", hdr.Size, rel))
+			return nil, nil
+		}
+		if err := root.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return nil, fmt.Errorf("mkdir parent for %s: %w", rel, err)
+		}
+		buf, err := io.ReadAll(tr)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", rel, err)
+		}
+		if err := root.WriteFile(dst, buf, 0o644); err != nil {
+			return nil, fmt.Errorf("write %s: %w", rel, err)
+		}
+		report.FilesRestored = append(report.FilesRestored, rel)
+		return buf, nil
+	case tar.TypeSymlink, tar.TypeLink:
+		report.Warnings = append(report.Warnings, fmt.Sprintf("skipped symlink: %s", rel))
 	}
-	cli := s.docker.Raw()
-	// Idempotent create — VolumeCreate succeeds if the volume already
-	// exists (Docker treats it as a get-or-create).
-	if _, err := cli.VolumeCreate(ctx, dvolume.CreateOptions{Name: volName}); err != nil {
-		return fmt.Errorf("ensure volume %s: %w", volName, err)
-	}
-
-	tmp, err := os.CreateTemp("", "dm-restore-vol-*")
-	if err != nil {
-		return fmt.Errorf("temp file: %w", err)
-	}
-	defer func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmp.Name())
-	}()
-
-	if _, err := io.CopyN(tmp, src, size); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("buffer volume tar: %w", err)
-	}
-	if _, err := tmp.Seek(0, 0); err != nil {
-		return err
-	}
-	return untarVolume(ctx, s.docker, volName, tmp)
+	return nil, nil
 }
 
 // safeRelPath rejects paths that try to escape the stack directory via
@@ -244,4 +432,18 @@ func safeRelPath(rel string) bool {
 		}
 	}
 	return true
+}
+
+// RunHost is the host a run's backup was taken on ("local" for the
+// central server).
+func (s *Service) RunHost(ctx context.Context, runID int64) (string, error) {
+	run, err := s.store.getRun(ctx, runID)
+	if err != nil {
+		return "", err
+	}
+	job, err := s.store.getJobForRun(ctx, run.JobID)
+	if err != nil {
+		return "", err
+	}
+	return defaultStr(job.HostID, "local"), nil
 }

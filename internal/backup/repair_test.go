@@ -2,11 +2,32 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 )
+
+// createLegacyJob stores a job the way 0.4.x did: the target config
+// inline on the job, no saved target referenced.
+func createLegacyJob(ctx context.Context, svc *Service, in JobInput) (*Job, error) {
+	cfg, err := json.Marshal(in.TargetConfig)
+	if err != nil {
+		return nil, err
+	}
+	srcs, err := json.Marshal(in.Sources)
+	if err != nil {
+		return nil, err
+	}
+	res, err := svc.store.db.ExecContext(ctx, `INSERT INTO backup_jobs (name, encrypt, target_type, target_config, sources)
+		VALUES (?, 0, ?, ?, ?)`, in.Name, in.TargetType, string(cfg), string(srcs))
+	if err != nil {
+		return nil, err
+	}
+	id, _ := res.LastInsertId()
+	return svc.GetJob(ctx, id)
+}
 
 func smbJob(name string, cfg map[string]any) JobInput {
 	return JobInput{
@@ -40,19 +61,19 @@ func TestRepairJobSecrets(t *testing.T) {
 		}
 	}
 
-	fix, err := svc.CreateJob(ctx, smbJob("from-target", withPass(nas, "")))
+	fix, err := createLegacyJob(ctx, svc, smbJob("from-target", withPass(nas, "")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	typed, err := svc.CreateJob(ctx, smbJob("typed", withPass(nas, "mine")))
+	typed, err := createLegacyJob(ctx, svc, smbJob("typed", withPass(nas, "mine")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := svc.CreateJob(ctx, smbJob("other-share", withPass(map[string]any{"host": "nas", "share": "elsewhere", "username": "u"}, "")))
+	other, err := createLegacyJob(ctx, svc, smbJob("other-share", withPass(map[string]any{"host": "nas", "share": "elsewhere", "username": "u"}, "")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ambiguous, err := svc.CreateJob(ctx, smbJob("ambiguous", withPass(map[string]any{"host": "dup", "share": "x", "username": "u"}, "")))
+	ambiguous, err := createLegacyJob(ctx, svc, smbJob("ambiguous", withPass(map[string]any{"host": "dup", "share": "x", "username": "u"}, "")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +143,7 @@ func TestRepairJobSecretsResolvesNotice(t *testing.T) {
 	ctx := context.Background()
 	ts := targets.NewTargetStore(svc.store.db)
 
-	job, err := svc.CreateJob(ctx, smbJob("lonely", map[string]any{"host": "gone", "share": "x", "username": "u", "password": ""}))
+	job, err := createLegacyJob(ctx, svc, smbJob("lonely", map[string]any{"host": "gone", "share": "x", "username": "u", "password": ""}))
 	if err != nil {
 		t.Fatal(err)
 	}

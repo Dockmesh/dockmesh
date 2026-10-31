@@ -159,16 +159,18 @@ func (m *Manager) issueServerCert(dns []string, ips []net.IP) (*x509.Certificate
 // cert next to the old key. The key goes first: a cert is never on disk
 // without its key.
 func writeServerPair(dir string, certPEM, keyPEM []byte) error {
-	if err := writeFileAtomic(filepath.Join(dir, serverKeyFile), keyPEM, 0o600); err != nil {
+	if err := WriteFileAtomic(filepath.Join(dir, serverKeyFile), keyPEM, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", serverKeyFile, err)
 	}
-	if err := writeFileAtomic(filepath.Join(dir, serverCertFile), certPEM, 0o644); err != nil {
+	if err := WriteFileAtomic(filepath.Join(dir, serverCertFile), certPEM, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", serverCertFile, err)
 	}
 	return nil
 }
 
-func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+// WriteFileAtomic replaces path via a temp file in the same directory and
+// a rename, keeping the owner of the file it replaces.
+func WriteFileAtomic(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {

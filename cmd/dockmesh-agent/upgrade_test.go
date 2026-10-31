@@ -88,57 +88,90 @@ func TestBinaryURL(t *testing.T) {
 	}
 }
 
-func TestOpenBinDir(t *testing.T) {
+func TestLegacyOpenBinDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX permissions")
 	}
+	opened := map[string]os.FileMode{".": 0o711, "bin": 0o755, "agent.key": 0o600, "enroll-ca.pem": 0o600, "staging": 0o700, "staging/s": 0o644}
+	unchanged := map[string]os.FileMode{".": 0o700, "bin": 0o750, "agent.key": 0o600, "enroll-ca.pem": 0o644, "staging": 0o755, "staging/s": 0o644}
 	tests := []struct {
-		name              string
-		dataMode, binMode os.FileMode
-		serverFile        string
-		elsewhere         bool
-		wantData, wantBin os.FileMode
+		name       string
+		link       string // "symlink", "copy", "other" or "" for none
+		serverFile string
+		want       map[string]os.FileMode
 	}{
-		{"old installer modes", 0o700, 0o750, "", false, 0o711, 0o755},
-		{"custom modes kept", 0o750, 0o700, "", false, 0o750, 0o700},
-		{"shared with a server", 0o700, 0o750, "dockmesh.env", false, 0o700, 0o750},
-		{"binary not in bin", 0o700, 0o750, "", true, 0o700, 0o750},
+		{"symlink into the data dir", "symlink", "", opened},
+		{"regular copy", "copy", "", unchanged},
+		{"symlink elsewhere", "other", "", unchanged},
+		{"no file on the path", "", "", unchanged},
+		{"shared with a server", "symlink", "dockmesh.env", unchanged},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), "agent")
-			bin := filepath.Join(dir, "bin")
-			if err := os.MkdirAll(bin, 0o700); err != nil {
-				t.Fatal(err)
-			}
+			root := t.TempDir()
+			dir := filepath.Join(root, "agent")
+			exe := filepath.Join(dir, "bin", "dockmesh-agent")
+			mustMkdir(t, filepath.Join(dir, "bin"))
+			mustMkdir(t, filepath.Join(dir, "staging"))
+			mustWrite(t, exe, 0o755)
+			mustWrite(t, filepath.Join(dir, "agent.key"), 0o600)
+			mustWrite(t, filepath.Join(dir, "enroll-ca.pem"), 0o644)
+			mustWrite(t, filepath.Join(dir, "staging", "s"), 0o644)
 			if tt.serverFile != "" {
-				if err := os.WriteFile(filepath.Join(dir, tt.serverFile), nil, 0o600); err != nil {
+				mustWrite(t, filepath.Join(dir, tt.serverFile), 0o600)
+			}
+			link := filepath.Join(root, "dockmesh-agent")
+			switch tt.link {
+			case "symlink":
+				mustSymlink(t, exe, link)
+			case "copy":
+				mustWrite(t, link, 0o755)
+			case "other":
+				other := filepath.Join(root, "elsewhere")
+				mustWrite(t, other, 0o755)
+				mustSymlink(t, other, link)
+			}
+			for rel, mode := range map[string]os.FileMode{"staging": 0o755, "bin": 0o750, ".": 0o700} {
+				if err := os.Chmod(filepath.Join(dir, rel), mode); err != nil {
 					t.Fatal(err)
 				}
 			}
-			exe := filepath.Join(bin, "dockmesh-agent")
-			if tt.elsewhere {
-				exe = filepath.Join(t.TempDir(), "dockmesh-agent")
-			}
-			if err := os.WriteFile(exe, nil, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Chmod(bin, tt.binMode); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Chmod(dir, tt.dataMode); err != nil {
-				t.Fatal(err)
-			}
-			openBinDirFor(dir, exe)
-			for path, want := range map[string]os.FileMode{dir: tt.wantData, bin: tt.wantBin} {
-				fi, err := os.Stat(path)
+
+			legacyOpenBinDirFor(dir, exe, link)
+
+			for rel, want := range tt.want {
+				fi, err := os.Stat(filepath.Join(dir, rel))
 				if err != nil {
 					t.Fatal(err)
 				}
 				if got := fi.Mode().Perm(); got != want {
-					t.Errorf("%s: mode %o, want %o", path, got, want)
+					t.Errorf("%s: mode %04o, want %04o", rel, got, want)
 				}
 			}
 		})
+	}
+}
+
+func mustMkdir(t *testing.T, p string) {
+	t.Helper()
+	if err := os.MkdirAll(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustWrite(t *testing.T, p string, mode os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(p, nil, mode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustSymlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
 	}
 }

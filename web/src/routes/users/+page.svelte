@@ -6,7 +6,7 @@
   // See project_users_roles_open.md + project_rbac_v2_spec.md memories.
   import { api, ApiError, type CustomRole, type PermissionInfo, type RoleScope, type HostInfo, type StackListEntry } from '$lib/api';
   import { onMount } from 'svelte';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { allowed } from '$lib/rbac.svelte';
   import { Skeleton, EmptyState } from '$lib/components/ui';
   import { Eyebrow } from '$lib/components/editorial';
@@ -21,7 +21,7 @@
   } from 'lucide-svelte';
 
   type Sub = 'users' | 'roles';
-  let sub = $state<Sub>((new URLSearchParams($page.url.search).get('sub') as Sub) || 'users');
+  let sub = $state<Sub>((new URLSearchParams(page.url.search).get('sub') as Sub) || 'users');
 
   // ─── Users state ──────────────────────────────────────────────────────
   interface UserRow {

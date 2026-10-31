@@ -73,7 +73,6 @@ The systemd unit init writes runs as user `dockmesh`, group `docker`, with `Prot
 
 ## restore
 
-<!-- update after: restore: stage system restores and swap them in at startup -->
 ```bash
 sudo systemctl stop dockmesh
 sudo dockmesh restore --from ./dockmesh-system.tar.gz --dry-run
@@ -81,16 +80,16 @@ sudo dockmesh restore --from ./dockmesh-system.tar.gz --force
 sudo chown -R dockmesh:docker /var/lib/dockmesh
 ```
 
-Restores the database, stacks directory and data directory from a system backup archive. Stop the server first: files are written in place. Run as root, the restored files belong to root, hence the `chown` afterwards.
+Restores the database, stacks directory and data directory from a system backup archive. Stop the server first. The archive is unpacked next to the live files and checked; then the files are swapped in. A restore that stops halfway finishes on the next start of the server. The replaced files are kept in `<data>/.pre-restore/<time>` and `<stacks>.pre-restore-<time>`. Run as root, the restored files belong to root, hence the `chown` afterwards.
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--from` | (required) | Path to the system backup tarball |
-| `--force` | `false` | Restore over a database that already has users. The current database is moved to `dockmesh.db.pre-restore-<unix time>` |
+| `--key` | | Backup key file exported from the old server, for encrypted archives (`.tar.gz.age`) |
+| `--force` | `false` | Restore over a database that already has users |
 | `--dry-run` | `false` | Count files and bytes, write nothing |
-| `--skip-sanity` | `false` | Skip the post-restore checks (DB opens, migrates, at least one admin exists) |
 
-Encrypted archives (`.tar.gz.age`) are refused. Decrypt them first with `age -d` and the key exported from the old server. See [Disaster recovery](../operations/disaster-recovery.md).
+The checks after unpacking (database opens and migrates, at least one admin exists) always run. See [Disaster recovery](../operations/disaster-recovery.md).
 
 ## doctor
 

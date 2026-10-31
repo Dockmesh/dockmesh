@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	dnetwork "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
@@ -28,7 +27,7 @@ func ServiceContainerConfig(proj *composetypes.Project, serviceName string) (*co
 
 // ServiceContainers lists every container of one stack service, running
 // or not, ordered by replica index.
-func ServiceContainers(ctx context.Context, cli *client.Client, stackName, serviceName string) ([]dtypes.Container, error) {
+func ServiceContainers(ctx context.Context, cli *client.Client, stackName, serviceName string) ([]container.Summary, error) {
 	cs, err := listServiceContainers(ctx, cli, stackName, serviceName)
 	if err != nil {
 		return nil, err

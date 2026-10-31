@@ -135,3 +135,74 @@ func TestInstallAgentMigrateFiles(t *testing.T) {
 		t.Error("empty bin dir left behind")
 	}
 }
+
+func TestInstallAgentPathCopy(t *testing.T) {
+	fn := agentScriptFunc(t, "install_path_copy")
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to chown the copy")
+	}
+	tests := []struct {
+		name     string
+		existing string // "", "symlink" or "file"
+	}{
+		{"fresh copy", ""},
+		{"replaces a symlink", "symlink"},
+		{"replaces an older copy", "file"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "bin", "dockmesh-agent")
+			dest := filepath.Join(dir, "path", "dockmesh-agent")
+			for _, d := range []string{filepath.Dir(src), filepath.Dir(dest)} {
+				if err := os.MkdirAll(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(src, []byte("new"), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			switch tt.existing {
+			case "symlink":
+				if err := os.Symlink(src, dest); err != nil {
+					t.Fatal(err)
+				}
+			case "file":
+				if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := exec.Command("bash", "-c", "set -euo pipefail\n"+fn+"\ninstall_path_copy \"$1\" \"$2\"", "t", src, dest)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			fi, err := os.Lstat(dest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !fi.Mode().IsRegular() || fi.Mode().Perm() != 0o755 {
+				t.Errorf("dest mode %v, want regular 0755", fi.Mode())
+			}
+			if b, _ := os.ReadFile(dest); string(b) != "new" {
+				t.Errorf("dest content %q, want %q", b, "new")
+			}
+			if b, _ := os.ReadFile(src); string(b) != "new" {
+				t.Errorf("src changed to %q", b)
+			}
+		})
+	}
+}
+
+func TestInstallAgentUnitRefreshesPathCopy(t *testing.T) {
+	b, err := os.ReadFile("install-agent.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, "ExecStartPre=-+$INSTALL_CMD -m 0755 -o root -g root $AGENT_BIN $PATH_BIN") {
+		t.Error("unit does not refresh the /usr/local/bin copy at start")
+	}
+	if strings.Contains(s, "ln -sf \"$AGENT_BIN\"") {
+		t.Error("installer still links the agent into the PATH")
+	}
+}

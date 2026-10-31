@@ -44,7 +44,7 @@ func (r *Registry) Pick(id string) (Host, error) {
 	if live == nil {
 		return nil, ErrAgentOffline
 	}
-	rh := NewRemote(live.ID, live.Name, live)
+	rh := NewRemote(live.ID, live.Name, r.agents)
 	rh.afterDeploy = r.afterDeploy
 	return rh, nil
 }
