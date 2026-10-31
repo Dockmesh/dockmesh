@@ -47,7 +47,7 @@ type pullRequest struct {
 }
 
 // imageRow is the all-mode row type for ListImages. Embeds the docker
-// ImageSummary so its fields flatten into the final JSON alongside
+// image.Summary so its fields flatten into the final JSON alongside
 // host_id / host_name.
 type imageRow struct {
 	image.Summary

@@ -92,7 +92,7 @@ func FromContainers(projectName string, insp []container.InspectResponse) (*Resu
 	return &Result{YAML: string(out), Warnings: warnings}, nil
 }
 
-// serviceFromInspect maps one ContainerJSON onto a compose service.
+// serviceFromInspect maps one inspected container onto a compose service.
 // Fields are translated conservatively — anything we can't represent
 // cleanly in compose v3 ends up in Warnings rather than silently lost.
 func serviceFromInspect(svcName string, c container.InspectResponse) (service, []string) {

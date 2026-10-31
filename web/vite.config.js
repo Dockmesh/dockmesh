@@ -17,7 +17,7 @@ export default defineConfig({
         strict: false
       }),
       preprocess: vitePreprocess(),
-      // Keeps the existing $lib imports working; Kit 3 no longer generates it.
+      // Kit 3 doesn't generate the $lib alias.
       alias: { $lib: 'src/lib' }
     })
   ],

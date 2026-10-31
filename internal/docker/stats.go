@@ -10,7 +10,7 @@ import (
 
 // NormalizedStats is the minimal stats payload the UI needs. Computed
 // server-side so the wire format stays tiny and the frontend doesn't have
-// to know Docker's full StatsJSON layout.
+// to know Docker's full container.StatsResponse layout.
 type NormalizedStats struct {
 	CPUPercent float64 `json:"cpu_percent"`
 	MemUsed    uint64  `json:"mem_used"`
@@ -24,7 +24,7 @@ type NormalizedStats struct {
 }
 
 // ContainerStats returns the raw stats stream from the docker daemon —
-// newline-delimited JSON matching the StatsJSON layout. Same wire format
+// newline-delimited JSON matching the container.StatsResponse layout. Same wire format
 // the local handler and the remote agent use, so normalization can stay
 // in one place (the WS handler).
 func (c *Client) ContainerStats(ctx context.Context, containerID string) (io.ReadCloser, error) {

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-
-	"github.com/docker/docker/api/types/container"
 )
 
 // Topology is the network-graph payload returned to the frontend.
@@ -163,6 +161,3 @@ func stripCIDR(s string) string {
 	}
 	return s
 }
-
-// silence unused import if dtypes is otherwise unused in the file
-var _ = container.Summary{}

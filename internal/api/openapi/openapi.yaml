@@ -1354,10 +1354,10 @@ paths:
       description: The container must be within the caller's host scope and role scope (403 otherwise).
       responses:
         "200":
-          description: Full ContainerJSON from the Docker daemon.
+          description: Full container inspect response from the Docker daemon.
           content:
             application/json:
-              schema: { type: object, description: Passthrough of the Docker SDK ContainerJSON. }
+              schema: { type: object, description: Passthrough of the Docker SDK container.InspectResponse. }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -2753,7 +2753,7 @@ paths:
           description: Include intermediate / dangling image layers.
       responses:
         "200":
-          description: Image list (passthrough of Docker SDK ImageSummary plus host_id/host_name in fan-out mode).
+          description: Image list (passthrough of Docker SDK image.Summary plus host_id/host_name in fan-out mode).
           content:
             application/json:
               schema:
@@ -8563,7 +8563,7 @@ components:
       type: object
       description: |
         Docker container summary. Mirrors the Docker SDK's
-        `types.Container` with `host_id` + `host_name` added when the
+        `container.Summary` with `host_id` + `host_name` added when the
         response comes from a fan-out list. Most fields are passthrough.
       properties:
         Id: { type: string }
