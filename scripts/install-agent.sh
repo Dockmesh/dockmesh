@@ -305,11 +305,18 @@ if [[ -f "$DATA_DIR/agent.crt" ]] || [[ -f "$DATA_DIR/agent.key" ]] || [[ -d "$D
 fi
 
 # install_path_copy replaces dest (a file or an old symlink) with a
-# root-owned copy of src, leaving the symlink's target alone.
+# root-owned copy of src, leaving the symlink's target alone. src lives in
+# a directory the service user owns, so it is read as that user: root only
+# publishes what the user could read anyway, even if src is a symlink.
 install_path_copy() {
-  local src="$1" dest="$2"
-  rm -f "$dest"
-  install -m 0755 -o root -g root "$src" "$dest"
+  local src="$1" dest="$2" user="$3" group="$4" tmp
+  tmp="$(mktemp "$(dirname "$dest")/.dockmesh-agent.XXXXXX")" || return 1
+  if [[ "$user" == root ]]; then
+    cat -- "$src" >"$tmp" || { rm -f "$tmp"; return 1; }
+  else
+    setpriv --reuid="$user" --regid="$group" --clear-groups cat -- "$src" >"$tmp" || { rm -f "$tmp"; return 1; }
+  fi
+  chmod 0755 "$tmp" && chown root:root "$tmp" && mv -f "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
 }
 # end install_path_copy
 
@@ -352,8 +359,16 @@ rm -f "$TMP_BIN"
 # unit runs the real path in $DATA_DIR/bin and refreshes the copy at every
 # start, so it follows self-upgrades.
 PATH_BIN=/usr/local/bin/dockmesh-agent
-INSTALL_CMD="$(command -v install)"
-install_path_copy "$AGENT_BIN" "$PATH_BIN"
+REFRESH_SCRIPT="$ENV_DIR/refresh-path-copy"
+{
+  echo '#!/bin/bash'
+  declare -f install_path_copy
+  printf 'install_path_copy %q %q %q %q
+' "$AGENT_BIN" "$PATH_BIN" "$RUN_USER" "$RUN_GROUP"
+} >"$REFRESH_SCRIPT"
+chown root:root "$REFRESH_SCRIPT"
+chmod 0755 "$REFRESH_SCRIPT"
+"$REFRESH_SCRIPT" || log "warning: could not copy the agent to $PATH_BIN"
 
 log "installed: $($AGENT_BIN --version 2>&1 | head -1 || echo dockmesh-agent)"
 
@@ -406,7 +421,7 @@ Requires=docker.service
 Type=simple
 $USER_LINES
 EnvironmentFile=$ENV_FILE
-ExecStartPre=-+$INSTALL_CMD -m 0755 -o root -g root $AGENT_BIN $PATH_BIN
+ExecStartPre=-+$REFRESH_SCRIPT
 ExecStart=$AGENT_BIN
 Restart=always
 RestartSec=10s

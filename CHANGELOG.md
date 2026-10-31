@@ -127,9 +127,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 ### Fixed
 - `dockmesh-agent --version` works for users other than root. The installer now puts a
   root-owned copy of the agent in `/usr/local/bin` instead of a symlink into the agent's data
-  directory, and the agent's service refreshes that copy at every start. Existing agents still
-  have the symlink: they make the data directory traversable (not listable) at their next
-  start and remove group and other access from everything else in it. Re-running the agent
+  directory, and the agent's service refreshes that copy at every start. Agents installed
+  earlier still have the symlink: after upgrading to this release they make the data directory
+  traversable (not listable) and remove group and other access from everything else in it. Re-running the agent
   install command is optional and replaces the symlink with the copy and closes the data
   directory again.
 - Versions are no longer shown as "vv0.4.2" on the host pages and in the host switcher.
