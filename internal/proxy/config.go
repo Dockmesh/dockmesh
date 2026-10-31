@@ -25,10 +25,11 @@ type caddyHTTP struct {
 }
 
 type caddyServer struct {
-	Listen         []string         `json:"listen"`
-	Routes         []caddyRoute     `json:"routes"`
-	Logs           *caddyServerLogs `json:"logs,omitempty"`
-	TrustedProxies *caddyIPSource   `json:"trusted_proxies,omitempty"`
+	Listen          []string         `json:"listen"`
+	Routes          []caddyRoute     `json:"routes"`
+	Logs            *caddyServerLogs `json:"logs,omitempty"`
+	TrustedProxies  *caddyIPSource   `json:"trusted_proxies,omitempty"`
+	ClientIPHeaders []string         `json:"client_ip_headers,omitempty"`
 }
 
 type caddyIPSource struct {
@@ -264,9 +265,9 @@ func buildConfigWith(routes []Route, g Settings, redact bool) (*caddyConfig, []s
 	if plain == nil {
 		plain = []caddyRoute{}
 	}
-	cfg.Apps.HTTP.Servers[serverHTTP] = caddyServer{Listen: []string{":80"}, Routes: plain, Logs: serverLogs(plainLogs), TrustedProxies: g.trustedProxies()}
+	cfg.Apps.HTTP.Servers[serverHTTP] = caddyServer{Listen: []string{":80"}, Routes: plain, Logs: serverLogs(plainLogs), TrustedProxies: g.trustedProxies(), ClientIPHeaders: g.clientIPHeaders()}
 	if len(secure) > 0 {
-		cfg.Apps.HTTP.Servers[serverHTTPS] = caddyServer{Listen: []string{":443"}, Routes: secure, Logs: serverLogs(secureLogs), TrustedProxies: g.trustedProxies()}
+		cfg.Apps.HTTP.Servers[serverHTTPS] = caddyServer{Listen: []string{":443"}, Routes: secure, Logs: serverLogs(secureLogs), TrustedProxies: g.trustedProxies(), ClientIPHeaders: g.clientIPHeaders()}
 	}
 	if len(policies) > 0 {
 		cfg.Apps.TLS = &caddyTLS{Automation: caddyAutomation{Policies: policies}}

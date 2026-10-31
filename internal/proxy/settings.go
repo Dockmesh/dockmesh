@@ -21,9 +21,9 @@ const (
 // write, because they need validation or a container switch.
 var ManagedSettingKeys = []string{KeyACMEEmail, KeyACMECA, KeyTrustedProxies, KeyCaddyVersion, KeyCaddyPrevious}
 
-// Settings apply to every site. The zero value is what the proxy did
-// before they existed: Let's Encrypt without an account email, client
-// addresses taken from the connection.
+// Settings apply to every site. The zero value means Let's Encrypt
+// without an account email and client addresses taken from the
+// connection.
 type Settings struct {
 	ACMEEmail string `json:"acme_email"`
 	// ACMECA is "" (Let's Encrypt), "letsencrypt_staging" or "zerossl".
@@ -81,6 +81,16 @@ func (g Settings) trustedProxies() *caddyIPSource {
 		return nil
 	}
 	return &caddyIPSource{Source: "static", Ranges: cloudflareRanges}
+}
+
+// clientIPHeaders reads the client address from CF-Connecting-IP, which
+// Cloudflare sets itself. X-Forwarded-For would start with whatever the
+// visitor sent, letting them pass IP allow and deny lists.
+func (g Settings) clientIPHeaders() []string {
+	if g.TrustedProxies != "cloudflare" {
+		return nil
+	}
+	return []string{"CF-Connecting-IP"}
 }
 
 // SetSettings gives the service the settings store for the proxy-wide

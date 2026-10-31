@@ -51,6 +51,9 @@ func TestBuildConfigAppliesSettings(t *testing.T) {
 		}
 	}
 	b, _ := json.Marshal(cfg)
+	if !strings.Contains(string(b), `"client_ip_headers":["CF-Connecting-IP"]`) {
+		t.Errorf("client IP header not set: %s", b)
+	}
 	if !strings.Contains(string(b), `"trusted_proxies":{"source":"static","ranges":["173.245.48.0/20"`) {
 		t.Errorf("trusted proxies JSON: %s", b)
 	}

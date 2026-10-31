@@ -79,6 +79,11 @@ func (s *Service) EnableProxy(ctx context.Context) error {
 	}
 	s.lifecycle.Lock()
 	defer s.lifecycle.Unlock()
+	return s.enableLocked(ctx)
+}
+
+// enableLocked is EnableProxy for callers holding s.lifecycle.
+func (s *Service) enableLocked(ctx context.Context) error {
 	cli := s.docker.Raw()
 	img := s.currentImage()
 

@@ -33,9 +33,8 @@ type Route struct {
 	Host     string `json:"host"`
 	Upstream string `json:"upstream"`
 	TLSMode  string `json:"tls_mode"` // auto | internal | none
-	// Enabled gates whether this route is included in the generated
-	// Caddyfile. Disabled routes stay in the table for editing but
-	// traffic stops flowing. Default true on new rows (migration 054).
+	// Enabled gates whether this route is in the generated config;
+	// disabled routes stay in the table.
 	Enabled bool `json:"enabled"`
 	// Options are returned without basic-auth hashes (see Public).
 	Options   SiteOptions `json:"options"`

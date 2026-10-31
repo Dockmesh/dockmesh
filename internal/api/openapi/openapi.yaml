@@ -8611,7 +8611,7 @@ components:
         trusted_proxies:
           type: string
           enum: ["", cloudflare]
-          description: "`cloudflare` trusts the client address Cloudflare's published edge ranges send in X-Forwarded-For; IP filters then match the visitor, not Cloudflare."
+          description: "`cloudflare` takes the client address from the CF-Connecting-IP header on requests from Cloudflare's published edge ranges; IP filters and logs then see the visitor, not Cloudflare."
 
     ProxyRoute:
       type: object

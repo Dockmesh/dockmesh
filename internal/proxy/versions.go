@@ -130,6 +130,10 @@ func (s *Service) SwitchVersion(ctx context.Context, version string) (*VersionIn
 	}
 	s.switchMu.Lock()
 	defer s.switchMu.Unlock()
+	// Held across the enabled check and the restart, so a disable in
+	// between isn't undone.
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
 
 	oldImage := s.currentImage()
 	if oldImage == target.Image {
@@ -174,12 +178,16 @@ func (s *Service) RollbackVersion(ctx context.Context) (*VersionInfo, error) {
 }
 
 // startAndVerify recreates the container with the current image and
-// checks that Caddy runs the config Dockmesh generates.
+// checks that Caddy runs the config Dockmesh generates. Callers hold
+// s.lifecycle.
 func (s *Service) startAndVerify(ctx context.Context) error {
 	if s.startProxy != nil {
 		return s.startProxy(ctx)
 	}
-	if err := s.EnableProxy(ctx); err != nil {
+	if s.docker == nil {
+		return errors.New("docker unavailable")
+	}
+	if err := s.enableLocked(ctx); err != nil {
 		return err
 	}
 	s.mu.Lock()
