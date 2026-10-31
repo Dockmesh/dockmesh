@@ -10,17 +10,17 @@ import (
 	"strings"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	"github.com/dockmesh/dockmesh/internal/docker"
-	"github.com/dockmesh/dockmesh/internal/stacks"
-	dtypes "github.com/docker/docker/api/types"
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	dnetwork "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
+	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -309,8 +309,8 @@ func (s *Service) prePullImages(ctx context.Context, cli *client.Client, proj *c
 			// error message stand. No pull to attempt either way.
 			continue
 		}
-		_, _, localErr := cli.ImageInspectWithRaw(ctx, svc.Image)
-		localMissing := errdefs.IsNotFound(localErr)
+		_, localErr := cli.ImageInspect(ctx, svc.Image)
+		localMissing := cerrdefs.IsNotFound(localErr)
 		if localErr != nil && !localMissing {
 			return fmt.Errorf("image inspect %s: %w", svc.Image, localErr)
 		}
@@ -330,7 +330,7 @@ func (s *Service) prePullImages(ctx context.Context, cli *client.Client, proj *c
 				attribute.Bool("forced", !localMissing),
 			))
 		auth := s.resolveImageAuth(pullCtx, svc.Image)
-		rc, err := cli.ImagePull(pullCtx, svc.Image, dtypes.ImagePullOptions{RegistryAuth: auth})
+		rc, err := cli.ImagePull(pullCtx, svc.Image, image.PullOptions{RegistryAuth: auth})
 		if err != nil {
 			pullSpan.SetStatus(codes.Error, err.Error())
 			pullSpan.End()
@@ -358,13 +358,13 @@ func (s *Service) Stop(ctx context.Context, stackName string) error {
 		return errors.New("docker unavailable")
 	}
 	cli := s.docker.Raw()
-	list, err := listProjectContainers(ctx, cli, stackName, true)
+	list, err := listProjectContainers(ctx, cli, stackName)
 	if err != nil {
 		return err
 	}
 	for _, c := range list {
 		_ = cli.ContainerStop(ctx, c.ID, container.StopOptions{})
-		if err := cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+		if err := cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 			return fmt.Errorf("remove %s: %w", c.ID[:12], err)
 		}
 	}
@@ -375,7 +375,7 @@ func (s *Service) Status(ctx context.Context, stackName string) ([]StatusEntry, 
 	if s.docker == nil {
 		return nil, errors.New("docker unavailable")
 	}
-	list, err := listProjectContainers(ctx, s.docker.Raw(), stackName, true)
+	list, err := listProjectContainers(ctx, s.docker.Raw(), stackName)
 	if err != nil {
 		return nil, err
 	}
@@ -411,10 +411,10 @@ func (s *Service) reconcileNetworks(ctx context.Context, cli *client.Client, pro
 		if bool(net.External) {
 			continue
 		}
-		if _, err := cli.NetworkInspect(ctx, actualName, dtypes.NetworkInspectOptions{}); err == nil {
+		if _, err := cli.NetworkInspect(ctx, actualName, dnetwork.InspectOptions{}); err == nil {
 			res.Networks = append(res.Networks, ResourceResult{Name: actualName, Created: false})
 			continue
-		} else if !errdefs.IsNotFound(err) {
+		} else if !cerrdefs.IsNotFound(err) {
 			return nil, fmt.Errorf("network inspect %s: %w", actualName, err)
 		}
 
@@ -429,7 +429,7 @@ func (s *Service) reconcileNetworks(ctx context.Context, cli *client.Client, pro
 		if driver == "" {
 			driver = "bridge"
 		}
-		if _, err := cli.NetworkCreate(ctx, actualName, dtypes.NetworkCreate{
+		if _, err := cli.NetworkCreate(ctx, actualName, dnetwork.CreateOptions{
 			Driver:     driver,
 			Internal:   net.Internal,
 			Attachable: net.Attachable,
@@ -455,7 +455,7 @@ func (s *Service) reconcileVolumes(ctx context.Context, cli *client.Client, proj
 		if _, err := cli.VolumeInspect(ctx, actualName); err == nil {
 			res.Volumes = append(res.Volumes, ResourceResult{Name: actualName, Created: false})
 			continue
-		} else if !errdefs.IsNotFound(err) {
+		} else if !cerrdefs.IsNotFound(err) {
 			return fmt.Errorf("volume inspect %s: %w", actualName, err)
 		}
 
@@ -509,7 +509,7 @@ func (s *Service) deployService(ctx context.Context, cli *client.Client, proj *c
 	// Remove any existing container with the same name (idempotent redeploy).
 	if existing, err := cli.ContainerInspect(ctx, containerName); err == nil {
 		_ = cli.ContainerStop(ctx, existing.ID, container.StopOptions{})
-		if err := cli.ContainerRemove(ctx, existing.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+		if err := cli.ContainerRemove(ctx, existing.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 			return nil, fmt.Errorf("remove existing %s: %w", containerName, err)
 		}
 	}
@@ -644,13 +644,13 @@ func serviceToContainerConfig(proj *composetypes.Project, svc composetypes.Servi
 	}
 
 	hostCfg := &container.HostConfig{
-		PortBindings: bindings,
-		Binds:        binds,
-		Mounts:       mounts,
-		Privileged:   svc.Privileged,
+		PortBindings:   bindings,
+		Binds:          binds,
+		Mounts:         mounts,
+		Privileged:     svc.Privileged,
 		ReadonlyRootfs: svc.ReadOnly,
-		CapAdd:       svc.CapAdd,
-		CapDrop:      svc.CapDrop,
+		CapAdd:         svc.CapAdd,
+		CapDrop:        svc.CapDrop,
 	}
 	if svc.Restart != "" {
 		hostCfg.RestartPolicy = container.RestartPolicy{
@@ -696,10 +696,10 @@ func serviceToContainerConfig(proj *composetypes.Project, svc composetypes.Servi
 	return cfg, hostCfg, netCfg, nil
 }
 
-func listProjectContainers(ctx context.Context, cli *client.Client, stackName string, all bool) ([]dtypes.Container, error) {
+func listProjectContainers(ctx context.Context, cli *client.Client, stackName string) ([]container.Summary, error) {
 	f := filters.NewArgs()
 	f.Add("label", LabelProject+"="+stackName)
-	list, err := cli.ContainerList(ctx, container.ListOptions{All: all, Filters: f})
+	list, err := cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
 	if err != nil {
 		return nil, err
 	}

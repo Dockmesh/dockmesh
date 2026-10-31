@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -144,6 +145,20 @@ func syncUnencryptableNotice(ctx context.Context, n *notices.Service, svc *backu
 }
 
 const jobRepairDoneSetting = "backups.job_repair_done"
+
+// prepareJobTargets runs the one-time job secret repair and then moves
+// inline job targets to saved targets. The order matters: the migration
+// copies whatever secret the job holds, so it must see the repaired one.
+func prepareJobTargets(ctx context.Context, st *settings.Store, svc *backup.Service, ts *targets.TargetStore, n *notices.Service, onRepair func(backup.Job, string)) error {
+	if err := repairJobSecretsOnce(ctx, st, svc, ts, n, onRepair); err != nil {
+		return err
+	}
+	moved, err := svc.MigrateInlineTargets(ctx)
+	if moved > 0 {
+		slog.Info("backup: job targets moved to saved targets", "jobs", moved)
+	}
+	return err
+}
 
 // repairJobSecretsOnce runs the job secret repair for the first start
 // after the upgrade that fixed the wizard and never again, so a secret

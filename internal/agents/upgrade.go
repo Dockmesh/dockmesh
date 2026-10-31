@@ -365,6 +365,20 @@ func agentIsUpToDate(ca *ConnectedAgent) bool {
 	return ca.Hello.Version == version.Version
 }
 
+// Outdated returns the connected agents whose build differs from the
+// server's, keyed by agent id, with the version each agent reports.
+func (s *Service) Outdated() map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := map[string]string{}
+	for id, ca := range s.connected {
+		if !agentIsUpToDate(ca) {
+			out[id] = ca.Hello.Version
+		}
+	}
+	return out
+}
+
 func pendingIDs(list []*ConnectedAgent) []string {
 	out := make([]string, len(list))
 	for i, ca := range list {

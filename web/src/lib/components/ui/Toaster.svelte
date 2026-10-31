@@ -1,52 +1,73 @@
 <script lang="ts">
   import { toast } from '$lib/stores/toast.svelte';
-  import { CheckCircle2, XCircle, Info, AlertTriangle, X } from 'lucide-svelte';
-
-  const iconMap = {
-    success: CheckCircle2,
-    error: XCircle,
-    info: Info,
-    warning: AlertTriangle
-  };
-
-  // Errors get a fully-tinted background + full-width left border so
-  // they stand out from info/warning/success.
-  const variantCls = {
-    success: 'border-[color-mix(in_srgb,var(--color-success-500)_40%,transparent)] text-[var(--color-success-400)]',
-    error:   'border border-[var(--color-danger-500)] bg-[color-mix(in_srgb,var(--color-danger-500)_10%,var(--surface))] text-[var(--color-danger-400)]',
-    info:    'border-[color-mix(in_srgb,var(--color-brand-500)_40%,transparent)] text-[var(--color-brand-400)]',
-    warning: 'border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] text-[var(--color-warning-400)]'
-  };
+  import { X } from 'lucide-svelte';
 </script>
 
-<div class="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none max-w-sm w-full">
+<div class="toasts">
   {#each toast.items as t (t.id)}
-    {@const Icon = iconMap[t.variant]}
-    <!-- `relative` so the absolute-positioned dismiss button anchors to
-         THIS toast, not to the outer fixed container. Previous bug:
-         every X stacked at the same absolute coord on the container,
-         only the topmost was clickable. -->
     <div
-      class="relative dm-card p-3 pr-9 flex gap-3 items-start pointer-events-auto shadow-xl dm-fade-in {t.variant === 'error' ? variantCls[t.variant] : 'border-l-2 ' + variantCls[t.variant]}"
+      class="toast {t.variant}"
       role={t.variant === 'error' ? 'alert' : 'status'}
       aria-live={t.variant === 'error' ? 'assertive' : 'polite'}
       onmouseenter={() => toast.pause(t.id)}
       onmouseleave={() => toast.resume(t.id)}
     >
-      <Icon class="w-5 h-5 shrink-0 mt-0.5" />
-      <div class="flex-1 min-w-0">
-        <div class="text-sm font-medium text-[var(--fg)]">{t.title}</div>
+      <div class="txt">
+        <div class="t">{t.title}</div>
         {#if t.description}
-          <div class="text-xs text-[var(--fg-muted)] mt-0.5 break-words">{t.description}</div>
+          <div class="d">{t.description}</div>
         {/if}
       </div>
-      <button
-        class="absolute top-2 right-2 p-1 rounded-md hover:bg-[var(--surface-hover)] text-[var(--fg-muted)]"
-        onclick={() => toast.dismiss(t.id)}
-        aria-label="Dismiss"
-      >
-        <X class="w-3.5 h-3.5" />
+      <button type="button" class="x" onclick={() => toast.dismiss(t.id)} aria-label="Dismiss">
+        <X size={13} strokeWidth={1.8} />
       </button>
     </div>
   {/each}
 </div>
+
+<style>
+  .toasts {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 200;
+    pointer-events: none;
+    width: min(380px, calc(100vw - 36px));
+  }
+  .toast {
+    pointer-events: auto;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    background: var(--menu);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--r);
+    padding: 9px 10px 9px 14px;
+    box-shadow: var(--pop);
+    font-size: 13px;
+  }
+  .toast.success { border-left-color: var(--ok); }
+  .toast.warning { border-left-color: var(--warn); }
+  .toast.error { border-left-color: var(--bad); }
+  .txt { flex: 1; min-width: 0; }
+  .t { font-weight: 500; color: var(--fg); }
+  .d { color: var(--muted); font-size: var(--fs-xs); margin-top: 2px; overflow-wrap: anywhere; }
+  .x {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    border: 0;
+    border-radius: 5px;
+    background: none;
+    color: var(--subtle);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .x:hover { background: var(--field); color: var(--fg); }
+</style>

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -84,5 +85,93 @@ func TestBinaryURL(t *testing.T) {
 		if (err == nil) != (c.want != "") || got != c.want {
 			t.Errorf("binaryURL(%q) = %q, %v; want %q", c.dial, got, err, c.want)
 		}
+	}
+}
+
+func TestLegacyOpenBinDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permissions")
+	}
+	opened := map[string]os.FileMode{".": 0o711, "bin": 0o755, "agent.key": 0o600, "enroll-ca.pem": 0o600, "staging": 0o700, "staging/s": 0o644}
+	unchanged := map[string]os.FileMode{".": 0o700, "bin": 0o750, "agent.key": 0o600, "enroll-ca.pem": 0o644, "staging": 0o755, "staging/s": 0o644}
+	tests := []struct {
+		name       string
+		link       string // "symlink", "copy", "other" or "" for none
+		serverFile string
+		want       map[string]os.FileMode
+	}{
+		{"symlink into the data dir", "symlink", "", opened},
+		{"regular copy", "copy", "", unchanged},
+		{"symlink elsewhere", "other", "", unchanged},
+		{"no file on the path", "", "", unchanged},
+		{"shared with a server", "symlink", "dockmesh.env", unchanged},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, "agent")
+			exe := filepath.Join(dir, "bin", "dockmesh-agent")
+			mustMkdir(t, filepath.Join(dir, "bin"))
+			mustMkdir(t, filepath.Join(dir, "staging"))
+			mustWrite(t, exe, 0o755)
+			mustWrite(t, filepath.Join(dir, "agent.key"), 0o600)
+			mustWrite(t, filepath.Join(dir, "enroll-ca.pem"), 0o644)
+			mustWrite(t, filepath.Join(dir, "staging", "s"), 0o644)
+			if tt.serverFile != "" {
+				mustWrite(t, filepath.Join(dir, tt.serverFile), 0o600)
+			}
+			link := filepath.Join(root, "dockmesh-agent")
+			switch tt.link {
+			case "symlink":
+				mustSymlink(t, exe, link)
+			case "copy":
+				mustWrite(t, link, 0o755)
+			case "other":
+				other := filepath.Join(root, "elsewhere")
+				mustWrite(t, other, 0o755)
+				mustSymlink(t, other, link)
+			}
+			for rel, mode := range map[string]os.FileMode{"staging": 0o755, "bin": 0o750, ".": 0o700} {
+				if err := os.Chmod(filepath.Join(dir, rel), mode); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			legacyOpenBinDirFor(dir, exe, link)
+
+			for rel, want := range tt.want {
+				fi, err := os.Stat(filepath.Join(dir, rel))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := fi.Mode().Perm(); got != want {
+					t.Errorf("%s: mode %04o, want %04o", rel, got, want)
+				}
+			}
+		})
+	}
+}
+
+func mustMkdir(t *testing.T, p string) {
+	t.Helper()
+	if err := os.MkdirAll(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustWrite(t *testing.T, p string, mode os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(p, nil, mode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustSymlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
 	}
 }

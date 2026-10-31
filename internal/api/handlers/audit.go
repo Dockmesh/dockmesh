@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
@@ -48,6 +49,11 @@ func (h *Handlers) ListAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	f.Action = r.URL.Query().Get("action")
 	f.UserID = r.URL.Query().Get("user_id")
+	f.Category = r.URL.Query().Get("category")
+	if f.Category != "" && !audit.ValidCategory(f.Category) {
+		writeError(w, http.StatusBadRequest, "category must be one of: "+strings.Join(audit.Categories, ", "))
+		return
+	}
 	entries, err := h.Audit.ListFiltered(r.Context(), f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

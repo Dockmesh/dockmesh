@@ -4,15 +4,14 @@ import (
 	"context"
 	"io"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 )
 
-func (c *Client) ListContainers(ctx context.Context, all bool) ([]types.Container, error) {
+func (c *Client) ListContainers(ctx context.Context, all bool) ([]container.Summary, error) {
 	return c.cli.ContainerList(ctx, container.ListOptions{All: all})
 }
 
-func (c *Client) InspectContainer(ctx context.Context, id string) (types.ContainerJSON, error) {
+func (c *Client) InspectContainer(ctx context.Context, id string) (container.InspectResponse, error) {
 	return c.cli.ContainerInspect(ctx, id)
 }
 
@@ -55,7 +54,7 @@ func (c *Client) KillContainer(ctx context.Context, id, signal string) error {
 // ContainerStatPath stats a path inside the container without copying
 // any bytes — used by the file-browser to decide "is this a dir or a
 // file?" before deciding whether to stream a single file or a listing.
-func (c *Client) ContainerStatPath(ctx context.Context, id, path string) (types.ContainerPathStat, error) {
+func (c *Client) ContainerStatPath(ctx context.Context, id, path string) (container.PathStat, error) {
 	return c.cli.ContainerStatPath(ctx, id, path)
 }
 
@@ -63,7 +62,7 @@ func (c *Client) ContainerStatPath(ctx context.Context, id, path string) (types.
 // a tar archive. The returned ReadCloser must be drained and closed by
 // the caller. Used by the file-browser for both directory listings
 // (depth-1 tar walk) and file downloads (single tar entry → raw bytes).
-func (c *Client) CopyFromContainer(ctx context.Context, id, path string) (io.ReadCloser, types.ContainerPathStat, error) {
+func (c *Client) CopyFromContainer(ctx context.Context, id, path string) (io.ReadCloser, container.PathStat, error) {
 	return c.cli.CopyFromContainer(ctx, id, path)
 }
 
@@ -71,5 +70,5 @@ func (c *Client) CopyFromContainer(ctx context.Context, id, path string) (io.Rea
 // Caller supplies the tar stream — usually a single-entry tar built in
 // memory by the file-browser's upload handler.
 func (c *Client) CopyToContainer(ctx context.Context, id, dstPath string, src io.Reader) error {
-	return c.cli.CopyToContainer(ctx, id, dstPath, src, types.CopyToContainerOptions{})
+	return c.cli.CopyToContainer(ctx, id, dstPath, src, container.CopyToContainerOptions{})
 }

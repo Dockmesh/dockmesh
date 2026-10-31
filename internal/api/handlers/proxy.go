@@ -7,9 +7,12 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/proxy"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -47,6 +50,12 @@ func writeProxyRouteError(w http.ResponseWriter, err error) bool {
 		return false
 	}
 	return true
+}
+
+// canEditProxy reports whether the caller may see header values and the
+// full forward-auth URL; viewers get them masked.
+func canEditProxy(r *http.Request) bool {
+	return middleware.Allowed(r.Context(), rbac.PermProxyUpdate)
 }
 
 // persistProxyEnabled stores the operator's choice so it is applied again
@@ -143,6 +152,11 @@ func (h *Handlers) ListProxyRoutes(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 	defer cancel()
 	routes = h.Proxy.EnrichWithCertInfo(ctx, routes)
+	if !canEditProxy(r) {
+		for i := range routes {
+			routes[i].Options = routes[i].Options.Masked()
+		}
+	}
 	writeJSON(w, http.StatusOK, routes)
 }
 
@@ -331,7 +345,7 @@ func (h *Handlers) GetProxyRouteConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	preview, err := h.Proxy.SiteConfig(r.Context(), id)
+	preview, err := h.Proxy.SiteConfig(r.Context(), id, !canEditProxy(r))
 	if errors.Is(err, proxy.ErrRouteNotFound) {
 		writeError(w, http.StatusNotFound, "route not found")
 		return
@@ -360,6 +374,51 @@ func (h *Handlers) DeleteProxyRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(r, "proxy.route_delete", idStr, nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ImportProxyCaddyfile maps the sites of a Caddyfile to routes with
+// options. Importable sites are created disabled unless dry_run is set;
+// what can't be mapped is reported per site.
+//
+//	POST /api/v1/proxy/import
+func (h *Handlers) ImportProxyCaddyfile(w http.ResponseWriter, r *http.Request) {
+	if h.Proxy == nil {
+		writeError(w, http.StatusServiceUnavailable, "proxy not configured")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 2*proxy.MaxCaddyfileSize)
+	var req struct {
+		Caddyfile string `json:"caddyfile"`
+		DryRun    bool   `json:"dry_run"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if strings.TrimSpace(req.Caddyfile) == "" {
+		writeError(w, http.StatusBadRequest, "caddyfile required")
+		return
+	}
+	res, err := h.Proxy.ImportCaddyfile(r.Context(), req.Caddyfile, req.DryRun)
+	switch {
+	case errors.Is(err, proxy.ErrProxyNotConfigured):
+		writeError(w, http.StatusConflict, "start the proxy first: Caddy reads the Caddyfile")
+		return
+	case errors.Is(err, proxy.ErrCaddyfileRejected), errors.Is(err, proxy.ErrCaddyfileInvalid):
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var created []string
+	for _, s := range res.Sites {
+		if s.RouteID != 0 {
+			created = append(created, s.Host)
+		}
+	}
+	h.audit(r, "proxy.import", "", map[string]any{"dry_run": req.DryRun, "created": created, "sites": len(res.Sites)})
+	writeJSON(w, http.StatusOK, res)
 }
 
 // GetProxyVersion reports the running Caddy version and the tested

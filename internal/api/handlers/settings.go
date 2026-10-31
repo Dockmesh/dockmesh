@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/proxy"
@@ -93,6 +94,12 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, "changing "+e.Key+" needs the system.upgrade permission")
 			return
 		}
+		if e.Key == backup.TimezoneSetting {
+			if err := backup.CheckTimezone(e.Value); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		}
 		if e.Key == targets.LocalRootsSetting {
 			if err := h.Settings.Set(r.Context(), targets.LocalRootsSeededSetting, "reviewed"); err != nil {
 				writeError(w, http.StatusInternalServerError, err.Error())
@@ -121,6 +128,12 @@ func (h *Handlers) applySettingSideEffect(r *http.Request, key, value string) {
 	switch key {
 	case settings.KeyTrustedProxies:
 		h.proxyNotice.reset(r.Context())
+	case backup.TimezoneSetting:
+		if h.Backups != nil {
+			if err := h.Backups.SetTimezone(r.Context(), value); err != nil {
+				slog.Error("settings: backup time zone", "err", err)
+			}
+		}
 	case "proxy_enabled":
 		if h.Proxy == nil {
 			return

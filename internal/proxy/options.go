@@ -126,6 +126,38 @@ func (o SiteOptions) Public() SiteOptions {
 	return o
 }
 
+// maskedValue stands in for header values shown to callers who cannot
+// edit the route.
+const maskedValue = "********"
+
+// Masked returns a copy with header values and the forward-auth URL's
+// query hidden, since both can carry credentials.
+func (o SiteOptions) Masked() SiteOptions {
+	o.Headers.RequestSet = maskHeaders(o.Headers.RequestSet)
+	o.Headers.ResponseSet = maskHeaders(o.Headers.ResponseSet)
+	if f := o.Access.ForwardAuth; f != nil {
+		m := *f
+		m.URL = ""
+		if u, err := url.Parse(f.URL); err == nil {
+			u.RawQuery, u.ForceQuery = "", false
+			m.URL = u.String()
+		}
+		o.Access.ForwardAuth = &m
+	}
+	return o
+}
+
+func maskHeaders(in []Header) []Header {
+	if in == nil {
+		return nil
+	}
+	out := make([]Header, len(in))
+	for i, h := range in {
+		out[i] = Header{Name: h.Name, Value: maskedValue}
+	}
+	return out
+}
+
 // ErrInvalidOptions wraps every validation failure of SiteOptions.
 var ErrInvalidOptions = errors.New("invalid proxy options")
 

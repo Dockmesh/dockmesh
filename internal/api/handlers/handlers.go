@@ -13,98 +13,107 @@ import (
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/apitokens"
 	"github.com/dockmesh/dockmesh/internal/audit"
-	"github.com/dockmesh/dockmesh/internal/host"
-	"github.com/dockmesh/dockmesh/internal/hosttags"
-	"github.com/dockmesh/dockmesh/internal/ldapauth"
-	"github.com/dockmesh/dockmesh/internal/migration"
-	"github.com/dockmesh/dockmesh/internal/rbac"
-	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/changelog"
 	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/deploy"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
+	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/hosttags"
+	"github.com/dockmesh/dockmesh/internal/invites"
+	"github.com/dockmesh/dockmesh/internal/ldapauth"
 	"github.com/dockmesh/dockmesh/internal/metrics"
+	"github.com/dockmesh/dockmesh/internal/migration"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/oauth2auth"
 	"github.com/dockmesh/dockmesh/internal/oidc"
 	"github.com/dockmesh/dockmesh/internal/proxy"
-	"github.com/dockmesh/dockmesh/internal/saml"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/registries"
+	"github.com/dockmesh/dockmesh/internal/saml"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/selfupdate"
+	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/setup"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/templates"
 	"github.com/dockmesh/dockmesh/internal/updater"
-	"github.com/dockmesh/dockmesh/internal/invites"
+	"github.com/dockmesh/dockmesh/internal/userprefs"
 )
 
 type Handlers struct {
-	DB           *sql.DB
-	Auth         *auth.Service
-	Audit        *audit.Service
-	Docker       *docker.Client // may be nil if the daemon was unreachable at startup
-	Stacks       *stacks.Manager
-	Deployments  *stacks.DeploymentStore
+	DB            *sql.DB
+	Auth          *auth.Service
+	Audit         *audit.Service
+	Docker        *docker.Client // may be nil if the daemon was unreachable at startup
+	Stacks        *stacks.Manager
+	Deployments   *stacks.DeploymentStore
 	DeployHistory *stacks.HistoryStore
 	DeployTracker *deploy.Tracker
 	Notifications *notifications.Service
 	Notices       *notices.Service
 	Dependencies  *stacks.DependencyStore
-	Compose      *compose.Service
-	LoginLimiter *ratelimit.Limiter
+	Compose       *compose.Service
+	LoginLimiter  *ratelimit.Limiter
 	// mfaDisableLimiter caps wrong codes on DELETE /mfa per user.
 	mfaDisableLimiter *ratelimit.Limiter
 	mfaLimiter        *ratelimit.Limiter // per IP; per account in auth.Service
 	ldapLimits        authLimits
 	inviteLimits      authLimits
 	refreshLimits     authLimits
-	Scanner      scanner.Scanner
-	ScanStore    *scanner.Store
-	Proxy        *proxy.Service
-	Updater      *updater.Service
-	UpdateWatcher *updater.Watcher
-	OIDC         *oidc.Service
-	SAML         *saml.Service
-	LDAP         *ldapauth.Service
-	OAuth2       *oauth2auth.Service
-	Metrics      *metrics.Collector
-	Notify       *notify.Service
-	Alerts       *alerts.Service
-	Backups        *backup.Service
-	BackupTargets  *targets.TargetStore
-	Secrets        *secrets.Service
-	Migrations     *migration.Service
-	Drains         *migration.DrainService
-	Agents         *agents.Service
-	Hosts          *host.Registry
-	HostTags       *hosttags.Service
-	Roles          *rbac.Store
-	Settings       *settings.Store
-	GlobalEnv      *globalenv.Store
-	APITokens      *apitokens.Service
-	Registries     *registries.Service
-	GitSource      *gitsource.Service
-	Templates      *templates.Service
-	Invites        *invites.Service
-	AuditRetention *audit.Retention
-	AuditWebhook   *audit.Webhook
-	AgentUpgrade   *agents.UpgradeController
-	Prom           *metrics.PromMetrics
-	SelfUpdate     *selfupdate.Checker
-	SetupState     *setup.State    // first-run wizard state; nil = setup never active
-	SetupCommit_   setup.CommitFunc // wizard's commit-runner — wired by main; nil = wizard cannot commit
-	ssoCodes       ssoCodes
-	setupRuns      sync.Map        // runID → *setup.Runner; populated when SetupCommit fires
+	Scanner           scanner.Scanner
+	ScanStore         *scanner.Store
+	Proxy             *proxy.Service
+	Updater           *updater.Service
+	UpdateWatcher     *updater.Watcher
+	OIDC              *oidc.Service
+	SAML              *saml.Service
+	LDAP              *ldapauth.Service
+	OAuth2            *oauth2auth.Service
+	Metrics           *metrics.Collector
+	Notify            *notify.Service
+	Alerts            *alerts.Service
+	Backups           *backup.Service
+	BackupTargets     *targets.TargetStore
+	Secrets           *secrets.Service
+	Migrations        *migration.Service
+	Drains            *migration.DrainService
+	Agents            *agents.Service
+	Hosts             *host.Registry
+	HostTags          *hosttags.Service
+	Roles             *rbac.Store
+	Settings          *settings.Store
+	GlobalEnv         *globalenv.Store
+	APITokens         *apitokens.Service
+	Registries        *registries.Service
+	GitSource         *gitsource.Service
+	Templates         *templates.Service
+	Invites           *invites.Service
+	AuditRetention    *audit.Retention
+	AuditWebhook      *audit.Webhook
+	AgentUpgrade      *agents.UpgradeController
+	Prom              *metrics.PromMetrics
+	SelfUpdate        *selfupdate.Checker
+	UserPrefs         *userprefs.Store
+	SetupState        *setup.State     // first-run wizard state; nil = setup never active
+	SetupCommit_      setup.CommitFunc // wizard's commit-runner — wired by main; nil = wizard cannot commit
+	ssoCodes          ssoCodes
+	// System restore: the live paths, a restart request after staging,
+	// and the end-of-setup step for a restore from the wizard.
+	RestoreConfig  *config.Config
+	RequestRestart func()
+	FinishSetup    func() error
+	setupRuns      sync.Map // runID → *setup.Runner; populated when SetupCommit fires
 	// RBACv2Enforce gates per-host + per-stack scope checks on typed-
 	// resource handlers. Wired from cfg.RBACv2Enforce.
 	RBACv2Enforce bool
@@ -113,36 +122,42 @@ type Handlers struct {
 	// router mounts its middleware.
 	ClientIPs   *clientip.Resolver
 	proxyNotice *proxyNotice
+	// releaseSections is the embedded changelog, parsed once.
+	releaseSections []*changelog.Section
+	// attentionRows replaces the container fan-out of GET /attention in tests.
+	attentionRows func(ctx context.Context) []containerRow
+	// attentionCertRoutes replaces the proxy certificate probe of GET /attention in tests.
+	attentionCertRoutes func(ctx context.Context) ([]proxy.Route, error)
 	// gitWebhookTrigger replaces GitSource.TriggerSync in tests.
 	gitWebhookTrigger func(ctx context.Context, stackName string)
 }
 
 type Deps struct {
-	DB           *sql.DB
-	Auth         *auth.Service
-	Audit        *audit.Service
-	Docker       *docker.Client
-	Stacks       *stacks.Manager
-	Deployments  *stacks.DeploymentStore
-	DeployHistory *stacks.HistoryStore
-	DeployTracker *deploy.Tracker
-	Notifications *notifications.Service
-	Notices       *notices.Service
-	Dependencies  *stacks.DependencyStore
-	Compose      *compose.Service
-	LoginLimiter *ratelimit.Limiter
-	Scanner      scanner.Scanner
-	ScanStore    *scanner.Store
-	Proxy        *proxy.Service
-	Updater      *updater.Service
-	UpdateWatcher *updater.Watcher
-	OIDC         *oidc.Service
-	SAML         *saml.Service
-	LDAP         *ldapauth.Service
-	OAuth2       *oauth2auth.Service
-	Metrics      *metrics.Collector
-	Notify       *notify.Service
-	Alerts       *alerts.Service
+	DB             *sql.DB
+	Auth           *auth.Service
+	Audit          *audit.Service
+	Docker         *docker.Client
+	Stacks         *stacks.Manager
+	Deployments    *stacks.DeploymentStore
+	DeployHistory  *stacks.HistoryStore
+	DeployTracker  *deploy.Tracker
+	Notifications  *notifications.Service
+	Notices        *notices.Service
+	Dependencies   *stacks.DependencyStore
+	Compose        *compose.Service
+	LoginLimiter   *ratelimit.Limiter
+	Scanner        scanner.Scanner
+	ScanStore      *scanner.Store
+	Proxy          *proxy.Service
+	Updater        *updater.Service
+	UpdateWatcher  *updater.Watcher
+	OIDC           *oidc.Service
+	SAML           *saml.Service
+	LDAP           *ldapauth.Service
+	OAuth2         *oauth2auth.Service
+	Metrics        *metrics.Collector
+	Notify         *notify.Service
+	Alerts         *alerts.Service
 	Backups        *backup.Service
 	BackupTargets  *targets.TargetStore
 	Secrets        *secrets.Service
@@ -164,51 +179,57 @@ type Deps struct {
 	AgentUpgrade   *agents.UpgradeController
 	Prom           *metrics.PromMetrics
 	SelfUpdate     *selfupdate.Checker
+	UserPrefs      *userprefs.Store
+	// Changelog is CHANGELOG.md as embedded in the binary.
+	Changelog      string
 	SetupState     *setup.State
 	SetupCommit_   setup.CommitFunc
+	RestoreConfig  *config.Config
+	RequestRestart func()
+	FinishSetup    func() error
 	RBACv2Enforce  bool
 }
 
 func New(d Deps) *Handlers {
 	h := &Handlers{
-		DB:          d.DB,
-		Auth:        d.Auth,
-		Audit:       d.Audit,
-		Docker:      d.Docker,
-		Stacks:      d.Stacks,
-		Deployments: d.Deployments,
-		DeployHistory: d.DeployHistory,
-		DeployTracker: d.DeployTracker,
-		Notifications: d.Notifications,
-		Notices:       d.Notices,
-		Dependencies: d.Dependencies,
-		Compose:     d.Compose,
-		LoginLimiter: d.LoginLimiter,
-		Scanner:     d.Scanner,
-		ScanStore:   d.ScanStore,
-		Proxy:       d.Proxy,
-		Updater:     d.Updater,
-		UpdateWatcher: d.UpdateWatcher,
-		OIDC:        d.OIDC,
-		SAML:        d.SAML,
-		LDAP:        d.LDAP,
-		OAuth2:      d.OAuth2,
-		Metrics:     d.Metrics,
-		Notify:      d.Notify,
-		Alerts:      d.Alerts,
-		Backups:       d.Backups,
-		BackupTargets: d.BackupTargets,
-		Secrets:       d.Secrets,
-		Migrations:    d.Migrations,
-		Drains:      d.Drains,
-		Agents:      d.Agents,
-		Hosts:       d.Hosts,
-		HostTags:    d.HostTags,
-		Roles:       d.Roles,
-		Settings:    d.Settings,
-		GlobalEnv:   d.GlobalEnv,
-		APITokens:   d.APITokens,
-		Registries:  d.Registries,
+		DB:             d.DB,
+		Auth:           d.Auth,
+		Audit:          d.Audit,
+		Docker:         d.Docker,
+		Stacks:         d.Stacks,
+		Deployments:    d.Deployments,
+		DeployHistory:  d.DeployHistory,
+		DeployTracker:  d.DeployTracker,
+		Notifications:  d.Notifications,
+		Notices:        d.Notices,
+		Dependencies:   d.Dependencies,
+		Compose:        d.Compose,
+		LoginLimiter:   d.LoginLimiter,
+		Scanner:        d.Scanner,
+		ScanStore:      d.ScanStore,
+		Proxy:          d.Proxy,
+		Updater:        d.Updater,
+		UpdateWatcher:  d.UpdateWatcher,
+		OIDC:           d.OIDC,
+		SAML:           d.SAML,
+		LDAP:           d.LDAP,
+		OAuth2:         d.OAuth2,
+		Metrics:        d.Metrics,
+		Notify:         d.Notify,
+		Alerts:         d.Alerts,
+		Backups:        d.Backups,
+		BackupTargets:  d.BackupTargets,
+		Secrets:        d.Secrets,
+		Migrations:     d.Migrations,
+		Drains:         d.Drains,
+		Agents:         d.Agents,
+		Hosts:          d.Hosts,
+		HostTags:       d.HostTags,
+		Roles:          d.Roles,
+		Settings:       d.Settings,
+		GlobalEnv:      d.GlobalEnv,
+		APITokens:      d.APITokens,
+		Registries:     d.Registries,
 		GitSource:      d.GitSource,
 		Templates:      d.Templates,
 		Invites:        d.Invites,
@@ -217,8 +238,12 @@ func New(d Deps) *Handlers {
 		AgentUpgrade:   d.AgentUpgrade,
 		Prom:           d.Prom,
 		SelfUpdate:     d.SelfUpdate,
+		UserPrefs:      d.UserPrefs,
 		SetupState:     d.SetupState,
 		SetupCommit_:   d.SetupCommit_,
+		RestoreConfig:  d.RestoreConfig,
+		RequestRestart: d.RequestRestart,
+		FinishSetup:    d.FinishSetup,
 		RBACv2Enforce:  d.RBACv2Enforce,
 
 		mfaDisableLimiter: ratelimit.New(5, 15*time.Minute, 15*time.Minute),
@@ -235,6 +260,13 @@ func New(d Deps) *Handlers {
 		return d.Settings.Get(settings.KeyTrustedProxies, "")
 	})
 	h.ClientIPs.OnUntrustedForward = h.proxyNotice.observe
+	if d.Changelog != "" {
+		sections, err := changelog.Parse(d.Changelog)
+		if err != nil {
+			slog.Warn("embedded changelog unreadable; what's new stays empty", "err", err)
+		}
+		h.releaseSections = sections
+	}
 	return h
 }
 

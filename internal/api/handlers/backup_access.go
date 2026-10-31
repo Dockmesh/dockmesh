@@ -57,6 +57,27 @@ func (h *Handlers) requireJobAccess(w http.ResponseWriter, r *http.Request, prev
 	return true
 }
 
+// requireTargetAccess guards writes to a saved target (its settings, its
+// accepted host key): they change where every job using it writes, so the
+// caller needs requireJobAccess for each of those jobs, deleted ones
+// included. A target with a system job is admin-only.
+func (h *Handlers) requireTargetAccess(w http.ResponseWriter, r *http.Request, targetID int64) bool {
+	if h.Backups == nil {
+		return true
+	}
+	jobs, err := h.Backups.JobsUsingTarget(r.Context(), targetID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	for i := range jobs {
+		if !h.requireJobAccess(w, r, &jobs[i], nil) {
+			return false
+		}
+	}
+	return true
+}
+
 // requireRunAccess guards everything that reads or restores a run's
 // archive or log: system runs need an admin, all others the job's host in
 // the caller's scope. A run whose job is gone is admin-only.

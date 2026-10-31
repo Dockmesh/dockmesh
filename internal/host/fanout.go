@@ -42,7 +42,7 @@ type Unreachable struct {
 // encoders render `"unreachable_hosts": []` consistently on the wire.
 //
 // Handlers own the shape of T: typically a small wrapper struct that
-// embeds the underlying resource type (e.g. dtypes.Container) with
+// embeds the underlying resource type (e.g. container.Summary) with
 // `HostID` / `HostName` fields added. Struct embedding flattens the
 // host metadata alongside the resource fields in the final JSON, so
 // the frontend reads `item.host_id` and `item.Id` side-by-side without
@@ -79,7 +79,7 @@ func (r *Registry) PickAll(ctx context.Context) []Host {
 		if live == nil {
 			continue
 		}
-		out = append(out, NewRemote(live.ID, live.Name, live))
+		out = append(out, NewRemote(live.ID, live.Name, r.agents))
 	}
 	return out
 }
@@ -94,7 +94,7 @@ func (r *Registry) PickAll(ctx context.Context) []Host {
 // handler defines a small local wrapper struct like:
 //
 //	type containerRow struct {
-//	    dtypes.Container
+//	    container.Summary
 //	    HostID   string `json:"host_id"`
 //	    HostName string `json:"host_name"`
 //	}

@@ -58,6 +58,10 @@ type RouteSpec struct {
 	Upstream string
 	TLSMode  string
 	Options  *SiteOptions
+	Disabled bool
+	// hashed marks options whose basic-auth users carry bcrypt hashes
+	// instead of passwords (imported from a Caddyfile).
+	hashed bool
 }
 
 // Status reports whether the proxy container is running and whether the
@@ -109,6 +113,11 @@ type Service struct {
 	mu        sync.Mutex
 	metrics   *metricsState
 	acme      *acmeBuffer
+
+	// certMu guards the RouteCerts cache.
+	certMu     sync.Mutex
+	certAt     time.Time
+	certRoutes []Route
 
 	// containerState reports whether the managed container exists and runs;
 	// nil means ask Docker.
@@ -213,20 +222,25 @@ func (s *Service) CreateRoute(ctx context.Context, spec RouteSpec) (*Route, erro
 	if spec.Options != nil {
 		opts = *spec.Options
 	}
-	raw, err := s.prepareOptions(ctx, 0, spec.Host, spec.TLSMode, &opts, nil)
+	var prev *SiteOptions
+	if spec.hashed {
+		hashes := opts
+		prev = &hashes
+	}
+	raw, err := s.prepareOptions(ctx, 0, spec.Host, spec.TLSMode, &opts, prev)
 	if err != nil {
 		return nil, err
 	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO proxy_routes (host, upstream, tls_mode, enabled, options) VALUES (?, ?, ?, 1, ?)`,
-		spec.Host, spec.Upstream, spec.TLSMode, raw)
+		`INSERT INTO proxy_routes (host, upstream, tls_mode, enabled, options) VALUES (?, ?, ?, ?, ?)`,
+		spec.Host, spec.Upstream, spec.TLSMode, boolToInt(!spec.Disabled), raw)
 	if err != nil {
 		// SQLite unique constraint code is vendor-specific; the string
 		// "UNIQUE constraint" is stable enough.
 		return nil, ErrDuplicateHost
 	}
 	id, _ := res.LastInsertId()
-	route := &Route{ID: id, Host: spec.Host, Upstream: spec.Upstream, TLSMode: spec.TLSMode, Enabled: true, Options: opts.Public()}
+	route := &Route{ID: id, Host: spec.Host, Upstream: spec.Upstream, TLSMode: spec.TLSMode, Enabled: !spec.Disabled, Options: opts.Public()}
 	if err := s.SyncFromDB(ctx); err != nil {
 		return route, err
 	}
@@ -326,8 +340,9 @@ type SitePreview struct {
 }
 
 // SiteConfig returns the config the site gets when enabled, with
-// basic-auth hashes redacted and without the admin section.
-func (s *Service) SiteConfig(ctx context.Context, id int64) (*SitePreview, error) {
+// basic-auth hashes redacted and without the admin section. With mask
+// it is built from Masked options.
+func (s *Service) SiteConfig(ctx context.Context, id int64, mask bool) (*SitePreview, error) {
 	routes, err := s.listRoutes(ctx)
 	if err != nil {
 		return nil, err
@@ -347,6 +362,9 @@ func (s *Service) SiteConfig(ctx context.Context, id int64) (*SitePreview, error
 		if o.ID != id && o.Enabled && strings.EqualFold(o.Host, "www."+site.Host) {
 			one.Options.Routing.WWWRedirect = false
 		}
+	}
+	if mask {
+		one.Options = one.Options.Masked()
 	}
 	cfg, blocked := buildConfigWith([]Route{one}, s.ProxySettings(), true)
 	cfg.Admin = nil

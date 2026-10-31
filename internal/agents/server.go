@@ -4,12 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/pki"
+	"github.com/dockmesh/dockmesh/pkg/version"
 	"github.com/gorilla/websocket"
 )
 
@@ -32,6 +32,7 @@ var upgrader = websocket.Upgrader{
 }
 
 const (
+	maxRenewBytes  = 16 << 10
 	heartbeatGrace = 60 * time.Second
 	pingInterval   = 30 * time.Second
 	writeWait      = 10 * time.Second
@@ -65,17 +66,14 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	ag := &ConnectedAgent{
-		ID:        agent.ID,
-		Name:      agent.Name,
-		JoinedAt:  time.Now(),
-		send:      make(chan Frame, 32),
-		closeConn: func() { _ = conn.Close() },
-	}
+	ag := newConnectedAgent(agent.ID, agent.Name, func() { _ = conn.Close() })
+	ag.certFP = fp
+	ag.certNotAfter = peer.NotAfter
+	conn.SetReadLimit(MaxFrameBytes)
 
 	// Wait for the hello frame before marking the agent online so the DB
 	// reflects the most up-to-date hostinfo.
-	conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
 	_, raw, err := conn.ReadMessage()
 	if err != nil {
 		slog.Warn("agent hello read", "agent", agent.Name, "err", err)
@@ -91,12 +89,8 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("agent hello payload", "agent", agent.Name, "err", err)
 		return
 	}
-	// Stash the hello on the ConnectedAgent so downstream code (notably
-	// the upgrade controller's version/commit compare) sees the
-	// reported build identity. Without this the field stayed zero-value
-	// and every connected agent looked "outdated" to the server, which
-	// manifested as an infinite auto-upgrade loop during Phase-2
-	// testing even after the commit-hash compare landed.
+	// The upgrade controller compares the reported commit, and stream /
+	// cancel features depend on the advertised capabilities.
 	ag.Hello = hello
 
 	if err := h.svc.markOnline(r.Context(), ag, hello); err != nil {
@@ -107,51 +101,32 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.svc.markOffline(ag)
 	defer ag.closeAllStreams()
+	defer ag.shutdown()
 
-	slog.Info("agent connected", "id", agent.ID, "name", agent.Name, "host", hello.Hostname, "version", hello.Version)
+	if err := h.svc.recordCert(r.Context(), agent.ID, fp, peer.NotAfter); err != nil {
+		slog.Warn("agent cert record", "agent", agent.Name, "err", err)
+	}
 
-	// Welcome
+	slog.Info("agent connected", "id", agent.ID, "name", agent.Name, "host", hello.Hostname,
+		"version", hello.Version, "protocol", hello.ProtocolVersion)
+
 	welcome, _ := json.Marshal(WelcomePayload{
-		AgentID:       agent.ID,
-		AgentName:     agent.Name,
-		ServerVersion: "dev",
+		AgentID:         agent.ID,
+		AgentName:       agent.Name,
+		ServerVersion:   version.Label(),
+		ProtocolVersion: ProtocolVersion,
+		Capabilities:    serverCapabilities,
 	})
 	if err := writeFrame(conn, Frame{Type: FrameServerWelcome, Payload: welcome}); err != nil {
 		return
 	}
-	conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
-	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
-		return nil
-	})
+	_ = conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
 
-	// Outbound pump (server → agent): drains ag.send + sends periodic pings.
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	go func() {
-		ticker := time.NewTicker(pingInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case f, ok := <-ag.send:
-				if !ok {
-					return
-				}
-				if err := writeFrame(conn, f); err != nil {
-					return
-				}
-			case <-ticker.C:
-				ping, _ := json.Marshal(PingPayload{TS: time.Now().Unix()})
-				if err := writeFrame(conn, Frame{Type: FrameServerPing, Payload: ping}); err != nil {
-					return
-				}
-			}
-		}
-	}()
+	go h.pump(ag, conn)
 
-	// Inbound loop (agent → server)
+	// Inbound loop (agent → server). Any frame proves the agent is alive.
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -160,6 +135,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+		_ = conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
 		var f Frame
 		if err := json.Unmarshal(raw, &f); err != nil {
 			continue
@@ -167,25 +143,56 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		switch f.Type {
 		case FrameAgentHeartbeat:
 			h.svc.touchHeartbeat(ctx, ag.ID)
-			conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
-		case FrameAgentPong:
-			conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
 		case FrameRes:
 			ag.deliverResponse(f)
-			conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
 		case FrameStreamData, FrameStreamClose, FrameStreamControl:
 			ag.routeStreamFrame(f)
-			conn.SetReadDeadline(time.Now().Add(heartbeatGrace))
+		case FrameAgentCertRenew:
+			if len(f.Payload) > maxRenewBytes || !ag.renewing.CompareAndSwap(false, true) {
+				continue
+			}
+			go func(f Frame) {
+				defer ag.renewing.Store(false)
+				h.svc.handleCertRenew(ctx, ag, f)
+			}(f)
 		}
 	}
 }
+
+// pump is the only writer on conn after the welcome: it drains the send
+// queue and pings. A failed write ends the whole session, so the read
+// loop can't outlive a dead writer.
+func (h *WSHandler) pump(ag *ConnectedAgent, conn *websocket.Conn) {
+	ticker := time.NewTicker(pingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ag.done:
+			return
+		case f := <-ag.send:
+			if err := writeFrame(conn, f); err != nil {
+				ag.shutdown()
+				return
+			}
+		case <-ticker.C:
+			ping, _ := json.Marshal(PingPayload{TS: time.Now().Unix()})
+			if err := writeFrame(conn, Frame{Type: FrameServerPing, Payload: ping}); err != nil {
+				ag.shutdown()
+				return
+			}
+		}
+	}
+}
+
+// serverCapabilities is what this server offers agents in the welcome.
+var serverCapabilities = []string{CapStreamCredit, CapCertRenew}
 
 func writeFrame(conn *websocket.Conn, f Frame) error {
 	b, err := json.Marshal(f)
 	if err != nil {
 		return err
 	}
-	conn.SetWriteDeadline(time.Now().Add(writeWait))
+	_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
 	return conn.WriteMessage(websocket.TextMessage, b)
 }
 
@@ -211,6 +218,3 @@ func ServerTLSConfig(p *pki.Manager) (*tls.Config, error) {
 		MinVersion:   tls.VersionTLS12,
 	}, nil
 }
-
-// silence unused import lint when the file is in flux
-var _ = errors.New

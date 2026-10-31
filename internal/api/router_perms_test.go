@@ -15,9 +15,10 @@ import (
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
-// Route-level gates of the real router for the sensitive downloads and
-// the host-admin change: a 403 means the permission middleware refused,
-// anything else means the request reached the handler.
+// Route-level gates of the real router for the sensitive downloads,
+// the host-admin change and the proxy version and settings changes: a
+// 403 means the permission middleware refused, anything else means the
+// request reached the handler.
 func TestSensitiveRoutePermissions(t *testing.T) {
 	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -71,9 +72,21 @@ func TestSensitiveRoutePermissions(t *testing.T) {
 		{"host-admin", http.MethodGet, "/api/v1/global-env", true},
 		{"host-admin", http.MethodGet, "/api/v1/auth/providers", true},
 		{"admin", http.MethodGet, "/api/v1/settings", false},
+
+		{"viewer", http.MethodGet, "/api/v1/proxy/version", false},
+		{"viewer", http.MethodGet, "/api/v1/proxy/settings", false},
+		{"viewer", http.MethodPut, "/api/v1/proxy/version", true},
+		{"viewer", http.MethodPost, "/api/v1/proxy/version/rollback", true},
+		{"viewer", http.MethodPut, "/api/v1/proxy/settings", true},
+		{"operator", http.MethodPut, "/api/v1/proxy/version", true},
+		{"operator", http.MethodPost, "/api/v1/proxy/version/rollback", true},
+		{"operator", http.MethodPut, "/api/v1/proxy/settings", true},
+		{"host-admin", http.MethodPut, "/api/v1/proxy/version", false},
+		{"host-admin", http.MethodPost, "/api/v1/proxy/version/rollback", false},
+		{"host-admin", http.MethodPut, "/api/v1/proxy/settings", false},
 	}
 	for _, tt := range tests {
-		t.Run(tt.role+" "+tt.path, func(t *testing.T) {
+		t.Run(tt.role+" "+tt.method+" "+tt.path, func(t *testing.T) {
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			req.Header.Set("Authorization", "Bearer "+tokens[tt.role])
 			rr := httptest.NewRecorder()

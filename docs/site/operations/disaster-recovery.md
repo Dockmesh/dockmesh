@@ -51,15 +51,18 @@ Both forms are standard age identity files and work with `age -d -i`.
 
 ## Rebuild a server
 
-<!-- update after: restore: stage system restores and swap them in at startup -->
-System restore runs only on the command line, with the server stopped. `dockmesh restore` extracts a system archive into the paths from the server configuration, then runs sanity checks.
+There are three ways to restore a system backup. All of them unpack the archive next to the live files, check it, and swap the restored files in when the server starts, before it opens the database. The replaced files are kept in `<data>/.pre-restore/<time>` and `<stacks>.pre-restore-<time>`.
+
+- **Setup wizard** of a fresh install: **Restore from a backup instead**, upload the archive and, for an encrypted backup, the key file you exported. This is the quickest way to rebuild a server.
+- **Backups** page of a running server (admins): **Restore the whole system** on a system run, or **Restore system from file**. Dockmesh restarts to apply it.
+- **Command line**, with the server stopped: `dockmesh restore`, below.
 
 | Flag | Meaning |
 |---|---|
-| `--from <path>` | System archive (`.tar.gz`), required |
-| `--force` | Restore over a database that already has users. The current database is moved to `dockmesh.db.pre-restore-<unix time>` |
+| `--from <path>` | System archive (`.tar.gz` or `.tar.gz.age`), required |
+| `--key <file>` | Backup key file exported from the old server, for encrypted archives |
+| `--force` | Restore over a database that already has users |
 | `--dry-run` | Only walk the archive and print `would restore N files, M bytes` |
-| `--skip-sanity` | Skip the checks after extracting |
 
 Like other subcommands, `restore` reads `/var/lib/dockmesh/dockmesh.env` when `DOCKMESH_DB_PATH` is not set in the environment. Pass `--env-file <path>` for any other location.
 
@@ -74,23 +77,16 @@ Use the version you ran before, or newer. Do not finish the setup wizard. If you
 
 ### 2. Get and decrypt the archive
 
-Copy the latest system archive from your backup target, e.g. `jobs/dockmesh-system/20261029-030000-r412.tar.gz.age`. `dockmesh restore` cannot read encrypted archives and stops with an error. Decrypt it first with the key you exported, using the [age](https://github.com/FiloSottile/age) CLI:
-
-```bash
-age -d -i dockmesh-backup-key.txt -o /root/system.tar.gz 20261029-030000-r412.tar.gz.age
-```
-
-If secrets encryption was off on the old server, the `.age` file is not actually encrypted: rename it to `.tar.gz` and skip `age -d`.
+Copy the latest system archive from your backup target, e.g. `jobs/1-dockmesh-system/20261029-030000-r412.tar.gz.age`, and the backup key file you exported (`dockmesh-backup-key.txt`). With the setup wizard, upload both and skip to step 4. If secrets encryption was off on the old server, the `.age` file is not actually encrypted and needs no key.
 
 ### 3. Restore
 
 ```bash
-sudo dockmesh restore --from /root/system.tar.gz --dry-run
-sudo dockmesh restore --from /root/system.tar.gz
+sudo dockmesh restore --from 20261029-030000-r412.tar.gz.age --key dockmesh-backup-key.txt --dry-run
+sudo dockmesh restore --from 20261029-030000-r412.tar.gz.age --key dockmesh-backup-key.txt
 ```
 
-<!-- update after: restore: stage system restores and swap them in at startup -->
-Files under `stacks/` and `data/` are written in place, before the database is swapped. Files that exist on disk but not in the archive stay. The restore ends with checks printed as `[ ok ]`, `[warn]` or `[FAIL]`. The database must open and migrate, and contain at least one admin. A missing CA certificate or key (`agents-ca.crt`, `agents-ca.key`), audit genesis or `secrets.env` is a warning. The server certificate and the age key are not checked. On success it prints `sanity OK`.
+The restored stacks directory replaces the live one as a whole; in the data directory, each file or folder in the archive replaces the live one and everything else stays. The replaced ones are kept as described above. The restore ends with checks printed as `[ ok ]`, `[warn]` or `[FAIL]`. The database must open and migrate, and contain at least one admin. A missing CA certificate or key (`agents-ca.crt`, `agents-ca.key`), audit genesis or `secrets.env` is a warning. The server certificate and the age key are not checked. On success it prints `sanity OK`.
 
 ### 4. Fix configuration and ownership
 

@@ -8,7 +8,8 @@
   // (per-container metrics, host-affinity panel).
   import { untrack } from 'svelte';
   import { latest } from '$lib/latest';
-  import { page } from '$app/stores';
+  import { fmtVersion } from '$lib/version';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import {
     api, ApiError,
@@ -22,14 +23,15 @@
   import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
+  import MountTable from '$lib/components/MountTable.svelte';
   import {
     ChevronLeft, RefreshCw, ArrowDownToLine, Trash2, Terminal,
     X, Check, AlertTriangle, Info
   } from 'lucide-svelte';
 
-  const id = $derived($page.params.id);
+  const id = $derived(page.params.id);
   const isLocal = $derived(id === 'local');
-  const tabFromQuery = $derived(($page.url.searchParams.get('tab') ?? 'overview') as TabId);
+  const tabFromQuery = $derived((page.url.searchParams.get('tab') ?? 'overview') as TabId);
 
   type TabId = 'overview' | 'containers' | 'stacks' | 'migrations' | 'tags' | 'maintenance';
   let tab = $state<TabId>('overview');
@@ -259,7 +261,7 @@
     upgradeBusy = true;
     try {
       const r = await api.agents.upgrade(id);
-      toast.success('Upgrade dispatched', `${hostName} → v${r.version}`);
+      toast.success('Upgrade dispatched', `${hostName} → ${fmtVersion(r.version)}`);
       await loadAll();
     } catch (err) {
       toast.error('Upgrade failed', err instanceof ApiError ? err.message : undefined);
@@ -366,8 +368,8 @@
 
       <div class="ed-host-header-actions">
         <div class="ed-host-version-line font-mono">
-          {#if hostVersion}<span>v{hostVersion}</span>{/if}
-          {#if needsUpgrade}<span class="dm-pill dm-pill-warning ed-host-version-pill">↑ v{upgradePolicyVersion} avail.</span>{/if}
+          {#if hostVersion}<span>{fmtVersion(hostVersion)}</span>{/if}
+          {#if needsUpgrade}<span class="dm-pill dm-pill-warning ed-host-version-pill">↑ {fmtVersion(upgradePolicyVersion)} avail.</span>{/if}
         </div>
         <div class="ed-actions">
           <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={isLocal || status !== 'online'} onclick={openDrain} title={isLocal ? "Local server can't be drained" : ''}>
@@ -421,10 +423,12 @@
               <dt>docker</dt><dd class="font-mono">{agent.docker_version || '—'}</dd>
               <dt>agent version</dt>
               <dd class="font-mono">
-                {agent.version || '—'}
-                {#if needsUpgrade}<span class="ed-host-kv-warn">· server is on v{upgradePolicyVersion}</span>{/if}
+                {agent.version ? fmtVersion(agent.version) : '—'}
+                {#if needsUpgrade}<span class="ed-host-kv-warn">· server is on {fmtVersion(upgradePolicyVersion)}</span>
+                {:else if agent.update_recommended}<span class="ed-host-kv-warn">· agent update recommended</span>{/if}
               </dd>
               <dt>cert fingerprint</dt><dd class="font-mono ed-host-kv-fingerprint">{agent.cert_fingerprint || '—'}</dd>
+              <dt>cert expires</dt><dd class="font-mono">{agent.cert_expires_at ? fmtDate(agent.cert_expires_at) : '—'}</dd>
               <dt>last seen</dt><dd class="font-mono">{fmtAgo(agent.last_seen_at)}</dd>
               <dt>online since</dt><dd class="font-mono">{agent.online_since ? `${fmtAgo(agent.online_since)} (${fmtUptime(agent.online_since)} up)` : '—'}</dd>
               <dt>enrolled</dt><dd class="font-mono">{fmtDate(agent.created_at)}</dd>
@@ -477,6 +481,13 @@
             </div>
           </div>
         </div>
+
+        {#if metrics && (metrics.mounts?.length || metrics.mounts_unsupported)}
+          <div class="ed-host-card ed-host-mounts">
+            <div class="ed-host-card-title">Disks</div>
+            <MountTable mounts={metrics.mounts} unsupported={metrics.mounts_unsupported} />
+          </div>
+        {/if}
 
         <!-- Stacks deployed here (Overview block) -->
         <div class="ed-host-card ed-host-stacks-block">
@@ -700,9 +711,9 @@
             {#if isLocal}
               Server self-update lives in System settings — not a per-host concern.
             {:else if !needsUpgrade}
-              {hostVersion ? `Already on v${hostVersion}.` : 'Version unknown.'} Nothing to do.
+              {hostVersion ? `Already on ${fmtVersion(hostVersion)}.` : 'Version unknown.'} Nothing to do.
             {:else}
-              This host is on <span class="ed-accent-mono">v{hostVersion}</span>. Server is on v{upgradePolicyVersion}. Upgrades are zero-downtime — agent reconnects within ~10s.
+              This host is on <span class="ed-accent-mono">{fmtVersion(hostVersion)}</span>. Server is on {fmtVersion(upgradePolicyVersion)}. Upgrades are zero-downtime — agent reconnects within ~10s.
             {/if}
           </p>
           <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" disabled={isLocal || !needsUpgrade || upgradeBusy} onclick={upgradeAgent}>
@@ -953,6 +964,7 @@
     padding: 16px 18px;
   }
   .ed-host-identity { grid-column: span 7; }
+  .ed-host-mounts { grid-column: 1 / -1; }
   .ed-host-snapshot { grid-column: span 5; display: flex; flex-direction: column; gap: 12px; }
   .ed-host-stacks-block { grid-column: span 7; }
   .ed-host-mig-block { grid-column: span 5; }
