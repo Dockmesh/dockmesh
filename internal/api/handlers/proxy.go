@@ -21,7 +21,7 @@ type proxyRouteRequest struct {
 	Upstream string `json:"upstream"`
 	TLSMode  string `json:"tls_mode"`
 	// Enabled is *bool so PUT bodies that omit the field keep the
-	// existing state; only an explicit false disables the route.
+	// existing state.
 	Enabled *bool `json:"enabled,omitempty"`
 	// Options stay raw so an omitted object (keep on update) can be
 	// told apart from an empty one (defaults).
@@ -214,16 +214,12 @@ func (h *Handlers) UpdateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	enabled := true
-	if req.Enabled != nil {
-		enabled = *req.Enabled
-	}
 	opts, err := proxy.ParseOptions(req.Options)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	err = h.Proxy.UpdateRoute(r.Context(), id, req.Upstream, req.TLSMode, enabled, opts)
+	err = h.Proxy.UpdateRoute(r.Context(), id, req.Upstream, req.TLSMode, req.Enabled, opts)
 	if writeProxyRouteError(w, err) {
 		return
 	}
@@ -232,7 +228,12 @@ func (h *Handlers) UpdateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, "proxy.route_update", idStr, nil)
-	w.WriteHeader(http.StatusNoContent)
+	route, err := h.Proxy.GetRoute(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, route)
 }
 
 // SetProxyRouteEnabled flips just the enabled flag for one route. Used
@@ -418,4 +419,126 @@ func (h *Handlers) ImportProxyCaddyfile(w http.ResponseWriter, r *http.Request) 
 	}
 	h.audit(r, "proxy.import", "", map[string]any{"dry_run": req.DryRun, "created": created, "sites": len(res.Sites)})
 	writeJSON(w, http.StatusOK, res)
+}
+
+// GetProxyVersion reports the running Caddy version and the tested
+// versions this release can switch to.
+//
+//	GET /api/v1/proxy/version
+func (h *Handlers) GetProxyVersion(w http.ResponseWriter, r *http.Request) {
+	if h.Proxy == nil {
+		writeError(w, http.StatusServiceUnavailable, "proxy not configured")
+		return
+	}
+	info := h.Proxy.VersionInfo()
+	// A custom image can name a private registry.
+	if !info.Managed && !canEditProxy(r) {
+		info.Image = ""
+	}
+	writeJSON(w, http.StatusOK, info)
+}
+
+// SetProxyVersion switches Caddy to another tested version; the switch
+// is undone when the new container doesn't take the config.
+//
+//	PUT /api/v1/proxy/version
+func (h *Handlers) SetProxyVersion(w http.ResponseWriter, r *http.Request) {
+	if h.Proxy == nil {
+		writeError(w, http.StatusServiceUnavailable, "proxy not configured")
+		return
+	}
+	var req struct {
+		Version string `json:"version"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	ch, err := h.Proxy.SwitchVersion(r.Context(), req.Version)
+	h.writeVersionSwitch(w, r, "proxy.version_update", ch, err)
+}
+
+// RollbackProxyVersion switches back to the version before the last
+// switch.
+//
+//	POST /api/v1/proxy/version/rollback
+func (h *Handlers) RollbackProxyVersion(w http.ResponseWriter, r *http.Request) {
+	if h.Proxy == nil {
+		writeError(w, http.StatusServiceUnavailable, "proxy not configured")
+		return
+	}
+	ch, err := h.Proxy.RollbackVersion(r.Context())
+	h.writeVersionSwitch(w, r, "proxy.version_rollback", ch, err)
+}
+
+// writeVersionSwitch audits detached from the request, which may have
+// been cancelled while the container was replaced.
+func (h *Handlers) writeVersionSwitch(w http.ResponseWriter, r *http.Request, action string, ch proxy.VersionChange, err error) {
+	switch {
+	case errors.Is(err, proxy.ErrVersionReadOnly), errors.Is(err, proxy.ErrProxyNotRunning):
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	case errors.Is(err, proxy.ErrUnknownVersion), errors.Is(err, proxy.ErrNoPreviousVersion):
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	case errors.Is(err, proxy.ErrVersionSwitchFailed):
+		result := "rolled back"
+		if errors.Is(err, proxy.ErrVersionRollbackFailed) {
+			result = "rollback failed"
+		}
+		h.auditDetached(r, action, ch.To, map[string]string{"from": ch.From, "to": ch.To, "result": result, "error": err.Error()})
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if ch.From != ch.To {
+		h.auditDetached(r, action, ch.To, map[string]string{"from": ch.From, "to": ch.To})
+	}
+	writeJSON(w, http.StatusOK, ch.Info)
+}
+
+// GetProxySettings returns the proxy-wide options. Without proxy.update
+// the ACME email is shown with its local part hidden.
+//
+//	GET /api/v1/proxy/settings
+func (h *Handlers) GetProxySettings(w http.ResponseWriter, r *http.Request) {
+	if h.Proxy == nil {
+		writeError(w, http.StatusServiceUnavailable, "proxy not configured")
+		return
+	}
+	st := h.Proxy.ProxySettings()
+	if !canEditProxy(r) {
+		st = st.Masked()
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+// UpdateProxySettings stores and applies the proxy-wide options.
+//
+//	PUT /api/v1/proxy/settings
+func (h *Handlers) UpdateProxySettings(w http.ResponseWriter, r *http.Request) {
+	if h.Proxy == nil {
+		writeError(w, http.StatusServiceUnavailable, "proxy not configured")
+		return
+	}
+	var req proxy.Settings
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	before := h.Proxy.ProxySettings()
+	err := h.Proxy.SaveSettings(r.Context(), req)
+	if errors.Is(err, proxy.ErrInvalidSettings) {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	after := h.Proxy.ProxySettings()
+	h.auditDetached(r, "proxy.settings_update", "", map[string]any{"before": before, "after": after})
+	writeJSON(w, http.StatusOK, after)
 }

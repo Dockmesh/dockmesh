@@ -74,6 +74,12 @@ A `PUT` without `options` keeps the stored ones; a `PUT` with `options` replaces
 
 `POST /api/v1/proxy/import` with `{"caddyfile": "…", "dry_run": true}` shows how each site of an existing Caddyfile maps to a route and its options; without `dry_run` the sites are created **disabled**, so you can check them before they serve traffic. The proxy has to be running, because Caddy itself parses the file. Each site comes back as `ready`, `partial` (the `unsupported` list names what wasn't imported, such as `file_server`, path rules or placeholders like `{remote_host}`) or `skipped` (with the reason, for example a host that already has a route). `import <name>` works for snippets defined earlier in the same Caddyfile; imports of files or globs, imports with arguments, heredocs (`<<`), client certificate files and `{$ENV}` variables are refused, so paste that content instead. Because of that check, the word `import` can't appear anywhere else in the file either, not even in a comment. A block listing several names becomes one site per name, and a `www.` block that only redirects becomes the site's www redirect. Creating sites needs `proxy.create`.
 
+## Caddy version and proxy settings
+
+`GET /api/v1/proxy/version` lists the Caddy versions tested with your Dockmesh release (pinned by digest) and the one that runs. `PUT /api/v1/proxy/version` with `{"version": "2.11.6"}` recreates the proxy container with that version; if Caddy doesn't come up with the current config, the previous version is started again and the call fails with 502. `POST /api/v1/proxy/version/rollback` goes back to the version before the last switch, whose image is kept until the next switch. Without a chosen version the proxy follows the default of each Dockmesh release. With `DOCKMESH_PROXY_IMAGE` set, the version can't be changed here.
+
+`PUT /api/v1/proxy/settings` sets `acme_email` (expiry notices; required for ZeroSSL), `acme_ca` (empty for Let's Encrypt, `letsencrypt_staging` for tests, or `zerossl`) and `trusted_proxies` (`cloudflare` trusts Cloudflare's published edge ranges, so IP filters and logs see the visitor's address). Switching versions and changing settings needs `proxy.update` and is recorded in the audit log; users without it see the ACME email with its local part hidden.
+
 ## TLS modes
 
 | Mode | Label in the UI | Behaviour |

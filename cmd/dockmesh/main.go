@@ -700,6 +700,7 @@ func main() {
 	})
 	noticesSvc.Register("api-tokens.legacy", apiTokensSvc.SyncLegacyNotice)
 	proxySvc.SetNotices(noticesSvc)
+	proxySvc.SetSettings(settingsStore)
 
 	// Proxy: the boot-time config flag is just the *default* — the
 	// DB-backed `proxy_enabled` setting overrides it so an admin

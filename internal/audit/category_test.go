@@ -23,9 +23,10 @@ var dynamicActions = map[string][]string{
 // forwarders pass an action parameter through to the audit log; the
 // index is the position of the action argument.
 var forwarders = map[string]int{
-	"audit":           1,
-	"auditDetached":   1,
-	"containerAction": 3,
+	"audit":              1,
+	"auditDetached":      1,
+	"containerAction":    3,
+	"writeVersionSwitch": 2,
 }
 
 // TestEveryEmittedActionHasCategory parses the server and agent sources,

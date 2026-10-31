@@ -6086,20 +6086,13 @@ paths:
     get:
       operationId: proxy.status
       tags: [proxy]
-      summary: Embedded Caddy proxy state
+      summary: Managed Caddy proxy state
       responses:
         "200":
           description: Status.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  enabled: { type: boolean }
-                  container_state: { type: string, enum: [running, stopped, missing] }
-                  routes_count: { type: integer }
-                  last_sync_at: { type: string, format: date-time }
-                  last_error: { type: string }
+              schema: { $ref: "#/components/schemas/ProxyStatus" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /proxy/enable:
@@ -6111,11 +6104,15 @@ paths:
         Reconciles the `dockmesh-proxy` container: one created with the
         current spec (image, command, mounts) is kept and started if needed;
         an outdated or foreign one is replaced. The image is pinned by digest
-        (`caddy:2.11.7@sha256:…`, override with `DOCKMESH_PROXY_IMAGE`). Caddy resumes its last pushed
-        config after a restart, and Dockmesh re-pushes the routes when the
-        running config drifts from them.
+        (the selected version from `/proxy/version`, or `DOCKMESH_PROXY_IMAGE`).
+        Caddy resumes its last pushed config after a restart, and Dockmesh
+        re-pushes the routes when the running config drifts from them.
       responses:
-        "204": { description: Enabled. }
+        "200":
+          description: Enabled; the proxy state after starting.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxyStatus" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "503":
@@ -6230,6 +6227,9 @@ paths:
       operationId: proxy.update_route
       tags: [proxy]
       summary: Update a proxy route
+      description: |
+        Replaces `upstream` and `tls_mode`. `enabled` and `options` are kept
+        when omitted. Returns the updated route.
       requestBody:
         required: true
         content:
@@ -6245,6 +6245,11 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: A www redirect onto a name that is a site of its own.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
     delete:
       operationId: proxy.delete_route
       tags: [proxy]
@@ -7638,6 +7643,121 @@ paths:
             application/json:
               schema: { type: object, additionalProperties: true }
 
+  # ---------------------- proxy: version + settings ----------------------
+  /proxy/version:
+    get:
+      operationId: proxy.version
+      tags: [proxy]
+      summary: Running Caddy version and the tested versions to switch to
+      description: Without `proxy.update`, `image` is empty while a custom image runs.
+      responses:
+        "200":
+          description: Version info.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxyVersionInfo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      operationId: proxy.set_version
+      tags: [proxy]
+      summary: Switch Caddy to another tested version
+      description: |
+        Only versions listed in `available` are accepted. While the proxy runs,
+        the container is recreated with the new image and must load the current
+        config; if it doesn't, the previous image is started again and 502 is
+        returned. The image of the version left behind is kept for a rollback,
+        older tested images are removed. While the proxy is off only the
+        selection is stored; 409 when the proxy is switched on but its container
+        isn't running yet, and while `DOCKMESH_PROXY_IMAGE` is set. The switch
+        finishes even when the client disconnects.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version: { type: string, example: 2.11.7 }
+      responses:
+        "200":
+          description: Switched.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxyVersionInfo" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Version management is read-only (`DOCKMESH_PROXY_IMAGE` set), or the proxy should run but isn't running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: The new version did not come up with the config. It was rolled back, or the error says that starting the previous version failed too.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /proxy/version/rollback:
+    post:
+      operationId: proxy.rollback_version
+      tags: [proxy]
+      summary: Switch back to the Caddy version before the last switch
+      description: Same checks and automatic rollback as `PUT /proxy/version`; 400 when there is no previous version.
+      responses:
+        "200":
+          description: Rolled back.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxyVersionInfo" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Version management is read-only (`DOCKMESH_PROXY_IMAGE` set), or the proxy should run but isn't running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: The previous version did not come up with the config; the current one runs again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /proxy/settings:
+    get:
+      operationId: proxy.settings
+      tags: [proxy]
+      summary: Proxy-wide options (ACME account, CA, trusted proxies)
+      description: Without `proxy.update` the ACME email is returned as `***@<domain>`.
+      responses:
+        "200":
+          description: Settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxySettings" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      operationId: proxy.update_settings
+      tags: [proxy]
+      summary: Store and apply the proxy-wide options
+      description: Replaces all three fields; the config is pushed to Caddy right away when the proxy runs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProxySettings" }
+      responses:
+        "200":
+          description: Stored.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxySettings" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   # ---------------------- proxy: metrics + ACME events -------------------
   /proxy/metrics:
     get:
@@ -8923,6 +9043,51 @@ components:
           type: object
           description: Deploy result when `deployed` is true; mirrors /stacks/{name}/deploy.
         duration_ms: { type: integer, format: int64 }
+
+    ProxyStatus:
+      type: object
+      required: [enabled, running, admin_ok]
+      properties:
+        enabled: { type: boolean, description: Dockmesh manages and pushes config to the proxy. }
+        running: { type: boolean }
+        admin_ok: { type: boolean, description: Caddy's admin API answers. }
+        version: { type: string, description: Server header reported by Caddy. }
+        container: { type: string, description: Short container ID. }
+
+    ProxyVersionInfo:
+      type: object
+      required: [current, image, default, available, managed]
+      properties:
+        current: { type: string, description: Running tested version; empty when a custom image runs. }
+        image: { type: string }
+        default: { type: string, description: Version new installs and unpinned servers run. }
+        previous: { type: string, description: Version a rollback goes back to. }
+        available:
+          type: array
+          description: Caddy versions tested with this Dockmesh release, oldest first, pinned by digest.
+          items:
+            type: object
+            required: [version, image]
+            properties:
+              version: { type: string }
+              image: { type: string }
+        managed: { type: boolean }
+        read_only_reason: { type: string, description: Set when `managed` is false. }
+
+    ProxySettings:
+      type: object
+      properties:
+        acme_email:
+          type: string
+          description: Account email for certificate expiry notices. Required for ZeroSSL.
+        acme_ca:
+          type: string
+          enum: ["", letsencrypt_staging, zerossl]
+          description: Empty is Let's Encrypt. Applies to sites with tls_mode auto.
+        trusted_proxies:
+          type: string
+          enum: ["", cloudflare]
+          description: "`cloudflare` takes the client address from the CF-Connecting-IP header on requests from Cloudflare's published edge ranges; IP filters and logs then see the visitor, not Cloudflare."
 
     ProxyRoute:
       type: object

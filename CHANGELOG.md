@@ -77,6 +77,14 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   routes with the matching options. Directives without a matching option are listed per
   site instead of being dropped, and `dry_run` shows the result without creating anything.
   Snippets defined in the same file can be imported; imports of files can't.
+- The Caddy version of the proxy can be switched between the versions tested with this
+  release (`/api/v1/proxy/version`), with a rollback to the previous one. A version that
+  doesn't come up with the current config is rolled back automatically. While
+  `DOCKMESH_PROXY_IMAGE` is set the version can't be changed.
+- Proxy settings for the ACME account email, the certificate authority (Let's Encrypt,
+  its staging environment, or ZeroSSL) and trusting Cloudflare as a proxy in front of
+  Caddy (`/api/v1/proxy/settings`). Both need `proxy.update` to change; users without it see
+  the ACME email with its local part hidden.
 
 ### Changed
 - New look for the web UI: a calmer, flat design with equal light and dark themes that
@@ -149,6 +157,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   their first sign-in, instead of showing an internal note.
 - The resources page no longer fails to load when images have never been scanned.
 - Logs and terminal links in the containers list open those tabs instead of the overview.
+- Updating a proxy route without `enabled` no longer switches a disabled route back on,
+  and the update returns the saved route.
 - Updating a container's image no longer loses its anonymous volumes (`-v /data` or a
   `VOLUME` in the image); the new container gets the old volumes.
 - A failed image update no longer leaves the container deleted: the old container is kept
