@@ -161,6 +161,10 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   staying "running".
 - Backup runs that were still running when the server stopped are marked failed at the
   next start instead of showing "running" forever.
+- Volume backups no longer keep a copy of the archive in Docker's container log of their
+  helper, which took several times the archive's size on the server's disk while the backup
+  ran. A backup that fails midway stops and removes its helper container instead of leaving it
+  running until the next restart.
 
 ### Security
 - A rollback now only accepts update-history entries of the container it is called for, and
