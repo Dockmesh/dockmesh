@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 )
 
 // NormalizedStats is the minimal stats payload the UI needs. Computed
 // server-side so the wire format stays tiny and the frontend doesn't have
-// to know Docker's full StatsJSON layout.
+// to know Docker's full container.StatsResponse layout.
 type NormalizedStats struct {
 	CPUPercent float64 `json:"cpu_percent"`
 	MemUsed    uint64  `json:"mem_used"`
@@ -24,7 +24,7 @@ type NormalizedStats struct {
 }
 
 // ContainerStats returns the raw stats stream from the docker daemon —
-// newline-delimited JSON matching the StatsJSON layout. Same wire format
+// newline-delimited JSON matching the container.StatsResponse layout. Same wire format
 // the local handler and the remote agent use, so normalization can stay
 // in one place (the WS handler).
 func (c *Client) ContainerStats(ctx context.Context, containerID string) (io.ReadCloser, error) {
@@ -57,7 +57,7 @@ func (c *Client) StreamStats(ctx context.Context, containerID string) (<-chan No
 			if ctx.Err() != nil {
 				return
 			}
-			var s types.StatsJSON
+			var s container.StatsResponse
 			if err := dec.Decode(&s); err != nil {
 				if err != io.EOF && ctx.Err() == nil {
 					errCh <- err
@@ -78,9 +78,9 @@ func (c *Client) StreamStats(ctx context.Context, containerID string) (<-chan No
 // Normalize is the exported version of normalize() so handlers that
 // stream raw stats (local or via remote agent) can convert frame-by-frame
 // without reimplementing the formulas.
-func Normalize(s *types.StatsJSON) NormalizedStats { return normalize(s) }
+func Normalize(s *container.StatsResponse) NormalizedStats { return normalize(s) }
 
-func normalize(s *types.StatsJSON) NormalizedStats {
+func normalize(s *container.StatsResponse) NormalizedStats {
 	// CPU % — Linux formula (Windows path omitted; concept §10 targets Linux).
 	cpuDelta := float64(s.CPUStats.CPUUsage.TotalUsage - s.PreCPUStats.CPUUsage.TotalUsage)
 	sysDelta := float64(s.CPUStats.SystemUsage - s.PreCPUStats.SystemUsage)

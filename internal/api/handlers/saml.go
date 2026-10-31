@@ -3,20 +3,23 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/auth"
+	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/saml"
 	"github.com/go-chi/chi/v5"
-	"github.com/golang-jwt/jwt/v5"
 )
 
 const samlStateCookie = "dockmesh_saml"
 
 type samlStateClaims struct {
 	Pending *saml.Pending `json:"p"`
-	jwt.RegisteredClaims
+	auth.TypedClaims
 }
 
 // -----------------------------------------------------------------------------
@@ -52,30 +55,18 @@ func (h *Handlers) SAMLLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	claims := samlStateClaims{
-		Pending: pending,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "dockmesh",
-			Subject:   "saml-pending",
-		},
-	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(h.JWTSecret)
+	token, err := h.Auth.TokenKeys().Sign(auth.KindSAMLState, 5*time.Minute, &samlStateClaims{Pending: pending})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     samlStateCookie,
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   300,
-	})
+	h.setSAMLStateCookie(w, r, token, 300)
 	http.Redirect(w, r, url, http.StatusFound)
 }
+
+// samlNeedsHTTPSMsg explains the usual reason the state cookie is missing.
+const samlNeedsHTTPSMsg = "SAML sign-in did not return to the browser session it started from. " +
+	"With an identity provider on another domain, Dockmesh must be reached over HTTPS."
 
 // SAMLACS handles the assertion-consumer POST from the IdP. Validates
 // the response, finds/creates the user, issues Dockmesh session tokens,
@@ -87,22 +78,21 @@ func (h *Handlers) SAMLACS(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := r.Cookie(samlStateCookie)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "missing state cookie")
+		msg := "SAML sign-in session expired or missing; sign in again."
+		if !clientip.Secure(r) {
+			msg = samlNeedsHTTPSMsg
+		}
+		ssoErrorRedirect(w, r, msg)
 		return
 	}
 	// Clear the cookie immediately — single-use.
-	http.SetCookie(w, &http.Cookie{
-		Name: samlStateCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
-	})
-	parsed, err := jwt.ParseWithClaims(c.Value, &samlStateClaims{}, func(t *jwt.Token) (any, error) {
-		return h.JWTSecret, nil
-	})
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid state cookie: "+err.Error())
+	h.setSAMLStateCookie(w, r, "", -1)
+	claims := &samlStateClaims{}
+	if err := h.Auth.TokenKeys().Parse(auth.KindSAMLState, c.Value, claims); err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid state cookie")
 		return
 	}
-	claims, ok := parsed.Claims.(*samlStateClaims)
-	if !ok || !parsed.Valid || claims.Pending == nil {
+	if claims.Pending == nil {
 		writeError(w, http.StatusUnauthorized, "invalid state cookie")
 		return
 	}
@@ -112,11 +102,14 @@ func (h *Handlers) SAMLACS(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?sso_error="+encodeQuery(err.Error()), http.StatusFound)
 		return
 	}
-	if res.User != nil {
-		h.audit(r, "auth.sso_login", res.User.ID, map[string]string{"provider": claims.Pending.Slug, "kind": "saml"})
+	if res.RekeyedUser != "" {
+		h.audit(r, audit.ActionSAMLRekey, res.RekeyedUser, map[string]string{"provider": claims.Pending.Slug})
+		h.syncSAMLRekeyNotice(r.Context())
 	}
-	loc := "/login#sso_access=" + res.AccessToken + "&sso_refresh=" + res.RefreshToken
-	http.Redirect(w, r, loc, http.StatusFound)
+	if res.Login.User != nil {
+		h.audit(r, "auth.sso_login", res.Login.User.ID, map[string]string{"provider": claims.Pending.Slug, "kind": "saml"})
+	}
+	h.finishSSOLogin(w, r, res.Login)
 }
 
 // SAMLMetadata serves the SP-side metadata XML for the given slug.
@@ -238,6 +231,48 @@ func (h *Handlers) DeleteSAMLProvider(w http.ResponseWriter, r *http.Request) {
 // and persists the outcome on the row. The frontend renders a
 // green/red dot from last_test_ok and surfaces last_test_error in a
 // tooltip.
+// GetSAMLRekey lists the accounts still waiting for their one-time re-key.
+func (h *Handlers) GetSAMLRekey(w http.ResponseWriter, r *http.Request) {
+	if h.SAML == nil {
+		writeError(w, http.StatusServiceUnavailable, "saml not configured")
+		return
+	}
+	p, err := h.SAML.PendingRekeys(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+// EndSAMLRekey closes the one-time re-key for every account that is still
+// waiting for it.
+func (h *Handlers) EndSAMLRekey(w http.ResponseWriter, r *http.Request) {
+	if h.SAML == nil {
+		writeError(w, http.StatusServiceUnavailable, "saml not configured")
+		return
+	}
+	n, err := h.SAML.EndRekey(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, audit.ActionSAMLRekeyEnd, "", map[string]string{"accounts": strconv.FormatInt(n, 10)})
+	h.syncSAMLRekeyNotice(r.Context())
+	writeJSON(w, http.StatusOK, map[string]int64{"ended": n})
+}
+
+// syncSAMLRekeyNotice updates the pending re-key notice. A failure only
+// delays it until the next change or restart.
+func (h *Handlers) syncSAMLRekeyNotice(ctx context.Context) {
+	if h.SAML == nil || h.Notices == nil {
+		return
+	}
+	if err := h.SAML.SyncRekeyNotice(ctx, h.Notices); err != nil {
+		slog.Warn("saml re-key notice update failed", "err", err)
+	}
+}
+
 func (h *Handlers) TestSAMLProvider(w http.ResponseWriter, r *http.Request) {
 	if h.SAML == nil {
 		writeError(w, http.StatusServiceUnavailable, "saml not configured")

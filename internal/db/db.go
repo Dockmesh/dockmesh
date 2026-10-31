@@ -27,7 +27,13 @@ func Open(path string) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", path)
+	// busy_timeout comes first: journal_mode(WAL) takes a lock, and a new
+	// pool connection opened while another one writes would fail with
+	// SQLITE_BUSY before the timeout applied. _txlock=immediate takes the
+	// write lock at BEGIN, where busy_timeout waits for it: a deferred
+	// transaction that reads first fails at once with SQLITE_BUSY when
+	// another writer commits before its first write.
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_txlock=immediate", path)
 	db, err := otelsql.Open("sqlite", dsn, otelsql.WithAttributes(
 		semconv.DBSystemSqlite,
 	), otelsql.WithSpanOptions(otelsql.SpanOptions{
@@ -47,7 +53,13 @@ func Open(path string) (*sql.DB, error) {
 	return db, nil
 }
 
-func Migrate(db *sql.DB) error {
+// Migrate applies all pending migrations. On an existing database it first
+// writes a snapshot next to the DB file (see snapshotBeforeMigrate).
+func Migrate(db *sql.DB) error { return migrateUpTo(db, "") }
+
+// migrateUpTo applies migrations up to and including last ("" = all), so
+// tests can seed data in an older schema before running the rest.
+func migrateUpTo(db *sql.DB, last string) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); err != nil {
 		return err
 	}
@@ -61,14 +73,32 @@ func Migrate(db *sql.DB) error {
 	}
 	sort.Strings(names)
 
+	applied, err := appliedMigrations(db)
+	if err != nil {
+		return err
+	}
+	var pending []string
+	latest := ""
+	for name := range applied {
+		latest = max(latest, name)
+	}
 	for _, name := range names {
-		var exists int
-		if err := db.QueryRow(`SELECT COUNT(1) FROM schema_migrations WHERE version = ?`, name).Scan(&exists); err != nil {
+		if last != "" && name > last {
+			break
+		}
+		if !applied[name] {
+			pending = append(pending, name)
+		}
+	}
+	// A database without any applied migration is a fresh install with
+	// nothing in it to lose.
+	if len(pending) > 0 && len(applied) > 0 {
+		if err := snapshotBeforeMigrate(db, latest); err != nil {
 			return err
 		}
-		if exists > 0 {
-			continue
-		}
+	}
+
+	for _, name := range pending {
 		b, err := migrations.ReadFile("migrations/" + name)
 		if err != nil {
 			return err
@@ -90,4 +120,21 @@ func Migrate(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+func appliedMigrations(db *sql.DB) (map[string]bool, error) {
+	rows, err := db.Query(`SELECT version FROM schema_migrations`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	applied := map[string]bool{}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		applied[v] = true
+	}
+	return applied, rows.Err()
 }

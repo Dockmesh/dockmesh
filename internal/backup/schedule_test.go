@@ -77,8 +77,17 @@ func TestStartRunAsyncAndSkipIfRunning(t *testing.T) {
 	if got := waitRun(t, svc, run.ID); got.Status != StatusSuccess {
 		t.Fatalf("async run: %+v", got)
 	}
-	if _, err := svc.runNow(context.Background(), job.ID); err != nil {
-		t.Fatalf("job should be free again: %v", err)
+	// The run's status is written before its goroutine frees the job.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, err := svc.RunNow(context.Background(), job.ID)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, ErrJobRunning) || time.Now().After(deadline) {
+			t.Fatalf("job should be free again: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -169,11 +178,11 @@ func TestInlineTargetsMigrate(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	n, err := svc.store.migrateInlineTargets(ctx)
+	n, err := svc.MigrateInlineTargets(ctx)
 	if err != nil || n != 3 {
 		t.Fatalf("migrated %d: %v", n, err)
 	}
-	if n, _ := svc.store.migrateInlineTargets(ctx); n != 0 {
+	if n, _ := svc.MigrateInlineTargets(ctx); n != 0 {
 		t.Fatalf("second pass migrated %d jobs", n)
 	}
 	jobs, _ := svc.ListJobs(ctx)
@@ -206,8 +215,75 @@ func TestInlineTargetsMigrate(t *testing.T) {
 			a = j
 		}
 	}
-	if r, err := svc.runNow(ctx, a.ID); err != nil || r.Status != StatusSuccess {
+	if r, err := svc.RunNow(ctx, a.ID); err != nil || r.Status != StatusSuccess {
 		t.Fatalf("run after migration: %v %+v", err, r)
+	}
+}
+
+func TestInlineTargetMigrationFieldsAndNames(t *testing.T) {
+	svc, _, _ := newExecTest(t, false)
+	ctx := context.Background()
+	db := svc.store.db
+	s3 := `{"endpoint":"s3.lan:3900","region":"garage","bucket":"bk","prefix":"p","access_key":"AK","secret_key":"SK","use_ssl":true,"ca_cert":"-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----"}`
+	sftpKey := `{"host":"nas.lan","port":22,"username":"u","private_key":"-----BEGIN OPENSSH PRIVATE KEY-----\nK\n-----END OPENSSH PRIVATE KEY-----","path":"/bk"}`
+	smb := `{"host":"nas.lan","share":"bk","username":"u","password":"pw","domain":"CORP","path":"x"}`
+	dav := `{"url":"https://dav.lan:8443/remote.php","username":"u","password":"pw","path":"/"}`
+	for _, j := range []struct{ name, typ, cfg string }{
+		{"s3", "s3", s3},
+		{"sftp-no-key", "sftp", sftpKey},
+		{"sftp-key", "sftp", sftpKey[:len(sftpKey)-1] + `,"host_key":"ssh-ed25519 AAAA"}`},
+		{"sftp-other-key", "sftp", sftpKey[:len(sftpKey)-1] + `,"host_key":"ssh-ed25519 BBBB"}`},
+		{"smb", "smb", smb},
+		{"dav", "webdav", dav},
+	} {
+		if _, err := db.Exec(`INSERT INTO backup_jobs (name, host_id, encrypt, target_type, target_config, sources) VALUES (?, 'fake', 0, ?, ?, '[{"type":"volume","name":"data"}]')`,
+			j.name, j.typ, j.cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := svc.MigrateInlineTargets(ctx); err != nil || n != 6 {
+		t.Fatalf("migrated %d: %v", n, err)
+	}
+	jobs, _ := svc.ListJobs(ctx)
+	ids := map[string]int64{}
+	for _, j := range jobs {
+		ids[j.Name] = j.TargetID
+	}
+	if ids["sftp-no-key"] != ids["sftp-key"] || ids["sftp-key"] == ids["sftp-other-key"] {
+		t.Fatalf("sftp jobs: same settings share a target unless their accepted host keys differ: %v", ids)
+	}
+
+	st := targets.NewTargetStore(db)
+	cfgOf := func(name string) (string, map[string]any) {
+		tg, err := st.Get(ctx, ids[name])
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, _ := tg.Config.(map[string]any)
+		return tg.Name, m
+	}
+	tests := []struct {
+		job, wantName string
+		want          map[string]any
+	}{
+		{"s3", "s3-s3.lan:3900/bk (migrated)", map[string]any{"secret_key": "SK", "use_ssl": true, "ca_cert": "-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----"}},
+		{"sftp-key", "sftp-nas.lan (migrated)", map[string]any{"private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\nK\n-----END OPENSSH PRIVATE KEY-----", "host_key": "ssh-ed25519 AAAA"}},
+		{"sftp-other-key", "sftp-nas.lan (migrated) (2)", map[string]any{"host_key": "ssh-ed25519 BBBB"}},
+		{"smb", "smb-nas.lan (migrated)", map[string]any{"password": "pw", "domain": "CORP"}},
+		{"dav", "webdav-dav.lan:8443 (migrated)", map[string]any{"password": "pw"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.job, func(t *testing.T) {
+			name, cfg := cfgOf(tc.job)
+			if name != tc.wantName {
+				t.Errorf("target name %q, want %q", name, tc.wantName)
+			}
+			for k, v := range tc.want {
+				if cfg[k] != v {
+					t.Errorf("%s = %v, want %v", k, cfg[k], v)
+				}
+			}
+		})
 	}
 }
 
@@ -228,7 +304,7 @@ func TestJobWithSavedTarget(t *testing.T) {
 	if job.TargetID != tgt.ID || job.TargetType != "local" {
 		t.Fatalf("job target: %+v", job)
 	}
-	in.TargetID = 9999
+	in.Name, in.TargetID = "saved-elsewhere", 9999
 	if _, err := svc.CreateJob(ctx, in); !errors.Is(err, ErrTargetNotFound) {
 		t.Fatalf("unknown target: %v", err)
 	}
@@ -252,4 +328,29 @@ func jsonEscape(s string) string {
 		out = append(out, s[i])
 	}
 	return string(out)
+}
+
+func TestInlineTargetMigrationKeepsSystemJobApart(t *testing.T) {
+	svc, _, _ := newExecTest(t, false)
+	ctx := context.Background()
+	cfg := `{"host":"nas.lan","username":"u","password":"pw","path":"/bk"}`
+	for _, j := range []struct{ name, sources string }{
+		{"web", `[{"type":"volume","name":"data"}]`},
+		{"sys", `[{"type":"system","name":"dockmesh"}]`},
+	} {
+		if _, err := svc.store.db.Exec(`INSERT INTO backup_jobs (name, encrypt, target_type, target_config, sources) VALUES (?, 0, 'sftp', ?, ?)`, j.name, cfg, j.sources); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := svc.MigrateInlineTargets(ctx); err != nil || n != 2 {
+		t.Fatalf("migrated %d: %v", n, err)
+	}
+	jobs, _ := svc.ListJobs(ctx)
+	ids := map[string]int64{}
+	for _, j := range jobs {
+		ids[j.Name] = j.TargetID
+	}
+	if ids["web"] == 0 || ids["web"] == ids["sys"] {
+		t.Fatalf("system job shares a target with another job: %v", ids)
+	}
 }

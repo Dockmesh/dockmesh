@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/oidc"
 	"github.com/go-chi/chi/v5"
-	"github.com/golang-jwt/jwt/v5"
 )
 
 const oidcStateCookie = "dockmesh_oidc"
@@ -20,7 +20,7 @@ const oidcStateCookie = "dockmesh_oidc"
 // round-trip it via an httpOnly cookie.
 type oidcStateClaims struct {
 	Pending *oidc.Pending `json:"p"`
-	jwt.RegisteredClaims
+	auth.TypedClaims
 }
 
 // -----------------------------------------------------------------------------
@@ -55,34 +55,18 @@ func (h *Handlers) OIDCLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Persist the pending state as a signed short-lived cookie.
-	claims := oidcStateClaims{
-		Pending: pending,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "dockmesh",
-			Subject:   "oidc-pending",
-		},
-	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(h.JWTSecret)
+	token, err := h.Auth.TokenKeys().Sign(auth.KindOIDCState, 5*time.Minute, &oidcStateClaims{Pending: pending})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     oidcStateCookie,
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   300,
-	})
+	h.setStateCookie(w, r, oidcStateCookie, token, 300)
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
 // OIDCCallback handles the provider redirect, completes the exchange,
-// provisions the user, and redirects to the SPA with tokens in the
-// URL fragment.
+// provisions the user, and redirects to the SPA with a one-time code in the
+// query string.
 func (h *Handlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 	if h.OIDC == nil {
 		writeError(w, http.StatusServiceUnavailable, "oidc not configured")
@@ -91,7 +75,7 @@ func (h *Handlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 
 	// Handle provider-side error (user clicked "Deny" etc.).
 	if errStr := r.URL.Query().Get("error"); errStr != "" {
-		http.Redirect(w, r, "/login?sso_error="+errStr, http.StatusFound)
+		ssoErrorRedirect(w, r, errStr)
 		return
 	}
 
@@ -101,19 +85,14 @@ func (h *Handlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Clear the cookie immediately.
-	http.SetCookie(w, &http.Cookie{
-		Name: oidcStateCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
-	})
+	h.setStateCookie(w, r, oidcStateCookie, "", -1)
 
-	parsed, err := jwt.ParseWithClaims(c.Value, &oidcStateClaims{}, func(t *jwt.Token) (any, error) {
-		return h.JWTSecret, nil
-	})
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid state cookie: "+err.Error())
+	claims := &oidcStateClaims{}
+	if err := h.Auth.TokenKeys().Parse(auth.KindOIDCState, c.Value, claims); err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid state cookie")
 		return
 	}
-	claims, ok := parsed.Claims.(*oidcStateClaims)
-	if !ok || !parsed.Valid || claims.Pending == nil {
+	if claims.Pending == nil {
 		writeError(w, http.StatusUnauthorized, "invalid state cookie")
 		return
 	}
@@ -139,10 +118,7 @@ func (h *Handlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		h.audit(r, "auth.sso_login", res.User.ID, map[string]string{"provider": claims.Pending.Slug})
 	}
 
-	// Hand tokens to the SPA via URL fragment (fragment is never sent to
-	// the server by the browser, so it doesn't leak to logs).
-	loc := "/login#sso_access=" + res.AccessToken + "&sso_refresh=" + res.RefreshToken
-	http.Redirect(w, r, loc, http.StatusFound)
+	h.finishSSOLogin(w, r, res)
 }
 
 // -----------------------------------------------------------------------------

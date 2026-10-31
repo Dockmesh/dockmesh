@@ -1,6 +1,6 @@
 <script lang="ts">
   import '../app.css';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { hosts } from '$lib/stores/host.svelte';
@@ -186,7 +186,7 @@
 
   // Route guard.
   $effect(() => {
-    const path = $page.url.pathname;
+    const path = page.url.pathname;
     if (path === '/setup' || path.startsWith('/setup/')) return;
     // Invite accept pages are reachable without a session — that's the
     // whole point. The page does its own state handling.
@@ -261,7 +261,7 @@
   );
 
   function isActive(href: string): boolean {
-    const p = $page.url.pathname;
+    const p = page.url.pathname;
     if (href === '/') return p === '/';
     return p === href || p.startsWith(href + '/');
   }
@@ -270,7 +270,7 @@
   // section ("fleet" for daily-use, otherwise the segment itself); the
   // rendered label is the readable label of the matching nav item.
   const crumb = $derived.by<{ section: string; leaf: string; leafHref: string }>(() => {
-    const p = $page.url.pathname;
+    const p = page.url.pathname;
     if (p === '/') return { section: 'fleet', leaf: 'dashboard', leafHref: '/' };
     if (p === '/settings' || p.startsWith('/settings/'))
       return { section: 'platform', leaf: 'settings', leafHref: '/settings' };
@@ -310,11 +310,11 @@
 <ConfirmDialog />
 <MigrationDrawer bind:open={migDrawerOpen} />
 
-{#if $page.url.pathname === '/setup' || $page.url.pathname.startsWith('/setup/')}
+{#if page.url.pathname === '/setup' || page.url.pathname.startsWith('/setup/')}
   {@render children()}
 {:else if !setupProbed || setupActive}
   <!-- Render nothing while we figure out where the operator should land. -->
-{:else if $page.url.pathname === '/login' || $page.url.pathname.startsWith('/invite/')}
+{:else if page.url.pathname === '/login' || page.url.pathname.startsWith('/invite/')}
   {@render children()}
 {:else if auth.isAuthenticated}
   <div class="ed-stage app-stage-root">

@@ -22,10 +22,26 @@ func (h *Handlers) ListBackupTargets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if list == nil {
-		list = []targets.StoredTarget{}
+	// Counts include jobs on hosts outside a scoped caller's view.
+	unscoped := h.callerUnscoped(r)
+	out := make([]*targets.StoredTarget, len(list))
+	for i := range list {
+		out[i] = redactTarget(&list[i])
+		if !unscoped {
+			out[i].JobCount = nil
+		}
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// BackupLocalPath tells the backup wizards which directory to prefill for
+// a local target.
+func (h *Handlers) BackupLocalPath(w http.ResponseWriter, r *http.Request) {
+	path := ""
+	if h.Backups != nil {
+		path = h.Backups.DefaultLocalPath()
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"path": path})
 }
 
 func (h *Handlers) CreateBackupTarget(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +65,7 @@ func (h *Handlers) CreateBackupTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, t)
+	writeJSON(w, http.StatusCreated, redactTarget(t))
 }
 
 func (h *Handlers) UpdateBackupTarget(w http.ResponseWriter, r *http.Request) {
@@ -67,6 +83,15 @@ func (h *Handlers) UpdateBackupTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !h.requireTargetAccess(w, r, id) {
+		return
+	}
+	if prev, err := h.BackupTargets.Get(r.Context(), id); err == nil && prev.Type == in.Type {
+		if in.Config, err = keepConfig(in.Config, prev.Config, backupTargetSecrets); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	if in.Type == "local" {
 		if err := targets.CheckLocalConfig(in.Config); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -78,7 +103,7 @@ func (h *Handlers) UpdateBackupTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, t)
+	writeJSON(w, http.StatusOK, redactTarget(t))
 }
 
 func (h *Handlers) DeleteBackupTarget(w http.ResponseWriter, r *http.Request) {
@@ -185,6 +210,9 @@ func (h *Handlers) AcceptBackupTargetHostKey(w http.ResponseWriter, r *http.Requ
 	}
 	if _, err := h.BackupTargets.Get(r.Context(), id); err != nil {
 		writeError(w, http.StatusNotFound, "target not found")
+		return
+	}
+	if !h.requireTargetAccess(w, r, id) {
 		return
 	}
 	err = h.BackupTargets.AcceptHostKey(r.Context(), id, h.Notices)

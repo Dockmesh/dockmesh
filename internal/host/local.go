@@ -2,14 +2,14 @@ package host
 
 import (
 	"context"
-	"errors"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	dtypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
@@ -91,16 +91,16 @@ func (h *LocalHost) newComposeSvc() *compose.Service {
 func (h *LocalHost) ID() string   { return "local" }
 func (h *LocalHost) Name() string { return "Local" }
 
-func (h *LocalHost) ListContainers(ctx context.Context, all bool) ([]dtypes.Container, error) {
+func (h *LocalHost) ListContainers(ctx context.Context, all bool) ([]container.Summary, error) {
 	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	return h.cli.ListContainers(ctx, all)
 }
 
-func (h *LocalHost) InspectContainer(ctx context.Context, id string) (dtypes.ContainerJSON, error) {
+func (h *LocalHost) InspectContainer(ctx context.Context, id string) (container.InspectResponse, error) {
 	if h.cli == nil || !h.cli.Connected() {
-		return dtypes.ContainerJSON{}, ErrNoDocker
+		return container.InspectResponse{}, ErrNoDocker
 	}
 	return h.cli.InspectContainer(ctx, id)
 }
@@ -276,44 +276,44 @@ func (s *localExecSession) Close() error {
 	return nil
 }
 
-func (h *LocalHost) ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error) {
+func (h *LocalHost) ListImages(ctx context.Context, all bool) ([]image.Summary, error) {
 	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	return h.cli.ListImages(ctx, all)
 }
 
-func (h *LocalHost) InspectImage(ctx context.Context, id string) (dtypes.ImageInspect, error) {
+func (h *LocalHost) InspectImage(ctx context.Context, id string) (image.InspectResponse, error) {
 	if h.cli == nil || !h.cli.Connected() {
-		return dtypes.ImageInspect{}, ErrNoDocker
+		return image.InspectResponse{}, ErrNoDocker
 	}
 	return h.cli.InspectImage(ctx, id)
 }
 
-func (h *LocalHost) RemoveImage(ctx context.Context, id string, force bool) ([]dtypes.ImageDeleteResponseItem, error) {
+func (h *LocalHost) RemoveImage(ctx context.Context, id string, force bool) ([]image.DeleteResponse, error) {
 	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	return h.cli.RemoveImage(ctx, id, force)
 }
 
-func (h *LocalHost) PruneImages(ctx context.Context) (dtypes.ImagesPruneReport, error) {
+func (h *LocalHost) PruneImages(ctx context.Context) (image.PruneReport, error) {
 	if h.cli == nil || !h.cli.Connected() {
-		return dtypes.ImagesPruneReport{}, ErrNoDocker
+		return image.PruneReport{}, ErrNoDocker
 	}
 	return h.cli.PruneImages(ctx)
 }
 
-func (h *LocalHost) ListNetworks(ctx context.Context) ([]dtypes.NetworkResource, error) {
+func (h *LocalHost) ListNetworks(ctx context.Context) ([]network.Inspect, error) {
 	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
 	}
 	return h.cli.ListNetworks(ctx)
 }
 
-func (h *LocalHost) InspectNetwork(ctx context.Context, id string) (dtypes.NetworkResource, error) {
+func (h *LocalHost) InspectNetwork(ctx context.Context, id string) (network.Inspect, error) {
 	if h.cli == nil || !h.cli.Connected() {
-		return dtypes.NetworkResource{}, ErrNoDocker
+		return network.Inspect{}, ErrNoDocker
 	}
 	return h.cli.InspectNetwork(ctx, id)
 }
@@ -325,11 +325,7 @@ func (h *LocalHost) InspectVolume(ctx context.Context, name string) (volume.Volu
 	return h.cli.InspectVolume(ctx, name)
 }
 
-// VolumeBrowseEntries first tries direct filesystem access via the
-// volume's mountpoint. On EACCES (common — Docker volumes are
-// root:root 0700 and Dockmesh runs as an unprivileged user) we fall
-// back to spawning a short-lived alpine container with the volume
-// mounted, which sees everything as root inside its own namespace.
+// VolumeBrowseEntries lists a directory inside a local volume.
 func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath string) ([]VolumeEntry, error) {
 	if h.cli == nil || !h.cli.Connected() {
 		return nil, ErrNoDocker
@@ -342,16 +338,7 @@ func (h *LocalHost) VolumeBrowseEntries(ctx context.Context, name, subpath strin
 	if err != nil {
 		return nil, err
 	}
-	// The helper container resolves links inside its own mount of the
-	// volume, so absolute in-volume symlinks work there safely.
-	entries, err := BrowseVolume(mp, subpath)
-	if errors.Is(err, ErrVolumePathEscape) {
-		return BrowseDirViaHelper(ctx, h.cli, name, subpath)
-	}
-	if err != nil && errors.Is(err, fs.ErrPermission) {
-		return BrowseDirViaHelper(ctx, h.cli, name, subpath)
-	}
-	return entries, err
+	return BrowseVolumeOnHost(ctx, h.cli.Raw(), name, mp, subpath)
 }
 
 func (h *LocalHost) VolumeReadFile(ctx context.Context, name, subpath string, maxBytes int64) (*VolumeFileResult, error) {
@@ -366,14 +353,7 @@ func (h *LocalHost) VolumeReadFile(ctx context.Context, name, subpath string, ma
 	if err != nil {
 		return nil, err
 	}
-	res, err := ReadVolumeFile(mp, subpath, maxBytes)
-	if errors.Is(err, ErrVolumePathEscape) {
-		return ReadFileViaHelper(ctx, h.cli, name, subpath, maxBytes)
-	}
-	if err != nil && errors.Is(err, fs.ErrPermission) {
-		return ReadFileViaHelper(ctx, h.cli, name, subpath, maxBytes)
-	}
-	return res, err
+	return ReadVolumeFileOnHost(ctx, h.cli.Raw(), name, mp, subpath, maxBytes)
 }
 
 // VolumeTar spawns a busybox helper against the docker socket and
@@ -498,7 +478,12 @@ func (h *LocalHost) RollingReplace(ctx context.Context, name, composeYAML, envCo
 // (dev builds) the system package stub returns zero values so the
 // dashboard still renders without crashing.
 func (h *LocalHost) SystemMetrics(ctx context.Context) (system.Metrics, error) {
-	return system.Collect(), nil
+	return system.CollectWithMounts(ctx), nil
+}
+
+// DiskMounts returns this host's per-mount disk usage.
+func (h *LocalHost) DiskMounts(ctx context.Context) ([]system.Mount, error) {
+	return system.LocalMounts(ctx), nil
 }
 
 // silence unused import if volume isn't otherwise referenced

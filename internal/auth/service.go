@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
@@ -21,6 +24,10 @@ var (
 	ErrUserExists         = errors.New("user already exists")
 	ErrUsernameTaken      = errors.New("username already in use")
 	ErrEmailTaken         = errors.New("email already in use")
+
+	// ErrSessionOutdated marks a refresh token from before per-kind token
+	// keys; the user has to sign in again and the UI says why.
+	ErrSessionOutdated = errors.New("session predates the current token format")
 )
 
 type User struct {
@@ -29,11 +36,14 @@ type User struct {
 	DisplayName string  `json:"display_name,omitempty"`
 	Email      string   `json:"email,omitempty"`
 	Role       string   `json:"role"`
-	ScopeTags  []string `json:"scope_tags,omitempty"` // P.11.3: empty = all hosts
+	ScopeTags  []string `json:"scope_tags,omitempty"` // empty = all hosts
 	MFAEnabled bool     `json:"mfa_enabled"`
 	// Profile timestamps surfaced in the Account page.
 	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
 	PasswordChangedAt *time.Time `json:"password_changed_at,omitempty"`
+	// LockedUntil is set by ListUsers while the account is blocked by the
+	// policy lockout or the per-account login limit.
+	LockedUntil *time.Time `json:"locked_until,omitempty"`
 	// HasAvatar indicates whether the user has uploaded an avatar.
 	// The actual bytes are served from a separate endpoint
 	// (GET /users/{id}/avatar) so we don't bloat every list response.
@@ -69,20 +79,39 @@ type LoginResult struct {
 
 type Service struct {
 	db         *sql.DB
-	secret     []byte
-	accessTTL  time.Duration
+	keys       *TokenKeys
+	tickets    *ticketStore
 	refreshTTL time.Duration
 	settings   SettingsReader // optional; nil = skip policy checks
+	// unknownLimit is the per-account sign-in limit for names that match
+	// no user.
+	unknownLimit *ratelimit.Limiter
+	// lockoutMu serializes policy-lockout updates so a lockout starts once.
+	lockoutMu sync.Mutex
+	// afterAcquire runs once an attempt is counted; tests use it to hang up
+	// mid-request.
+	afterAcquire func()
 }
 
+// NewService panics if secret is shorter than 32 bytes; config always
+// generates 32.
 func NewService(db *sql.DB, secret []byte) *Service {
+	keys, err := NewTokenKeys(secret)
+	if err != nil {
+		panic(fmt.Sprintf("auth: %v", err))
+	}
 	return &Service{
-		db:         db,
-		secret:     secret,
-		accessTTL:  15 * time.Minute,
-		refreshTTL: 30 * 24 * time.Hour,
+		db:           db,
+		keys:         keys,
+		tickets:      newTicketStore(),
+		refreshTTL:   30 * 24 * time.Hour,
+		unknownLimit: newUnknownNameLimiter(),
 	}
 }
+
+// TokenKeys exposes the per-kind signing keys for tokens minted outside
+// this package (SSO state cookies).
+func (s *Service) TokenKeys() *TokenKeys { return s.keys }
 
 // SetSettings wires the settings store for password-policy + lockout
 // lookups. Nil is fine — policy checks default to "no policy".
@@ -103,6 +132,7 @@ func (s *Service) policy() PolicyConfig {
 func (s *Service) signInConfig() SignInConfig {
 	if s.settings == nil {
 		return SignInConfig{
+			AutoCreateOnSSO:       true,
 			SessionIdleTTLMin:     60,
 			SessionAbsoluteTTLHr:  24,
 			SessionRememberMeDays: 14,
@@ -186,33 +216,6 @@ func (s *Service) CreateUser(ctx context.Context, username, email, password, rol
 			return nil, ErrEmailTaken
 		}
 		return nil, fmt.Errorf("insert user: %w", err)
-	}
-	return &User{ID: id, Username: username, Email: email, Role: role}, nil
-}
-
-// CreateSSOUser inserts a user without a local password. The password
-// column holds a random unguessable value so local login can never
-// succeed for SSO-only accounts.
-func (s *Service) CreateSSOUser(ctx context.Context, username, email, role, provider, subject string) (*User, error) {
-	randomPw, err := generatePassword(40)
-	if err != nil {
-		return nil, err
-	}
-	hash, err := HashPassword(randomPw)
-	if err != nil {
-		return nil, err
-	}
-	id := uuid.NewString()
-	var emailNullable any
-	if email != "" {
-		emailNullable = email
-	}
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO users (id, username, email, password, role, oidc_provider, oidc_subject)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, username, emailNullable, hash, role, provider, subject)
-	if err != nil {
-		return nil, fmt.Errorf("insert sso user: %w", err)
 	}
 	return &User{ID: id, Username: username, Email: email, Role: role}, nil
 }
@@ -333,25 +336,40 @@ func (s *Service) ListActiveUserIDs(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
+// UserAccess returns the role and host-tag scope of one user, for
+// deciding who a notification may reach.
+func (s *Service) UserAccess(ctx context.Context, userID string) (string, []string, error) {
+	u, err := s.GetUser(ctx, userID)
+	if err != nil {
+		return "", nil, err
+	}
+	return u.Role, u.ScopeTags, nil
+}
+
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, username, email, role, scope_tags, totp_verified,
-		        display_name, last_login_at, password_changed_at, avatar_mime
+		        display_name, last_login_at, password_changed_at, avatar_mime,
+		        locked_until, login_limit_until
 		   FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []User{}
+	now := time.Now()
 	for rows.Next() {
 		var u User
 		var email, scope, displayName, avatarMime sql.NullString
 		var totp int
-		var lastLoginAt, pwChangedAt sql.NullTime
+		var lastLoginAt, pwChangedAt, lockedUntil sql.NullTime
+		var limitUntil int64
 		if err := rows.Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &totp,
-			&displayName, &lastLoginAt, &pwChangedAt, &avatarMime); err != nil {
+			&displayName, &lastLoginAt, &pwChangedAt, &avatarMime,
+			&lockedUntil, &limitUntil); err != nil {
 			return nil, err
 		}
+		u.LockedUntil = activeLockEnd(now, lockedUntil, limitUntil)
 		if email.Valid {
 			u.Email = email.String
 		}
@@ -374,19 +392,37 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	return out, rows.Err()
 }
 
+// activeLockEnd returns the later of the two block ends that are still in
+// the future, or nil when the account is not blocked.
+func activeLockEnd(now time.Time, lockedUntil sql.NullTime, limitUntil int64) *time.Time {
+	var end time.Time
+	if lockedUntil.Valid && lockedUntil.Time.After(now) {
+		end = lockedUntil.Time
+	}
+	if t := time.Unix(limitUntil, 0); limitUntil > 0 && t.After(now) && t.After(end) {
+		end = t
+	}
+	if end.IsZero() {
+		return nil
+	}
+	return &end
+}
+
 // UpdateUser edits email, role, and (optionally) display name. Scope
 // changes go through UpdateUserScope so callers don't need to pass
-// scope on every role change.
+// scope on every role change. A role changed here counts as set by an
+// admin, so SSO logins no longer overwrite it.
 func (s *Service) UpdateUser(ctx context.Context, id, email, role, displayName string) (*User, error) {
 	var emailNullable any
 	if email != "" {
 		emailNullable = email
 	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE users SET email = ?, role = ?, display_name = ?,
-		                  updated_at = CURRENT_TIMESTAMP
+		`UPDATE users SET email = ?, display_name = ?,
+		                  role_source = CASE WHEN role = ? THEN role_source ELSE ? END,
+		                  role = ?, updated_at = CURRENT_TIMESTAMP
 		   WHERE id = ?`,
-		emailNullable, role, displayName, id)
+		emailNullable, displayName, role, RoleSourceManual, role, id)
 	if err != nil {
 		return nil, err
 	}
@@ -455,13 +491,11 @@ func (s *Service) VerifyUserPassword(ctx context.Context, id, password string) (
 	return VerifyPassword(password, hash)
 }
 
-// Unlock clears the per-user lockout state. Admin-only — called from
-// the Users settings page when an operator is locked out after too
-// many bad passwords.
+// Unlock clears the per-user lockout and sign-in limit. Admin-only —
+// called from the Users settings page when an operator is locked out after
+// too many bad passwords.
 func (s *Service) Unlock(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE users SET failed_login_attempts = 0, locked_until = NULL,
-		                  updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	_, err := ClearLockout(ctx, s.db, id)
 	return err
 }
 
@@ -486,48 +520,94 @@ func (e *LockoutError) Is(target error) bool {
 }
 
 // recordFailedLogin bumps the counter and — if the threshold is hit —
-// sets locked_until to (now + LockoutDurationMins). When the lockout
-// config is zero, it still increments the counter (harmless) but
-// never sets locked_until.
-func (s *Service) recordFailedLogin(ctx context.Context, userID string, newCount int) {
+// sets locked_until to (now + LockoutDurationMins) and returns that lockout.
+// When the lockout config is zero, it never sets locked_until.
+func (s *Service) recordFailedLogin(ctx context.Context, userID, key string) *Block {
+	s.lockoutMu.Lock()
+	defer s.lockoutMu.Unlock()
+	var count int
+	if err := s.db.QueryRowContext(ctx,
+		`UPDATE users SET failed_login_attempts = failed_login_attempts + 1
+		  WHERE id = ? RETURNING failed_login_attempts`, userID).Scan(&count); err != nil {
+		slog.Warn("auth: count failed login", "user", userID, "err", err)
+		return nil
+	}
 	policy := s.policy()
-	if policy.LockoutMaxAttempts <= 0 || newCount < policy.LockoutMaxAttempts {
-		_, _ = s.db.ExecContext(ctx,
-			`UPDATE users SET failed_login_attempts = ? WHERE id = ?`,
-			newCount, userID)
-		return
+	if policy.LockoutMaxAttempts <= 0 || count < policy.LockoutMaxAttempts {
+		return nil
+	}
+	// A request that passed the lockout check before the lock was set can
+	// fail after it; that must not restart the lock.
+	var lockedUntil sql.NullTime
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT locked_until FROM users WHERE id = ?`, userID).Scan(&lockedUntil); err != nil {
+		return nil
+	}
+	if lockedUntil.Valid && time.Now().Before(lockedUntil.Time) {
+		return nil
 	}
 	lockUntil := time.Now().Add(time.Duration(policy.LockoutDurationMins) * time.Minute)
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE users SET locked_until = ? WHERE id = ?`, lockUntil, userID); err != nil {
+		return nil
+	}
+	return &Block{Reason: BlockLockout, Key: key, Until: lockUntil}
+}
+
+// clearFailures resets the lockout counters after a completed sign-in.
+func (s *Service) clearFailures(ctx context.Context, userID string) {
 	_, _ = s.db.ExecContext(ctx,
-		`UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?`,
-		newCount, lockUntil, userID)
+		`UPDATE users SET failed_login_attempts = 0, locked_until = NULL,
+		                  login_limit_count = 0, login_limit_since = 0, login_limit_until = 0
+		  WHERE id = ?`, userID)
 }
 
 func (s *Service) Login(ctx context.Context, username, password, userAgent, ip string) (*LoginResult, error) {
+	key := NormalizeUsername(username)
+	subject, err := s.limitSubject(ctx, username, key)
+	if err != nil {
+		return nil, err
+	}
 	var u User
 	var email, scope, displayName sql.NullString
 	var hash string
 	var totpVerified int
-	var failedAttempts int
 	var lockedUntil, pwChangedAt sql.NullTime
-	err := s.db.QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		`SELECT id, username, email, role, scope_tags, password, totp_verified,
-		        failed_login_attempts, locked_until, display_name, password_changed_at
+		        locked_until, display_name, password_changed_at
 		   FROM users WHERE username = ?`, username).
 		Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &hash, &totpVerified,
-			&failedAttempts, &lockedUntil, &displayName, &pwChangedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrInvalidCredentials
-	}
-	if err != nil {
+			&lockedUntil, &displayName, &pwChangedAt)
+	found := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	// Per-user lockout: if the lockout window is active, refuse fast
 	// without verifying the password (so a correct-password-too-late
 	// attempt still gets rejected — matches what every competent auth
 	// system does).
-	if lockedUntil.Valid && time.Now().Before(lockedUntil.Time) {
+	if found && lockedUntil.Valid && time.Now().Before(lockedUntil.Time) {
 		return nil, &LockoutError{Until: lockedUntil.Time}
+	}
+	att, ok, until, err := s.acquireAccount(ctx, subject, key)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, &RateLimitError{Until: until}
+	}
+	// The attempt is counted; a client that hangs up must not keep the
+	// outcome from being recorded.
+	ctx = context.WithoutCancel(ctx)
+	if s.afterAcquire != nil {
+		s.afterAcquire()
+	}
+	if !found {
+		// Same argon2 work as a wrong password, so response time doesn't
+		// tell which usernames exist.
+		_, _ = VerifyPassword(password, dummyHash())
+		return nil, s.failedAttempt(ctx, att, nil)
 	}
 	if email.Valid {
 		u.Email = email.String
@@ -540,28 +620,23 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 		u.PasswordChangedAt = &t
 	}
 	u.ScopeTags = parseScopeTags(scope)
-	ok, err := VerifyPassword(password, hash)
+	ok, err = VerifyPassword(password, hash)
 	if err != nil || !ok {
-		// Record the failure and trip the lockout if we hit the
-		// threshold. Errors on the increment itself are logged but
-		// don't block the 401 response.
-		s.recordFailedLogin(ctx, u.ID, failedAttempts+1)
-		return nil, ErrInvalidCredentials
-	}
-	// Success — clear any accumulated failures.
-	if failedAttempts > 0 || lockedUntil.Valid {
-		_, _ = s.db.ExecContext(ctx,
-			`UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?`,
-			u.ID)
+		lockout := s.recordFailedLogin(ctx, u.ID, key)
+		return nil, s.failedAttempt(ctx, att, lockout)
 	}
 	if totpVerified == 1 {
-		// Password OK but MFA required — return a pending token.
+		// Password OK but MFA required — return a pending token. The
+		// earlier failures stay counted until the second step succeeds,
+		// so wrong codes add up with wrong passwords.
+		s.refundAccount(ctx, att)
 		token, err := s.issueMFAPending(u.ID)
 		if err != nil {
 			return nil, err
 		}
 		return &LoginResult{MFARequired: true, MFAToken: token}, nil
 	}
+	s.clearFailures(ctx, u.ID)
 	return s.startSession(ctx, u, userAgent, ip)
 }
 
@@ -572,10 +647,38 @@ func (s *Service) VerifyLoginMFA(ctx context.Context, mfaToken, code, userAgent,
 	if err != nil {
 		return nil, ErrInvalidCredentials
 	}
-	ok, err := s.verifyMFACode(ctx, claims.UserID, code)
-	if err != nil || !ok {
+	var username string
+	var lockedUntil sql.NullTime
+	err = s.db.QueryRowContext(ctx,
+		`SELECT username, locked_until FROM users WHERE id = ?`, claims.UserID).
+		Scan(&username, &lockedUntil)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrInvalidCredentials
 	}
+	if err != nil {
+		return nil, err
+	}
+	if lockedUntil.Valid && time.Now().Before(lockedUntil.Time) {
+		return nil, &LockoutError{Until: lockedUntil.Time}
+	}
+	key := NormalizeUsername(username)
+	att, ok, until, err := s.acquireAccount(ctx, claims.UserID, key)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, &RateLimitError{Until: until}
+	}
+	ctx = context.WithoutCancel(ctx)
+	if s.afterAcquire != nil {
+		s.afterAcquire()
+	}
+	ok, err = s.verifyMFACode(ctx, claims.UserID, code)
+	if err != nil || !ok {
+		lockout := s.recordFailedLogin(ctx, claims.UserID, key)
+		return nil, s.failedAttempt(ctx, att, lockout)
+	}
+	s.clearFailures(ctx, claims.UserID)
 	u, err := s.GetUser(ctx, claims.UserID)
 	if err != nil {
 		return nil, err
@@ -621,31 +724,13 @@ func (s *Service) startSession(ctx context.Context, u User, userAgent, ip string
 }
 
 func (s *Service) issueMFAPending(userID string) (string, error) {
-	c := Claims{
-		UserID: userID,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "dockmesh",
-			Subject:   "mfa-pending",
-		},
-	}
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString(s.secret)
+	return s.keys.Sign(KindMFAPending, 5*time.Minute, &Claims{UserID: userID})
 }
 
 func (s *Service) parseMFAPending(token string) (*Claims, error) {
-	t, err := jwt.ParseWithClaims(token, &Claims{}, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
-		return s.secret, nil
-	})
-	if err != nil {
+	c := &Claims{}
+	if err := s.keys.Parse(KindMFAPending, token, c); err != nil {
 		return nil, err
-	}
-	c, ok := t.Claims.(*Claims)
-	if !ok || !t.Valid || c.Subject != "mfa-pending" {
-		return nil, errors.New("invalid mfa token")
 	}
 	return c, nil
 }
@@ -653,6 +738,9 @@ func (s *Service) parseMFAPending(token string) (*Claims, error) {
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (*LoginResult, error) {
 	claims, err := s.parseRefresh(refreshToken)
 	if err != nil {
+		if isPreUpgradeRefresh(refreshToken) {
+			return nil, ErrSessionOutdated
+		}
 		return nil, ErrInvalidToken
 	}
 	var (
@@ -708,9 +796,18 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*LoginResul
 	if cfg.SessionAbsoluteTTLHr > 0 {
 		newExpires = time.Now().Add(time.Duration(cfg.SessionAbsoluteTTLHr) * time.Hour)
 	}
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE sessions SET current_seq = ?, expires_at = ? WHERE family_id = ?`, newSeq, newExpires, claims.FamilyID); err != nil {
+	// Conditional on the sequence we read, so of two parallel refreshes with
+	// the same token only one rotates the session.
+	upd, err := s.db.ExecContext(ctx,
+		`UPDATE sessions SET current_seq = ?, expires_at = ? WHERE family_id = ? AND current_seq = ? AND revoked_at IS NULL`,
+		newSeq, newExpires, claims.FamilyID, currentSeq)
+	if err != nil {
 		return nil, err
+	}
+	if n, err := upd.RowsAffected(); err != nil {
+		return nil, err
+	} else if n == 0 {
+		return nil, ErrInvalidToken
 	}
 	u, err := s.GetUser(ctx, userID)
 	if err != nil {
@@ -730,23 +827,73 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 	return err
 }
 
-// Validate parses an access token and returns (userID, role).
-func (s *Service) Validate(token string) (string, string, []string, error) {
-	c, err := ParseAccessToken(s.secret, token)
-	if err != nil {
-		return "", "", nil, err
+// Validate parses an access token and checks that its session is still
+// live. Role and scope are re-read from the user row, so a demotion or a
+// scope change applies to the next request rather than after the token's
+// 15 minutes.
+func (s *Service) Validate(ctx context.Context, token string) (*Claims, error) {
+	c := &Claims{}
+	if err := s.keys.Parse(KindAccess, token, c); err != nil {
+		return nil, err
 	}
-	return c.UserID, c.Role, c.ScopeTags, nil
+	role, scope, err := s.SessionIdentity(ctx, c.UserID, c.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	c.Role, c.ScopeTags = role, scope
+	return c, nil
+}
+
+// SessionIdentity returns the current role and scope of userID if
+// sessionID is one of their live sessions, ErrInvalidToken otherwise.
+func (s *Service) SessionIdentity(ctx context.Context, userID, sessionID string) (string, []string, error) {
+	if userID == "" || sessionID == "" {
+		return "", nil, ErrInvalidToken
+	}
+	var (
+		revokedAt sql.NullTime
+		expiresAt time.Time
+		role      string
+		scope     sql.NullString
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT s.revoked_at, s.expires_at, u.role, u.scope_tags
+		  FROM sessions s JOIN users u ON u.id = s.user_id
+		 WHERE s.family_id = ? AND s.user_id = ?`, sessionID, userID).
+		Scan(&revokedAt, &expiresAt, &role, &scope)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil, ErrInvalidToken
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	if revokedAt.Valid || time.Now().After(expiresAt) {
+		return "", nil, ErrInvalidToken
+	}
+	return role, parseScopeTags(scope), nil
+}
+
+// RevokeUserSessions ends every live session of userID except
+// keepSessionID (pass "" to end all). Access tokens of those sessions stop
+// working on their next request because Validate checks the session.
+func (s *Service) RevokeUserSessions(ctx context.Context, userID, keepSessionID string) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE sessions SET revoked_at = CURRENT_TIMESTAMP
+		 WHERE user_id = ? AND family_id != ? AND revoked_at IS NULL`, userID, keepSessionID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 type refreshClaims struct {
 	FamilyID string `json:"fam"`
 	Seq      int    `json:"seq"`
-	jwt.RegisteredClaims
+	TypedClaims
 }
 
 func (s *Service) mintPair(u User, familyID string, seq int, expiresAt time.Time) (*LoginResult, error) {
-	access, err := IssueAccessToken(s.secret, u.ID, u.Role, u.ScopeTags)
+	access, err := s.keys.Sign(KindAccess, accessTTL, &Claims{UserID: u.ID, SessionID: familyID})
 	if err != nil {
 		return nil, err
 	}
@@ -763,61 +910,17 @@ func (s *Service) mintPair(u User, familyID string, seq int, expiresAt time.Time
 }
 
 func (s *Service) issueRefresh(familyID string, seq int, expiresAt time.Time) (string, error) {
-	c := refreshClaims{
-		FamilyID: familyID,
-		Seq:      seq,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expiresAt),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "dockmesh",
-			Subject:   "refresh",
-		},
-	}
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString(s.secret)
+	c := &refreshClaims{FamilyID: familyID, Seq: seq}
+	c.ExpiresAt = jwt.NewNumericDate(expiresAt)
+	return s.keys.Sign(KindRefresh, 0, c)
 }
 
 func (s *Service) parseRefresh(token string) (*refreshClaims, error) {
-	t, err := jwt.ParseWithClaims(token, &refreshClaims{}, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
-		return s.secret, nil
-	})
-	if err != nil {
+	c := &refreshClaims{}
+	if err := s.keys.Parse(KindRefresh, token, c); err != nil {
 		return nil, err
 	}
-	c, ok := t.Claims.(*refreshClaims)
-	if !ok || !t.Valid || c.Subject != "refresh" {
-		return nil, errors.New("invalid refresh token")
-	}
 	return c, nil
-}
-
-// IssueWSTicket creates a short-lived (30s) JWT ticket for WebSocket auth (§15.8).
-// The client obtains it via POST /api/v1/ws/ticket?for=<perm> with a valid
-// Bearer token, then passes it as ?ticket=<JWT> on the WebSocket upgrade URL.
-// The ticket binds to the requested permission so a logs-ticket can't be
-// reused on /ws/exec — the WS handler compares claims.Perm against the
-// endpoint's required permission and rejects on mismatch.
-func (s *Service) IssueWSTicket(userID, role, perm string) (string, error) {
-	c := Claims{
-		UserID: userID,
-		Role:   role,
-		Perm:   perm,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(30 * time.Second)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "dockmesh",
-			Subject:   "ws-ticket",
-		},
-	}
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString(s.secret)
-}
-
-// ValidateWSTicket verifies a WebSocket ticket JWT and returns the full
-// claims so handlers can check both the user ID and the bound permission.
-func (s *Service) ValidateWSTicket(token string) (*Claims, error) {
-	return ParseAccessToken(s.secret, token)
 }
 
 func generatePassword(n int) (string, error) {

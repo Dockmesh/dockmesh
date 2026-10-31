@@ -1,14 +1,20 @@
 package stacks
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/notices"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // trackedFiles are the stack files a deploy reads.
@@ -58,6 +64,65 @@ func (s *SumStore) deleteStack(stack string) error {
 
 // SetSumStore enables tracking of changes made outside Dockmesh.
 func (m *Manager) SetSumStore(s *SumStore) { m.sums = s }
+
+// SetNotices lets a held-back git deploy tell the stack's deployers.
+func (m *Manager) SetNotices(n *notices.Service) { m.notices = n }
+
+// GitDeployHeldNoticeKey is the notice raised while a git deploy of stack
+// waits for its outside changes to be confirmed.
+func GitDeployHeldNoticeKey(stack string) string { return "stacks.git-deploy-held:" + stack }
+
+// CheckGitDeploy refuses an automatic deploy from stack files changed
+// outside Dockmesh. Nobody is there to confirm them, so it raises a
+// notice asking a deployer to review and deploy the stack by hand.
+func (m *Manager) CheckGitDeploy(ctx context.Context, name string) error {
+	changed, err := m.ModifiedOutside(name)
+	if err != nil || len(changed) == 0 {
+		return err
+	}
+	files := strings.Join(changed, ", ")
+	if m.notices != nil {
+		if nerr := m.notices.Raise(ctx, notices.RaiseInput{
+			Key:      GitDeployHeldNoticeKey(name),
+			Audience: notices.WithPermission(string(rbac.PermStacksDeploy)),
+			Severity: notices.SevWarning,
+			Title:    "Git deploy of " + name + " is on hold",
+			Body: "The new commit was not deployed because " + files + " of this stack changed " +
+				"outside Dockmesh. Open the stack, review the files and deploy it to confirm the changes; " +
+				"git deploys resume after that.",
+			Link: "/stacks/" + name,
+		}); nerr != nil {
+			slog.Warn("git deploy held back notice", "stack", name, "err", nerr)
+		}
+	}
+	return fmt.Errorf("%w: %s", ErrModifiedOutside, files)
+}
+
+// Deployed clears the held-back git deploy notice after a deploy, unless
+// the stack files still differ from what Dockmesh recorded: a deploy that
+// skipped the confirmation (a migration, for one) leaves git deploys held.
+func (m *Manager) Deployed(ctx context.Context, name string) {
+	if m.notices == nil {
+		return
+	}
+	changed, err := m.ModifiedOutside(name)
+	if err != nil {
+		slog.Warn("check stack files after deploy", "stack", name, "err", err)
+		return
+	}
+	if len(changed) == 0 {
+		m.resolveGitDeployHold(ctx, name)
+	}
+}
+
+func (m *Manager) resolveGitDeployHold(ctx context.Context, name string) {
+	if m.notices == nil {
+		return
+	}
+	if err := m.notices.Resolve(ctx, GitDeployHeldNoticeKey(name)); err != nil {
+		slog.Warn("resolve git deploy held back notice", "stack", name, "err", err)
+	}
+}
 
 // fileSum is the hex SHA-256 of path, or "" when it does not exist.
 func fileSum(path string) (string, error) {
@@ -121,7 +186,7 @@ func (m *Manager) ModifiedOutside(name string) ([]string, error) {
 		return nil, err
 	}
 	if len(recorded) == 0 {
-		return nil, m.AcceptExternal(name)
+		return nil, m.recordSums(name)
 	}
 	var changed []string
 	for _, f := range trackedFiles {
@@ -139,7 +204,15 @@ func (m *Manager) ModifiedOutside(name string) ([]string, error) {
 
 // AcceptExternal records the stack files as they are now, after an
 // operator reviewed and confirmed them.
-func (m *Manager) AcceptExternal(name string) error {
+func (m *Manager) AcceptExternal(ctx context.Context, name string) error {
+	if err := m.recordSums(name); err != nil {
+		return err
+	}
+	m.resolveGitDeployHold(ctx, name)
+	return nil
+}
+
+func (m *Manager) recordSums(name string) error {
 	if m.sums == nil {
 		return nil
 	}

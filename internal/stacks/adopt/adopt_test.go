@@ -11,10 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/stacks"
-
-	dtypes "github.com/docker/docker/api/types"
 )
 
 // --- test doubles -----------------------------------------------------------
@@ -22,13 +21,13 @@ import (
 type fakeHost struct {
 	id         string
 	name       string
-	containers []dtypes.Container
+	containers []container.Summary
 	listErr    error
 }
 
 func (f *fakeHost) ID() string   { return f.id }
 func (f *fakeHost) Name() string { return f.name }
-func (f *fakeHost) ListContainers(_ context.Context, _ bool) ([]dtypes.Container, error) {
+func (f *fakeHost) ListContainers(_ context.Context, _ bool) ([]container.Summary, error) {
 	return f.containers, f.listErr
 }
 
@@ -94,7 +93,7 @@ func TestDiscoverGroupsByProjectLabelAndSkipsManaged(t *testing.T) {
 		"local": {
 			id:   "local",
 			name: "mac-mini",
-			containers: []dtypes.Container{
+			containers: []container.Summary{
 				{
 					ID: "c1", Names: []string{"/audiobookshelf"}, State: "running",
 					Image: "ghcr.io/advplyr/audiobookshelf:latest", Created: 1_700_000_000,
@@ -176,7 +175,7 @@ func newAdoptHarness(t *testing.T) (*Service, *fakeStacks, string) {
 	src := &fakeHostSource{byID: map[string]*fakeHost{
 		"local": {
 			id: "local", name: "mac-mini",
-			containers: []dtypes.Container{
+			containers: []container.Summary{
 				{
 					ID: "c1", State: "running",
 					Labels: map[string]string{

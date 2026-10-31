@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -55,6 +56,20 @@ type RestoreReport struct {
 // fails; nothing was changed.
 var ErrArchiveInvalid = errors.New("backup archive failed verification, nothing was restored")
 
+var (
+	// ErrRestoreBusy refuses a restore while another one writes the same
+	// volume or stack, or too many restores run.
+	ErrRestoreBusy = errors.New("another restore is in progress")
+	// ErrUnverifiedReplace refuses emptying volumes for a run with no
+	// recorded checksum: nothing ties its archive to what was backed up.
+	ErrUnverifiedReplace = errors.New("this backup has no recorded checksum, so it can only be merged, not replace the volume's contents")
+)
+
+const (
+	maxConcurrentRestores = 2
+	restoreTimeout        = 6 * time.Hour
+)
+
 // VolumeInUseError refuses replacing a volume that running containers use.
 type VolumeInUseError struct {
 	Volume     string
@@ -66,12 +81,19 @@ func (e *VolumeInUseError) Error() string {
 		e.Volume, strings.Join(e.Containers, ", "))
 }
 
-// Restore restores a volume or stack run. The whole archive is verified
-// first, so a damaged or incomplete backup never overwrites anything.
+// Restore restores a volume or stack run. The archive is downloaded once,
+// checked against the recorded size and hash, verified completely and
+// then extracted from that same copy, so a damaged or swapped backup
+// never overwrites anything.
 func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions) (*RestoreReport, error) {
+	ctx, cancel := context.WithTimeout(ctx, restoreTimeout)
+	defer cancel()
 	run, err := s.store.getRun(ctx, runID)
 	if err != nil {
 		return nil, err
+	}
+	if HasSystemSource(run.Sources) {
+		return nil, ErrSystemRestore
 	}
 	if !run.Restorable() {
 		return nil, ErrNotRestorable
@@ -81,10 +103,14 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 	}
 	kind := run.Sources[0].Type
 	if kind != "volume" && kind != "stack" {
-		return nil, errors.New("system backups are restored as a whole, not into a volume or stack")
+		return nil, fmt.Errorf("cannot restore a %q backup into a volume or stack", kind)
 	}
+	if opts.Replace && run.SHA256 == "" {
+		return nil, ErrUnverifiedReplace
+	}
+	source := run.Sources[0].Name
 	if opts.Target == "" {
-		opts.Target = run.Sources[0].Name
+		opts.Target = source
 	}
 	if kind == "volume" {
 		if err := docker.CheckVolumeName(opts.Target); err != nil {
@@ -104,63 +130,134 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 	if err != nil {
 		return nil, fmt.Errorf("restore host: %w", err)
 	}
-
-	check, err := s.VerifyRun(ctx, runID)
+	target, err := jobTarget(ctx, s.store, s.notices, job)
 	if err != nil {
 		return nil, err
 	}
+	stored, err := fetchArchive(ctx, target, run)
+	if err != nil {
+		return nil, err
+	}
+	defer stored.Close()
+
+	check := &VerifyResult{RunID: runID, Type: kind, Passed: true}
+	plain, err := s.plaintext(stored, run)
+	if err != nil {
+		return nil, err
+	}
+	if kind == "stack" {
+		verifyStackArchive(check, plain)
+	} else {
+		verifyVolumeArchive(check, plain)
+	}
 	if !check.Passed {
 		return nil, fmt.Errorf("%w: %s", ErrArchiveInvalid, failedChecks(check))
-	}
-
-	volumes := []string{opts.Target}
-	if kind == "stack" {
-		volumes = volumes[:0]
-		for _, v := range check.Counts.Volumes {
-			volumes = append(volumes, stackVolumeName(run.Sources[0].Name, opts.Target, v))
-		}
-	}
-	if opts.Replace {
-		for _, v := range volumes {
-			users, err := host.VolumeInUse(ctx, v)
-			if err != nil {
-				return nil, fmt.Errorf("check volume %s: %w", v, err)
-			}
-			if len(users) > 0 {
-				return nil, &VolumeInUseError{Volume: v, Containers: users}
-			}
-		}
 	}
 
 	report := &RestoreReport{Kind: kind, HostID: opts.HostID, Mode: "merge", FilesRestored: []string{}, VolumesRestored: []string{}}
 	if opts.Replace {
 		report.Mode = "replace"
 	}
-	// The archive is read a second time to restore it; hashing that read
-	// too catches a file swapped on the target after the check.
-	rc, sum, err := s.openRunHashed(ctx, run)
+	// Volumes the verified archive holds, mapped onto the target. A volume
+	// with a fixed name belongs to whatever else uses that name, so a
+	// restore under another stack name leaves it alone.
+	plan := map[string]string{}
+	if kind == "volume" {
+		plan[source] = opts.Target
+	} else {
+		for _, v := range check.Counts.Volumes {
+			dest := stackVolumeName(source, opts.Target, v)
+			if dest == v && source != opts.Target {
+				report.Warnings = append(report.Warnings, fmt.Sprintf("volume %s has a fixed name and was not restored into the copy %s", v, opts.Target))
+				continue
+			}
+			plan[v] = dest
+		}
+	}
+	keys := []string{"stack:" + opts.Target}
+	for _, dest := range plan {
+		keys = append(keys, "volume:"+opts.HostID+"/"+dest)
+	}
+	release, err := s.claimRestore(keys)
 	if err != nil {
 		return nil, err
 	}
-	defer rc.Close()
-	if kind == "volume" {
-		err = host.VolumeImport(ctx, opts.Target, rc, opts.Replace)
-		if err == nil {
-			report.VolumesRestored = append(report.VolumesRestored, opts.Target)
-		} else {
-			err = fmt.Errorf("restore volume %s: %w", opts.Target, err)
+	defer release()
+	if opts.Replace {
+		for _, dest := range plan {
+			if err := checkVolumeFree(ctx, host, dest); err != nil {
+				return nil, err
+			}
 		}
-	} else {
-		report.StackName = opts.Target
-		err = s.restoreStackInto(ctx, run.Sources[0].Name, opts.Target, rc, host, opts.Replace, report)
 	}
+
+	if _, err := stored.(io.Seeker).Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	if plain, err = s.plaintext(stored, run); err != nil {
+		return nil, err
+	}
+	if kind == "volume" {
+		if err := host.VolumeImport(ctx, opts.Target, plain, opts.Replace); err != nil {
+			return report, fmt.Errorf("restore volume %s: %w", opts.Target, err)
+		}
+		report.VolumesRestored = append(report.VolumesRestored, opts.Target)
+		return report, nil
+	}
+	report.StackName = opts.Target
+	return report, s.restoreStackInto(ctx, opts.Target, plain, host, plan, opts.Replace, report)
+}
+
+// plaintext reads a fetched archive, decrypting encrypted runs. The
+// returned reader doesn't close stored.
+func (s *Service) plaintext(stored io.Reader, run *Run) (io.Reader, error) {
+	if !run.Encrypted {
+		return stored, nil
+	}
+	return wrapDecrypt(io.NopCloser(stored), s.secrets)
+}
+
+// checkVolumeFree refuses replacing a volume that containers use.
+func checkVolumeFree(ctx context.Context, host hostBackupTarget, volume string) error {
+	users, err := host.VolumeInUse(ctx, volume)
 	if err != nil {
-		return report, err
+		return fmt.Errorf("check volume %s: %w", volume, err)
 	}
-	if c := sum(); c.Status == "fail" {
-		return report, fmt.Errorf("the archive changed on the target during the restore, restored data may not match the backup: %s", c.Message)
+	if len(users) > 0 {
+		return &VolumeInUseError{Volume: volume, Containers: users}
 	}
-	return report, nil
+	return nil
+}
+
+// claimRestore takes the named volumes and stack for one restore, and a
+// slot of the few restores that may run at once; each holds a temp copy
+// of its archive.
+func (s *Service) claimRestore(keys []string) (func(), error) {
+	s.restoreMu.Lock()
+	defer s.restoreMu.Unlock()
+	if s.restoring == nil {
+		s.restoring = map[string]bool{}
+	}
+	if s.restoreSlots >= maxConcurrentRestores {
+		return nil, fmt.Errorf("%w: %d restores are already running", ErrRestoreBusy, s.restoreSlots)
+	}
+	for _, k := range keys {
+		if s.restoring[k] {
+			return nil, fmt.Errorf("%w: %s", ErrRestoreBusy, strings.TrimPrefix(strings.TrimPrefix(k, "stack:"), "volume:"))
+		}
+	}
+	for _, k := range keys {
+		s.restoring[k] = true
+	}
+	s.restoreSlots++
+	return func() {
+		s.restoreMu.Lock()
+		defer s.restoreMu.Unlock()
+		for _, k := range keys {
+			delete(s.restoring, k)
+		}
+		s.restoreSlots--
+	}, nil
 }
 
 // stackVolumeName maps a backed-up volume onto the target stack. Compose
@@ -186,10 +283,9 @@ func failedChecks(r *VerifyResult) string {
 
 // restoreStackInto extracts a stack archive (layout in tarStackWithVolumes):
 // stack/<rel> goes to the stack directory on the server, each
-// volumes/<vol>.tar.gz is streamed into that volume on host. The stack
-// name comes from the caller, so restoring under another name works.
+// volumes/<vol>.tar.gz named in plan is streamed into plan[vol] on host.
 // Links in the archive are skipped; writes go through an os.Root.
-func (s *Service) restoreStackInto(ctx context.Context, source, stackName string, src io.Reader, host hostBackupTarget, replace bool, report *RestoreReport) error {
+func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io.Reader, host hostBackupTarget, plan map[string]string, replace bool, report *RestoreReport) error {
 	if s.stacks == nil {
 		return errors.New("stacks manager not configured")
 	}
@@ -253,12 +349,14 @@ func (s *Service) restoreStackInto(ctx context.Context, source, stackName string
 			if hdr.Typeflag != tar.TypeReg {
 				return fmt.Errorf("archive entry %s is not a regular file", name)
 			}
-			if err := docker.CheckVolumeName(volName); err != nil {
-				return fmt.Errorf("archive entry %s: %w", name, err)
+			dest, ok := plan[volName]
+			if !ok {
+				continue
 			}
-			dest := stackVolumeName(source, stackName, volName)
-			if dest == volName && source != stackName {
-				report.Warnings = append(report.Warnings, fmt.Sprintf("volume %s has a fixed name and was restored under it, not as part of %s", volName, stackName))
+			if replace {
+				if err := checkVolumeFree(ctx, host, dest); err != nil {
+					return err
+				}
 			}
 			if err := host.VolumeImport(ctx, dest, io.LimitReader(tr, hdr.Size), replace); err != nil {
 				return fmt.Errorf("restore volume %s: %w", dest, err)

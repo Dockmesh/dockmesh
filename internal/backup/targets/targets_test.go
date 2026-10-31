@@ -96,3 +96,28 @@ func TestParseRoots(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+func TestDefaultLocalDir(t *testing.T) {
+	base := t.TempDir()
+	data := filepath.Join(base, "data")
+	srv := filepath.Join(base, "srv")
+	t.Cleanup(func() { SetLocalRoots(nil) })
+
+	tests := []struct {
+		name  string
+		roots []string
+		want  string
+	}{
+		{"data dir covered", []string{srv, data}, filepath.Join(data, "backups")},
+		{"falls back to first root", []string{srv}, srv},
+		{"no roots", nil, filepath.Join(data, "backups")},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			SetLocalRoots(func() []string { return tc.roots })
+			if got := DefaultLocalDir(data); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

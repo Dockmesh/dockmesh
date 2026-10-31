@@ -311,6 +311,10 @@ func extractAll(ctx context.Context, tr *tar.Reader, cfg *config.Config, dbTmp s
 		case clean == "dockmesh.db":
 		case strings.HasPrefix(clean, "stacks/"):
 			root, rel = cfg.StacksRoot, strings.TrimPrefix(clean, "stacks/")
+		case strings.HasPrefix(clean, "data/") && db.IsSnapshotName("", filepath.Base(clean)):
+			// Archives written before backups excluded them can carry
+			// pre-migration snapshots with stale secrets.
+			continue
 		case strings.HasPrefix(clean, "data/"):
 			root, rel = dataDir, strings.TrimPrefix(clean, "data/")
 			// The live DB is never part of data/ (it is restored from the

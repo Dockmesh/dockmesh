@@ -35,7 +35,27 @@ var (
 	ErrInvalidMetadata  = errors.New("invalid SAML metadata XML")
 	ErrInvalidAssertion = errors.New("invalid SAML assertion")
 	ErrEmailRequired    = errors.New("provider did not return an email attribute")
+	ErrNameIDFormat     = errors.New("nameid_format must be persistent, unspecified or emailAddress")
+	ErrRequestUsed      = errors.New("this SAML response was already used or its sign-in request expired; sign in again")
 )
+
+// NameID formats an account can be keyed by. Transient changes on every
+// login; emailAddress changes when the user's email does.
+const (
+	NameIDPersistent  = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+	NameIDUnspecified = "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
+	NameIDEmail       = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+)
+
+func checkNameIDFormat(f string) (string, error) {
+	switch f {
+	case "":
+		return NameIDPersistent, nil
+	case NameIDPersistent, NameIDUnspecified, NameIDEmail:
+		return f, nil
+	}
+	return "", ErrNameIDFormat
+}
 
 // GroupMapping is one row of saml_provider_group_mappings.
 type GroupMapping struct {
@@ -47,42 +67,48 @@ type GroupMapping struct {
 // XML stays in the row but is omitted from list responses; the modal
 // fetches it via GetProvider when editing.
 type Provider struct {
-	ID              int64          `json:"id"`
-	Slug            string         `json:"slug"`
-	DisplayName     string         `json:"display_name"`
-	EntityID        string         `json:"entity_id"`
-	SSOURL          string         `json:"sso_url"`
-	SLOURL          string         `json:"slo_url,omitempty"`
-	IdPMetadataXML  string         `json:"idp_metadata_xml,omitempty"`
-	IdPCertPEM      string         `json:"idp_cert_pem,omitempty"`
-	NameIDFormat       string         `json:"nameid_format"`
-	UsernameAttribute  string         `json:"username_attribute"`
-	EmailAttribute     string         `json:"email_attribute"`
-	GroupsAttribute    string         `json:"groups_attribute"`
-	DefaultRole     string         `json:"default_role"`
-	GroupMappings   []GroupMapping `json:"group_mappings"`
-	Enabled         bool           `json:"enabled"`
-	IsDefault       bool           `json:"is_default"`
-	LastTestedAt    *time.Time     `json:"last_tested_at,omitempty"`
-	LastTestOK      *bool          `json:"last_test_ok,omitempty"`
-	LastTestError   string         `json:"last_test_error,omitempty"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
+	ID                int64          `json:"id"`
+	Slug              string         `json:"slug"`
+	DisplayName       string         `json:"display_name"`
+	EntityID          string         `json:"entity_id"`
+	SSOURL            string         `json:"sso_url"`
+	SLOURL            string         `json:"slo_url,omitempty"`
+	IdPMetadataXML    string         `json:"idp_metadata_xml,omitempty"`
+	IdPCertPEM        string         `json:"idp_cert_pem,omitempty"`
+	NameIDFormat      string         `json:"nameid_format"`
+	SubjectAttribute  string         `json:"subject_attribute"`
+	UsernameAttribute string         `json:"username_attribute"`
+	EmailAttribute    string         `json:"email_attribute"`
+	GroupsAttribute   string         `json:"groups_attribute"`
+	DefaultRole       string         `json:"default_role"`
+	GroupMappings     []GroupMapping `json:"group_mappings"`
+	Enabled           bool           `json:"enabled"`
+	IsDefault         bool           `json:"is_default"`
+	LastTestedAt      *time.Time     `json:"last_tested_at,omitempty"`
+	LastTestOK        *bool          `json:"last_test_ok,omitempty"`
+	LastTestError     string         `json:"last_test_error,omitempty"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
+
+	AllowEmailLink bool `json:"allow_email_link"`
 }
 
 // ProviderInput is the create/update payload.
 type ProviderInput struct {
-	Slug           string         `json:"slug"`
-	DisplayName    string         `json:"display_name"`
-	IdPMetadataXML string         `json:"idp_metadata_xml"`
-	NameIDFormat       string         `json:"nameid_format"`
-	UsernameAttribute  string         `json:"username_attribute"`
-	EmailAttribute     string         `json:"email_attribute"`
-	GroupsAttribute    string         `json:"groups_attribute"`
-	DefaultRole    string         `json:"default_role"`
-	GroupMappings  []GroupMapping `json:"group_mappings,omitempty"`
-	Enabled        bool           `json:"enabled"`
-	IsDefault      bool           `json:"is_default,omitempty"`
+	Slug              string         `json:"slug"`
+	DisplayName       string         `json:"display_name"`
+	IdPMetadataXML    string         `json:"idp_metadata_xml"`
+	NameIDFormat      string         `json:"nameid_format"`
+	SubjectAttribute  string         `json:"subject_attribute"`
+	UsernameAttribute string         `json:"username_attribute"`
+	EmailAttribute    string         `json:"email_attribute"`
+	GroupsAttribute   string         `json:"groups_attribute"`
+	DefaultRole       string         `json:"default_role"`
+	GroupMappings     []GroupMapping `json:"group_mappings,omitempty"`
+	Enabled           bool           `json:"enabled"`
+	IsDefault         bool           `json:"is_default,omitempty"`
+
+	AllowEmailLink bool `json:"allow_email_link"`
 }
 
 // PublicProvider is what the unauthenticated login page sees.
@@ -100,6 +126,10 @@ type Service struct {
 	mu  sync.Mutex
 	key *rsa.PrivateKey
 	crt *x509.Certificate
+
+	reqMu    sync.Mutex
+	requests map[string]time.Time // AuthnRequest ID -> expiry
+	reqSwept time.Time
 }
 
 func NewService(db *sql.DB, authSvc *auth.Service, secretsSvc *secrets.Service, baseURL string) *Service {
@@ -113,7 +143,7 @@ func NewService(db *sql.DB, authSvc *auth.Service, secretsSvc *secrets.Service, 
 func (s *Service) ListProviders(ctx context.Context) ([]Provider, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, slug, display_name, entity_id, sso_url, slo_url,
-		       nameid_format, username_attribute, email_attribute, groups_attribute, default_role,
+		       nameid_format, subject_attribute, username_attribute, email_attribute, groups_attribute, default_role,
 		       enabled, is_default, last_tested_at, last_test_ok, last_test_error,
 		       created_at, updated_at
 		FROM saml_providers ORDER BY id`)
@@ -136,6 +166,13 @@ func (s *Service) ListProviders(ctx context.Context) ([]Provider, error) {
 		if err := s.loadGroupMappings(ctx, &out[i]); err != nil {
 			return nil, err
 		}
+	}
+	links, err := s.auth.EmailLinkingByID(ctx, "saml")
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].AllowEmailLink = links[out[i].ID]
 	}
 	return out, nil
 }
@@ -164,7 +201,7 @@ func (s *Service) GetProvider(ctx context.Context, id int64) (*Provider, error) 
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, slug, display_name, entity_id, sso_url, slo_url,
 		       idp_metadata_xml, idp_cert_pem,
-		       nameid_format, username_attribute, email_attribute, groups_attribute, default_role,
+		       nameid_format, subject_attribute, username_attribute, email_attribute, groups_attribute, default_role,
 		       enabled, is_default, last_tested_at, last_test_ok, last_test_error,
 		       created_at, updated_at
 		FROM saml_providers WHERE id = ?`, id)
@@ -178,6 +215,11 @@ func (s *Service) GetProvider(ctx context.Context, id int64) (*Provider, error) 
 	if err := s.loadGroupMappings(ctx, p); err != nil {
 		return nil, err
 	}
+	links, err := s.auth.EmailLinkingByID(ctx, "saml")
+	if err != nil {
+		return nil, err
+	}
+	p.AllowEmailLink = links[p.ID]
 	return p, nil
 }
 
@@ -185,7 +227,7 @@ func (s *Service) getProviderBySlug(ctx context.Context, slug string) (*Provider
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, slug, display_name, entity_id, sso_url, slo_url,
 		       idp_metadata_xml, idp_cert_pem,
-		       nameid_format, username_attribute, email_attribute, groups_attribute, default_role,
+		       nameid_format, subject_attribute, username_attribute, email_attribute, groups_attribute, default_role,
 		       enabled, is_default, last_tested_at, last_test_ok, last_test_error,
 		       created_at, updated_at
 		FROM saml_providers WHERE slug = ? AND enabled = 1`, slug)
@@ -210,8 +252,8 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidMetadata, err)
 	}
-	if in.NameIDFormat == "" {
-		in.NameIDFormat = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+	if in.NameIDFormat, err = checkNameIDFormat(in.NameIDFormat); err != nil {
+		return nil, err
 	}
 	if in.UsernameAttribute == "" {
 		in.UsernameAttribute = "NameID"
@@ -229,12 +271,12 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 		INSERT INTO saml_providers
 			(slug, display_name, entity_id, sso_url, slo_url,
 			 idp_metadata_xml, idp_cert_pem,
-			 nameid_format, username_attribute, email_attribute, groups_attribute, default_role,
+			 nameid_format, subject_attribute, username_attribute, email_attribute, groups_attribute, default_role,
 			 enabled, is_default)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, in.Slug, in.DisplayName, meta.EntityID, meta.SSOURL, nullable(meta.SLOURL),
 		in.IdPMetadataXML, meta.CertPEM,
-		in.NameIDFormat, in.UsernameAttribute, in.EmailAttribute, in.GroupsAttribute, in.DefaultRole,
+		in.NameIDFormat, in.SubjectAttribute, in.UsernameAttribute, in.EmailAttribute, in.GroupsAttribute, in.DefaultRole,
 		boolInt(in.Enabled), boolInt(in.IsDefault))
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -248,10 +290,17 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 			return nil, err
 		}
 	}
+	if err := s.auth.SetEmailLinking(ctx, "saml", id, in.AllowEmailLink); err != nil {
+		return nil, err
+	}
 	return s.GetProvider(ctx, id)
 }
 
 func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput) (*Provider, error) {
+	var err error
+	if in.NameIDFormat, err = checkNameIDFormat(in.NameIDFormat); err != nil {
+		return nil, err
+	}
 	// Re-parse metadata only if the body supplied a non-empty value; an
 	// empty string means "keep the stored XML" so admins can tweak
 	// attribute mappings without re-pasting the whole blob.
@@ -260,17 +309,24 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", ErrInvalidMetadata, err)
 		}
+		// Another IdP behind the same provider must not re-key its accounts.
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE users SET saml_rekey_until = NULL
+			 WHERE saml_provider = (SELECT slug FROM saml_providers WHERE id = ? AND entity_id <> ?)`,
+			id, meta.EntityID); err != nil {
+			return nil, err
+		}
 		_, err = s.db.ExecContext(ctx, `
 			UPDATE saml_providers SET
 				display_name = ?, entity_id = ?, sso_url = ?, slo_url = ?,
 				idp_metadata_xml = ?, idp_cert_pem = ?,
-				nameid_format = ?, username_attribute = ?, email_attribute = ?,
+				nameid_format = ?, subject_attribute = ?, username_attribute = ?, email_attribute = ?,
 				groups_attribute = ?, default_role = ?,
 				enabled = ?, is_default = ?, updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?`,
 			in.DisplayName, meta.EntityID, meta.SSOURL, nullable(meta.SLOURL),
 			in.IdPMetadataXML, meta.CertPEM,
-			in.NameIDFormat, in.UsernameAttribute, in.EmailAttribute,
+			in.NameIDFormat, in.SubjectAttribute, in.UsernameAttribute, in.EmailAttribute,
 			in.GroupsAttribute, in.DefaultRole,
 			boolInt(in.Enabled), boolInt(in.IsDefault), id)
 		if err != nil {
@@ -279,12 +335,12 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 	} else {
 		_, err := s.db.ExecContext(ctx, `
 			UPDATE saml_providers SET
-				display_name = ?, nameid_format = ?, username_attribute = ?,
+				display_name = ?, nameid_format = ?, subject_attribute = ?, username_attribute = ?,
 				email_attribute = ?, groups_attribute = ?,
 				default_role = ?, enabled = ?, is_default = ?,
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?`,
-			in.DisplayName, in.NameIDFormat, in.UsernameAttribute,
+			in.DisplayName, in.NameIDFormat, in.SubjectAttribute, in.UsernameAttribute,
 			in.EmailAttribute, in.GroupsAttribute,
 			in.DefaultRole, boolInt(in.Enabled), boolInt(in.IsDefault), id)
 		if err != nil {
@@ -296,12 +352,29 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 			return nil, err
 		}
 	}
+	if err := s.auth.SetEmailLinking(ctx, "saml", id, in.AllowEmailLink); err != nil {
+		return nil, err
+	}
 	return s.GetProvider(ctx, id)
 }
 
 func (s *Service) DeleteProvider(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM saml_providers WHERE id = ?`, id)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	// A new provider with the same slug may be another IdP, so the marked
+	// accounts of this one must not be re-keyed through it.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE users SET saml_rekey_until = NULL
+		 WHERE saml_provider = (SELECT slug FROM saml_providers WHERE id = ?)`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM saml_providers WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Service) SetGroupMappings(ctx context.Context, providerID int64, mappings []GroupMapping) error {
@@ -484,7 +557,7 @@ func scanListRow(r scanner) (*Provider, error) {
 	var lastTestOK sql.NullInt64
 	if err := r.Scan(
 		&p.ID, &p.Slug, &p.DisplayName, &p.EntityID, &p.SSOURL, &slo,
-		&p.NameIDFormat, &p.UsernameAttribute, &p.EmailAttribute, &p.GroupsAttribute, &p.DefaultRole,
+		&p.NameIDFormat, &p.SubjectAttribute, &p.UsernameAttribute, &p.EmailAttribute, &p.GroupsAttribute, &p.DefaultRole,
 		&enabled, &isDefault, &lastTestedAt, &lastTestOK, &lastTestErr,
 		&p.CreatedAt, &p.UpdatedAt,
 	); err != nil {
@@ -519,7 +592,7 @@ func scanFullRow(r scanner) (*Provider, error) {
 	if err := r.Scan(
 		&p.ID, &p.Slug, &p.DisplayName, &p.EntityID, &p.SSOURL, &slo,
 		&p.IdPMetadataXML, &p.IdPCertPEM,
-		&p.NameIDFormat, &p.UsernameAttribute, &p.EmailAttribute, &p.GroupsAttribute, &p.DefaultRole,
+		&p.NameIDFormat, &p.SubjectAttribute, &p.UsernameAttribute, &p.EmailAttribute, &p.GroupsAttribute, &p.DefaultRole,
 		&enabled, &isDefault, &lastTestedAt, &lastTestOK, &lastTestErr,
 		&p.CreatedAt, &p.UpdatedAt,
 	); err != nil {

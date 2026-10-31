@@ -15,6 +15,7 @@ export interface ScanVuln {
 }
 
 export interface ScanReport {
+  scanned?: boolean;
   image: string;
   scanner: string;
   scanner_version?: string;
@@ -428,7 +429,11 @@ export interface ApiToken {
   prefix: string;            // e.g. "dmt_A7f3X9c4"
   name: string;
   role: string;
-  created_by?: number;
+  created_by?: string;       // owning user id
+  // Created before tokens were tied to a user: no owner, pinned role.
+  legacy: boolean;
+  // Owner was deleted; the token no longer authenticates.
+  owner_missing?: boolean;
   created_at: string;
   expires_at?: string;
   last_used_at?: string;
@@ -719,6 +724,11 @@ export interface SystemMetrics {
   disk_used: number;
   disk_path: string;
   uptime_seconds: number;
+  // Per-filesystem breakdown, fullest first; disk_* then describe the
+  // fullest mount holding Docker, containerd, stacks or Dockmesh data.
+  mounts?: DiskMount[];
+  // Set for agents too old to report per-mount usage.
+  mounts_unsupported?: boolean;
   // Present only when Docker's configured resource limits differ from
   // raw host hardware — most commonly on macOS / Windows where Docker
   // Desktop caps the VM at some fraction of the Mac's cores + RAM.
@@ -771,6 +781,9 @@ export interface Agent {
   cert_fingerprint?: string;
   last_seen_at?: string;
   online_since?: string;
+  cert_expires_at?: string;
+  protocol_version?: number;
+  update_recommended?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -778,8 +791,10 @@ export interface Agent {
 export interface AgentCreateResult {
   agent: Agent;
   token: string;
+  token_expires_at: string;
   enroll_url: string;
   agent_url: string;
+  ca_fingerprint: string;
   install_hint: string;
 }
 
@@ -831,8 +846,15 @@ export interface BackupTarget {
   used_bytes: number;
   free_bytes: number;
   last_checked_at?: string;
+  job_count?: number;
   created_at: string;
   updated_at: string;
+}
+
+// targetUsage tells whoever edits a shared target what the change affects.
+export function targetUsage(jobCount: number): string {
+  if (jobCount === 0) return 'Not used by any job yet.';
+  return `Used by ${jobCount} job${jobCount === 1 ? '' : 's'}; changes apply to all of them.`;
 }
 
 export interface BackupSource {
@@ -959,12 +981,26 @@ export function runRestorable(r: BackupRun): boolean {
   return (r.status === 'success' || r.status === 'success_with_warnings') && !r.pruned_at;
 }
 
+export interface DiskMount {
+  mount_point: string;
+  fs_type: string;
+  total: number;
+  used: number;
+  percent: number;
+  roles?: string[];
+  error?: string;
+}
+
 export interface NotificationChannel {
   id: number;
   type: string;
   name: string;
   config: any;
   enabled: boolean;
+  mute_schedule?: string;
+  last_sent_at?: string;
+  last_error?: string;
+  last_error_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -972,7 +1008,12 @@ export interface NotificationChannel {
 export interface AlertRule {
   id: number;
   name: string;
+  kind?: string;
   container_filter: string;
+  scope_host?: string;
+  scope_tag?: string;
+  scope_stack?: string;
+  mute_schedule?: string;
   metric: string;
   operator: string;
   threshold: number;
@@ -995,7 +1036,12 @@ export interface AlertRule {
 
 export interface AlertRuleInput {
   name: string;
+  kind?: string;
   container_filter: string;
+  scope_host?: string;
+  scope_tag?: string;
+  scope_stack?: string;
+  mute_schedule?: string;
   metric: string;
   operator: string;
   threshold: number;
@@ -1016,6 +1062,9 @@ export interface AlertHistoryEntry {
   message: string;
   value: number;
   threshold: number;
+  kind?: string;
+  host_id?: string;
+  notified: boolean;
   occurred_at: string;
 }
 
@@ -1030,6 +1079,7 @@ export interface OIDCProvider {
   admin_group?: string;
   operator_group?: string;
   default_role: string;
+  allow_email_link?: boolean;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -1046,6 +1096,7 @@ export interface OIDCProviderInput {
   admin_group?: string;
   operator_group?: string;
   default_role: string;
+  allow_email_link?: boolean;
   enabled: boolean;
 }
 
@@ -1108,10 +1159,12 @@ export interface SAMLProvider {
   idp_metadata_xml?: string;
   idp_cert_pem?: string;
   nameid_format: string;
+  subject_attribute?: string;
   username_attribute: string;
   email_attribute: string;
   groups_attribute: string;
   default_role: string;
+  allow_email_link?: boolean;
   group_mappings: GroupMapping[];
   enabled: boolean;
   is_default: boolean;
@@ -1127,10 +1180,12 @@ export interface SAMLProviderInput {
   display_name: string;
   idp_metadata_xml: string;
   nameid_format: string;
+  subject_attribute?: string;
   username_attribute: string;
   email_attribute: string;
   groups_attribute: string;
   default_role: string;
+  allow_email_link?: boolean;
   group_mappings?: GroupMapping[];
   enabled: boolean;
   is_default?: boolean;
@@ -1152,6 +1207,7 @@ export interface LDAPProvider {
   group_search_base?: string;
   group_membership_attribute: string;
   default_role: string;
+  allow_email_link?: boolean;
   group_mappings: GroupMapping[];
   enabled: boolean;
   is_default: boolean;
@@ -1178,6 +1234,7 @@ export interface LDAPProviderInput {
   group_search_base: string;
   group_membership_attribute: string;
   default_role: string;
+  allow_email_link?: boolean;
   group_mappings?: GroupMapping[];
   enabled: boolean;
   is_default?: boolean;
@@ -1196,6 +1253,7 @@ export interface OAuth2Provider {
   email_field: string;
   groups_field: string;
   default_role: string;
+  allow_email_link?: boolean;
   group_mappings: GroupMapping[];
   enabled: boolean;
   is_default: boolean;
@@ -1219,6 +1277,7 @@ export interface OAuth2ProviderInput {
   email_field: string;
   groups_field: string;
   default_role: string;
+  allow_email_link?: boolean;
   group_mappings?: GroupMapping[];
   enabled: boolean;
   is_default?: boolean;
@@ -1245,25 +1304,32 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(init.headers as Record<string, string> ?? {})
+// Sends a request with the current access token. On 401 it waits for the
+// shared session refresh and retries once.
+async function authFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const send = (token: string | null) => {
+    const headers = new Headers(init.headers);
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    return fetch(url, { ...init, headers });
   };
-  if (auth.accessToken) {
-    headers['Authorization'] = `Bearer ${auth.accessToken}`;
+  const used = auth.accessToken;
+  const userId = auth.user?.id;
+  const res = await send(used);
+  if (res.status !== 401 || !auth.refreshToken) return res;
+  // Another caller may already have renewed the token while this one was in flight.
+  if (auth.accessToken === used && !(await auth.refresh())) {
+    if (auth.isAuthenticated) throw new ApiError('Cannot reach the server to renew the session', 0);
+    return res;
   }
+  // Never replay a request under a different account.
+  if (auth.user?.id !== userId) return res;
+  return send(auth.accessToken);
+}
 
-  let res = await fetch(`${BASE}${path}`, { ...init, headers });
-
-  // On 401, try one refresh then retry.
-  if (res.status === 401 && auth.refreshToken) {
-    const ok = await auth.refresh();
-    if (ok && auth.accessToken) {
-      headers['Authorization'] = `Bearer ${auth.accessToken}`;
-      res = await fetch(`${BASE}${path}`, { ...init, headers });
-    }
-  }
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  const res = await authFetch(`${BASE}${path}`, { ...init, headers });
 
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
@@ -1308,6 +1374,12 @@ export const api = {
         refresh_token: string;
         user: { id: string; username: string; role: string; mfa_enabled?: boolean };
       }>('/auth/mfa', { method: 'POST', body: JSON.stringify({ mfa_token: mfaToken, code }) }),
+    ssoExchange: (code: string) =>
+      request<{
+        access_token: string;
+        refresh_token: string;
+        user: { id: string; username: string; role: string; mfa_enabled?: boolean };
+      }>('/auth/sso/exchange', { method: 'POST', body: JSON.stringify({ code }) }),
     logout: () => {
       const body = auth.refreshToken ? JSON.stringify({ refresh_token: auth.refreshToken }) : '{}';
       return request<void>('/auth/logout', { method: 'POST', body }).finally(() => auth.clear());
@@ -1343,7 +1415,8 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ code })
       }),
-    disable: () => request<void>('/mfa', { method: 'DELETE' }),
+    disable: (code: string) =>
+      request<void>('/mfa', { method: 'DELETE', body: JSON.stringify({ code }) }),
     reset: (userId: string) => request<void>(`/users/${userId}/mfa`, { method: 'DELETE' })
   },
 
@@ -1593,7 +1666,7 @@ export const api = {
     list: () => request<Array<{ id: number; key: string; value: string; group_name: string; encrypted: boolean; created_at: string; updated_at: string }>>('/global-env'),
     create: (data: { key: string; value: string; group_name: string }) =>
       request<any>('/global-env', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
-    update: (id: number, data: { key: string; value: string; group_name: string }) =>
+    update: (id: number, data: { key: string; value: string; group_name: string; encrypted?: boolean }) =>
       request<any>(`/global-env/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
     delete: (id: number) => request<void>(`/global-env/${id}`, { method: 'DELETE' }),
     groups: () => request<string[]>('/global-env/groups')
@@ -1755,9 +1828,7 @@ export const api = {
       downloadBlob: async (id: string, path: string, host = 'local') => {
         const qs = new URLSearchParams({ path });
         if (host && host !== 'local') qs.set('host', host);
-        const headers: Record<string, string> = {};
-        if (auth.accessToken) headers['Authorization'] = `Bearer ${auth.accessToken}`;
-        const res = await fetch(`${BASE}/containers/${id}/files/download?${qs.toString()}`, { headers });
+        const res = await authFetch(`${BASE}/containers/${id}/files/download?${qs.toString()}`);
         if (!res.ok) {
           let msg = `${res.status} ${res.statusText}`;
           try { const j = await res.json(); if (j.error) msg = j.error; } catch { /* ignore */ }
@@ -1866,6 +1937,7 @@ export const api = {
       request<BackupTarget>('/backups/targets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
     updateTarget: (id: number, input: { name: string; type: string; config: any }) =>
       request<BackupTarget>(`/backups/targets/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+    localPath: () => request<{ path: string }>('/backups/local-path').then((r) => r.path).catch(() => ''),
     deleteTarget: (id: number) => request<void>(`/backups/targets/${id}`, { method: 'DELETE' }),
     testTarget: (id: number) => request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string }>(`/backups/targets/${id}/test`, { method: 'POST' }),
     testTargetConfig: (type: string, config: any, targetId?: number) =>
@@ -1910,16 +1982,7 @@ export const api = {
     // user always gets plaintext bytes. We auth via bearer token then
     // hand the user a Blob URL — same pattern as audit-log export.
     downloadArchive: async (runId: number): Promise<void> => {
-      const headers: Record<string, string> = {};
-      if (auth.accessToken) headers['Authorization'] = `Bearer ${auth.accessToken}`;
-      let res = await fetch(`${BASE}/backups/runs/${runId}/archive`, { headers });
-      if (res.status === 401 && auth.refreshToken) {
-        const ok = await auth.refresh();
-        if (ok && auth.accessToken) {
-          headers['Authorization'] = `Bearer ${auth.accessToken}`;
-          res = await fetch(`${BASE}/backups/runs/${runId}/archive`, { headers });
-        }
-      }
+      const res = await authFetch(`${BASE}/backups/runs/${runId}/archive`);
       if (!res.ok) {
         let msg = `${res.status} ${res.statusText}`;
         try { const body = await res.json(); if (body.error) msg = body.error; } catch { /* ignore */ }
@@ -1953,12 +2016,7 @@ export const api = {
     verifyUpload: async (file: File): Promise<BackupVerifyResult> => {
       const form = new FormData();
       form.append('file', file);
-      const token = auth.accessToken;
-      const res = await fetch(`${BASE}/restore/verify`, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        body: form
-      });
+      const res = await authFetch(`${BASE}/restore/verify`, { method: 'POST', body: form });
       const data = await res.json();
       if (!res.ok && res.status !== 422) throw new ApiError(data?.error ?? res.statusText, res.status);
       return data as BackupVerifyResult;
@@ -1978,7 +2036,7 @@ export const api = {
 
   users: {
     me: () => request<{ id: string; username: string; email?: string; role: string; scope_tags?: string[] }>('/me'),
-    list: () => request<Array<{ id: string; username: string; email?: string; role: string; scope_tags?: string[] }>>('/users'),
+    list: () => request<Array<{ id: string; username: string; email?: string; role: string; scope_tags?: string[]; locked_until?: string }>>('/users'),
     create: (username: string, password: string, role: string, email?: string) =>
       request<{ id: string; username: string; role: string }>('/users', {
         method: 'POST',
@@ -2134,7 +2192,7 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ ...input, config: typeof input.config === 'string' ? JSON.parse(input.config) : input.config })
       }),
-    updateChannel: (id: number, input: { type: string; name: string; config: any; enabled: boolean }) =>
+    updateChannel: (id: number, input: { type: string; name: string; config: any; enabled: boolean; mute_schedule?: string }) =>
       request<NotificationChannel>(`/notifications/channels/${id}`, {
         method: 'PUT',
         body: JSON.stringify({ ...input, config: typeof input.config === 'string' ? JSON.parse(input.config) : input.config })
@@ -2213,6 +2271,8 @@ export const api = {
     update: (id: number, input: SAMLProviderInput) =>
       request<SAMLProvider>(`/saml/providers/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
     delete: (id: number) => request<void>(`/saml/providers/${id}`, { method: 'DELETE' }),
+    rekeyPending: () => request<{ accounts: string[]; until?: string }>('/saml/rekey'),
+    endRekey: () => request<{ ended: number }>('/saml/rekey/end', { method: 'POST' }),
     test: (id: number) =>
       request<{ ok: boolean; error?: string; entity_id?: string; sso_url?: string }>(
         `/saml/providers/${id}/test`,
@@ -2269,7 +2329,7 @@ export const api = {
     // token + the curl-bash install command the operator pastes on
     // the agent host.
     rotateToken: (id: string) =>
-      request<{ token: string; install_hint: string }>(`/agents/${id}/rotate-token`, { method: 'POST' }),
+      request<AgentCreateResult>(`/agents/${id}/rotate-token`, { method: 'POST' }),
     // P.11.16 upgrade policy
     getUpgradePolicy: () => request<AgentUpgradePolicy>('/agents/upgrade-policy'),
     setUpgradePolicy: (input: AgentUpgradeInput) =>

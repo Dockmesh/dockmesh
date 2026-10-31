@@ -15,6 +15,7 @@ export interface ProviderBase {
   display_name: string;
   enabled: boolean;
   default_role: string;
+  allow_email_link: boolean;
   group_mappings: GroupMapping[];
 }
 
@@ -48,6 +49,7 @@ export interface SAMLConfig extends ProviderBase {
   signing_cert: string;
   encryption_cert: string;
   nameid_format: string;
+  subject_attribute: string;
   username_attribute: string;
   email_attribute: string;
   groups_attribute: string;
@@ -173,6 +175,7 @@ export interface SAMLTemplate {
   email_attribute: string;
   groups_attribute: string;
   nameid_format: string;
+  subject_attribute: string;
   help: string;
 }
 
@@ -182,7 +185,8 @@ export const SAML_TEMPLATES: SAMLTemplate[] = [
     username_attribute: 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name',
     email_attribute: 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress',
     groups_attribute: 'http://schemas.microsoft.com/ws/2008/06/identity/claims/groups',
-    nameid_format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+    nameid_format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+    subject_attribute: 'http://schemas.microsoft.com/identity/claims/objectidentifier',
     help: 'Configure as Enterprise App. Add SP entity ID + ACS URL in App Registration.' },
   { id: 'adfs', label: 'AD FS', icon: '🪟',
     idp_metadata_url_hint: 'https://adfs.example.com/FederationMetadata/2007-06/FederationMetadata.xml',
@@ -190,27 +194,31 @@ export const SAML_TEMPLATES: SAMLTemplate[] = [
     email_attribute: 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress',
     groups_attribute: 'http://schemas.xmlsoap.org/claims/Group',
     nameid_format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified',
+    subject_attribute: '',
     help: 'Add Relying Party Trust on the AD FS server with the ACS URL below.' },
   { id: 'okta', label: 'Okta', icon: '🌀',
     idp_metadata_url_hint: 'https://your-tenant.okta.com/app/{app-id}/sso/saml/metadata',
     username_attribute: 'NameID',
     email_attribute: 'email',
     groups_attribute: 'groups',
-    nameid_format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+    nameid_format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+    subject_attribute: '',
     help: 'Create a new SAML 2.0 application in Okta. Configure attribute statements for groups.' },
   { id: 'authentik', label: 'Authentik / Keycloak', icon: '🔐',
     idp_metadata_url_hint: 'https://auth.example/application/saml/dockmesh/metadata/',
     username_attribute: 'http://schemas.goauthentik.io/2021/02/saml/username',
     email_attribute: 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress',
     groups_attribute: 'http://schemas.xmlsoap.org/claims/Group',
-    nameid_format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+    nameid_format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+    subject_attribute: '',
     help: 'Both Authentik and Keycloak ship SAML provider templates. Use the upstream metadata URL.' },
   { id: 'generic', label: 'Generic SAML 2.0', icon: '○',
     idp_metadata_url_hint: 'https://idp.example/metadata',
     username_attribute: 'NameID',
     email_attribute: 'email',
     groups_attribute: 'groups',
-    nameid_format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+    nameid_format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+    subject_attribute: '',
     help: 'Any SAML 2.0 IdP with HTTP-Redirect or HTTP-POST bindings.' },
 ];
 
@@ -238,6 +246,7 @@ export function newOIDCConfig(): OIDCConfig {
     scopes: 'openid profile email',
     group_claim: 'groups',
     default_role: 'viewer',
+    allow_email_link: false,
     group_mappings: [],
   };
 }
@@ -258,6 +267,7 @@ export function newOAuth2Config(): OAuth2Config {
     email_field: 'email',
     groups_field: 'groups',
     default_role: 'viewer',
+    allow_email_link: false,
     group_mappings: [],
   };
 }
@@ -273,11 +283,13 @@ export function newSAMLConfig(): SAMLConfig {
     sp_entity_id: '',
     signing_cert: '',
     encryption_cert: '',
-    nameid_format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+    nameid_format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+    subject_attribute: '',
     username_attribute: 'NameID',
     email_attribute: 'email',
     groups_attribute: 'groups',
     default_role: 'viewer',
+    allow_email_link: false,
     group_mappings: [],
   };
 }
@@ -302,6 +314,7 @@ export function newLDAPConfig(): LDAPConfig {
     group_search_base: '',
     group_membership_attribute: 'memberOf',
     default_role: 'viewer',
+    allow_email_link: false,
     group_mappings: [],
   };
 }

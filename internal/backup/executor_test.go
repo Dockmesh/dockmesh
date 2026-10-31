@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // fakeHost serves volume archives from memory and records hook calls.
@@ -47,9 +48,11 @@ func (f *fakeHost) ContainerExec(_ context.Context, container string, cmd []stri
 	return nil, f.hookExit[container], nil
 }
 
-type errReader struct{ err error }
+func (f *fakeHost) VolumeImport(context.Context, string, io.Reader, bool) error {
+	return errors.New("fakeHost: import not supported")
+}
 
-func (e errReader) Read([]byte) (int, error) { return 0, e.err }
+func (f *fakeHost) VolumeInUse(context.Context, string) ([]string, error) { return nil, nil }
 
 func tarGz(t *testing.T, files map[string]string) []byte {
 	t.Helper()
@@ -125,8 +128,8 @@ func TestRetentionKeepsNewestAndIgnoresOtherJobs(t *testing.T) {
 	svc, fake, root := newExecTest(t, false)
 	ctx := context.Background()
 
-	// Same name once sanitized: the old layout put both into jobs/db-prod.
-	in := volumeJob("DB Prod", root)
+	// A name that prefixes another must not share its archives.
+	in := volumeJob("db", root)
 	in.RetentionCount = 2
 	job, err := svc.CreateJob(ctx, in)
 	if err != nil {
@@ -136,7 +139,7 @@ func TestRetentionKeepsNewestAndIgnoresOtherJobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherRun, err := svc.runNow(ctx, other.ID)
+	otherRun, err := svc.RunNow(ctx, other.ID)
 	if err != nil || otherRun.Status != StatusSuccess {
 		t.Fatalf("other job run: %v %+v", err, otherRun)
 	}
@@ -146,7 +149,7 @@ func TestRetentionKeepsNewestAndIgnoresOtherJobs(t *testing.T) {
 		if i == 2 {
 			fake.failVol["data"] = errors.New("tar exit 1")
 		}
-		r, err := svc.runNow(ctx, job.ID)
+		r, err := svc.RunNow(ctx, job.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -172,7 +175,7 @@ func TestRetentionKeepsNewestAndIgnoresOtherJobs(t *testing.T) {
 	if pruned.PrunedAt == nil || pruned.Restorable() {
 		t.Fatalf("oldest run should be pruned: %+v", pruned)
 	}
-	if !strings.HasPrefix(runs[3].TargetPath, "jobs/"+itoa(job.ID)+"-db-prod/") {
+	if !strings.HasPrefix(runs[3].TargetPath, "jobs/"+itoa(job.ID)+"-db/") {
 		t.Fatalf("archive path not keyed by job id: %s", runs[3].TargetPath)
 	}
 }
@@ -186,7 +189,7 @@ func TestRetentionCleansLegacyPartials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A failed run of an older version: file left behind, no hash.
+	// A failed run that left its file behind, no hash.
 	legacy := filepath.Join(root, "jobs", "vol", "old.tar.gz")
 	if err := os.MkdirAll(filepath.Dir(legacy), 0o700); err != nil {
 		t.Fatal(err)
@@ -198,7 +201,7 @@ func TestRetentionCleansLegacyPartials(t *testing.T) {
 		VALUES (?, 'vol', 'failed', 'jobs/vol/old.tar.gz', '[]')`, job.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.runNow(ctx, job.ID); err != nil {
+	if _, err := svc.RunNow(ctx, job.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(legacy); !errors.Is(err, os.ErrNotExist) {
@@ -274,7 +277,7 @@ func TestVerifyHash(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			run, err := svc.runNow(ctx, job.ID)
+			run, err := svc.RunNow(ctx, job.ID)
 			if err != nil || run.Status != StatusSuccess {
 				t.Fatalf("%v %+v", err, run)
 			}
@@ -300,7 +303,7 @@ func TestVerifyHash(t *testing.T) {
 	}
 }
 
-func TestVerifyLegacyCiphertextHash(t *testing.T) {
+func TestEncryptedRunHashCoversStoredBytes(t *testing.T) {
 	svc, _, root := newExecTest(t, true)
 	ctx := context.Background()
 	in := volumeJob("v", root)
@@ -309,22 +312,20 @@ func TestVerifyLegacyCiphertextHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := svc.runNow(ctx, job.ID)
+	run, err := svc.RunNow(ctx, job.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// What older versions stored: the hash of the encrypted file.
 	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(run.TargetPath)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.store.db.Exec(`UPDATE backup_runs SET sha256 = ?, sha256_plain = 0 WHERE id = ?`,
-		sha256Hex(data), run.ID); err != nil {
-		t.Fatal(err)
+	if run.SHA256 != sha256Hex(data) {
+		t.Fatalf("run sha256 %s, stored file %s", run.SHA256, sha256Hex(data))
 	}
 	res, err := svc.VerifyRun(ctx, run.ID)
 	if err != nil || !res.Passed || !res.SHA256OK {
-		t.Fatalf("legacy hash should verify: %v %+v", err, res)
+		t.Fatalf("encrypted run should verify: %v %+v", err, res)
 	}
 }
 
@@ -335,7 +336,7 @@ func TestDeletedJobRunsStayRestorable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := svc.runNow(ctx, job.ID)
+	run, err := svc.RunNow(ctx, job.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +395,7 @@ func TestStackArchiveVolumes(t *testing.T) {
 		t.Fatalf("complete archive: %+v", res)
 	}
 
-	// A volume that can't be read fails the backup instead of being skipped.
+	// A volume that can't be read fails the backup.
 	delete(fake.volumes, "web_cache")
 	if _, err := tarStackWithVolumes(ctx, fake, dir, "web", io.Discard); err == nil || !strings.Contains(err.Error(), "web_cache") {
 		t.Fatalf("missing volume: %v", err)
@@ -427,8 +428,27 @@ func TestStackArchiveVolumes(t *testing.T) {
 	}
 }
 
-func (f *fakeHost) VolumeImport(context.Context, string, io.Reader, bool) error {
-	return errors.New("fakeHost: import not supported")
+func TestRunNotificationAudience(t *testing.T) {
+	tests := []struct {
+		name         string
+		job          Job
+		wantPerm     rbac.Perm
+		wantHost     string
+		wantUnscoped bool
+	}{
+		{"local volume job", Job{Sources: []Source{{Type: "volume", Name: "pg"}}}, rbac.PermBackupsView, "local", false},
+		{"agent host job", Job{HostID: "h1", Sources: []Source{{Type: "stack", Name: "web"}}}, rbac.PermBackupsView, "h1", false},
+		{"system job", Job{Sources: []Source{{Type: "system"}}}, rbac.PermSystemUpdate, "local", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := runNotification(&tt.job, 7)
+			if in.Perm != tt.wantPerm || in.HostID != tt.wantHost || in.Unscoped != tt.wantUnscoped {
+				t.Errorf("got perm %q host %q unscoped %v", in.Perm, in.HostID, in.Unscoped)
+			}
+			if in.Link != "/backups/runs/7" || in.UserID != "" {
+				t.Errorf("link %q user %q", in.Link, in.UserID)
+			}
+		})
+	}
 }
-
-func (f *fakeHost) VolumeInUse(context.Context, string) ([]string, error) { return nil, nil }

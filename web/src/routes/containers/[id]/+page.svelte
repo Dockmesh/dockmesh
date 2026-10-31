@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api, ApiError } from '$lib/api';
   import { tick } from 'svelte';
@@ -44,10 +44,10 @@
     ArrowRight
   } from 'lucide-svelte';
 
-  const id = $derived($page.params.id);
+  const id = $derived(page.params.id);
   // Resolve the host: prefer the URL ?host=… (set when the user navigated
   // here from a remote-host listing), otherwise the global selection.
-  const targetHost = $derived($page.url.searchParams.get('host') || hosts.id);
+  const targetHost = $derived(page.url.searchParams.get('host') || hosts.id);
   const isRemote = $derived(targetHost !== 'local');
 
   let info = $state<any>(null);
@@ -602,6 +602,11 @@
   // the backoff retry — otherwise leaving the page would kick off a
   // reconnect loop against a torn-down component.
   let logsUserClosed = false;
+  // Bumped on every disconnect so a socket whose ticket arrives after the
+  // tab was left (or the page destroyed) is never opened.
+  let logsGen = 0;
+  let statsGen = 0;
+  let execGen = 0;
   let logsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let logsReconnectAttempt = 0;
   let statsUserClosed = false;
@@ -623,11 +628,14 @@
   }
 
   async function openLogsSocket() {
+    const gen = logsGen;
     try {
       const { ticket } = await api.ws.ticket('containers.logs');
+      if (gen !== logsGen) return;
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const hostQs = isRemote ? `&host=${encodeURIComponent(targetHost)}` : '';
-      ws = new WebSocket(`${proto}//${location.host}/api/v1/ws/logs/${id}?ticket=${ticket}&tail=200${hostQs}`);
+      const sock = new WebSocket(`${proto}//${location.host}/api/v1/ws/logs/${id}?ticket=${ticket}&tail=200${hostQs}`);
+      ws = sock;
       ws.onopen = () => {
         wsConnected = true;
         logsReconnectAttempt = 0;
@@ -641,6 +649,7 @@
         }
       };
       ws.onclose = () => {
+        if (ws !== sock) return;
         wsConnected = false;
         scheduleLogsReconnect();
       };
@@ -648,6 +657,7 @@
         wsConnected = false;
       };
     } catch (err) {
+      if (gen !== logsGen) return;
       if (logsReconnectAttempt === 0) {
         toast.error('Logs connect failed', err instanceof ApiError ? err.message : undefined);
       }
@@ -666,6 +676,7 @@
   }
 
   function disconnectLogs() {
+    logsGen++;
     logsUserClosed = true;
     if (logsReconnectTimer) { clearTimeout(logsReconnectTimer); logsReconnectTimer = null; }
     if (ws) { ws.close(); ws = null; }
@@ -682,11 +693,14 @@
   }
 
   async function openStatsSocket() {
+    const gen = statsGen;
     try {
       const { ticket } = await api.ws.ticket('containers.view');
+      if (gen !== statsGen) return;
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const hostQs = isRemote ? `&host=${encodeURIComponent(targetHost)}` : '';
-      statsWs = new WebSocket(`${proto}//${location.host}/api/v1/ws/stats/${id}?ticket=${ticket}${hostQs}`);
+      const sock = new WebSocket(`${proto}//${location.host}/api/v1/ws/stats/${id}?ticket=${ticket}${hostQs}`);
+      statsWs = sock;
       statsWs.onopen = () => {
         statsConnected = true;
         statsReconnectAttempt = 0;
@@ -700,11 +714,12 @@
         } catch { /* ignore */ }
       };
       statsWs.onclose = () => {
+        if (statsWs !== sock) return;
         statsConnected = false;
         scheduleStatsReconnect();
       };
     } catch {
-      scheduleStatsReconnect();
+      if (gen === statsGen) scheduleStatsReconnect();
     }
   }
 
@@ -719,6 +734,7 @@
   }
 
   function disconnectStats() {
+    statsGen++;
     statsUserClosed = true;
     if (statsReconnectTimer) { clearTimeout(statsReconnectTimer); statsReconnectTimer = null; }
     if (statsWs) { statsWs.close(); statsWs = null; }
@@ -754,8 +770,10 @@
     term.open(execContainer);
     fitAddon.fit();
 
+    const gen = execGen;
     try {
       const { ticket } = await api.ws.ticket('containers.exec');
+      if (gen !== execGen || !term) return;
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const cmd = execShell === 'bash' ? '/bin/bash' : '/bin/sh';
       const hostQs = isRemote ? `&host=${encodeURIComponent(targetHost)}` : '';
@@ -795,10 +813,12 @@
       });
       resizeObserver.observe(execContainer);
     } catch (err) {
+      if (gen !== execGen) return;
       toast.error('Exec failed', err instanceof ApiError ? err.message : undefined);
     }
   }
   function disconnectExec() {
+    execGen++;
     resizeObserver?.disconnect();
     resizeObserver = null;
     if (execWs) { execWs.close(); execWs = null; }
@@ -887,7 +907,7 @@
     if (info) {
       const svc = info.Config?.Labels?.['com.docker.compose.service'];
       const proj = info.Config?.Labels?.['com.docker.compose.project'];
-      const fromStack = $page.url.searchParams.get('from') === 'stack';
+      const fromStack = page.url.searchParams.get('from') === 'stack';
       const name = svc || containerName(info) || id.slice(0, 12);
       if (fromStack && proj) {
         pageContext.set(name, [
@@ -1237,6 +1257,7 @@
         <span class="count">{Object.keys(info.NetworkSettings?.Networks ?? {}).length}</span>
       {/if}
     </button>
+    {#if canExec}
     <button
       role="tab"
       type="button"
@@ -1248,6 +1269,7 @@
       <FilesIcon size={13} strokeWidth={1.5} />
       Files
     </button>
+    {/if}
     {#if canControl && !isRemote}
       <button
         role="tab"
@@ -2056,7 +2078,7 @@
         </div>
       {/if}
     </div>
-  {:else if tab === 'files' && info}
+  {:else if tab === 'files' && info && canExec}
     <div class="ctn-files-pane">
       <div class="ctn-files-bar">
         <nav class="ctn-files-crumbs" aria-label="Path">

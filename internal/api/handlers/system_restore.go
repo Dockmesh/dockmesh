@@ -241,7 +241,7 @@ func writeStageError(w http.ResponseWriter, err error, result *restore.SanityRes
 // secrets, its own keys.
 func (h *Handlers) openUploadedSystemBackup(w http.ResponseWriter, r *http.Request) (io.ReadCloser, string, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, uploadLimit+(1<<20))
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	if err := r.ParseMultipartForm(32 << 20); err != nil { //nolint:gosec // the body is capped by MaxBytesReader above
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
 			writeError(w, http.StatusRequestEntityTooLarge, "backup larger than 1 GiB")

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -15,13 +16,13 @@ import (
 	"strings"
 	"time"
 
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
@@ -106,7 +107,9 @@ func (e *Executor) complete(ctx context.Context, job *Job, runID int64) (*Run, e
 		slog.Warn("backup finish run", "run", runID, "err", err)
 	}
 	if target != nil {
-		e.applyRetention(ctx, runID, job, target)
+		rctx, cancel := context.WithTimeout(ctx, cleanupTimeout)
+		e.applyRetention(rctx, runID, job, target)
+		cancel()
 	}
 
 	now := time.Now()
@@ -157,8 +160,8 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	}
 
 	relPath := relativePath(job, runID)
-	// Recorded up front so a crash mid-upload still leaves a pointer to
-	// the partial file for the cleanup at startup.
+	// Recorded up front so the partial file of a crashed run stays
+	// traceable.
 	if err := e.store.setRunPath(ctx, runID, relPath); err != nil {
 		slog.Warn("backup record run path", "run", runID, "err", err)
 	}
@@ -166,32 +169,39 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	if err != nil {
 		return fail(fmt.Sprintf("open target %q", relPath), err), nil
 	}
-	stored := &countingWriter{w: w}
+	// The hash covers the bytes as stored on the target (ciphertext for
+	// encrypted runs), which read-back, verify and restore check against.
+	hasher := sha256.New()
+	stored := &countingWriter{w: w, h: hasher}
 	encW, err := wrapEncrypt(stored, encryptionFor(job, e.secrets))
 	if err != nil {
 		_ = abortWriter(stored)
 		out = fail("encrypt", err)
-		out.path = e.removePartial(ctx, runID, target, w, relPath)
+		out.path = e.removePartial(ctx, runID, target, w, relPath, false)
 		return out, nil
 	}
 
-	// The hash covers the plaintext archive, so verify can recompute it
-	// from any copy, decrypted or not.
-	hasher := sha256.New()
 	e.logf(ctx, runID, "info", "streaming %d source(s) → %s", len(job.Sources), relPath)
-	if _, err := e.streamSources(ctx, job.Sources, hostTarget, io.MultiWriter(encW, hasher)); err != nil {
+	if _, err := e.streamSources(ctx, job.Sources, hostTarget, encW); err != nil {
 		_ = abortWriter(encW)
 		out = fail("stream sources", err)
-		out.path = e.removePartial(ctx, runID, target, w, relPath)
+		out.path = e.removePartial(ctx, runID, target, w, relPath, false)
 		return out, nil
 	}
 	if err := encW.Close(); err != nil {
 		out = fail("finish upload", err)
-		out.path = e.removePartial(ctx, runID, target, w, relPath)
+		out.path = e.removePartial(ctx, runID, target, w, relPath, true)
 		return out, nil
 	}
 	sum := hex.EncodeToString(hasher.Sum(nil))
 	e.logf(ctx, runID, "info", "wrote %d bytes, sha256=%s", stored.n, sum[:12])
+	if err := readBack(ctx, target, relPath, stored.n, sum); err != nil {
+		e.logf(ctx, runID, "error", "%s", err)
+		out = runOutcome{status: StatusFailed, size: stored.n, err: err}
+		out.path = e.removePartial(ctx, runID, target, w, relPath, true)
+		return out, nil
+	}
+	e.logf(ctx, runID, "info", "read back %d bytes, sha256 matches", stored.n)
 	return runOutcome{status: StatusSuccess, size: stored.n, path: relPath, sum: sum}, target
 }
 
@@ -208,14 +218,22 @@ func (e *Executor) runPostHooks(ctx context.Context, runID int64, hostTarget hos
 	return out
 }
 
-// removePartial deletes what a failed run wrote; targets that upload on
-// Close never published anything. Returns the path to keep on the run
-// when the file could not be deleted, so the retention pass retries.
-func (e *Executor) removePartial(ctx context.Context, runID int64, target targets.Target, w io.WriteCloser, relPath string) string {
-	if _, ok := w.(targets.Aborter); ok {
+// cleanupTimeout bounds retention and partial-file deletes, which run
+// after the caller may have gone away; a stalled target must not keep
+// them alive forever.
+const cleanupTimeout = 10 * time.Minute
+
+// removePartial deletes what a failed run wrote. Targets that upload on
+// Close published nothing when the run was aborted before Close (closed
+// false). Returns the path to keep on the run when the file could not be
+// deleted, so the retention pass retries.
+func (e *Executor) removePartial(ctx context.Context, runID int64, target targets.Target, w io.WriteCloser, relPath string, closed bool) string {
+	if _, ok := w.(targets.Aborter); ok && !closed {
 		return ""
 	}
-	err := target.Delete(context.WithoutCancel(ctx), relPath)
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+	defer cancel()
+	err := target.Delete(dctx, relPath)
 	if err == nil || errors.Is(err, fs.ErrNotExist) {
 		return ""
 	}
@@ -227,7 +245,7 @@ func (e *Executor) notifyRun(ctx context.Context, job *Job, runID int64, out run
 	if e.notifs == nil {
 		return
 	}
-	in := notifications.EmitInput{Link: fmt.Sprintf("/backups/runs/%d", runID)}
+	in := runNotification(job, runID)
 	switch out.status {
 	case StatusSuccess:
 		in.Kind, in.Severity = notifications.KindBackupOK, notifications.SevSuccess
@@ -246,6 +264,22 @@ func (e *Executor) notifyRun(ctx context.Context, job *Job, runID int64, out run
 		}
 	}
 	_, _ = e.notifs.Emit(ctx, in)
+}
+
+// runNotification addresses a run notification to the users who may open
+// the run: unscoped admins for system jobs, otherwise backup viewers whose
+// scope covers the job's host.
+func runNotification(job *Job, runID int64) notifications.EmitInput {
+	in := notifications.EmitInput{
+		Link:   fmt.Sprintf("/backups/runs/%d", runID),
+		Perm:   rbac.PermBackupsView,
+		HostID: defaultStr(job.HostID, "local"),
+	}
+	if HasSystemSource(job.Sources) {
+		in.Perm = rbac.PermSystemUpdate
+		in.Unscoped = true
+	}
+	return in
 }
 
 func defaultStr(v, fallback string) string {
@@ -374,16 +408,25 @@ func (l *localBackupTarget) VolumeImport(ctx context.Context, name string, src i
 }
 
 func (l *localBackupTarget) VolumeInUse(ctx context.Context, name string) ([]string, error) {
+	// Paused and restarting containers come back while the volume is
+	// rewritten, so only stopped ones don't count.
 	list, err := l.dc.Raw().ContainerList(ctx, container.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("volume", name), filters.Arg("status", "running")),
+		All:     true,
+		Filters: filters.NewArgs(filters.Arg("volume", name)),
 	})
 	if err != nil {
 		return nil, err
 	}
-	return containerNames(list), nil
+	active := list[:0]
+	for _, c := range list {
+		if c.State != container.StateExited && c.State != container.StateDead && c.State != container.StateCreated {
+			active = append(active, c)
+		}
+	}
+	return containerNames(active), nil
 }
 
-func containerNames(list []dtypes.Container) []string {
+func containerNames(list []container.Summary) []string {
 	out := make([]string, 0, len(list))
 	for _, c := range list {
 		name := c.ID
@@ -397,13 +440,13 @@ func containerNames(list []dtypes.Container) []string {
 
 func (l *localBackupTarget) ContainerExec(ctx context.Context, containerID string, cmd []string) ([]byte, int, error) {
 	cli := l.dc.Raw()
-	exec, err := cli.ContainerExecCreate(ctx, containerID, dtypes.ExecConfig{
+	exec, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		Cmd: cmd, AttachStdout: true, AttachStderr: true,
 	})
 	if err != nil {
 		return nil, -1, err
 	}
-	attach, err := cli.ContainerExecAttach(ctx, exec.ID, dtypes.ExecStartCheck{})
+	attach, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecStartOptions{})
 	if err != nil {
 		return nil, -1, err
 	}
@@ -472,15 +515,17 @@ func (e *Executor) deleteArchive(ctx context.Context, target targets.Target, r R
 // helpers
 // -----------------------------------------------------------------------------
 
-// countingWriter counts the bytes stored on the target.
+// countingWriter counts and hashes the bytes stored on the target.
 type countingWriter struct {
 	w io.WriteCloser
+	h hash.Hash
 	n int64
 }
 
 func (c *countingWriter) Write(p []byte) (int, error) {
 	n, err := c.w.Write(p)
 	c.n += int64(n)
+	c.h.Write(p[:n])
 	return n, err
 }
 

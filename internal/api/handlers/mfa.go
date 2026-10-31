@@ -1,12 +1,15 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
+	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -21,15 +24,37 @@ type mfaCodeRequest struct {
 
 // LoginMFA completes a two-step login by verifying a TOTP/recovery code.
 func (h *Handlers) LoginMFA(w http.ResponseWriter, r *http.Request) {
+	limitBody(w, r)
 	var req mfaVerifyRequest
 	if err := decodeJSON(r, &req); err != nil || req.MFAToken == "" || req.Code == "" {
 		writeError(w, http.StatusBadRequest, "mfa_token and code required")
 		return
 	}
-	res, err := h.Auth.VerifyLoginMFA(r.Context(), req.MFAToken, req.Code, r.UserAgent(), clientIP(r))
+	// The per-account limit and lockout are applied in VerifyLoginMFA,
+	// shared with wrong passwords.
+	ip := clientIP(r)
+	key := clientip.LimitKey(ip)
+	ipTicket, ok := acquireIP(w, h.mfaLimiter, key, "too many attempts")
+	if !ok {
+		return
+	}
+	res, err := h.Auth.VerifyLoginMFA(r.Context(), req.MFAToken, req.Code, r.UserAgent(), ip)
+	h.settleIP(r, h.mfaLimiter, ipTicket, key, "mfa", errors.Is(err, auth.ErrInvalidCredentials))
+	ctx := context.WithoutCancel(r.Context())
+	var rateErr *auth.RateLimitError
+	if errors.As(err, &rateErr) {
+		writeTooMany(w, "too many attempts", time.Until(rateErr.Until))
+		return
+	}
+	var lockErr *auth.LockoutError
+	if errors.As(err, &lockErr) {
+		writeLocked(w, lockErr.Until)
+		return
+	}
 	if errors.Is(err, auth.ErrInvalidCredentials) {
+		h.auditAccountBlocks(r, err, "mfa")
 		if h.Audit != nil {
-			h.Audit.Write(r.Context(), "", audit.ActionLoginFailed, "mfa", map[string]string{"ip": clientIP(r)})
+			h.Audit.Write(ctx, "", audit.ActionLoginFailed, "mfa", map[string]string{"ip": ip})
 		}
 		writeError(w, http.StatusUnauthorized, "invalid code")
 		return
@@ -39,7 +64,7 @@ func (h *Handlers) LoginMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.Audit != nil && res.User != nil {
-		h.Audit.Write(r.Context(), res.User.ID, audit.ActionLogin, res.User.Username, map[string]string{"mfa": "true"})
+		h.Audit.Write(ctx, res.User.ID, audit.ActionLogin, res.User.Username, map[string]string{"mfa": "true"})
 	}
 	writeJSON(w, http.StatusOK, res)
 }
@@ -96,14 +121,40 @@ func (h *Handlers) MFAEnrollVerify(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes})
 }
 
-// MFADisable clears MFA for the current user.
+// MFADisable clears MFA for the current user after checking a TOTP or
+// recovery code.
+//
+//	DELETE /api/v1/mfa  {"code": "123456"}
 func (h *Handlers) MFADisable(w http.ResponseWriter, r *http.Request) {
 	uid := middleware.UserID(r.Context())
 	if uid == "" {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	if err := h.Auth.DisableTOTP(r.Context(), uid); err != nil {
+	limitKey := "mfa-disable:" + uid
+	if h.mfaDisableLimiter != nil {
+		if ok, retry := h.mfaDisableLimiter.Check(limitKey); !ok {
+			writeRetryAfter(w, retry)
+			writeError(w, http.StatusTooManyRequests, "too many wrong codes, try again later")
+			return
+		}
+	}
+	var req struct {
+		Code string `json:"code"`
+	}
+	_ = decodeJSON(r, &req)
+	err := h.Auth.DisableTOTPWithCode(r.Context(), uid, req.Code)
+	switch {
+	case errors.Is(err, auth.ErrMFAInvalidCode):
+		if h.mfaDisableLimiter != nil {
+			h.mfaDisableLimiter.Fail(limitKey)
+		}
+		h.audit(r, "user.mfa_disable_failed", uid, nil)
+		// 400, not 401: the session is fine, and a 401 makes clients
+		// refresh and resend the same wrong code.
+		writeError(w, http.StatusBadRequest, "invalid code")
+		return
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -114,6 +165,13 @@ func (h *Handlers) MFADisable(w http.ResponseWriter, r *http.Request) {
 // MFAReset (admin only) clears MFA for any user.
 func (h *Handlers) MFAReset(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if id == middleware.UserID(r.Context()) {
+		writeError(w, http.StatusBadRequest, "use DELETE /api/v1/mfa with a code to turn off your own 2FA")
+		return
+	}
+	if _, _, ok := h.requireManageUser(w, r, id); !ok {
+		return
+	}
 	if err := h.Auth.DisableTOTP(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

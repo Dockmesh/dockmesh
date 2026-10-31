@@ -13,6 +13,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/notifications"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/google/uuid"
 )
@@ -182,6 +183,9 @@ func (s *Service) run(ctx context.Context, migrationID string) {
 					Title:    "Stack migration failed: " + m.StackName,
 					Body:     "Phase " + p.status + ": " + err.Error(),
 					Link:     "/migrations",
+					Perm:      rbac.PermStacksView,
+					HostID:    m.SourceHostID,
+					StackName: m.StackName,
 				})
 			}
 			return
@@ -197,6 +201,9 @@ func (s *Service) run(ctx context.Context, migrationID string) {
 			Title:    "Stack migrated: " + m.StackName,
 			Body:     "Moved from " + m.SourceHostID + " to " + m.TargetHostID,
 			Link:     "/migrations",
+			Perm:      rbac.PermStacksView,
+			HostID:    m.TargetHostID,
+			StackName: m.StackName,
 		})
 	}
 }

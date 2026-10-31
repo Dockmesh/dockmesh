@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "sections": [
+    {
+      "title": "Getting started",
+      "items": [
+        { "title": "Introduction", "path": "getting-started/introduction.md" },
+        { "title": "Installation", "path": "getting-started/installation.md" },
+        { "title": "First steps", "path": "getting-started/first-steps.md" },
+        { "title": "Upgrading", "path": "getting-started/upgrading.md" }
+      ]
+    },
+    {
+      "title": "Concepts",
+      "items": [
+        { "title": "Architecture", "path": "concepts/architecture.md" },
+        { "title": "Stacks and the filesystem", "path": "concepts/stacks.md" },
+        { "title": "Hosts and agents", "path": "concepts/hosts-and-agents.md" },
+        { "title": "Permissions", "path": "concepts/permissions.md" }
+      ]
+    },
+    {
+      "title": "Features",
+      "items": [
+        { "title": "Stacks", "path": "features/stacks.md" },
+        { "title": "Git sources", "path": "features/git-sources.md" },
+        { "title": "Templates", "path": "features/templates.md" },
+        { "title": "Environment variables", "path": "features/environment-variables.md" },
+        { "title": "Containers", "path": "features/containers.md" },
+        { "title": "Images", "path": "features/images.md" },
+        { "title": "Volumes", "path": "features/volumes.md" },
+        { "title": "Networks", "path": "features/networks.md" },
+        { "title": "Registries", "path": "features/registries.md" },
+        { "title": "Scaling", "path": "features/scaling.md" },
+        { "title": "Multi-host", "path": "features/multi-host.md" },
+        { "title": "Migration and drain", "path": "features/migration-and-drain.md" },
+        { "title": "Reverse proxy", "path": "features/reverse-proxy.md" },
+        { "title": "Vulnerability scanning", "path": "features/vulnerability-scanning.md" },
+        { "title": "Image updates", "path": "features/image-updates.md" },
+        { "title": "Alerts", "path": "features/alerts.md" },
+        { "title": "Notifications", "path": "features/notifications.md" },
+        { "title": "Audit log", "path": "features/audit-log.md" },
+        { "title": "Authentication", "path": "features/authentication.md" },
+        { "title": "Single sign-on", "path": "features/sso.md" },
+        { "title": "API tokens", "path": "features/api-tokens.md" },
+        { "title": "Monitoring", "path": "features/monitoring.md" }
+      ]
+    },
+    {
+      "title": "Operations",
+      "items": [
+        { "title": "Backups and restore", "path": "operations/backups.md" },
+        { "title": "Disaster recovery", "path": "operations/disaster-recovery.md" },
+        { "title": "Security hardening", "path": "operations/hardening.md" },
+        { "title": "Upgrade", "path": "operations/upgrade.md" },
+        { "title": "Uninstall", "path": "operations/uninstall.md" }
+      ]
+    },
+    {
+      "title": "Reference",
+      "items": [
+        { "title": "dockmesh CLI", "path": "reference/dockmesh-cli.md" },
+        { "title": "dmctl", "path": "reference/dmctl.md" },
+        { "title": "Environment variables", "path": "reference/environment-variables.md" },
+        { "title": "Ports", "path": "reference/ports.md" },
+        { "title": "Filesystem layout", "path": "reference/filesystem-layout.md" },
+        { "title": "API", "path": "reference/api.md" }
+      ]
+    },
+    {
+      "title": "Troubleshooting",
+      "items": [
+        { "title": "Troubleshooting", "path": "troubleshooting/troubleshooting.md" }
+      ]
+    }
+  ]
+}

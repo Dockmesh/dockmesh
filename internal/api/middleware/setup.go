@@ -120,3 +120,22 @@ func SetupGate(state *setup.State) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+// SetupHeader is the request header the install wizard sends on every
+// state-changing /setup call. A page on another origin cannot set it
+// without a CORS preflight, which the API never grants, so a visitor's
+// browser cannot be steered into running or probing the setup.
+const SetupHeader = "X-Dockmesh-Setup"
+
+// RequireSetupHeader rejects requests without SetupHeader.
+func RequireSetupHeader(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(SetupHeader) == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing " + SetupHeader + " header"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

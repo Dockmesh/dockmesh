@@ -177,7 +177,7 @@
         </div>
         {#if job.target_config && Object.keys(job.target_config).length > 0}
           <dl class="bk-drawer-kv">
-            {#each Object.entries(job.target_config) as [k, v] (k)}
+            {#each Object.entries(job.target_config).filter(([k]) => !k.endsWith('_set')) as [k, v] (k)}
               <dt>{k}</dt>
               <dd class="font-mono">{k.includes('secret') || k.includes('password') ? '••••••••' : String(v ?? '—')}</dd>
             {/each}

@@ -61,7 +61,7 @@ build: frontend-build agent-bundle dmctl-bundle backend-build
 
 test:
 	go test -race ./...
-	cd web && npm run check
+	cd web && npm run check && npm test
 
 # Run the v1 regression suite (web/e2e/). Defaults to the dev host at
 # 192.168.10.164:8080 with admin credentials. Override with

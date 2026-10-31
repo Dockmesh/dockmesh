@@ -7,18 +7,18 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
-
-	dtypes "github.com/docker/docker/api/types"
 )
 
 // WSStats streams normalized container stats over a WebSocket.
-// Auth via ?ticket= query parameter (§15.8). Honours ?host= for remote agents.
+// Auth via ?ticket= query parameter. Honours ?host= for remote agents.
 func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
-	if !h.requireWSTicketPerm(w, r, rbac.PermContainersView) {
+	r, ok := h.wsAuth(w, r, rbac.PermContainersView)
+	if !ok {
 		return
 	}
 
@@ -29,9 +29,7 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	containerID := chi.URLParam(r, "id")
-	scopeReq := h.containerScopeReq(r.Context(), target.ID(), containerID)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermContainersLogs, scopeReq, "container "+containerID)
+	if !h.wsContainerAccess(w, r, rbac.PermContainersView, target.ID(), containerID) {
 		return
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -40,6 +38,7 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	h.wsWatch(r, conn, rbac.PermContainersView, target.ID())
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -73,7 +72,7 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 		if ctx.Err() != nil {
 			return
 		}
-		var raw dtypes.StatsJSON
+		var raw container.StatsResponse
 		if err := dec.Decode(&raw); err != nil {
 			if err != io.EOF {
 				slog.Debug("stats decode", "err", err)

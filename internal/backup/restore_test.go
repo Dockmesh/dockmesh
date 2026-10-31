@@ -59,7 +59,7 @@ func TestRestoreVolume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := svc.runNow(ctx, job.ID)
+	run, err := svc.RunNow(ctx, job.ID)
 	if err != nil || run.Status != StatusSuccess {
 		t.Fatalf("%v %+v", err, run)
 	}
@@ -96,9 +96,8 @@ func TestRestoreVolume(t *testing.T) {
 	if err := os.WriteFile(p, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	delete(host.imported, "fresh")
 	if _, err := svc.Restore(ctx, run.ID, RestoreOptions{Target: "fresh"}); err == nil {
-		t.Fatalf("damaged archive restored: %v", err)
+		t.Fatal("damaged archive restored")
 	}
 	if _, ok := host.imported["fresh"]; ok {
 		t.Fatal("damaged archive reached the volume")
@@ -120,7 +119,7 @@ func TestRestoreStack(t *testing.T) {
 	compose := "services:\n  db:\n    image: postgres\n    volumes: [\"pg:/var/lib/postgresql/data\"]\nvolumes:\n  pg: {}\n"
 	vol := tarGz(t, map[string]string{"PG_VERSION": "16"})
 	archive := stackArchive(t, compose, map[string][]byte{"shop_pg": vol})
-	run := storeRun(t, svc, root, "stack", "shop", archive)
+	run := storeRun(ctx, t, svc, root, archive)
 
 	rep, err := svc.Restore(ctx, run, RestoreOptions{Target: "shop-copy", Replace: true})
 	if err != nil {
@@ -141,7 +140,7 @@ func TestRestoreStack(t *testing.T) {
 
 	// The archive misses a volume its manifest lists: nothing is written.
 	broken := stackArchiveManifest(t, compose, []string{"shop_pg", "shop_cache"}, map[string][]byte{"shop_pg": vol})
-	brokenRun := storeRun(t, svc, root, "stack", "shop", broken)
+	brokenRun := storeRun(ctx, t, svc, root, broken)
 	if _, err := svc.Restore(ctx, brokenRun, RestoreOptions{Target: "shop-two"}); !errors.Is(err, ErrArchiveInvalid) {
 		t.Fatalf("incomplete archive: %v", err)
 	}
@@ -188,13 +187,15 @@ func stackArchiveManifest(t *testing.T, compose string, manifest []string, volum
 	return buf.Bytes()
 }
 
-// storeRun puts an archive on the job's target and records a successful
-// run for it, as if a backup had produced it.
-func storeRun(t *testing.T, svc *Service, root, kind, name string, archive []byte) int64 {
+var storedRuns int64
+
+// storeRun puts an archive of stack shop on the job's target and records a
+// successful run for it, as if a backup had produced it.
+func storeRun(ctx context.Context, t *testing.T, svc *Service, root string, archive []byte) int64 {
 	t.Helper()
-	ctx := context.Background()
-	in := volumeJob("job-"+name+"-"+itoa(int64(len(archive))), root)
-	in.Sources = []Source{{Type: kind, Name: name}}
+	storedRuns++
+	in := volumeJob("job-shop-"+itoa(storedRuns), root)
+	in.Sources = []Source{{Type: "stack", Name: "shop"}}
 	job, err := svc.CreateJob(ctx, in)
 	if err != nil {
 		t.Fatal(err)
@@ -215,4 +216,60 @@ func storeRun(t *testing.T, svc *Service, root, kind, name string, archive []byt
 		t.Fatal(err)
 	}
 	return id
+}
+
+func TestRestoreGuards(t *testing.T) {
+	svc, fake, root := newExecTest(t, false)
+	mgr, err := stacks.NewManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.stacks = mgr
+	host := newImportHost(fake)
+	svc.SetHostResolver(host)
+	ctx := context.Background()
+	compose := "services:\n  db:\n    image: postgres\n"
+	vol := tarGz(t, map[string]string{"f": "1"})
+
+	t.Run("copy leaves fixed-name volumes alone", func(t *testing.T) {
+		run := storeRun(ctx, t, svc, root, stackArchive(t, compose, map[string][]byte{"shop_pg": vol, "shared-certs": vol}))
+		rep, err := svc.Restore(ctx, run, RestoreOptions{Target: "shop-copy", Replace: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := host.imported["shared-certs"]; ok {
+			t.Fatal("a copy restore wrote into a volume with a fixed name")
+		}
+		if len(rep.VolumesRestored) != 1 || len(rep.Warnings) != 1 {
+			t.Fatalf("report: %+v", rep)
+		}
+	})
+
+	t.Run("busy stack or volume", func(t *testing.T) {
+		release, err := svc.claimRestore([]string{"stack:shop"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		run := storeRun(ctx, t, svc, root, stackArchive(t, compose, map[string][]byte{"shop_pg": vol}))
+		if _, err := svc.Restore(ctx, run, RestoreOptions{}); !errors.Is(err, ErrRestoreBusy) {
+			t.Fatalf("restore while another one runs: %v", err)
+		}
+		release()
+		if _, err := svc.Restore(ctx, run, RestoreOptions{}); err != nil {
+			t.Fatalf("restore after the other one ended: %v", err)
+		}
+	})
+
+	t.Run("replace needs a recorded checksum", func(t *testing.T) {
+		run := storeRun(ctx, t, svc, root, stackArchive(t, compose, map[string][]byte{"shop_pg": vol}))
+		if _, err := svc.store.db.Exec(`UPDATE backup_runs SET sha256 = '' WHERE id = ?`, run); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.Restore(ctx, run, RestoreOptions{Replace: true}); !errors.Is(err, ErrUnverifiedReplace) {
+			t.Fatalf("replace from an unhashed run: %v", err)
+		}
+		if _, err := svc.Restore(ctx, run, RestoreOptions{}); err != nil {
+			t.Fatalf("merge from an unhashed run: %v", err)
+		}
+	})
 }

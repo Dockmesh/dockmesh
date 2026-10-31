@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
+	dmdb "github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/restore"
 )
 
@@ -137,19 +138,30 @@ func tarSystem(ctx context.Context, db *sql.DB, paths SystemPaths, w io.Writer) 
 	}
 
 	// 3. Data dir → data/…, excluding the live DB (plus WAL/SHM siblings)
-	// since VACUUM INTO already gave us a consistent copy.
+	// since VACUUM INTO already gave us a consistent copy, the
+	// pre-migration snapshots, which hold old secrets and revoked tokens,
+	// and <data>/backups, the default system job target: every archive
+	// would otherwise contain all earlier ones.
 	liveDB, _ := filepath.Abs(paths.DBPath)
-	dataDir, _ := filepath.Abs(paths.DataDir)
-	skip := map[string]bool{
-		// A staged or replaced restore, and the default local backup
-		// folder: a system backup must not contain earlier backups.
-		filepath.Join(dataDir, restore.StagingDir):    true,
-		filepath.Join(dataDir, restore.PreRestoreDir): true,
-		filepath.Join(dataDir, "backups"):             true,
-		liveDB:                                        true,
-		liveDB + "-wal":                               true,
-		liveDB + "-shm":                               true,
-		liveDB + "-journal":                           true,
+	liveDir, liveBase := filepath.Split(liveDB)
+	dataAbs, _ := filepath.Abs(paths.DataDir)
+	// Earlier backups, a staged or replaced restore and the database
+	// snapshots must not end up inside a system backup.
+	excluded := map[string]bool{
+		filepath.Join(dataAbs, "backups"):             true,
+		filepath.Join(dataAbs, restore.StagingDir):    true,
+		filepath.Join(dataAbs, restore.PreRestoreDir): true,
+	}
+	skip := func(abs string) bool {
+		switch abs {
+		case liveDB, liveDB + "-wal", liveDB + "-shm", liveDB + "-journal":
+			return true
+		}
+		if excluded[abs] {
+			return true
+		}
+		dir, name := filepath.Split(abs)
+		return dir == liveDir && dmdb.IsSnapshotName(liveBase, name)
 	}
 	if err := walkInto(paths.DataDir, "data", skip, add); err != nil {
 		_ = tw.Close()
@@ -168,9 +180,10 @@ func tarSystem(ctx context.Context, db *sql.DB, paths SystemPaths, w io.Writer) 
 }
 
 // walkInto walks root and emits each entry under prefix/<rel> via add,
-// skipping absolute paths present in skip. Missing root is treated as
-// an empty set (first-boot installs may not have the dir yet).
-func walkInto(root, prefix string, skip map[string]bool, add func(src, archivePath string, info fs.FileInfo) error) error {
+// skipping absolute paths for which skip returns true (a skipped directory
+// with everything below it). Missing root is
+// treated as an empty set (first-boot installs may not have the dir yet).
+func walkInto(root, prefix string, skip func(abs string) bool, add func(src, archivePath string, info fs.FileInfo) error) error {
 	if _, err := os.Stat(root); err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -182,7 +195,7 @@ func walkInto(root, prefix string, skip map[string]bool, add func(src, archivePa
 			return err
 		}
 		abs, _ := filepath.Abs(p)
-		if skip != nil && skip[abs] {
+		if skip != nil && skip(abs) {
 			if d.IsDir() {
 				return fs.SkipDir
 			}
