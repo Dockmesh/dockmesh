@@ -19,6 +19,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/changelog"
 	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/deploy"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/gitsource"
@@ -107,7 +108,12 @@ type Handlers struct {
 	SetupState        *setup.State     // first-run wizard state; nil = setup never active
 	SetupCommit_      setup.CommitFunc // wizard's commit-runner — wired by main; nil = wizard cannot commit
 	ssoCodes          ssoCodes
-	setupRuns         sync.Map // runID → *setup.Runner; populated when SetupCommit fires
+	// System restore: the live paths, a restart request after staging,
+	// and the end-of-setup step for a restore from the wizard.
+	RestoreConfig  *config.Config
+	RequestRestart func()
+	FinishSetup    func() error
+	setupRuns      sync.Map // runID → *setup.Runner; populated when SetupCommit fires
 	// RBACv2Enforce gates per-host + per-stack scope checks on typed-
 	// resource handlers. Wired from cfg.RBACv2Enforce.
 	RBACv2Enforce bool
@@ -118,6 +124,10 @@ type Handlers struct {
 	proxyNotice *proxyNotice
 	// releaseSections is the embedded changelog, parsed once.
 	releaseSections []*changelog.Section
+	// attentionRows replaces the container fan-out of GET /attention in tests.
+	attentionRows func(ctx context.Context) []containerRow
+	// attentionCertRoutes replaces the proxy certificate probe of GET /attention in tests.
+	attentionCertRoutes func(ctx context.Context) ([]proxy.Route, error)
 	// gitWebhookTrigger replaces GitSource.TriggerSync in tests.
 	gitWebhookTrigger func(ctx context.Context, stackName string)
 }
@@ -171,10 +181,13 @@ type Deps struct {
 	SelfUpdate     *selfupdate.Checker
 	UserPrefs      *userprefs.Store
 	// Changelog is CHANGELOG.md as embedded in the binary.
-	Changelog     string
-	SetupState    *setup.State
-	SetupCommit_  setup.CommitFunc
-	RBACv2Enforce bool
+	Changelog      string
+	SetupState     *setup.State
+	SetupCommit_   setup.CommitFunc
+	RestoreConfig  *config.Config
+	RequestRestart func()
+	FinishSetup    func() error
+	RBACv2Enforce  bool
 }
 
 func New(d Deps) *Handlers {
@@ -228,6 +241,9 @@ func New(d Deps) *Handlers {
 		UserPrefs:      d.UserPrefs,
 		SetupState:     d.SetupState,
 		SetupCommit_:   d.SetupCommit_,
+		RestoreConfig:  d.RestoreConfig,
+		RequestRestart: d.RequestRestart,
+		FinishSetup:    d.FinishSetup,
 		RBACv2Enforce:  d.RBACv2Enforce,
 
 		mfaDisableLimiter: ratelimit.New(5, 15*time.Minute, 15*time.Minute),

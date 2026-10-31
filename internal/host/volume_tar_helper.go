@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
+	"time"
 
-	"github.com/dockmesh/dockmesh/internal/docker"
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
+	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
 const volumeTarHelperImage = "busybox:latest"
@@ -24,8 +26,8 @@ func tarVolumeHelper(ctx context.Context, dc *docker.Client, volumeName string) 
 	}
 	cli := dc.Raw()
 	// ensure helper image present
-	if _, _, err := cli.ImageInspectWithRaw(ctx, volumeTarHelperImage); err != nil {
-		rc, pullErr := cli.ImagePull(ctx, volumeTarHelperImage, dtypes.ImagePullOptions{})
+	if _, err := cli.ImageInspect(ctx, volumeTarHelperImage); err != nil {
+		rc, pullErr := cli.ImagePull(ctx, volumeTarHelperImage, image.PullOptions{})
 		if pullErr != nil {
 			return nil, fmt.Errorf("pull %s: %w", volumeTarHelperImage, pullErr)
 		}
@@ -42,7 +44,8 @@ func tarVolumeHelper(ctx context.Context, dc *docker.Client, volumeName string) 
 			"dockmesh.component": "backup-helper",
 		},
 	}, &container.HostConfig{
-		Binds: []string{volumeName + ":/source:ro"},
+		Binds:     []string{volumeName + ":/source:ro"},
+		LogConfig: docker.HelperLogConfig,
 	}, nil, nil, "")
 	if err != nil {
 		return nil, fmt.Errorf("create helper: %w", err)
@@ -69,17 +72,18 @@ func tarVolumeHelper(ctx context.Context, dc *docker.Client, volumeName string) 
 }
 
 type volumeTarStream struct {
-	ctx     context.Context
-	cli     dockerClient
-	id      string
-	hijack  io.Reader
-	closeFn func()
+	ctx      context.Context
+	cli      dockerClient
+	id       string
+	hijack   io.Reader
+	closeFn  func()
 	leftover []byte
+	// done is set once tar's output ended; a Close before that stops it.
+	done bool
 }
 
 type dockerClient interface {
-	ContainerRemove(ctx context.Context, id string, opts container.RemoveOptions) error
-	ContainerWait(ctx context.Context, id string, condition container.WaitCondition) (<-chan container.WaitResponse, <-chan error)
+	docker.HelperAPI
 }
 
 func (s *volumeTarStream) Read(p []byte) (int, error) {
@@ -92,6 +96,10 @@ func (s *volumeTarStream) Read(p []byte) (int, error) {
 	}
 	var hdr [8]byte
 	if _, err := io.ReadFull(s.hijack, hdr[:]); err != nil {
+		if errors.Is(err, io.EOF) {
+			s.done = true
+			return 0, s.exitErr()
+		}
 		return 0, err
 	}
 	size := binary.BigEndian.Uint32(hdr[4:8])
@@ -113,17 +121,26 @@ func (s *volumeTarStream) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-func (s *volumeTarStream) Close() error {
-	s.closeFn()
-	// Best-effort wait for exit + remove helper.
-	waitCtx, cancel := context.WithCancel(context.Background())
+// exitErr turns the end of the output into io.EOF only when tar exited 0;
+// otherwise the archive is incomplete and the reader must see an error.
+func (s *volumeTarStream) exitErr() error {
+	waitCtx, cancel := context.WithTimeout(s.ctx, time.Minute)
 	defer cancel()
 	waitCh, errCh := s.cli.ContainerWait(waitCtx, s.id, container.WaitConditionNotRunning)
 	select {
-	case <-waitCh:
-	case <-errCh:
+	case w := <-waitCh:
+		if w.StatusCode != 0 {
+			return fmt.Errorf("tar exit %d", w.StatusCode)
+		}
+		return io.EOF
+	case err := <-errCh:
+		return fmt.Errorf("wait for tar: %w", err)
 	}
-	_ = s.cli.ContainerRemove(context.Background(), s.id, container.RemoveOptions{Force: true})
+}
+
+func (s *volumeTarStream) Close() error {
+	s.closeFn()
+	_, _ = docker.FinishHelper(s.ctx, s.cli, s.id, !s.done)
 	return nil
 }
 
@@ -131,7 +148,7 @@ func (s *volumeTarStream) Close() error {
 // merged stdout/stderr. Used for backup pre-hooks.
 func execHelper(ctx context.Context, dc *docker.Client, containerID string, cmd []string) ([]byte, int, error) {
 	cli := dc.Raw()
-	exec, err := cli.ContainerExecCreate(ctx, containerID, dtypes.ExecConfig{
+	exec, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -139,7 +156,7 @@ func execHelper(ctx context.Context, dc *docker.Client, containerID string, cmd 
 	if err != nil {
 		return nil, -1, err
 	}
-	attach, err := cli.ContainerExecAttach(ctx, exec.ID, dtypes.ExecStartCheck{})
+	attach, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecStartOptions{})
 	if err != nil {
 		return nil, -1, err
 	}

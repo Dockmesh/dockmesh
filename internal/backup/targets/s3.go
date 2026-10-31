@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/minio/minio-go/v7"
@@ -13,10 +12,10 @@ import (
 )
 
 type S3Config struct {
-	Endpoint  string `json:"endpoint"`  // "s3.amazonaws.com" or "minio.example.com:9000"
-	Region    string `json:"region"`    // optional, defaults to "us-east-1"
+	Endpoint  string `json:"endpoint"` // "s3.amazonaws.com" or "minio.example.com:9000"
+	Region    string `json:"region"`   // optional, defaults to "us-east-1"
 	Bucket    string `json:"bucket"`
-	Prefix    string `json:"prefix"`    // optional path prefix inside the bucket
+	Prefix    string `json:"prefix"` // optional path prefix inside the bucket
 	AccessKey string `json:"access_key"`
 	SecretKey string `json:"secret_key"`
 	UseSSL    bool   `json:"use_ssl"`
@@ -58,42 +57,22 @@ func NewS3(raw any) (*S3, error) {
 	return &S3{cfg: cfg, client: cli}, nil
 }
 
-// s3Upload buffers writes to a temp file and uploads on Close. Streaming
-// directly via io.Pipe is possible but minio-go needs the size up front
-// for non-multipart uploads; the temp file lets us hash + size + upload
-// in one pass without keeping the whole archive in memory.
-type s3Upload struct {
-	file   *os.File
-	target *S3
-	key    string
-	ctx    context.Context
-}
+// s3PartSize bounds the memory one upload uses: minio-go buffers one part
+// at a time for streams of unknown size, and the 10,000-part limit puts
+// the largest archive at about 320 GiB.
+const s3PartSize = 32 << 20
 
-func (u *s3Upload) Write(p []byte) (int, error) { return u.file.Write(p) }
-
-func (u *s3Upload) Close() error {
-	defer os.Remove(u.file.Name())
-	if _, err := u.file.Seek(0, 0); err != nil {
-		u.file.Close()
-		return err
-	}
-	info, err := u.file.Stat()
-	if err != nil {
-		u.file.Close()
-		return err
-	}
-	_, err = u.target.client.PutObject(u.ctx, u.target.cfg.Bucket, u.key, u.file, info.Size(),
-		minio.PutObjectOptions{ContentType: "application/octet-stream"})
-	u.file.Close()
-	return err
-}
-
+// Open streams the archive as a multipart upload. A failed or aborted
+// upload is cancelled by minio-go, so no partial object is left.
 func (s *S3) Open(ctx context.Context, path string) (io.WriteCloser, error) {
-	f, err := os.CreateTemp("", "dockmesh-s3-")
-	if err != nil {
-		return nil, err
-	}
-	return &s3Upload{file: f, target: s, key: s.objectKey(path), ctx: ctx}, nil
+	key := s.objectKey(path)
+	return startPipeUpload(func(r io.Reader) error {
+		_, err := s.client.PutObject(ctx, s.cfg.Bucket, key, r, -1, minio.PutObjectOptions{
+			ContentType: "application/octet-stream",
+			PartSize:    s3PartSize,
+		})
+		return err
+	}), nil
 }
 
 func (s *S3) Read(ctx context.Context, path string) (io.ReadCloser, error) {

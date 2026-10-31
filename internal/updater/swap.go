@@ -9,7 +9,6 @@ import (
 	"time"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	dnetwork "github.com/docker/docker/api/types/network"
@@ -31,7 +30,7 @@ type newSpec struct {
 // same name. The old container is renamed aside and stopped, not removed,
 // until the new one runs (and passes its healthcheck); any failure before
 // that removes the new container and puts the old one back.
-func swapContainer(ctx context.Context, cli *client.Client, old *dtypes.ContainerJSON, spec newSpec) (string, error) {
+func swapContainer(ctx context.Context, cli *client.Client, old *container.InspectResponse, spec newSpec) (string, error) {
 	if old.HostConfig != nil && old.HostConfig.AutoRemove {
 		return "", errors.New("container was started with --rm; stopping it would delete it, recreate it without auto-remove first")
 	}
@@ -94,7 +93,7 @@ func swapContainer(ctx context.Context, cli *client.Client, old *dtypes.Containe
 // every mount point the new config doesn't already bind by name.
 // Without it, anonymous volumes (`-v /data`, image VOLUME, compose
 // `- /data`) are replaced by fresh empty ones on every recreate.
-func carryVolumes(old []dtypes.MountPoint, cfg *container.Config, hostCfg *container.HostConfig) {
+func carryVolumes(old []container.MountPoint, cfg *container.Config, hostCfg *container.HostConfig) {
 	bound := make(map[string]bool)
 	for _, b := range hostCfg.Binds {
 		if dst := bindTarget(b); dst != "" {

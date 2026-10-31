@@ -195,7 +195,7 @@ func storeEncryptedVolumeRun(t *testing.T, svc *Service, dir string) (*Run, stri
 		t.Fatal(err)
 	}
 
-	tg, err := buildTarget(job.TargetType, job.TargetConfig)
+	tg, err := jobTarget(ctx, svc.store, nil, job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func storeEncryptedVolumeRun(t *testing.T, svc *Service, dir string) (*Run, stri
 		t.Fatal(err)
 	}
 	h := sha256.New()
-	tee := newTeeWriter(w, h)
+	tee := &countingWriter{w: w, h: h}
 	enc, err := wrapEncrypt(tee, svc.secrets)
 	if err != nil {
 		t.Fatal(err)
@@ -220,7 +220,7 @@ func storeEncryptedVolumeRun(t *testing.T, svc *Service, dir string) (*Run, stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.store.finishRun(ctx, runID, "success", tee.size, path, hex.EncodeToString(h.Sum(nil)), nil); err != nil {
+	if err := svc.store.finishRun(ctx, runID, "success", tee.n, path, hex.EncodeToString(h.Sum(nil)), nil); err != nil {
 		t.Fatal(err)
 	}
 	run, err := svc.store.getRun(ctx, runID)

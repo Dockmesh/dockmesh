@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/docker"
-	"github.com/docker/docker/api/types"
 )
 
 // Container-file browsing reuses the VolumeEntry / VolumeFileResult
@@ -272,4 +272,4 @@ func WriteContainerFile(ctx context.Context, cli *docker.Client, id, p string, d
 
 // Ensure types import survives even if the only reference is via
 // docker.Client's exported methods.
-var _ types.ContainerPathStat
+var _ container.PathStat

@@ -83,6 +83,11 @@ type Service struct {
 	metrics   *metricsState
 	acme      *acmeBuffer
 
+	// certMu guards the RouteCerts cache.
+	certMu     sync.Mutex
+	certAt     time.Time
+	certRoutes []Route
+
 	// containerState reports whether the managed container exists and runs;
 	// nil means ask Docker.
 	containerState func(ctx context.Context) (exists, running bool)

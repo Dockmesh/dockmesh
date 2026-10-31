@@ -2,7 +2,7 @@
   // Network detail — editorial. Header + summary tiles + tabs (Overview ·
   // Containers · IPAM). Uses /networks/{id} inspect endpoint. Back-link
   // to /resources?tab=networks. Delete action gated on network.write.
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api, ApiError } from '$lib/api';
   import { Skeleton, EmptyState } from '$lib/components/ui';
@@ -16,11 +16,11 @@
     ChevronLeft, Network as NetworkIcon, Trash2, Copy, Box, RefreshCw
   } from 'lucide-svelte';
 
-  const id = $derived($page.params.id);
-  const hostId = $derived($page.url.searchParams.get('host') || 'local');
+  const id = $derived(page.params.id);
+  const hostId = $derived(page.url.searchParams.get('host') || 'local');
 
   type Tab = 'overview' | 'containers' | 'ipam';
-  let tab = $state<Tab>(((new URLSearchParams($page.url.search).get('tab')) as Tab) || 'overview');
+  let tab = $state<Tab>(((new URLSearchParams(page.url.search).get('tab')) as Tab) || 'overview');
 
   const SYSTEM_NETWORKS = new Set(['bridge', 'host', 'none']);
 
