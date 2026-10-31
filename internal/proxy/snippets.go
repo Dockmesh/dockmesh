@@ -123,8 +123,10 @@ const (
 // What isn't expanded is left for screenCaddyfile to refuse.
 func expandSnippets(text string) (string, error) {
 	e := &snippetExpander{snippets: map[string]string{}}
-	return e.expand(strings.TrimPrefix(text, "\uFEFF"), nil)
+	return e.expand(text, nil)
 }
+
+const byteOrderMark = "\xef\xbb\xbf"
 
 type snippetExpander struct {
 	snippets map[string]string

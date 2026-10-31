@@ -127,10 +127,17 @@ var fileReadingTokens = map[string]bool{
 }
 
 // prepareCaddyfile expands snippet imports and screens the result, which
-// is the text sent to Caddy.
+// is the text sent to Caddy. Caddy's lexer drops a lone CR and a leading
+// byte order mark inside a token, so `imp\rort` would be one token to
+// Caddy but two to the screen; both are refused after CRLF and the first
+// mark are removed.
 func prepareCaddyfile(text string) (string, error) {
 	if len(text) > MaxCaddyfileSize {
 		return "", fmt.Errorf("%w: larger than %d KiB", ErrCaddyfileRejected, MaxCaddyfileSize>>10)
+	}
+	text = strings.ReplaceAll(strings.TrimPrefix(text, byteOrderMark), "\r\n", "\n")
+	if strings.Contains(text, "\r") || strings.Contains(text, byteOrderMark) {
+		return "", fmt.Errorf("%w: carriage returns outside line endings and byte order marks are not supported", ErrCaddyfileRejected)
 	}
 	expanded, err := expandSnippets(text)
 	if err != nil {
