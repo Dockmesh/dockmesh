@@ -1,46 +1,52 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { goto } from '$app/navigation';
+  import { goto, replaceState } from '$app/navigation';
   import { api, ApiError } from '$lib/api';
   import { tick } from 'svelte';
   import { Terminal as XTerm } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
   import '@xterm/xterm/css/xterm.css';
-  import { Card, Badge, Button, Skeleton } from '$lib/components/ui';
-  import { Eyebrow, StatusPill, EdMetric, Sparkline } from '$lib/components/editorial';
-  // Files-tab icons. FilesIcon kept for the tab navigation chip;
-  // Folder/FileText/Link2 are used inside the file browser rows.
-  import { Image as FilesIcon, Search, Folder, File as FileIcon, Link2, Upload, ChevronRight, Save, X as XIcon, Pencil } from 'lucide-svelte';
+  import {
+    Skeleton,
+    StatusChip,
+    Tabs,
+    Menu
+  } from '$lib/components/ui';
+  import type { MenuItem } from '$lib/components/ui/Menu.svelte';
+  import { EdMetric } from '$lib/components/editorial';
+  import ContainerMetrics from '$lib/components/ContainerMetrics.svelte';
+  import type { ChartEvent } from '$lib/components/ui/MetricsChart.svelte';
+  import {
+    Image as FilesIcon,
+    Search,
+    Folder,
+    File as FileIcon,
+    Link2,
+    Upload,
+    ChevronRight,
+    Save,
+    X as XIcon,
+    Pencil
+  } from 'lucide-svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
-  import type { UpdatePreview, UpdateHistoryEntry, MetricsSample } from '$lib/api';
+  import type { UpdatePreview, UpdateHistoryEntry } from '$lib/api';
   import {
-    ChevronLeft,
     Play,
     Square,
     RotateCw,
-    Trash2,
     FileText,
     Terminal as TerminalIcon,
-    Activity,
-    Code2,
     Trash,
-    Link as LinkIcon,
     Download,
     Undo2,
     ExternalLink,
     Package,
-    Info,
-    Network,
-    HardDrive,
-    Tag,
-    Pause,
     PlayCircle,
-    Zap,
     ArrowRight
   } from 'lucide-svelte';
 
@@ -55,16 +61,32 @@
   // Scope-aware perm gates: containers.update / .exec also require the
   // caller's role-scope to cover this container's host + stack (if any).
   const ctxStack = $derived(info?.Config?.Labels?.['com.docker.compose.project'] as string | undefined);
+  const ctxService = $derived(info?.Config?.Labels?.['com.docker.compose.service'] as string | undefined);
   const ctxHost = $derived(targetHost);
   const canControl = $derived(allowed('containers.update', { stack: ctxStack, host: ctxHost }));
   const canExec = $derived(allowed('containers.exec', { stack: ctxStack, host: ctxHost }));
   let loading = $state(true);
-  let tab = $state<'overview' | 'logs' | 'exec' | 'updates' | 'inspect' | 'network' | 'files'>('overview');
+  type TabKey = 'overview' | 'logs' | 'exec' | 'updates' | 'inspect' | 'network' | 'files';
+  const TAB_KEYS: TabKey[] = ['overview', 'logs', 'exec', 'updates', 'inspect', 'network', 'files'];
+  // ?tab= deep-links a section (row menus on the list link to logs and the
+  // terminal); switching tabs rewrites it without a navigation.
+  function tabFromUrl(): TabKey {
+    const t = page.url.searchParams.get('tab') as TabKey | null;
+    return t && TAB_KEYS.includes(t) ? t : 'overview';
+  }
+  let tab = $state<TabKey>(tabFromUrl());
+  // A terminal opened from a link waits for Attach instead of starting a
+  // session (and an audit entry) on page load.
+  let autoAttach = tab !== 'exec';
+  $effect(() => {
+    const want = tab;
+    const url = new URL(page.url.href);
+    if ((url.searchParams.get('tab') ?? 'overview') === want) return;
+    if (want === 'overview') url.searchParams.delete('tab');
+    else url.searchParams.set('tab', want);
+    replaceState(url, {});
+  });
 
-  // More-menu dropdown for the header action cluster + env-show-more
-  // toggle for the Identity block. Both are local UX state, no
-  // persistence.
-  let moreOpen = $state(false);
   let envExpanded = $state(false);
   let logFilter = $state<'all' | 'error' | 'warn' | 'info' | 'fatal'>('all');
   let logQuery = $state('');
@@ -392,15 +414,6 @@
   // updatePreview-dependent deriveds are declared further down, right
   // after `let updatePreview = …`, to avoid TDZ.
 
-  // For remote hosts in 3.1.2.4: Logs / Stats / Terminal / Inspect work.
-  // Updates is still local-only (image pulls live on the central server's
-  // docker daemon — that one comes in 3.1.3 with stack deploy).
-  $effect(() => {
-    if (isRemote && tab === 'updates') {
-      tab = 'inspect';
-    }
-  });
-
   // Updates state
   let updatePreview = $state<UpdatePreview | null>(null);
   let updateHistory = $state<UpdateHistoryEntry[]>([]);
@@ -469,41 +482,7 @@
   }
   let stats = $state<StatsSample | null>(null);
   let statsHistory = $state<StatsSample[]>([]);
-  let statsConnected = $state(false);
   let statsWs: WebSocket | null = null;
-
-  // History metrics (server-side collected)
-  type HistoryRange = '1h' | '6h' | '24h' | '7d' | '30d';
-  let historyRange = $state<HistoryRange>('1h');
-  let historySamples = $state<MetricsSample[]>([]);
-  let historyLoading = $state(false);
-
-  const RANGE_SECONDS: Record<HistoryRange, number> = {
-    '1h': 3600,
-    '6h': 6 * 3600,
-    '24h': 24 * 3600,
-    '7d': 7 * 86400,
-    '30d': 30 * 86400
-  };
-
-  function rangeResolution(r: HistoryRange): 'raw' | '1m' | '1h' {
-    if (r === '1h' || r === '6h') return 'raw';
-    if (r === '24h' || r === '7d') return '1m';
-    return '1h';
-  }
-
-  async function loadHistory() {
-    historyLoading = true;
-    try {
-      const to = Math.floor(Date.now() / 1000);
-      const from = to - RANGE_SECONDS[historyRange];
-      historySamples = await api.containers.metrics(id, from, to, rangeResolution(historyRange));
-    } catch { /* ignore — empty history is fine */
-      historySamples = [];
-    } finally {
-      historyLoading = false;
-    }
-  }
 
   // Exec
   let execContainer: HTMLDivElement | null = $state(null);
@@ -702,7 +681,6 @@
       const sock = new WebSocket(`${proto}//${location.host}/api/v1/ws/stats/${id}?ticket=${ticket}${hostQs}`);
       statsWs = sock;
       statsWs.onopen = () => {
-        statsConnected = true;
         statsReconnectAttempt = 0;
       };
       statsWs.onmessage = (ev) => {
@@ -715,7 +693,6 @@
       };
       statsWs.onclose = () => {
         if (statsWs !== sock) return;
-        statsConnected = false;
         scheduleStatsReconnect();
       };
     } catch {
@@ -738,7 +715,6 @@
     statsUserClosed = true;
     if (statsReconnectTimer) { clearTimeout(statsReconnectTimer); statsReconnectTimer = null; }
     if (statsWs) { statsWs.close(); statsWs = null; }
-    statsConnected = false;
   }
 
   // ---------- Exec ----------
@@ -876,7 +852,9 @@
       disconnectLogs();
       disconnectExec();
       connectStats();
-      loadHistory();
+      if (!isRemote) {
+        api.containers.updateHistory(id).then((h) => (updateHistory = h)).catch(() => {});
+      }
     } else if (tab === 'logs') {
       disconnectExec();
       disconnectStats();
@@ -884,7 +862,8 @@
     } else if (tab === 'exec') {
       disconnectLogs();
       disconnectStats();
-      tick().then(connectExec);
+      if (autoAttach) tick().then(connectExec);
+      autoAttach = true;
     } else if (tab === 'updates') {
       disconnectLogs();
       disconnectExec();
@@ -911,7 +890,7 @@
       const name = svc || containerName(info) || id.slice(0, 12);
       if (fromStack && proj) {
         pageContext.set(name, [
-          { label: 'stacks', href: '/stacks' },
+          { label: 'Stacks', href: '/stacks' },
           { label: proj, href: `/stacks/${encodeURIComponent(proj)}` },
         ]);
       } else {
@@ -926,16 +905,6 @@
     return (inf?.Name ?? '').replace(/^\//, '');
   }
 
-  function portList(inf: any): string {
-    if (!inf?.NetworkSettings?.Ports) return '—';
-    const out: string[] = [];
-    for (const [priv, bindings] of Object.entries(inf.NetworkSettings.Ports)) {
-      if (Array.isArray(bindings) && bindings.length > 0) {
-        for (const b of bindings as any[]) out.push(`${b.HostPort}→${priv}`);
-      }
-    }
-    return out.join(', ') || '—';
-  }
 
   function formatBytes(n: number): string {
     if (n < 1024) return `${n} B`;
@@ -944,14 +913,6 @@
     return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
   }
 
-  function sparkPath(values: number[], max: number, w: number, h: number): string {
-    if (values.length === 0) return '';
-    const m = max || Math.max(1, ...values);
-    const stepX = w / Math.max(1, values.length - 1);
-    return values
-      .map((v, i) => `${i === 0 ? 'M' : 'L'}${(i * stepX).toFixed(1)},${(h - (v / m) * h).toFixed(1)}`)
-      .join(' ');
-  }
 
   // JSON syntax highlighting for Inspect tab
   function highlightJSON(obj: any): string {
@@ -986,135 +947,107 @@
     return result;
   }
 
-  function sparkArea(values: number[], max: number, w: number, h: number): string {
-    if (values.length === 0) return '';
-    const m = max || Math.max(1, ...values);
-    const stepX = w / Math.max(1, values.length - 1);
-    const pts = values
-      .map((v, i) => `${(i * stepX).toFixed(1)},${(h - (v / m) * h).toFixed(1)}`)
-      .join(' L');
-    return `M0,${h} L${pts} L${w},${h} Z`;
-  }
+
+  const statusTone = $derived.by<{ tone: 'ok' | 'warn' | 'bad' | 'off'; label: string }>(() => {
+    const st = info?.State;
+    if (!st) return { tone: 'off', label: 'unknown' };
+    if (st.Paused) return { tone: 'warn', label: 'paused' };
+    if (st.Running) {
+      if (st.Health?.Status === 'unhealthy') return { tone: 'warn', label: 'unhealthy' };
+      if (st.Restarting) return { tone: 'warn', label: 'restarting' };
+      return { tone: 'ok', label: 'running' };
+    }
+    if (st.Status === 'dead' || (st.ExitCode ?? 0) !== 0) return { tone: 'bad', label: st.Status === 'dead' ? 'dead' : `exited ${st.ExitCode}` };
+    return { tone: 'off', label: st.Status ?? 'stopped' };
+  });
+
+  const hostName = $derived(
+    hosts.available.find((h) => h.id === targetHost)?.name ?? (targetHost === 'local' ? 'the server' : targetHost)
+  );
+
+  const chartEvents = $derived.by<ChartEvent[]>(() => {
+    const out: ChartEvent[] = [];
+    const started = info?.State?.StartedAt ? Date.parse(info.State.StartedAt) : NaN;
+    if (isFinite(started)) out.push({ ts: started, label: 'container started', color: 'var(--warn)' });
+    for (const e of updateHistory) {
+      const t = Date.parse(e.applied_at);
+      if (isFinite(t)) out.push({ ts: t, label: `image updated · ${e.image_ref}` });
+      const rb = e.rolled_back_at ? Date.parse(e.rolled_back_at) : NaN;
+      if (isFinite(rb)) out.push({ ts: rb, label: `rolled back · ${e.image_ref}`, color: 'var(--warn)' });
+    }
+    return out;
+  });
+
+  const liveSample = $derived(
+    stats
+      ? {
+          cpu_percent: stats.cpu_percent,
+          mem_used: stats.mem_used,
+          mem_limit: stats.mem_limit,
+          net_rx: stats.net_rx,
+          net_tx: stats.net_tx,
+          blk_read: stats.blk_read,
+          blk_write: stats.blk_write
+        }
+      : null
+  );
+
+  const headerMenu = $derived.by<MenuItem[]>(() => {
+    if (!info) return [];
+    const items: MenuItem[] = [];
+    if (canControl && info.State?.Running && !info.State?.Paused) items.push({ label: 'Pause', onclick: () => action('pause') });
+    if (canControl && (info.State?.Running || info.State?.Paused)) items.push({ label: 'Kill', onclick: killContainer });
+    items.push({ label: 'Copy ID', onclick: () => void copyWithToast(info.Id ?? id, 'Copied container ID') });
+    if (ctxStack) items.push({ label: `Open stack ${ctxStack}`, href: `/stacks/${encodeURIComponent(ctxStack)}` });
+    if (canControl) items.push({ separator: true }, { label: 'Remove…', danger: true, onclick: remove });
+    return items;
+  });
+
+  $effect(() => {
+    if (info && !tabItems.some((t) => t.key === tab)) tab = 'overview';
+  });
+
+  const tabItems = $derived([
+    { key: 'overview', label: 'Overview' },
+    { key: 'logs', label: 'Logs', count: wsConnected ? 'live' : null },
+    ...(canExec ? [{ key: 'exec', label: 'Terminal', count: execConnected ? 'attached' : null }] : []),
+    { key: 'inspect', label: 'Inspect' },
+    {
+      key: 'network',
+      label: 'Network',
+      count: info && Object.keys(info.NetworkSettings?.Networks ?? {}).length > 0 ? Object.keys(info.NetworkSettings?.Networks ?? {}).length : null
+    },
+    ...(canExec ? [{ key: 'files', label: 'Files' }] : []),
+    ...(canControl && !isRemote ? [{ key: 'updates', label: 'Updates', count: updateHistory.length || null }] : [])
+  ]);
 </script>
 
-<section class="ctn-frame">
+<section class="dm-page ctn-frame">
   {#if loading}
     <div class="ctn-skeleton">
       <Skeleton width="40%" height="2rem" />
       <Skeleton width="70%" height="1rem" />
     </div>
   {:else if info}
-    {@const projectLabel = info.Config?.Labels?.['com.docker.compose.project']}
-    {@const serviceLabel = info.Config?.Labels?.['com.docker.compose.service']}
 
-    <!-- Editorial header — title alone on its own row, then a SECOND
-         row below with status pill + version pill + uptime + host + id
-         in a mono meta line. Buttons compress to Restart / Stop / Kill /
-         More menu (Recreate / Pause / Copy ID / Remove); matches the
-         mockup's container-detail header pattern. -->
-    <header class="ctn-header">
-      <div class="ctn-header-text">
-        <h1 class="ed-title ctn-title">{serviceLabel || containerName(info) || id.slice(0, 12)}</h1>
-        <div class="ctn-meta-row">
-          {#if info.State?.Paused}
-            <StatusPill status="warn" label="paused" />
-          {:else if info.State?.Running}
-            <StatusPill status="running" />
-          {:else}
-            <StatusPill status="stopped" label={info.State?.Status ?? 'stopped'} />
-          {/if}
-          {#if imageTag}
-            <span class="dm-pill dm-pill-neutral ctn-meta-pill">{imageTag}</span>
-          {/if}
-          <span class="ctn-meta-sep">·</span>
-          <span class="ctn-meta-cell">up {fmtRelTime(info.State?.StartedAt)}{#if (info.RestartCount ?? 0) > 0}, {info.RestartCount} restart{info.RestartCount === 1 ? '' : 's'}{/if}</span>
-          {#if isRemote && hosts.selected}
-            <span class="ctn-meta-sep">·</span>
-            <span class="ctn-meta-cell">{hosts.selected.name}</span>
-          {/if}
-          <span class="ctn-meta-sep">·</span>
-          <span class="ctn-meta-cell">id {id.slice(0, 12)}</span>
-        </div>
-      </div>
+    <header class="dm-ph ctn-ph">
+      <h1>{ctxService || containerName(info) || id.slice(0, 12)}</h1>
+      <StatusChip tone={statusTone.tone} label={statusTone.label} title={info.State?.Status} />
+      <span class="dm-sub dm-mono ctn-ph-sub">
+        {imageTag ? `${imageTag} · ` : ''}{info.State?.Running ? `up ${fmtRelTime(info.State?.StartedAt).replace(' ago', '')}` : 'not running'}{(info.RestartCount ?? 0) > 0 ? ` · ${info.RestartCount} restart${info.RestartCount === 1 ? '' : 's'}` : ''} · {hostName} · {id.slice(0, 12)}
+      </span>
+      <span class="dm-sp"></span>
       {#if canControl}
-        <div class="ed-actions ctn-actions">
-          {#if info.State?.Paused}
-            <button class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => action('unpause')}>
-              <PlayCircle size={13} strokeWidth={1.5} /> Resume
-            </button>
-            <button class="dm-btn dm-btn-ghost dm-btn-sm ctn-btn-kill" onclick={killContainer}>
-              <Zap size={13} strokeWidth={1.5} /> Kill
-            </button>
-          {:else if info.State?.Running}
-            <button class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => action('restart')}>
-              <RotateCw size={13} strokeWidth={1.5} /> Restart
-            </button>
-            <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick={() => action('stop')}>
-              <Square size={13} strokeWidth={1.5} /> Stop
-            </button>
-            <button class="dm-btn dm-btn-ghost dm-btn-sm ctn-btn-kill" onclick={killContainer}>
-              <Zap size={13} strokeWidth={1.5} /> Kill
-            </button>
-          {:else}
-            <button class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => action('start')}>
-              <Play size={13} strokeWidth={1.5} /> Start
-            </button>
-          {/if}
-          <div class="ctn-more-wrap">
-            <button
-              type="button"
-              class="dm-btn dm-btn-ghost dm-btn-sm ctn-more-btn"
-              onclick={() => (moreOpen = !moreOpen)}
-              aria-haspopup="menu"
-              aria-expanded={moreOpen}
-              aria-label="More actions"
-              title="More"
-            >
-              <span class="ctn-more-dots" aria-hidden="true">···</span>
-            </button>
-            {#if moreOpen}
-              <button
-                type="button"
-                class="ctn-more-overlay"
-                aria-label="Close menu"
-                onclick={() => (moreOpen = false)}
-              ></button>
-              <div class="ctn-more-menu" role="menu">
-                {#if info.State?.Running}
-                  <button
-                    type="button"
-                    class="ctn-more-item"
-                    role="menuitem"
-                    onclick={() => { moreOpen = false; action('pause'); }}
-                  >
-                    <Pause size={12} strokeWidth={1.5} /> Pause
-                  </button>
-                {/if}
-                <button
-                  type="button"
-                  class="ctn-more-item"
-                  role="menuitem"
-                  onclick={async () => {
-                    moreOpen = false;
-                    void copyWithToast(info.Id ?? id, 'Copied container ID');
-                  }}
-                >
-                  <FileText size={12} strokeWidth={1.5} /> Copy ID
-                </button>
-                <div class="ctn-more-sep"></div>
-                <button
-                  type="button"
-                  class="ctn-more-item ctn-more-item-danger"
-                  role="menuitem"
-                  onclick={() => { moreOpen = false; remove(); }}
-                >
-                  <Trash2 size={12} strokeWidth={1.5} /> Remove
-                </button>
-              </div>
-            {/if}
-          </div>
-        </div>
+        {#if info.State?.Paused}
+          <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('unpause')}><PlayCircle size={14} /> Resume</button>
+        {:else if info.State?.Running}
+          <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('restart')}><RotateCw size={14} /> Restart</button>
+          <button type="button" class="dm-btn" onclick={() => action('stop')}><Square size={13} /> Stop</button>
+        {:else}
+          <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('start')}><Play size={14} /> Start</button>
+        {/if}
       {/if}
+      <Menu label="More actions" items={headerMenu} />
     </header>
   {/if}
 
@@ -1126,170 +1059,10 @@
     </div>
   {/if}
 
-  <!-- Live stats — ALWAYS visible above the tab strip (not gated by
-       which tab the operator is on). Mockup-faithful: CPU / Memory /
-       Network are current-state snapshots that stay relevant whether
-       you're reading Logs, opening a Terminal, or browsing Inspect. -->
-  {#if info && stats}
-    {@const cpuVals = statsHistory.map((s) => s.cpu_percent)}
-    {@const memVals = statsHistory.map((s) => s.mem_percent)}
-    {@const rxVals = statsHistory.map((s) => s.net_rx)}
-    {@const txVals = statsHistory.map((s) => s.net_tx)}
-    {@const netMax = Math.max(1, ...rxVals, ...txVals)}
-    {@const netW = 100}
-    {@const netH = 32}
-    {@const netPath = (vals: number[], baseline = false) => {
-      if (vals.length < 2) return '';
-      const pts = vals.map((v, i) => `${(i / (vals.length - 1) * netW).toFixed(1)},${(netH - (v / netMax) * (netH - 2) - 1).toFixed(1)}`);
-      return baseline ? `M0,${netH} L${pts.join(' L')} L${netW},${netH} Z` : `M${pts.join(' L')}`;
-    }}
-    <div class="ctn-stats">
-      <EdMetric
-        label="CPU"
-        value={stats.cpu_percent.toFixed(1)}
-        unit="%"
-        meta={statsHistory.length > 1 ? `${statsHistory.length} samples · last 60s` : 'live'}
-        spark={statsHistory.length > 1 ? cpuVals : undefined}
-        sparkColor={stats.cpu_percent > 85
-          ? 'var(--color-danger-500)'
-          : stats.cpu_percent > 60
-            ? 'var(--color-warning-500)'
-            : 'var(--accent)'}
-      />
-      <EdMetric
-        label="Memory"
-        value={formatBytes(stats.mem_used)}
-        meta={stats.mem_limit > 0
-          ? `${stats.mem_percent.toFixed(0)}% of ${formatBytes(stats.mem_limit)} limit`
-          : 'no limit set'}
-        spark={statsHistory.length > 1 ? memVals : undefined}
-        sparkColor={stats.mem_percent > 85
-          ? 'var(--color-danger-500)'
-          : stats.mem_percent > 60
-            ? 'var(--color-warning-500)'
-            : 'var(--color-success-500)'}
-      />
-      <div class="ed-metric">
-        <div class="ctn-net-head">
-          <span class="ed-metric-label">Network · in / out</span>
-          <span class="ed-metric-meta">MB/s</span>
-        </div>
-        <div class="ed-metric-value">
-          {formatBytes(stats.net_rx)}<span class="unit"> / {formatBytes(stats.net_tx)}</span>
-        </div>
-        {#if statsHistory.length > 1}
-          <svg class="dm-spark" viewBox="0 0 {netW} {netH}" preserveAspectRatio="none">
-            <path d={netPath(txVals, true)} class="dm-spark-fill" style="opacity: 0.07" />
-            <path d={netPath(rxVals)} class="dm-spark-line" style="stroke: var(--accent); opacity: 0.75" />
-            <path d={netPath(txVals)} class="dm-spark-line" style="stroke: var(--color-warning-400); opacity: 0.85" />
-          </svg>
-        {/if}
-        <span class="ed-metric-meta">in solid · out warn · cumulative since start</span>
-      </div>
-    </div>
-  {:else if info && statsConnected}
-    <div class="ctn-stats-pending">waiting for first stats sample…</div>
-  {/if}
-
-  <!-- Editorial tab strip. Live indicators (green dot for active stream)
-       sit on the per-tab counter slot so operators can tell at a glance
-       which feeds are open. -->
-  <div class="ed-tabs ctn-tabs" role="tablist" aria-label="Container sections">
-    <button
-      role="tab"
-      type="button"
-      aria-selected={tab === 'overview'}
-      class="ed-tab"
-      class:active={tab === 'overview'}
-      onclick={() => (tab = 'overview')}
-    >
-      <Info size={13} strokeWidth={1.5} />
-      Overview
-    </button>
-    <button
-      role="tab"
-      type="button"
-      aria-selected={tab === 'logs'}
-      class="ed-tab"
-      class:active={tab === 'logs'}
-      onclick={() => (tab = 'logs')}
-    >
-      <FileText size={13} strokeWidth={1.5} />
-      Logs
-      {#if wsConnected}<span class="count" style="color: var(--color-success-400)">stream</span>{/if}
-    </button>
-    {#if canExec}
-      <button
-        role="tab"
-        type="button"
-        aria-selected={tab === 'exec'}
-        class="ed-tab"
-        class:active={tab === 'exec'}
-        onclick={() => (tab = 'exec')}
-      >
-        <TerminalIcon size={13} strokeWidth={1.5} />
-        Terminal
-        {#if execConnected}<span class="count" style="color: var(--color-success-400)">attached</span>{/if}
-      </button>
-    {/if}
-    <button
-      role="tab"
-      type="button"
-      aria-selected={tab === 'inspect'}
-      class="ed-tab"
-      class:active={tab === 'inspect'}
-      onclick={() => (tab = 'inspect')}
-    >
-      <Code2 size={13} strokeWidth={1.5} />
-      Inspect
-    </button>
-    <button
-      role="tab"
-      type="button"
-      aria-selected={tab === 'network'}
-      class="ed-tab"
-      class:active={tab === 'network'}
-      onclick={() => (tab = 'network')}
-    >
-      <Network size={13} strokeWidth={1.5} />
-      Network
-      {#if info && Object.keys(info.NetworkSettings?.Networks ?? {}).length > 0}
-        <span class="count">{Object.keys(info.NetworkSettings?.Networks ?? {}).length}</span>
-      {/if}
-    </button>
-    {#if canExec}
-    <button
-      role="tab"
-      type="button"
-      aria-selected={tab === 'files'}
-      class="ed-tab"
-      class:active={tab === 'files'}
-      onclick={() => (tab = 'files')}
-    >
-      <FilesIcon size={13} strokeWidth={1.5} />
-      Files
-    </button>
-    {/if}
-    {#if canControl && !isRemote}
-      <button
-        role="tab"
-        type="button"
-        aria-selected={tab === 'updates'}
-        class="ed-tab"
-        class:active={tab === 'updates'}
-        onclick={() => (tab = 'updates')}
-      >
-        <Download size={13} strokeWidth={1.5} />
-        Updates
-        {#if updateHistory.length > 0}<span class="count">{updateHistory.length}</span>{/if}
-      </button>
-    {/if}
-  </div>
+  <Tabs label="Container sections" tabs={tabItems} active={tab} onchange={(k) => (tab = k as TabKey)} />
 
   <!-- Tab panels -->
   {#if tab === 'overview' && info}
-    {@const projectLabel2 = info.Config?.Labels?.['com.docker.compose.project']}
-    {@const serviceLabel2 = info.Config?.Labels?.['com.docker.compose.service']}
     {@const envLines = (info.Config?.Env ?? []) as string[]}
     {@const portsMap = (info.NetworkSettings?.Ports ?? {}) as Record<string, Array<{HostIp: string; HostPort: string}> | null>}
     {@const portRows = Object.entries(portsMap).map(([k, v]) => ({
@@ -1302,13 +1075,20 @@
     {@const cmdParts = [...(info.Config?.Entrypoint ?? []), ...(info.Config?.Cmd ?? [])]}
     {@const restartCount = info.RestartCount ?? info.State?.RestartCount ?? 0}
 
-    <!-- 2-column overview: identity / health / restarts on the left,
-         mounts / networks / stack-context / endpoints in the right rail. -->
+    <ContainerMetrics
+      {id}
+      host={targetHost}
+      {hostName}
+      running={!!info.State?.Running}
+      latest={liveSample}
+      events={chartEvents}
+    />
+
     <div class="ctn-overview">
       <div class="ctn-overview-main">
         <!-- Identity -->
         <section class="ctn-block">
-          <Eyebrow>Identity</Eyebrow>
+          <h3 class="ctn-h3">Identity</h3>
           <dl class="ctn-kv">
             <dt>id</dt>
             <dd>{id.slice(0, 12)}</dd>
@@ -1375,7 +1155,7 @@
              only exposes one healthcheck per container; we render exactly
              that one row, status-coloured. -->
         <section class="ctn-block">
-          <Eyebrow>Health</Eyebrow>
+          <h3 class="ctn-h3">Health</h3>
           {#if !health || health.Status === 'none'}
             <p class="ctn-empty-line">No <code>healthcheck</code> configured. Status comes from the container's running/stopped state only.</p>
           {:else}
@@ -1437,7 +1217,7 @@
         <!-- Restart history (summarized — Docker doesn't expose individual
              restart events, so we show count + last-start + last-exit). -->
         <section class="ctn-block">
-          <Eyebrow>Restart history · {restartCount} restart{restartCount === 1 ? '' : 's'}</Eyebrow>
+          <h3 class="ctn-h3">Restart history · {restartCount} restart{restartCount === 1 ? '' : 's'}</h3>
           {#if restartCount === 0 && info.State?.Running}
             <p class="ctn-empty-line">No restarts since this container was created. Running cleanly since <strong>{fmtRelTime(info.State?.StartedAt)}</strong>.</p>
           {:else}
@@ -1478,12 +1258,9 @@
         </section>
       </div>
 
-      <!-- Right rail. Mounts / Networks / Endpoints sit on `.dm-card`
-           (filled background); Stack context uses `.dm-card-flat`
-           (border only, transparent) — same chrome as the mockup. -->
       <aside class="ctn-overview-rail">
         <section class="dm-card ctn-rail-card">
-          <Eyebrow>Mounts · {mounts.length}</Eyebrow>
+          <h3 class="ctn-h3">Mounts · {mounts.length}</h3>
           {#if mounts.length === 0}
             <p class="ctn-empty-line">No volumes or bind mounts.</p>
           {:else}
@@ -1501,7 +1278,7 @@
         </section>
 
         <section class="dm-card ctn-rail-card">
-          <Eyebrow>Networks · {networks.length}</Eyebrow>
+          <h3 class="ctn-h3">Networks · {networks.length}</h3>
           {#if networks.length === 0}
             <p class="ctn-empty-line">Not attached to any user network.</p>
           {:else}
@@ -1519,21 +1296,21 @@
           {/if}
         </section>
 
-        {#if projectLabel2}
+        {#if ctxStack}
           <section class="dm-card-flat ctn-rail-card">
-            <Eyebrow>Stack context</Eyebrow>
+            <h3 class="ctn-h3">Stack context</h3>
             <p class="ctn-stack-blurb">
-              Service <em class="ed-accent">{serviceLabel2 || '—'}</em> of stack
-              <em class="ed-accent">{projectLabel2}</em>.
+              Service <em class="ed-accent">{ctxService || '—'}</em> of stack
+              <em class="ed-accent">{ctxStack}</em>.
             </p>
-            <a href={`/stacks/${encodeURIComponent(projectLabel2)}`} class="dm-btn dm-btn-secondary dm-btn-sm ctn-stack-link">
-              ↑ Open {projectLabel2}
+            <a href={`/stacks/${encodeURIComponent(ctxStack)}`} class="dm-btn dm-btn-secondary dm-btn-sm ctn-stack-link">
+              ↑ Open {ctxStack}
             </a>
           </section>
         {/if}
 
         <section class="dm-card ctn-rail-card">
-          <Eyebrow>Endpoints</Eyebrow>
+          <h3 class="ctn-h3">Endpoints</h3>
           {#if portRows.length === 0}
             <p class="ctn-empty-line">No exposed ports.</p>
           {:else}
@@ -1640,7 +1417,7 @@
         <span>tail · since boot</span>
       </div>
     </div>
-  {:else if tab === 'exec'}
+  {:else if tab === 'exec' && canExec}
     <div class="ctn-tab-pane">
       <div class="ctn-term-bar">
         <div class="ctn-term-shell-pills">
@@ -1686,7 +1463,7 @@
         {/if}
       </div>
     </div>
-  {:else if tab === 'updates'}
+  {:else if tab === 'updates' && canControl && !isRemote}
     <div class="ctn-tab-pane ctn-updates-grid">
       <div class="ctn-updates-main">
         {#if previewLoading && !updatePreview}
@@ -1702,7 +1479,7 @@
               <div class="ctn-updates-banner-head">
                 <div class="ctn-updates-banner-text">
                   <div class="ctn-updates-banner-eyebrow">
-                    <Eyebrow>Update available</Eyebrow>
+                    <h3 class="ctn-h3">Update available</h3>
                   </div>
                   <div class="ctn-updates-vdiff">
                     <span class="ctn-updates-vdiff-old">{currentTagShort || imageTag}</span>
@@ -1763,7 +1540,7 @@
                     <Package size={18} strokeWidth={1.5} />
                   </span>
                   <div>
-                    <Eyebrow>Up to date</Eyebrow>
+                    <h3 class="ctn-h3">Up to date</h3>
                     <div class="ctn-updates-image-ref">{updatePreview.image}</div>
                     <div class="ctn-updates-image-meta">
                       <div>local: {shortDigest(updatePreview.current_digest)} · built {fmtRelTime(updatePreview.current_created)}</div>
@@ -1787,17 +1564,13 @@
           {/if}
 
           {#if updatePreview.latest_release?.body}
-            <!-- Release notes — render the upstream body verbatim in a
-                 framed text block. We tried parsing it into a tagged
-                 bullet list, but real release bodies are often prose
-                 (Vaultwarden, Caddy, …), so the structured list lost
-                 information. The text block keeps everything. -->
+            <!-- Release bodies are often prose, so they are shown verbatim. -->
             <section class="ctn-block">
               <div class="ctn-updates-release-head">
                 <div class="ctn-updates-release-title">
-                  <Eyebrow>
+                  <h3 class="ctn-h3">
                     Release notes{#if updatePreview.latest_release.tag} · {updatePreview.latest_release.tag}{/if}
-                  </Eyebrow>
+                  </h3>
                   {#if updatePreview.latest_release.name && updatePreview.latest_release.name !== updatePreview.latest_release.tag}
                     <h3>{updatePreview.latest_release.name}</h3>
                   {/if}
@@ -1817,19 +1590,15 @@
             </section>
           {/if}
 
-          <!-- Image facts mini-grid — only the data we actually have:
-               size on the registry, push time, local digest. No fake
-               "size delta" or "CVEs resolved" since we don't compute
-               those yet. -->
           {#if updatePreview.local_size || updatePreview.remote_size || updatePreview.remote_last_updated || updatePreview.current_digest}
             <section class="ctn-block">
-              <Eyebrow>
+              <h3 class="ctn-h3">
                 {#if updateAvailable && currentTagShort && newTag}
                   Image diff · {updatePreview.image.split(':')[0]}:{currentTagShort} → {newTag}
                 {:else}
                   Image · {updatePreview.image}
                 {/if}
-              </Eyebrow>
+              </h3>
               <div class="ctn-updates-imgdiff">
                 {#if sizeDeltaMB !== null}
                   <div class="ed-metric ctn-updates-metric">
@@ -1884,7 +1653,7 @@
 
       <aside class="ctn-updates-rail">
         <div class="dm-card-flat ctn-updates-rail-card">
-          <Eyebrow>Version history</Eyebrow>
+          <h3 class="ctn-h3">Version history</h3>
           <ul class="ctn-updates-versions">
             <li>
               <span class="ctn-updates-version-tag current">{currentTagShort || imageTag || '—'}</span>
@@ -1909,7 +1678,7 @@
 
         {#if updateHistory.length > 0}
           <div class="dm-card-flat ctn-updates-rail-card">
-            <Eyebrow>Rollback timeline</Eyebrow>
+            <h3 class="ctn-h3">Rollback timeline</h3>
             <ol class="ctn-updates-history">
               <span class="ctn-updates-history-rule" aria-hidden="true"></span>
               {#each updateHistory as e, i (e.id)}
@@ -1946,7 +1715,7 @@
   {:else if tab === 'inspect'}
     <div class="ctn-tab-pane">
       <div class="ctn-inspect-bar">
-        <Eyebrow>docker inspect · <em class="ed-accent">{containerName(info) || id.slice(0, 12)}</em></Eyebrow>
+        <h3 class="ctn-h3">docker inspect · <em class="ed-accent">{containerName(info) || id.slice(0, 12)}</em></h3>
         <div class="ctn-inspect-actions">
           {#each ['pretty', 'raw'] as v (v)}
             <button
@@ -1977,10 +1746,10 @@
     {@const netEntries = Object.entries(info.NetworkSettings?.Networks ?? {}) as Array<[string, any]>}
     {@const portsMap2 = (info.NetworkSettings?.Ports ?? {}) as Record<string, Array<{HostIp: string; HostPort: string}> | null>}
     {@const portRows2 = Object.entries(portsMap2).map(([k, v]) => ({ port: k, bindings: (v ?? []) as Array<{HostIp: string; HostPort: string}> }))}
-    <div class="ctn-network-pane-v2">
+    <div class="ctn-network-pane">
       <!-- LEFT: Connected networks -->
       <div>
-        <Eyebrow>Connected networks</Eyebrow>
+        <h3 class="ctn-h3">Connected networks</h3>
         {#if netEntries.length === 0}
           <div class="ctn-network-empty">
             <p>Not attached to any user network. Default bridge or host networking.</p>
@@ -2014,7 +1783,7 @@
 
       <!-- RIGHT: Port bindings -->
       <div>
-        <Eyebrow>Port bindings · {portRows2.length}</Eyebrow>
+        <h3 class="ctn-h3">Port bindings · {portRows2.length}</h3>
         {#if portRows2.length === 0}
           <div class="ctn-network-empty">
             <p>No ports declared in the image or compose.</p>
@@ -2048,7 +1817,7 @@
       <!-- BOTTOM: Throughput row, full-width -->
       {#if stats}
         <div class="ctn-network-throughput">
-          <Eyebrow>Throughput · last 60s</Eyebrow>
+          <h3 class="ctn-h3">Throughput · last 60s</h3>
           <div class="ctn-throughput-grid">
             <EdMetric
               label="rx total"
@@ -2281,108 +2050,16 @@
 </section>
 
 <style>
-  /* ─────────── Editorial container-detail layout ─────────── */
-  .ctn-frame {
-    display: flex;
-    flex-direction: column;
-    gap: 22px;
-    max-width: 1480px;
-    padding-bottom: 48px;
-  }
+  .ctn-frame { gap: 18px; }
+  .ctn-ph h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40ch; }
+  .ctn-ph-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+  .ctn-h3 { margin: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--subtle); }
+  .ctn-h3 :global(em) { color: var(--fg); }
   .ctn-skeleton { display: flex; flex-direction: column; gap: 10px; }
 
-  .ctn-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 24px;
-    flex-wrap: wrap;
-  }
-  .ctn-header-text { min-width: 0; max-width: 80ch; flex: 1 1 40ch; }
-  .ctn-title {
-    font-size: 24px;
-    line-height: 1.2;
-    letter-spacing: -0.02em;
-    margin-top: 8px;
-  }
-  /* Container service-names look right in mono-bold (programmatic identity)
-     — override the global .ed-title em italic-serif treatment. */
-  .ctn-title :global(em) {
-    font-family: var(--font-mono);
-    font-style: normal;
-    font-weight: 700;
-    color: var(--fg);
-    letter-spacing: -0.01em;
-  }
-  /* Meta row sits on its OWN line below the title — status pill + version
-     pill + uptime + host + id. Mockup-faithful. */
-  .ctn-meta-row {
-    margin-top: 12px;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 12px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-subtle);
-    letter-spacing: 0.02em;
-  }
   .ctn-meta-sep { color: var(--border-strong); }
-  .ctn-meta-cell { color: var(--fg-subtle); }
-  .ctn-meta-pill { font-size: 9.5px; }
 
-  /* Action cluster + more menu */
-  .ctn-actions { gap: 6px; }
-  .ctn-btn-kill { color: var(--color-danger-400); }
-  .ctn-btn-kill:hover { color: var(--color-danger-500); background: color-mix(in srgb, var(--color-danger-500) 10%, transparent); }
-  .ctn-more-wrap { position: relative; }
-  .ctn-more-btn { padding: 0.35rem 0.55rem; }
-  .ctn-more-dots {
-    font-family: var(--font-mono);
-    font-size: 14px;
-    letter-spacing: 0;
-    line-height: 1;
-    transform: translateY(-3px);
-  }
-  .ctn-more-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 30;
-    background: transparent;
-    border: 0;
-    cursor: default;
-  }
-  .ctn-more-menu {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    min-width: 180px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    padding: 4px;
-    z-index: 40;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  }
-  .ctn-more-item {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 7px 10px;
-    background: transparent;
-    border: 0;
-    color: var(--fg);
-    font-size: 12.5px;
-    cursor: pointer;
-    text-align: left;
-    border-radius: 4px;
-    font-family: inherit;
-  }
-  .ctn-more-item:hover { background: var(--surface-hover); }
-  .ctn-more-item-danger { color: var(--color-danger-400); }
-  .ctn-more-item-danger:hover { background: color-mix(in srgb, var(--color-danger-500) 12%, transparent); }
-  .ctn-more-sep { height: 1px; background: var(--border); margin: 4px 0; }
+  .ctn-meta-pill { font-size: 9.5px; }
 
   .ctn-remote {
     display: inline-flex;
@@ -2398,29 +2075,6 @@
   }
   .ctn-remote-bullet { color: var(--color-brand-400); font-weight: 700; }
 
-  .ctn-tabs { margin-top: 6px; }
-
-  .ctn-stats {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 12px;
-    margin-top: 14px;
-  }
-  .ctn-stats-pending {
-    margin-top: 14px;
-    padding: 18px 0;
-    color: var(--fg-muted);
-    font-size: 13px;
-    text-align: center;
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  /* ─────────── 2-column overview ──────────
-     Right rail is fixed 320px (smaller than the left main column) per
-     the mockup's grid: `minmax(0, 1fr) 320px`. Mounts/Networks/Endpoints
-     get filled-card chrome (`.dm-card`); Stack-context uses the flat
-     border-only variant (`.dm-card-flat`). */
   .ctn-overview {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 320px;
@@ -2433,7 +2087,7 @@
   .ctn-overview-main { display: flex; flex-direction: column; gap: 36px; min-width: 0; }
   .ctn-overview-rail { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
   .ctn-block { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-  .ctn-rail-card { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 10px; }
+  .ctn-rail-card { display: flex; flex-direction: column; gap: 10px; padding: 0 0 14px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
   .ctn-empty-line {
     margin: 0;
     color: var(--fg-subtle);
@@ -2472,7 +2126,6 @@
   }
   .ctn-kv-env-pair { color: var(--fg-muted); }
   .ctn-kv-env-pair .secret { color: var(--fg-subtle); font-style: normal; }
-  .ctn-kv-env-more { color: var(--fg-subtle); font-style: normal; }
 
   /* ─────────── Health ──────────
      Bordered container wraps the row(s) — even a single row gets the
@@ -2515,13 +2168,6 @@
     white-space: pre-wrap;
     max-height: 140px;
     overflow: auto;
-  }
-
-  /* Network tile dual-line layout — compact label/value head row. */
-  .ctn-net-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
   }
 
   /* Identity env show-more button */
@@ -2639,14 +2285,14 @@
   :global(.ctn-endpoint-icon) { color: var(--fg-subtle); flex-shrink: 0; }
 
   /* ─────────── Network tab — 2-column with bottom throughput row ─────────── */
-  .ctn-network-pane-v2 {
+  .ctn-network-pane {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 24px;
     margin-top: 14px;
   }
   @media (max-width: 1100px) {
-    .ctn-network-pane-v2 { grid-template-columns: 1fr; }
+    .ctn-network-pane { grid-template-columns: 1fr; }
   }
   .ctn-network-list {
     margin-top: 12px;
@@ -2720,25 +2366,6 @@
     gap: 12px;
   }
 
-  /* legacy network-pane styles kept for backward compat (not used by v2) */
-  .ctn-network-pane {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    margin-top: 14px;
-  }
-  .ctn-network-card {
-    padding: 16px 20px 18px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .ctn-network-card-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
   .ctn-inline-link {
     font-family: var(--font-mono);
     font-size: 11px;
@@ -2747,22 +2374,7 @@
     text-decoration: none;
   }
   .ctn-inline-link:hover { color: var(--fg); }
-  .ctn-network-kv {
-    margin: 0;
-    display: grid;
-    grid-template-columns: 90px 1fr;
-    column-gap: 14px;
-    row-gap: 6px;
-    font-family: var(--font-mono);
-    font-size: 12px;
-  }
-  .ctn-network-kv dt {
-    color: var(--fg-subtle);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: lowercase;
-  }
-  .ctn-network-kv dd { margin: 0; color: var(--fg); word-break: break-all; }
+
   .ctn-network-empty {
     padding: 32px 28px;
     border: 1px dashed var(--border-strong);
@@ -2774,8 +2386,6 @@
   }
   .ctn-network-empty p { margin: 0; }
 
-  /* ─────────── Files tab — table chrome to mirror the mockup, with
-                an honest "no backend yet" full-row state. ─────────── */
   .ctn-files-pane {
     display: flex;
     flex-direction: column;
@@ -3515,28 +3125,6 @@
     color: var(--fg-subtle);
     letter-spacing: 0.02em;
   }
-  .ctn-updates-history-spacer { flex: 1; }
-
-  /* Inspect pane — JSON viewer in a single editorial card. */
-  .ctn-inspect-card { padding: 0; overflow: hidden; }
-  .ctn-inspect-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 18px;
-    border-bottom: 1px solid var(--border);
-  }
-  .ctn-inspect-body {
-    margin: 0;
-    padding: 18px;
-    max-height: 60vh;
-    min-height: 320px;
-    overflow: auto;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    line-height: 1.6;
-    color: var(--fg);
-  }
 
   /* JSON syntax highlighting */
   :global(.json-view .json-key) { color: #7dd3fc; }
@@ -3545,12 +3133,10 @@
   :global(.json-view .json-bool) { color: #c4b5fd; }
   :global(.json-view .json-null) { color: #94a3b8; font-style: normal; }
 
-  /* Log line colorization */
-  :global(.log-line) { color: #d4d4d4; }
-  :global(.log-line .log-ts) { color: #6b7280; }
-  :global(.log-line .log-error) { color: #f87171; font-weight: 600; }
-  :global(.log-line .log-warn) { color: #fbbf24; }
-  :global(.log-line .log-info) { color: #60a5fa; }
-  :global(.log-line .log-debug) { color: #6b7280; }
-  :global(.log-line .log-ok) { color: #4ade80; }
+  .ctn-log-msg :global(.log-ts) { color: var(--subtle); }
+  .ctn-log-msg :global(.log-error) { color: var(--bad); font-weight: 600; }
+  .ctn-log-msg :global(.log-warn) { color: var(--warn); }
+  .ctn-log-msg :global(.log-info) { color: var(--accent); }
+  .ctn-log-msg :global(.log-debug) { color: var(--subtle); }
+  .ctn-log-msg :global(.log-ok) { color: var(--ok); }
 </style>

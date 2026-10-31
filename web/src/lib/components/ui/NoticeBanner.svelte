@@ -42,8 +42,8 @@
   }
 
   const tone = {
-    critical: 'border-[color-mix(in_srgb,var(--color-danger-500)_45%,var(--border))] bg-[color-mix(in_srgb,var(--color-danger-500)_8%,var(--surface))]',
-    warning: 'border-[color-mix(in_srgb,var(--color-warning-500)_45%,var(--border))] bg-[color-mix(in_srgb,var(--color-warning-500)_8%,var(--surface))]',
+    critical: 'border-[var(--bad-bd)] bg-[var(--bad-bg)]',
+    warning: 'border-[var(--warn-bd)] bg-[var(--warn-bg)]',
     info: 'border-[var(--border)] bg-[var(--surface)]',
   };
   const actionBtn =
@@ -56,7 +56,7 @@
 
 {#if top}
   <div class="app-band">
-    <div class="rounded-md border {tone[top.severity]}" role={top.severity === 'critical' ? 'alert' : 'status'}>
+    <div class="rounded-[9px] border {tone[top.severity]}" role={top.severity === 'critical' ? 'alert' : 'status'}>
       <div class="px-4 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
         <NoticeLabel severity={top.severity} />
         <button
