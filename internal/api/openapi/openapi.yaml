@@ -4397,8 +4397,8 @@ paths:
         `current` is the running version's section of the changelog embedded
         in the binary; null for builds that are not a release. `latest` is
         the newer release found by the update check, read from its
-        `release-manifest.json`; null when there is none or it has no
-        manifest. `highlights` is empty when the changelog section has no
+        `release-manifest.json`; null when there is none, it has no
+        manifest, or the caller lacks `system.view`. `highlights` is empty when the changelog section has no
         `### Highlights` list. `unseen` is true while the caller has not
         marked the running version as seen; API tokens always get false.
         Any authenticated caller.

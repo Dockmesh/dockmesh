@@ -42,8 +42,10 @@ const (
 
 	// manifestAsset is the machine-readable release section published
 	// with every release; assetPrefix is where release assets live.
-	manifestAsset  = "release-manifest.json"
-	assetPrefix    = "https://github.com/Dockmesh/dockmesh/releases/download/"
+	manifestAsset = "release-manifest.json"
+	assetPrefix   = "https://github.com/Dockmesh/dockmesh/releases/download/"
+
+	// Max manifest bytes read; real manifests are a few KB.
 	maxManifestLen = 256 << 10
 
 	// Max release notes bytes stored. Trimmed to keep the settings row

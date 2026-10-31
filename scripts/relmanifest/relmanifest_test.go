@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/dockmesh/dockmesh/internal/changelog"
 )
 
 const sample = `# Changelog
@@ -56,41 +58,41 @@ Minimum upgrade from: 0.3.0
 `
 
 func TestParseSample(t *testing.T) {
-	sections, err := Parse(sample)
+	sections, err := changelog.Parse(sample)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(sections) != 3 {
 		t.Fatalf("got %d sections, want 3", len(sections))
 	}
-	s := Find(sections, "v0.3.4")
+	s := changelog.Find(sections, "v0.3.4")
 	if s == nil {
 		t.Fatal("0.3.4 not found via tag name")
 	}
-	want := Manifest{
+	want := changelog.Manifest{
 		Schema:     1,
 		Version:    "0.3.4",
 		Date:       "2026-11-05",
 		Severity:   "security",
 		Summary:    "Closes several access-control issues.\nEveryone has to sign in again.",
 		Highlights: []string{"Sessions are typed per purpose."},
-		Changes: Changes{
+		Changes: changelog.Changes{
 			Added:    []string{"Release manifest."},
 			Changed:  []string{},
 			Fixed:    []string{"One.", "Two."},
 			Security: []string{"Session tokens are now typed per purpose."},
 		},
-		Advisories: []Advisory{{ID: "GHSA-2xq8-c4fv-9m7w", Severity: "critical", Title: "MFA could be disabled with a half-finished login."}},
-		Actions: []Action{
+		Advisories: []changelog.Advisory{{ID: "GHSA-2xq8-c4fv-9m7w", Severity: "critical", Title: "MFA could be disabled with a half-finished login."}},
+		Actions: []changelog.Action{
 			{ID: "re-login", Audience: "all", Text: "Sign in again after the upgrade."},
 			{ID: "sftp-host-key", Audience: "admins", Text: "Re-save each SFTP backup target."},
 		},
 		MinUpgradeFrom: "0.3.0",
 	}
-	if got := BuildManifest(s); !reflect.DeepEqual(got, want) {
+	if got := changelog.BuildManifest(s); !reflect.DeepEqual(got, want) {
 		t.Errorf("manifest mismatch\n got %+v\nwant %+v", got, want)
 	}
-	if old := Find(sections, "0.3.3"); old == nil || len(old.Fixed) != 1 || old.Fixed[0] != "Older fix." {
+	if old := changelog.Find(sections, "0.3.3"); old == nil || len(old.Fixed) != 1 || old.Fixed[0] != "Older fix." {
 		t.Errorf("0.3.3 parsed wrong (link reference must not leak into Fixed): %+v", old)
 	}
 }
@@ -113,7 +115,7 @@ func TestParseErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Parse(tt.src)
+			_, err := changelog.Parse(tt.src)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("err = %v, want containing %q", err, tt.want)
 			}
@@ -122,7 +124,7 @@ func TestParseErrors(t *testing.T) {
 }
 
 func TestAdvisoryLookalikeStaysPlainSecurityEntry(t *testing.T) {
-	sections, err := Parse("## [Unreleased]\n### Security\n- GHSA-2xq8-c4fv-9m7w (urgent): not a valid severity.\n")
+	sections, err := changelog.Parse("## [Unreleased]\n### Security\n- GHSA-2xq8-c4fv-9m7w (urgent): not a valid severity.\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,11 +135,11 @@ func TestAdvisoryLookalikeStaysPlainSecurityEntry(t *testing.T) {
 }
 
 func TestRenderNotes(t *testing.T) {
-	sections, err := Parse(sample)
+	sections, err := changelog.Parse(sample)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := RenderNotes(Find(sections, "0.3.4"))
+	got := RenderNotes(changelog.Find(sections, "0.3.4"))
 	want := `**Security release.** Update as soon as possible.
 
 Closes several access-control issues.
@@ -189,7 +191,7 @@ Fixes two issues.
 ### Fixed
 - Long list entry that stays out of the body.
 `
-	sections, err := Parse(src)
+	sections, err := changelog.Parse(src)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +218,7 @@ Fixes two issues.
 }
 
 func TestRenderBodyNormalNoAdvisories(t *testing.T) {
-	sections, err := Parse("## [1.0.0] - 2026-01-01 [normal]\n\n### Fixed\n- A fix.\n")
+	sections, err := changelog.Parse("## [1.0.0] - 2026-01-01 [normal]\n\n### Fixed\n- A fix.\n")
 	if err != nil {
 		t.Fatal(err)
 	}

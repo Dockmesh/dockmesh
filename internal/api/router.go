@@ -164,7 +164,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Get("/notices", h.ListNotices)
 			r.Post("/notices/{id}/dismiss", h.DismissNotice)
 
-			// Release notes are public; any signed-in user sees them.
+			// Any signed-in user may read the release notes.
 			r.Get("/system/whats-new", h.GetWhatsNew)
 			r.Post("/system/whats-new/seen", h.MarkWhatsNewSeen)
 

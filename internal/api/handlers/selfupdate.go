@@ -5,6 +5,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/changelog"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/userprefs"
 	"github.com/dockmesh/dockmesh/pkg/version"
 )
@@ -77,7 +78,9 @@ func (h *Handlers) GetWhatsNew(w http.ResponseWriter, r *http.Request) {
 	if s := changelog.Find(h.releaseSections, version.Version); s != nil && s.Version != changelog.Unreleased {
 		out.Current = notesFromSection(s)
 	}
-	if h.SelfUpdate != nil {
+	// Whether this install lags behind a release, and which advisories it
+	// misses, is shown only to callers who may see the update status.
+	if h.SelfUpdate != nil && middleware.Allowed(r.Context(), rbac.PermSystemView) {
 		if m := h.SelfUpdate.LatestManifest(); m != nil {
 			out.Latest = notesFromManifest(m)
 		}
@@ -131,17 +134,10 @@ func notesFromManifest(m *changelog.Manifest) *ReleaseNotes {
 		Date:       m.Date,
 		Severity:   m.Severity,
 		Summary:    m.Summary,
-		Highlights: nonNilStrings(m.Highlights),
-		Added:      nonNilStrings(m.Changes.Added),
-		Changed:    nonNilStrings(m.Changes.Changed),
-		Fixed:      nonNilStrings(m.Changes.Fixed),
+		Highlights: changelog.NonNil(m.Highlights),
+		Added:      changelog.NonNil(m.Changes.Added),
+		Changed:    changelog.NonNil(m.Changes.Changed),
+		Fixed:      changelog.NonNil(m.Changes.Fixed),
 		Security:   security,
 	}
-}
-
-func nonNilStrings(s []string) []string {
-	if s == nil {
-		return []string{}
-	}
-	return s
 }

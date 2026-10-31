@@ -11,6 +11,7 @@ import (
 // KeyWhatsNewSeen is the last version whose release notes the user saw.
 const KeyWhatsNewSeen = "whats_new_seen"
 
+// Store reads and writes user_preferences.
 type Store struct {
 	db *sql.DB
 }

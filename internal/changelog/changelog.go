@@ -250,6 +250,7 @@ type Manifest struct {
 	MinUpgradeFrom string     `json:"min_upgrade_from"`
 }
 
+// Changes holds a manifest's entries by subsection.
 type Changes struct {
 	Added    []string `json:"added"`
 	Changed  []string `json:"changed"`
@@ -257,7 +258,8 @@ type Changes struct {
 	Security []string `json:"security"`
 }
 
-func nonNil[T any](s []T) []T {
+// NonNil returns s, or an empty slice when s is nil, so it encodes as [].
+func NonNil[T any](s []T) []T {
 	if s == nil {
 		return []T{}
 	}
@@ -272,15 +274,15 @@ func BuildManifest(s *Section) Manifest {
 		Date:       s.Date,
 		Severity:   s.Severity,
 		Summary:    s.Summary,
-		Highlights: nonNil(s.Highlights),
+		Highlights: NonNil(s.Highlights),
 		Changes: Changes{
-			Added:    nonNil(s.Added),
-			Changed:  nonNil(s.Changed),
-			Fixed:    nonNil(s.Fixed),
-			Security: nonNil(s.Security),
+			Added:    NonNil(s.Added),
+			Changed:  NonNil(s.Changed),
+			Fixed:    NonNil(s.Fixed),
+			Security: NonNil(s.Security),
 		},
-		Advisories:     nonNil(s.Advisories),
-		Actions:        nonNil(s.Actions),
+		Advisories:     NonNil(s.Advisories),
+		Actions:        NonNil(s.Actions),
 		MinUpgradeFrom: s.MinUpgradeFrom,
 	}
 }

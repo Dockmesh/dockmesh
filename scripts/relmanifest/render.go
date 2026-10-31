@@ -10,25 +10,8 @@ import (
 
 const advisoryURL = "https://github.com/Dockmesh/dockmesh/security/advisories/"
 
-type (
-	Section  = changelog.Section
-	Advisory = changelog.Advisory
-	Action   = changelog.Action
-	Manifest = changelog.Manifest
-	Changes  = changelog.Changes
-)
-
-const unreleased = changelog.Unreleased
-
-var (
-	Parse          = changelog.Parse
-	Find           = changelog.Find
-	BuildManifest  = changelog.BuildManifest
-	unreleasedBody = changelog.UnreleasedBody
-)
-
-func ManifestJSON(s *Section) ([]byte, error) {
-	b, err := json.MarshalIndent(BuildManifest(s), "", "  ")
+func ManifestJSON(s *changelog.Section) ([]byte, error) {
+	b, err := json.MarshalIndent(changelog.BuildManifest(s), "", "  ")
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +20,7 @@ func ManifestJSON(s *Section) ([]byte, error) {
 
 // RenderNotes produces the GitHub release body. Security and upgrade actions
 // come first because they are what a reader has to act on.
-func RenderNotes(s *Section) string {
+func RenderNotes(s *changelog.Section) string {
 	var b strings.Builder
 	switch s.Severity {
 	case "security":
@@ -94,7 +77,7 @@ const repoURL = "https://github.com/Dockmesh/dockmesh"
 
 // RenderBody produces the short GitHub release body: what to run, what to
 // check afterwards and where the advisories and the full changelog are.
-func RenderBody(s *Section) string {
+func RenderBody(s *changelog.Section) string {
 	var b strings.Builder
 	switch s.Severity {
 	case "security":
@@ -139,7 +122,7 @@ func plural(n int, one, many string) string {
 }
 
 // headingAnchor mirrors GitHub's slug of "## [v] - date [severity]".
-func headingAnchor(s *Section) string {
+func headingAnchor(s *changelog.Section) string {
 	h := strings.ToLower(fmt.Sprintf("%s - %s %s", s.Version, s.Date, s.Severity))
 	var b strings.Builder
 	for _, r := range h {
