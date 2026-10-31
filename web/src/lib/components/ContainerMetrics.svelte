@@ -11,6 +11,7 @@
 </script>
 
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { api, type MetricsSample } from '$lib/api';
   import MetricsChart, { type ChartEvent, type ChartSeries } from './ui/MetricsChart.svelte';
   import Segmented from './ui/Segmented.svelte';
@@ -67,7 +68,8 @@
   $effect(() => {
     if (!latest) return;
     const s: MetricsSample = { ts: Math.floor(Date.now() / 1000), ...latest };
-    liveBuf = [...liveBuf.filter((x) => x.ts !== s.ts), s].slice(-240);
+    const prev = untrack(() => liveBuf);
+    liveBuf = [...prev.filter((x) => x.ts !== s.ts), s].slice(-240);
   });
 
   function resolution(seconds: number): 'raw' | '1m' | '1h' {
@@ -211,7 +213,7 @@
       History is stored for containers on the server host; agent hosts show live values.
     {/if}
   </p>
-  {#if events.length}
+  {#if events.some((e) => e.ts >= domain[0] && e.ts <= domain[1])}
     <p class="dm-sub cm-legend"><span style="color: var(--accent)">┊</span> event · drag across a chart to zoom</p>
   {/if}
 </section>

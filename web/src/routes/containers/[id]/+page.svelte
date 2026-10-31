@@ -1,13 +1,16 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { goto } from '$app/navigation';
+  import { goto, replaceState } from '$app/navigation';
   import { api, ApiError } from '$lib/api';
   import { tick } from 'svelte';
   import { Terminal as XTerm } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
   import '@xterm/xterm/css/xterm.css';
-  import { Card, Badge, Button, Skeleton } from '$lib/components/ui';
-  import { Eyebrow, StatusPill, EdMetric, Sparkline } from '$lib/components/editorial';
+  import { Card, Badge, Button, Skeleton, StatusChip, Tabs, Menu } from '$lib/components/ui';
+  import type { MenuItem } from '$lib/components/ui/Menu.svelte';
+  import { EdMetric, Sparkline } from '$lib/components/editorial';
+  import ContainerMetrics from '$lib/components/ContainerMetrics.svelte';
+  import type { ChartEvent } from '$lib/components/ui/MetricsChart.svelte';
   // Files-tab icons. FilesIcon kept for the tab navigation chip;
   // Folder/FileText/Link2 are used inside the file browser rows.
   import { Image as FilesIcon, Search, Folder, File as FileIcon, Link2, Upload, ChevronRight, Save, X as XIcon, Pencil } from 'lucide-svelte';
@@ -17,7 +20,7 @@
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
-  import type { UpdatePreview, UpdateHistoryEntry, MetricsSample } from '$lib/api';
+  import type { UpdatePreview, UpdateHistoryEntry } from '$lib/api';
   import {
     ChevronLeft,
     Play,
@@ -59,12 +62,24 @@
   const canControl = $derived(allowed('containers.update', { stack: ctxStack, host: ctxHost }));
   const canExec = $derived(allowed('containers.exec', { stack: ctxStack, host: ctxHost }));
   let loading = $state(true);
-  let tab = $state<'overview' | 'logs' | 'exec' | 'updates' | 'inspect' | 'network' | 'files'>('overview');
+  type TabKey = 'overview' | 'logs' | 'exec' | 'updates' | 'inspect' | 'network' | 'files';
+  const TAB_KEYS: TabKey[] = ['overview', 'logs', 'exec', 'updates', 'inspect', 'network', 'files'];
+  // ?tab= deep-links a section (row menus on the list link to logs and the
+  // terminal); switching tabs rewrites it without a navigation.
+  function tabFromUrl(): TabKey {
+    const t = page.url.searchParams.get('tab') as TabKey | null;
+    return t && TAB_KEYS.includes(t) ? t : 'overview';
+  }
+  let tab = $state<TabKey>(tabFromUrl());
+  $effect(() => {
+    const want = tab;
+    const url = new URL(page.url.href);
+    if ((url.searchParams.get('tab') ?? 'overview') === want) return;
+    if (want === 'overview') url.searchParams.delete('tab');
+    else url.searchParams.set('tab', want);
+    replaceState(url, {});
+  });
 
-  // More-menu dropdown for the header action cluster + env-show-more
-  // toggle for the Identity block. Both are local UX state, no
-  // persistence.
-  let moreOpen = $state(false);
   let envExpanded = $state(false);
   let logFilter = $state<'all' | 'error' | 'warn' | 'info' | 'fatal'>('all');
   let logQuery = $state('');
@@ -472,39 +487,6 @@
   let statsConnected = $state(false);
   let statsWs: WebSocket | null = null;
 
-  // History metrics (server-side collected)
-  type HistoryRange = '1h' | '6h' | '24h' | '7d' | '30d';
-  let historyRange = $state<HistoryRange>('1h');
-  let historySamples = $state<MetricsSample[]>([]);
-  let historyLoading = $state(false);
-
-  const RANGE_SECONDS: Record<HistoryRange, number> = {
-    '1h': 3600,
-    '6h': 6 * 3600,
-    '24h': 24 * 3600,
-    '7d': 7 * 86400,
-    '30d': 30 * 86400
-  };
-
-  function rangeResolution(r: HistoryRange): 'raw' | '1m' | '1h' {
-    if (r === '1h' || r === '6h') return 'raw';
-    if (r === '24h' || r === '7d') return '1m';
-    return '1h';
-  }
-
-  async function loadHistory() {
-    historyLoading = true;
-    try {
-      const to = Math.floor(Date.now() / 1000);
-      const from = to - RANGE_SECONDS[historyRange];
-      historySamples = await api.containers.metrics(id, from, to, rangeResolution(historyRange));
-    } catch { /* ignore — empty history is fine */
-      historySamples = [];
-    } finally {
-      historyLoading = false;
-    }
-  }
-
   // Exec
   let execContainer: HTMLDivElement | null = $state(null);
   let execConnected = $state(false);
@@ -876,7 +858,9 @@
       disconnectLogs();
       disconnectExec();
       connectStats();
-      loadHistory();
+      if (!isRemote) {
+        api.containers.updateHistory(id).then((h) => (updateHistory = h)).catch(() => {});
+      }
     } else if (tab === 'logs') {
       disconnectExec();
       disconnectStats();
@@ -911,7 +895,7 @@
       const name = svc || containerName(info) || id.slice(0, 12);
       if (fromStack && proj) {
         pageContext.set(name, [
-          { label: 'stacks', href: '/stacks' },
+          { label: 'Stacks', href: '/stacks' },
           { label: proj, href: `/stacks/${encodeURIComponent(proj)}` },
         ]);
       } else {
@@ -995,9 +979,78 @@
       .join(' L');
     return `M0,${h} L${pts} L${w},${h} Z`;
   }
+
+  const statusTone = $derived.by<{ tone: 'ok' | 'warn' | 'bad' | 'off'; label: string }>(() => {
+    const st = info?.State;
+    if (!st) return { tone: 'off', label: 'unknown' };
+    if (st.Paused) return { tone: 'warn', label: 'paused' };
+    if (st.Running) {
+      if (st.Health?.Status === 'unhealthy') return { tone: 'warn', label: 'unhealthy' };
+      if (st.Restarting) return { tone: 'warn', label: 'restarting' };
+      return { tone: 'ok', label: 'running' };
+    }
+    if (st.Status === 'dead' || (st.ExitCode ?? 0) !== 0) return { tone: 'bad', label: st.Status === 'dead' ? 'dead' : `exited ${st.ExitCode}` };
+    return { tone: 'off', label: st.Status ?? 'stopped' };
+  });
+
+  const hostName = $derived(
+    hosts.available.find((h) => h.id === targetHost)?.name ?? (targetHost === 'local' ? 'the server' : targetHost)
+  );
+
+  const chartEvents = $derived.by<ChartEvent[]>(() => {
+    const out: ChartEvent[] = [];
+    const started = info?.State?.StartedAt ? Date.parse(info.State.StartedAt) : NaN;
+    if (isFinite(started)) out.push({ ts: started, label: 'container started', color: 'var(--warn)' });
+    for (const e of updateHistory) {
+      const t = Date.parse(e.applied_at);
+      if (isFinite(t)) out.push({ ts: t, label: `image updated · ${e.image_ref}` });
+      const rb = e.rolled_back_at ? Date.parse(e.rolled_back_at) : NaN;
+      if (isFinite(rb)) out.push({ ts: rb, label: `rolled back · ${e.image_ref}`, color: 'var(--warn)' });
+    }
+    return out;
+  });
+
+  const liveSample = $derived(
+    stats
+      ? {
+          cpu_percent: stats.cpu_percent,
+          mem_used: stats.mem_used,
+          mem_limit: stats.mem_limit,
+          net_rx: stats.net_rx,
+          net_tx: stats.net_tx,
+          blk_read: stats.blk_read,
+          blk_write: stats.blk_write
+        }
+      : null
+  );
+
+  const headerMenu = $derived.by<MenuItem[]>(() => {
+    if (!info) return [];
+    const items: MenuItem[] = [];
+    if (canControl && info.State?.Running && !info.State?.Paused) items.push({ label: 'Pause', onclick: () => action('pause') });
+    if (canControl && (info.State?.Running || info.State?.Paused)) items.push({ label: 'Kill', onclick: killContainer });
+    items.push({ label: 'Copy ID', onclick: () => void copyWithToast(info.Id ?? id, 'Copied container ID') });
+    if (ctxStack) items.push({ label: `Open stack ${ctxStack}`, href: `/stacks/${encodeURIComponent(ctxStack)}` });
+    if (canControl) items.push({ separator: true }, { label: 'Remove…', danger: true, onclick: remove });
+    return items;
+  });
+
+  const tabItems = $derived([
+    { key: 'overview', label: 'Overview' },
+    { key: 'logs', label: 'Logs', count: wsConnected ? 'live' : null },
+    ...(canExec ? [{ key: 'exec', label: 'Terminal', count: execConnected ? 'attached' : null }] : []),
+    { key: 'inspect', label: 'Inspect' },
+    {
+      key: 'network',
+      label: 'Network',
+      count: info && Object.keys(info.NetworkSettings?.Networks ?? {}).length > 0 ? Object.keys(info.NetworkSettings?.Networks ?? {}).length : null
+    },
+    ...(canExec ? [{ key: 'files', label: 'Files' }] : []),
+    ...(canControl && !isRemote ? [{ key: 'updates', label: 'Updates', count: updateHistory.length || null }] : [])
+  ]);
 </script>
 
-<section class="ctn-frame">
+<section class="dm-page ctn-frame">
   {#if loading}
     <div class="ctn-skeleton">
       <Skeleton width="40%" height="2rem" />
@@ -1007,114 +1060,24 @@
     {@const projectLabel = info.Config?.Labels?.['com.docker.compose.project']}
     {@const serviceLabel = info.Config?.Labels?.['com.docker.compose.service']}
 
-    <!-- Editorial header — title alone on its own row, then a SECOND
-         row below with status pill + version pill + uptime + host + id
-         in a mono meta line. Buttons compress to Restart / Stop / Kill /
-         More menu (Recreate / Pause / Copy ID / Remove); matches the
-         mockup's container-detail header pattern. -->
-    <header class="ctn-header">
-      <div class="ctn-header-text">
-        <h1 class="ed-title ctn-title">{serviceLabel || containerName(info) || id.slice(0, 12)}</h1>
-        <div class="ctn-meta-row">
-          {#if info.State?.Paused}
-            <StatusPill status="warn" label="paused" />
-          {:else if info.State?.Running}
-            <StatusPill status="running" />
-          {:else}
-            <StatusPill status="stopped" label={info.State?.Status ?? 'stopped'} />
-          {/if}
-          {#if imageTag}
-            <span class="dm-pill dm-pill-neutral ctn-meta-pill">{imageTag}</span>
-          {/if}
-          <span class="ctn-meta-sep">·</span>
-          <span class="ctn-meta-cell">up {fmtRelTime(info.State?.StartedAt)}{#if (info.RestartCount ?? 0) > 0}, {info.RestartCount} restart{info.RestartCount === 1 ? '' : 's'}{/if}</span>
-          {#if isRemote && hosts.selected}
-            <span class="ctn-meta-sep">·</span>
-            <span class="ctn-meta-cell">{hosts.selected.name}</span>
-          {/if}
-          <span class="ctn-meta-sep">·</span>
-          <span class="ctn-meta-cell">id {id.slice(0, 12)}</span>
-        </div>
-      </div>
+    <header class="dm-ph ctn-ph">
+      <h1>{serviceLabel || containerName(info) || id.slice(0, 12)}</h1>
+      <StatusChip tone={statusTone.tone} label={statusTone.label} title={info.State?.Status} />
+      <span class="dm-sub dm-mono ctn-ph-sub">
+        {imageTag ? `${imageTag} · ` : ''}{info.State?.Running ? `up ${fmtRelTime(info.State?.StartedAt).replace(' ago', '')}` : 'not running'}{(info.RestartCount ?? 0) > 0 ? ` · ${info.RestartCount} restart${info.RestartCount === 1 ? '' : 's'}` : ''} · {hostName} · {id.slice(0, 12)}
+      </span>
+      <span class="dm-sp"></span>
       {#if canControl}
-        <div class="ed-actions ctn-actions">
-          {#if info.State?.Paused}
-            <button class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => action('unpause')}>
-              <PlayCircle size={13} strokeWidth={1.5} /> Resume
-            </button>
-            <button class="dm-btn dm-btn-ghost dm-btn-sm ctn-btn-kill" onclick={killContainer}>
-              <Zap size={13} strokeWidth={1.5} /> Kill
-            </button>
-          {:else if info.State?.Running}
-            <button class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => action('restart')}>
-              <RotateCw size={13} strokeWidth={1.5} /> Restart
-            </button>
-            <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick={() => action('stop')}>
-              <Square size={13} strokeWidth={1.5} /> Stop
-            </button>
-            <button class="dm-btn dm-btn-ghost dm-btn-sm ctn-btn-kill" onclick={killContainer}>
-              <Zap size={13} strokeWidth={1.5} /> Kill
-            </button>
-          {:else}
-            <button class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => action('start')}>
-              <Play size={13} strokeWidth={1.5} /> Start
-            </button>
-          {/if}
-          <div class="ctn-more-wrap">
-            <button
-              type="button"
-              class="dm-btn dm-btn-ghost dm-btn-sm ctn-more-btn"
-              onclick={() => (moreOpen = !moreOpen)}
-              aria-haspopup="menu"
-              aria-expanded={moreOpen}
-              aria-label="More actions"
-              title="More"
-            >
-              <span class="ctn-more-dots" aria-hidden="true">···</span>
-            </button>
-            {#if moreOpen}
-              <button
-                type="button"
-                class="ctn-more-overlay"
-                aria-label="Close menu"
-                onclick={() => (moreOpen = false)}
-              ></button>
-              <div class="ctn-more-menu" role="menu">
-                {#if info.State?.Running}
-                  <button
-                    type="button"
-                    class="ctn-more-item"
-                    role="menuitem"
-                    onclick={() => { moreOpen = false; action('pause'); }}
-                  >
-                    <Pause size={12} strokeWidth={1.5} /> Pause
-                  </button>
-                {/if}
-                <button
-                  type="button"
-                  class="ctn-more-item"
-                  role="menuitem"
-                  onclick={async () => {
-                    moreOpen = false;
-                    void copyWithToast(info.Id ?? id, 'Copied container ID');
-                  }}
-                >
-                  <FileText size={12} strokeWidth={1.5} /> Copy ID
-                </button>
-                <div class="ctn-more-sep"></div>
-                <button
-                  type="button"
-                  class="ctn-more-item ctn-more-item-danger"
-                  role="menuitem"
-                  onclick={() => { moreOpen = false; remove(); }}
-                >
-                  <Trash2 size={12} strokeWidth={1.5} /> Remove
-                </button>
-              </div>
-            {/if}
-          </div>
-        </div>
+        {#if info.State?.Paused}
+          <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('unpause')}><PlayCircle size={14} /> Resume</button>
+        {:else if info.State?.Running}
+          <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('restart')}><RotateCw size={14} /> Restart</button>
+          <button type="button" class="dm-btn" onclick={() => action('stop')}><Square size={13} /> Stop</button>
+        {:else}
+          <button type="button" class="dm-btn dm-btn-primary" onclick={() => action('start')}><Play size={14} /> Start</button>
+        {/if}
       {/if}
+      <Menu label="More actions" items={headerMenu} />
     </header>
   {/if}
 
@@ -1126,165 +1089,7 @@
     </div>
   {/if}
 
-  <!-- Live stats — ALWAYS visible above the tab strip (not gated by
-       which tab the operator is on). Mockup-faithful: CPU / Memory /
-       Network are current-state snapshots that stay relevant whether
-       you're reading Logs, opening a Terminal, or browsing Inspect. -->
-  {#if info && stats}
-    {@const cpuVals = statsHistory.map((s) => s.cpu_percent)}
-    {@const memVals = statsHistory.map((s) => s.mem_percent)}
-    {@const rxVals = statsHistory.map((s) => s.net_rx)}
-    {@const txVals = statsHistory.map((s) => s.net_tx)}
-    {@const netMax = Math.max(1, ...rxVals, ...txVals)}
-    {@const netW = 100}
-    {@const netH = 32}
-    {@const netPath = (vals: number[], baseline = false) => {
-      if (vals.length < 2) return '';
-      const pts = vals.map((v, i) => `${(i / (vals.length - 1) * netW).toFixed(1)},${(netH - (v / netMax) * (netH - 2) - 1).toFixed(1)}`);
-      return baseline ? `M0,${netH} L${pts.join(' L')} L${netW},${netH} Z` : `M${pts.join(' L')}`;
-    }}
-    <div class="ctn-stats">
-      <EdMetric
-        label="CPU"
-        value={stats.cpu_percent.toFixed(1)}
-        unit="%"
-        meta={statsHistory.length > 1 ? `${statsHistory.length} samples · last 60s` : 'live'}
-        spark={statsHistory.length > 1 ? cpuVals : undefined}
-        sparkColor={stats.cpu_percent > 85
-          ? 'var(--color-danger-500)'
-          : stats.cpu_percent > 60
-            ? 'var(--color-warning-500)'
-            : 'var(--accent)'}
-      />
-      <EdMetric
-        label="Memory"
-        value={formatBytes(stats.mem_used)}
-        meta={stats.mem_limit > 0
-          ? `${stats.mem_percent.toFixed(0)}% of ${formatBytes(stats.mem_limit)} limit`
-          : 'no limit set'}
-        spark={statsHistory.length > 1 ? memVals : undefined}
-        sparkColor={stats.mem_percent > 85
-          ? 'var(--color-danger-500)'
-          : stats.mem_percent > 60
-            ? 'var(--color-warning-500)'
-            : 'var(--color-success-500)'}
-      />
-      <div class="ed-metric">
-        <div class="ctn-net-head">
-          <span class="ed-metric-label">Network · in / out</span>
-          <span class="ed-metric-meta">MB/s</span>
-        </div>
-        <div class="ed-metric-value">
-          {formatBytes(stats.net_rx)}<span class="unit"> / {formatBytes(stats.net_tx)}</span>
-        </div>
-        {#if statsHistory.length > 1}
-          <svg class="dm-spark" viewBox="0 0 {netW} {netH}" preserveAspectRatio="none">
-            <path d={netPath(txVals, true)} class="dm-spark-fill" style="opacity: 0.07" />
-            <path d={netPath(rxVals)} class="dm-spark-line" style="stroke: var(--accent); opacity: 0.75" />
-            <path d={netPath(txVals)} class="dm-spark-line" style="stroke: var(--color-warning-400); opacity: 0.85" />
-          </svg>
-        {/if}
-        <span class="ed-metric-meta">in solid · out warn · cumulative since start</span>
-      </div>
-    </div>
-  {:else if info && statsConnected}
-    <div class="ctn-stats-pending">waiting for first stats sample…</div>
-  {/if}
-
-  <!-- Editorial tab strip. Live indicators (green dot for active stream)
-       sit on the per-tab counter slot so operators can tell at a glance
-       which feeds are open. -->
-  <div class="ed-tabs ctn-tabs" role="tablist" aria-label="Container sections">
-    <button
-      role="tab"
-      type="button"
-      aria-selected={tab === 'overview'}
-      class="ed-tab"
-      class:active={tab === 'overview'}
-      onclick={() => (tab = 'overview')}
-    >
-      <Info size={13} strokeWidth={1.5} />
-      Overview
-    </button>
-    <button
-      role="tab"
-      type="button"
-      aria-selected={tab === 'logs'}
-      class="ed-tab"
-      class:active={tab === 'logs'}
-      onclick={() => (tab = 'logs')}
-    >
-      <FileText size={13} strokeWidth={1.5} />
-      Logs
-      {#if wsConnected}<span class="count" style="color: var(--color-success-400)">stream</span>{/if}
-    </button>
-    {#if canExec}
-      <button
-        role="tab"
-        type="button"
-        aria-selected={tab === 'exec'}
-        class="ed-tab"
-        class:active={tab === 'exec'}
-        onclick={() => (tab = 'exec')}
-      >
-        <TerminalIcon size={13} strokeWidth={1.5} />
-        Terminal
-        {#if execConnected}<span class="count" style="color: var(--color-success-400)">attached</span>{/if}
-      </button>
-    {/if}
-    <button
-      role="tab"
-      type="button"
-      aria-selected={tab === 'inspect'}
-      class="ed-tab"
-      class:active={tab === 'inspect'}
-      onclick={() => (tab = 'inspect')}
-    >
-      <Code2 size={13} strokeWidth={1.5} />
-      Inspect
-    </button>
-    <button
-      role="tab"
-      type="button"
-      aria-selected={tab === 'network'}
-      class="ed-tab"
-      class:active={tab === 'network'}
-      onclick={() => (tab = 'network')}
-    >
-      <Network size={13} strokeWidth={1.5} />
-      Network
-      {#if info && Object.keys(info.NetworkSettings?.Networks ?? {}).length > 0}
-        <span class="count">{Object.keys(info.NetworkSettings?.Networks ?? {}).length}</span>
-      {/if}
-    </button>
-    {#if canExec}
-    <button
-      role="tab"
-      type="button"
-      aria-selected={tab === 'files'}
-      class="ed-tab"
-      class:active={tab === 'files'}
-      onclick={() => (tab = 'files')}
-    >
-      <FilesIcon size={13} strokeWidth={1.5} />
-      Files
-    </button>
-    {/if}
-    {#if canControl && !isRemote}
-      <button
-        role="tab"
-        type="button"
-        aria-selected={tab === 'updates'}
-        class="ed-tab"
-        class:active={tab === 'updates'}
-        onclick={() => (tab = 'updates')}
-      >
-        <Download size={13} strokeWidth={1.5} />
-        Updates
-        {#if updateHistory.length > 0}<span class="count">{updateHistory.length}</span>{/if}
-      </button>
-    {/if}
-  </div>
+  <Tabs label="Container sections" tabs={tabItems} active={tab} onchange={(k) => (tab = k as TabKey)} />
 
   <!-- Tab panels -->
   {#if tab === 'overview' && info}
@@ -1302,13 +1107,20 @@
     {@const cmdParts = [...(info.Config?.Entrypoint ?? []), ...(info.Config?.Cmd ?? [])]}
     {@const restartCount = info.RestartCount ?? info.State?.RestartCount ?? 0}
 
-    <!-- 2-column overview: identity / health / restarts on the left,
-         mounts / networks / stack-context / endpoints in the right rail. -->
+    <ContainerMetrics
+      {id}
+      host={targetHost}
+      {hostName}
+      running={!!info.State?.Running}
+      latest={liveSample}
+      events={chartEvents}
+    />
+
     <div class="ctn-overview">
       <div class="ctn-overview-main">
         <!-- Identity -->
         <section class="ctn-block">
-          <Eyebrow>Identity</Eyebrow>
+          <h3 class="ctn-h3">Identity</h3>
           <dl class="ctn-kv">
             <dt>id</dt>
             <dd>{id.slice(0, 12)}</dd>
@@ -1375,7 +1187,7 @@
              only exposes one healthcheck per container; we render exactly
              that one row, status-coloured. -->
         <section class="ctn-block">
-          <Eyebrow>Health</Eyebrow>
+          <h3 class="ctn-h3">Health</h3>
           {#if !health || health.Status === 'none'}
             <p class="ctn-empty-line">No <code>healthcheck</code> configured. Status comes from the container's running/stopped state only.</p>
           {:else}
@@ -1437,7 +1249,7 @@
         <!-- Restart history (summarized — Docker doesn't expose individual
              restart events, so we show count + last-start + last-exit). -->
         <section class="ctn-block">
-          <Eyebrow>Restart history · {restartCount} restart{restartCount === 1 ? '' : 's'}</Eyebrow>
+          <h3 class="ctn-h3">Restart history · {restartCount} restart{restartCount === 1 ? '' : 's'}</h3>
           {#if restartCount === 0 && info.State?.Running}
             <p class="ctn-empty-line">No restarts since this container was created. Running cleanly since <strong>{fmtRelTime(info.State?.StartedAt)}</strong>.</p>
           {:else}
@@ -1483,7 +1295,7 @@
            (border only, transparent) — same chrome as the mockup. -->
       <aside class="ctn-overview-rail">
         <section class="dm-card ctn-rail-card">
-          <Eyebrow>Mounts · {mounts.length}</Eyebrow>
+          <h3 class="ctn-h3">Mounts · {mounts.length}</h3>
           {#if mounts.length === 0}
             <p class="ctn-empty-line">No volumes or bind mounts.</p>
           {:else}
@@ -1501,7 +1313,7 @@
         </section>
 
         <section class="dm-card ctn-rail-card">
-          <Eyebrow>Networks · {networks.length}</Eyebrow>
+          <h3 class="ctn-h3">Networks · {networks.length}</h3>
           {#if networks.length === 0}
             <p class="ctn-empty-line">Not attached to any user network.</p>
           {:else}
@@ -1521,7 +1333,7 @@
 
         {#if projectLabel2}
           <section class="dm-card-flat ctn-rail-card">
-            <Eyebrow>Stack context</Eyebrow>
+            <h3 class="ctn-h3">Stack context</h3>
             <p class="ctn-stack-blurb">
               Service <em class="ed-accent">{serviceLabel2 || '—'}</em> of stack
               <em class="ed-accent">{projectLabel2}</em>.
@@ -1533,7 +1345,7 @@
         {/if}
 
         <section class="dm-card ctn-rail-card">
-          <Eyebrow>Endpoints</Eyebrow>
+          <h3 class="ctn-h3">Endpoints</h3>
           {#if portRows.length === 0}
             <p class="ctn-empty-line">No exposed ports.</p>
           {:else}
@@ -1702,7 +1514,7 @@
               <div class="ctn-updates-banner-head">
                 <div class="ctn-updates-banner-text">
                   <div class="ctn-updates-banner-eyebrow">
-                    <Eyebrow>Update available</Eyebrow>
+                    <h3 class="ctn-h3">Update available</h3>
                   </div>
                   <div class="ctn-updates-vdiff">
                     <span class="ctn-updates-vdiff-old">{currentTagShort || imageTag}</span>
@@ -1763,7 +1575,7 @@
                     <Package size={18} strokeWidth={1.5} />
                   </span>
                   <div>
-                    <Eyebrow>Up to date</Eyebrow>
+                    <h3 class="ctn-h3">Up to date</h3>
                     <div class="ctn-updates-image-ref">{updatePreview.image}</div>
                     <div class="ctn-updates-image-meta">
                       <div>local: {shortDigest(updatePreview.current_digest)} · built {fmtRelTime(updatePreview.current_created)}</div>
@@ -1795,9 +1607,9 @@
             <section class="ctn-block">
               <div class="ctn-updates-release-head">
                 <div class="ctn-updates-release-title">
-                  <Eyebrow>
+                  <h3 class="ctn-h3">
                     Release notes{#if updatePreview.latest_release.tag} · {updatePreview.latest_release.tag}{/if}
-                  </Eyebrow>
+                  </h3>
                   {#if updatePreview.latest_release.name && updatePreview.latest_release.name !== updatePreview.latest_release.tag}
                     <h3>{updatePreview.latest_release.name}</h3>
                   {/if}
@@ -1823,13 +1635,13 @@
                those yet. -->
           {#if updatePreview.local_size || updatePreview.remote_size || updatePreview.remote_last_updated || updatePreview.current_digest}
             <section class="ctn-block">
-              <Eyebrow>
+              <h3 class="ctn-h3">
                 {#if updateAvailable && currentTagShort && newTag}
                   Image diff · {updatePreview.image.split(':')[0]}:{currentTagShort} → {newTag}
                 {:else}
                   Image · {updatePreview.image}
                 {/if}
-              </Eyebrow>
+              </h3>
               <div class="ctn-updates-imgdiff">
                 {#if sizeDeltaMB !== null}
                   <div class="ed-metric ctn-updates-metric">
@@ -1884,7 +1696,7 @@
 
       <aside class="ctn-updates-rail">
         <div class="dm-card-flat ctn-updates-rail-card">
-          <Eyebrow>Version history</Eyebrow>
+          <h3 class="ctn-h3">Version history</h3>
           <ul class="ctn-updates-versions">
             <li>
               <span class="ctn-updates-version-tag current">{currentTagShort || imageTag || '—'}</span>
@@ -1909,7 +1721,7 @@
 
         {#if updateHistory.length > 0}
           <div class="dm-card-flat ctn-updates-rail-card">
-            <Eyebrow>Rollback timeline</Eyebrow>
+            <h3 class="ctn-h3">Rollback timeline</h3>
             <ol class="ctn-updates-history">
               <span class="ctn-updates-history-rule" aria-hidden="true"></span>
               {#each updateHistory as e, i (e.id)}
@@ -1946,7 +1758,7 @@
   {:else if tab === 'inspect'}
     <div class="ctn-tab-pane">
       <div class="ctn-inspect-bar">
-        <Eyebrow>docker inspect · <em class="ed-accent">{containerName(info) || id.slice(0, 12)}</em></Eyebrow>
+        <h3 class="ctn-h3">docker inspect · <em class="ed-accent">{containerName(info) || id.slice(0, 12)}</em></h3>
         <div class="ctn-inspect-actions">
           {#each ['pretty', 'raw'] as v (v)}
             <button
@@ -1980,7 +1792,7 @@
     <div class="ctn-network-pane-v2">
       <!-- LEFT: Connected networks -->
       <div>
-        <Eyebrow>Connected networks</Eyebrow>
+        <h3 class="ctn-h3">Connected networks</h3>
         {#if netEntries.length === 0}
           <div class="ctn-network-empty">
             <p>Not attached to any user network. Default bridge or host networking.</p>
@@ -2014,7 +1826,7 @@
 
       <!-- RIGHT: Port bindings -->
       <div>
-        <Eyebrow>Port bindings · {portRows2.length}</Eyebrow>
+        <h3 class="ctn-h3">Port bindings · {portRows2.length}</h3>
         {#if portRows2.length === 0}
           <div class="ctn-network-empty">
             <p>No ports declared in the image or compose.</p>
@@ -2048,7 +1860,7 @@
       <!-- BOTTOM: Throughput row, full-width -->
       {#if stats}
         <div class="ctn-network-throughput">
-          <Eyebrow>Throughput · last 60s</Eyebrow>
+          <h3 class="ctn-h3">Throughput · last 60s</h3>
           <div class="ctn-throughput-grid">
             <EdMetric
               label="rx total"
@@ -2282,13 +2094,11 @@
 
 <style>
   /* ─────────── Editorial container-detail layout ─────────── */
-  .ctn-frame {
-    display: flex;
-    flex-direction: column;
-    gap: 22px;
-    max-width: 1480px;
-    padding-bottom: 48px;
-  }
+  .ctn-frame { gap: 18px; }
+  .ctn-ph h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40ch; }
+  .ctn-ph-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+  .ctn-h3 { margin: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--subtle); }
+  .ctn-h3 :global(em) { color: var(--fg); }
   .ctn-skeleton { display: flex; flex-direction: column; gap: 10px; }
 
   .ctn-header {
@@ -2433,7 +2243,7 @@
   .ctn-overview-main { display: flex; flex-direction: column; gap: 36px; min-width: 0; }
   .ctn-overview-rail { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
   .ctn-block { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-  .ctn-rail-card { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 10px; }
+  .ctn-rail-card { display: flex; flex-direction: column; gap: 10px; padding: 0 0 14px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
   .ctn-empty-line {
     margin: 0;
     color: var(--fg-subtle);
