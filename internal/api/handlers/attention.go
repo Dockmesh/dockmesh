@@ -64,24 +64,28 @@ func (h *Handlers) Attention(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	r = r.WithContext(ctx)
 
-	rows := h.attentionContainers(r)
+	allowed := func(perm rbac.Perm) bool { return middleware.Allowed(ctx, perm) }
+	var rows []containerRow
+	if allowed(rbac.PermContainersView) || allowed(rbac.PermAlertsView) || allowed(rbac.PermImagesView) {
+		rows = h.attentionContainers(r)
+	}
 	items := []AttentionItem{}
-	if h.allowed(r, rbac.PermHostsView) {
+	if allowed(rbac.PermHostsView) {
 		items = append(items, h.attentionHosts(r)...)
 	}
-	if h.allowed(r, rbac.PermContainersView) {
+	if allowed(rbac.PermContainersView) {
 		items = append(items, attentionContainerItems(rows)...)
 	}
-	if h.allowed(r, rbac.PermBackupsView) {
+	if allowed(rbac.PermBackupsView) {
 		items = append(items, h.attentionBackups(r)...)
 	}
-	if h.allowed(r, rbac.PermAlertsView) {
+	if allowed(rbac.PermAlertsView) {
 		items = append(items, h.attentionAlerts(r, rows)...)
 	}
-	if h.allowed(r, rbac.PermImagesView) {
-		items = append(items, h.attentionImageUpdates(rows)...)
+	if allowed(rbac.PermImagesView) {
+		items = append(items, h.attentionImageUpdates(rows, allowed(rbac.PermContainersView))...)
 	}
-	if h.allowed(r, rbac.PermProxyView) && h.callerUnscoped(r) {
+	if allowed(rbac.PermProxyView) && h.callerUnscoped(r) {
 		items = append(items, h.attentionCerts(r)...)
 	}
 	items = append(items, h.attentionNotices(r)...)
@@ -89,20 +93,18 @@ func (h *Handlers) Attention(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, items)
 }
 
-func (h *Handlers) allowed(r *http.Request, perm rbac.Perm) bool {
-	return middleware.Allowed(r.Context(), perm)
-}
-
 // attentionContainers lists every container on the reachable hosts the
 // caller may see. The rows also decide which alerts and image updates
 // are in scope.
 func (h *Handlers) attentionContainers(r *http.Request) []containerRow {
-	list := h.attentionRows
-	if list == nil {
-		list = h.listAllContainerRows
+	var all []containerRow
+	if h.attentionRows != nil {
+		all = h.attentionRows(r.Context())
+	} else if h.Hosts != nil {
+		all = listContainerRows(r.Context(), h.filterHostsByScope(r, h.Hosts.PickAll(r.Context())))
 	}
 	var rows []containerRow
-	for _, c := range list(r.Context()) {
+	for _, c := range all {
 		if h.canAccessHost(r, c.HostID) {
 			rows = append(rows, c)
 		}
@@ -110,11 +112,8 @@ func (h *Handlers) attentionContainers(r *http.Request) []containerRow {
 	return h.filterContainerRowsByRoleScope(r, rows)
 }
 
-func (h *Handlers) listAllContainerRows(ctx context.Context) []containerRow {
-	if h.Hosts == nil {
-		return nil
-	}
-	res := host.FanOut(ctx, h.Hosts.PickAll(ctx), func(ctx context.Context, hh host.Host) ([]containerRow, error) {
+func listContainerRows(ctx context.Context, targets []host.Host) []containerRow {
+	res := host.FanOut(ctx, targets, func(ctx context.Context, hh host.Host) ([]containerRow, error) {
 		list, err := hh.ListContainers(ctx, true)
 		if err != nil {
 			return nil, err
@@ -349,7 +348,7 @@ func (h *Handlers) attentionAlerts(r *http.Request, rows []containerRow) []Atten
 
 // attentionImageUpdates groups the visible containers by image and lists
 // the images with a newer upstream manifest.
-func (h *Handlers) attentionImageUpdates(rows []containerRow) []AttentionItem {
+func (h *Handlers) attentionImageUpdates(rows []containerRow, showNames bool) []AttentionItem {
 	if h.UpdateWatcher == nil {
 		return nil
 	}
@@ -368,9 +367,14 @@ func (h *Handlers) attentionImageUpdates(rows []containerRow) []AttentionItem {
 	out := make([]AttentionItem, 0, len(images))
 	for _, img := range images {
 		names := users[img]
-		detail := "Used by " + names[0] + "."
-		if len(names) > 1 {
+		var detail string
+		switch {
+		case !showNames:
+			detail = fmt.Sprintf("Used by %d container%s.", len(names), plural(len(names)))
+		case len(names) > 1:
 			detail = fmt.Sprintf("Used by %s and %d more.", names[0], len(names)-1)
+		default:
+			detail = "Used by " + names[0] + "."
 		}
 		out = append(out, AttentionItem{
 			ID:       "image_update:" + img,

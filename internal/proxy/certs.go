@@ -76,20 +76,27 @@ const certCacheTTL = 15 * time.Minute
 
 // RouteCerts returns the routes with cert metadata like
 // EnrichWithCertInfo, reusing the last probe for certCacheTTL so pages
-// that poll don't open a TLS handshake per route on every request.
+// that poll don't open a TLS handshake per route on every request. The
+// probe runs on its own deadline, so a caller that goes away can't leave
+// a cache without cert data behind.
 func (s *Service) RouteCerts(ctx context.Context) ([]Route, error) {
 	s.certMu.Lock()
 	defer s.certMu.Unlock()
 	if s.certRoutes != nil && time.Since(s.certAt) < certCacheTTL {
 		return s.certRoutes, nil
 	}
-	routes, err := s.ListRoutes(ctx)
+	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	routes, err := s.ListRoutes(pctx)
 	if err != nil {
 		return nil, err
 	}
-	s.certRoutes = s.EnrichWithCertInfo(ctx, routes)
-	s.certAt = time.Now()
-	return s.certRoutes, nil
+	routes = s.EnrichWithCertInfo(pctx, routes)
+	if pctx.Err() == nil {
+		s.certRoutes = routes
+		s.certAt = time.Now()
+	}
+	return routes, nil
 }
 
 func certIssuer(c *x509.Certificate) string {
