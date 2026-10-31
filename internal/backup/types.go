@@ -13,6 +13,7 @@ type Job struct {
 	ID             int64    `json:"id"`
 	Name           string   `json:"name"`
 	HostID         string   `json:"host_id,omitempty"`
+	TargetID       int64    `json:"target_id,omitempty"`
 	TargetType     string   `json:"target_type"`
 	TargetConfig   any      `json:"target_config"`
 	Sources        []Source `json:"sources"`
@@ -40,8 +41,11 @@ type Job struct {
 
 // JobInput is the create/update payload from the API.
 type JobInput struct {
-	Name           string   `json:"name"`
-	HostID         string   `json:"host_id,omitempty"` // empty or "local" → central daemon. P.12 multi-host backup.
+	Name   string `json:"name"`
+	HostID string `json:"host_id,omitempty"` // empty or "local" → central daemon
+	// TargetID picks a saved target. Without it, TargetType/TargetConfig
+	// describe a new target that is saved under the job's name.
+	TargetID       int64    `json:"target_id,omitempty"`
 	TargetType     string   `json:"target_type"`
 	TargetConfig   any      `json:"target_config"`
 	Sources        []Source `json:"sources"`
@@ -105,6 +109,7 @@ type Run struct {
 // Run statuses. A post-hook failure leaves an intact archive, so it is
 // a success with warnings rather than a failure.
 const (
+	StatusRunning             = "running"
 	StatusSuccess             = "success"
 	StatusSuccessWithWarnings = "success_with_warnings"
 	StatusFailed              = "failed"
@@ -129,7 +134,8 @@ var (
 	ErrRunNotFound        = errors.New("run not found")
 	// ErrSystemRestore refuses to unpack a system backup anywhere a
 	// container could read it; system backups go through `dockmesh restore`.
-	ErrSystemRestore = errors.New("system backups can only be restored with `dockmesh restore` on the server")
+	ErrSystemRestore  = errors.New("system backups can only be restored with `dockmesh restore` on the server")
+	ErrTargetNotFound = errors.New("backup target not found")
 )
 
 // HasSystemSource reports whether sources include the server itself.

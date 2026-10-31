@@ -195,7 +195,7 @@ func storeEncryptedVolumeRun(t *testing.T, svc *Service, dir string) (*Run, stri
 		t.Fatal(err)
 	}
 
-	tg, err := buildTarget(job.TargetType, job.TargetConfig)
+	tg, err := jobTarget(ctx, svc.store, nil, job)
 	if err != nil {
 		t.Fatal(err)
 	}

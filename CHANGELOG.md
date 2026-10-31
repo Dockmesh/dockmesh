@@ -40,6 +40,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   certificate has expired, with the steps to re-enroll it under the same ID.
 - The hosts list and host page show "update recommended" for agents that speak an older
   protocol than the server, and the host page shows when the agent's certificate expires.
+- Backup schedules run in the time zone set in `backups.timezone` (an IANA name such as
+  `Europe/Berlin`); without it they use the server's time zone, which the job wizard now
+  shows next to the schedule.
 
 ### Changed
 - Updating the image of a container that belongs to a stack now rebuilds it from the
@@ -62,6 +65,16 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   The host's disk figure now shows the fullest of the Docker-related mounts instead of the
   data directory only, so a full Docker or containerd mount no longer goes unnoticed. Hosts
   with an older agent keep the single figure until the agent is updated.
+- Backup jobs now write to saved backup targets instead of keeping their own copy of the
+  target settings. On upgrade, each job's settings are moved to a saved target named after
+  the type and server (for example `sftp-nas.lan (migrated)`); jobs with the same settings
+  share one target, and a job that already matches a saved target uses it. A new target set
+  up in the job wizard is saved under the job's name. Editing a target shows how many jobs use
+  it, and a target that jobs still use can't be deleted.
+- "Run now" starts the backup in the background and returns at once; closing the browser no
+  longer cancels it. A job that is still running is not started a second time, and a
+  scheduled run is skipped (with a notification) while the previous one is in progress.
+- S3 backups stream to the bucket instead of being written to a temporary file first.
 
 ### Fixed
 - Updating a container's image no longer loses its anonymous volumes (`-v /data` or a
@@ -124,6 +137,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   retention are shown as pruned.
 - A backup run whose request is cancelled midway still records its result instead of
   staying "running".
+- Backup runs that were still running when the server stopped are marked failed at the
+  next start instead of showing "running" forever.
 
 ### Security
 - A rollback now only accepts update-history entries of the container it is called for, and

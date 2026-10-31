@@ -846,8 +846,15 @@ export interface BackupTarget {
   used_bytes: number;
   free_bytes: number;
   last_checked_at?: string;
+  job_count?: number;
   created_at: string;
   updated_at: string;
+}
+
+// targetUsage tells whoever edits a shared target what the change affects.
+export function targetUsage(jobCount: number): string {
+  if (jobCount === 0) return 'Not used by any job yet.';
+  return `Used by ${jobCount} job${jobCount === 1 ? '' : 's'}; changes apply to all of them.`;
 }
 
 export interface BackupSource {
@@ -864,6 +871,7 @@ export interface BackupJob {
   id: number;
   name: string;
   host_id?: string;
+  target_id?: number;
   target_type: string;
   target_config: any;
   sources: BackupSource[];
@@ -887,9 +895,11 @@ export interface BackupJob {
 export interface BackupJobInput {
   name: string;
   host_id?: string;
+  // A saved target; without it target_type/target_config are saved as a
+  // new target named after the job.
+  target_id?: number;
   target_type: string;
   target_config: any;
-  target_id?: number;
   sources: BackupSource[];
   schedule: string;
   retention_count: number;
@@ -1898,6 +1908,8 @@ export const api = {
       request<BackupJob>(`/backups/jobs/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
     deleteJob: (id: number) => request<void>(`/backups/jobs/${id}`, { method: 'DELETE' }),
     runJob: (id: number) => request<BackupRun>(`/backups/jobs/${id}/run`, { method: 'POST' }),
+    schedule: () =>
+      request<{ timezone: string; source: 'setting' | 'server'; server_timezone: string }>('/backups/schedule'),
     acceptHostKey: (id: number) =>
       request<void>(`/backups/jobs/${id}/accept-host-key`, { method: 'POST' }),
     // Clear the needs_review flag on a legacy auto-created

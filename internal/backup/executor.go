@@ -74,13 +74,26 @@ func (e *Executor) logf(ctx context.Context, runID int64, stream, format string,
 // Run executes one backup job, persisting a backup_runs row throughout.
 // Returns the final run record.
 func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
-	runID, err := e.store.startRun(ctx, job)
+	runID, err := e.begin(ctx, job)
 	if err != nil {
 		return nil, err
 	}
+	return e.complete(ctx, job, runID)
+}
+
+// begin records a new run in state running.
+func (e *Executor) begin(ctx context.Context, job *Job) (int64, error) {
+	runID, err := e.store.startRun(ctx, job)
+	if err != nil {
+		return 0, err
+	}
 	e.logf(ctx, runID, "info", "start: job=%s host=%s sources=%d target=%s encrypt=%v",
 		job.Name, defaultStr(job.HostID, "local"), len(job.Sources), job.TargetType, job.Encrypt)
+	return runID, nil
+}
 
+// complete executes a run started with begin and records its outcome.
+func (e *Executor) complete(ctx context.Context, job *Job, runID int64) (*Run, error) {
 	out, target := e.execute(ctx, job, runID)
 	// The outcome is recorded even when the caller went away mid-run.
 	ctx = context.WithoutCancel(ctx)

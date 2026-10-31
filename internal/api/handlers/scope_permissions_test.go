@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -538,7 +539,12 @@ func TestBackupJobsKeepTheirOwnArchives(t *testing.T) {
 	}
 	vol := []backup.Source{{Type: "volume", Name: "data"}}
 	sys := []backup.Source{{Type: "system", Name: "dockmesh"}}
-	web, err := svc.CreateJob(ctx, backup.JobInput{Name: "web", TargetType: "s3", Sources: vol})
+	s3, err := targets.NewTargetStore(e.db).Create(ctx, targets.TargetInput{Name: "s3", Type: "s3",
+		Config: map[string]any{"endpoint": "s3.lan", "bucket": "b", "access_key": "a", "secret_key": "s"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	web, err := svc.CreateJob(ctx, backup.JobInput{Name: "web", TargetID: s3.ID, Sources: vol})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -559,7 +565,7 @@ func TestBackupJobsKeepTheirOwnArchives(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.in.TargetType = "s3"
+			tt.in.TargetID = s3.ID
 			var err error
 			if tt.id == 0 {
 				_, err = svc.CreateJob(ctx, tt.in)
@@ -714,6 +720,78 @@ func TestLegacyBackupJobsCanBeDisabled(t *testing.T) {
 		}
 		if j.Enabled {
 			t.Errorf("job %d still enabled", id)
+		}
+	}
+}
+
+func TestSharedTargetWritesNeedEveryJob(t *testing.T) {
+	e := newScopeEnv(t)
+	ctx := context.Background()
+	e.h.BackupTargets = targets.NewTargetStore(e.db)
+	e.router.Group(func(r chi.Router) {
+		r.Use(middleware.NewAuth(e.h.Auth))
+		r.Use(e.h.StackScope)
+		r.With(middleware.RequirePerm(rbac.PermBackupsView)).Get("/backups/targets", e.h.ListBackupTargets)
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Put("/backups/targets/{id}", e.h.UpdateBackupTarget)
+		r.With(middleware.RequirePerm(rbac.PermBackupsUpdate)).Post("/backups/targets/{id}/accept-host-key", e.h.AcceptBackupTargetHostKey)
+	})
+	mk := func(name string) int64 {
+		tg, err := e.h.BackupTargets.Create(ctx, targets.TargetInput{Name: name, Type: "sftp", Config: map[string]any{"host": "nas", "username": "u", "password": "p"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tg.ID
+	}
+	shared, remote, local := mk("shared"), mk("remote"), mk("local")
+	for _, stmt := range []string{
+		fmt.Sprintf(`INSERT INTO backup_jobs (name, target_type, target_id, host_id, sources) VALUES ('sys', 'sftp', %d, 'local', '[{"type":"system","name":"system"}]')`, shared),
+		fmt.Sprintf(`INSERT INTO backup_jobs (name, target_type, target_id, host_id, sources) VALUES ('web', 'sftp', %d, 'local', '[{"type":"stack","name":"web"}]')`, shared),
+		fmt.Sprintf(`INSERT INTO backup_jobs (name, target_type, target_id, host_id, sources) VALUES ('edge', 'sftp', %d, 'agent-1', '[{"type":"stack","name":"web"}]')`, remote),
+		fmt.Sprintf(`INSERT INTO backup_jobs (name, target_type, target_id, host_id, sources, deleted_at) VALUES ('old', 'sftp', %d, 'local', '[{"type":"stack","name":"web"}]', CURRENT_TIMESTAMP)`, local),
+	} {
+		if _, err := e.db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.user("boss", "admin")
+	e.user("hadmin", "host-admin")
+	tagged := e.user("thadmin", "host-admin")
+	e.scopeUser(tagged.ID, "prod")
+	boss, hadmin, thadmin := e.login("boss").AccessToken, e.login("hadmin").AccessToken, e.login("thadmin").AccessToken
+	edit := map[string]any{"name": "x", "type": "sftp", "config": map[string]any{"host": "evil.example", "username": "m", "password": "mine"}}
+
+	tests := []struct {
+		name, who, path string
+		body            any
+		want            int
+	}{
+		{"edit target of a system job", hadmin, fmt.Sprintf("/backups/targets/%d", shared), edit, http.StatusForbidden},
+		{"accept key on target of a system job", hadmin, fmt.Sprintf("/backups/targets/%d/accept-host-key", shared), nil, http.StatusForbidden},
+		{"edit target of a job outside scope", thadmin, fmt.Sprintf("/backups/targets/%d", remote), edit, http.StatusForbidden},
+		{"edit target of a deleted job outside scope", thadmin, fmt.Sprintf("/backups/targets/%d", local), edit, http.StatusForbidden},
+		{"admin accepts key on the system target", boss, fmt.Sprintf("/backups/targets/%d/accept-host-key", shared), nil, http.StatusConflict},
+		{"host admin edits target of local jobs", hadmin, fmt.Sprintf("/backups/targets/%d", local), map[string]any{"name": "local", "type": "sftp", "config": map[string]any{"host": "nas", "username": "u", "password": "p"}}, http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			method := http.MethodPut
+			if tt.body == nil {
+				method = http.MethodPost
+			}
+			if rr := e.do(method, tt.path, tt.who, tt.body); rr.Code != tt.want {
+				t.Errorf("%s %s: %d, want %d (%s)", method, tt.path, rr.Code, tt.want, rr.Body)
+			}
+		})
+	}
+	got, _ := e.h.BackupTargets.Get(ctx, shared)
+	if cfg, _ := got.Config.(map[string]any); cfg["host"] != "nas" {
+		t.Fatalf("shared target was changed: %v", got.Config)
+	}
+
+	for who, want := range map[string]bool{boss: true, thadmin: false} {
+		rr := e.do(http.MethodGet, "/backups/targets", who, nil)
+		if has := strings.Contains(rr.Body.String(), `"job_count"`); has != want {
+			t.Errorf("job_count in list = %v, want %v", has, want)
 		}
 	}
 }

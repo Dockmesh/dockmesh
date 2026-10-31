@@ -8,7 +8,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { api, ApiError, runRestorable } from '$lib/api';
+  import { api, ApiError, runRestorable, targetUsage } from '$lib/api';
   import type { BackupJob, BackupJobInput, BackupRun, BackupSource, BackupHook, BackupTarget } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
@@ -646,6 +646,8 @@
   }
 
   function pendingHostKey(j: BackupJob): boolean {
+    const t = j.target_id ? targetById(j.target_id) : undefined;
+    if (t) return targetPendingHostKey(t);
     return j.target_type === 'sftp' && !!(j.target_config as { host_key_pending?: string } | null)?.host_key_pending;
   }
 
@@ -692,7 +694,7 @@
 
   async function toggleJob(j: BackupJob) {
     try {
-      const input: BackupJobInput = { name: j.name, host_id: j.host_id, target_type: j.target_type, target_config: j.target_config, sources: j.sources, schedule: j.schedule, retention_count: j.retention_count, retention_days: j.retention_days, encrypt: j.encrypt, pre_hooks: j.pre_hooks, post_hooks: j.post_hooks, enabled: !j.enabled };
+      const input: BackupJobInput = { name: j.name, host_id: j.host_id, target_id: j.target_id, target_type: j.target_type, target_config: j.target_config, sources: j.sources, schedule: j.schedule, retention_count: j.retention_count, retention_days: j.retention_days, encrypt: j.encrypt, pre_hooks: j.pre_hooks, post_hooks: j.post_hooks, enabled: !j.enabled };
       await api.backups.updateJob(j.id, input);
       await loadJobs();
     } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
@@ -867,7 +869,7 @@
       <div class="bk-job-grid">
         {#each sortedJobs as j (j.id)}
           {@const SrcIcon = jobSourceIcon(j)}
-          {@const target = targetById(j.target_type === 'inline' ? -1 : -1)}
+          {@const target = targetById(j.target_id ?? -1)}
           {@const tgtMeta = targetTypeMeta(j.target_type)}
           {@const last = jobLastRun(j.name)}
           {@const status = jobStatusFor(j.name)}
@@ -913,7 +915,7 @@
               <div class="bk-job-card-target-text">
                 <span class="bk-target-glyph">{tgtMeta.glyph}</span>
                 <div class="bk-job-card-target-info">
-                  <span class="bk-job-card-target-name">{j.target_type === 'inline' ? 'inline target' : tgtMeta.label}</span>
+                  <span class="bk-job-card-target-name">{target ? target.name : tgtMeta.label}</span>
                   <span class="font-mono bk-job-card-target-meta">{j.target_type}</span>
                 </div>
               </div>
@@ -1268,6 +1270,9 @@
 <!-- Target modal -->
 <Modal bind:open={showTarget} title={editingTarget ? `Edit: ${editingTarget.name}` : 'New backup target'} maxWidth="max-w-lg">
   <form onsubmit={saveTarget} class="space-y-4" id="target-form">
+    {#if editingTarget && editingTarget.job_count != null}
+      <p class="text-xs text-[var(--fg-muted)]">{targetUsage(editingTarget.job_count)}</p>
+    {/if}
     <Input label="Name" bind:value={tName} placeholder="My NAS" />
 
     <!-- Type selector as visual cards -->

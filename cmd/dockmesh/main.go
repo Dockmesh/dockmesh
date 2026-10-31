@@ -587,6 +587,11 @@ func main() {
 	targets.SetLocalRoots(func() []string {
 		return targets.ParseRoots(settingsStore.Get(targets.LocalRootsSetting, ""))
 	})
+	if tz := settingsStore.Get(backup.TimezoneSetting, ""); tz != "" {
+		if err := backupSvc.SetTimezone(ctx, tz); err != nil {
+			slog.Warn("backup time zone setting ignored, using the server time zone", "err", err)
+		}
+	}
 	// P.12.1 — hand the settings store to auth.Service so password
 	// policy + per-user lockout thresholds + rotation-day setting
 	// are live-editable via the UI without a restart.
@@ -878,7 +883,7 @@ func main() {
 	backupSvc.SetNotifier(notifSvc)
 	backupSvc.SetNotices(noticesSvc)
 	noticesSvc.Register(backup.RepairNoticeKey, func(ctx context.Context, n *notices.Service) error {
-		return repairJobSecretsOnce(ctx, settingsStore, backupSvc, backupTargetStore, n, func(j backup.Job, target string) {
+		return prepareJobTargets(ctx, settingsStore, backupSvc, backupTargetStore, n, func(j backup.Job, target string) {
 			auditSvc.Write(ctx, "", audit.ActionBackupJobRepaired, j.Name, map[string]any{"job_id": j.ID, "target": target})
 		})
 	})

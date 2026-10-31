@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -61,13 +60,12 @@ func (h *Handlers) CreateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "backups not configured")
 		return
 	}
-	var body jobBody
-	if err := decodeJSON(r, &body); err != nil {
+	var in backup.JobInput
+	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	in := body.JobInput
-	if err := h.resolveJobTargetSecrets(r.Context(), &in, body.TargetID, nil); err != nil {
+	if err := resolveJobTargetSecrets(&in, nil); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -94,12 +92,11 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	var body jobBody
-	if err := decodeJSON(r, &body); err != nil {
+	var in backup.JobInput
+	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	in := body.JobInput
 	prev, err := h.Backups.GetJob(r.Context(), id)
 	if errors.Is(err, backup.ErrJobNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
@@ -112,7 +109,7 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 	if !h.requireJobAccess(w, r, prev, &in) || !h.checkBackupJobScope(w, r, in) {
 		return
 	}
-	if err := h.resolveJobTargetSecrets(r.Context(), &in, body.TargetID, prev); err != nil {
+	if err := resolveJobTargetSecrets(&in, prev); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -188,6 +185,9 @@ func (h *Handlers) AcceptBackupHostKey(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if job.TargetID > 0 && !h.requireTargetAccess(w, r, job.TargetID) {
+		return
+	}
 	id := job.ID
 	err := h.Backups.AcceptHostKey(r.Context(), id)
 	switch {
@@ -214,13 +214,29 @@ func (h *Handlers) RunBackupJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	run, err := h.Backups.RunNow(r.Context(), job.ID)
-	if err != nil {
+	run, err := h.Backups.StartRun(r.Context(), job.ID)
+	switch {
+	case errors.Is(err, backup.ErrJobNotFound):
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	case errors.Is(err, backup.ErrJobRunning):
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	h.audit(r, audit.ActionStackDeploy, "backup:run:"+strconv.FormatInt(job.ID, 10), nil)
-	writeJSON(w, http.StatusOK, run)
+	writeJSON(w, http.StatusAccepted, run)
+}
+
+// GetBackupSchedule reports the time zone backup schedules run in.
+func (h *Handlers) GetBackupSchedule(w http.ResponseWriter, r *http.Request) {
+	if h.Backups == nil {
+		writeError(w, http.StatusServiceUnavailable, "backups not configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, h.Backups.ScheduleInfo())
 }
 
 func (h *Handlers) ListBackupRuns(w http.ResponseWriter, r *http.Request) {
@@ -462,35 +478,16 @@ func (h *Handlers) hookScopeReq(r *http.Request, hostID, container string) (rbac
 	return req, true
 }
 
-// jobBody is a job create/update request. TargetID names the saved
-// target the job's config was picked from, so its write-only secrets
-// can be filled in server-side.
-type jobBody struct {
-	backup.JobInput
-	TargetID int64 `json:"target_id"`
-}
-
-// resolveJobTargetSecrets fills the redacted secrets in in.TargetConfig
-// from the saved target (targetID) or the job's previous config, and
-// rejects a job that would be stored with a secret still blank.
-func (h *Handlers) resolveJobTargetSecrets(ctx context.Context, in *backup.JobInput, targetID int64, prev *backup.Job) error {
+// resolveJobTargetSecrets fills the redacted secrets of an inline target
+// config from the job's previous inline config. A job that references a
+// saved target (TargetID) has no inline config: the target holds it.
+func resolveJobTargetSecrets(in *backup.JobInput, prev *backup.Job) error {
+	if in.TargetID > 0 {
+		return nil
+	}
 	blank := blankedSecrets(in.TargetConfig)
 	var err error
-	if targetID > 0 && h.BackupTargets != nil {
-		stored, gerr := h.BackupTargets.Get(ctx, targetID)
-		if gerr != nil {
-			return errors.New("backup target not found")
-		}
-		if stored.Type == in.TargetType {
-			if len(blank) > 0 && !sameLocation(in.TargetConfig, stored.Config) {
-				return redact.ErrReenter
-			}
-			if in.TargetConfig, err = keepConfig(in.TargetConfig, stored.Config, backupTargetSecrets); err != nil {
-				return err
-			}
-		}
-	}
-	if prev != nil && prev.TargetType == in.TargetType {
+	if prev != nil && prev.TargetID == 0 && prev.TargetType == in.TargetType {
 		if in.TargetConfig, err = keepConfig(in.TargetConfig, prev.TargetConfig, backupTargetSecrets); err != nil {
 			return err
 		}
@@ -517,18 +514,4 @@ func blankedSecrets(cfg any) []string {
 		}
 	}
 	return out
-}
-
-// targetLocationFields say where in the target data lands; a job that
-// borrows a saved target's secrets may not point them elsewhere.
-var targetLocationFields = []string{"path", "bucket", "prefix", "region", "use_ssl"}
-
-func sameLocation(next, stored any) bool {
-	n, s := redact.ToMap(next), redact.ToMap(stored)
-	for _, k := range targetLocationFields {
-		if fmt.Sprint(n[k]) != fmt.Sprint(s[k]) {
-			return false
-		}
-	}
-	return true
 }

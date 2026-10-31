@@ -3443,13 +3443,10 @@ paths:
         - $ref: "#/components/parameters/IntIDPath"
       responses:
         "202":
-          description: Run queued — poll `/backups/runs` for progress.
+          description: Run started in the background (status `running`); poll `/backups/runs/{id}` for the outcome. The run is not tied to this request.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  run_id: { type: integer, format: int64 }
+              schema: { $ref: "#/components/schemas/BackupRun" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -3458,6 +3455,26 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+
+  /backups/schedule:
+    get:
+      operationId: backups.schedule_info
+      tags: [backups]
+      summary: Time zone backup schedules are evaluated in
+      description: Set with the `backups.timezone` setting (IANA name); empty means the server's time zone.
+      responses:
+        "200":
+          description: Scheduler time zone.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [timezone, source, server_timezone]
+                properties:
+                  timezone: { type: string, example: Europe/Berlin }
+                  source: { type: string, enum: [setting, server] }
+                  server_timezone: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
   /backups/runs:
     get:
@@ -3757,7 +3774,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: Target is referenced by one or more jobs.
+          description: Target is referenced by one or more jobs (including deleted jobs whose archives are still on it).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -7877,11 +7894,14 @@ components:
       properties:
         id: { type: integer, format: int64 }
         name: { type: string }
-        target_type: { type: string, enum: [local, sftp, smb, webdav, s3] }
+        target_id: { type: integer, format: int64, description: Saved target (backup_targets) the job writes to. }
+        target_type: { type: string, enum: [local, sftp, smb, webdav, s3], description: Type of the referenced target. }
         target_config:
           type: object
           description: >-
-            Target-specific credentials/paths. Secret fields (`password`, `secret_key`, `private_key`) are returned as `""` with a sibling `<field>_set: true` when a value is stored. On update an empty or omitted secret keeps the stored value.
+            Empty for jobs that reference a saved target; the configuration lives on the target.
+            For a job not yet moved to a saved target, secret fields (`password`, `secret_key`, `private_key`) are
+            returned as `""` with a sibling `<field>_set: true` when a value is stored.
         sources:
           type: array
           items: { $ref: "#/components/schemas/BackupSource" }
@@ -7903,18 +7923,12 @@ components:
 
     BackupJobInput:
       type: object
-      required: [name, target_type, sources, schedule]
+      required: [name, sources, schedule]
       properties:
         name: { type: string }
-        target_type: { type: string, enum: [local, sftp, smb, webdav, s3] }
+        target_id: { type: integer, format: int64, description: Saved target to write to. When set, target_type and target_config are ignored. }
+        target_type: { type: string, enum: [local, sftp, smb, webdav, s3], description: Without target_id, the inline target is saved as a new target named after the job. }
         target_config: { type: object }
-        target_id:
-          type: integer
-          description: |
-            Saved backup target the config was picked from. Its stored
-            secrets fill the redacted fields of target_config. A config
-            that still carries a redacted secret without a matching
-            target_id is rejected.
         sources:
           type: array
           minItems: 1
@@ -8088,6 +8102,7 @@ components:
         total_bytes: { type: integer, format: int64 }
         used_bytes: { type: integer, format: int64 }
         last_checked_at: { type: string, format: date-time }
+        job_count: { type: integer, description: "Backup jobs (not deleted ones) that write to this target. Only for callers without a host or role scope." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 

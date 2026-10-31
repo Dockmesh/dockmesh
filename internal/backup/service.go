@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/docker"
@@ -30,9 +31,18 @@ type Service struct {
 	secrets *secrets.Service
 	paths   SystemPaths
 
-	cron     *cron.Cron
 	mu       sync.Mutex
+	cron     *cron.Cron
+	started  bool
+	tzName   string // backups.timezone; empty = server time zone
 	entryIDs map[int64]cron.EntryID
+	running  map[int64]bool
+	stopping bool
+
+	// runCtx is cancelled on Stop.
+	runCtx    context.Context
+	cancelRun context.CancelFunc
+	runs      sync.WaitGroup
 
 	notices *notices.Service
 }
@@ -45,15 +55,19 @@ func (s *Service) SetNotices(n *notices.Service) {
 
 func NewService(db *sql.DB, dc *docker.Client, sm *stacks.Manager, sec *secrets.Service, paths SystemPaths) *Service {
 	st := newStore(db)
+	runCtx, cancel := context.WithCancel(context.Background())
 	return &Service{
-		store:    st,
-		exec:     newExecutor(st, db, dc, nil, sm, sec, paths),
-		docker:   dc,
-		stacks:   sm,
-		secrets:  sec,
-		paths:    paths,
-		cron:     cron.New(),
-		entryIDs: make(map[int64]cron.EntryID),
+		store:     st,
+		exec:      newExecutor(st, db, dc, nil, sm, sec, paths),
+		docker:    dc,
+		stacks:    sm,
+		secrets:   sec,
+		paths:     paths,
+		cron:      newCron(time.Local),
+		entryIDs:  make(map[int64]cron.EntryID),
+		running:   make(map[int64]bool),
+		runCtx:    runCtx,
+		cancelRun: cancel,
 	}
 }
 
@@ -75,60 +89,17 @@ func (s *Service) SetHostResolver(hr hostResolver) {
 	s.exec.hosts = hr
 }
 
-// Start loads enabled jobs and schedules them.
-func (s *Service) Start(ctx context.Context) error {
-	jobs, err := s.store.listJobs(ctx)
-	if err != nil {
-		return err
-	}
-	for _, j := range jobs {
-		if !j.Enabled || j.Schedule == "" {
-			continue
-		}
-		_ = s.schedule(&j)
-	}
-	s.cron.Start()
-	return nil
-}
-
-func (s *Service) Stop() {
-	if s.cron != nil {
-		<-s.cron.Stop().Done()
-	}
-}
-
-// schedule (re)registers a job's cron entry.
-func (s *Service) schedule(j *Job) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if id, ok := s.entryIDs[j.ID]; ok {
-		s.cron.Remove(id)
-		delete(s.entryIDs, j.ID)
-	}
-	if !j.Enabled || j.Schedule == "" {
-		return nil
-	}
-	jobID := j.ID
-	id, err := s.cron.AddFunc(j.Schedule, func() {
-		bg := context.Background()
-		fresh, err := s.store.getJob(bg, jobID)
-		if err != nil {
-			return
-		}
-		_, _ = s.exec.Run(bg, fresh)
-	})
-	if err != nil {
-		return err
-	}
-	s.entryIDs[j.ID] = id
-	return nil
-}
-
 // -----------------------------------------------------------------------------
 // public API used by handlers
 // -----------------------------------------------------------------------------
 
-func (s *Service) ListJobs(ctx context.Context) ([]Job, error) { return s.store.listJobs(ctx) }
+func (s *Service) ListJobs(ctx context.Context) ([]Job, error) {
+	jobs, err := s.store.listJobs(ctx)
+	for i := range jobs {
+		jobs[i].NextRunAt = s.nextRun(jobs[i].ID)
+	}
+	return jobs, err
+}
 
 // UnencryptableJobs lists enabled jobs set to encrypt while secrets
 // encryption is off; their runs fail instead of writing plaintext.
@@ -150,7 +121,11 @@ func (s *Service) UnencryptableJobs(ctx context.Context) ([]string, error) {
 }
 
 func (s *Service) GetJob(ctx context.Context, id int64) (*Job, error) {
-	return s.store.getJob(ctx, id)
+	j, err := s.store.getJob(ctx, id)
+	if err == nil {
+		j.NextRunAt = s.nextRun(id)
+	}
+	return j, err
 }
 
 // DefaultLocalPath is the directory the wizards suggest for a local target.
@@ -164,13 +139,10 @@ func canEncrypt(sec *secrets.Service) bool { return sec != nil && sec.Enabled() 
 
 // checkJobInput applies the save-time rules that depend on the server:
 // encryption needs secrets (a disabled job may keep the flag, so it can
-// still be switched off), and local paths must be inside the allowed roots.
+// still be switched off). Local paths are checked when the target is built.
 func (s *Service) checkJobInput(in JobInput) error {
 	if in.Encrypt && in.Enabled && !s.canEncrypt() {
 		return ErrEncryptUnavailable
-	}
-	if in.TargetType == "local" {
-		return targets.CheckLocalConfig(in.TargetConfig)
 	}
 	return nil
 }
@@ -185,7 +157,9 @@ func (s *Service) CreateJob(ctx context.Context, in JobInput) (*Job, error) {
 	if err := s.checkJobInput(in); err != nil {
 		return nil, err
 	}
-	in.TargetConfig = targets.KeepHostKey("", nil, in.TargetType, in.TargetConfig)
+	if err := s.attachTarget(ctx, &in, nil); err != nil {
+		return nil, err
+	}
 	id, err := s.store.createJob(ctx, in)
 	if err != nil {
 		return nil, err
@@ -221,7 +195,9 @@ func (s *Service) UpdateJob(ctx context.Context, id int64, in JobInput) (*Job, e
 	if err != nil {
 		return nil, err
 	}
-	in.TargetConfig = targets.KeepHostKey(prev.TargetType, prev.TargetConfig, in.TargetType, in.TargetConfig)
+	if err := s.attachTarget(ctx, &in, prev); err != nil {
+		return nil, err
+	}
 	if err := s.store.updateJob(ctx, id, in); err != nil {
 		return nil, err
 	}
@@ -306,23 +282,53 @@ func (s *Service) checkJobName(ctx context.Context, id int64, in JobInput) error
 	return nil
 }
 
+// JobsUsingTarget lists the jobs, deleted ones included, that write to a
+// saved target. Changing the target changes where all of them write.
+func (s *Service) JobsUsingTarget(ctx context.Context, targetID int64) ([]Job, error) {
+	return s.store.jobsUsingTarget(ctx, targetID)
+}
+
 func (s *Service) DeleteJob(ctx context.Context, id int64) error {
-	s.mu.Lock()
-	if cid, ok := s.entryIDs[id]; ok {
-		s.cron.Remove(cid)
-		delete(s.entryIDs, id)
-	}
-	s.mu.Unlock()
+	s.unschedule(id)
 	return s.store.deleteJob(ctx, id)
 }
 
-// RunNow triggers a job manually and blocks until it finishes.
+// RunNow runs a job and blocks until it finishes.
 func (s *Service) RunNow(ctx context.Context, id int64) (*Run, error) {
 	j, err := s.store.getJob(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	if !s.claim(id) {
+		return nil, ErrJobRunning
+	}
+	defer s.release(id)
 	return s.exec.Run(ctx, j)
+}
+
+// StartRun starts a job in the background and returns its run record
+// right away, so the run doesn't depend on the HTTP request that asked
+// for it. Poll GetRun for the outcome.
+func (s *Service) StartRun(ctx context.Context, id int64) (*Run, error) {
+	j, err := s.store.getJob(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !s.claim(id) {
+		return nil, ErrJobRunning
+	}
+	runID, err := s.exec.begin(ctx, j)
+	if err != nil {
+		s.release(id)
+		return nil, err
+	}
+	s.runs.Add(1)
+	go func() {
+		defer s.runs.Done()
+		defer s.release(id)
+		_, _ = s.exec.complete(s.runCtx, j, runID)
+	}()
+	return s.store.getRun(ctx, runID)
 }
 
 func (s *Service) ListRuns(ctx context.Context, limit int) ([]Run, error) {
@@ -548,18 +554,15 @@ func validateJob(in JobInput) error {
 	if in.Name == "" {
 		return errors.New("name required")
 	}
-	if in.TargetType == "" {
-		return errors.New("target_type required")
+	if in.TargetID == 0 && in.TargetType == "" {
+		return errors.New("target_id or target_type required")
 	}
 	if len(in.Sources) == 0 {
 		return errors.New("at least one source required")
 	}
 	if len(in.Sources) > 1 {
-		// P.13.5: rather than letting jobs land in the DB with multiple
-		// sources and silently truncating to the first one at run time
-		// (the old behaviour, which produced incomplete backups under
-		// the radar), reject up front. Operators who need to back up
-		// several things create one job per source.
+		// The executor handles exactly one source; operators who need to
+		// back up several things create one job per source.
 		return errors.New("exactly one source per job — create one job per stack/volume/system you want to back up")
 	}
 	for _, src := range in.Sources {
