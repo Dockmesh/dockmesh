@@ -243,7 +243,7 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode s
 	if opts != nil {
 		next = *opts
 	} else if cur.optionsErr != nil {
-		return fmt.Errorf("%w: stored options can't be read (%v); send new options", ErrInvalidOptions, cur.optionsErr)
+		return fmt.Errorf("%w: stored options can't be read (%w); send new options", ErrInvalidOptions, cur.optionsErr)
 	}
 	raw, err := s.prepareOptions(ctx, id, cur.Host, tlsMode, &next, prev)
 	if err != nil {
