@@ -606,7 +606,7 @@ func startStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpe
 	case "volume_import":
 		err = runVolumeImportStream(conn, cli, open, reg)
 	case "events":
-		err = runEventsStream(conn, cli, open, reg)
+		err = runEventsStream(conn, cli, reg)
 	default:
 		err = errors.New("unknown stream kind: " + open.Kind)
 	}
@@ -623,7 +623,7 @@ func startStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpe
 
 // runEventsStream forwards Docker container events, one JSON object per
 // chunk, for the server's event alerts.
-func runEventsStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) error {
+func runEventsStream(conn *websocket.Conn, cli *client.Client, reg *streamReg) error {
 	msgs, errs := cli.Events(reg.ctx, events.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("type", string(events.ContainerEventType))),
 	})
