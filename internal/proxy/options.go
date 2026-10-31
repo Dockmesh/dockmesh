@@ -130,8 +130,8 @@ func (o SiteOptions) Public() SiteOptions {
 // edit the route.
 const maskedValue = "********"
 
-// Masked hides what can carry credentials from callers who may view but
-// not edit a route: header values and the query of the forward-auth URL.
+// Masked returns a copy with header values and the forward-auth URL's
+// query hidden, since both can carry credentials.
 func (o SiteOptions) Masked() SiteOptions {
 	o.Headers.RequestSet = maskHeaders(o.Headers.RequestSet)
 	o.Headers.ResponseSet = maskHeaders(o.Headers.ResponseSet)
