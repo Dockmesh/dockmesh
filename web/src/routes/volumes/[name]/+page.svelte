@@ -8,7 +8,7 @@
   // shell-into-container path.
   import { untrack } from 'svelte';
   import { latest } from '$lib/latest';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api, ApiError, isFanOut, type VolumeEntry, type VolumeFileResult } from '$lib/api';
   import { Skeleton, EmptyState } from '$lib/components/ui';
@@ -24,8 +24,8 @@
     RefreshCw, HardDrive, AlertTriangle, Trash2, Copy, Box
   } from 'lucide-svelte';
 
-  const name = $derived(decodeURIComponent($page.params.name));
-  const hostId = $derived($page.url.searchParams.get('host') || 'local');
+  const name = $derived(decodeURIComponent(page.params.name));
+  const hostId = $derived(page.url.searchParams.get('host') || 'local');
 
   $effect(() => {
     pageContext.set(name);
@@ -33,7 +33,7 @@
   });
 
   type Tab = 'overview' | 'files' | 'containers';
-  let tab = $state<Tab>(((new URLSearchParams($page.url.search).get('tab')) as Tab) || 'overview');
+  let tab = $state<Tab>(((new URLSearchParams(page.url.search).get('tab')) as Tab) || 'overview');
 
   // ───────── Inspect
   let inspect = $state<any>(null);

@@ -5,5 +5,5 @@
   // redirected to /hosts.
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  onMount(() => goto('/hosts', { replaceState: true }));
+  onMount(() => goto('/hosts', { replace: true }));
 </script>

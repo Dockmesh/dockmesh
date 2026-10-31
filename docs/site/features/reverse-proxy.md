@@ -68,7 +68,7 @@ Each route can carry options in its `options` object (`POST /api/v1/proxy/routes
 | `headers` | `security` (nosniff, SAMEORIGIN framing, strict referrer), `request_set`, `request_remove`, `response_set`, `response_remove` |
 | `logs` | `access_log` (one line per request in `docker logs dockmesh-proxy`) |
 
-A `PUT` without `options` keeps the stored ones; a `PUT` with `options` replaces them. Basic-auth passwords are stored as bcrypt hashes and never returned; send a user without `password` to keep its password. Values can't contain Caddy placeholders (`{…}`), and there's no way to add raw Caddy directives. `GET /api/v1/proxy/routes/{id}/config` returns the Caddy config Dockmesh generates for one site, with password hashes redacted.
+A `PUT` without `options` keeps the stored ones; a `PUT` with `options` replaces them. Basic-auth passwords are stored as bcrypt hashes and never returned; send a user without `password` to keep its password. Values can't contain Caddy placeholders (`{…}`), and there's no way to add raw Caddy directives. `GET /api/v1/proxy/routes/{id}/config` returns the Caddy config Dockmesh generates for one site, with password hashes redacted. Users who can view proxy routes but not edit them (`proxy.update`) see header names with the values replaced by `********` and the forward-auth URL without its query, in the route list and in the config preview.
 
 ### Importing a Caddyfile
 

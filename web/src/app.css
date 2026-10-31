@@ -8,12 +8,7 @@
    Design tokens — Tailwind v4 theme
    ---------------------------------------------------------------------------*/
 @theme {
-  /* Brand: cyan, aligned with the dockmesh.dev marketing site.
-     Base = Tailwind cyan-500 (#06b6d4); the marketing hero accent
-     (#04d1eb) sits between 400 and 500 on this scale. Chosen over
-     the previous muted-steel-blue so the app + marketing site read
-     as one product, and because cyan is what the logo gradient
-     already uses (#04d1eb → #097d9a). */
+  /* Brand: cyan, aligned with the dockmesh.dev site and the logo gradient. */
   --color-brand-50:  #ecfeff;
   --color-brand-100: #cffafe;
   --color-brand-200: #a5f3fc;
@@ -25,7 +20,6 @@
   --color-brand-800: #155e75;
   --color-brand-900: #164e63;
 
-  /* Semantic status colors */
   --color-success-400: #4ade80;
   --color-success-500: #22c55e;
   --color-success-600: #16a34a;
@@ -40,100 +34,125 @@
 }
 
 /* -----------------------------------------------------------------------------
-   Surface & text tokens — swap on data-theme for dark/light
+   Theme tokens. Dark and light are equal; data-theme on <html> picks one.
+   Surfaces are flat: structure comes from hairlines (--border) and spacing.
+   --side    sidebar           --surface  raised objects (dialogs, host tiles)
+   --band    table header/hover --field   inputs, segmented track, chart grid
+   --menu    popovers, dialogs, drawers
    ---------------------------------------------------------------------------*/
+:root {
+  --fs-xs: 11.5px;
+  --fs-sm: 12.5px;
+  --fs-base: 13.5px;
+  --fs-md: 15px;
+  --fs-lg: 18px;
+  --fs-xl: 22px;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+
+  --r-sm: 6px;
+  --r: 8px;
+  --r-lg: 10px;
+  --r-xl: 12px;
+
+  --row-h: 44px;
+  --ctl-h: 34px;
+  --ctl-h-sm: 28px;
+}
+
 :root,
 :root[data-theme="dark"] {
-  /* Backgrounds — three-tier slate palette, matches the marketing
-     hero's layering (sidebar darker, content mid, cards with border).
-     - --bg         slate-950: the page shell and the sidebar. DARKEST.
-     - --bg-elevated slate-900: the main content area behind all cards.
-     - --surface    slate-900: card / panel backgrounds, differentiated
-                    from the content area by border rather than tone
-                    (mirrors the mockup's subtle, border-led hierarchy).
-     - --surface-hover slate-800: hover state on rows, menu items, cards.
-     - --surface-active slate-700: pressed / currently-selected rows.*/
-  --bg:           #020617;
-  --bg-elevated:  #0f172a;
-  --surface:      #111c32;
-  --surface-hover:#1e293b;
-  --surface-active:#334155;
+  --bg: #020617;
+  --side: #060d1d;
+  --surface: #0b1426;
+  --field: #16213a;
+  --band: #081122;
+  --menu: #0f1a30;
+  --border: #1b2740;
+  --border-strong: #2b3a57;
+  --fg: #f1f5f9;
+  --muted: #a3b1c6;
+  --subtle: #8293ab;
+  --accent: #22d3ee;
+  --on-accent: #03161b;
+  --accent-soft: rgba(34, 211, 238, 0.14);
+  --nav-active: #111d35;
+  --pop: 0 12px 32px rgba(0, 0, 0, 0.55);
+  --overlay: rgba(2, 6, 23, 0.6);
 
-  /* Borders — slate-800 / slate-700 so panels separate without shouting. */
-  --border:        #1e293b;
-  --border-subtle: #101a2e;
-  --border-strong: #334155;
-
-  /* Foreground — cool whites (slate-100 → slate-500) harmonise with the
-     bluish backgrounds. */
-  --fg:         #f1f5f9;
-  --fg-muted:   #94a3b8;
-  --fg-subtle:  #64748b;
-
-  /* Theme-adaptive accent tokens. On dark-bg the LIGHT cyan shades
-     (300/400) pop against the near-black surface; on light-bg they
-     disappear and the DARK cyan shades (600/700) become the readable
-     choice. Both themes reference the same tokens so component CSS
-     doesn't need to branch. */
-  --accent:     var(--color-brand-400);   /* default / dark */
-  --accent-fg:  var(--color-brand-300);   /* text-on-surface highlight */
-  --accent-bg:  color-mix(in srgb, var(--color-brand-500) 12%, transparent);
-
-  /* Focus ring */
-  --ring: color-mix(in srgb, var(--color-brand-500) 60%, transparent);
-
-  /* Editorial-page tokens — bluish-white dot-mesh on near-black canvas,
-     huge italic-serif watermark almost-invisible behind editorial titles.
-     Both default to dark; the light-theme block below overrides. */
-  --mesh-color:      rgba(148, 163, 184, 0.10);
-  --watermark-color: rgba(148, 163, 184, 0.04);
+  --ok: #4ade80;
+  --ok-bg: rgba(74, 222, 128, 0.1);
+  --ok-bd: rgba(74, 222, 128, 0.45);
+  --warn: #facc15;
+  --warn-bg: rgba(250, 204, 21, 0.1);
+  --warn-bd: rgba(250, 204, 21, 0.45);
+  --bad: #f87171;
+  --bad-bg: rgba(248, 113, 113, 0.1);
+  --bad-bd: rgba(248, 113, 113, 0.45);
+  --off: #8293ab;
+  --violet: #a78bfa;
 
   color-scheme: dark;
 }
 
 :root[data-theme="light"] {
-  --bg:           #fafbfc;
-  --bg-elevated:  #ffffff;
-  --surface:      #ffffff;
-  --surface-hover:#f1f5f9;
-  --surface-active:#e2e8f0;
+  --bg: #f7f9fc;
+  --side: #ffffff;
+  --surface: #ffffff;
+  --field: #eaeef4;
+  --band: #f1f4f8;
+  --menu: #ffffff;
+  --border: #dfe5ee;
+  --border-strong: #c3cddb;
+  --fg: #0b1424;
+  --muted: #47566b;
+  --subtle: #56657a;
+  --accent: #0e7490;
+  --on-accent: #ffffff;
+  --accent-soft: rgba(14, 116, 144, 0.12);
+  --nav-active: #ecfeff;
+  --pop: 0 12px 32px rgba(15, 23, 42, 0.14);
+  --overlay: rgba(15, 23, 42, 0.35);
 
-  /* Borders darkened vs. the original pastel values — on a near-white
-     background #e5e9f0 disappeared visually which made cards feel
-     floating and subdivisions between rows invisible. */
-  --border:        #d1d5db;
-  --border-subtle: #e5e7eb;
-  --border-strong: #9ca3af;
+  --ok: #15803d;
+  --ok-bg: #f0fdf4;
+  --ok-bd: #86efac;
+  --warn: #92400e;
+  --warn-bg: #fffbeb;
+  --warn-bd: #fcd34d;
+  --bad: #b91c1c;
+  --bad-bg: #fef2f2;
+  --bad-bd: #fca5a5;
+  --off: #56657a;
+  --violet: #7c3aed;
 
-  /* Text-color tokens calibrated for ≥4.5:1 contrast on var(--bg).
-     Previously --fg-subtle was #8892a8 which is only 3:1 (LARGE-TEXT
-     tier on WCAG AA) — it made labels like "Host" barely readable. */
-  --fg:         #0f1524;
-  --fg-muted:   #475569;   /* slate-600 — 7.6:1 on white */
-  --fg-subtle:  #64748b;   /* slate-500 — 4.9:1 on white */
-
-  /* Light-theme accents — dark cyan so text + outlines read cleanly
-     on white. The brand-300 that works on dark-bg is unreadable here. */
-  --accent:     var(--color-brand-600);
-  --accent-fg:  var(--color-brand-700);
-  --accent-bg:  color-mix(in srgb, var(--color-brand-500) 14%, transparent);
-
-  /* Remap the light-cyan 300/400 shades to their darker siblings in
-     light mode. This is a CSS-variable trick that flips contrast for
-     every component using var(--color-brand-300) or -400 as a text or
-     border colour — no per-component CSS touch needed. The original
-     light shades remain available via direct hex if specifically
-     wanted, but by default every "brand accent" now reads both ways. */
-  --color-brand-300: #0e7490;  /* was #67e8f9 — now equivalent to brand-700 */
-  --color-brand-400: #0891b2;  /* was #22d3ee — now equivalent to brand-600 */
-
-  --ring: color-mix(in srgb, var(--color-brand-500) 40%, transparent);
-
-  /* Light-theme editorial tokens — warm graphite dots on near-white. */
-  --mesh-color:      rgba(74, 70, 61, 0.10);
-  --watermark-color: rgba(74, 70, 61, 0.04);
+  /* Brand and status shades read as text; on white they need the darker
+     siblings to keep AA contrast. */
+  --color-brand-300: #0e7490;
+  --color-brand-400: #0e7490;
+  --color-success-400: #15803d;
+  --color-success-500: #16a34a;
+  --color-warning-400: #92400e;
+  --color-warning-500: #b45309;
+  --color-danger-400: #b91c1c;
+  --color-danger-500: #dc2626;
 
   color-scheme: light;
+}
+
+:root {
+  --bg-elevated: var(--band);
+  --surface-hover: var(--nav-active);
+  --border-subtle: color-mix(in srgb, var(--border) 60%, transparent);
+  --fg-muted: var(--muted);
+  --fg-subtle: var(--subtle);
+  --accent-fg: var(--accent);
+  --accent-bg: var(--accent-soft);
 }
 
 /* -----------------------------------------------------------------------------
@@ -144,7 +163,9 @@ body {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-sans);
-  font-feature-settings: "cv11", "ss01", "ss03";
+  font-size: var(--fs-base);
+  line-height: 1.5;
+  font-feature-settings: "tnum" 1, "cv11" 1;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -168,61 +189,35 @@ body {
 
 /* Global focus ring */
 :focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-  border-radius: 4px;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 /* -----------------------------------------------------------------------------
-   Utility components
+   Utility components (older class names, restyled to the flat design)
    ---------------------------------------------------------------------------*/
 @layer components {
-  /* ───────── Surface hierarchy — read this before adding new styles.
-   *
-   * --bg           page canvas (slate-950). NEVER use for elements;
-   *                only the html/body fill. Reserved as the floor so
-   *                cards sitting on --surface read as "raised".
-   * --bg-elevated  input slots + nested boxes inside cards/modals
-   *                (slate-900). One shade above the floor, signals
-   *                "this is an interactive slot inside a card".
-   * --surface      top-level card / modal surface. Use for any visible
-   *                container on a page (card row, panel, etc).
-   * --surface-hover hover state of --surface. Lighter still.
-   * --surface-active pressed / selected state of --surface.
-   *
-   * Rule of thumb: cards on the page use --surface; inputs/sub-boxes
-   * inside cards or modals use --bg-elevated. If you reach for --bg
-   * for an element background, you almost certainly want --surface.
-   * ───────── */
-
-  /* Cards: sit on --surface, which is one step lighter than the
-     --bg-elevated content area plus a thin border. Matches the marketing
-     hero's subtle border-led hierarchy over the slate-900 content bg. */
   .dm-card {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    transition: background-color 0.15s ease, border-color 0.15s ease;
+    border-radius: var(--r-lg);
   }
-  .dm-card-hover:hover {
-    background: var(--surface-hover);
-    border-color: var(--border-strong);
-  }
+  .dm-card-hover:hover { border-color: var(--accent); }
 
   .dm-input {
     background: var(--surface);
     border: 1px solid var(--border);
     color: var(--fg);
-    border-radius: 8px;
-    padding: 0.625rem 0.875rem;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    border-radius: var(--r);
+    padding: 6px 10px;
+    min-height: var(--ctl-h);
+    font: inherit;
     width: 100%;
   }
-  .dm-input::placeholder { color: var(--fg-subtle); }
+  .dm-input::placeholder { color: var(--subtle); }
   .dm-input:focus {
-    outline: none;
-    border-color: var(--color-brand-500);
-    box-shadow: 0 0 0 3px var(--ring);
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
   .dm-input:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -230,62 +225,55 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 0.5rem;
+    gap: 7px;
+    font: inherit;
     font-weight: 500;
-    border-radius: 8px;
-    padding: 0.5rem 1rem;
-    transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.06s ease;
-    border: 1px solid transparent;
+    border-radius: var(--r);
+    padding: 0 12px;
+    min-height: var(--ctl-h);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--fg);
     cursor: pointer;
     white-space: nowrap;
     user-select: none;
   }
-  .dm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .dm-btn:not(:disabled):active { transform: translateY(1px); }
+  .dm-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .dm-btn:not(:disabled):hover { border-color: var(--accent); }
 
   .dm-btn-primary {
-    background: var(--color-brand-500);
-    /* Dark text on cyan reads better than white — peer-tool convention. */
-    color: #0a0e1a;
-    border-color: var(--color-brand-500);
-    font-weight: 500;
+    background: var(--accent);
+    color: var(--on-accent);
+    border-color: var(--accent);
+    font-weight: 600;
   }
-  .dm-btn-primary:not(:disabled):hover {
-    background: var(--color-brand-400);
-    border-color: var(--color-brand-400);
-  }
+  .dm-btn-primary:not(:disabled):hover { filter: brightness(1.08); }
 
   .dm-btn-secondary {
     background: var(--surface);
     color: var(--fg);
     border-color: var(--border);
   }
-  .dm-btn-secondary:not(:disabled):hover {
-    background: var(--surface-hover);
-    border-color: var(--border-strong);
-  }
 
   .dm-btn-ghost {
     background: transparent;
-    color: var(--fg-muted);
+    border-color: transparent;
+    color: var(--muted);
   }
   .dm-btn-ghost:not(:disabled):hover {
-    background: var(--surface-hover);
     color: var(--fg);
+    border-color: var(--border);
   }
 
   .dm-btn-danger {
-    background: transparent;
-    color: var(--color-danger-500);
-    border-color: color-mix(in srgb, var(--color-danger-500) 40%, transparent);
+    background: var(--surface);
+    color: var(--bad);
+    border-color: var(--border);
   }
-  .dm-btn-danger:not(:disabled):hover {
-    background: color-mix(in srgb, var(--color-danger-500) 12%, transparent);
-    border-color: var(--color-danger-500);
-  }
+  .dm-btn-danger:not(:disabled):hover { border-color: var(--bad); }
 
-  .dm-btn-sm { padding: 0.35rem 0.7rem; font-size: 0.8125rem; }
-  .dm-btn-xs { padding: 0.25rem 0.55rem; font-size: 0.75rem; border-radius: 6px; }
+  .dm-btn-sm { padding: 0 9px; min-height: var(--ctl-h-sm); font-size: var(--fs-sm); }
+  .dm-btn-xs { padding: 0 7px; min-height: 24px; font-size: var(--fs-xs); border-radius: var(--r-sm); }
 
   .dm-badge {
     display: inline-flex;
@@ -324,35 +312,19 @@ body {
 }
 .dm-fade-in { animation: dm-fade-in 0.2s ease-out; }
 
-/* =============================================================================
-   Editorial layer — primitives ported from the wizard / claude-design mockup.
-
-   This whole block is ADDITIVE: it does not redefine any existing .dm-* class
-   used by production pages. Editorial pages opt in by wrapping content in
-   `.ed-stage` and using the `.ed-*` and editorial `.dm-pill / .dm-bar /
-   .dm-spark / .dm-card-flat / .ed-input / .ed-input-mono` classes.
-
-   Page-by-page conversion happens in later slices; this slice only ships the
-   foundation + a /_design showcase page.
-   ===========================================================================*/
+/* Editorial primitives (.ed-*, .dm-pill, .dm-bar, …) still used by pages
+   outside the redesigned set. */
 @layer components {
   /* Utility font classes — Tailwind v4 doesn't auto-emit `.font-mono`
      from --font-* tokens unless we declare them. */
   .font-mono  { font-family: var(--font-mono); }
 
-  /* Page canvas — dot-mesh background with a soft radial fade so the dots
-     are densest where the eye lands and dissolve toward the edges. */
   .ed-stage {
     position: relative;
     isolation: isolate;
     background: var(--bg);
     min-height: 100vh;
   }
-  /* Dot-mesh background — disabled by default. Was applied to every
-     editorial page; user feedback was that the constant texture was
-     distracting on long sessions. The Login + Wizard pages still get
-     the mesh via their dedicated `.login-shell::before` (kept on the
-     identity surfaces where it adds drama, not the daily-driver pages). */
   .ed-stage > * { position: relative; z-index: 1; }
 
   /* Eyebrow — small mono caption, optionally with blinking cursor when the
@@ -489,11 +461,12 @@ body {
     font-size: 10.5px;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    border: 1px solid var(--border-strong);
-    border-radius: 3px;
-    color: var(--fg-muted);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    color: var(--off);
     background: transparent;
     line-height: 1.6;
+    white-space: nowrap;
   }
   .dm-pill-dot {
     width: 6px;
@@ -501,11 +474,11 @@ body {
     border-radius: 999px;
     background: currentColor;
   }
-  .dm-pill-success { color: var(--color-success-400); border-color: color-mix(in srgb, var(--color-success-500) 40%, var(--border)); }
-  .dm-pill-warning { color: var(--color-warning-400); border-color: color-mix(in srgb, var(--color-warning-500) 40%, var(--border)); }
-  .dm-pill-danger  { color: var(--color-danger-400);  border-color: color-mix(in srgb, var(--color-danger-500)  40%, var(--border)); }
-  .dm-pill-neutral { color: var(--fg-subtle); }
-  .dm-pill-info    { color: var(--color-brand-400);   border-color: color-mix(in srgb, var(--color-brand-500)   40%, var(--border)); }
+  .dm-pill-success { color: var(--ok); background: var(--ok-bg); border-color: var(--ok-bd); }
+  .dm-pill-warning { color: var(--warn); background: var(--warn-bg); border-color: var(--warn-bd); }
+  .dm-pill-danger  { color: var(--bad); background: var(--bad-bg); border-color: var(--bad-bd); }
+  .dm-pill-neutral { color: var(--off); }
+  .dm-pill-info    { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
 
   /* Numeric count badge — square corners, mono, subtle, with a hairline
      border. Used for tab counts, filter-pill counts, "N items"
@@ -669,29 +642,25 @@ body {
      column widths can vary. Mono cells use .res-cell-mono for
      consistent type and tabular numbers. */
   .res-table {
-    border: 1px solid var(--border);
-    border-radius: 6px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
     overflow: visible;
   }
   .res-row {
     display: grid;
     align-items: center;
     gap: 12px;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border-subtle);
-    min-height: 44px;
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--border);
+    min-height: var(--row-h);
   }
   .res-row:last-child { border-bottom: 0; }
   .res-row--head {
-    background: var(--bg-elevated);
-    color: var(--fg-subtle);
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    min-height: 36px;
+    color: var(--subtle);
+    font-size: var(--fs-xs);
+    min-height: 32px;
   }
-  .res-row:hover:not(.res-row--head) { background: var(--surface-hover); }
+  .res-row:hover:not(.res-row--head) { background: var(--band); }
   .res-cell-mono {
     font-family: var(--font-mono);
     font-size: 11.5px;
@@ -864,482 +833,4 @@ body {
 @keyframes ed-blink {
   0%, 49%   { opacity: 1; }
   50%, 100% { opacity: 0; }
-}
-
-/* =============================================================================
-   Editorial AppShell — sidebar + topbar + page surface.
-
-   Wraps the authenticated dashboard chrome. Pages opt in by being rendered
-   inside <main class="app-page"> within the shell layout.
-   ===========================================================================*/
-@layer components {
-  /* Two-column grid: fixed-width sidebar + scrolling main column. The
-     `.app-shell-collapsed` modifier squeezes the sidebar to icon-only width.
-     Mobile breakpoint pulls the sidebar off-canvas — see below. */
-  .app-shell {
-    display: grid;
-    grid-template-columns: 232px minmax(0, 1fr);
-    min-height: 100vh;
-  }
-  .app-shell.app-shell-collapsed {
-    grid-template-columns: 64px minmax(0, 1fr);
-  }
-
-  .app-nav {
-    border-right: 1px solid var(--border);
-    background: var(--bg-elevated);
-    display: flex;
-    flex-direction: column;
-    z-index: 10;
-    position: sticky;
-    top: 0;
-    height: 100vh;
-    overflow: hidden;
-  }
-  .app-nav-brand {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 18px 20px 14px;
-    color: var(--fg);
-    font-weight: 600;
-    font-size: 14.5px;
-    letter-spacing: -0.01em;
-    border-bottom: 1px solid var(--border-subtle);
-    min-height: 56px;
-    box-sizing: border-box;
-  }
-  .app-shell-collapsed .app-nav-brand { justify-content: center; padding: 18px 12px; }
-  .app-nav-brand .brand-mark {
-    color: var(--color-brand-400);
-    display: inline-flex;
-    flex-shrink: 0;
-  }
-  .app-nav-brand a {
-    color: inherit;
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 9px;
-    min-width: 0;
-  }
-  .app-nav-brand .accent { color: var(--color-brand-400); }
-
-  .app-nav-scroll {
-    flex: 1;
-    overflow-y: auto;
-    padding: 10px 0 16px;
-  }
-  .app-nav-section { padding: 0 12px; margin-top: 16px; }
-  .app-nav-section:first-child { margin-top: 6px; }
-  .app-nav-section-label {
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--fg-subtle);
-    padding: 0 10px 8px;
-  }
-  .app-nav-item {
-    display: flex;
-    align-items: center;
-    gap: 11px;
-    padding: 7px 10px;
-    border-radius: 5px;
-    color: var(--fg-muted);
-    font-size: 13px;
-    text-decoration: none;
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-    border: 0;
-    background: transparent;
-    width: 100%;
-    text-align: left;
-    font-family: inherit;
-    line-height: 1.3;
-    white-space: nowrap;
-  }
-  .app-nav-item :global(svg) { flex-shrink: 0; }
-  .app-nav-item:hover { color: var(--fg); background: var(--surface-hover); }
-  .app-nav-item.active {
-    color: var(--fg);
-    background: var(--surface-hover);
-    box-shadow: inset 2px 0 0 var(--color-brand-400);
-  }
-  .app-shell-collapsed .app-nav-item { justify-content: center; padding: 7px; }
-  .app-shell-collapsed .app-nav-item-label,
-  .app-shell-collapsed .app-nav-item-badge { display: none; }
-
-  .app-nav-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .app-nav-item-badge {
-    margin-left: auto;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--fg-subtle);
-    background: var(--surface);
-    padding: 1px 6px;
-    border-radius: 3px;
-    border: 1px solid var(--border);
-    line-height: 1.4;
-  }
-  .app-nav-item.active .app-nav-item-badge {
-    color: var(--accent-fg);
-    border-color: color-mix(in srgb, var(--color-brand-500) 40%, var(--border));
-  }
-
-  .app-nav-footer {
-    border-top: 1px solid var(--border-subtle);
-    padding: 12px 14px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    color: var(--fg-muted);
-    font-size: 12.5px;
-  }
-  .app-shell-collapsed .app-nav-footer {
-    flex-direction: column;
-    gap: 8px;
-    padding: 10px 6px;
-  }
-  .app-nav-avatar {
-    width: 28px;
-    height: 28px;
-    border-radius: 999px;
-    background: var(--surface-hover);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg);
-    border: 1px solid var(--border-strong);
-    flex-shrink: 0;
-    cursor: pointer;
-    text-transform: uppercase;
-  }
-  .app-nav-userblock {
-    display: flex;
-    flex-direction: column;
-    line-height: 1.25;
-    min-width: 0;
-    flex: 1;
-  }
-  .app-nav-userblock .name { color: var(--fg); font-size: 12.5px; font-weight: 500; }
-  .app-nav-userblock .role {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-  }
-  .app-shell-collapsed .app-nav-userblock { display: none; }
-
-  /* Sidebar collapse-toggle pin. Sits on the right edge of the aside,
-     half-overlapping the column gap so it stays at the same absolute
-     position regardless of expanded/collapsed state. */
-  .app-nav-collapse {
-    position: absolute;
-    top: 18px;
-    right: -11px;
-    width: 22px;
-    height: 22px;
-    border-radius: 999px;
-    border: 1px solid var(--border-strong);
-    background: var(--bg-elevated);
-    color: var(--fg-muted);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    z-index: 11;
-    transition: color 0.12s, border-color 0.12s;
-  }
-  .app-nav-collapse:hover { color: var(--fg); border-color: var(--color-brand-500); }
-
-  /* Topbar — sticky, mono crumb + ok-dot host status + theme toggle. */
-  .app-topbar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    height: 48px;
-    padding: 0 32px;
-    border-bottom: 1px solid var(--border-subtle);
-    background: color-mix(in srgb, var(--bg) 75%, transparent);
-    backdrop-filter: blur(6px);
-    position: sticky;
-    top: 0;
-    z-index: 9;
-    font-size: 12.5px;
-  }
-  .app-topbar-crumb {
-    color: var(--fg-muted);
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    letter-spacing: 0.04em;
-  }
-  .app-topbar-crumb .sep { color: var(--border-strong); }
-  .app-topbar-crumb .leaf { color: var(--fg); }
-  .app-topbar-crumb .leaf-link {
-    color: var(--fg-muted);
-    text-decoration: none;
-    transition: color 120ms;
-  }
-  .app-topbar-crumb .leaf-link:hover { color: var(--fg); }
-
-  /* Alerts slot sits between crumb and host-picker; left of marginLeft:auto
-     wrapper so it follows reading order. Empty placeholder for now —
-     backup / migration error indicators land here in a future slice. */
-  .app-topbar-alerts {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    margin-left: 14px;
-  }
-  .app-topbar-host-wrap { margin-left: auto; }
-  .app-topbar-host-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 10px;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--bg);
-    color: var(--fg-subtle);
-    font-family: var(--font-mono);
-    font-size: 11px;
-    cursor: pointer;
-    transition: border-color 120ms, background 120ms;
-  }
-  .app-topbar-host-btn:hover {
-    border-color: var(--border-strong);
-    background: var(--bg-elevated);
-  }
-  .app-topbar-host-btn .label { color: var(--fg); font-weight: 500; }
-  .app-topbar-host-btn .sep   { color: var(--border-strong); }
-  .app-topbar-host-btn .meta  { color: var(--fg-subtle); }
-  .app-topbar-host-btn .caret { color: var(--fg-subtle); margin-left: 4px; }
-
-  /* Status dots used by both the trigger button and each menu row. */
-  .app-topbar-host-btn .dot-ok,
-  .app-topbar-host-menu-item .dot-ok,
-  .app-topbar-host-btn .dot-warn,
-  .app-topbar-host-menu-item .dot-warn,
-  .app-topbar-host-btn .dot-brand,
-  .app-topbar-host-menu-item .dot-brand {
-    width: 6px;
-    height: 6px;
-    border-radius: 999px;
-    flex-shrink: 0;
-  }
-  .app-topbar-host-btn .dot-ok,
-  .app-topbar-host-menu-item .dot-ok {
-    background: var(--color-success-400);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success-500) 18%, transparent);
-  }
-  .app-topbar-host-btn .dot-warn,
-  .app-topbar-host-menu-item .dot-warn {
-    background: var(--color-warning-500);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-warning-500) 18%, transparent);
-  }
-  .app-topbar-host-btn .dot-brand,
-  .app-topbar-host-menu-item .dot-brand {
-    background: var(--color-brand-500);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand-500) 18%, transparent);
-  }
-
-  .app-topbar-host-menu {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    min-width: 280px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    box-shadow: 0 12px 30px rgba(2, 6, 23, 0.4);
-    padding: 6px;
-    z-index: 50;
-  }
-  [data-theme="light"] .app-topbar-host-menu {
-    box-shadow: 0 8px 24px rgba(20, 18, 14, 0.16);
-  }
-  .app-topbar-host-menu-label {
-    padding: 8px 10px 6px;
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--fg-subtle);
-  }
-  .app-topbar-host-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
-    padding: 7px 10px;
-    border: 0;
-    border-radius: 4px;
-    background: transparent;
-    text-align: left;
-    cursor: pointer;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-muted);
-    text-decoration: none;
-  }
-  .app-topbar-host-menu-item .label { color: var(--fg); font-weight: 500; flex-shrink: 0; }
-  .app-topbar-host-menu-item .meta  { color: var(--fg-subtle); margin-left: auto; font-size: 10.5px; }
-  .app-topbar-host-menu-item .check { color: var(--accent-fg); margin-left: 6px; }
-  .app-topbar-host-menu-item:hover  { background: var(--surface-hover); }
-  .app-topbar-host-menu-item:disabled { opacity: 0.5; cursor: not-allowed; }
-  .app-topbar-host-menu-item.active { background: color-mix(in srgb, var(--color-brand-500) 8%, transparent); }
-  .app-topbar-host-menu-item.manage { color: var(--accent-fg); }
-  .app-topbar-host-menu-item.manage .label { color: var(--accent-fg); }
-  .app-topbar-host-menu-divider {
-    height: 1px;
-    margin: 6px 4px;
-    background: var(--border);
-  }
-
-  .app-topbar-theme-btn {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--fg-subtle);
-    width: 28px;
-    height: 28px;
-    border-radius: 4px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: color 120ms, background 120ms, border-color 120ms;
-    margin-left: 4px;
-    flex-shrink: 0;
-  }
-  .app-topbar-theme-btn:hover {
-    color: var(--fg);
-    background: var(--bg-elevated);
-    border-color: var(--border-strong);
-  }
-
-  /* Page surface — sits inside .ed-stage so the dot-mesh shows through.
-     Transparent background lets the .ed-stage::before pseudo-mesh render. */
-  .app-page {
-    position: relative;
-    min-height: calc(100vh - 48px);
-    padding: 28px 36px 64px;
-    max-width: 1480px;
-    background: transparent;
-  }
-  .app-page > * { position: relative; z-index: 1; }
-  /* Banners above the page share its column: same left edge, padding and
-     maximum width as .app-page. */
-  .app-band {
-    padding: 16px 36px 0;
-    max-width: 1480px;
-  }
-  @media (max-width: 768px) {
-    .app-band { padding: 12px 18px 0; }
-    .app-page { padding: 18px 18px 48px; }
-    .app-topbar { padding: 0 18px; }
-  }
-
-  /* Mobile-only hamburger header. Desktop hides it via CSS, mobile shows
-     it above the topbar. */
-  .app-mobile-bar {
-    display: none;
-    align-items: center;
-    height: 44px;
-    padding: 0 14px;
-    border-bottom: 1px solid var(--border-subtle);
-    background: var(--bg-elevated);
-  }
-  .app-mobile-button {
-    background: transparent;
-    border: 0;
-    color: var(--fg-muted);
-    width: 32px;
-    height: 32px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    border-radius: 5px;
-  }
-  .app-mobile-button:hover { color: var(--fg); background: var(--surface-hover); }
-
-  @media (max-width: 768px) {
-    .app-shell { grid-template-columns: 1fr; }
-    .app-shell.app-shell-collapsed { grid-template-columns: 1fr; }
-    .app-nav {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 280px;
-      height: 100vh;
-      transform: translateX(-100%);
-      transition: transform 0.18s ease;
-      box-shadow: 0 0 0 9999px rgba(2, 6, 23, 0);
-    }
-    .app-shell.mobile-open .app-nav {
-      transform: translateX(0);
-      box-shadow: 0 0 0 9999px rgba(2, 6, 23, 0.55);
-    }
-    .app-nav-collapse { display: none; }
-    .app-mobile-bar { display: flex; }
-  }
-
-  /* Sidebar footer iconless action button — used for sign-out, theme,
-     etc. when packed into the footer alongside the avatar. */
-  .app-nav-footer-action {
-    background: transparent;
-    border: 0;
-    color: var(--fg-subtle);
-    width: 26px;
-    height: 26px;
-    border-radius: 4px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: color 0.12s, background 0.12s;
-    flex-shrink: 0;
-  }
-  .app-nav-footer-action:hover { color: var(--fg); background: var(--surface-hover); }
-
-  .app-user-menu {
-    position: absolute;
-    bottom: calc(100% + 6px);
-    left: 12px;
-    right: 12px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    overflow: hidden;
-    z-index: 30;
-  }
-  .app-user-menu-head {
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border-subtle);
-  }
-  .app-user-menu-head .name { font-size: 13px; color: var(--fg); font-weight: 500; }
-  .app-user-menu-head .role { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-subtle); letter-spacing: 0.04em; }
-  .app-user-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 8px 12px;
-    background: transparent;
-    border: 0;
-    color: var(--fg);
-    font-size: 12.5px;
-    cursor: pointer;
-    width: 100%;
-    text-align: left;
-    text-decoration: none;
-    font-family: inherit;
-  }
-  .app-user-menu-item:hover { background: var(--surface-hover); }
-  .app-user-menu-item.danger { color: var(--color-danger-400); }
-  .app-user-menu-sep { height: 1px; background: var(--border); margin: 2px 0; }
 }

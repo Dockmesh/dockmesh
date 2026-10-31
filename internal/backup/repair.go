@@ -53,6 +53,9 @@ func (s *Service) RepairJobSecrets(ctx context.Context, ts *targets.TargetStore,
 	}
 	var repaired, missing []string
 	for _, j := range jobs {
+		if j.TargetID > 0 {
+			continue
+		}
 		cfg, err := configToMap(j.TargetConfig)
 		if err != nil || !lacksSecret(j.TargetType, cfg) {
 			continue

@@ -14,6 +14,8 @@ import (
 	"io"
 	"io/fs"
 	"os"
+
+	"github.com/dockmesh/dockmesh/internal/changelog"
 )
 
 func main() {
@@ -39,7 +41,7 @@ func run(args []string, stdout io.Writer) error {
 
 func runRelease(args []string, stdout io.Writer) error {
 	fl := flag.NewFlagSet("release", flag.ContinueOnError)
-	changelog := fl.String("changelog", "CHANGELOG.md", "changelog path")
+	changelogPath := fl.String("changelog", "CHANGELOG.md", "changelog path")
 	version := fl.String("version", "", "version or tag to release, e.g. v0.3.4")
 	notesOut := fl.String("notes", "", "write release notes (Markdown) here")
 	bodyOut := fl.String("body", "", "write the short release body (Markdown) here")
@@ -50,16 +52,19 @@ func runRelease(args []string, stdout io.Writer) error {
 	if *version == "" || *notesOut == "" || *manifestOut == "" {
 		return errors.New("release: -version, -notes and -manifest are required")
 	}
-	sections, err := parseFile(*changelog)
+	sections, err := parseFile(*changelogPath)
 	if err != nil {
 		return err
 	}
-	s := Find(sections, *version)
-	if s == nil || s.Version == unreleased {
-		return fmt.Errorf("%s has no section for %s; rename [Unreleased] to the release version before tagging", *changelog, *version)
+	s := changelog.Find(sections, *version)
+	if s == nil || s.Version == changelog.Unreleased {
+		return fmt.Errorf("%s has no section for %s; rename [Unreleased] to the release version before tagging", *changelogPath, *version)
 	}
-	if s.empty() {
+	if s.Empty() {
 		return fmt.Errorf("section [%s] has no entries", s.Version)
+	}
+	if err := s.CheckHighlights(); err != nil {
+		return err
 	}
 	manifest, err := ManifestJSON(s)
 	if err != nil {
@@ -82,7 +87,7 @@ func runRelease(args []string, stdout io.Writer) error {
 
 func runCheck(args []string, stdout io.Writer) error {
 	fl := flag.NewFlagSet("check", flag.ContinueOnError)
-	changelog := fl.String("changelog", "CHANGELOG.md", "changelog path in the PR head")
+	changelogPath := fl.String("changelog", "CHANGELOG.md", "changelog path in the PR head")
 	base := fl.String("base", "", "changelog from the PR base; a missing file counts as empty")
 	if err := fl.Parse(args); err != nil {
 		return err
@@ -90,14 +95,14 @@ func runCheck(args []string, stdout io.Writer) error {
 	if *base == "" {
 		return errors.New("check: -base is required")
 	}
-	head, err := parseFile(*changelog)
+	head, err := parseFile(*changelogPath)
 	if err != nil {
 		return err
 	}
-	if Find(head, unreleased) == nil {
-		return fmt.Errorf("%s has no [Unreleased] section", *changelog)
+	if changelog.Find(head, changelog.Unreleased) == nil {
+		return fmt.Errorf("%s has no [Unreleased] section", *changelogPath)
 	}
-	var baseSections []*Section
+	var baseSections []*changelog.Section
 	if _, statErr := os.Stat(*base); statErr == nil {
 		if baseSections, err = parseFile(*base); err != nil {
 			return fmt.Errorf("base: %w", err)
@@ -105,7 +110,14 @@ func runCheck(args []string, stdout io.Writer) error {
 	} else if !errors.Is(statErr, fs.ErrNotExist) {
 		return statErr
 	}
-	if unreleasedBody(head) == unreleasedBody(baseSections) && !hasNewRelease(head, baseSections) {
+	if baseSections != nil {
+		for _, s := range newReleases(head, baseSections) {
+			if err := s.CheckHighlights(); err != nil {
+				return err
+			}
+		}
+	}
+	if changelog.UnreleasedBody(head) == changelog.UnreleasedBody(baseSections) && !hasNewRelease(head, baseSections) {
 		return errors.New("CHANGELOG.md [Unreleased] was not changed; add an entry, or label the PR no-changelog if users won't notice the change")
 	}
 	fmt.Fprintln(stdout, "changelog: [Unreleased] updated")
@@ -114,21 +126,26 @@ func runCheck(args []string, stdout io.Writer) error {
 
 // hasNewRelease reports whether head carries a versioned section that base
 // lacks, i.e. the PR cuts a release and moves the Unreleased entries into it.
-func hasNewRelease(head, base []*Section) bool {
-	for _, s := range head {
-		if s.Version != unreleased && Find(base, s.Version) == nil {
-			return true
-		}
-	}
-	return false
+func hasNewRelease(head, base []*changelog.Section) bool {
+	return len(newReleases(head, base)) > 0
 }
 
-func parseFile(path string) ([]*Section, error) {
+func newReleases(head, base []*changelog.Section) []*changelog.Section {
+	var out []*changelog.Section
+	for _, s := range head {
+		if s.Version != changelog.Unreleased && changelog.Find(base, s.Version) == nil {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func parseFile(path string) ([]*changelog.Section, error) {
 	b, err := os.ReadFile(path) //nolint:gosec // path comes from the CLI caller
 	if err != nil {
 		return nil, err
 	}
-	sections, err := Parse(string(b))
+	sections, err := changelog.Parse(string(b))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}

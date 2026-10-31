@@ -135,3 +135,109 @@ func TestInstallAgentMigrateFiles(t *testing.T) {
 		t.Error("empty bin dir left behind")
 	}
 }
+
+func TestInstallAgentPathCopy(t *testing.T) {
+	fn := agentScriptFunc(t, "install_path_copy")
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to switch to the service user and chown the copy")
+	}
+	if _, err := exec.LookPath("setpriv"); err != nil {
+		t.Skip("setpriv not available")
+	}
+	tests := []struct {
+		name     string
+		existing string // "", "symlink" or "file"
+		src      string // "binary" or "secret": a symlink to a root-only file
+		wantErr  bool
+	}{
+		{"fresh copy", "", "binary", false},
+		{"replaces a symlink", "symlink", "binary", false},
+		{"replaces an older copy", "file", "binary", false},
+		{"source swapped for a root-only file", "file", "secret", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, d := range []string{filepath.Dir(dir), dir} {
+				if err := os.Chmod(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			binary := filepath.Join(dir, "bin", "dockmesh-agent")
+			dest := filepath.Join(dir, "path", "dockmesh-agent")
+			for _, d := range []string{filepath.Dir(binary), filepath.Dir(dest)} {
+				if err := os.MkdirAll(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(binary, []byte("new"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			src := binary
+			if tt.src == "secret" {
+				secret := filepath.Join(dir, "secret")
+				if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				src = filepath.Join(dir, "bin", "swapped")
+				if err := os.Symlink(secret, src); err != nil {
+					t.Fatal(err)
+				}
+			}
+			switch tt.existing {
+			case "symlink":
+				if err := os.Symlink(binary, dest); err != nil {
+					t.Fatal(err)
+				}
+			case "file":
+				if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := exec.Command("bash", "-c", "set -euo pipefail\n"+fn+"\ninstall_path_copy \"$@\"", "t", src, dest, "nobody", "65534")
+			out, err := cmd.CombinedOutput()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("copy succeeded, want an error")
+				}
+				if b, _ := os.ReadFile(dest); string(b) != "old" {
+					t.Errorf("dest changed to %q", b)
+				}
+				if m, _ := filepath.Glob(filepath.Join(filepath.Dir(dest), ".dockmesh-agent.*")); len(m) != 0 {
+					t.Errorf("temp files left behind: %v", m)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			fi, err := os.Lstat(dest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !fi.Mode().IsRegular() || fi.Mode().Perm() != 0o755 {
+				t.Errorf("dest mode %v, want regular 0755", fi.Mode())
+			}
+			if b, _ := os.ReadFile(dest); string(b) != "new" {
+				t.Errorf("dest content %q, want %q", b, "new")
+			}
+			if b, _ := os.ReadFile(binary); string(b) != "new" {
+				t.Errorf("binary changed to %q", b)
+			}
+		})
+	}
+}
+
+func TestInstallAgentUnitRefreshesPathCopy(t *testing.T) {
+	b, err := os.ReadFile("install-agent.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, "ExecStartPre=-+$REFRESH_SCRIPT") {
+		t.Error("unit does not refresh the /usr/local/bin copy at start")
+	}
+	if strings.Contains(s, "ln -sf \"$AGENT_BIN\"") {
+		t.Error("installer still links the agent into the PATH")
+	}
+}

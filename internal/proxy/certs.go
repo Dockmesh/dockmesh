@@ -67,6 +67,28 @@ func probeCert(ctx context.Context, host string) (*x509.Certificate, error) {
 	return chain[0], nil
 }
 
+// certCacheTTL bounds how often RouteCerts re-probes the routes; cert
+// validity changes on the scale of days.
+const certCacheTTL = 15 * time.Minute
+
+// RouteCerts returns the routes with cert metadata like
+// EnrichWithCertInfo, reusing the last probe for certCacheTTL so pages
+// that poll don't open a TLS handshake per route on every request.
+func (s *Service) RouteCerts(ctx context.Context) ([]Route, error) {
+	s.certMu.Lock()
+	defer s.certMu.Unlock()
+	if s.certRoutes != nil && time.Since(s.certAt) < certCacheTTL {
+		return s.certRoutes, nil
+	}
+	routes, err := s.ListRoutes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.certRoutes = s.EnrichWithCertInfo(ctx, routes)
+	s.certAt = time.Now()
+	return s.certRoutes, nil
+}
+
 func certIssuer(c *x509.Certificate) string {
 	cn := c.Issuer.CommonName
 	if cn != "" {

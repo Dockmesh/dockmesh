@@ -12,6 +12,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/redact"
 	"github.com/go-chi/chi/v5"
@@ -61,13 +62,12 @@ func (h *Handlers) CreateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "backups not configured")
 		return
 	}
-	var body jobBody
-	if err := decodeJSON(r, &body); err != nil {
+	var in backup.JobInput
+	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	in := body.JobInput
-	if err := h.resolveJobTargetSecrets(r.Context(), &in, body.TargetID, nil); err != nil {
+	if err := resolveJobTargetSecrets(&in, nil); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -94,12 +94,11 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	var body jobBody
-	if err := decodeJSON(r, &body); err != nil {
+	var in backup.JobInput
+	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	in := body.JobInput
 	prev, err := h.Backups.GetJob(r.Context(), id)
 	if errors.Is(err, backup.ErrJobNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
@@ -112,7 +111,7 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 	if !h.requireJobAccess(w, r, prev, &in) || !h.checkBackupJobScope(w, r, in) {
 		return
 	}
-	if err := h.resolveJobTargetSecrets(r.Context(), &in, body.TargetID, prev); err != nil {
+	if err := resolveJobTargetSecrets(&in, prev); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -139,7 +138,10 @@ func (h *Handlers) DeleteBackupJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.Backups.DeleteJob(r.Context(), job.ID); err != nil {
+	if err := h.Backups.DeleteJob(r.Context(), job.ID); errors.Is(err, backup.ErrJobNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -185,6 +187,9 @@ func (h *Handlers) AcceptBackupHostKey(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if job.TargetID > 0 && !h.requireTargetAccess(w, r, job.TargetID) {
+		return
+	}
 	id := job.ID
 	err := h.Backups.AcceptHostKey(r.Context(), id)
 	switch {
@@ -211,13 +216,29 @@ func (h *Handlers) RunBackupJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	run, err := h.Backups.RunNow(r.Context(), job.ID)
-	if err != nil {
+	run, err := h.Backups.StartRun(r.Context(), job.ID)
+	switch {
+	case errors.Is(err, backup.ErrJobNotFound):
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	case errors.Is(err, backup.ErrJobRunning):
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	h.audit(r, audit.ActionStackDeploy, "backup:run:"+strconv.FormatInt(job.ID, 10), nil)
-	writeJSON(w, http.StatusOK, run)
+	writeJSON(w, http.StatusAccepted, run)
+}
+
+// GetBackupSchedule reports the time zone backup schedules run in.
+func (h *Handlers) GetBackupSchedule(w http.ResponseWriter, r *http.Request) {
+	if h.Backups == nil {
+		writeError(w, http.StatusServiceUnavailable, "backups not configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, h.Backups.ScheduleInfo())
 }
 
 func (h *Handlers) ListBackupRuns(w http.ResponseWriter, r *http.Request) {
@@ -301,8 +322,8 @@ func (h *Handlers) DownloadBackupArchive(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	id := run.ID
-	if run.Status != "success" {
-		writeError(w, http.StatusConflict, "can only download from a successful run")
+	if !run.Restorable() {
+		writeError(w, http.StatusConflict, backup.ErrNotRestorable.Error())
 		return
 	}
 	src, err := h.Backups.ReadRun(r.Context(), id)
@@ -323,10 +344,25 @@ func (h *Handlers) DownloadBackupArchive(w http.ResponseWriter, r *http.Request)
 }
 
 type restoreRequest struct {
-	DestVolume string `json:"dest_volume"`
+	DestVolume  string `json:"dest_volume"`
+	TargetStack string `json:"target_stack"`
+	HostID      string `json:"host_id"`
+	Mode        string `json:"mode"`
 }
 
+// RestoreBackup restores a volume run into dest_volume (default: the
+// backed-up volume) on host_id (default: the host it was taken on).
 func (h *Handlers) RestoreBackup(w http.ResponseWriter, r *http.Request) {
+	h.restoreRun(w, r, false)
+}
+
+// RestoreStackBackup restores a stack run: files into the stack directory
+// (target_stack, default: the source name), volumes onto the host.
+func (h *Handlers) RestoreStackBackup(w http.ResponseWriter, r *http.Request) {
+	h.restoreRun(w, r, true)
+}
+
+func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly bool) {
 	if h.Backups == nil {
 		writeError(w, http.StatusServiceUnavailable, "backups not configured")
 		return
@@ -337,60 +373,118 @@ func (h *Handlers) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	id := run.ID
 	var req restoreRequest
-	if err := decodeJSON(r, &req); err != nil || req.DestVolume == "" {
-		writeError(w, http.StatusBadRequest, "dest_volume required")
-		return
-	}
-	if err := h.Backups.CheckRestoreTarget(r.Context(), id, req.DestVolume); err != nil {
-		if errors.Is(err, docker.ErrInvalidVolumeName) {
-			writeError(w, http.StatusBadRequest, "dest_volume must be a Docker volume name, not a path")
+	if r.ContentLength != 0 {
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
 			return
 		}
+	}
+	if req.Mode != "" && req.Mode != "merge" && req.Mode != "replace" {
+		writeError(w, http.StatusBadRequest, "mode must be merge or replace")
+		return
+	}
+	if backup.HasSystemSource(run.Sources) {
+		writeError(w, http.StatusConflict, backup.ErrSystemRestore.Error())
+		return
+	}
+	kind := ""
+	if len(run.Sources) > 0 {
+		kind = run.Sources[0].Type
+	}
+	if stackOnly && kind != "stack" {
+		writeError(w, http.StatusBadRequest, "run is not a stack backup")
+		return
+	}
+	opts := backup.RestoreOptions{Target: req.DestVolume, HostID: req.HostID, Replace: req.Mode == "replace"}
+	if kind == "stack" {
+		opts.Target = req.TargetStack
+		if opts.Target == "" {
+			opts.Target = req.DestVolume
+		}
+	}
+	origin, err := h.Backups.RunHost(r.Context(), id)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := h.Backups.Restore(r.Context(), id, req.DestVolume); err != nil {
-		writeRestoreError(w, err)
+	if opts.HostID == "" {
+		opts.HostID = origin
+	}
+	// runForAccess covered the origin host; writing changes the
+	// destination host, which must be in scope too.
+	if !h.requireHostAccess(w, r, opts.HostID) {
 		return
 	}
-	h.audit(r, audit.ActionContainerRollback, "backup:restore:"+strconv.FormatInt(id, 10), map[string]string{"dest": req.DestVolume})
-	w.WriteHeader(http.StatusNoContent)
-}
+	if scopeReq := h.hostScopeReq(r.Context(), opts.HostID); !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, rbac.PermBackupsRestore, scopeReq, "")
+		return
+	}
+	if kind == "stack" {
+		if opts.Target == "" {
+			opts.Target = run.Sources[0].Name
+		}
+		if !h.requireStackRestoreTarget(w, r, opts.Target, opts.HostID) {
+			return
+		}
+	}
 
-// RestoreStackBackup is the explicit stack-restore entry point. Takes
-// an optional target stack name (defaults to the source name in the
-// run) and writes the archive's stack/* files into /stacks/<name>/
-// plus untars any volumes/<vol>.tar.gz into matching docker volumes.
-// Returns a structured report so the UI can show what happened.
-func (h *Handlers) RestoreStackBackup(w http.ResponseWriter, r *http.Request) {
-	if h.Backups == nil {
-		writeError(w, http.StatusServiceUnavailable, "backups not configured")
+	// A restore stopped halfway leaves a half-written volume, so it runs to
+	// the end even if the client disconnects.
+	report, err := h.Backups.Restore(context.WithoutCancel(r.Context()), id, opts)
+	var inUse *backup.VolumeInUseError
+	switch {
+	case errors.Is(err, docker.ErrInvalidVolumeName):
+		writeError(w, http.StatusBadRequest, "dest_volume must be a Docker volume name, not a path")
+		return
+	case errors.Is(err, backup.ErrNotRestorable), errors.Is(err, backup.ErrSystemRestore), errors.Is(err, backup.ErrRestoreBusy),
+		errors.Is(err, backup.ErrUnverifiedReplace), errors.Is(err, host.ErrAgentTooOld), errors.As(err, &inUse):
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	case errors.Is(err, backup.ErrArchiveInvalid), errors.Is(err, backup.ErrArchiveMismatch):
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	run, ok := h.runForAccess(w, r, rbac.PermBackupsRestore)
-	if !ok {
-		return
-	}
-	id := run.ID
-	var req struct {
-		TargetStack string `json:"target_stack,omitempty"`
-	}
-	_ = decodeJSON(r, &req) // body is optional — empty means "same name as source"
-	report, err := h.Backups.RestoreStack(r.Context(), id, req.TargetStack)
-	if err != nil {
-		writeRestoreError(w, err)
-		return
-	}
-	h.audit(r, audit.ActionContainerRollback, "backup:restore-stack:"+strconv.FormatInt(id, 10), map[string]string{"target": report.StackName})
+	h.audit(r, audit.ActionContainerRollback, "backup:restore:"+strconv.FormatInt(id, 10), map[string]string{
+		"kind": report.Kind, "target": opts.Target, "host": report.HostID, "mode": report.Mode,
+	})
 	writeJSON(w, http.StatusOK, report)
 }
 
-func writeRestoreError(w http.ResponseWriter, err error) {
-	if errors.Is(err, backup.ErrSystemRestore) {
-		writeError(w, http.StatusConflict, err.Error())
-		return
+// requireStackRestoreTarget guards writing a stack's files from a backup:
+// it replaces compose.yaml and .env like PUT /stacks/{name} (or creates
+// the stack like POST /stacks), so it needs that permission and the
+// stack's scope, on the restore host and on the host the stack is
+// deployed to.
+func (h *Handlers) requireStackRestoreTarget(w http.ResponseWriter, r *http.Request, stack, hostID string) bool {
+	perm := rbac.PermStacksCreate
+	if h.Stacks != nil {
+		if _, err := h.Stacks.Get(stack); err == nil {
+			perm = rbac.PermStacksUpdate
+		}
 	}
-	writeError(w, http.StatusInternalServerError, err.Error())
+	if !roleAllows(r, perm) {
+		writeError(w, http.StatusForbidden, "restoring stack "+stack+" needs the "+string(perm)+" permission")
+		return false
+	}
+	if scopeReq := h.stackScopeReq(r.Context(), "", stack); !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, perm, scopeReq, "stack "+stack)
+		return false
+	}
+	if !h.requireStackScope(w, r, perm, hostID, stack) {
+		return false
+	}
+	if h.Deployments != nil {
+		if dep, err := h.Deployments.Get(r.Context(), stack); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return false
+		} else if dep != nil && dep.HostID != hostID && !h.requireStackScope(w, r, perm, dep.HostID, stack) {
+			return false
+		}
+	}
+	return true
 }
 
 // syncBackupNameNotice re-evaluates the shared-archive-folder notice after
@@ -459,35 +553,16 @@ func (h *Handlers) hookScopeReq(r *http.Request, hostID, container string) (rbac
 	return req, true
 }
 
-// jobBody is a job create/update request. TargetID names the saved
-// target the job's config was picked from, so its write-only secrets
-// can be filled in server-side.
-type jobBody struct {
-	backup.JobInput
-	TargetID int64 `json:"target_id"`
-}
-
-// resolveJobTargetSecrets fills the redacted secrets in in.TargetConfig
-// from the saved target (targetID) or the job's previous config, and
-// rejects a job that would be stored with a secret still blank.
-func (h *Handlers) resolveJobTargetSecrets(ctx context.Context, in *backup.JobInput, targetID int64, prev *backup.Job) error {
+// resolveJobTargetSecrets fills the redacted secrets of an inline target
+// config from the job's previous inline config. A job that references a
+// saved target (TargetID) has no inline config: the target holds it.
+func resolveJobTargetSecrets(in *backup.JobInput, prev *backup.Job) error {
+	if in.TargetID > 0 {
+		return nil
+	}
 	blank := blankedSecrets(in.TargetConfig)
 	var err error
-	if targetID > 0 && h.BackupTargets != nil {
-		stored, gerr := h.BackupTargets.Get(ctx, targetID)
-		if gerr != nil {
-			return errors.New("backup target not found")
-		}
-		if stored.Type == in.TargetType {
-			if len(blank) > 0 && !sameLocation(in.TargetConfig, stored.Config) {
-				return redact.ErrReenter
-			}
-			if in.TargetConfig, err = keepConfig(in.TargetConfig, stored.Config, backupTargetSecrets); err != nil {
-				return err
-			}
-		}
-	}
-	if prev != nil && prev.TargetType == in.TargetType {
+	if prev != nil && prev.TargetID == 0 && prev.TargetType == in.TargetType {
 		if in.TargetConfig, err = keepConfig(in.TargetConfig, prev.TargetConfig, backupTargetSecrets); err != nil {
 			return err
 		}
@@ -514,18 +589,4 @@ func blankedSecrets(cfg any) []string {
 		}
 	}
 	return out
-}
-
-// targetLocationFields say where in the target data lands; a job that
-// borrows a saved target's secrets may not point them elsewhere.
-var targetLocationFields = []string{"path", "bucket", "prefix", "region", "use_ssl"}
-
-func sameLocation(next, stored any) bool {
-	n, s := redact.ToMap(next), redact.ToMap(stored)
-	for _, k := range targetLocationFields {
-		if fmt.Sprint(n[k]) != fmt.Sprint(s[k]) {
-			return false
-		}
-	}
-	return true
 }

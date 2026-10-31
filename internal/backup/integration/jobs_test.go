@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"maps"
 	"strings"
@@ -48,14 +49,15 @@ func TestJobs(t *testing.T) {
 				t.Fatalf("run %s: %s", run.Status, run.Error)
 			}
 
-			if !strings.HasPrefix(run.TargetPath, "jobs/nightly/") {
-				t.Fatalf("archive path %q is not below jobs/nightly/", run.TargetPath)
+			dir := fmt.Sprintf("jobs/%d-nightly/", job.ID)
+			if !strings.HasPrefix(run.TargetPath, dir) {
+				t.Fatalf("archive path %q is not below %s", run.TargetPath, dir)
 			}
 			if len(readFile(t, tg, run.TargetPath)) == 0 {
 				t.Fatal("archive is empty")
 			}
 			if c.Gaps[GapList] == "" {
-				entries, err := tg.List(ctx, "jobs/nightly/")
+				entries, err := tg.List(ctx, dir)
 				if err != nil || len(entries) != 1 || entries[0].Path != run.TargetPath {
 					t.Fatalf("target holds %+v (%v), want only %s", entries, err, run.TargetPath)
 				}
@@ -117,7 +119,7 @@ func TestJobs(t *testing.T) {
 						t.Fatalf("run: %v %+v", err, r)
 					}
 				}
-				entries, err := tg.List(ctx, "jobs/nightly/")
+				entries, err := tg.List(ctx, dir)
 				if err != nil {
 					t.Fatal(err)
 				}

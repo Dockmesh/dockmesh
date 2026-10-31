@@ -327,7 +327,7 @@ func TestReenrollSeversOldSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	closed := false
-	svc.connected[res.Agent.ID] = &ConnectedAgent{ID: res.Agent.ID, closeConn: func() { closed = true }}
+	svc.connected[res.Agent.ID] = newConnectedAgent(res.Agent.ID, "edge-1", func() { closed = true })
 
 	rot, err := svc.RotateEnrollToken(ctx, res.Agent.ID)
 	if err != nil {
@@ -341,6 +341,51 @@ func TestReenrollSeversOldSession(t *testing.T) {
 	}
 	if !closed {
 		t.Fatal("re-enrollment left the old session open")
+	}
+}
+
+func TestReenrollRefusesSessionStillOnOldCert(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	res, err := svc.Create(ctx, "edge-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := svc.Enroll(ctx, enrollReq(res.Token))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := svc.Get(ctx, first.AgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This session passed the fingerprint lookup and is still waiting for
+	// its hello when the host is re-enrolled.
+	stale := newConnectedAgent(first.AgentID, "edge-1", func() {})
+	stale.certFP = before.CertFingerprint
+
+	rot, err := svc.RotateEnrollToken(ctx, first.AgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Enroll(ctx, enrollReq(rot.Token)); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.markOnline(ctx, stale, HelloPayload{}); !errors.Is(err, ErrCertReplaced) {
+		t.Fatalf("markOnline with the replaced cert = %v, want ErrCertReplaced", err)
+	}
+	if svc.GetConnected(first.AgentID) != nil {
+		t.Fatal("session on the replaced cert stayed registered")
+	}
+
+	after, err := svc.Get(ctx, first.AgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := newConnectedAgent(first.AgentID, "edge-1", func() {})
+	fresh.certFP = after.CertFingerprint
+	if err := svc.markOnline(ctx, fresh, HelloPayload{}); err != nil {
+		t.Fatalf("markOnline with the new cert: %v", err)
 	}
 }
 

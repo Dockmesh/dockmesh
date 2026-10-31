@@ -128,3 +128,39 @@ func TestAgentEnrollTokenExpiryMigration(t *testing.T) {
 		t.Errorf("enrolled agent got an expiry: %v", enrolled.String)
 	}
 }
+
+// Upgrading keeps existing alert rules as metric rules and tells admins
+// about the new built-in event rules.
+func TestEventAlertsMigration(t *testing.T) {
+	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := migrateUpTo(database, "079_alert_engine.sql"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES ('u1', 'alice', 'x')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO alert_rules (name, metric, operator, threshold) VALUES ('mine', 'cpu_percent', 'gt', 80)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+	var kind string
+	if err := database.QueryRow(`SELECT kind FROM alert_rules WHERE name = 'mine'`).Scan(&kind); err != nil {
+		t.Fatal(err)
+	}
+	if kind != "metric" {
+		t.Errorf("existing rule kind = %q, want metric", kind)
+	}
+	var notices int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM notices WHERE key = 'alerts.event-rules-added' AND audience = 'admins' AND resolved_at IS NULL`).Scan(&notices); err != nil {
+		t.Fatal(err)
+	}
+	if notices != 1 {
+		t.Errorf("upgrade notice count = %d, want 1", notices)
+	}
+}

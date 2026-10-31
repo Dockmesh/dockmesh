@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/docker/docker/errdefs"
+	cerrdefs "github.com/containerd/errdefs"
 )
 
 // SettingsStore is the part of the settings store the boot decision needs.
@@ -61,7 +61,7 @@ func (s *Service) state(ctx context.Context) (exists, running bool) {
 	}
 	info, err := s.docker.Raw().ContainerInspect(ctx, ProxyContainerName)
 	if err != nil {
-		if !errdefs.IsNotFound(err) {
+		if !cerrdefs.IsNotFound(err) {
 			slog.Warn("proxy: container inspect failed", "err", err)
 		}
 		return false, false

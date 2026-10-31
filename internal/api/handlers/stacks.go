@@ -13,17 +13,17 @@ import (
 
 	"strings"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/compose"
-	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/convert"
+	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/stacks/adopt"
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -97,7 +97,7 @@ func (h *Handlers) ListStacks(w http.ResponseWriter, r *http.Request) {
 	// only on a remote agent stay at 0 until we batch across hosts.
 	containerCounts := map[string]int{}
 	if h.Docker != nil {
-		if running, err := h.Docker.Raw().ContainerList(r.Context(), dtypes.ContainerListOptions{All: false}); err == nil {
+		if running, err := h.Docker.Raw().ContainerList(r.Context(), container.ListOptions{All: false}); err == nil {
 			for _, c := range running {
 				if c.Labels == nil {
 					continue
@@ -225,7 +225,7 @@ func (h *Handlers) RecoverStack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no running containers carry the compose project label "+name)
 		return
 	}
-	insps := make([]dtypes.ContainerJSON, 0, len(matching))
+	insps := make([]container.InspectResponse, 0, len(matching))
 	for _, id := range matching {
 		insp, ierr := target.InspectContainer(r.Context(), id)
 		if ierr != nil {
@@ -483,10 +483,10 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 	if h.Dependencies != nil && r.URL.Query().Get("force") != "true" {
 		if deps, err := h.Dependencies.Dependents(r.Context(), name); err == nil && len(deps) > 0 {
 			writeJSON(w, http.StatusConflict, map[string]any{
-				"error":       "stack has dependents",
-				"dependents":  deps,
+				"error":        "stack has dependents",
+				"dependents":   deps,
 				"force_needed": true,
-				"message":     "The following stacks depend on this one: " + strings.Join(deps, ", ") + ". Re-send with ?force=true to delete anyway; their depends_on edges will be purged.",
+				"message":      "The following stacks depend on this one: " + strings.Join(deps, ", ") + ". Re-send with ?force=true to delete anyway; their depends_on edges will be purged.",
 			})
 			return
 		}
@@ -892,8 +892,8 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 	// — a sync failure must not block the deploy response.
 	h.syncStackToAgent(r.Context(), target.ID(), name, detail.Compose, detail.Env)
 	h.audit(r, audit.ActionStackDeploy, name, map[string]any{
-		"services":       len(res.Services),
-		"host":           target.ID(),
+		"services":      len(res.Services),
+		"host":          target.ID(),
 		"deps_deployed": depsDeployed,
 	})
 	out := map[string]any{
@@ -1051,10 +1051,10 @@ func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
 	if h.Dependencies != nil && r.URL.Query().Get("force") != "true" {
 		if deps, err := h.Dependencies.Dependents(r.Context(), name); err == nil && len(deps) > 0 {
 			writeJSON(w, http.StatusConflict, map[string]any{
-				"error":       "stack has live dependents",
-				"dependents":  deps,
+				"error":        "stack has live dependents",
+				"dependents":   deps,
 				"force_needed": true,
-				"message":     "The following stacks depend on this one: " + strings.Join(deps, ", ") + ". Stopping it will likely break them. Re-send with ?force=true to stop anyway.",
+				"message":      "The following stacks depend on this one: " + strings.Join(deps, ", ") + ". Stopping it will likely break them. Re-send with ?force=true to stop anyway.",
 			})
 			return
 		}
