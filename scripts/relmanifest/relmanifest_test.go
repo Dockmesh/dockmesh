@@ -26,6 +26,9 @@ Everyone has to sign in again.
 
 Minimum upgrade from: 0.3.0
 
+### Highlights
+- Sessions are typed per purpose.
+
 ### Security
 - GHSA-2xq8-c4fv-9m7w (critical): MFA could be disabled with a half-finished login.
 - Session tokens are now typed
@@ -65,11 +68,12 @@ func TestParseSample(t *testing.T) {
 		t.Fatal("0.3.4 not found via tag name")
 	}
 	want := Manifest{
-		Schema:   1,
-		Version:  "0.3.4",
-		Date:     "2026-11-05",
-		Severity: "security",
-		Summary:  "Closes several access-control issues.\nEveryone has to sign in again.",
+		Schema:     1,
+		Version:    "0.3.4",
+		Date:       "2026-11-05",
+		Severity:   "security",
+		Summary:    "Closes several access-control issues.\nEveryone has to sign in again.",
+		Highlights: []string{"Sessions are typed per purpose."},
 		Changes: Changes{
 			Added:    []string{"Release manifest."},
 			Changed:  []string{},
@@ -138,6 +142,10 @@ func TestRenderNotes(t *testing.T) {
 
 Closes several access-control issues.
 Everyone has to sign in again.
+
+### Highlights
+
+- Sessions are typed per purpose.
 
 ### Security
 

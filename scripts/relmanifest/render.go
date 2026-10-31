@@ -4,54 +4,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/changelog"
 )
 
 const advisoryURL = "https://github.com/Dockmesh/dockmesh/security/advisories/"
 
-type Manifest struct {
-	Schema         int        `json:"schema"`
-	Version        string     `json:"version"`
-	Date           string     `json:"date"`
-	Severity       string     `json:"severity"`
-	Summary        string     `json:"summary"`
-	Changes        Changes    `json:"changes"`
-	Advisories     []Advisory `json:"advisories"`
-	Actions        []Action   `json:"actions"`
-	MinUpgradeFrom string     `json:"min_upgrade_from"`
-}
+type (
+	Section  = changelog.Section
+	Advisory = changelog.Advisory
+	Action   = changelog.Action
+	Manifest = changelog.Manifest
+	Changes  = changelog.Changes
+)
 
-type Changes struct {
-	Added    []string `json:"added"`
-	Changed  []string `json:"changed"`
-	Fixed    []string `json:"fixed"`
-	Security []string `json:"security"`
-}
+const unreleased = changelog.Unreleased
 
-func nonNil[T any](s []T) []T {
-	if s == nil {
-		return []T{}
-	}
-	return s
-}
-
-func BuildManifest(s *Section) Manifest {
-	return Manifest{
-		Schema:   1,
-		Version:  s.Version,
-		Date:     s.Date,
-		Severity: s.Severity,
-		Summary:  s.Summary,
-		Changes: Changes{
-			Added:    nonNil(s.Added),
-			Changed:  nonNil(s.Changed),
-			Fixed:    nonNil(s.Fixed),
-			Security: nonNil(s.Security),
-		},
-		Advisories:     nonNil(s.Advisories),
-		Actions:        nonNil(s.Actions),
-		MinUpgradeFrom: s.MinUpgradeFrom,
-	}
-}
+var (
+	Parse          = changelog.Parse
+	Find           = changelog.Find
+	BuildManifest  = changelog.BuildManifest
+	unreleasedBody = changelog.UnreleasedBody
+)
 
 func ManifestJSON(s *Section) ([]byte, error) {
 	b, err := json.MarshalIndent(BuildManifest(s), "", "  ")
@@ -73,6 +47,11 @@ func RenderNotes(s *Section) string {
 	}
 	if s.Summary != "" {
 		b.WriteString(s.Summary + "\n\n")
+	}
+	if len(s.Highlights) > 0 {
+		b.WriteString("### Highlights\n\n")
+		writeBullets(&b, s.Highlights)
+		b.WriteString("\n")
 	}
 
 	if len(s.Advisories)+len(s.Security) > 0 {

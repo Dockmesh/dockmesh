@@ -1,4 +1,7 @@
-package main
+// Package changelog parses CHANGELOG.md, whose syntax is documented at
+// the top of that file. The release tooling renders notes and the
+// release manifest from it; the server reads its own version's section.
+package changelog
 
 import (
 	"bufio"
@@ -14,6 +17,7 @@ type Section struct {
 	Severity       string
 	Summary        string
 	MinUpgradeFrom string
+	Highlights     []string
 	Added          []string
 	Changed        []string
 	Fixed          []string
@@ -36,7 +40,8 @@ type Action struct {
 	Text     string `json:"text"`
 }
 
-const unreleased = "Unreleased"
+// Unreleased is the Version of the "## [Unreleased]" section.
+const Unreleased = "Unreleased"
 
 var (
 	releaseHeader    = regexp.MustCompile(`^## \[(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\] - (\d{4}-\d{2}-\d{2}) \[(security|recommended|normal)\]$`)
@@ -48,7 +53,7 @@ var (
 )
 
 var subsections = map[string]bool{
-	"Added": true, "Changed": true, "Fixed": true, "Security": true, "Upgrade notes": true,
+	"Highlights": true, "Added": true, "Changed": true, "Fixed": true, "Security": true, "Upgrade notes": true,
 }
 
 // Parse reads a whole changelog. Text before the first "## " header is free
@@ -104,7 +109,7 @@ func Parse(src string) ([]*Section, error) {
 			}
 			switch {
 			case unreleasedHeader.MatchString(line):
-				cur = &Section{Version: unreleased}
+				cur = &Section{Version: Unreleased}
 			case releaseHeader.MatchString(line):
 				m := releaseHeader.FindStringSubmatch(line)
 				cur = &Section{Version: m[1], Date: m[2], Severity: m[3]}
@@ -131,7 +136,7 @@ func Parse(src string) ([]*Section, error) {
 			}
 			sub = strings.TrimPrefix(line, "### ")
 			if !subsections[sub] {
-				return nil, fmt.Errorf("line %d: unknown subsection %q (want Added, Changed, Fixed, Security or Upgrade notes)", lineNo, sub)
+				return nil, fmt.Errorf("line %d: unknown subsection %q (want Highlights, Added, Changed, Fixed, Security or Upgrade notes)", lineNo, sub)
 			}
 			continue
 		}
@@ -167,6 +172,8 @@ func Parse(src string) ([]*Section, error) {
 func (s *Section) add(sub string, bullets []string) error {
 	for _, b := range bullets {
 		switch sub {
+		case "Highlights":
+			s.Highlights = append(s.Highlights, b)
 		case "Added":
 			s.Added = append(s.Added, b)
 		case "Changed":
@@ -195,7 +202,9 @@ func (s *Section) add(sub string, bullets []string) error {
 	return nil
 }
 
-func (s *Section) empty() bool {
+// Empty reports whether the section has no change entries. Highlights
+// alone don't count: they summarise entries listed elsewhere.
+func (s *Section) Empty() bool {
 	return len(s.Added)+len(s.Changed)+len(s.Fixed)+len(s.Security)+len(s.Advisories)+len(s.Actions) == 0
 }
 
@@ -210,10 +219,10 @@ func Find(sections []*Section, version string) *Section {
 	return nil
 }
 
-// unreleasedBody is the Unreleased section's lines with blank lines dropped,
+// UnreleasedBody is the Unreleased section's lines with blank lines dropped,
 // so whitespace-only edits don't count as a changelog entry.
-func unreleasedBody(sections []*Section) string {
-	s := Find(sections, unreleased)
+func UnreleasedBody(sections []*Section) string {
+	s := Find(sections, Unreleased)
 	if s == nil {
 		return ""
 	}
@@ -224,4 +233,54 @@ func unreleasedBody(sections []*Section) string {
 		}
 	}
 	return strings.Join(keep, "\n")
+}
+
+// Manifest is release-manifest.json, the machine-readable form of a
+// release section published with every release.
+type Manifest struct {
+	Schema         int        `json:"schema"`
+	Version        string     `json:"version"`
+	Date           string     `json:"date"`
+	Severity       string     `json:"severity"`
+	Summary        string     `json:"summary"`
+	Highlights     []string   `json:"highlights"`
+	Changes        Changes    `json:"changes"`
+	Advisories     []Advisory `json:"advisories"`
+	Actions        []Action   `json:"actions"`
+	MinUpgradeFrom string     `json:"min_upgrade_from"`
+}
+
+type Changes struct {
+	Added    []string `json:"added"`
+	Changed  []string `json:"changed"`
+	Fixed    []string `json:"fixed"`
+	Security []string `json:"security"`
+}
+
+func nonNil[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
+
+// BuildManifest converts a section to its manifest.
+func BuildManifest(s *Section) Manifest {
+	return Manifest{
+		Schema:     1,
+		Version:    s.Version,
+		Date:       s.Date,
+		Severity:   s.Severity,
+		Summary:    s.Summary,
+		Highlights: nonNil(s.Highlights),
+		Changes: Changes{
+			Added:    nonNil(s.Added),
+			Changed:  nonNil(s.Changed),
+			Fixed:    nonNil(s.Fixed),
+			Security: nonNil(s.Security),
+		},
+		Advisories:     nonNil(s.Advisories),
+		Actions:        nonNil(s.Actions),
+		MinUpgradeFrom: s.MinUpgradeFrom,
+	}
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/changelog"
 	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/deploy"
@@ -45,6 +46,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/templates"
 	"github.com/dockmesh/dockmesh/internal/updater"
+	"github.com/dockmesh/dockmesh/internal/userprefs"
 	"github.com/dockmesh/dockmesh/internal/invites"
 )
 
@@ -101,6 +103,7 @@ type Handlers struct {
 	AgentUpgrade   *agents.UpgradeController
 	Prom           *metrics.PromMetrics
 	SelfUpdate     *selfupdate.Checker
+	UserPrefs      *userprefs.Store
 	SetupState     *setup.State    // first-run wizard state; nil = setup never active
 	SetupCommit_   setup.CommitFunc // wizard's commit-runner — wired by main; nil = wizard cannot commit
 	ssoCodes       ssoCodes
@@ -113,6 +116,8 @@ type Handlers struct {
 	// router mounts its middleware.
 	ClientIPs   *clientip.Resolver
 	proxyNotice *proxyNotice
+	// releaseSections is the embedded changelog, parsed once.
+	releaseSections []*changelog.Section
 	// gitWebhookTrigger replaces GitSource.TriggerSync in tests.
 	gitWebhookTrigger func(ctx context.Context, stackName string)
 }
@@ -164,6 +169,9 @@ type Deps struct {
 	AgentUpgrade   *agents.UpgradeController
 	Prom           *metrics.PromMetrics
 	SelfUpdate     *selfupdate.Checker
+	UserPrefs      *userprefs.Store
+	// Changelog is CHANGELOG.md as embedded in the binary.
+	Changelog      string
 	SetupState     *setup.State
 	SetupCommit_   setup.CommitFunc
 	RBACv2Enforce  bool
@@ -217,6 +225,7 @@ func New(d Deps) *Handlers {
 		AgentUpgrade:   d.AgentUpgrade,
 		Prom:           d.Prom,
 		SelfUpdate:     d.SelfUpdate,
+		UserPrefs:      d.UserPrefs,
 		SetupState:     d.SetupState,
 		SetupCommit_:   d.SetupCommit_,
 		RBACv2Enforce:  d.RBACv2Enforce,
@@ -235,6 +244,13 @@ func New(d Deps) *Handlers {
 		return d.Settings.Get(settings.KeyTrustedProxies, "")
 	})
 	h.ClientIPs.OnUntrustedForward = h.proxyNotice.observe
+	if d.Changelog != "" {
+		sections, err := changelog.Parse(d.Changelog)
+		if err != nil {
+			slog.Warn("embedded changelog unreadable; what's new stays empty", "err", err)
+		}
+		h.releaseSections = sections
+	}
 	return h
 }
 

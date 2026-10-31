@@ -58,7 +58,7 @@ func runRelease(args []string, stdout io.Writer) error {
 	if s == nil || s.Version == unreleased {
 		return fmt.Errorf("%s has no section for %s; rename [Unreleased] to the release version before tagging", *changelog, *version)
 	}
-	if s.empty() {
+	if s.Empty() {
 		return fmt.Errorf("section [%s] has no entries", s.Version)
 	}
 	manifest, err := ManifestJSON(s)
