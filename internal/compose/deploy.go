@@ -358,7 +358,7 @@ func (s *Service) Stop(ctx context.Context, stackName string) error {
 		return errors.New("docker unavailable")
 	}
 	cli := s.docker.Raw()
-	list, err := listProjectContainers(ctx, cli, stackName, true)
+	list, err := listProjectContainers(ctx, cli, stackName)
 	if err != nil {
 		return err
 	}
@@ -375,7 +375,7 @@ func (s *Service) Status(ctx context.Context, stackName string) ([]StatusEntry, 
 	if s.docker == nil {
 		return nil, errors.New("docker unavailable")
 	}
-	list, err := listProjectContainers(ctx, s.docker.Raw(), stackName, true)
+	list, err := listProjectContainers(ctx, s.docker.Raw(), stackName)
 	if err != nil {
 		return nil, err
 	}
@@ -696,10 +696,10 @@ func serviceToContainerConfig(proj *composetypes.Project, svc composetypes.Servi
 	return cfg, hostCfg, netCfg, nil
 }
 
-func listProjectContainers(ctx context.Context, cli *client.Client, stackName string, all bool) ([]container.Summary, error) {
+func listProjectContainers(ctx context.Context, cli *client.Client, stackName string) ([]container.Summary, error) {
 	f := filters.NewArgs()
 	f.Add("label", LabelProject+"="+stackName)
-	list, err := cli.ContainerList(ctx, container.ListOptions{All: all, Filters: f})
+	list, err := cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
 	if err != nil {
 		return nil, err
 	}

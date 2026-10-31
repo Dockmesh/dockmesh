@@ -228,7 +228,7 @@ func (s *Service) ScaleService(ctx context.Context, proj *composetypes.Project, 
 // listServiceContainers returns containers belonging to a specific
 // service within a stack project.
 func listServiceContainers(ctx context.Context, cli *client.Client, stackName, serviceName string) ([]container.Summary, error) {
-	all, err := listProjectContainers(ctx, cli, stackName, true)
+	all, err := listProjectContainers(ctx, cli, stackName)
 	if err != nil {
 		return nil, err
 	}

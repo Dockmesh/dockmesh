@@ -218,7 +218,7 @@ func (s *Service) RollingReplace(ctx context.Context, proj *composetypes.Project
 	// rollback knows what to revert. Only populated on successful replace.
 	var done []replacedReplica
 
-	replaceOne := func(idx int, oldC container.Summary) error {
+	replaceOne := func(oldC container.Summary) error {
 		replicaIdx := replicaIndex(oldC, proj.Name+"-"+serviceName+"-")
 		containerName := fmt.Sprintf("%s-%s-%d", proj.Name, serviceName, replicaIdx)
 
@@ -246,7 +246,7 @@ func (s *Service) RollingReplace(ctx context.Context, proj *composetypes.Project
 			batchEnd = len(existing)
 		}
 		for i := batchStart; i < batchEnd; i++ {
-			if err := replaceOne(i, existing[i]); err != nil {
+			if err := replaceOne(existing[i]); err != nil {
 				msg := fmt.Sprintf("replica %d: %v", replicaIndex(existing[i], proj.Name+"-"+serviceName+"-"), err)
 				res.Errors = append(res.Errors, msg)
 				slog.Warn("rolling replace: replica failed", "stack", proj.Name, "service", serviceName, "error", err)

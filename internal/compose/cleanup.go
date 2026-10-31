@@ -89,7 +89,7 @@ func (s *Service) CleanupPreview(ctx context.Context, stackName string) (*Cleanu
 	// Images referenced by this project's containers. An image is
 	// considered shared (and skipped) if any container OUTSIDE this
 	// project references it.
-	projContainers, err := listProjectContainers(ctx, cli, stackName, true)
+	projContainers, err := listProjectContainers(ctx, cli, stackName)
 	if err != nil {
 		return nil, fmt.Errorf("list project containers: %w", err)
 	}
