@@ -90,37 +90,24 @@ func (s *Service) OpenRunHashed(ctx context.Context, runID int64) (io.ReadCloser
 	return s.openRunHashed(ctx, run)
 }
 
-// openRunHashed hashes what the stored SHA256 covers: the plaintext, or
-// or the stored ciphertext when sha256Plain is false.
+// openRunHashed opens the run's archive for the walkers. run.SHA256
+// covers the bytes as stored on the target (ciphertext for encrypted
+// runs), so the hash is taken below the decryption.
 func (s *Service) openRunHashed(ctx context.Context, run *Run) (io.ReadCloser, func() VerifyCheck, error) {
 	h := sha256.New()
-	var (
-		rc  io.ReadCloser
-		err error
-	)
-	overCiphertext := run.Encrypted && !run.sha256Plain
-	if overCiphertext {
-		rc, err = s.openRun(ctx, run, h)
-	} else {
-		rc, err = s.openRun(ctx, run, nil)
-	}
+	rc, err := s.openRun(ctx, run, h)
 	if err != nil {
 		return nil, nil, err
 	}
-	var plain io.Reader = rc
-	if !overCiphertext {
-		plain = io.TeeReader(rc, h)
-	}
-	wrapped := &tappedReader{Reader: plain, Closer: rc}
 	finish := func() VerifyCheck {
 		// Tar readers stop at the end-of-archive marker and gzip at its
 		// trailer; the padding after them is part of the hash.
-		if _, err := io.Copy(io.Discard, plain); err != nil {
+		if _, err := io.Copy(io.Discard, rc); err != nil {
 			return VerifyCheck{Name: "sha256", Status: "fail", Message: "read archive: " + err.Error()}
 		}
 		return shaCheck(hex.EncodeToString(h.Sum(nil)), run.SHA256)
 	}
-	return wrapped, finish, nil
+	return rc, finish, nil
 }
 
 func (r *VerifyResult) add(c VerifyCheck) {

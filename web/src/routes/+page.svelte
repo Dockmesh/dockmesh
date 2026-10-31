@@ -4,7 +4,9 @@
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
   import { autoRefresh } from '$lib/autorefresh';
+  import { latest } from '$lib/latest';
   import { Skeleton } from '$lib/components/ui';
+  import MountTable from '$lib/components/MountTable.svelte';
   import {
     EdMetric,
     EdRow,
@@ -50,7 +52,9 @@
   const isAll = $derived(hosts.isAll);
   const isRemote = $derived(hosts.id !== 'local' && hosts.id !== 'all');
 
+  const nextLoad = latest();
   async function load() {
+    const current = nextLoad();
     const isFirstLoad = untrack(
       () => !sysMetrics && perHostMetrics.length === 0 && stackCards.length === 0
     );
@@ -75,6 +79,7 @@
         allowed('audit.view') ? api.audit.list(10).catch(() => []) : Promise.resolve([]),
         api.hosts.list().catch(() => []),
       ]);
+      if (!current()) return;
       health = h;
 
       if (sysRaw && isFanOut(sysRaw)) {
@@ -129,26 +134,20 @@
       agentCount.total = hostListRaw.length;
       agentCount.online = hostListRaw.filter((x: any) => x.status === 'online').length;
     } catch (err: any) {
-      error = err.message ?? 'Failed to load';
+      if (current()) error = err.message ?? 'Failed to load';
     } finally {
-      loading = false;
+      if (current()) loading = false;
     }
   }
 
-  let prevHost = hosts.id;
   $effect(() => {
-    const cur = hosts.id;
-    if (cur !== prevHost) {
-      prevHost = cur;
+    hosts.id;
+    untrack(() => {
       cpuHistory = [];
       memHistory = [];
       diskHistory = [];
       load();
-    }
-  });
-
-  $effect(() => {
-    load();
+    });
   });
 
   $effect(() => autoRefresh(load, 10_000));
@@ -209,6 +208,7 @@
       case 'auth.login': return 'signed in';
       case 'auth.logout': return 'signed out';
       case 'auth.login_failed': return `failed sign-in${tgt ? ' for ' + tgt : ''}`;
+      case 'auth.lockout': return `sign-in blocked for ${tgt}`;
       case 'auth.sso_login': return 'signed in via SSO';
       case 'stack.create': return `created stack ${tgt}`;
       case 'stack.update': return `updated stack ${tgt}`;
@@ -510,6 +510,13 @@
       />
     {/if}
   </section>
+
+  {#if sysMetrics && (sysMetrics.mounts?.length || sysMetrics.mounts_unsupported)}
+    <section class="dash-mounts">
+      <Eyebrow>Disks · {sysMetrics.mounts?.length ?? 0}</Eyebrow>
+      <MountTable mounts={sysMetrics.mounts} unsupported={sysMetrics.mounts_unsupported} />
+    </section>
+  {/if}
 
   <!-- ────────────────────────────────────────────── Top row: Stacks | Activity
        Stacks list takes the wider column; Activity feed stretches to the
@@ -848,6 +855,11 @@
     align-items: stretch;
     column-gap: 32px;
     row-gap: 12px;
+  }
+  .dash-mounts {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
   .dash-top > .dash-block {
     display: grid;

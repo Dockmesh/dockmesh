@@ -260,7 +260,7 @@ func (s *Service) ResolveAuthForImage(ctx context.Context, image string, hostTag
 
 // ResolveAuth looks up credentials for an image reference that will be
 // pulled against hostTags. Returns the base64-encoded X-Registry-Auth
-// blob ready to hand to Docker's ImagePullOptions.RegistryAuth, and the
+// blob ready to hand to Docker's image.PullOptions.RegistryAuth, and the
 // registry that provided it (for audit), or ("", nil, nil) when no
 // matching entry exists — the caller should then fall back to an
 // anonymous pull.

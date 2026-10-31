@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"path"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/notices"
@@ -49,8 +51,14 @@ func (s *Service) attachTarget(ctx context.Context, in *JobInput, prev *Job) err
 	return nil
 }
 
+// execer is what the target helpers need from a *sql.DB or *sql.Tx.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
 // insertTarget saves a target under name, or "name (2)", … when taken.
-func (s *store) insertTarget(ctx context.Context, name, typ string, cfg any) (int64, error) {
+func insertTarget(ctx context.Context, db execer, name, typ string, cfg any) (int64, error) {
 	raw, err := json.Marshal(cfg)
 	if err != nil {
 		return 0, err
@@ -60,7 +68,7 @@ func (s *store) insertTarget(ctx context.Context, name, typ string, cfg any) (in
 		if i > 1 {
 			n = fmt.Sprintf("%s (%d)", name, i)
 		}
-		res, err := s.db.ExecContext(ctx,
+		res, err := db.ExecContext(ctx,
 			`INSERT INTO backup_targets (name, type, config_json) VALUES (?, ?, ?) ON CONFLICT(name) DO NOTHING`,
 			n, typ, string(raw))
 		if err != nil {
@@ -73,26 +81,32 @@ func (s *store) insertTarget(ctx context.Context, name, typ string, cfg any) (in
 	return 0, fmt.Errorf("no free target name for %q", name)
 }
 
-// migrateInlineTargets moves the target config stored on each job into
-// backup_targets and points the job at it. Identical configs share one
-// target. Deleted jobs are included: their runs still need the target.
-// The copy keeps recorded SFTP host keys.
-func (s *store) migrateInlineTargets(ctx context.Context) (int, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, target_type, target_config FROM backup_jobs
+func (s *store) insertTarget(ctx context.Context, name, typ string, cfg any) (int64, error) {
+	return insertTarget(ctx, s.db, name, typ, cfg)
+}
+
+// MigrateInlineTargets moves the target config stored on each job into a
+// saved target and points the job at it. Jobs whose configs only differ
+// in a recorded SFTP host key share one target, which keeps that key.
+// Deleted jobs are included: their runs still need the target. Each job
+// moves in its own transaction, so an interrupted pass resumes with the
+// jobs not moved yet.
+func (s *Service) MigrateInlineTargets(ctx context.Context) (int, error) {
+	rows, err := s.store.db.QueryContext(ctx, `
+		SELECT id, name, target_type, target_config, sources FROM backup_jobs
 		WHERE target_id IS NULL OR target_id NOT IN (SELECT id FROM backup_targets)`)
 	if err != nil {
 		return 0, err
 	}
 	type pending struct {
-		id        int64
-		name, typ string
-		config    string
+		id              int64
+		name, typ       string
+		config, sources string
 	}
 	var jobs []pending
 	for rows.Next() {
 		var p pending
-		if err := rows.Scan(&p.id, &p.name, &p.typ, &p.config); err != nil {
+		if err := rows.Scan(&p.id, &p.name, &p.typ, &p.config, &p.sources); err != nil {
 			rows.Close()
 			return 0, err
 		}
@@ -105,61 +119,143 @@ func (s *store) migrateInlineTargets(ctx context.Context) (int, error) {
 
 	moved := 0
 	for _, j := range jobs {
-		var cfg any
-		if err := json.Unmarshal([]byte(j.config), &cfg); err != nil {
+		var cfg map[string]any
+		if err := json.Unmarshal([]byte(j.config), &cfg); err != nil || len(cfg) == 0 {
 			slog.Warn("backup: job target config unreadable, left inline", "job", j.name, "err", err)
 			continue
 		}
-		id, err := s.findTarget(ctx, j.typ, cfg)
-		if err != nil {
-			return moved, err
-		}
-		if id == 0 {
-			if id, err = s.insertTarget(ctx, j.name, j.typ, cfg); err != nil {
-				return moved, err
-			}
-		}
-		if _, err := s.db.ExecContext(ctx,
-			`UPDATE backup_jobs SET target_id = ?, target_config = '{}' WHERE id = ?`, id, j.id); err != nil {
-			return moved, err
+		var srcs []Source
+		_ = json.Unmarshal([]byte(j.sources), &srcs)
+		if err := s.store.moveJobTarget(ctx, j.id, j.typ, cfg, HasSystemSource(srcs)); err != nil {
+			return moved, fmt.Errorf("job %q: %w", j.name, err)
 		}
 		moved++
 	}
 	return moved, nil
 }
 
-// findTarget returns a saved target with exactly this type and config.
-func (s *store) findTarget(ctx context.Context, typ string, cfg any) (int64, error) {
-	want, err := json.Marshal(cfg)
+// moveJobTarget points one job at a saved target. A system job gets a
+// target of its own: whoever may edit a shared target would otherwise
+// decide where the whole install's backup goes.
+func (s *store) moveJobTarget(ctx context.Context, jobID int64, typ string, cfg map[string]any, system bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var id int64
+	if !system {
+		if id, err = findTarget(ctx, tx, typ, cfg); err != nil {
+			return err
+		}
+	}
+	if id == 0 {
+		if id, err = insertTarget(ctx, tx, migratedTargetName(typ, cfg), typ, cfg); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE backup_jobs SET target_id = ?, target_config = '{}' WHERE id = ?`, id, jobID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// hostKeyFields are recorded by the target itself, not set by the user.
+var hostKeyFields = []string{"host_key", "host_key_pending"}
+
+// findTarget returns a saved target with this type and the same settings
+// apart from SFTP host keys. A recorded key the target lacks is copied to
+// it; targets that recorded a different key don't match.
+func findTarget(ctx context.Context, db execer, typ string, cfg map[string]any) (int64, error) {
+	want, err := json.Marshal(withoutHostKeys(cfg))
 	if err != nil {
 		return 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, config_json FROM backup_targets WHERE type = ? ORDER BY id`, typ)
+	rows, err := db.QueryContext(ctx, `SELECT id, config_json FROM backup_targets WHERE type = ? ORDER BY id`, typ)
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
+	type candidate struct {
+		id  int64
+		cfg map[string]any
+	}
+	var found []candidate
 	for rows.Next() {
-		var id int64
+		var c candidate
 		var raw string
-		if err := rows.Scan(&id, &raw); err != nil {
+		if err := rows.Scan(&c.id, &raw); err != nil {
+			rows.Close()
 			return 0, err
 		}
-		var have any
-		if json.Unmarshal([]byte(raw), &have) != nil {
+		if json.Unmarshal([]byte(raw), &c.cfg) != nil {
 			continue
 		}
-		if got, err := json.Marshal(have); err == nil && string(got) == string(want) {
-			return id, nil
+		if got, err := json.Marshal(withoutHostKeys(c.cfg)); err == nil && string(got) == string(want) {
+			found = append(found, c)
 		}
 	}
-	return 0, rows.Err()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	key, _ := cfg["host_key"].(string)
+	for _, c := range found {
+		have, _ := c.cfg["host_key"].(string)
+		switch {
+		case key == "" || have == key:
+			return c.id, nil
+		case have == "":
+			if _, err := db.ExecContext(ctx,
+				`UPDATE backup_targets SET config_json = json_set(config_json, '$.host_key', ?) WHERE id = ?`, key, c.id); err != nil {
+				return 0, err
+			}
+			return c.id, nil
+		}
+	}
+	return 0, nil
+}
+
+func withoutHostKeys(cfg map[string]any) map[string]any {
+	out := make(map[string]any, len(cfg))
+	for k, v := range cfg {
+		out[k] = v
+	}
+	for _, k := range hostKeyFields {
+		delete(out, k)
+	}
+	return out
+}
+
+// migratedTargetName names a target moved out of a job after its type and
+// the server it talks to, e.g. "sftp-nas.lan (migrated)".
+func migratedTargetName(typ string, cfg map[string]any) string {
+	str := func(k string) string { s, _ := cfg[k].(string); return s }
+	where := ""
+	switch typ {
+	case "smb", "sftp":
+		where = str("host")
+	case "s3":
+		where = str("endpoint")
+		if b := str("bucket"); b != "" {
+			where += "/" + b
+		}
+	case "webdav":
+		if u, err := url.Parse(str("url")); err == nil {
+			where = u.Host
+		}
+	case "local":
+		where = path.Base(str("path"))
+	}
+	if where == "" || where == "." || where == "/" {
+		return typ + " (migrated)"
+	}
+	return typ + "-" + where + " (migrated)"
 }
 
 // jobTarget builds the job's target. For SFTP it records the host key on
 // first contact and parks a changed key until an admin accepts it. Jobs
-// the startup migration couldn't move (unreadable config) still run from
-// their inline config.
+// not moved to a saved target yet run from their inline config.
 func jobTarget(ctx context.Context, st *store, n *notices.Service, job *Job) (targets.Target, error) {
 	if job.TargetID > 0 {
 		ts := targets.NewTargetStore(st.db)
@@ -178,23 +274,4 @@ func jobTarget(ctx context.Context, st *store, n *notices.Service, job *Job) (ta
 	}
 	jobTOFU(st, n, job).Attach(ctx, t)
 	return t, nil
-}
-
-// input returns the job as an update payload.
-func (j *Job) input() JobInput {
-	return JobInput{
-		Name:           j.Name,
-		HostID:         j.HostID,
-		TargetID:       j.TargetID,
-		TargetType:     j.TargetType,
-		TargetConfig:   j.TargetConfig,
-		Sources:        j.Sources,
-		Schedule:       j.Schedule,
-		RetentionCount: j.RetentionCount,
-		RetentionDays:  j.RetentionDays,
-		Encrypt:        j.Encrypt,
-		PreHooks:       j.PreHooks,
-		PostHooks:      j.PostHooks,
-		Enabled:        j.Enabled,
-	}
 }

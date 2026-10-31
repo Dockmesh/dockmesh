@@ -1,14 +1,14 @@
 // Tracks in-flight stack operations (deploy / stop / save / delete) so the
 // "busy" state survives navigating away and back to the stack detail page
-// while a long-running request is still pending. A local `$state` on the
-// page is reset every time the component mounts, which made the Deploy
-// button clickable again during an ongoing deploy — producing duplicate
-// deploys.
+// while a long-running request is still pending; page-local state resets
+// on every mount.
 //
 // Keyed by `${hostId}:${stackName}` because the same stack name can exist
 // on different hosts and we only want to lock the one being mutated.
 
-const inflight = $state(new Set<string>());
+import { SvelteSet } from 'svelte/reactivity';
+
+const inflight = new SvelteSet<string>();
 
 export function stackOpKey(hostId: string, name: string): string {
   return `${hostId}:${name}`;

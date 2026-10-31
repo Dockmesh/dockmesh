@@ -47,6 +47,37 @@ func (s *store) getJob(ctx context.Context, id int64) (*Job, error) {
 
 // getJobForRun also returns deleted jobs: their runs stay restorable and
 // need the job's target.
+// jobsUsingTarget returns every job that writes to the target, deleted
+// ones included: their runs still read from it.
+func (s *store) jobsUsingTarget(ctx context.Context, targetID int64) ([]Job, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM backup_jobs WHERE target_id = ? ORDER BY id`, targetID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]Job, 0, len(ids))
+	for _, id := range ids {
+		j, err := s.getJobForRun(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *j)
+	}
+	return out, nil
+}
+
 func (s *store) getJobForRun(ctx context.Context, id int64) (*Job, error) {
 	return s.queryJob(ctx, id, true)
 }
@@ -192,8 +223,8 @@ func (s *store) startRun(ctx context.Context, j *Job) (int64, error) {
 	srcs, _ := json.Marshal(j.Sources)
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO backup_runs (job_id, job_name, status, sources_json, encrypted)
-		VALUES (?, ?, 'running', ?, ?)`,
-		j.ID, j.Name, string(srcs), boolInt(j.Encrypt))
+		VALUES (?, ?, ?, ?, ?)`,
+		j.ID, j.Name, StatusRunning, string(srcs), boolInt(j.Encrypt))
 	if err != nil {
 		return 0, err
 	}
@@ -206,9 +237,9 @@ func (s *store) startRun(ctx context.Context, j *Job) (int64, error) {
 // retention pass of the job removes the partial archive.
 func (s *store) failInterruptedRuns(ctx context.Context) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE backup_runs SET status = 'failed', finished_at = ?, sha256 = '',
+		UPDATE backup_runs SET status = ?, finished_at = ?, sha256 = '',
 			error = 'interrupted: the server stopped during this run'
-		WHERE status = 'running'`, time.Now())
+		WHERE status = ?`, StatusFailed, time.Now(), StatusRunning)
 	if err != nil {
 		return 0, err
 	}
@@ -220,7 +251,7 @@ func (s *store) setRunPath(ctx context.Context, runID int64, path string) error 
 	return err
 }
 
-// finishRun records the outcome; sha always covers the plaintext archive.
+// finishRun records the outcome; sha covers the archive as stored on the target.
 func (s *store) finishRun(ctx context.Context, runID int64, status string, size int64, path, sha string, runErr error) error {
 	now := time.Now()
 	var errStr string
@@ -229,7 +260,7 @@ func (s *store) finishRun(ctx context.Context, runID int64, status string, size 
 	}
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE backup_runs SET status = ?, finished_at = ?, size_bytes = ?,
-			target_path = ?, sha256 = ?, sha256_plain = 1, error = ?
+			target_path = ?, sha256 = ?, error = ?
 		WHERE id = ?`,
 		status, now, size, path, sha, errStr, runID)
 	return err
@@ -264,9 +295,9 @@ func (s *store) keptRuns(ctx context.Context, jobID int64) ([]Run, error) {
 	return out, rows.Err()
 }
 
-// partialRuns lists failed runs that still point at a file. Partial
-// archives are deleted when a run fails; this catches leftovers from
-// older versions (no hash means the archive never completed).
+// partialRuns lists failed runs that still point at a file: partials that
+// could not be deleted when the run failed (no hash means the archive
+// never completed).
 func (s *store) partialRuns(ctx context.Context, jobID int64) ([]Run, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, target_path FROM backup_runs
@@ -300,7 +331,7 @@ func (s *store) listRuns(ctx context.Context, limit int) ([]Run, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, job_id, job_name, status, started_at, finished_at,
 		       size_bytes, COALESCE(target_path, ''), COALESCE(sha256, ''),
-		       encrypted, COALESCE(error, ''), sources_json, sha256_plain, pruned_at
+		       encrypted, COALESCE(error, ''), sources_json, pruned_at
 		FROM backup_runs ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -313,7 +344,7 @@ func (s *store) listRuns(ctx context.Context, limit int) ([]Run, error) {
 		var encInt int
 		var srcs string
 		if err := rows.Scan(&r.ID, &r.JobID, &r.JobName, &r.Status, &r.StartedAt,
-			&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs, &r.sha256Plain, &pruned); err != nil {
+			&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs, &pruned); err != nil {
 			return nil, err
 		}
 		if finished.Valid {
@@ -335,14 +366,14 @@ func (s *store) getRun(ctx context.Context, id int64) (*Run, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, job_id, job_name, status, started_at, finished_at,
 		       size_bytes, COALESCE(target_path, ''), COALESCE(sha256, ''),
-		       encrypted, COALESCE(error, ''), sources_json, sha256_plain, pruned_at
+		       encrypted, COALESCE(error, ''), sources_json, pruned_at
 		FROM backup_runs WHERE id = ?`, id)
 	var r Run
 	var finished, pruned sql.NullTime
 	var encInt int
 	var srcs string
 	if err := row.Scan(&r.ID, &r.JobID, &r.JobName, &r.Status, &r.StartedAt,
-		&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs, &r.sha256Plain, &pruned); err != nil {
+		&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs, &pruned); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrRunNotFound
 		}
@@ -415,6 +446,19 @@ func boolInt(b bool) int {
 	return 0
 }
 
+func (s *store) setJobEnabled(ctx context.Context, id int64, enabled bool) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE backup_jobs SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		boolInt(enabled), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrJobNotFound
+	}
+	return nil
+}
+
 // markJobNeedsReview flags a job for operator review with a reason.
 // Used by MarkAutoCreatedJobsForReview when a legacy default job is
 // found on an existing install. P.13.2.
@@ -432,5 +476,15 @@ func (s *store) clearJobReview(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE backup_jobs SET needs_review = 0, review_reason = '', review_acked = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		id)
+	return err
+}
+
+func (s *store) setJobTargetConfig(ctx context.Context, id int64, cfg any) error {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE backup_jobs SET target_config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, string(b), id)
 	return err
 }

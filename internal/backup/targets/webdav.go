@@ -1,13 +1,12 @@
 package targets
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"net"
-	"net/http"
+	"os"
 	"path"
-	"time"
 
 	"github.com/studio-b12/gowebdav"
 )
@@ -17,15 +16,13 @@ type WebDAVConfig struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Path     string `json:"path"`
+	// CACert is an optional PEM bundle trusted in addition to the system roots.
+	CACert string `json:"ca_cert,omitempty"`
 }
 
 type WebDAV struct {
 	cfg    WebDAVConfig
 	client *gowebdav.Client
-	// upload has no overall timeout (an archive upload takes as long as it
-	// takes) and authenticates up front, so the body is never buffered
-	// for an auth retry.
-	upload *gowebdav.Client
 }
 
 func NewWebDAV(raw any) (*WebDAV, error) {
@@ -40,20 +37,19 @@ func NewWebDAV(raw any) (*WebDAV, error) {
 		cfg.Path = "/backups"
 	}
 	client := gowebdav.NewClient(cfg.URL, cfg.Username, cfg.Password)
-	client.SetTimeout(30 * time.Second)
-	upload := gowebdav.NewAuthClient(cfg.URL, gowebdav.NewPreemptiveAuth(&basicAuth{user: cfg.Username, pw: cfg.Password}))
-	upload.SetTransport(stallTransport())
-	return &WebDAV{cfg: cfg, client: client, upload: upload}, nil
+	tr, err := transferTransportWithCA(cfg.CACert)
+	if err != nil {
+		return nil, fmt.Errorf("webdav: %w", err)
+	}
+	client.SetTransport(tr)
+	return &WebDAV{cfg: cfg, client: client}, nil
 }
 
 func (w *WebDAV) Open(ctx context.Context, p string) (io.WriteCloser, error) {
 	full := path.Join(w.cfg.Path, p)
 	dir := path.Dir(full)
 	_ = w.client.MkdirAll(dir, 0o755)
-	// Content length -1 sends the body chunked, straight from the pipe.
-	return startPipeUpload(func(r io.Reader) error {
-		return w.upload.WriteStreamWithLength(full, r, -1, 0o644)
-	}, func() { _ = w.client.Remove(full) }), nil
+	return &webdavWriter{client: w.client, path: full}, nil
 }
 
 func (w *WebDAV) Read(ctx context.Context, p string) (io.ReadCloser, error) {
@@ -99,59 +95,57 @@ func (w *WebDAV) Delete(ctx context.Context, p string) error {
 	return w.client.Remove(path.Join(w.cfg.Path, p))
 }
 
-// uploadStall is how long an upload may make no progress before it fails;
-// a hung server would otherwise block the job, and every later run of it.
-const uploadStall = 5 * time.Minute
-
-// stallTransport fails a request when a write or the response stalls,
-// without capping how long a large upload may take overall.
-func stallTransport() *http.Transport {
-	t := http.DefaultTransport.(*http.Transport).Clone()
-	t.ResponseHeaderTimeout = uploadStall
-	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
-	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		c, err := dialer.DialContext(ctx, network, addr)
-		if err != nil {
-			return nil, err
-		}
-		return &stallConn{Conn: c}, nil
-	}
-	return t
-}
-
-type stallConn struct{ net.Conn }
-
-func (c *stallConn) Write(p []byte) (int, error) {
-	_ = c.Conn.SetWriteDeadline(time.Now().Add(uploadStall))
-	return c.Conn.Write(p)
-}
-
-// basicAuth sends credentials with every request. gowebdav's negotiating
-// authorizer copies each upload body into memory so it can resend it
-// after a 401.
-type basicAuth struct{ user, pw string }
-
-func (b *basicAuth) Authorize(_ *http.Client, rq *http.Request, _ string) error {
-	if b.user != "" || b.pw != "" {
-		rq.SetBasicAuth(b.user, b.pw)
-	}
-	return nil
-}
-
-func (b *basicAuth) Verify(_ *http.Client, rs *http.Response, p string) (bool, error) {
-	if rs.StatusCode == http.StatusUnauthorized {
-		return false, gowebdav.NewPathError("Authorize", p, rs.StatusCode)
-	}
-	return false, nil
-}
-
-func (b *basicAuth) Clone() gowebdav.Authenticator { return b }
-func (b *basicAuth) Close() error                  { return nil }
-func (b *basicAuth) String() string                { return "basic " + b.user }
-
 // StorageInfo queries WebDAV quota (RFC 4331). Returns 0,0 if not supported.
 func (w *WebDAV) StorageInfo() (total, used int64, err error) {
 	// gowebdav doesn't expose quota directly. Try a PROPFIND.
 	// If it fails, return 0,0 (not all servers support quota).
 	return 0, 0, nil
+}
+
+// webdavWriter spools the archive to a temp file and uploads it on Close:
+// gowebdav only writes from a reader, and a large archive must not sit in
+// memory.
+type webdavWriter struct {
+	client  *gowebdav.Client
+	path    string
+	file    *os.File
+	aborted bool
+}
+
+func (w *webdavWriter) Write(p []byte) (int, error) {
+	if w.file == nil {
+		f, err := os.CreateTemp("", "dockmesh-webdav-")
+		if err != nil {
+			return 0, err
+		}
+		w.file = f
+	}
+	return w.file.Write(p)
+}
+
+// Abort drops the buffered upload; nothing reached the server yet.
+func (w *webdavWriter) Abort() error {
+	w.aborted = true
+	if w.file == nil {
+		return nil
+	}
+	name := w.file.Name()
+	_ = w.file.Close()
+	w.file = nil
+	return os.Remove(name)
+}
+
+func (w *webdavWriter) Close() error {
+	if w.aborted {
+		return nil
+	}
+	if w.file == nil {
+		return w.client.WriteStream(w.path, bytes.NewReader(nil), 0o644)
+	}
+	defer os.Remove(w.file.Name())
+	defer w.file.Close()
+	if _, err := w.file.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	return w.client.WriteStream(w.path, w.file, 0o644)
 }

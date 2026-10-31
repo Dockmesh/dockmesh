@@ -13,6 +13,9 @@
   } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
   import { notices } from '$lib/stores/notices.svelte';
+  import { noticeAction, sortNotices } from '$lib/notices';
+  import NoticeLabel from './NoticeLabel.svelte';
+  import NoticeBody from './NoticeBody.svelte';
   import { goto } from '$app/navigation';
   import {
     Bell, X, CheckCheck, CheckCircle2, XCircle, AlertTriangle, Info, Trash2, ArrowRight,
@@ -250,30 +253,28 @@
       <!-- Body -->
       <div style="flex: 1 1 auto; overflow-y: auto; min-height: 0; background-color: {dark};">
         {#if notices.items.length > 0}
-          <div style="padding: 8px 18px 6px; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: {fgMuted}; font-family: var(--font-mono, monospace);">Action required</div>
-          {#each notices.items as n (n.id)}
+          <div style="padding: 8px 18px 6px; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: {fgMuted}; font-family: var(--font-mono, monospace);">Notices</div>
+          {#each sortNotices(notices.items) as n (n.id)}
             {@const sev = severityColor(n.severity)}
             <div style="display: flex; align-items: stretch; border-bottom: 1px solid {border}; background-color: {unreadTint};">
               <div style="width: 3px; flex-shrink: 0; background-color: {sev};"></div>
               <button
                 type="button"
                 onclick={() => openNotice(n.link)}
-                style="flex: 1; display: flex; align-items: flex-start; gap: 10px; padding: 12px 18px 12px 14px; background-color: transparent; border: 0; text-align: left; color: {fg}; cursor: {n.link ? 'pointer' : 'default'}; min-width: 0;"
+                style="flex: 1; display: block; padding: 12px 18px 12px 14px; background-color: transparent; border: 0; text-align: left; color: {fg}; cursor: {n.link ? 'pointer' : 'default'}; min-width: 0;"
               >
-                <div style="flex-shrink: 0; margin-top: 1px; color: {sev};">
-                  <AlertTriangle size={16} strokeWidth={1.6} />
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                  <NoticeLabel severity={n.severity} />
+                  <span style="font-size: 13px; line-height: 1.4; color: {fg}; font-weight: 600;">{n.title}</span>
                 </div>
-                <div style="flex: 1; min-width: 0;">
-                  <div style="font-size: 13px; line-height: 1.4; color: {fg}; font-weight: 600;">{n.title}</div>
-                  {#if n.body}
-                    <div style="margin-top: 3px; font-size: 11.5px; color: {fgMuted}; line-height: 1.45; word-break: break-word;">{n.body}</div>
+                {#if n.body}
+                  <div style="margin-top: 6px; font-size: 12px;"><NoticeBody body={n.body} /></div>
+                {/if}
+                <div style="margin-top: 6px; display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: {fgMuted};">
+                  <span>{relTime(n.created_at)}</span>
+                  {#if n.link}
+                    <span style="display: inline-flex; align-items: center; gap: 3px; color: {fg};">{noticeAction(n)} <ArrowRight size={10} strokeWidth={1.6} /></span>
                   {/if}
-                  <div style="margin-top: 5px; display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: {fgMuted};">
-                    <span>{relTime(n.created_at)}</span>
-                    {#if n.link}
-                      <span style="display: inline-flex; align-items: center; gap: 3px; color: {fg};">Fix it <ArrowRight size={10} strokeWidth={1.6} /></span>
-                    {/if}
-                  </div>
                 </div>
               </button>
             </div>

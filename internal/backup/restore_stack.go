@@ -73,6 +73,9 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 	if err != nil {
 		return nil, err
 	}
+	if HasSystemSource(run.Sources) {
+		return nil, ErrSystemRestore
+	}
 	if !run.Restorable() {
 		return nil, ErrNotRestorable
 	}
@@ -81,7 +84,7 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 	}
 	kind := run.Sources[0].Type
 	if kind != "volume" && kind != "stack" {
-		return nil, errors.New("system backups are restored as a whole, not into a volume or stack")
+		return nil, fmt.Errorf("cannot restore a %q backup into a volume or stack", kind)
 	}
 	if opts.Target == "" {
 		opts.Target = run.Sources[0].Name
@@ -136,13 +139,25 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 	if opts.Replace {
 		report.Mode = "replace"
 	}
-	// The archive is read a second time to restore it; hashing that read
-	// too catches a file swapped on the target after the check.
-	rc, sum, err := s.openRunHashed(ctx, run)
+	// Extract the bytes whose size and hash were checked, not a second
+	// download that could differ from what was verified.
+	target, err := jobTarget(ctx, s.store, s.notices, job)
 	if err != nil {
 		return nil, err
 	}
-	defer rc.Close()
+	stored, err := fetchArchive(ctx, target, run)
+	if err != nil {
+		return nil, err
+	}
+	defer stored.Close()
+	var rc io.Reader = stored
+	if run.Encrypted {
+		dec, err := wrapDecrypt(stored, s.secrets)
+		if err != nil {
+			return nil, err
+		}
+		rc = dec
+	}
 	if kind == "volume" {
 		err = host.VolumeImport(ctx, opts.Target, rc, opts.Replace)
 		if err == nil {
@@ -156,9 +171,6 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 	}
 	if err != nil {
 		return report, err
-	}
-	if c := sum(); c.Status == "fail" {
-		return report, fmt.Errorf("the archive changed on the target during the restore, restored data may not match the backup: %s", c.Message)
 	}
 	return report, nil
 }

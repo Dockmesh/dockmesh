@@ -3,7 +3,7 @@
 // changelog entry. The changelog syntax is documented at the top of
 // CHANGELOG.md.
 //
-//	relmanifest release -version v0.3.4 [-changelog CHANGELOG.md] -notes notes.md -manifest release-manifest.json
+//	relmanifest release -version v0.3.4 [-changelog CHANGELOG.md] -notes notes.md [-body body.md] -manifest release-manifest.json
 //	relmanifest check -base base-CHANGELOG.md [-changelog CHANGELOG.md]
 package main
 
@@ -42,6 +42,7 @@ func runRelease(args []string, stdout io.Writer) error {
 	changelog := fl.String("changelog", "CHANGELOG.md", "changelog path")
 	version := fl.String("version", "", "version or tag to release, e.g. v0.3.4")
 	notesOut := fl.String("notes", "", "write release notes (Markdown) here")
+	bodyOut := fl.String("body", "", "write the short release body (Markdown) here")
 	manifestOut := fl.String("manifest", "", "write release-manifest.json here")
 	if err := fl.Parse(args); err != nil {
 		return err
@@ -66,6 +67,11 @@ func runRelease(args []string, stdout io.Writer) error {
 	}
 	if err := os.WriteFile(*notesOut, []byte(RenderNotes(s)), 0o644); err != nil { //nolint:gosec // release artifact, not secret
 		return err
+	}
+	if *bodyOut != "" {
+		if err := os.WriteFile(*bodyOut, []byte(RenderBody(s)), 0o644); err != nil { //nolint:gosec // release artifact, not secret
+			return err
+		}
 	}
 	if err := os.WriteFile(*manifestOut, manifest, 0o644); err != nil { //nolint:gosec // release artifact, not secret
 		return err
@@ -99,11 +105,22 @@ func runCheck(args []string, stdout io.Writer) error {
 	} else if !errors.Is(statErr, fs.ErrNotExist) {
 		return statErr
 	}
-	if unreleasedBody(head) == unreleasedBody(baseSections) {
+	if unreleasedBody(head) == unreleasedBody(baseSections) && !hasNewRelease(head, baseSections) {
 		return errors.New("CHANGELOG.md [Unreleased] was not changed; add an entry, or label the PR no-changelog if users won't notice the change")
 	}
 	fmt.Fprintln(stdout, "changelog: [Unreleased] updated")
 	return nil
+}
+
+// hasNewRelease reports whether head carries a versioned section that base
+// lacks, i.e. the PR cuts a release and moves the Unreleased entries into it.
+func hasNewRelease(head, base []*Section) bool {
+	for _, s := range head {
+		if s.Version != unreleased && Find(base, s.Version) == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func parseFile(path string) ([]*Section, error) {

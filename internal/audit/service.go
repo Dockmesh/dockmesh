@@ -24,44 +24,52 @@ import (
 
 // Action constants so callers don't fat-finger strings.
 const (
-	ActionLogin          = "auth.login"
-	ActionLoginFailed    = "auth.login_failed"
-	ActionLogout         = "auth.logout"
-	ActionRefresh        = "auth.refresh"
-	ActionUserCreate     = "user.create"
-	ActionUserUpdate     = "user.update"
-	ActionUserDelete     = "user.delete"
-	ActionUserPassword   = "user.password"
-	ActionRoleCreate     = "role.create"
-	ActionRoleUpdate     = "role.update"
-	ActionRoleDelete     = "role.delete"
-	ActionStackCreate    = "stack.create"
-	ActionStackUpdate    = "stack.update"
-	ActionStackDelete    = "stack.delete"
-	ActionStackDeploy    = "stack.deploy"
-	ActionStackStop      = "stack.stop"
-	ActionStackAdopt     = "stack.adopt"
-	ActionContainerStart    = "container.start"
-	ActionContainerStop     = "container.stop"
-	ActionContainerKill     = "container.restart"
-	ActionContainerRm       = "container.remove"
+	ActionLogin              = "auth.login"
+	ActionLoginFailed        = "auth.login_failed"
+	ActionLoginBlocked       = "auth.lockout"
+	ActionLogout             = "auth.logout"
+	ActionRefresh            = "auth.refresh"
+	ActionSAMLRekey          = "auth.saml_rekey"
+	ActionSAMLRekeyEnd       = "auth.saml_rekey_end"
+	ActionUserCreate         = "user.create"
+	ActionUserUpdate         = "user.update"
+	ActionUserDelete         = "user.delete"
+	ActionUserPassword       = "user.password"
+	ActionRoleCreate         = "role.create"
+	ActionRoleUpdate         = "role.update"
+	ActionRoleDelete         = "role.delete"
+	ActionStackCreate        = "stack.create"
+	ActionStackUpdate        = "stack.update"
+	ActionStackDelete        = "stack.delete"
+	ActionStackDeploy        = "stack.deploy"
+	ActionStackStop          = "stack.stop"
+	ActionStackAdopt         = "stack.adopt"
+	ActionContainerStart     = "container.start"
+	ActionContainerStop      = "container.stop"
+	ActionContainerKill      = "container.restart"
+	ActionContainerRm        = "container.remove"
 	ActionContainerUpdate    = "container.update"
 	ActionContainerRollback  = "container.rollback"
 	ActionContainerBrowse    = "container.browse"
 	ActionContainerReadFile  = "container.read_file"
 	ActionContainerWriteFile = "container.write_file"
-	ActionImagePull      = "image.pull"
-	ActionImageRemove    = "image.remove"
-	ActionImagePrune     = "image.prune"
-	ActionImageScan      = "image.scan"
-	ActionNetworkCreate  = "network.create"
-	ActionNetworkRemove  = "network.remove"
-	ActionVolumeCreate   = "volume.create"
-	ActionVolumeRemove   = "volume.remove"
-	ActionVolumePrune    = "volume.prune"
-	ActionVolumeBrowse   = "volume.browse"
-	ActionVolumeReadFile = "volume.read_file"
-	ActionGenesis        = "audit.genesis"
+	ActionContainerExecStart = "container.exec_start"
+	ActionContainerExecEnd   = "container.exec_end"
+	ActionImagePull          = "image.pull"
+	ActionImageRemove        = "image.remove"
+	ActionImagePrune         = "image.prune"
+	ActionImageScan          = "image.scan"
+	ActionNetworkCreate      = "network.create"
+	ActionNetworkRemove      = "network.remove"
+	ActionVolumeCreate       = "volume.create"
+	ActionVolumeRemove       = "volume.remove"
+	ActionVolumePrune        = "volume.prune"
+	ActionVolumeBrowse       = "volume.browse"
+	ActionVolumeReadFile     = "volume.read_file"
+	ActionGenesis            = "audit.genesis"
+	ActionBackupDownload     = "backup.download"
+	ActionBackupKeyExport    = "backup.key_export"
+	ActionBackupJobRepaired  = "backup.job_repaired"
 
 	// ActionScopeDenied is fired by the RBAC v2 scope-check helper when
 	// a request is rejected because the caller's role-scope doesn't
@@ -353,11 +361,11 @@ func (s *Service) Verify(ctx context.Context) (*VerifyReport, error) {
 	var expectedPrev string
 	for rows.Next() {
 		var (
-			id                                int64
-			ts                                time.Time
-			userID, target, details           sql.NullString
-			action                            string
-			prevHash, rowHash                 sql.NullString
+			id                      int64
+			ts                      time.Time
+			userID, target, details sql.NullString
+			action                  string
+			prevHash, rowHash       sql.NullString
 		)
 		if err := rows.Scan(&id, &ts, &userID, &action, &target, &details, &prevHash, &rowHash); err != nil {
 			return nil, err

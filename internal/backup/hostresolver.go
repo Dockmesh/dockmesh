@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	dtypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 
 	"github.com/dockmesh/dockmesh/internal/host"
@@ -59,7 +59,7 @@ func (a *hostBackupAdapter) VolumeInUse(ctx context.Context, name string) ([]str
 	if err != nil {
 		return nil, err
 	}
-	var users []dtypes.Container
+	var users []container.Summary
 	for _, c := range list {
 		for _, m := range c.Mounts {
 			if m.Type == mount.TypeVolume && m.Name == name {

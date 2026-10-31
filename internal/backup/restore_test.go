@@ -59,7 +59,7 @@ func TestRestoreVolume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := svc.runNow(ctx, job.ID)
+	run, err := svc.RunNow(ctx, job.ID)
 	if err != nil || run.Status != StatusSuccess {
 		t.Fatalf("%v %+v", err, run)
 	}

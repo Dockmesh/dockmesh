@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	dtypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/system"
 	"github.com/docker/docker/client"
 )
 
@@ -147,7 +147,7 @@ func (c *Client) Ping(ctx context.Context) error {
 // typically equal to the host totals unless dockmesh runs inside a
 // constrained container. dockmesh's dashboard uses these as the
 // authoritative "resources Docker can use" numbers.
-func (c *Client) Info(ctx context.Context) (dtypes.Info, error) {
+func (c *Client) Info(ctx context.Context) (system.Info, error) {
 	return c.cli.Info(ctx)
 }
 

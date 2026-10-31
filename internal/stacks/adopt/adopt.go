@@ -28,10 +28,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/stacks"
-
-	dtypes "github.com/docker/docker/api/types"
 )
 
 const (
@@ -55,7 +54,7 @@ const (
 type ContainerLister interface {
 	ID() string
 	Name() string
-	ListContainers(ctx context.Context, all bool) ([]dtypes.Container, error)
+	ListContainers(ctx context.Context, all bool) ([]container.Summary, error)
 }
 
 // HostSource is what Discover/Adopt need to resolve a host by ID. In
@@ -167,7 +166,7 @@ func (s *Service) Discover(ctx context.Context, hostID string) ([]DiscoveredStac
 	}
 
 	// Group by project label.
-	grouped := map[string][]dtypes.Container{}
+	grouped := map[string][]container.Summary{}
 	for _, c := range containers {
 		proj := strings.TrimSpace(c.Labels[labelProject])
 		if proj == "" {
@@ -310,8 +309,8 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (*AdoptResult, er
 	return result, nil
 }
 
-func filterByProject(cs []dtypes.Container, project string) []dtypes.Container {
-	var out []dtypes.Container
+func filterByProject(cs []container.Summary, project string) []container.Summary {
+	var out []container.Summary
 	for _, c := range cs {
 		if strings.TrimSpace(c.Labels[labelProject]) == project {
 			out = append(out, c)

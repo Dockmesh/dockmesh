@@ -1,0 +1,137 @@
+package scripts
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// agentScriptFunc returns the source of a shell function in install-agent.sh,
+// delimited by "name() {" and "# end name".
+func agentScriptFunc(t *testing.T, name string) string {
+	t.Helper()
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	b, err := os.ReadFile("install-agent.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	start := strings.Index(s, name+"() {")
+	end := strings.Index(s, "# end "+name)
+	if start < 0 || end < start {
+		t.Fatalf("%s not found in install-agent.sh", name)
+	}
+	return s[start:end]
+}
+
+func TestInstallAgentLogState(t *testing.T) {
+	fn := agentScriptFunc(t, "agent_log_state")
+
+	tests := []struct {
+		name, logs, want string
+	}{
+		{"empty", "", "waiting"},
+		{"enrolling", `{"level":"INFO","msg":"enrolling","url":"https://s:8443"}`, "waiting"},
+		{"enrolled and connected", `{"msg":"enrolled successfully"}` + "\n" + `{"msg":"connected","agent_id":"a"}`, "connected"},
+		{"enrollment rejected", `{"msg":"enrolling"}` + "\n" + `{"level":"ERROR","msg":"enrollment failed","err":"token expired"}`, "failed"},
+		{"tls error after enroll", `{"msg":"enrolled successfully"}` + "\n" + `{"msg":"disconnected, reconnecting","err":"x509"}`, "waiting"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := exec.Command("bash", "-c", "set -euo pipefail\n"+fn+"\nagent_log_state \"$1\"", "t", tt.logs)
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.TrimSpace(string(out)); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestInstallAgentIsServerDataDir(t *testing.T) {
+	fn := agentScriptFunc(t, "is_server_data_dir")
+
+	withDB := t.TempDir()
+	if err := os.WriteFile(filepath.Join(withDB, "dockmesh.db"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withEnv := t.TempDir()
+	if err := os.WriteFile(filepath.Join(withEnv, "dockmesh.env"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name, dir string
+		want      bool
+	}{
+		{"server default", "/var/lib/dockmesh", true},
+		{"server default trailing slash", "/var/lib/dockmesh/", true},
+		{"docker volume", "/data", true},
+		{"agent default", "/var/lib/dockmesh-agent", false},
+		{"contains database", withDB, true},
+		{"contains server env", withEnv, true},
+		{"unrelated", t.TempDir(), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := filepath.ToSlash(tt.dir)
+			err := exec.Command("bash", "-c", fn+"\nis_server_data_dir \"$1\"", "t", dir).Run()
+			if got := err == nil; got != tt.want {
+				t.Errorf("is_server_data_dir(%q) = %v, want %v", dir, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestInstallAgentMigrateFiles(t *testing.T) {
+	fn := agentScriptFunc(t, "migrate_agent_files")
+
+	from := t.TempDir()
+	to := t.TempDir()
+	write := func(rel string) {
+		t.Helper()
+		p := filepath.Join(from, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(rel), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	agentFiles := []string{"agent.crt", "agent.key", "agent.url", "ca.crt", "enroll-ca.pem", "certs/x.pem", "staging/s", "bin/dockmesh-agent"}
+	serverFiles := []string{"dockmesh.db", "dockmesh.env", "agents-ca.crt", "stacks/web/compose.yaml"}
+	for _, f := range append(agentFiles, serverFiles...) {
+		write(f)
+	}
+
+	cmd := exec.Command("bash", "-c", "set -euo pipefail\n"+fn+"\nmigrate_agent_files \"$1\" \"$2\"", "t", filepath.ToSlash(from), filepath.ToSlash(to))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+
+	for _, f := range agentFiles {
+		if _, err := os.Stat(filepath.Join(to, f)); err != nil {
+			t.Errorf("%s not moved: %v", f, err)
+		}
+		if _, err := os.Stat(filepath.Join(from, f)); !os.IsNotExist(err) {
+			t.Errorf("%s still in old dir", f)
+		}
+	}
+	for _, f := range serverFiles {
+		if _, err := os.Stat(filepath.Join(from, f)); err != nil {
+			t.Errorf("server file %s touched: %v", f, err)
+		}
+		if _, err := os.Stat(filepath.Join(to, f)); !os.IsNotExist(err) {
+			t.Errorf("server file %s copied to agent dir", f)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(from, "bin")); !os.IsNotExist(err) {
+		t.Error("empty bin dir left behind")
+	}
+}
