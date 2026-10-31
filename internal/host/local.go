@@ -481,5 +481,10 @@ func (h *LocalHost) SystemMetrics(ctx context.Context) (system.Metrics, error) {
 	return system.CollectWithMounts(ctx), nil
 }
 
+// DiskMounts returns this host's per-mount disk usage.
+func (h *LocalHost) DiskMounts(ctx context.Context) ([]system.Mount, error) {
+	return system.LocalMounts(ctx), nil
+}
+
 // silence unused import if volume isn't otherwise referenced
 var _ = volume.Volume{}

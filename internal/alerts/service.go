@@ -12,8 +12,10 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/rbac"
@@ -23,6 +25,7 @@ var (
 	ErrInvalidMetric    = errors.New("metric must be cpu_percent or mem_percent")
 	ErrInvalidOperator  = errors.New(`operator must be "gt" (or ">") or "lt" (or "<")`)
 	ErrInvalidThreshold = errors.New("threshold required")
+	ErrInvalidKind      = errors.New("unknown rule kind")
 	// ErrBuiltinImmutable is returned when a caller tries to delete a
 	// built-in alert rule. Disabling and editing are still allowed; only
 	// hard delete is blocked so new installs retain baseline coverage.
@@ -31,9 +34,15 @@ var (
 
 // Rule is one row of alert_rules.
 type Rule struct {
-	ID              int64      `json:"id"`
-	Name            string     `json:"name"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	// Kind selects the evaluator; "metric" is the CPU/memory threshold
+	// rule, the others are listed in kinds.go.
+	Kind            string     `json:"kind"`
 	ContainerFilter string     `json:"container_filter"`
+	ScopeHost       string     `json:"scope_host"`
+	ScopeTag        string     `json:"scope_tag"`
+	ScopeStack      string     `json:"scope_stack"`
 	Metric          string     `json:"metric"`
 	Operator        string     `json:"operator"`
 	Threshold       float64    `json:"threshold"`
@@ -66,6 +75,8 @@ type HistoryEntry struct {
 	RuleID        int64   `json:"rule_id"`
 	RuleName      string  `json:"rule_name"`
 	Severity      string  `json:"severity,omitempty"` // enriched from alert_rules
+	Kind          string  `json:"kind,omitempty"`     // enriched from alert_rules
+	HostID        string  `json:"host_id"`
 	ContainerName string  `json:"container_name"`
 	Status        string  `json:"status"`
 	Message       string  `json:"message"`
@@ -79,7 +90,11 @@ type HistoryEntry struct {
 
 type RuleInput struct {
 	Name            string  `json:"name"`
+	Kind            string  `json:"kind"`
 	ContainerFilter string  `json:"container_filter"`
+	ScopeHost       string  `json:"scope_host"`
+	ScopeTag        string  `json:"scope_tag"`
+	ScopeStack      string  `json:"scope_stack"`
 	Metric          string  `json:"metric"`
 	Operator        string  `json:"operator"`
 	Threshold       float64 `json:"threshold"`
@@ -116,6 +131,27 @@ type Service struct {
 	stateMu      sync.Mutex
 	firing       map[string]bool
 	lastNotified map[string]time.Time
+
+	srcMu   sync.Mutex
+	sources Sources
+	notices *notices.Service
+
+	rulesMu sync.Mutex
+	rules   []Rule
+
+	// Event state: kill/stop request times and recent dies per
+	// container, and the running watcher per host.
+	evMu        sync.Mutex
+	stopping    map[string]time.Time
+	dies        map[string][]time.Time
+	rate        map[string]eventBucket
+	watching    map[string]context.CancelFunc
+	unsupported string
+
+	lastRunID int64 // backup_runs high-water mark; -1 until first read
+	certsAt   time.Time
+	certsBusy atomic.Bool
+	certs     atomic.Pointer[[]CertStatus]
 }
 
 // SetProm attaches a prom recorder after construction. Nil clears it.
@@ -134,6 +170,11 @@ func NewService(db *sql.DB, notifier *notify.Service) *Service {
 		stop:         make(chan struct{}),
 		firing:       make(map[string]bool),
 		lastNotified: make(map[string]time.Time),
+		stopping:     make(map[string]time.Time),
+		dies:         make(map[string][]time.Time),
+		rate:         make(map[string]eventBucket),
+		watching:     make(map[string]context.CancelFunc),
+		lastRunID:    -1,
 	}
 }
 
@@ -144,8 +185,9 @@ func (s *Service) Start(ctx context.Context) {
 	if err := s.loadFiringState(ctx); err != nil {
 		slog.Warn("alerts: load firing state", "err", err)
 	}
-	s.wg.Add(1)
+	s.wg.Add(2)
 	go s.evalLoop(ctx)
+	go s.watchLoop(ctx)
 	slog.Info("alerts evaluator started", "firing", len(s.firing))
 }
 
@@ -160,7 +202,8 @@ func (s *Service) loadFiringState(ctx context.Context) error {
 			FROM alert_history
 			GROUP BY rule_id, container_name
 		) latest ON h.id = latest.max_id
-		WHERE h.status = 'fired'`)
+		JOIN alert_rules r ON r.id = h.rule_id
+		WHERE h.status = 'fired' AND r.kind NOT IN ('oom', 'backup_failed')`)
 	if err != nil {
 		return err
 	}
@@ -212,7 +255,8 @@ func (s *Service) Stop() {
 
 func (s *Service) ListRules(ctx context.Context) ([]Rule, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, container_filter, metric, operator, threshold,
+		SELECT id, name, kind, container_filter, scope_host, scope_tag, scope_stack,
+		       metric, operator, threshold,
 		       duration_seconds, channel_ids, enabled,
 		       severity, cooldown_seconds, muted_until, mute_schedule, builtin,
 		       firing_since, last_triggered_at, last_resolved_at,
@@ -234,7 +278,7 @@ func (s *Service) ListRules(ctx context.Context) ([]Rule, error) {
 }
 
 func (s *Service) Create(ctx context.Context, in RuleInput) (*Rule, error) {
-	in.Operator = normalizeOperator(in.Operator)
+	in = normalizeInput(in)
 	if err := validateInput(in); err != nil {
 		return nil, err
 	}
@@ -255,10 +299,10 @@ func (s *Service) Create(ctx context.Context, in RuleInput) (*Rule, error) {
 	}
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO alert_rules
-			(name, container_filter, metric, operator, threshold,
+			(name, kind, container_filter, scope_host, scope_tag, scope_stack, metric, operator, threshold,
 			 duration_seconds, channel_ids, enabled, severity, cooldown_seconds, muted_until, mute_schedule)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.Name, in.ContainerFilter, in.Metric, in.Operator, in.Threshold,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.Name, in.Kind, in.ContainerFilter, in.ScopeHost, in.ScopeTag, in.ScopeStack, in.Metric, in.Operator, in.Threshold,
 		in.DurationSeconds, string(ids), boolInt(in.Enabled), sev, cooldown, mutedUntil, in.MuteSchedule)
 	if err != nil {
 		return nil, err
@@ -268,7 +312,7 @@ func (s *Service) Create(ctx context.Context, in RuleInput) (*Rule, error) {
 }
 
 func (s *Service) Update(ctx context.Context, id int64, in RuleInput) (*Rule, error) {
-	in.Operator = normalizeOperator(in.Operator)
+	in = normalizeInput(in)
 	if err := validateInput(in); err != nil {
 		return nil, err
 	}
@@ -289,12 +333,13 @@ func (s *Service) Update(ctx context.Context, id int64, in RuleInput) (*Rule, er
 	}
 	if _, err := s.db.ExecContext(ctx, `
 		UPDATE alert_rules SET
-			name = ?, container_filter = ?, metric = ?, operator = ?,
+			name = ?, kind = ?, container_filter = ?, scope_host = ?, scope_tag = ?, scope_stack = ?,
+			metric = ?, operator = ?,
 			threshold = ?, duration_seconds = ?, channel_ids = ?, enabled = ?,
 			severity = ?, cooldown_seconds = ?, muted_until = ?, mute_schedule = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
-		in.Name, in.ContainerFilter, in.Metric, in.Operator, in.Threshold,
+		in.Name, in.Kind, in.ContainerFilter, in.ScopeHost, in.ScopeTag, in.ScopeStack, in.Metric, in.Operator, in.Threshold,
 		in.DurationSeconds, string(ids), boolInt(in.Enabled), sev, cooldown, mutedUntil, in.MuteSchedule, id); err != nil {
 		return nil, err
 	}
@@ -329,8 +374,8 @@ func (s *Service) History(ctx context.Context, limit int) ([]HistoryEntry, error
 	// without a second query. LEFT JOIN to keep history entries whose
 	// rule has been deleted (rule_id may dangle).
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT h.id, h.rule_id, h.rule_name, COALESCE(r.severity, ''),
-		       h.container_name, h.status, h.message,
+		SELECT h.id, h.rule_id, h.rule_name, COALESCE(r.severity, ''), COALESCE(r.kind, ''),
+		       h.host_id, h.container_name, h.status, h.message,
 		       COALESCE(h.value, 0), COALESCE(h.threshold, 0), h.notified, h.occurred_at
 		  FROM alert_history h
 		  LEFT JOIN alert_rules r ON r.id = h.rule_id
@@ -343,8 +388,8 @@ func (s *Service) History(ctx context.Context, limit int) ([]HistoryEntry, error
 	for rows.Next() {
 		var e HistoryEntry
 		var notified int
-		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Severity,
-			&e.ContainerName, &e.Status, &e.Message, &e.Value, &e.Threshold,
+		if err := rows.Scan(&e.ID, &e.RuleID, &e.RuleName, &e.Severity, &e.Kind,
+			&e.HostID, &e.ContainerName, &e.Status, &e.Message, &e.Value, &e.Threshold,
 			&notified, &e.OccurredAt); err != nil {
 			return nil, err
 		}
@@ -417,11 +462,42 @@ func (s *Service) evalAll(ctx context.Context, now time.Time) {
 		slog.Warn("alerts list rules", "err", err)
 		return
 	}
+	s.setRules(rules)
+	s.pruneState(now)
+	s.refreshCerts(ctx, now)
+
+	src := s.src()
+	var mounts []HostMounts
+	mountsLoaded := false
+	runs, runsErr := s.newFailedRuns(ctx)
+	if runsErr != nil {
+		slog.Warn("alerts: read backup runs", "err", runsErr)
+	}
 	for _, r := range rules {
 		if !r.Enabled {
 			continue
 		}
-		if err := s.evalRule(ctx, &r, now); err != nil {
+		var err error
+		switch r.Kind {
+		case KindMetric:
+			err = s.evalRule(ctx, &r, now)
+		case KindRestartLoop:
+			s.expireRestartLoops(ctx, &r, now)
+		case KindHostOffline:
+			err = s.evalHostOffline(ctx, &r, now)
+		case KindDiskUsage:
+			if !mountsLoaded && src.Mounts != nil {
+				mounts, mountsLoaded = src.Mounts(ctx), true
+			}
+			s.evalDisk(ctx, &r, mounts, now)
+		case KindBackupFailed:
+			s.evalBackupFailed(ctx, &r, runs, now)
+		case KindBackupMissed:
+			err = s.evalBackupMissed(ctx, &r, now)
+		case KindCertExpiry:
+			s.evalCerts(ctx, &r, now)
+		}
+		if err != nil {
 			slog.Warn("alerts eval", "rule", r.Name, "err", err)
 		}
 	}
@@ -496,9 +572,11 @@ func (s *Service) evalRule(ctx context.Context, r *Rule, now time.Time) error {
 		last := smp[len(smp)-1].Value
 		switch {
 		case firing && !wasFiring:
-			s.fireRule(ctx, r, name, last, now)
+			s.fireRule(ctx, r, "local", name, fmt.Sprintf("%s on %s: %s = %.1f (threshold %s %.1f)",
+				r.Name, name, r.Metric, last, r.Operator, r.Threshold), last, now)
 		case !firing && wasFiring:
-			s.resolveRule(ctx, r, name, last, now)
+			s.resolveRule(ctx, r, name, fmt.Sprintf("%s on %s resolved: %s = %.1f",
+				r.Name, name, r.Metric, last), last, now)
 		}
 	}
 
@@ -515,7 +593,7 @@ func (s *Service) evalRule(ctx context.Context, r *Rule, now time.Time) error {
 	}
 	s.stateMu.Unlock()
 	for _, name := range gone {
-		s.resolveRule(ctx, r, name, 0, now)
+		s.resolveRule(ctx, r, name, fmt.Sprintf("%s on %s resolved: no samples", r.Name, name), 0, now)
 	}
 	return nil
 }
@@ -542,27 +620,30 @@ func (s *Service) inCooldown(r *Rule, key string, t time.Time) bool {
 	return ok && t.Sub(last) < time.Duration(r.CooldownSeconds)*time.Second
 }
 
-func (s *Service) fireRule(ctx context.Context, r *Rule, container string, value float64, ts time.Time) {
+// fireRule records a fire for container and notifies unless muted or in
+// cooldown. One-shot kinds (OOM, failed backup run) have nothing to
+// resolve, so they never enter the firing set.
+func (s *Service) fireRule(ctx context.Context, r *Rule, hostID, container, msg string, value float64, ts time.Time) {
 	key := stateKey(r.ID, container)
 	muted := r.mutedAt(ts)
 	cooling := s.inCooldown(r, key, ts)
 	notified := !muted && !cooling
 
-	msg := fmt.Sprintf("%s on %s: %s = %.1f (threshold %s %.1f)",
-		r.Name, container, r.Metric, value, r.Operator, r.Threshold)
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, value, threshold, notified)
-		VALUES (?, ?, ?, 'fired', ?, ?, ?, ?)`,
-		r.ID, r.Name, container, msg, value, r.Threshold, boolInt(notified)); err != nil {
+		INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, value, threshold, notified, host_id)
+		VALUES (?, ?, ?, 'fired', ?, ?, ?, ?, ?)`,
+		r.ID, r.Name, container, msg, value, r.Threshold, boolInt(notified), hostID); err != nil {
 		slog.Warn("alerts: record fire", "rule", r.Name, "err", err)
 	}
 	if _, err := s.db.ExecContext(ctx,
-		`UPDATE alert_rules SET firing_since = ?, last_triggered_at = ? WHERE id = ?`,
-		ts, ts, r.ID); err != nil {
+		`UPDATE alert_rules SET firing_since = COALESCE(firing_since, ?), last_triggered_at = ? WHERE id = ?`,
+		nullIf(oneShot(r.Kind), ts), ts, r.ID); err != nil {
 		slog.Warn("alerts: update rule state", "rule", r.Name, "err", err)
 	}
 	s.stateMu.Lock()
-	s.firing[key] = notified
+	if !oneShot(r.Kind) {
+		s.firing[key] = notified
+	}
 	if notified {
 		s.lastNotified[key] = ts
 	}
@@ -579,8 +660,11 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, container string, value
 
 	if s.notify != nil && len(r.ChannelIDs) > 0 {
 		level := notify.LevelWarning
-		if r.Operator == "gt" && value >= r.Threshold*1.5 {
+		switch {
+		case r.Severity == "critical", r.Kind == KindMetric && r.Operator == "gt" && value >= r.Threshold*1.5:
 			level = notify.LevelCritical
+		case r.Severity == "info":
+			level = notify.LevelInfo
 		}
 		s.notify.SendToAll(ctx, r.ChannelIDs, notify.Notification{
 			Title:     "🔥 " + r.Name,
@@ -598,14 +682,14 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, container string, value
 	// rule has no external channels set, operators want a durable trail
 	// in the UI.
 	if s.notifs != nil {
-		_, _ = s.notifs.Emit(ctx, alertNotification(r, msg))
+		_, _ = s.notifs.Emit(ctx, alertNotification(r, hostID, msg))
 	}
 }
 
 // alertNotification addresses a firing alert to alert viewers whose scope
-// covers the local host: rules are evaluated against the server's own
-// container metrics only.
-func alertNotification(r *Rule, msg string) notifications.EmitInput {
+// covers the alert's host. Backup and certificate rules have no host, so
+// like their history entries they only reach unscoped viewers.
+func alertNotification(r *Rule, hostID, msg string) notifications.EmitInput {
 	sev := notifications.SevWarning
 	switch r.Severity {
 	case "critical":
@@ -620,14 +704,15 @@ func alertNotification(r *Rule, msg string) notifications.EmitInput {
 		Body:     msg,
 		Link:     "/alerts",
 		Perm:     rbac.PermAlertsView,
-		HostID:   "local",
+		HostID:   hostID,
+		Unscoped: hostID == "",
 	}
 }
 
 // resolveRule records the resolve and notifies only when the matching
 // fire was announced and the rule isn't muted now — a "resolved" for an
 // alert nobody was told about is noise.
-func (s *Service) resolveRule(ctx context.Context, r *Rule, container string, value float64, ts time.Time) {
+func (s *Service) resolveRule(ctx context.Context, r *Rule, container, msg string, value float64, ts time.Time) {
 	key := stateKey(r.ID, container)
 	s.stateMu.Lock()
 	fireNotified := s.firing[key]
@@ -635,11 +720,13 @@ func (s *Service) resolveRule(ctx context.Context, r *Rule, container string, va
 	s.stateMu.Unlock()
 	notified := fireNotified && !r.mutedAt(ts)
 
-	msg := fmt.Sprintf("%s on %s resolved: %s = %.1f", r.Name, container, r.Metric, value)
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, value, threshold, notified)
-		VALUES (?, ?, ?, 'resolved', ?, ?, ?, ?)`,
-		r.ID, r.Name, container, msg, value, r.Threshold, boolInt(notified)); err != nil {
+		INSERT INTO alert_history (rule_id, rule_name, container_name, status, message, value, threshold, notified, host_id)
+		VALUES (?, ?, ?, 'resolved', ?, ?, ?, ?,
+		        COALESCE((SELECT host_id FROM alert_history
+		                   WHERE rule_id = ? AND container_name = ? AND status = 'fired'
+		                   ORDER BY id DESC LIMIT 1), ''))`,
+		r.ID, r.Name, container, msg, value, r.Threshold, boolInt(notified), r.ID, container); err != nil {
 		slog.Warn("alerts: record resolve", "rule", r.Name, "err", err)
 	}
 	if !s.ruleHasFiring(r.ID) {
@@ -688,9 +775,13 @@ func (s *Service) ruleHasFiring(ruleID int64) bool {
 // helpers
 // -----------------------------------------------------------------------------
 
+// Rule returns one rule by id.
+func (s *Service) Rule(ctx context.Context, id int64) (*Rule, error) { return s.getRule(ctx, id) }
+
 func (s *Service) getRule(ctx context.Context, id int64) (*Rule, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, container_filter, metric, operator, threshold,
+		SELECT id, name, kind, container_filter, scope_host, scope_tag, scope_stack,
+		       metric, operator, threshold,
 		       duration_seconds, channel_ids, enabled,
 		       severity, cooldown_seconds, muted_until, mute_schedule, builtin,
 		       firing_since, last_triggered_at, last_resolved_at,
@@ -712,7 +803,8 @@ func scanRule(r rowScanner) (*Rule, error) {
 	var muteSchedule sql.NullString
 	var firingSince, lastT, lastR sql.NullTime
 	if err := r.Scan(
-		&rule.ID, &rule.Name, &rule.ContainerFilter, &rule.Metric, &rule.Operator,
+		&rule.ID, &rule.Name, &rule.Kind, &rule.ContainerFilter,
+		&rule.ScopeHost, &rule.ScopeTag, &rule.ScopeStack, &rule.Metric, &rule.Operator,
 		&rule.Threshold, &rule.DurationSeconds, &ids, &enabled,
 		&severity, &rule.CooldownSeconds, &mutedUntil, &muteSchedule, &builtin,
 		&firingSince, &lastT, &lastR, &rule.CreatedAt, &rule.UpdatedAt,
@@ -758,24 +850,80 @@ func normalizeOperator(op string) string {
 	return op
 }
 
+type eventBucket struct {
+	start time.Time
+	n     int
+}
+
+// maxRuleField bounds the free-text rule fields; they are only compared
+// for equality, so this is about size.
+const maxRuleField = 255
+
+// maxDuration per kind keeps lookback windows and die histories bounded.
+var maxDuration = map[string]int{
+	KindMetric:      24 * 3600,
+	KindRestartLoop: 7 * 24 * 3600,
+	KindHostOffline: 30 * 24 * 3600,
+}
+
+// normalizeInput folds operator aliases and defaults the kind and the
+// target filter.
+func normalizeInput(in RuleInput) RuleInput {
+	if in.Kind == "" {
+		in.Kind = KindMetric
+	}
+	in.Operator = normalizeOperator(in.Operator)
+	if in.ContainerFilter == "" && in.Kind != KindMetric {
+		in.ContainerFilter = "*"
+	}
+	return in
+}
+
 func validateInput(in RuleInput) error {
 	if in.Name == "" {
 		return errors.New("name required")
-	}
-	if in.Metric != "cpu_percent" && in.Metric != "mem_percent" {
-		return ErrInvalidMetric
-	}
-	if in.Operator != "gt" && in.Operator != "lt" {
-		return ErrInvalidOperator
-	}
-	if in.Threshold == 0 {
-		return ErrInvalidThreshold
 	}
 	if in.DurationSeconds < 0 {
 		return errors.New("duration_seconds must be >= 0")
 	}
 	if in.ContainerFilter == "" {
 		return errors.New("container_filter required (use '*' for all)")
+	}
+	for _, f := range []string{in.Name, in.ContainerFilter, in.ScopeHost, in.ScopeTag, in.ScopeStack} {
+		if len(f) > maxRuleField {
+			return fmt.Errorf("name, filter and scope fields are limited to %d characters", maxRuleField)
+		}
+	}
+	if limit, ok := maxDuration[in.Kind]; ok && in.DurationSeconds > limit {
+		return fmt.Errorf("duration_seconds must be <= %d for this rule type", limit)
+	}
+	switch in.Kind {
+	case KindMetric:
+		if in.Metric != "cpu_percent" && in.Metric != "mem_percent" {
+			return ErrInvalidMetric
+		}
+		if in.Operator != "gt" && in.Operator != "lt" {
+			return ErrInvalidOperator
+		}
+		if in.Threshold == 0 {
+			return ErrInvalidThreshold
+		}
+	case KindRestartLoop:
+		if in.Threshold < 2 || in.DurationSeconds <= 0 {
+			return errors.New("restart loop needs threshold >= 2 restarts and duration_seconds > 0")
+		}
+	case KindDiskUsage:
+		if in.Threshold <= 0 || in.Threshold > 100 {
+			return errors.New("disk usage threshold must be a percentage between 0 and 100")
+		}
+	case KindCertExpiry:
+		if in.Threshold <= 0 {
+			return errors.New("certificate expiry threshold must be a number of days > 0")
+		}
+	case KindContainerStopped, KindUnhealthy, KindOOM, KindHostOffline,
+		KindBackupFailed, KindBackupMissed:
+	default:
+		return ErrInvalidKind
 	}
 	return nil
 }
@@ -784,6 +932,13 @@ func stateKey(ruleID int64, container string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d|%s", ruleID, container)
 	return b.String()
+}
+
+func nullIf(cond bool, v any) any {
+	if cond {
+		return nil
+	}
+	return v
 }
 
 func boolInt(b bool) int {

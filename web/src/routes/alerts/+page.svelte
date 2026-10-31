@@ -288,7 +288,7 @@
                 </div>
                 <div class="al-history-target">
                   <span class="al-history-container">{e.container_name}</span>
-                  {#if e.value !== undefined && e.value !== null}
+                  {#if (!e.kind || e.kind === 'metric' || e.kind === 'disk_usage') && e.value !== undefined && e.value !== null}
                     <span class="al-history-value">
                       {e.value.toFixed(1)}%
                       {#if e.threshold !== undefined && e.threshold !== null}

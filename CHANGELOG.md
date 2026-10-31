@@ -24,6 +24,17 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ## [Unreleased]
 
+### Added
+- Alert rules for events: container restart loops, OOM kills, unhealthy containers and
+  unexpected stops (on the server and on agents), offline hosts, disk usage per mount,
+  failed or overdue backups and proxy TLS certificates close to expiry. Rules can be limited
+  to a host, a host tag or a stack and use the existing notification channels. New built-in
+  rules are on for restart loops, OOM kills, offline hosts, disks above 90%, backups and
+  certificates expiring within 14 days; admins of existing installs get a notice listing
+  them. Agents that are too old for container events are listed in a notice too.
+  Users limited to certain hosts can only manage rules restricted to one of their hosts
+  and only see alert history from those hosts.
+
 ### Changed
 - Updating the image of a container that belongs to a stack now rebuilds it from the
   stack's compose.yaml, together with the other replicas of its service, and records the

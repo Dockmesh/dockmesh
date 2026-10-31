@@ -939,7 +939,12 @@ export interface NotificationChannel {
 export interface AlertRule {
   id: number;
   name: string;
+  kind?: string;
   container_filter: string;
+  scope_host?: string;
+  scope_tag?: string;
+  scope_stack?: string;
+  mute_schedule?: string;
   metric: string;
   operator: string;
   threshold: number;
@@ -962,7 +967,12 @@ export interface AlertRule {
 
 export interface AlertRuleInput {
   name: string;
+  kind?: string;
   container_filter: string;
+  scope_host?: string;
+  scope_tag?: string;
+  scope_stack?: string;
+  mute_schedule?: string;
   metric: string;
   operator: string;
   threshold: number;
@@ -983,6 +993,8 @@ export interface AlertHistoryEntry {
   message: string;
   value: number;
   threshold: number;
+  kind?: string;
+  host_id?: string;
   notified: boolean;
   occurred_at: string;
 }

@@ -293,11 +293,11 @@ func (h *RemoteHost) SystemMetrics(ctx context.Context) (system.Metrics, error) 
 	if err := json.Unmarshal(data, &out); err != nil {
 		return system.Metrics{}, fmt.Errorf("decode system metrics: %w", err)
 	}
-	if !h.agent.Hello.Has(agents.CapDiskMounts) {
+	mounts, err := h.DiskMounts(ctx)
+	if errors.Is(err, ErrMountsUnsupported) {
 		out.MountsUnsupported = true
 		return out, nil
 	}
-	mounts, err := h.DiskMounts(ctx)
 	if err != nil {
 		slog.Warn("agent disk mounts", "host", h.name, "err", err)
 		return out, nil
@@ -307,6 +307,12 @@ func (h *RemoteHost) SystemMetrics(ctx context.Context) (system.Metrics, error) 
 
 // DiskMounts returns the agent's per-mount disk usage.
 func (h *RemoteHost) DiskMounts(ctx context.Context) ([]system.Mount, error) {
+	if h.agent == nil {
+		return nil, ErrAgentOffline
+	}
+	if !h.agent.Hello.Has(agents.CapDiskMounts) {
+		return nil, ErrMountsUnsupported
+	}
 	data, err := h.request(ctx, agents.FrameReqSystemDisks, nil)
 	if err != nil {
 		return nil, err
