@@ -66,6 +66,14 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   new one. Auto-refresh skips a cycle while the previous one is still loading.
 - Leaving a container or stack page while its logs, stats or terminal are connecting no
   longer leaves a socket open in the background.
+- Container CPU and memory alerts now fire once a breach has lasted for the rule's duration
+  (allowing for one missed sample) and resolve only after the value has been back to normal
+  for a full sampling interval, so they no longer stay silent or flap. Cooldown and "muted
+  until" are honoured, muted rules no longer send "resolved" messages, and the rule
+  statistics count fires correctly.
+- Notification channels retry a failed delivery twice before giving up, and the last
+  delivery error is shown on the channel card. Toggling a channel on or off no longer clears
+  its quiet hours.
 
 ### Security
 - A rollback now only accepts update-history entries of the container it is called for, and

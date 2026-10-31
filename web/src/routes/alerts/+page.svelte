@@ -278,7 +278,12 @@
                   {/if}
                 </span>
                 <div class="al-history-text">
-                  <div class="al-history-name">{e.rule_name}</div>
+                  <div class="al-history-name">
+                    {e.rule_name}
+                    {#if e.notified === false}
+                      <span class="al-history-silenced" title="Recorded without notifying channels (muted or in cooldown)">silenced</span>
+                    {/if}
+                  </div>
                   <div class="al-history-message">{e.message}</div>
                 </div>
                 <div class="al-history-target">
@@ -437,6 +442,15 @@
   .al-history-status :global(.al-icon-resolved) { color: var(--color-success-400); }
 
   .al-history-text { min-width: 0; }
+  .al-history-silenced {
+    margin-left: 6px;
+    padding: 0 5px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--fg-muted);
+  }
   .al-history-name {
     font-size: 13px;
     font-weight: 500;
