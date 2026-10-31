@@ -24,8 +24,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import {
-    Skeleton, EmptyState, Modal, Button, Input, Badge
-  } from '$lib/components/ui';
+    Skeleton, EmptyState, Modal, Button, Input, Badge, Tabs, StatBar } from '$lib/components/ui';
   import { Eyebrow } from '$lib/components/editorial';
   import {
     Image as ImageIcon, HardDrive, Network as NetworkIcon,
@@ -117,8 +116,10 @@
   // semantics), so we have to defensively coerce vulnerabilities to []
   // before storing — otherwise `report.vulnerabilities.length` blows
   // up with "Cannot read properties of null (reading 'length')".
+  // GET /images/{id}/scan answers {"scanned": false} for an image that was
+  // never scanned; that is "not scanned", not a report without findings.
   function normalizeScanReport(rep: ScanReport | null): ScanReport | null {
-    if (!rep) return null;
+    if (!rep || rep.scanned === false || !rep.summary) return null;
     if (!rep.vulnerabilities) rep.vulnerabilities = [];
     return rep;
   }
@@ -780,75 +781,39 @@
   }
 </script>
 
-<section class="resources-page">
-  <!-- ─── Header ─── -->
-  <header class="res-header">
-    <h1 class="ed-title res-title">Resources</h1>
-    <p class="res-subtitle">
-      {images.length} image{images.length === 1 ? '' : 's'} ·
-      {volumes.length} volume{volumes.length === 1 ? '' : 's'} ·
-      {networks.length} network{networks.length === 1 ? '' : 's'}
-    </p>
-  </header>
-
-  <!-- ─── Tab strip ─── -->
-  <div class="ed-tabs res-tabs">
-    <button
-      type="button"
-      class="ed-tab"
-      class:active={tab === 'images'}
-      onclick={() => (tab = 'images')}
-    >
-      <ImageIcon size={13} strokeWidth={1.5} /> Images <span class="count">{imageCounts.all}</span>
-    </button>
-    <button
-      type="button"
-      class="ed-tab"
-      class:active={tab === 'volumes'}
-      onclick={() => (tab = 'volumes')}
-    >
-      <HardDrive size={13} strokeWidth={1.5} /> Volumes <span class="count">{volumeCounts.all}</span>
-    </button>
-    <button
-      type="button"
-      class="ed-tab"
-      class:active={tab === 'networks'}
-      onclick={() => (tab = 'networks')}
-    >
-      <NetworkIcon size={13} strokeWidth={1.5} /> Networks <span class="count">{networkCounts.user}</span>
-    </button>
-    <span class="res-tabs-spacer"></span>
-    <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm res-cleanup-btn" onclick={openCleanup} title="Prune images + volumes + networks in one go">
-      <Trash2 size={12} strokeWidth={1.5} /> System cleanup…
+<section class="dm-page resources-page">
+  <div class="dm-ph">
+    <h1>Resources</h1>
+    <span class="dm-sub">{images.length} image{images.length === 1 ? '' : 's'} · {volumes.length} volume{volumes.length === 1 ? '' : 's'} · {networks.length} network{networks.length === 1 ? '' : 's'}</span>
+    <span class="dm-sp"></span>
+    <button type="button" class="dm-btn" onclick={openCleanup} title="Prune images, volumes and networks in one go">
+      <Trash2 size={13} strokeWidth={1.8} /> System cleanup…
     </button>
   </div>
+
+  <Tabs
+    label="Resource types"
+    active={tab}
+    onchange={(k) => (tab = k as Tab)}
+    tabs={[
+      { key: 'images', label: 'Images', count: imageCounts.all },
+      { key: 'volumes', label: 'Volumes', count: volumeCounts.all },
+      { key: 'networks', label: 'Networks', count: networkCounts.user }
+    ]}
+  />
 
   <!-- ============================================================= -->
   <!--  IMAGES                                                        -->
   <!-- ============================================================= -->
   {#if tab === 'images'}
-    <div class="res-summary">
-      <div class="ed-metric">
-        <span class="ed-metric-label">Total</span>
-        <div class="ed-metric-value">{imageCounts.all}</div>
-        <span class="ed-metric-meta">{fmtBytes(imageTotalSize)}</span>
-      </div>
-      <div class="ed-metric">
-        <span class="ed-metric-label">Dangling</span>
-        <div class="ed-metric-value" class:warn={imageCounts.dangling > 0}>{imageCounts.dangling}</div>
-        <span class="ed-metric-meta">{fmtBytes(imageDanglingSize)}</span>
-      </div>
-      <div class="ed-metric">
-        <span class="ed-metric-label">Reclaimable</span>
-        <div class="ed-metric-value">{fmtBytes(imageDanglingSize)}</div>
-        <span class="ed-metric-meta">via prune</span>
-      </div>
-      <div class="ed-metric">
-        <span class="ed-metric-label">In use</span>
-        <div class="ed-metric-value">{imageCounts.used}</div>
-        <span class="ed-metric-meta">attached to a container</span>
-      </div>
-    </div>
+    <StatBar
+      items={[
+        { label: 'Total', value: imageCounts.all, note: fmtBytes(imageTotalSize) },
+        { label: 'Dangling', value: imageCounts.dangling, note: fmtBytes(imageDanglingSize), tone: imageCounts.dangling > 0 ? 'warn' : '' },
+        { label: 'Reclaimable', value: fmtBytes(imageDanglingSize), note: 'via prune' },
+        { label: 'In use', value: imageCounts.used, note: 'attached to a container' }
+      ]}
+    />
 
     <div class="res-toolbar">
       <div class="res-toolbar-search">
@@ -999,28 +964,14 @@
   <!--  VOLUMES                                                       -->
   <!-- ============================================================= -->
   {#if tab === 'volumes'}
-    <div class="res-summary">
-      <div class="ed-metric">
-        <span class="ed-metric-label">Volumes</span>
-        <div class="ed-metric-value">{volumeCounts.all}</div>
-        <span class="ed-metric-meta">{volumeCounts.compose} from stacks</span>
-      </div>
-      <div class="ed-metric">
-        <span class="ed-metric-label">Orphan</span>
-        <div class="ed-metric-value" class:warn={volumeCounts.orphan > 0}>{volumeCounts.orphan}</div>
-        <span class="ed-metric-meta">no container attached</span>
-      </div>
-      <div class="ed-metric">
-        <span class="ed-metric-label">Anonymous</span>
-        <div class="ed-metric-value" class:warn={volumeCounts.anon > 0}>{volumeCounts.anon}</div>
-        <span class="ed-metric-meta">auto-named, untagged</span>
-      </div>
-      <div class="ed-metric">
-        <span class="ed-metric-label">Drivers</span>
-        <div class="ed-metric-value">{volumeDriverCount}</div>
-        <span class="ed-metric-meta">in use</span>
-      </div>
-    </div>
+    <StatBar
+      items={[
+        { label: 'Volumes', value: volumeCounts.all, note: `${volumeCounts.compose} from stacks` },
+        { label: 'Orphaned', value: volumeCounts.orphan, note: 'no container attached', tone: volumeCounts.orphan > 0 ? 'warn' : '' },
+        { label: 'Anonymous', value: volumeCounts.anon, note: 'auto-named', tone: volumeCounts.anon > 0 ? 'warn' : '' },
+        { label: 'Drivers', value: volumeDriverCount, note: 'in use' }
+      ]}
+    />
 
     <div class="res-toolbar">
       <div class="res-toolbar-search">
@@ -1142,28 +1093,14 @@
   <!--  NETWORKS                                                      -->
   <!-- ============================================================= -->
   {#if tab === 'networks'}
-    <div class="res-summary">
-      <div class="ed-metric">
-        <span class="ed-metric-label">Networks</span>
-        <div class="ed-metric-value">{networkCounts.user}</div>
-        <span class="ed-metric-meta">+ {networkSystemCount} system {showSystemNetworks ? 'shown' : 'hidden'}</span>
-      </div>
-      <div class="ed-metric">
-        <span class="ed-metric-label">Internal</span>
-        <div class="ed-metric-value">{networkCounts.internal}</div>
-        <span class="ed-metric-meta">no external egress</span>
-      </div>
-      <div class="ed-metric">
-        <span class="ed-metric-label">Attachable</span>
-        <div class="ed-metric-value">{networkCounts.attachable}</div>
-        <span class="ed-metric-meta">for swarm tasks</span>
-      </div>
-      <div class="ed-metric">
-        <span class="ed-metric-label">Empty</span>
-        <div class="ed-metric-value" class:warn={networkCounts.empty > 0}>{networkCounts.empty}</div>
-        <span class="ed-metric-meta">0 containers attached</span>
-      </div>
-    </div>
+    <StatBar
+      items={[
+        { label: 'Networks', value: networkCounts.user, note: `+ ${networkSystemCount} system ${showSystemNetworks ? 'shown' : 'hidden'}` },
+        { label: 'Internal', value: networkCounts.internal, note: 'no external egress' },
+        { label: 'Attachable', value: networkCounts.attachable, note: 'for swarm tasks' },
+        { label: 'Empty', value: networkCounts.empty, note: '0 containers attached', tone: networkCounts.empty > 0 ? 'warn' : '' }
+      ]}
+    />
 
     <div class="res-toolbar">
       <div class="res-toolbar-search">

@@ -663,29 +663,25 @@ body {
      column widths can vary. Mono cells use .res-cell-mono for
      consistent type and tabular numbers. */
   .res-table {
-    border: 1px solid var(--border);
-    border-radius: 6px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
     overflow: visible;
   }
   .res-row {
     display: grid;
     align-items: center;
     gap: 12px;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border-subtle);
-    min-height: 44px;
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--border);
+    min-height: var(--row-h);
   }
   .res-row:last-child { border-bottom: 0; }
   .res-row--head {
-    background: var(--bg-elevated);
-    color: var(--fg-subtle);
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    min-height: 36px;
+    color: var(--subtle);
+    font-size: var(--fs-xs);
+    min-height: 32px;
   }
-  .res-row:hover:not(.res-row--head) { background: var(--surface-hover); }
+  .res-row:hover:not(.res-row--head) { background: var(--band); }
   .res-cell-mono {
     font-family: var(--font-mono);
     font-size: 11.5px;
