@@ -57,7 +57,7 @@ Every change sends the whole config to Caddy's `/load` endpoint, with no contain
 ## Site options
 
 <!-- update after: proxy: per-site options (UI) -->
-Each route can carry options in its `options` object (`POST /api/v1/proxy/routes`, `PUT /api/v1/proxy/routes/{id}`). The UI doesn't show them yet. An empty object keeps Caddy's defaults, which is what every route had before options existed.
+Each route can carry options in its `options` object (`POST /api/v1/proxy/routes`, `PUT /api/v1/proxy/routes/{id}`). The UI doesn't show them yet. An empty object keeps Caddy's defaults, so existing routes behave as before.
 
 | Section | Options |
 |---|---|
