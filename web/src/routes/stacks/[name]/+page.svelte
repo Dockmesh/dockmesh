@@ -1430,7 +1430,7 @@
     }))) return;
     restoreBusy = true;
     try {
-      const res = await api.backups.restoreStack(latestBackupRun.id, name);
+      const res = await api.backups.restoreStack(latestBackupRun.id, { target_stack: name, mode: 'replace' });
       // Pull the freshly restored compose back into the editor.
       const detail = await api.stacks.get(name);
       compose = detail.compose;

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notices"
@@ -52,6 +53,11 @@ type hostResolver interface {
 type hostBackupTarget interface {
 	VolumeTar(ctx context.Context, name string) (io.ReadCloser, error)
 	ContainerExec(ctx context.Context, containerID string, cmd []string) ([]byte, int, error)
+	// VolumeImport extracts a tar.gz archive into the volume; replace
+	// empties it first.
+	VolumeImport(ctx context.Context, name string, src io.Reader, replace bool) error
+	// VolumeInUse names the running containers that mount the volume.
+	VolumeInUse(ctx context.Context, name string) ([]string, error)
 }
 
 func newExecutor(s *store, db *sql.DB, dc *docker.Client, hosts hostResolver, sm *stacks.Manager, sec *secrets.Service, paths SystemPaths) *Executor {
@@ -395,6 +401,41 @@ type localBackupTarget struct {
 
 func (l *localBackupTarget) VolumeTar(ctx context.Context, name string) (io.ReadCloser, error) {
 	return tarVolume(ctx, l.dc, name)
+}
+
+func (l *localBackupTarget) VolumeImport(ctx context.Context, name string, src io.Reader, replace bool) error {
+	return untarVolume(ctx, l.dc, name, src, replace)
+}
+
+func (l *localBackupTarget) VolumeInUse(ctx context.Context, name string) ([]string, error) {
+	// Paused and restarting containers come back while the volume is
+	// rewritten, so only stopped ones don't count.
+	list, err := l.dc.Raw().ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Filters: filters.NewArgs(filters.Arg("volume", name)),
+	})
+	if err != nil {
+		return nil, err
+	}
+	active := list[:0]
+	for _, c := range list {
+		if c.State != container.StateExited && c.State != container.StateDead && c.State != container.StateCreated {
+			active = append(active, c)
+		}
+	}
+	return containerNames(active), nil
+}
+
+func containerNames(list []container.Summary) []string {
+	out := make([]string, 0, len(list))
+	for _, c := range list {
+		name := c.ID
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		out = append(out, name)
+	}
+	return out
 }
 
 func (l *localBackupTarget) ContainerExec(ctx context.Context, containerID string, cmd []string) ([]byte, int, error) {

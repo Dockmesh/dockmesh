@@ -810,6 +810,7 @@ func runVolumeExportStream(conn *websocket.Conn, cli *client.Client, open agents
 func runVolumeImportStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) error {
 	ctx := reg.ctx
 	volumeName, _ := open.Params["volume"].(string)
+	replace, _ := open.Params["replace"].(bool)
 	if err := dockerwrap.CheckVolumeName(volumeName); err != nil {
 		return err
 	}
@@ -818,7 +819,7 @@ func runVolumeImportStream(conn *websocket.Conn, cli *client.Client, open agents
 	}
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:       helperImage,
-		Cmd:         []string{"sh", "-c", "tar xzf - -C /dest"},
+		Cmd:         []string{"sh", "-c", agents.VolumeImportScript(replace)},
 		AttachStdin: true,
 		OpenStdin:   true,
 		StdinOnce:   true,

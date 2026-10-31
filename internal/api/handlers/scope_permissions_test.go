@@ -795,3 +795,51 @@ func TestSharedTargetWritesNeedEveryJob(t *testing.T) {
 		}
 	}
 }
+
+func TestStackRestoreTargetNeedsStackRights(t *testing.T) {
+	e := newScopeEnv(t)
+	e.router.Group(func(r chi.Router) {
+		r.Use(middleware.NewAuth(e.h.Auth))
+		r.Use(e.h.StackScope)
+		r.With(middleware.RequirePerm(rbac.PermBackupsRestore)).Post("/backups/runs/{id}/restore-stack", e.h.RestoreStackBackup)
+		r.With(middleware.RequirePerm(rbac.PermBackupsRestore)).Post("/backups/runs/{id}/restore", e.h.RestoreBackup)
+	})
+	for _, stmt := range []string{
+		`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (1, 'web', 'local', 'local', '[{"type":"stack","name":"web"}]')`,
+		`INSERT INTO backup_runs (id, job_id, job_name, status, sources_json) VALUES (12, 1, 'web', 'success', '[{"type":"stack","name":"web"}]')`,
+		`INSERT INTO stack_deployments (stack_name, host_id, status) VALUES ('prod', 'agent-1', 'deployed')`,
+	} {
+		if _, err := e.db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.role("restorer", []rbac.Perm{rbac.PermBackupsView, rbac.PermBackupsRestore})
+	e.role("local-restorer", []rbac.Perm{rbac.PermBackupsView, rbac.PermBackupsRestore, rbac.PermStacksCreate, rbac.PermStacksUpdate},
+		rbac.Scope{ScopeType: "host", ScopeValue: "local"})
+	e.role("stack-restorer", []rbac.Perm{rbac.PermBackupsView, rbac.PermBackupsRestore, rbac.PermStacksCreate, rbac.PermStacksUpdate})
+	e.user("rest", "restorer")
+	e.user("lrest", "local-restorer")
+	e.user("srest", "stack-restorer")
+	rest, lrest, srest := e.login("rest").AccessToken, e.login("lrest").AccessToken, e.login("srest").AccessToken
+
+	tests := []struct {
+		name, path, who string
+		body            map[string]any
+	}{
+		{"no stack permission", "/backups/runs/12/restore-stack", rest, map[string]any{"target_stack": "web-copy"}},
+		{"no stack permission via restore", "/backups/runs/12/restore", rest, map[string]any{"dest_volume": "web-copy"}},
+		{"stack deployed on an out-of-scope host", "/backups/runs/12/restore-stack", lrest, map[string]any{"target_stack": "prod"}},
+		// Stack files can't be edited under a host scope (PUT /stacks/{name}), so not restored either.
+		{"host-scoped role writes stack files", "/backups/runs/12/restore-stack", lrest, map[string]any{"target_stack": "web-copy"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if rr := e.do(http.MethodPost, tt.path, tt.who, tt.body); rr.Code != http.StatusForbidden {
+				t.Errorf("%d, want 403: %s", rr.Code, rr.Body)
+			}
+		})
+	}
+	if rr := e.do(http.MethodPost, "/backups/runs/12/restore-stack", srest, map[string]any{"target_stack": "web-copy"}); rr.Code == http.StatusForbidden {
+		t.Errorf("in-scope copy refused: %s", rr.Body)
+	}
+}

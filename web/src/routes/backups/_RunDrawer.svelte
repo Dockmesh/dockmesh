@@ -1,8 +1,6 @@
 <script lang="ts">
-  // Run drawer — right-side aside per backup-wizards.jsx::RunDrawer.
-  // Shows status / size / duration / phase summary, the run error if
-  // any, and the restore-flow with three modes (in-place / alongside /
-  // download).
+  // Run drawer: status, size, duration, error, log and the restore modes
+  // (in-place / alongside / download).
   import { api, runRestorable, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
   import { Eyebrow } from '$lib/components/editorial';
   import { allowed, isAdmin } from '$lib/rbac.svelte';

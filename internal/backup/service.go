@@ -39,6 +39,10 @@ type Service struct {
 	running  map[int64]bool
 	stopping bool
 
+	restoreMu    sync.Mutex
+	restoring    map[string]bool
+	restoreSlots int
+
 	// runCtx is cancelled on Stop.
 	runCtx    context.Context
 	cancelRun context.CancelFunc
@@ -397,141 +401,6 @@ func (s *Service) openRun(ctx context.Context, run *Run, rawTap io.Writer) (io.R
 type tappedReader struct {
 	io.Reader
 	io.Closer
-}
-
-// Restore fetches the run's archive from its target, decrypts if needed,
-// and untars it into the named destination volume.
-func (s *Service) Restore(ctx context.Context, runID int64, destVolume string) error {
-	run, err := s.store.getRun(ctx, runID)
-	if err != nil {
-		return err
-	}
-	if HasSystemSource(run.Sources) {
-		return ErrSystemRestore
-	}
-	if !run.Restorable() {
-		return ErrNotRestorable
-	}
-	job, err := s.store.getJobForRun(ctx, run.JobID)
-	if err != nil {
-		return err
-	}
-	target, err := jobTarget(ctx, s.store, s.notices, job)
-	if err != nil {
-		return err
-	}
-	src, err := fetchArchive(ctx, target, run)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-
-	var reader = src
-	if run.Encrypted {
-		dec, err := wrapDecrypt(src, s.secrets)
-		if err != nil {
-			return err
-		}
-		reader = dec
-	}
-
-	if len(run.Sources) > 0 && run.Sources[0].Type == "stack" {
-		// destVolume is reused for stack restores: it carries the
-		// target stack name (the volumes inside the archive are
-		// named per their original project, so the caller picks
-		// "restore as stack X"). When empty, fall back to the
-		// source name from the run.
-		stackName := destVolume
-		if stackName == "" && len(run.Sources) > 0 {
-			stackName = run.Sources[0].Name
-		}
-		if stackName == "" {
-			return errors.New("stack restore: target stack name is required")
-		}
-		return s.restoreStack(ctx, stackName, reader)
-	}
-	return untarVolume(ctx, s.docker, destVolume, reader)
-}
-
-// CheckRestoreTarget rejects a dest_volume that isn't a volume name before
-// any archive is read, for runs that restore into a volume.
-func (s *Service) CheckRestoreTarget(ctx context.Context, runID int64, destVolume string) error {
-	run, err := s.store.getRun(ctx, runID)
-	if err != nil {
-		return err
-	}
-	if len(run.Sources) > 0 && run.Sources[0].Type == "stack" {
-		return nil
-	}
-	return docker.CheckVolumeName(destVolume)
-}
-
-// StackRestoreReport tells the caller what actually happened on a stack
-// restore — files extracted, volumes restored, anything skipped — so
-// the UI can show a list rather than a flat success/fail.
-type StackRestoreReport struct {
-	StackName       string   `json:"stack_name"`
-	FilesRestored   []string `json:"files_restored"`
-	VolumesRestored []string `json:"volumes_restored"`
-	Warnings        []string `json:"warnings,omitempty"`
-}
-
-// RestoreStack is the explicit entry point for a stack-typed run. Same
-// shape as Restore but always returns the structured report. Used by
-// the new POST /backups/runs/{id}/restore-stack endpoint and by the
-// stack-detail recovery panel ("Restore from last backup" card).
-func (s *Service) RestoreStack(ctx context.Context, runID int64, targetStack string) (*StackRestoreReport, error) {
-	run, err := s.store.getRun(ctx, runID)
-	if err != nil {
-		return nil, err
-	}
-	if HasSystemSource(run.Sources) {
-		return nil, ErrSystemRestore
-	}
-	if !run.Restorable() {
-		return nil, ErrNotRestorable
-	}
-	if len(run.Sources) == 0 || run.Sources[0].Type != "stack" {
-		return nil, errors.New("run is not a stack backup")
-	}
-	if targetStack == "" {
-		targetStack = run.Sources[0].Name
-	}
-	job, err := s.store.getJobForRun(ctx, run.JobID)
-	if err != nil {
-		return nil, err
-	}
-	target, err := jobTarget(ctx, s.store, s.notices, job)
-	if err != nil {
-		return nil, err
-	}
-	src, err := fetchArchive(ctx, target, run)
-	if err != nil {
-		return nil, err
-	}
-	defer src.Close()
-
-	var reader io.Reader = src
-	if run.Encrypted {
-		dec, err := wrapDecrypt(src, s.secrets)
-		if err != nil {
-			return nil, err
-		}
-		reader = dec
-	}
-
-	report := &StackRestoreReport{StackName: targetStack}
-	if err := s.restoreStackInto(ctx, targetStack, reader, report); err != nil {
-		return report, err
-	}
-	return report, nil
-}
-
-// restoreStack is the legacy single-error wrapper kept around for the
-// old Restore() entry point. New code should call RestoreStack.
-func (s *Service) restoreStack(ctx context.Context, stackName string, reader io.Reader) error {
-	report := &StackRestoreReport{StackName: stackName}
-	return s.restoreStackInto(ctx, stackName, reader, report)
 }
 
 func buildTarget(typ string, cfg any) (targets.Target, error) {

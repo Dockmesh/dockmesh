@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -16,6 +17,7 @@ import (
 	"github.com/docker/docker/api/types/volume"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/system"
 )
 
@@ -407,6 +409,84 @@ func (h *RemoteHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser,
 	}
 	return &dockerMuxStripper{src: s}, nil
 }
+
+// ErrAgentTooOld is returned when the agent can't take a volume restore
+// (or not the requested mode); it needs the agent version that ships with
+// this server.
+var ErrAgentTooOld = errors.New("the agent on this host is too old to restore volumes; upgrade it from the Hosts page")
+
+// VolumeImport streams a tar.gz archive into the named volume on the
+// agent's host. replace empties the volume first. Returns tar's result.
+//
+//nolint:contextcheck // stream writes have no ctx; the AfterFunc below closes the stream when ctx ends
+func (h *RemoteHost) VolumeImport(ctx context.Context, name string, src io.Reader, replace bool) error {
+	ag, err := h.live()
+	if err != nil {
+		return err
+	}
+	// Without flow control the agent drops input that arrives faster than
+	// tar reads it, and an agent without the replace mode would merge.
+	if !ag.Hello.Has(agents.CapStreamCredit) || (replace && !ag.Hello.Has(agents.CapVolumeReplace)) {
+		return ErrAgentTooOld
+	}
+	if err := docker.CheckVolumeName(name); err != nil {
+		return err
+	}
+	s, err := ag.OpenStream(ctx, "volume_import", "", map[string]any{"volume": name, "replace": replace})
+	if err != nil {
+		return fmt.Errorf("open volume_import stream: %w", err)
+	}
+	defer s.Close()
+	// A write waiting for credit only ends when the stream does.
+	stop := context.AfterFunc(ctx, func() { _ = s.Close() })
+	defer stop()
+	stall := time.AfterFunc(importStall, func() { _ = s.Close() })
+	defer stall.Stop()
+
+	buf := make([]byte, 32*1024)
+	for {
+		n, rerr := src.Read(buf)
+		if n > 0 {
+			if err := s.WriteFrame(append([]byte(nil), buf[:n]...)); err != nil {
+				return fmt.Errorf("send archive: %w", err)
+			}
+			// An agent that stops taking data fails the restore instead
+			// of holding it open forever.
+			stall.Reset(importStall)
+		}
+		if errors.Is(rerr, io.EOF) {
+			break
+		}
+		if rerr != nil {
+			return fmt.Errorf("read archive: %w", rerr)
+		}
+	}
+	stall.Stop()
+	if err := s.CloseWrite(); err != nil {
+		return fmt.Errorf("finish upload: %w", err)
+	}
+	// The agent closes the stream once tar has exited; its error, if
+	// any, is what Read returns.
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.Discard, s)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("volume import on agent: %w", err)
+		}
+		return nil
+	case <-time.After(importStall):
+		return errors.New("volume import on agent: no result from tar")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// importStall bounds how long a volume import may make no progress.
+const importStall = 5 * time.Minute
 
 // dockerMuxStripper demuxes docker's attach-stream format: repeating
 //

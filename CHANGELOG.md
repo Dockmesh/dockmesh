@@ -75,6 +75,18 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   longer cancels it. A job that is still running is not started a second time, and a
   scheduled run is skipped (with a notification) while the previous one is in progress.
 - S3 backups stream to the bucket instead of being written to a temporary file first.
+- Restoring a volume or stack backup puts the volumes back on the host the backup was taken
+  on (or one you pick), instead of always on the central server. The archive is checked
+  completely before anything is overwritten, and you choose between replacing the volume's
+  contents (refused while containers use it) and merging. A volume that fails to restore now
+  fails the stack restore instead of being reported as a warning. Restoring a stack under
+  another name gives the copy its own volumes instead of writing into the original stack's.
+  Restoring onto a remote host needs the agent from this release.
+- A restore downloads the archive once, checks it against the recorded checksum, verifies it
+  and restores from that same copy. Only one restore at a time may write a given volume or
+  stack, at most two restores run at once, and replacing a volume's contents needs a backup
+  with a recorded checksum (older backups can still be merged). Restoring a stack as a copy
+  under another name leaves volumes with a fixed name alone and lists them in the result.
 
 ### Fixed
 - Updating a container's image no longer loses its anonymous volumes (`-v /data` or a
@@ -147,6 +159,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - A proxy route can no longer forward to the proxy's own admin API, which would have let anyone
   reaching the proxy change its configuration. The admin API now also refuses requests from
   browsers on other sites.
+- Restoring a stack backup writes that stack's compose file and environment, so it now needs
+  the "Edit stacks" permission ("Create stacks" for a new name), the stack within your role
+  scope, and the host the stack is deployed on within your scope. Before, `backups.restore` on
+  the backup's host was enough to overwrite or create any stack, also for users limited to
+  certain hosts.
 
 ## [0.4.2] - 2026-10-30 [recommended]
 

@@ -134,11 +134,12 @@ const MaxFrameBytes = 16 << 20
 
 // Capabilities exchanged in hello / welcome.
 const (
-	CapRequestCancel = "req.cancel"    // agent: honours FrameReqCancel
-	CapStreamCredit  = "stream.credit" // both: credit-based stream flow control
-	CapCertRenew     = "cert.renew"    // server: accepts FrameAgentCertRenew
-	CapDiskMounts    = "disk_mounts"   // agent: answers FrameReqSystemDisks
-	CapDockerEvents  = "docker_events" // agent: serves the "events" stream kind
+	CapRequestCancel = "req.cancel"            // agent: honours FrameReqCancel
+	CapStreamCredit  = "stream.credit"         // both: credit-based stream flow control
+	CapCertRenew     = "cert.renew"            // server: accepts FrameAgentCertRenew
+	CapDiskMounts    = "disk_mounts"           // agent: answers FrameReqSystemDisks
+	CapDockerEvents  = "docker_events"         // agent: serves the "events" stream kind
+	CapVolumeReplace = "volume_import.replace" // agent: empties the volume first on params.replace
 )
 
 // Stream control ops beyond the exec "resize".
@@ -262,6 +263,16 @@ type StackCheckScaleReq struct {
 	Compose string `json:"compose"`
 	Env     string `json:"env,omitempty"`
 	Service string `json:"service"`
+}
+
+// VolumeImportScript is the helper command that extracts a restore into
+// /dest. With replace the volume is emptied first: the globs cover
+// dotfiles, and rm -f ignores patterns that match nothing.
+func VolumeImportScript(replace bool) string {
+	if replace {
+		return "rm -rf /dest/..?* /dest/.[!.]* /dest/* && tar xzf - -C /dest"
+	}
+	return "tar xzf - -C /dest"
 }
 
 // VolumeTarReq identifies the volume for tar export/import.

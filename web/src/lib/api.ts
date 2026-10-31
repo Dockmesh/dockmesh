@@ -926,6 +926,23 @@ export interface BackupRun {
   pruned_at?: string;
 }
 
+export interface BackupRestoreOptions {
+  dest_volume?: string;
+  target_stack?: string;
+  host_id?: string;
+  mode?: 'merge' | 'replace';
+}
+
+export interface BackupRestoreReport {
+  kind: 'volume' | 'stack';
+  stack_name?: string;
+  host_id: string;
+  mode: 'merge' | 'replace';
+  files_restored: string[];
+  volumes_restored: string[];
+  warnings?: string[];
+}
+
 // runRestorable mirrors the server: the archive exists and is complete.
 export function runRestorable(r: BackupRun): boolean {
   return (r.status === 'success' || r.status === 'success_with_warnings') && !r.pruned_at;
@@ -1949,20 +1966,18 @@ export const api = {
       // Revoke after a tick so Safari has a chance to start the download.
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     },
-    restore: (runId: number, destVolume: string) =>
-      request<void>(`/backups/runs/${runId}/restore`, {
+    // Empty fields mean: the backed-up volume/stack, on the host it was
+    // backed up on, merged. The server verifies the archive first.
+    restore: (runId: number, opts: BackupRestoreOptions) =>
+      request<BackupRestoreReport>(`/backups/runs/${runId}/restore`, {
         method: 'POST',
-        body: JSON.stringify({ dest_volume: destVolume })
+        body: JSON.stringify(opts)
       }),
-    // P.13.3: stack-typed restore. Extracts the archive's stack/<rel>
-    // files into /stacks/<target>/ and per-volume restores into
-    // matching docker volumes. target_stack is optional (defaults to
-    // the source stack name in the run).
-    restoreStack: (runId: number, targetStack?: string) =>
-      request<{ stack_name: string; files_restored: string[]; volumes_restored: string[]; warnings?: string[] }>(
-        `/backups/runs/${runId}/restore-stack`,
-        { method: 'POST', body: JSON.stringify({ target_stack: targetStack ?? '' }) }
-      ),
+    restoreStack: (runId: number, opts: BackupRestoreOptions) =>
+      request<BackupRestoreReport>(`/backups/runs/${runId}/restore-stack`, {
+        method: 'POST',
+        body: JSON.stringify(opts)
+      }),
     // P.12.4 — verify an uploaded system-backup tarball. Never touches
     // the live install; extracts to a temp dir, runs sanity, deletes.
     verifyUpload: async (file: File): Promise<BackupVerifyResult> => {

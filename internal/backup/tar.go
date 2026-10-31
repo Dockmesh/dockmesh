@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
@@ -110,7 +111,8 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 
 // untarVolume streams a gzipped tar archive into a named volume by
 // running `tar xzf -` inside a helper that mounts the volume read-write.
-func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src io.Reader) error {
+// replace empties the volume first.
+func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src io.Reader, replace bool) error {
 	if dc == nil {
 		return errors.New("docker unavailable")
 	}
@@ -124,7 +126,7 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 
 	cfg := &container.Config{
 		Image:        helperImage,
-		Cmd:          []string{"sh", "-c", "tar xzf - -C /dest"},
+		Cmd:          []string{"sh", "-c", agents.VolumeImportScript(replace)},
 		AttachStdin:  true,
 		AttachStderr: true,
 		OpenStdin:    true,
