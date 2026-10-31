@@ -149,8 +149,8 @@ func (h *Handlers) attentionHosts(r *http.Request) []AttentionItem {
 		}
 		obj := AttentionObject{Type: "host", ID: a.ID, Name: a.Name, HostID: a.ID}
 		link := "/hosts/" + url.PathEscape(a.ID)
-		switch {
-		case a.Status == "offline":
+		switch a.Status {
+		case "offline":
 			out = append(out, AttentionItem{
 				ID:       "host_offline:" + a.ID,
 				Kind:     "host_offline",
@@ -161,7 +161,7 @@ func (h *Handlers) attentionHosts(r *http.Request) []AttentionItem {
 				Object:   obj,
 				Since:    a.LastSeenAt,
 			})
-		case a.Status == "online":
+		case "online":
 			v, ok := outdated[a.ID]
 			if !ok {
 				continue

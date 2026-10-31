@@ -51,19 +51,16 @@ func (s *Service) EnrichWithCertInfo(ctx context.Context, routes []Route) []Rout
 // 4-second timeout — enough for a remote LE cert hop but tight enough
 // that a wedged DNS doesn't stall the list endpoint.
 func probeCert(ctx context.Context, host string) (*x509.Certificate, error) {
-	dialer := &tls.Dialer{
-		NetDialer: &net.Dialer{Timeout: 4 * time.Second},
-		Config: &tls.Config{
-			ServerName:         host,
-			InsecureSkipVerify: true,
-		},
-	}
-	conn, err := dialer.DialContext(ctx, "tcp", host+":443")
+	dialer := &net.Dialer{Timeout: 4 * time.Second}
+	conn, err := tls.DialWithDialer(dialer, "tcp", host+":443", &tls.Config{
+		ServerName:         host,
+		InsecureSkipVerify: true,
+	})
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
-	chain := conn.(*tls.Conn).ConnectionState().PeerCertificates
+	chain := conn.ConnectionState().PeerCertificates
 	if len(chain) == 0 {
 		return nil, errors.New("no peer certs in handshake")
 	}
@@ -76,27 +73,20 @@ const certCacheTTL = 15 * time.Minute
 
 // RouteCerts returns the routes with cert metadata like
 // EnrichWithCertInfo, reusing the last probe for certCacheTTL so pages
-// that poll don't open a TLS handshake per route on every request. The
-// probe runs on its own deadline, so a caller that goes away can't leave
-// a cache without cert data behind.
+// that poll don't open a TLS handshake per route on every request.
 func (s *Service) RouteCerts(ctx context.Context) ([]Route, error) {
 	s.certMu.Lock()
 	defer s.certMu.Unlock()
 	if s.certRoutes != nil && time.Since(s.certAt) < certCacheTTL {
 		return s.certRoutes, nil
 	}
-	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	defer cancel()
-	routes, err := s.ListRoutes(pctx)
+	routes, err := s.ListRoutes(ctx)
 	if err != nil {
 		return nil, err
 	}
-	routes = s.EnrichWithCertInfo(pctx, routes)
-	if pctx.Err() == nil {
-		s.certRoutes = routes
-		s.certAt = time.Now()
-	}
-	return routes, nil
+	s.certRoutes = s.EnrichWithCertInfo(ctx, routes)
+	s.certAt = time.Now()
+	return s.certRoutes, nil
 }
 
 func certIssuer(c *x509.Certificate) string {
