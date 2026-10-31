@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -61,13 +62,19 @@ func (s *Service) ImportCaddyfile(ctx context.Context, caddyfile string, dryRun 
 	if !s.Enabled() {
 		return nil, ErrProxyNotConfigured
 	}
-	caddyfile, err := prepareCaddyfile(caddyfile)
+	expanded, err := prepareCaddyfile(caddyfile)
 	if err != nil {
 		return nil, err
 	}
-	adapted, warnings, err := adaptCaddyfile(ctx, caddyfile)
+	adapted, warnings, err := adaptCaddyfile(ctx, expanded)
 	if err != nil {
 		return nil, err
+	}
+	if expanded != caddyfile {
+		// Caddy's formatting hint is about the expanded text, not the user's.
+		warnings = slices.DeleteFunc(warnings, func(w string) bool {
+			return strings.Contains(w, "input is not formatted")
+		})
 	}
 	res := mapAdapted(adapted)
 	res.Warnings = warnings

@@ -90,7 +90,7 @@ func TestImportCaddyfileSnippets(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		posted = append(posted, string(body))
-		_, _ = w.Write([]byte(`{"result":{}}`))
+		_, _ = w.Write([]byte(`{"result":{},"warnings":[{"line":4,"message":"Caddyfile input is not formatted; run 'caddy fmt --overwrite' to fix inconsistencies"}]}`))
 	}))
 	old := adminURL
 	adminURL = srv.URL
@@ -99,8 +99,12 @@ func TestImportCaddyfileSnippets(t *testing.T) {
 	s.enabled.Store(true)
 	ctx := context.Background()
 
-	if _, err := s.ImportCaddyfile(ctx, "(common) {\n\tencode gzip\n}\na.example.com {\n\timport common\n\treverse_proxy b:80\n}\n", true); err != nil {
+	res, err := s.ImportCaddyfile(ctx, "(common) {\n\tencode gzip\n}\na.example.com {\n\timport common\n\treverse_proxy b:80\n}\n", true)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(res.Warnings) != 0 {
+		t.Fatalf("formatting warning of the expanded text kept: %v", res.Warnings)
 	}
 	if len(posted) != 1 || strings.Contains(posted[0], "import") || strings.Contains(posted[0], "(common)") || !strings.Contains(posted[0], "encode gzip") {
 		t.Fatalf("sent to caddy: %q", posted)
