@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/changelog"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/settings"
@@ -38,6 +39,14 @@ const (
 	// server time to finish startup without blocking on a slow GitHub
 	// response.
 	bootDelay = 30 * time.Second
+
+	// manifestAsset is the machine-readable release section published
+	// with every release; assetPrefix is where release assets live.
+	manifestAsset = "release-manifest.json"
+	assetPrefix   = "https://github.com/Dockmesh/dockmesh/releases/download/"
+
+	// Max manifest bytes read; real manifests are a few KB.
+	maxManifestLen = 256 << 10
 
 	// Max release notes bytes stored. Trimmed to keep the settings row
 	// small — full notes are reachable via ReleaseURL.
@@ -68,6 +77,12 @@ type ghRelease struct {
 	PublishedAt time.Time `json:"published_at"`
 	Draft       bool      `json:"draft"`
 	Prerelease  bool      `json:"prerelease"`
+	Assets      []ghAsset `json:"assets"`
+}
+
+type ghAsset struct {
+	Name string `json:"name"`
+	URL  string `json:"browser_download_url"`
 }
 
 // Checker owns the background goroutine + the in-memory cache. A single
@@ -77,6 +92,8 @@ type Checker struct {
 	current  string
 	client   *http.Client
 	notifs   *notifications.Service
+	// assetPrefix is the only URL prefix a manifest is fetched from.
+	assetPrefix string
 
 	mu      sync.RWMutex
 	lastErr string
@@ -96,6 +113,8 @@ func New(s *settings.Store, currentVersion string) *Checker {
 		settings: s,
 		current:  currentVersion,
 		client:   &http.Client{Timeout: 10 * time.Second},
+
+		assetPrefix: assetPrefix,
 	}
 }
 
@@ -217,6 +236,7 @@ func (c *Checker) CheckNow(ctx context.Context) error {
 	_ = c.settings.Set(ctx, "update_release_url", rel.HTMLURL)
 	_ = c.settings.Set(ctx, "update_release_notes", notes)
 	_ = c.settings.Set(ctx, "update_published_at", published)
+	_ = c.settings.Set(ctx, keyManifest, c.fetchManifest(ctx, rel))
 
 	c.recordErr(nil)
 	updateAvailable := isNewer(c.current, rel.TagName) || isDevVersion(c.current)
@@ -245,6 +265,74 @@ func (c *Checker) CheckNow(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// keyManifest caches the latest release's manifest as JSON; empty when the
+// release has none.
+const keyManifest = "update_release_manifest"
+
+// fetchManifest downloads the release's manifest and returns it as JSON,
+// or "" when the release has none or it can't be read. The banner works
+// without it, so failures are only logged.
+func (c *Checker) fetchManifest(ctx context.Context, rel ghRelease) string {
+	url := ""
+	for _, a := range rel.Assets {
+		if a.Name == manifestAsset {
+			url = a.URL
+		}
+	}
+	if url == "" || !strings.HasPrefix(url, c.assetPrefix) {
+		return ""
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("User-Agent", "Dockmesh/"+c.current)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		slog.Warn("selfupdate: fetch release manifest", "err", err)
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		slog.Warn("selfupdate: fetch release manifest", "status", resp.StatusCode)
+		return ""
+	}
+	var m changelog.Manifest
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxManifestLen)).Decode(&m); err != nil {
+		slog.Warn("selfupdate: decode release manifest", "err", err)
+		return ""
+	}
+	if m.Version != strings.TrimPrefix(rel.TagName, "v") {
+		slog.Warn("selfupdate: release manifest is for another version", "manifest", m.Version, "tag", rel.TagName)
+		return ""
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// LatestManifest returns the manifest of the latest release when that
+// release is newer than the running version, or nil.
+func (c *Checker) LatestManifest() *changelog.Manifest {
+	if !c.Status().UpdateAvailable {
+		return nil
+	}
+	raw := c.settings.Get(keyManifest, "")
+	if raw == "" {
+		return nil
+	}
+	var m changelog.Manifest
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil
+	}
+	if m.Version != strings.TrimPrefix(c.settings.Get("update_latest_version", ""), "v") {
+		return nil
+	}
+	return &m
 }
 
 func (c *Checker) recordErr(err error) {

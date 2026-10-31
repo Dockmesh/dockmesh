@@ -164,6 +164,10 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Get("/notices", h.ListNotices)
 			r.Post("/notices/{id}/dismiss", h.DismissNotice)
 
+			// Any signed-in user may read the release notes.
+			r.Get("/system/whats-new", h.GetWhatsNew)
+			r.Post("/system/whats-new/seen", h.MarkWhatsNewSeen)
+
 			// -------------------------- READ ROUTES --------------------------
 			// Per-resource *.view permissions (RBAC v2). Each group gates
 			// its own listing + inspect endpoints. Built-in viewer role
