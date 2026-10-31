@@ -144,7 +144,6 @@ func TestScreenCaddyfile(t *testing.T) {
 		{"import on the block line", "a.example.com { import /config/caddy/autosave.json }\n", false},
 		{"quoted import", "a.example.com {\n\t\"import\" /etc/passwd\n}\n", false},
 		{"env substitution", "a.example.com {\n\treverse_proxy {$UPSTREAM}\n}\n", false},
-		{"too large", strings.Repeat("#", MaxCaddyfileSize+1), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

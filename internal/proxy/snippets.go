@@ -12,7 +12,7 @@ import (
 type cfToken struct {
 	text       string
 	start, end int
-	line       int // line the token starts on
+	line       int
 	endLine    int // line the token ends on
 	quoted     bool
 }
@@ -132,7 +132,7 @@ type snippetExpander struct {
 }
 
 // expand works on the whole file when stack is empty and on a snippet's
-// content otherwise; snippets can only be defined at the top of the file.
+// content otherwise; snippets can only be defined at the top level of the file.
 func (e *snippetExpander) expand(text string, stack []string) (string, error) {
 	toks := lexCaddyfile(text)
 	var b strings.Builder

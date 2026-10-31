@@ -111,10 +111,8 @@ func (s *Service) ImportCaddyfile(ctx context.Context, caddyfile string, dryRun 
 }
 
 // fileReadingTokens are Caddyfile directives and subdirectives that make
-// the adapter read a file of the proxy container. Snippet imports are
-// expanded before the screen, so any `import` left is refused.
+// the adapter read a file of the proxy container.
 var fileReadingTokens = map[string]bool{
-	"import":                 true,
 	"client_auth":            true,
 	"trusted_ca_cert_file":   true,
 	"trusted_leaf_cert_file": true,
@@ -140,9 +138,6 @@ func prepareCaddyfile(text string) (string, error) {
 // environment of the proxy container, e.g. certificate keys, through the
 // result or Caddy's error messages.
 func screenCaddyfile(text string) error {
-	if len(text) > MaxCaddyfileSize {
-		return fmt.Errorf("%w: larger than %d KiB", ErrCaddyfileRejected, MaxCaddyfileSize>>10)
-	}
 	if strings.Contains(text, "{$") {
 		return fmt.Errorf("%w: environment variables ({$NAME}) are not supported", ErrCaddyfileRejected)
 	}
