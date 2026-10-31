@@ -34,6 +34,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   them. Agents that are too old for container events are listed in a notice too.
   Users limited to certain hosts can only manage rules restricted to one of their hosts
   and only see alert history from those hosts.
+- Agents renew their client certificate over their existing connection when it has less
+  than 30 days left; the host keeps its ID. Admins get a notice for any agent whose
+  certificate is within 14 days of expiry, and a critical one for an offline agent whose
+  certificate has expired, with the steps to re-enroll it under the same ID.
+- The hosts list and host page show "update recommended" for agents that speak an older
+  protocol than the server, and the host page shows when the agent's certificate expires.
 
 ### Changed
 - Updating the image of a container that belongs to a stack now rebuilds it from the
@@ -90,6 +96,18 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - Notification channels retry a failed delivery twice before giving up, and the last
   delivery error is shown on the channel card. Toggling a channel on or off no longer clears
   its quiet hours.
+- Deleting a host while one of its shells, log views or requests was open no longer crashes
+  the server, and the deleted host's connection is closed right away.
+- Remote deploys, scale-ups and backup pre-hooks on agents are no longer cut off after 30
+  seconds; they get time for image pulls and database dumps, and a cancelled request now
+  also stops on the agent.
+- Requests to a host that just reconnected go to the new connection instead of hanging on
+  the old one.
+- Remote volume exports (used by multi-host backups) slow the agent down instead of
+  silently dropping data when the server reads slower than the agent sends, and report a
+  failing `tar` as an error. Closing a remote shell no longer leaks a goroutine.
+- Agents notice a vanished server within 90 seconds, reconnect immediately and then back off
+  with jitter, and no longer leak a goroutine on every stack request.
 
 ### Security
 - A rollback now only accepts update-history entries of the container it is called for, and

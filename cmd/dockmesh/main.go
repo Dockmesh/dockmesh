@@ -849,6 +849,7 @@ func main() {
 	// FrameReqAgentUpgrade to pending agents based on policy.
 	agentUpgrade := agents.NewUpgradeController(agentsSvc, settingsStore)
 	agentUpgrade.Start(ctx)
+	go agentsSvc.RunCertNotices(ctx, noticesSvc)
 
 	// Host tags (P.11.2). In-memory cache loaded once at startup; kept
 	// fresh after every mutation via Load() inside the service.

@@ -781,6 +781,9 @@ export interface Agent {
   cert_fingerprint?: string;
   last_seen_at?: string;
   online_since?: string;
+  cert_expires_at?: string;
+  protocol_version?: number;
+  update_recommended?: boolean;
   created_at: string;
   updated_at: string;
 }

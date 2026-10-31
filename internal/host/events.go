@@ -53,13 +53,14 @@ func (h *LocalHost) ContainerEvents(ctx context.Context) (<-chan events.Message,
 
 // ContainerEvents streams the agent's Docker container events.
 func (h *RemoteHost) ContainerEvents(ctx context.Context) (<-chan events.Message, error) {
-	if h.agent == nil {
-		return nil, ErrAgentOffline
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
 	}
-	if !h.agent.Hello.Has(agents.CapDockerEvents) {
+	if !ag.Hello.Has(agents.CapDockerEvents) {
 		return nil, ErrEventsUnsupported
 	}
-	stream, err := h.agent.OpenStream(ctx, "events", "", nil)
+	stream, err := ag.OpenStream(ctx, "events", "", nil)
 	if err != nil {
 		return nil, err
 	}
