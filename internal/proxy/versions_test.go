@@ -193,6 +193,18 @@ func TestSwitchVersionRollbackFails(t *testing.T) {
 	}
 }
 
+func TestSwitchVersionRefusedWhileProxyShouldRun(t *testing.T) {
+	older := TestedVersions[0]
+	s, st, started := versionService(t, "")
+	s.shouldRun = func() bool { return true }
+	if _, err := s.SwitchVersion(context.Background(), older.Version); !errors.Is(err, ErrProxyNotRunning) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(*started) != 0 || st[KeyCaddyVersion] != "" || s.currentImage() != DefaultProxyImage {
+		t.Fatalf("started %v, settings %v, image %s", *started, st, s.currentImage())
+	}
+}
+
 func TestSwitchVersionWhileProxyOff(t *testing.T) {
 	ctx := context.Background()
 	older := TestedVersions[0]

@@ -475,7 +475,7 @@ func (h *Handlers) RollbackProxyVersion(w http.ResponseWriter, r *http.Request) 
 // been cancelled while the container was replaced.
 func (h *Handlers) writeVersionSwitch(w http.ResponseWriter, r *http.Request, action string, ch proxy.VersionChange, err error) {
 	switch {
-	case errors.Is(err, proxy.ErrVersionReadOnly):
+	case errors.Is(err, proxy.ErrVersionReadOnly), errors.Is(err, proxy.ErrProxyNotRunning):
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	case errors.Is(err, proxy.ErrUnknownVersion), errors.Is(err, proxy.ErrNoPreviousVersion):
@@ -510,17 +510,9 @@ func (h *Handlers) GetProxySettings(w http.ResponseWriter, r *http.Request) {
 	}
 	st := h.Proxy.ProxySettings()
 	if !canEditProxy(r) {
-		st.ACMEEmail = maskEmail(st.ACMEEmail)
+		st = st.Masked()
 	}
 	writeJSON(w, http.StatusOK, st)
-}
-
-func maskEmail(addr string) string {
-	if addr == "" {
-		return ""
-	}
-	_, domain, _ := strings.Cut(addr, "@")
-	return "***@" + domain
 }
 
 // UpdateProxySettings stores and applies the proxy-wide options.
@@ -547,6 +539,6 @@ func (h *Handlers) UpdateProxySettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	after := h.Proxy.ProxySettings()
-	h.audit(r, "proxy.settings_update", "", map[string]any{"before": before, "after": after})
+	h.auditDetached(r, "proxy.settings_update", "", map[string]any{"before": before, "after": after})
 	writeJSON(w, http.StatusOK, after)
 }

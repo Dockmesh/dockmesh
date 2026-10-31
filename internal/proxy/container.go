@@ -219,6 +219,7 @@ func (s *Service) createProxy(ctx context.Context, img string, old *container.In
 // hasn't succeeded (Docker or Caddy slow at boot), it is retried, so
 // route changes don't silently stop reaching a running Caddy.
 func (s *Service) StartWatchdog(ctx context.Context, interval time.Duration, wanted func() bool) {
+	s.shouldRun = wanted
 	go func() {
 		t := time.NewTicker(interval)
 		defer t.Stop()

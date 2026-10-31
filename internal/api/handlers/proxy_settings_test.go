@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -84,6 +85,11 @@ func TestProxySettingsViewersSeeMaskedValues(t *testing.T) {
 	view := middleware.RequirePerm(rbac.PermProxyView)
 	e.router.With(middleware.NewAuth(e.h.Auth), view).Get("/proxy/settings", e.h.GetProxySettings)
 	e.router.With(middleware.NewAuth(e.h.Auth), view).Get("/proxy/version", e.h.GetProxyVersion)
+	e.router.With(middleware.NewAuth(e.h.Auth), view).Get("/proxy/routes/{id}/config", e.h.GetProxyRouteConfig)
+	route, err := e.h.Proxy.CreateRoute(context.Background(), proxy.RouteSpec{Host: "app.example.com", Upstream: "10.0.0.2:80", TLSMode: "auto"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	e.role("proxyviewer", []rbac.Perm{rbac.PermProxyView})
 	e.user("viewer1", "proxyviewer")
 	e.user("admin1", "admin")
@@ -98,14 +104,16 @@ func TestProxySettingsViewersSeeMaskedValues(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.user, func(t *testing.T) {
 			tok := e.login(tt.user).AccessToken
-			rr := e.do(http.MethodGet, "/proxy/settings", tok, nil)
-			if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "@example.com") {
-				t.Fatalf("settings: %d %s", rr.Code, rr.Body)
+			for _, path := range []string{"/proxy/settings", "/proxy/routes/" + strconv.FormatInt(route.ID, 10) + "/config"} {
+				rr := e.do(http.MethodGet, path, tok, nil)
+				if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "@example.com") {
+					t.Fatalf("%s: %d %s", path, rr.Code, rr.Body)
+				}
+				if got := strings.Contains(rr.Body.String(), "ops@"); got != tt.full {
+					t.Errorf("%s: email local part shown = %v, want %v", path, got, tt.full)
+				}
 			}
-			if got := strings.Contains(rr.Body.String(), "ops@"); got != tt.full {
-				t.Errorf("email local part shown = %v, want %v", got, tt.full)
-			}
-			rr = e.do(http.MethodGet, "/proxy/version", tok, nil)
+			rr := e.do(http.MethodGet, "/proxy/version", tok, nil)
 			if rr.Code != http.StatusOK {
 				t.Fatalf("version: %d %s", rr.Code, rr.Body)
 			}

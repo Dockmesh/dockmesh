@@ -102,6 +102,8 @@ type Service struct {
 	imageMu       sync.RWMutex
 	image         string
 	imageOverride bool
+	// shouldRun reports the stored proxy_enabled choice; set by StartWatchdog.
+	shouldRun func() bool
 	// startProxy replaces startAndVerify in tests.
 	startProxy func(ctx context.Context) error
 
@@ -361,10 +363,12 @@ func (s *Service) SiteConfig(ctx context.Context, id int64, mask bool) (*SitePre
 			one.Options.Routing.WWWRedirect = false
 		}
 	}
+	g := s.ProxySettings()
 	if mask {
 		one.Options = one.Options.Masked()
+		g = g.Masked()
 	}
-	cfg, blocked := buildConfigWith([]Route{one}, s.ProxySettings(), true)
+	cfg, blocked := buildConfigWith([]Route{one}, g, true)
 	cfg.Admin = nil
 	return &SitePreview{RouteID: id, Enabled: site.Enabled, Blocked: len(blocked) > 0, Config: cfg}, nil
 }

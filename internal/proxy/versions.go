@@ -31,6 +31,7 @@ var (
 	ErrNoPreviousVersion     = errors.New("no previous Caddy version to roll back to")
 	ErrVersionSwitchFailed   = errors.New("caddy version switch failed")
 	ErrVersionRollbackFailed = errors.New("going back to the previous version failed")
+	ErrProxyNotRunning       = errors.New("the proxy should run but isn't running yet; switch the version once it runs again")
 
 	errSettingsUnavailable = errors.New("settings store unavailable")
 )
@@ -177,6 +178,11 @@ func (s *Service) switchLocked(ctx context.Context, target CaddyVersion) (Versio
 		ch.Info = s.VersionInfo()
 		return ch, nil
 	}
+	// Without a running container the switch couldn't be checked, and the
+	// watchdog would start the new version unchecked.
+	if !s.Enabled() && s.shouldRun != nil && s.shouldRun() {
+		return ch, ErrProxyNotRunning
+	}
 	// Stored first, so the next boot runs what the container runs.
 	oldVersion, oldPrevious := s.settings.Get(KeyCaddyVersion, ""), s.settings.Get(KeyCaddyPrevious, "")
 	if err := s.storeVersion(ctx, target.Version, ch.From); err != nil {
@@ -202,7 +208,9 @@ func (s *Service) switchLocked(ctx context.Context, target CaddyVersion) (Versio
 			return ch, fmt.Errorf("%w: Caddy %s did not come up with the config (%w); rolled back", ErrVersionSwitchFailed, target.Version, err)
 		}
 	}
-	s.pruneImages(context.WithoutCancel(ctx), target.Image, oldImage)
+	pruneCtx, pruneCancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer pruneCancel()
+	s.pruneImages(pruneCtx, target.Image, oldImage)
 	ch.Info = s.VersionInfo()
 	return ch, nil
 }

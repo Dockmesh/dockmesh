@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/mail"
+	"strings"
 )
 
 // Settings keys of the proxy-wide options. They are written only
@@ -49,6 +50,16 @@ var cloudflareRanges = []string{
 	"104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
 	"2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32",
 	"2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32",
+}
+
+// Masked hides the local part of the ACME email, for users who can't
+// change the settings.
+func (g Settings) Masked() Settings {
+	if g.ACMEEmail != "" {
+		_, domain, _ := strings.Cut(g.ACMEEmail, "@")
+		g.ACMEEmail = "***@" + domain
+	}
+	return g
 }
 
 func (g Settings) validate() error {

@@ -7667,7 +7667,8 @@ paths:
         config; if it doesn't, the previous image is started again and 502 is
         returned. The image of the version left behind is kept for a rollback,
         older tested images are removed. While the proxy is off only the
-        selection is stored. 409 while `DOCKMESH_PROXY_IMAGE` is set. The switch
+        selection is stored; 409 when the proxy is switched on but its container
+        isn't running yet, and while `DOCKMESH_PROXY_IMAGE` is set. The switch
         finishes even when the client disconnects.
       requestBody:
         required: true
@@ -7688,7 +7689,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
-          description: Version management is read-only (`DOCKMESH_PROXY_IMAGE` set).
+          description: Version management is read-only (`DOCKMESH_PROXY_IMAGE` set), or the proxy should run but isn't running.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -7714,7 +7715,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
-          description: Version management is read-only (`DOCKMESH_PROXY_IMAGE` set).
+          description: Version management is read-only (`DOCKMESH_PROXY_IMAGE` set), or the proxy should run but isn't running.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
