@@ -74,6 +74,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 		r.With(middleware.RequireSetupHeader).Post("/setup/validate-user", h.SetupValidateUser)
 		r.With(middleware.RequireSetupHeader).Post("/setup/test-url", h.SetupTestURL)
 		r.With(middleware.RequireSetupHeader).Post("/setup/commit", h.SetupCommit)
+		r.With(middleware.RequireSetupHeader).Post("/setup/restore", h.SetupRestore)
 		r.Get("/setup/stream/{run_id}", h.SetupStream)
 
 		// OpenAPI 3.1 spec + Swagger UI (P.11.10). Public — the spec
@@ -163,6 +164,10 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			// Action-required notices; audience filtering happens in the handler.
 			r.Get("/notices", h.ListNotices)
 			r.Post("/notices/{id}/dismiss", h.DismissNotice)
+
+			// Needs-attention feed; each source is gated on its own view
+			// permission and the caller's scope inside the handler.
+			r.Get("/attention", h.Attention)
 
 			// -------------------------- READ ROUTES --------------------------
 			// Per-resource *.view permissions (RBAC v2). Each group gates
@@ -701,6 +706,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/backups/targets", h.ListBackupTargets)
 				r.Get("/backups/local-path", h.BackupLocalPath)
 				r.Get("/backups/runs", h.ListBackupRuns)
+				r.Get("/backups/schedule", h.GetBackupSchedule)
 				r.Get("/backups/runs/{id}", h.GetBackupRun)
 				r.Get("/backups/runs/{id}/log", h.GetBackupRunLog)
 			})
@@ -749,6 +755,12 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Use(middleware.RequirePerm(rbac.PermSystemUpgrade))
 				r.Post("/system/secrets/rotate", h.RotateSecretsKey)
 				r.Post("/system/update-check", h.CheckUpdateNow)
+				// Restoring the whole system replaces every user, key and
+				// stack, so it needs the same permission.
+				r.Get("/restore/system", h.GetStagedRestore)
+				r.Post("/restore/system", h.StageSystemRestore)
+				r.Delete("/restore/system", h.DiscardSystemRestore)
+				r.Post("/restore/system/apply", h.ApplySystemRestore)
 			})
 
 			// -------------------------- PROXY -------------------------------

@@ -27,8 +27,49 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 ### Added
 - Every audit log entry has a category (`changes`, `access`, `auth` or `system`), and the audit
   API filters by it with `?category=`.
+- `GET /api/v1/attention` lists what needs attention in your scope: offline hosts, restarting,
+  unhealthy or failed containers, failed backup jobs, firing alerts, proxy certificates
+  expiring within 30 days and open action-required notices. Agents on a different build than
+  the server and available image updates are listed as information. Items are sorted most
+  severe first.
+- Alert rules for events: container restart loops, OOM kills, unhealthy containers and
+  unexpected stops (on the server and on agents), offline hosts, disk usage per mount,
+  failed or overdue backups and proxy TLS certificates close to expiry. Rules can be limited
+  to a host, a host tag or a stack and use the existing notification channels. New built-in
+  rules are on for restart loops, OOM kills, offline hosts, disks above 90%, backups and
+  certificates expiring within 14 days; admins of existing installs get a notice listing
+  them. Agents that are too old for container events are listed in a notice too.
+  Users limited to certain hosts can only manage rules restricted to one of their hosts
+  and only see alert history from those hosts.
+- Agents renew their client certificate over their existing connection when it has less
+  than 30 days left; the host keeps its ID. Admins get a notice for any agent whose
+  certificate is within 14 days of expiry, and a critical one for an offline agent whose
+  certificate has expired, with the steps to re-enroll it under the same ID.
+- The hosts list and host page show "update recommended" for agents that speak an older
+  protocol than the server, and the host page shows when the agent's certificate expires.
+- Backup schedules run in the time zone set in `backups.timezone` (an IANA name such as
+  `Europe/Berlin`); without it they use the server's time zone, which the job wizard now
+  shows next to the schedule.
+- System backups can be restored from the UI (Backups → a system run → Restore, or "Restore
+  system from file" for an uploaded archive) and from the setup wizard of a fresh install
+  ("Restore from a backup instead"), including encrypted backups together with the key file
+  exported from the original server. The backup is unpacked and checked next to the live
+  files first; the server then restarts and swaps the restored files in before it opens the
+  database. The replaced files are kept in `<data>/.pre-restore/<time>` and
+  `<stacks>.pre-restore-<time>`.
 
 ### Changed
+- New look for the web UI: a calmer, flat design with equal light and dark themes that
+  follow the system setting until you pick one. The sidebar is grouped into Workloads,
+  Infrastructure, Operations and Admin, shows counts, and collapses to an icon rail.
+  Authentication, registries and the global environment now sit under Settings with their
+  own sub-navigation. Ctrl+K (⌘K) searches pages, stacks, containers, hosts and settings.
+- Stacks, containers, templates, resources, topology and settings follow the new design.
+  The containers list can be grouped by host or by stack, the container page shows CPU,
+  memory, network and disk I/O history in charts with zoom and deploy markers, and CPU
+  is shown as a share of all host cores. New templates list the placeholders found in the
+  compose file so you can label them and set defaults. Settings are split into General,
+  Updates and Encryption key.
 - Updating the image of a container that belongs to a stack now rebuilds it from the
   stack's compose.yaml, together with the other replicas of its service, and records the
   new image in the stack's deploy history. Because that applies the stack's current
@@ -43,8 +84,41 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - Proxy route upstreams must be `host:port` and may not point at the proxy's own admin API,
   and a route's host may not be `localhost`, a loopback address or a bare `*`. Existing routes
   that break these rules stop being served and are listed in a notice for admins.
+- Updated the bundled libraries, including the Docker SDK (28.5), SvelteKit 3 and Vite 8.
+- The dashboard and host page now list disk usage for every real filesystem of a host, with
+  the mounts holding Docker, containerd, stacks, Dockmesh data and local backups labelled.
+  The host's disk figure now shows the fullest of the Docker-related mounts instead of the
+  data directory only, so a full Docker or containerd mount no longer goes unnoticed. Hosts
+  with an older agent keep the single figure until the agent is updated.
+- Backup jobs now write to saved backup targets instead of keeping their own copy of the
+  target settings. On upgrade, each job's settings are moved to a saved target named after
+  the type and server (for example `sftp-nas.lan (migrated)`); jobs with the same settings
+  share one target, and a job that already matches a saved target uses it. A new target set
+  up in the job wizard is saved under the job's name. Editing a target shows how many jobs use
+  it, and a target that jobs still use can't be deleted.
+- "Run now" starts the backup in the background and returns at once; closing the browser no
+  longer cancels it. A job that is still running is not started a second time, and a
+  scheduled run is skipped (with a notification) while the previous one is in progress.
+- S3 backups stream to the bucket instead of being written to a temporary file first.
+- Restoring a volume or stack backup puts the volumes back on the host the backup was taken
+  on (or one you pick), instead of always on the central server. The archive is checked
+  completely before anything is overwritten, and you choose between replacing the volume's
+  contents (refused while containers use it) and merging. A volume that fails to restore now
+  fails the stack restore instead of being reported as a warning. Restoring a stack under
+  another name gives the copy its own volumes instead of writing into the original stack's.
+  Restoring onto a remote host needs the agent from this release.
+- A restore downloads the archive once, checks it against the recorded checksum, verifies it
+  and restores from that same copy. Only one restore at a time may write a given volume or
+  stack, at most two restores run at once, and replacing a volume's contents needs a backup
+  with a recorded checksum (older backups can still be merged). Restoring a stack as a copy
+  under another name leaves volumes with a fixed name alone and lists them in the result.
+- `dockmesh restore` uses the same staged swap: a restore that stops halfway no longer leaves
+  stacks and data overwritten next to the old database, and it finishes on the next start.
+  It takes `--key` for encrypted archives; `--skip-sanity` is gone, the checks always run.
 
 ### Fixed
+- The resources page no longer fails to load when images have never been scanned.
+- Logs and terminal links in the containers list open those tabs instead of the overview.
 - Updating a container's image no longer loses its anonymous volumes (`-v /data` or a
   `VOLUME` in the image); the new container gets the old volumes.
 - A failed image update no longer leaves the container deleted: the old container is kept
@@ -69,6 +143,48 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   new one. Auto-refresh skips a cycle while the previous one is still loading.
 - Leaving a container or stack page while its logs, stats or terminal are connecting no
   longer leaves a socket open in the background.
+- Container CPU and memory alerts now fire once a breach has lasted for the rule's duration
+  (allowing for one missed sample) and resolve only after the value has been back to normal
+  for a full sampling interval, so they no longer stay silent or flap. Cooldown and "muted
+  until" are honoured, muted rules no longer send "resolved" messages, and the rule
+  statistics count fires correctly.
+- Notification channels retry a failed delivery twice before giving up, and the last
+  delivery error is shown on the channel card. Toggling a channel on or off no longer clears
+  its quiet hours.
+- Deleting a host while one of its shells, log views or requests was open no longer crashes
+  the server, and the deleted host's connection is closed right away.
+- Remote deploys, scale-ups and backup pre-hooks on agents are no longer cut off after 30
+  seconds; they get time for image pulls and database dumps, and a cancelled request now
+  also stops on the agent.
+- Requests to a host that just reconnected go to the new connection instead of hanging on
+  the old one.
+- Remote volume exports (used by multi-host backups) slow the agent down instead of
+  silently dropping data when the server reads slower than the agent sends, and report a
+  failing `tar` as an error. Closing a remote shell no longer leaks a goroutine.
+- Agents notice a vanished server within 90 seconds, reconnect immediately and then back off
+  with jitter, and no longer leak a goroutine on every stack request.
+- Backup retention only deletes archives recorded for the job's own runs instead of listing
+  the target, and never the newest archive of a job. New archives go to a folder named after
+  the job ID; existing archives are still managed where they are.
+- A failed backup run deletes its partial archive and is no longer counted by retention, so
+  a few failed runs can't push the last good backups out.
+- A stack backup fails when the compose file can't be read or one of the stack's volumes
+  can't be archived, instead of reporting success without that volume. Local volume archives
+  fail when `tar` exits with an error.
+- Verifying a stack backup checks that every volume the stack had is in the archive.
+- A failing post-hook marks the run "completed with warnings" instead of failed; the archive
+  can still be restored. Post-hooks also run when a later pre-hook or the upload fails, so a
+  service stopped by a pre-hook is started again.
+- Deleting a backup job keeps its runs restorable; runs whose archive was removed by
+  retention are shown as pruned.
+- A backup run whose request is cancelled midway still records its result instead of
+  staying "running".
+- Backup runs that were still running when the server stopped are marked failed at the
+  next start instead of showing "running" forever.
+- Volume backups no longer keep a copy of the archive in Docker's container log of their
+  helper, which took several times the archive's size on the server's disk while the backup
+  ran. A backup that fails midway stops and removes its helper container instead of leaving it
+  running until the next restart.
 
 ### Security
 - A rollback now only accepts update-history entries of the container it is called for, and
@@ -77,6 +193,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - A proxy route can no longer forward to the proxy's own admin API, which would have let anyone
   reaching the proxy change its configuration. The admin API now also refuses requests from
   browsers on other sites.
+- Restoring a stack backup writes that stack's compose file and environment, so it now needs
+  the "Edit stacks" permission ("Create stacks" for a new name), the stack within your role
+  scope, and the host the stack is deployed on within your scope. Before, `backups.restore` on
+  the backup's host was enough to overwrite or create any stack, also for users limited to
+  certain hosts.
 
 ## [0.4.2] - 2026-10-30 [recommended]
 

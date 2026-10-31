@@ -52,7 +52,7 @@ func (s *Service) Preview(ctx context.Context, containerID string) (*UpdatePrevi
 	preview := &UpdatePreview{Image: ref}
 
 	// Local image metadata.
-	if img, _, err := cli.ImageInspectWithRaw(ctx, info.Image); err == nil {
+	if img, err := cli.ImageInspect(ctx, info.Image); err == nil {
 		if len(img.RepoDigests) > 0 {
 			preview.CurrentDigest = img.RepoDigests[0]
 		} else {

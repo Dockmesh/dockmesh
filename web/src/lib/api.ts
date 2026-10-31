@@ -724,6 +724,11 @@ export interface SystemMetrics {
   disk_used: number;
   disk_path: string;
   uptime_seconds: number;
+  // Per-filesystem breakdown, fullest first; disk_* then describe the
+  // fullest mount holding Docker, containerd, stacks or Dockmesh data.
+  mounts?: DiskMount[];
+  // Set for agents too old to report per-mount usage.
+  mounts_unsupported?: boolean;
   // Present only when Docker's configured resource limits differ from
   // raw host hardware — most commonly on macOS / Windows where Docker
   // Desktop caps the VM at some fraction of the Mac's cores + RAM.
@@ -776,6 +781,9 @@ export interface Agent {
   cert_fingerprint?: string;
   last_seen_at?: string;
   online_since?: string;
+  cert_expires_at?: string;
+  protocol_version?: number;
+  update_recommended?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -838,8 +846,15 @@ export interface BackupTarget {
   used_bytes: number;
   free_bytes: number;
   last_checked_at?: string;
+  job_count?: number;
   created_at: string;
   updated_at: string;
+}
+
+// targetUsage tells whoever edits a shared target what the change affects.
+export function targetUsage(jobCount: number): string {
+  if (jobCount === 0) return 'Not used by any job yet.';
+  return `Used by ${jobCount} job${jobCount === 1 ? '' : 's'}; changes apply to all of them.`;
 }
 
 export interface BackupSource {
@@ -856,6 +871,7 @@ export interface BackupJob {
   id: number;
   name: string;
   host_id?: string;
+  target_id?: number;
   target_type: string;
   target_config: any;
   sources: BackupSource[];
@@ -879,9 +895,11 @@ export interface BackupJob {
 export interface BackupJobInput {
   name: string;
   host_id?: string;
+  // A saved target; without it target_type/target_config are saved as a
+  // new target named after the job.
+  target_id?: number;
   target_type: string;
   target_config: any;
-  target_id?: number;
   sources: BackupSource[];
   schedule: string;
   retention_count: number;
@@ -905,6 +923,74 @@ export interface BackupRun {
   encrypted: boolean;
   error?: string;
   sources: BackupSource[];
+  pruned_at?: string;
+}
+
+export interface StagedRestore {
+  staged_at: string;
+  source: string;
+  files: number;
+  bytes: number;
+  prev_dir?: string;
+  prev_stacks?: string;
+}
+
+export interface StageSystemRestoreResult {
+  staged?: StagedRestore;
+  counts?: { files: number; bytes: number };
+  sanity?: { passed: boolean; summary?: string; checks: { name: string; status: string; message?: string }[] };
+}
+
+// uploadSystemBackup posts a system backup (and optional key file) as
+// multipart. 422 carries the failed restore checks, so it is returned.
+export async function uploadSystemBackup(
+  url: string,
+  file: File,
+  key?: File | null,
+  token?: string | null,
+  extraHeaders: Record<string, string> = {}
+): Promise<StageSystemRestoreResult & { error?: string; restarting?: boolean }> {
+  const form = new FormData();
+  form.append('file', file);
+  if (key) form.append('key', key);
+  const headers: Record<string, string> = { ...extraHeaders };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(url, { method: 'POST', headers, body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok && !(res.status === 422 && data?.sanity)) throw new ApiError(data?.error ?? res.statusText, res.status);
+  return data;
+}
+
+export interface BackupRestoreOptions {
+  dest_volume?: string;
+  target_stack?: string;
+  host_id?: string;
+  mode?: 'merge' | 'replace';
+}
+
+export interface BackupRestoreReport {
+  kind: 'volume' | 'stack';
+  stack_name?: string;
+  host_id: string;
+  mode: 'merge' | 'replace';
+  files_restored: string[];
+  volumes_restored: string[];
+  warnings?: string[];
+}
+
+// runRestorable mirrors the server: the archive exists and is complete.
+export function runRestorable(r: BackupRun): boolean {
+  return (r.status === 'success' || r.status === 'success_with_warnings') && !r.pruned_at;
+}
+
+export interface DiskMount {
+  mount_point: string;
+  fs_type: string;
+  total: number;
+  used: number;
+  percent: number;
+  roles?: string[];
+  error?: string;
 }
 
 export interface NotificationChannel {
@@ -913,6 +999,10 @@ export interface NotificationChannel {
   name: string;
   config: any;
   enabled: boolean;
+  mute_schedule?: string;
+  last_sent_at?: string;
+  last_error?: string;
+  last_error_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -920,7 +1010,12 @@ export interface NotificationChannel {
 export interface AlertRule {
   id: number;
   name: string;
+  kind?: string;
   container_filter: string;
+  scope_host?: string;
+  scope_tag?: string;
+  scope_stack?: string;
+  mute_schedule?: string;
   metric: string;
   operator: string;
   threshold: number;
@@ -943,7 +1038,12 @@ export interface AlertRule {
 
 export interface AlertRuleInput {
   name: string;
+  kind?: string;
   container_filter: string;
+  scope_host?: string;
+  scope_tag?: string;
+  scope_stack?: string;
+  mute_schedule?: string;
   metric: string;
   operator: string;
   threshold: number;
@@ -964,6 +1064,9 @@ export interface AlertHistoryEntry {
   message: string;
   value: number;
   threshold: number;
+  kind?: string;
+  host_id?: string;
+  notified: boolean;
   occurred_at: string;
 }
 
@@ -1857,6 +1960,8 @@ export const api = {
       request<BackupJob>(`/backups/jobs/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
     deleteJob: (id: number) => request<void>(`/backups/jobs/${id}`, { method: 'DELETE' }),
     runJob: (id: number) => request<BackupRun>(`/backups/jobs/${id}/run`, { method: 'POST' }),
+    schedule: () =>
+      request<{ timezone: string; source: 'setting' | 'server'; server_timezone: string }>('/backups/schedule'),
     acceptHostKey: (id: number) =>
       request<void>(`/backups/jobs/${id}/accept-host-key`, { method: 'POST' }),
     // Clear the needs_review flag on a legacy auto-created
@@ -1896,20 +2001,18 @@ export const api = {
       // Revoke after a tick so Safari has a chance to start the download.
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     },
-    restore: (runId: number, destVolume: string) =>
-      request<void>(`/backups/runs/${runId}/restore`, {
+    // Empty fields mean: the backed-up volume/stack, on the host it was
+    // backed up on, merged. The server verifies the archive first.
+    restore: (runId: number, opts: BackupRestoreOptions) =>
+      request<BackupRestoreReport>(`/backups/runs/${runId}/restore`, {
         method: 'POST',
-        body: JSON.stringify({ dest_volume: destVolume })
+        body: JSON.stringify(opts)
       }),
-    // P.13.3: stack-typed restore. Extracts the archive's stack/<rel>
-    // files into /stacks/<target>/ and per-volume restores into
-    // matching docker volumes. target_stack is optional (defaults to
-    // the source stack name in the run).
-    restoreStack: (runId: number, targetStack?: string) =>
-      request<{ stack_name: string; files_restored: string[]; volumes_restored: string[]; warnings?: string[] }>(
-        `/backups/runs/${runId}/restore-stack`,
-        { method: 'POST', body: JSON.stringify({ target_stack: targetStack ?? '' }) }
-      ),
+    restoreStack: (runId: number, opts: BackupRestoreOptions) =>
+      request<BackupRestoreReport>(`/backups/runs/${runId}/restore-stack`, {
+        method: 'POST',
+        body: JSON.stringify(opts)
+      }),
     // P.12.4 — verify an uploaded system-backup tarball. Never touches
     // the live install; extracts to a temp dir, runs sanity, deletes.
     verifyUpload: async (file: File): Promise<BackupVerifyResult> => {
@@ -1921,7 +2024,16 @@ export const api = {
       return data as BackupVerifyResult;
     },
     verifyRun: (runId: number) =>
-      request<BackupVerifyResult>(`/backups/runs/${runId}/verify`, { method: 'POST' })
+      request<BackupVerifyResult>(`/backups/runs/${runId}/verify`, { method: 'POST' }),
+    // System restore: stage (from a run or an upload), then apply, which
+    // restarts the server. Nothing live changes before apply.
+    stagedSystemRestore: () => request<{ staged: StagedRestore | null }>('/restore/system'),
+    stageSystemRestoreFromRun: (runId: number) =>
+      request<StageSystemRestoreResult>('/restore/system', { method: 'POST', body: JSON.stringify({ run_id: runId }) }),
+    stageSystemRestoreUpload: (file: File, key?: File | null) =>
+      uploadSystemBackup(`${BASE}/restore/system`, file, key, auth.accessToken),
+    applySystemRestore: () => request<{ restarting: boolean }>('/restore/system/apply', { method: 'POST' }),
+    discardSystemRestore: () => request<void>('/restore/system', { method: 'DELETE' })
   },
 
   users: {
@@ -2082,7 +2194,7 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ ...input, config: typeof input.config === 'string' ? JSON.parse(input.config) : input.config })
       }),
-    updateChannel: (id: number, input: { type: string; name: string; config: any; enabled: boolean }) =>
+    updateChannel: (id: number, input: { type: string; name: string; config: any; enabled: boolean; mute_schedule?: string }) =>
       request<NotificationChannel>(`/notifications/channels/${id}`, {
         method: 'PUT',
         body: JSON.stringify({ ...input, config: typeof input.config === 'string' ? JSON.parse(input.config) : input.config })

@@ -22,7 +22,7 @@ What a stack backup does not contain: bind-mounted host paths and anything outsi
 <!-- update after: backups: keep retention per job, fail on partial or missing data -->
 If the stack's compose file cannot be parsed, or a volume cannot be read, the run still reports success and the archive is missing that data. The run log does not mention skipped data, so after the first run of every new job download the archive and check that it contains `volumes/<name>.tar.gz` for every volume you expect.
 
-Jobs created in the web UI always read volumes from the local host; the wizard has no host picker. A `volume` job for a remote host can be created through the API by setting `host_id`, and the data then streams through the server. The agent stream can drop chunks under load, so archives of remote volumes may be silently incomplete; test-restore them. Volume backups use a small helper container (`alpine:3.19`), which Dockmesh pulls if it is missing.
+Jobs created in the web UI always read volumes from the local host; the wizard has no host picker. A `volume` job for a remote host can be created through the API by setting `host_id`, and the data then streams through the server. The agent stream can drop chunks under load, so archives of remote volumes may be silently incomplete; test-restore them. Volume backups use a small helper container (`alpine:3.24`), which Dockmesh pulls if it is missing.
 
 ## Targets
 
@@ -131,10 +131,9 @@ Click **Restore** on a successful run (in the **Runs** tab or on the run's page)
 <!-- update after: backups: restore onto the origin host, verify first, replace or merge -->
 Restores always write to the local host, whichever host the backup came from. They merge into what is there: files in the archive overwrite existing files, and everything else stays. Dockmesh does not stop containers before a restore, regardless of what the UI says. Stop the stack first and redeploy it afterwards.
 
-<!-- update after: restore: stage system restores and swap them in at startup -->
-- **Volume run**: extracted into the volume you name (the **Runs** tab suggests `<volume>-restored`; the run page starts empty). The volume is created if it does not exist.
-- **Stack run**: the stack files are written to `stacks/<name>/` and the volumes in the archive are restored under their original names, which are usually `<original-stack>_<volume>`. Restoring under a different stack name therefore still writes into the original stack's volumes. A failed volume shows up as a warning while the restore reports success. The stack is not redeployed.
-- **System run**: the UI shows **Restore**, but it does not restore the server. It decrypts the archive and unpacks it into a Docker volume with the name you type, so that volume then holds the database, the JWT secret (`secrets.env`) and the age key in plaintext, readable by anyone who can browse volumes or deploy a stack that mounts it. Don't use it; if you did, remove that volume (`docker volume rm <name>`) and rotate the secrets key. Use `dockmesh restore` on the command line, see [Disaster recovery](./disaster-recovery.md).
+- **Volume run**: restored into the volume you name, on the host the backup was taken on unless you pick another one. The volume is created if it does not exist.
+- **Stack run**: the stack files are written to `stacks/<name>/` and the volumes go to the backup's host. Restoring under another stack name gives the copy its own volumes (`<new-stack>_<volume>`); volumes with a fixed name are left alone and listed in the result. It needs permission to edit (or create) that stack. The stack is not redeployed.
+- **System run**: **Restore the whole system** (admins only) unpacks the backup next to the live files and checks it, then restarts Dockmesh, which swaps the restored files in before it opens the database. The replaced files are kept in `<data>/.pre-restore/<time>` and `<stacks>.pre-restore-<time>`. **Restore system from file** on the **Runs** tab does the same with an uploaded archive. See [Disaster recovery](./disaster-recovery.md).
 
 The run page also offers **Download archive**, which streams the archive decrypted, as plain `.tar.gz`.
 

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/dockmesh/dockmesh/pkg/version"
 )
 
 // runStatusCmd implements `dockmesh-agent status`. It reads the local
@@ -23,7 +25,7 @@ func runStatusCmd() {
 	caPath := filepath.Join(dataDir, "ca.crt")
 	urlPath := filepath.Join(dataDir, "agent.url")
 
-	fmt.Printf("dockmesh-agent %s\n", agentVersion())
+	fmt.Printf("dockmesh-agent %s\n", version.Label())
 	fmt.Printf("data dir: %s\n\n", dataDir)
 
 	enrolled := fileExists(certPath) && fileExists(keyPath) && fileExists(caPath)

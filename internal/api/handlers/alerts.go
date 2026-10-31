@@ -141,6 +141,24 @@ func (h *Handlers) TestNotificationChannel(w http.ResponseWriter, r *http.Reques
 // alert rules
 // -----------------------------------------------------------------------------
 
+const errAlertScope = "out of scope: host-scoped roles may only manage rules limited to one of their hosts"
+
+// alertRuleInScope lets a host-scoped caller manage only rules bound to a
+// host they can access: an unscoped rule would deliver events from every
+// host to a channel the caller picks. Metric rules watch the local host.
+func (h *Handlers) alertRuleInScope(r *http.Request, kind, scopeHost string) bool {
+	if h.callerUnscoped(r) {
+		return true
+	}
+	if kind == "" || kind == alerts.KindMetric {
+		return h.inReadScope(r, "local", "")
+	}
+	if !alerts.HostBound(kind) || scopeHost == "" {
+		return false
+	}
+	return h.inReadScope(r, scopeHost, "")
+}
+
 func (h *Handlers) ListAlertRules(w http.ResponseWriter, r *http.Request) {
 	if h.Alerts == nil {
 		writeJSON(w, http.StatusOK, []alerts.Rule{})
@@ -162,6 +180,10 @@ func (h *Handlers) CreateAlertRule(w http.ResponseWriter, r *http.Request) {
 	var in alerts.RuleInput
 	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if !h.alertRuleInScope(r, in.Kind, in.ScopeHost) {
+		writeError(w, http.StatusForbidden, errAlertScope)
 		return
 	}
 	rule, err := h.Alerts.Create(r.Context(), in)
@@ -188,6 +210,17 @@ func (h *Handlers) UpdateAlertRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !h.callerUnscoped(r) {
+		cur, err := h.Alerts.Rule(r.Context(), id)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "rule not found")
+			return
+		}
+		if !h.alertRuleInScope(r, cur.Kind, cur.ScopeHost) || !h.alertRuleInScope(r, in.Kind, in.ScopeHost) {
+			writeError(w, http.StatusForbidden, errAlertScope)
+			return
+		}
+	}
 	rule, err := h.Alerts.Update(r.Context(), id, in)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -206,6 +239,12 @@ func (h *Handlers) DeleteAlertRule(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
+	}
+	if !h.callerUnscoped(r) {
+		if cur, err := h.Alerts.Rule(r.Context(), id); err == nil && !h.alertRuleInScope(r, cur.Kind, cur.ScopeHost) {
+			writeError(w, http.StatusForbidden, errAlertScope)
+			return
+		}
 	}
 	if err := h.Alerts.Delete(r.Context(), id); err != nil {
 		// Built-in rules are not deletable — surface 409 so the UI can
@@ -261,6 +300,15 @@ func (h *Handlers) ListAlertHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	entries, err := h.Alerts.History(r.Context(), limit)
+	if err == nil && !h.callerUnscoped(r) {
+		visible := entries[:0]
+		for _, e := range entries {
+			if e.HostID != "" && h.inReadScope(r, e.HostID, "") {
+				visible = append(visible, e)
+			}
+		}
+		entries = visible
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

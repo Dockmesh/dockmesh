@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
@@ -51,12 +51,22 @@ func TestSFTPHostKeyLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tofu := jobTOFU(svc.store, n, job)
+	// The job's SFTP settings were saved as a target; keys live there.
+	stored := targets.NewTargetStore(svc.store.db)
+	targetConfig := func() map[string]any {
+		t, err := stored.Get(ctx, job.TargetID)
+		if err != nil {
+			return nil
+		}
+		m, _ := configMap(t.Config)
+		return m
+	}
+	id := fmt.Sprintf("target:%d", job.TargetID)
+	tofu := targets.TOFU{Rec: targets.TargetKeyRecorder(svc.store.db, job.TargetID), Notices: n, ID: id}
 	if err := tofu.Handle(ctx, targets.HostKeyEvent{Kind: "recorded", Key: "ssh-ed25519 AAAA1", Fingerprint: "SHA256:one"}); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := svc.GetJob(ctx, job.ID)
-	cfg, _ := configMap(got.TargetConfig)
+	cfg := targetConfig()
 	if cfg["host_key"] != "ssh-ed25519 AAAA1" {
 		t.Fatalf("first key not recorded: %v", cfg)
 	}
@@ -76,15 +86,14 @@ func TestSFTPHostKeyLifecycle(t *testing.T) {
 
 	_ = tofu.Handle(ctx, targets.HostKeyEvent{Kind: "changed", Key: "ssh-ed25519 AAAA2", Fingerprint: "SHA256:two", OldFingerprint: "SHA256:one"})
 	open, _ := n.Open(ctx)
-	changedKey := targets.ChangedNoticeKey(strconv.FormatInt(job.ID, 10))
+	changedKey := targets.ChangedNoticeKey(id)
 	if !hasKey(open, changedKey) {
 		t.Fatal("changed key raised no notice")
 	}
 	if err := svc.AcceptHostKey(ctx, job.ID); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = svc.GetJob(ctx, job.ID)
-	cfg, _ = configMap(got.TargetConfig)
+	cfg = targetConfig()
 	if cfg["host_key"] != "ssh-ed25519 AAAA2" || cfg["host_key_pending"] != nil {
 		t.Errorf("after accept: %v", cfg)
 	}
@@ -147,4 +156,29 @@ func hasKey(ns []notices.Notice, key string) bool {
 		}
 	}
 	return false
+}
+
+func TestInlineUpdateKeepsHostKey(t *testing.T) {
+	svc, _ := newTestService(t, false)
+	ctx := context.Background()
+	job, err := svc.CreateJob(ctx, sftpJob())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.store.db.Exec(`UPDATE backup_targets SET config_json = json_set(config_json, '$.host_key', 'ssh-ed25519 PINNED') WHERE id = ?`, job.TargetID); err != nil {
+		t.Fatal(err)
+	}
+	in := sftpJob()
+	in.Schedule = "0 4 * * *"
+	got, err := svc.UpdateJob(ctx, job.ID, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgt, err := targets.NewTargetStore(svc.store.db).Get(ctx, got.TargetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _ := configMap(tgt.Config); cfg["host_key"] != "ssh-ed25519 PINNED" {
+		t.Fatalf("pinned host key lost on update: %v", cfg)
+	}
 }

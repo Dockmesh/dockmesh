@@ -373,3 +373,20 @@ func (s *Service) Decrypt(ciphertext []byte) ([]byte, error) {
 	}
 	return out, nil
 }
+
+// ParseKeyFile reads the identities of an exported backup key file (or
+// a secrets.age-key file), for decrypting backups of another install.
+func ParseKeyFile(b []byte) ([]age.Identity, error) {
+	ids, err := parseIdentities(b)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, errors.New("no AGE-SECRET-KEY line in the key file")
+	}
+	out := make([]age.Identity, len(ids))
+	for i, id := range ids {
+		out[i] = id
+	}
+	return out, nil
+}
