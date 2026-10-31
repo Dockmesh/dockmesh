@@ -227,6 +227,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 		Arch:          runtime.GOARCH,
 		Hostname:      hostname,
 		DockerVersion: dockerVersion,
+		Capabilities:  []string{agents.CapDiskMounts},
 	}
 	helloBytes, _ := json.Marshal(hello)
 	if err := writeFrame(conn, agents.Frame{Type: agents.FrameAgentHello, Payload: helloBytes}); err != nil {
@@ -278,6 +279,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 	if dockerCli != nil {
 		defer dockerCli.Close()
 	}
+	system.SetRolePathsFn(agentRolePaths(dockerCli))
 
 	// Read loop: handle server pings + request/response frames.
 	for {
@@ -944,6 +946,9 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		// the agent side via the protocol. Slice P.6.
 		respond(conn, f.ID, system.Collect(), nil)
 
+	case agents.FrameReqSystemDisks:
+		respond(conn, f.ID, system.LocalMounts(ctx), nil)
+
 	case agents.FrameReqStackDeploy:
 		var req agents.StackDeployReq
 		_ = json.Unmarshal(f.Payload, &req)
@@ -1117,6 +1122,28 @@ func agentCheckScale(ctx context.Context, cli *client.Client, req agents.StackCh
 		return nil, err
 	}
 	return compose.NewService(dockerwrap.Wrap(cli), nil).CheckScale(ctx, proj, req.Service)
+}
+
+// agentRolePaths labels the filesystems holding Docker, containerd, the
+// stacks dir and the agent's data dir in the disk report.
+func agentRolePaths(cli *client.Client) system.RolePathsFn {
+	return func(ctx context.Context) []system.RolePath {
+		dir := dataDir()
+		paths := []system.RolePath{
+			{Role: system.RoleContainerdRoot, Path: system.ContainerdRoot()},
+			{Role: system.RoleData, Path: dir},
+			{Role: system.RoleStacks, Path: filepath.Join(dir, "stacks")},
+		}
+		if cli == nil {
+			return paths
+		}
+		ictx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		if info, err := cli.Info(ictx); err == nil && info.DockerRootDir != "" {
+			paths = append(paths, system.RolePath{Role: system.RoleDockerRoot, Path: info.DockerRootDir})
+		}
+		return paths
+	}
 }
 
 func respond(conn *websocket.Conn, id string, data any, err error) {

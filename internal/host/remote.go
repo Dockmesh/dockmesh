@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -291,6 +292,28 @@ func (h *RemoteHost) SystemMetrics(ctx context.Context) (system.Metrics, error) 
 	var out system.Metrics
 	if err := json.Unmarshal(data, &out); err != nil {
 		return system.Metrics{}, fmt.Errorf("decode system metrics: %w", err)
+	}
+	if !h.agent.Hello.Has(agents.CapDiskMounts) {
+		out.MountsUnsupported = true
+		return out, nil
+	}
+	mounts, err := h.DiskMounts(ctx)
+	if err != nil {
+		slog.Warn("agent disk mounts", "host", h.name, "err", err)
+		return out, nil
+	}
+	return system.ApplyMounts(out, mounts), nil
+}
+
+// DiskMounts returns the agent's per-mount disk usage.
+func (h *RemoteHost) DiskMounts(ctx context.Context) ([]system.Mount, error) {
+	data, err := h.request(ctx, agents.FrameReqSystemDisks, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out []system.Mount
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode disk mounts: %w", err)
 	}
 	return out, nil
 }

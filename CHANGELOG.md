@@ -40,6 +40,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   and a route's host may not be `localhost`, a loopback address or a bare `*`. Existing routes
   that break these rules stop being served and are listed in a notice for admins.
 - Updated the bundled libraries, including the Docker SDK (28.5), SvelteKit 3 and Vite 8.
+- The dashboard and host page now list disk usage for every real filesystem of a host, with
+  the mounts holding Docker, containerd, stacks, Dockmesh data and local backups labelled.
+  The host's disk figure now shows the fullest of the Docker-related mounts instead of the
+  data directory only, so a full Docker or containerd mount no longer goes unnoticed. Hosts
+  with an older agent keep the single figure until the agent is updated.
 
 ### Fixed
 - Updating a container's image no longer loses its anonymous volumes (`-v /data` or a
