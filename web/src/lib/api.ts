@@ -994,6 +994,7 @@ export interface AlertHistoryEntry {
   value: number;
   threshold: number;
   kind?: string;
+  host_id?: string;
   notified: boolean;
   occurred_at: string;
 }

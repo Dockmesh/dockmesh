@@ -8162,8 +8162,8 @@ components:
         scope_tag: { type: string, description: Host tag the rule is limited to; empty means any. }
         scope_stack: { type: string, description: Compose stack the rule is limited to (container kinds); empty means any. }
         mute_schedule: { type: string, description: JSON weekly quiet-hours schedule; empty means never muted. }
-        metric: { type: string, enum: [cpu_percent, mem_percent] }
-        operator: { type: string, enum: [gt, lt] }
+        metric: { type: string, enum: [cpu_percent, mem_percent, ""], description: Metric kind only. }
+        operator: { type: string, enum: [gt, lt, ""], description: Metric kind only. }
         threshold: { type: number }
         duration_seconds: { type: integer, minimum: 0 }
         cooldown_seconds: { type: integer, minimum: 0 }

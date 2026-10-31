@@ -4,7 +4,7 @@
   // at least [60s]") with inline select/input controls. Same fields
   // underneath as the legacy form, just better wired for reading.
   import { api, ApiError, type AlertRule, type AlertRuleInput, type HostInfo, type NotificationChannel } from '$lib/api';
-  import { KINDS, describeRule, isContainerKind, ruleToInput, type RuleKind } from './ruleKinds';
+  import { KINDS, describeRule, isContainerKind, isHostBoundKind, ruleToInput, type RuleKind } from './ruleKinds';
   import { toast } from '$lib/stores/toast.svelte';
   import { EditorialModal, Eyebrow, Field } from '$lib/components/editorial';
   import { Check, Plus } from 'lucide-svelte';
@@ -319,7 +319,7 @@
       </Field>
     </div>
 
-    {#if kind !== 'metric' && kind !== 'backup_failed' && kind !== 'backup_missed' && kind !== 'cert_expiry'}
+    {#if isHostBoundKind(kind)}
       <div class="rm-grid-2">
         <Field label="Host" hint="Limit the rule to one host.">
           <select class="dm-input rm-input" bind:value={form.scope_host}>

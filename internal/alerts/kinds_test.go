@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -373,6 +374,47 @@ func TestEventRateLimitPerHost(t *testing.T) {
 	s.handleEvent(context.Background(), ContainerEvent{HostID: "a1", HostName: "edge", Container: "late", Action: "oom", Time: evalNow.Add(time.Second)})
 	if got := len(statuses(t, database, r.ID)); got != eventsPerSecond+1 {
 		t.Fatalf("next window not accepted: %d", got)
+	}
+}
+
+func TestEventFieldsFromAgentsValidated(t *testing.T) {
+	tests := []struct {
+		name      string
+		container string
+		exitCode  string
+		wantRows  int
+		wantMsg   string
+	}{
+		{"docker name", "web-1.blue_x", "137", 1, "Container web-1.blue_x on edge was killed"},
+		{"slack markup in name", "<!channel> <https://evil|reset>", "137", 0, ""},
+		{"control character", "web\x1b[2J", "137", 0, ""},
+		{"exit code garbage dropped", "db", "1; rm", 1, "Container db on edge was killed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, database := newEvalService(t)
+			r := eventRule(t, s, RuleInput{Kind: KindOOM})
+			s.handleEvent(context.Background(), ContainerEvent{
+				HostID: "a1", HostName: "edge", Container: tt.container, ExitCode: tt.exitCode,
+				Action: "oom", Time: evalNow,
+			})
+			var msgs []string
+			rows, err := database.Query(`SELECT message FROM alert_history WHERE rule_id = ?`, r.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var m string
+				if err := rows.Scan(&m); err != nil {
+					t.Fatal(err)
+				}
+				msgs = append(msgs, m)
+			}
+			if len(msgs) != tt.wantRows || (tt.wantRows > 0 && !strings.HasPrefix(msgs[0], tt.wantMsg)) {
+				t.Fatalf("history = %q, want %d row(s) starting %q", msgs, tt.wantRows, tt.wantMsg)
+			}
+		})
 	}
 }
 

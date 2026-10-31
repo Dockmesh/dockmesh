@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -34,6 +35,12 @@ const (
 // oneShot kinds report a single occurrence; there is no state to resolve.
 func oneShot(kind string) bool { return kind == KindOOM || kind == KindBackupFailed }
 
+// HostBound reports whether rules of this kind watch one host's data.
+// Backup and certificate rules are global.
+func HostBound(kind string) bool {
+	return kind != KindBackupFailed && kind != KindBackupMissed && kind != KindCertExpiry
+}
+
 func containerKind(kind string) bool {
 	switch kind {
 	case KindContainerStopped, KindRestartLoop, KindUnhealthy, KindOOM:
@@ -41,6 +48,14 @@ func containerKind(kind string) bool {
 	}
 	return false
 }
+
+// Agents are not trusted to send what dockerd would: names end up in
+// Slack/Teams markup and terminal output, so anything outside Docker's
+// name charset is dropped.
+var (
+	dockerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+	exitCode   = regexp.MustCompile(`^-?[0-9]{1,10}$`)
+)
 
 // ContainerEvent is a Docker container event from any host.
 type ContainerEvent struct {
@@ -291,12 +306,17 @@ func truncate(v string, n int) string {
 }
 
 func (s *Service) handleEvent(ctx context.Context, ev ContainerEvent) {
-	if ev.Container == "" || !s.allowEvent(ev.HostID, ev.Time) {
+	if !dockerName.MatchString(ev.Container) || !s.allowEvent(ev.HostID, ev.Time) {
 		return
 	}
 	ev.Container = truncate(ev.Container, maxEventField)
 	ev.Stack = truncate(ev.Stack, maxEventField)
-	ev.ExitCode = truncate(ev.ExitCode, 16)
+	if !dockerName.MatchString(ev.Stack) {
+		ev.Stack = ""
+	}
+	if !exitCode.MatchString(ev.ExitCode) {
+		ev.ExitCode = ""
+	}
 	ckey := ev.HostID + "/" + ev.Container
 	s.evMu.Lock()
 	switch ev.Action {

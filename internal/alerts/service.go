@@ -620,7 +620,7 @@ func (s *Service) inCooldown(r *Rule, key string, t time.Time) bool {
 	return ok && t.Sub(last) < time.Duration(r.CooldownSeconds)*time.Second
 }
 
-// fireRule records a fire for target and notifies unless muted or in
+// fireRule records a fire for container and notifies unless muted or in
 // cooldown. One-shot kinds (OOM, failed backup run) have nothing to
 // resolve, so they never enter the firing set.
 func (s *Service) fireRule(ctx context.Context, r *Rule, hostID, container, msg string, value float64, ts time.Time) {
@@ -682,14 +682,14 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, hostID, container, msg 
 	// rule has no external channels set, operators want a durable trail
 	// in the UI.
 	if s.notifs != nil {
-		_, _ = s.notifs.Emit(ctx, alertNotification(r, msg))
+		_, _ = s.notifs.Emit(ctx, alertNotification(r, hostID, msg))
 	}
 }
 
 // alertNotification addresses a firing alert to alert viewers whose scope
-// covers the local host: rules are evaluated against the server's own
-// container metrics only.
-func alertNotification(r *Rule, msg string) notifications.EmitInput {
+// covers the alert's host. Backup and certificate rules have no host, so
+// like their history entries they only reach unscoped viewers.
+func alertNotification(r *Rule, hostID, msg string) notifications.EmitInput {
 	sev := notifications.SevWarning
 	switch r.Severity {
 	case "critical":
@@ -704,7 +704,8 @@ func alertNotification(r *Rule, msg string) notifications.EmitInput {
 		Body:     msg,
 		Link:     "/alerts",
 		Perm:     rbac.PermAlertsView,
-		HostID:   "local",
+		HostID:   hostID,
+		Unscoped: hostID == "",
 	}
 }
 
@@ -925,12 +926,6 @@ func validateInput(in RuleInput) error {
 		return ErrInvalidKind
 	}
 	return nil
-}
-
-// HostBound reports whether rules of this kind watch one host's data.
-// Backup and certificate rules are global.
-func HostBound(kind string) bool {
-	return kind != KindBackupFailed && kind != KindBackupMissed && kind != KindCertExpiry
 }
 
 func stateKey(ruleID int64, container string) string {

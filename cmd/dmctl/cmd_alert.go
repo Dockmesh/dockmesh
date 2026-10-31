@@ -29,13 +29,13 @@ type alertHistory struct {
 }
 
 type alertRule struct {
-	ID        int64  `json:"id"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	Metric    string `json:"metric"`
+	ID        int64   `json:"id"`
+	Name      string  `json:"name"`
+	Kind      string  `json:"kind"`
+	Metric    string  `json:"metric"`
 	Threshold float64 `json:"threshold"`
-	Duration  int    `json:"duration_seconds"`
-	Enabled   bool   `json:"enabled"`
+	Duration  int     `json:"duration_seconds"`
+	Enabled   bool    `json:"enabled"`
 }
 
 // ruleWhat is the metric of a metric rule, else the rule kind.
@@ -51,9 +51,9 @@ func ruleWhat(r alertRule) string {
 func oneShotKind(k string) bool { return k == "oom" || k == "backup_failed" }
 
 // alertListActiveCmd implements `dmctl alert list-active` from the spec.
-// "Active" = most recent `fired` history entries per rule and target. We pull the
-// history list and filter client-side since the server doesn't expose a
-// dedicated active-alerts endpoint.
+// "Active" = most recent `fired` history entries per rule and target. We
+// pull the history list and filter client-side since the server doesn't
+// expose a dedicated active-alerts endpoint.
 func alertListActiveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list-active",

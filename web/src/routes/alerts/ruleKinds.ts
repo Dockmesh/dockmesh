@@ -37,6 +37,11 @@ export function isContainerKind(k: RuleKind): boolean {
   return k === 'restart_loop' || k === 'container_stopped' || k === 'unhealthy' || k === 'oom';
 }
 
+// Mirrors alerts.HostBound: backup and certificate rules are global.
+export function isHostBoundKind(k: RuleKind): boolean {
+  return k !== 'metric' && k !== 'backup_failed' && k !== 'backup_missed' && k !== 'cert_expiry';
+}
+
 export function fmtDuration(secs: number): string {
   if (secs < 60) return `${secs}s`;
   if (secs < 3600) return `${Math.round(secs / 60)}m`;

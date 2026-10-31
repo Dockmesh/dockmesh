@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 
 	"github.com/docker/docker/api/types/events"
@@ -69,10 +70,13 @@ func (h *RemoteHost) ContainerEvents(ctx context.Context) (<-chan events.Message
 	}()
 	go func() {
 		defer close(out)
-		dec := json.NewDecoder(stream)
+		budget := &readBudget{r: stream, left: maxEventBytes}
+		dec := json.NewDecoder(budget)
 		for {
 			var m events.Message
-			if err := dec.Decode(&m); err != nil {
+			err := dec.Decode(&m)
+			budget.left = maxEventBytes
+			if err != nil {
 				if ctx.Err() == nil {
 					slog.Debug("agent docker events ended", "host", h.name, "err", err)
 				}
@@ -86,4 +90,27 @@ func (h *RemoteHost) ContainerEvents(ctx context.Context) (<-chan events.Message
 		}
 	}()
 	return out, nil
+}
+
+// maxEventBytes bounds one event from an agent: the decoder would
+// otherwise keep buffering a value that never ends.
+const maxEventBytes = 64 << 10
+
+var errEventTooLarge = errors.New("agent docker event too large")
+
+type readBudget struct {
+	r    io.Reader
+	left int
+}
+
+func (b *readBudget) Read(p []byte) (int, error) {
+	if b.left <= 0 {
+		return 0, errEventTooLarge
+	}
+	if len(p) > b.left {
+		p = p[:b.left]
+	}
+	n, err := b.r.Read(p)
+	b.left -= n
+	return n, err
 }

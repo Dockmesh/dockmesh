@@ -8,9 +8,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/alerts"
-	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/notify"
-	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -149,37 +147,16 @@ const errAlertScope = "out of scope: host-scoped roles may only manage rules lim
 // host they can access: an unscoped rule would deliver events from every
 // host to a channel the caller picks. Metric rules watch the local host.
 func (h *Handlers) alertRuleInScope(r *http.Request, kind, scopeHost string) bool {
-	if !h.callerHostScoped(r) {
+	if h.callerUnscoped(r) {
 		return true
 	}
 	if kind == "" || kind == alerts.KindMetric {
-		return h.hostVisible(r, "local")
+		return h.inReadScope(r, "local", "")
 	}
 	if !alerts.HostBound(kind) || scopeHost == "" {
 		return false
 	}
-	return h.hostVisible(r, scopeHost)
-}
-
-// callerHostScoped reports whether the caller's user scope or any of its
-// roles restricts which hosts it may act on. A role that can't reach a
-// host id that exists nowhere is scoped.
-func (h *Handlers) callerHostScoped(r *http.Request) bool {
-	if len(middleware.ScopeTags(r.Context())) > 0 {
-		return true
-	}
-	return !h.checkRoleScope(r, rbac.ScopeRequest{HostID: "dockmesh-scope-probe"})
-}
-
-func (h *Handlers) hostVisible(r *http.Request, hostID string) bool {
-	if !h.canAccessHost(r, hostID) {
-		return false
-	}
-	req := rbac.ScopeRequest{HostID: hostID}
-	if h.HostTags != nil {
-		req.HostTags = h.HostTags.Tags(hostID)
-	}
-	return h.checkRoleScope(r, req)
+	return h.inReadScope(r, scopeHost, "")
 }
 
 func (h *Handlers) ListAlertRules(w http.ResponseWriter, r *http.Request) {
@@ -233,7 +210,7 @@ func (h *Handlers) UpdateAlertRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if h.callerHostScoped(r) {
+	if !h.callerUnscoped(r) {
 		cur, err := h.Alerts.Rule(r.Context(), id)
 		if err != nil {
 			writeError(w, http.StatusNotFound, "rule not found")
@@ -263,7 +240,7 @@ func (h *Handlers) DeleteAlertRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if h.callerHostScoped(r) {
+	if !h.callerUnscoped(r) {
 		if cur, err := h.Alerts.Rule(r.Context(), id); err == nil && !h.alertRuleInScope(r, cur.Kind, cur.ScopeHost) {
 			writeError(w, http.StatusForbidden, errAlertScope)
 			return
@@ -323,10 +300,10 @@ func (h *Handlers) ListAlertHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	entries, err := h.Alerts.History(r.Context(), limit)
-	if err == nil && h.callerHostScoped(r) {
+	if err == nil && !h.callerUnscoped(r) {
 		visible := entries[:0]
 		for _, e := range entries {
-			if e.HostID != "" && h.hostVisible(r, e.HostID) {
+			if e.HostID != "" && h.inReadScope(r, e.HostID, "") {
 				visible = append(visible, e)
 			}
 		}
