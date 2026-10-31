@@ -4,26 +4,16 @@
     api, ApiError, isFanOut,
     type StackDeployment, type DiscoveredStack, type StackGitSourceInput, type EnvDrift,
   } from '$lib/api';
-  import { Button, Modal, Input, Skeleton } from '$lib/components/ui';
-  import { Eyebrow, EdRow, StatusPill } from '$lib/components/editorial';
+  import { goto } from '$app/navigation';
+  import { Button, Modal, Input, Skeleton, Segmented, StatBar, StatusChip, LiveIndicator, Menu, EmptyState } from '$lib/components/ui';
+  import { confirm } from '$lib/stores/confirm.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { stackOps } from '$lib/stores/stackOps.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { autoRefresh } from '$lib/autorefresh';
   import { latest } from '$lib/latest';
   import { hosts } from '$lib/stores/host.svelte';
-  import {
-    Plus,
-    FileCode2,
-    Terminal,
-    Search,
-    Server,
-    RefreshCw,
-    Clock,
-    AlertTriangle,
-    Anchor,
-    ArrowRight,
-  } from 'lucide-svelte';
+  import { Plus, Terminal, AlertTriangle, ArrowRight, FileCode2 } from 'lucide-svelte';
 
   const canWrite = $derived(allowed('stacks.create'));
   const canDeploy = $derived(allowed('stacks.deploy'));
@@ -31,7 +21,7 @@
   const isRemote = $derived(hosts.id !== 'local');
 
   type SortMode = 'name' | 'state' | 'deployed';
-  let sortMode = $state<SortMode>('name');
+  let sortMode = $state<SortMode>('state');
 
   type StackState = 'running' | 'stopped' | 'partial' | 'unhealthy';
   interface StackCard {
@@ -45,6 +35,9 @@
 
   let stackCards = $state<StackCard[]>([]);
   let loading = $state(true);
+  let refreshing = $state(false);
+  let lastLoaded = $state<number | null>(null);
+  let showAdoptPicker = $state(false);
   let showCreate = $state(false);
   let showImport = $state(false);
 
@@ -105,6 +98,7 @@
     // place, no visual jitter. (Same pattern the dashboard uses.)
     const isFirstLoad = untrack(() => stackCards.length === 0);
     if (isFirstLoad) loading = true;
+    refreshing = true;
     try {
       const [stackList, containersRaw, discovered] = await Promise.all([
         api.stacks.list(),
@@ -160,10 +154,14 @@
           status: s.status ?? 'ok',
         };
       });
+      lastLoaded = Date.now();
     } catch (err) {
       if (current()) toast.error('Failed to load stacks', err instanceof ApiError ? err.message : undefined);
     } finally {
-      if (current()) loading = false;
+      if (current()) {
+        loading = false;
+        refreshing = false;
+      }
     }
   }
 
@@ -348,10 +346,11 @@
       })
       .sort((a, b) => {
         if (sortMode === 'state') {
+          // Attention first, then running, then stopped.
           const order: Record<string, number> = {
-            running: 0, partial: 1, unhealthy: 2, stopped: 3,
+            unhealthy: 0, partial: 1, running: 2, stopped: 3,
           };
-          return (order[a.state] ?? 9) - (order[b.state] ?? 9);
+          return (order[a.state] ?? 9) - (order[b.state] ?? 9) || a.name.localeCompare(b.name);
         }
         if (sortMode === 'deployed') {
           const aTime = a.deployment?.deployed_at ?? '';
@@ -371,15 +370,78 @@
     return `${Math.floor(secs / 86400)}d ago`;
   }
 
-  function rowStatus(s: StackState): 'running' | 'degraded' | 'failing' | 'stopped' {
-    if (s === 'running') return 'running';
-    if (s === 'unhealthy') return 'failing';
-    if (s === 'partial') return 'degraded';
-    return 'stopped';
+  const COLS = '14px minmax(240px, 2.4fr) 120px minmax(100px, 1fr) 100px 110px 40px';
+
+  function stateTone(s: StackState): 'ok' | 'warn' | 'bad' | 'off' {
+    if (s === 'running') return 'ok';
+    if (s === 'unhealthy') return 'bad';
+    if (s === 'partial') return 'warn';
+    return 'off';
+  }
+  function stateLabel(s: StackState): string {
+    return { running: 'running', partial: 'degraded', unhealthy: 'unhealthy', stopped: 'stopped' }[s];
+  }
+  function svcTone(svc: { state: string; status: string }): string {
+    if (svc.status.toLowerCase().includes('unhealthy')) return 'bad';
+    if (svc.state === 'running') return '';
+    if (svc.state === 'restarting' || svc.state === 'paused') return 'warn';
+    return 'off';
+  }
+  function stackHost(s: StackCard): string {
+    return s.deployment?.host_id ?? s.hosts[0]?.id ?? (hosts.isAll ? 'local' : hosts.id);
+  }
+  function hostLabel(s: StackCard): string {
+    if (s.deployment) return s.deployment.host_name || s.deployment.host_id;
+    if (s.hosts.length) return s.hosts.map((h) => h.name).join(', ');
+    return '—';
+  }
+  const hostCount = $derived(
+    new Set(stackCards.map((s) => s.deployment?.host_id ?? s.hosts[0]?.id).filter(Boolean)).size
+  );
+
+  async function confirmExternalChanges(err: unknown, name: string): Promise<boolean> {
+    if (!(err instanceof ApiError) || err.status !== 409 || err.body?.code !== 'modified_outside') return false;
+    const files: string = (err.body.files as string[] | undefined)?.join(', ') || 'compose.yaml or .env';
+    return confirm.ask({
+      title: 'Stack files changed outside Dockmesh',
+      message: `${files} of "${name}" changed since Dockmesh last wrote them.`,
+      body: 'Something other than Dockmesh changed these files. Review them in the editor before you deploy them as they are.',
+      confirmLabel: 'Deploy anyway',
+      danger: true,
+    });
   }
 
-  function pillStatus(s: StackState): 'running' | 'degraded' | 'failing' | 'stopped' {
-    return rowStatus(s);
+  async function deployStack(name: string, host: string) {
+    try {
+      const res = await stackOps.run(host, name, async () => {
+        try {
+          return await api.stacks.deploy(name, host);
+        } catch (err) {
+          if (!(await confirmExternalChanges(err, name))) throw err;
+          return api.stacks.deploy(name, host, undefined, true);
+        }
+      });
+      toast.success('Deployed', `${name} · ${res.services.length} service(s)`);
+      await load();
+    } catch (err) {
+      toast.error('Deploy failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
+  async function stopStack(name: string, host: string) {
+    const ok = await confirm.ask({
+      title: `Stop ${name}?`,
+      message: 'All containers of this stack are stopped. Volumes and the compose file are kept.',
+      confirmLabel: 'Stop',
+    });
+    if (!ok) return;
+    try {
+      await stackOps.run(host, name, () => api.stacks.stop(name, host));
+      toast.info('Stopped', name);
+      await load();
+    } catch (err) {
+      toast.error('Stop failed', err instanceof ApiError ? err.message : undefined);
+    }
   }
 
   // Title is the page identity, not a narrative. Inline mono counter
@@ -392,275 +454,186 @@
   });
 </script>
 
-<section class="stacks-frame">
-  <!-- Header -->
-  <header class="stacks-header">
-    <div class="stacks-header-text">
-      <h1 class="ed-title stacks-title">Stacks</h1>
-      <p class="ed-subtitle stacks-subtitle">{subtitleLine}</p>
-    </div>
-    <div class="ed-actions">
-      {#if canWrite}
-        <button
-          type="button"
-          class="dm-btn dm-btn-primary dm-btn-sm"
-          onclick={() => { newHostId = hosts.isAll ? 'local' : hosts.id; showCreate = true; }}
-        >
-          <Plus size={13} strokeWidth={1.5} />
-          New stack
-        </button>
-        <button
-          type="button"
-          class="dm-btn dm-btn-secondary dm-btn-sm"
-          onclick={() => (showImport = true)}
-        >
-          <Terminal size={13} strokeWidth={1.5} />
-          Import compose
-        </button>
-      {/if}
+<section class="dm-page">
+  <div class="dm-ph">
+    <h1>Stacks</h1>
+    <span class="dm-sub">{subtitleLine}</span>
+    <span class="dm-sp"></span>
+    <LiveIndicator updatedAt={lastLoaded} onrefresh={load} busy={refreshing} />
+    {#if canAdopt}
+      <button type="button" class="dm-btn" onclick={() => (showAdoptPicker = true)}>
+        Adopt existing…{#if discoveredStacks.length}<span class="dm-num dm-dim">{discoveredStacks.length}</span>{/if}
+      </button>
+    {/if}
+    {#if canWrite}
       <button
         type="button"
-        class="dm-btn dm-btn-ghost dm-btn-sm"
-        onclick={load}
-        disabled={loading}
-        aria-label="Refresh"
+        class="dm-btn dm-btn-primary"
+        onclick={() => { newHostId = hosts.isAll ? 'local' : hosts.id; showCreate = true; }}
       >
-        <RefreshCw size={13} strokeWidth={1.5} class={loading ? 'animate-spin' : ''} />
-        Refresh
+        <Plus size={14} strokeWidth={2} /> New stack
       </button>
-    </div>
-  </header>
+    {/if}
+  </div>
 
-  <!-- Needs-recovery banner -->
   {#if needsRecovery.length > 0}
-    <div class="stacks-banner stacks-banner-warn">
-      <AlertTriangle size={14} strokeWidth={1.5} class="stacks-banner-icon-warn" />
-      <div>
-        <div class="stacks-banner-title">
-          {needsRecovery.length} stack{needsRecovery.length === 1 ? '' : 's'}
-          need{needsRecovery.length === 1 ? 's' : ''} <em class="ed-accent">attention</em>
-        </div>
-        <p class="stacks-banner-body">
-          The compose file is missing or empty on disk, but a deployment record (or running
-          containers carrying the project label) still exist. Open each stack to recover from
-          the running containers, restore from a backup, or remove the dockmesh record.
-        </p>
-        <ul class="stacks-banner-list">
-          {#each needsRecovery as s (s.name)}
-            <li>
-              <a
-                href="/stacks/{encodeURIComponent(s.name)}"
-                class="stacks-banner-row"
-              >
-                <span class="stacks-banner-row-name">{s.name}</span>
-                <span class="stacks-banner-row-meta">
-                  {#if s.deployment}
-                    last deployed {fmtRelTime(s.deployment.deployed_at)} on {s.deployment.host_name || s.deployment.host_id}
-                  {:else}
-                    containers found via project label
-                  {/if}
-                </span>
-                <span class="stacks-banner-row-cta">Open recovery <ArrowRight size={11} strokeWidth={1.5} /></span>
-              </a>
-            </li>
-          {/each}
-        </ul>
+    <div class="st-attn" role="status">
+      <div class="st-attn-h">
+        <AlertTriangle size={14} strokeWidth={1.8} />
+        <b>{needsRecovery.length} stack{needsRecovery.length === 1 ? '' : 's'} need{needsRecovery.length === 1 ? 's' : ''} recovery</b>
+        <span class="dm-dim">· compose file missing on disk, containers or a deploy record still exist</span>
       </div>
+      {#each needsRecovery as s (s.name)}
+        <a class="st-attn-row" href="/stacks/{encodeURIComponent(s.name)}">
+          <span class="dm-mono">{s.name}</span>
+          <span class="dm-dim dm-trunc">
+            {#if s.deployment}
+              last deployed {fmtRelTime(s.deployment.deployed_at)} on {s.deployment.host_name || s.deployment.host_id}
+            {:else}
+              containers found via project label
+            {/if}
+          </span>
+          <span class="st-attn-cta">Open recovery <ArrowRight size={12} /></span>
+        </a>
+      {/each}
     </div>
   {/if}
 
-  <!-- Discovered (unmanaged) banner -->
-  {#if canAdopt && discoveredStacks.length > 0}
-    <div class="stacks-banner stacks-banner-info">
-      <Anchor size={14} strokeWidth={1.5} class="stacks-banner-icon-info" />
-      <div>
-        <div class="stacks-banner-title">
-          {discoveredStacks.length} unmanaged compose project{discoveredStacks.length === 1 ? '' : 's'}
-          detected on this host
-        </div>
-        <p class="stacks-banner-body">
-          These are running via plain <code class="stacks-code">docker compose up</code> — Dockmesh
-          can take over without restarting containers. For stacks with build contexts or relative
-          bind mounts, prefer <code class="stacks-code">dmctl stack adopt &lt;path&gt;</code>
-          from the host shell.
-        </p>
-        <ul class="stacks-banner-list">
-          {#each discoveredStacks as ds (ds.project_name)}
-            <li>
-              <div class="stacks-banner-row">
-                <span class="stacks-banner-row-name">{ds.project_name}</span>
-                <span class="stacks-banner-row-meta">
-                  {ds.service_count} service{ds.service_count === 1 ? '' : 's'} on {ds.host_name}: {ds.services.map((s) => s.name).join(', ')}
-                </span>
-                <button
-                  type="button"
-                  class="dm-btn dm-btn-secondary dm-btn-xs"
-                  onclick={() => openAdopt(ds)}
-                >
-                  Adopt
-                </button>
-              </div>
-            </li>
-          {/each}
-        </ul>
-      </div>
-    </div>
-  {/if}
-
-  <!-- Filter bar — tabs LEFT, search + sort RIGHT, all on the same line.
-       Matches the mockup's pattern (tabs are the primary filter, search
-       is the secondary refinement).  -->
   {#if !loading && stackCards.length > 0}
-    <div class="ed-tabs stacks-tabs">
-      <button
-        class="ed-tab"
-        class:active={filter === 'all'}
-        onclick={() => (filter = 'all')}
-      >All <span class="count">{counts.all}</span></button>
-      <button
-        class="ed-tab"
-        class:active={filter === 'running'}
-        onclick={() => (filter = 'running')}
-      >Running <span class="count">{counts.running}</span></button>
-      <button
-        class="ed-tab"
-        class:active={filter === 'unhealthy'}
-        onclick={() => (filter = 'unhealthy')}
-      >Issues <span class="count">{counts.unhealthy}</span></button>
-      <button
-        class="ed-tab"
-        class:active={filter === 'stopped'}
-        onclick={() => (filter = 'stopped')}
-      >Stopped <span class="count">{counts.stopped}</span></button>
-
-      <div class="stacks-tabs-right">
-        <div class="stacks-search">
-          <Search size={13} strokeWidth={1.5} class="stacks-search-icon" />
-          <input
-            type="search"
-            placeholder="filter…"
-            bind:value={search}
-            class="ed-input ed-input-mono stacks-search-input"
-          />
-        </div>
-        <div class="stacks-sort">
-          <span class="stacks-sort-label">sort</span>
-          <select class="stacks-sort-select" bind:value={sortMode}>
-            <option value="name">name</option>
-            <option value="state">status</option>
-            <option value="deployed">last deployed</option>
-          </select>
-        </div>
-      </div>
+    <div class="dm-toolbar">
+      <Segmented
+        label="Filter stacks"
+        bind:value={filter}
+        options={[
+          { key: 'all', label: 'All', count: counts.all },
+          { key: 'running', label: 'Running', count: counts.running },
+          { key: 'unhealthy', label: 'Attention', count: counts.unhealthy },
+          { key: 'stopped', label: 'Stopped', count: counts.stopped }
+        ]}
+      />
+      <span class="dm-sp"></span>
+      <input type="search" class="dm-filter" placeholder="Filter stacks or services…" aria-label="Filter stacks" bind:value={search} style="width: 240px" />
     </div>
+
+    <StatBar
+      items={[
+        { label: 'Running', value: `${counts.running} of ${counts.all}` },
+        {
+          label: 'Needs attention',
+          value: counts.unhealthy + needsRecovery.length,
+          note: [...stackCards.filter((s) => s.state === 'unhealthy' || s.state === 'partial').map((s) => `${s.name} ${stateLabel(s.state)}`), ...needsRecovery.map((s) => `${s.name} needs recovery`)].join(' · '),
+          tone: counts.unhealthy + needsRecovery.length ? 'warn' : ''
+        },
+        { label: 'Stopped', value: counts.stopped },
+        { label: 'Hosts', value: hostCount }
+      ]}
+    />
   {/if}
 
-  <!-- Stacks list -->
   {#if loading}
-    <div class="stacks-skeleton">
-      {#each Array(5) as _}
-        <Skeleton width="100%" height="2.5rem" />
+    <div class="dm-tbl">
+      {#each Array(5) as _, i (i)}
+        <div class="dm-tr" style="grid-template-columns: 1fr"><Skeleton width="60%" height="0.9rem" /></div>
       {/each}
     </div>
   {:else if stackCards.length === 0}
-    <div class="stacks-empty">
-      <div class="stacks-empty-title">No stacks yet.</div>
-      <p class="stacks-empty-body">
-        Create your first stack by pasting a <em class="ed-accent">compose.yaml</em>
-        or importing a <code class="stacks-code">docker run</code> command.
-      </p>
-      {#if canWrite}
-        <div class="stacks-empty-actions">
-          <button
-            type="button"
-            class="dm-btn dm-btn-primary dm-btn-sm"
-            onclick={() => { newHostId = hosts.isAll ? 'local' : hosts.id; showCreate = true; }}
-          >
-            <Plus size={13} strokeWidth={1.5} /> Create stack
+    <EmptyState title="No stacks yet" description="Create a stack from a compose.yaml, a git repository or a docker run command.">
+      {#snippet action()}
+        {#if canWrite}
+          <button type="button" class="dm-btn dm-btn-primary" onclick={() => { newHostId = hosts.isAll ? 'local' : hosts.id; showCreate = true; }}>
+            <Plus size={14} strokeWidth={2} /> New stack
           </button>
-          <button
-            type="button"
-            class="dm-btn dm-btn-secondary dm-btn-sm"
-            onclick={() => (showImport = true)}
-          >
-            <Terminal size={13} strokeWidth={1.5} /> Import from docker run
-          </button>
-        </div>
-      {/if}
-    </div>
-  {:else if visible.length === 0}
-    <div class="stacks-empty">
-      <p class="stacks-empty-body">No stacks match this filter.</p>
-    </div>
+        {/if}
+      {/snippet}
+    </EmptyState>
   {:else}
-    <div class="stacks-list">
+    <div class="dm-tbl" role="table" aria-label="Stacks">
+      <div class="dm-tr dm-th" role="row" style="grid-template-columns: {COLS}">
+        <span role="columnheader"></span>
+        <span role="columnheader"><button type="button" onclick={() => (sortMode = 'name')}>Name · services{sortMode === 'name' ? ' ↓' : ''}</button></span>
+        <span role="columnheader"><button type="button" onclick={() => (sortMode = 'state')}>Status{sortMode === 'state' ? ' ↓' : ''}</button></span>
+        <span role="columnheader">Host</span>
+        <span role="columnheader">Containers</span>
+        <span role="columnheader"><button type="button" onclick={() => (sortMode = 'deployed')}>Last deploy{sortMode === 'deployed' ? ' ↓' : ''}</button></span>
+        <span role="columnheader"></span>
+      </div>
       {#each visible as s (s.name)}
-        <EdRow
-          status={rowStatus(s.state)}
-          href={`/stacks/${encodeURIComponent(s.name)}`}
-          columns="6px minmax(0, 1.6fr) minmax(0, 1.4fr) minmax(0, 0.9fr) auto minmax(80px, auto) auto"
+        {@const tone = stateTone(s.state)}
+        {@const running = s.services.filter((x) => x.state === 'running').length}
+        {@const host = stackHost(s)}
+        <div
+          class="dm-tr dm-click"
+          role="row"
+          style="grid-template-columns: {COLS}"
+          onclick={() => goto(`/stacks/${encodeURIComponent(s.name)}`)}
+          onkeydown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) goto(`/stacks/${encodeURIComponent(s.name)}`); }}
+          tabindex="0"
         >
-          <span class="stacks-row-name">
-            <span class="stacks-row-id">{s.name}</span>
-            <span class="stacks-row-meta">
-              {s.services.length} service{s.services.length === 1 ? '' : 's'}
-            </span>
-          </span>
-
-          <span class="stacks-row-services">
-            {#if s.services.length > 0}
-              {#each s.services.slice(0, 5) as svc (svc.name)}
-                <span
-                  class="stacks-row-service"
-                  class:running={svc.state === 'running'}
-                  title={svc.status}
-                >{svc.name}</span>
-              {/each}
-              {#if s.services.length > 5}
-                <span class="stacks-row-service-more">+{s.services.length - 5}</span>
+          <span role="cell"><span class="dm-dot {tone === 'off' ? '' : tone}"></span></span>
+          <span role="cell" class="dm-nm">
+            <a href="/stacks/{encodeURIComponent(s.name)}" onclick={(e) => e.stopPropagation()}>{s.name}</a>
+            <small title={s.services.map((x) => `${x.name}: ${x.status || x.state}`).join('\n')}>
+              {#if s.services.length}
+                <span class="dm-mini">{#each s.services as svc (svc.name)}<i class={svcTone(svc)}></i>{/each}</span>
+                {running}/{s.services.length} · {s.services.map((x) => x.name).join(' · ')}
+              {:else}
+                no containers
               {/if}
-            {:else}
-              <span class="stacks-row-service-empty">no containers</span>
-            {/if}
+            </small>
           </span>
-
-          <span class="stacks-row-host">
-            {#if s.deployment}
-              <span class="stacks-row-host-pill">
-                <Server size={10} strokeWidth={1.5} />
-                {s.deployment.host_name || s.deployment.host_id}
-              </span>
-            {:else if hosts.isAll && s.hosts.length > 0}
-              {#each s.hosts as h (h.id)}
-                <span class="stacks-row-host-pill">
-                  <Server size={10} strokeWidth={1.5} />
-                  {h.name}
-                </span>
-              {/each}
-            {/if}
+          <span role="cell"><StatusChip tone={tone} label={stateLabel(s.state)} /></span>
+          <span role="cell" class="dm-num dm-dim" title={hostLabel(s)}>{hostLabel(s)}</span>
+          <span role="cell" class="dm-num">{s.services.length ? `${running} / ${s.services.length}` : '—'}</span>
+          <span role="cell" class="dm-num dm-dim" title={s.deployment?.deployed_at ? new Date(s.deployment.deployed_at).toLocaleString() : ''}>
+            {s.deployment?.deployed_at ? fmtRelTime(s.deployment.deployed_at) : '—'}
           </span>
-
-          <StatusPill status={pillStatus(s.state)} />
-
-          <span class="stacks-row-uptime">
-            {#if s.deployment?.deployed_at && s.state === 'running'}
-              <Clock size={10} strokeWidth={1.5} class="stacks-row-uptime-icon" />
-              <span>up {fmtRelTime(s.deployment.deployed_at).replace(' ago', '')}</span>
-            {:else if s.deployment?.deployed_at}
-              <span class="stacks-row-uptime-muted">{fmtRelTime(s.deployment.deployed_at)}</span>
-            {:else}
-              <span class="stacks-row-uptime-muted">—</span>
-            {/if}
+          <span role="cell" class="dm-tr-menu">
+            <Menu
+              label="Actions for {s.name}"
+              items={[
+                { label: 'Open', kbd: '↵', href: `/stacks/${encodeURIComponent(s.name)}` },
+                ...(canDeploy
+                  ? [
+                      { separator: true },
+                      { label: s.state === 'stopped' ? 'Start' : 'Redeploy', disabled: stackOps.isBusy(host, s.name), onclick: () => deployStack(s.name, host) },
+                      ...(s.state !== 'stopped' ? [{ label: 'Stop', disabled: stackOps.isBusy(host, s.name), onclick: () => stopStack(s.name, host) }] : [])
+                    ]
+                  : [])
+              ]}
+            />
           </span>
-
-          <span class="stacks-row-arrow" aria-hidden="true">
-            <ArrowRight size={13} strokeWidth={1.5} />
-          </span>
-        </EdRow>
+        </div>
+      {:else}
+        <div class="dm-empty">No stacks match this filter.</div>
       {/each}
     </div>
   {/if}
 </section>
+
+<Modal bind:open={showAdoptPicker} title="Adopt an existing compose project" maxWidth="max-w-xl">
+  <div class="st-adopt">
+    <p class="dm-sub">
+      Projects started with plain <code class="dm-mono">docker compose up</code> can be taken over without
+      restarting their containers. For projects with build contexts or relative bind mounts, use
+      <code class="dm-mono">dmctl stack adopt &lt;path&gt;</code> on the host instead.
+    </p>
+    {#if discoveredStacks.length === 0}
+      <EmptyState title="Nothing to adopt" description="No unmanaged compose projects were found on {hosts.isAll ? 'any host' : (hosts.selected?.name ?? 'this host')}." />
+    {:else}
+      <div class="dm-tbl">
+        {#each discoveredStacks as ds (ds.host_id + ds.project_name)}
+          <div class="dm-tr" style="grid-template-columns: minmax(0, 1fr) auto">
+            <span class="dm-nm">
+              <span class="dm-t">{ds.project_name}</span>
+              <small>{ds.service_count} service{ds.service_count === 1 ? '' : 's'} on {ds.host_name}: {ds.services.map((x) => x.name).join(', ')}</small>
+            </span>
+            <button type="button" class="dm-btn dm-btn-sm" onclick={() => { showAdoptPicker = false; openAdopt(ds); }}>Adopt…</button>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </div>
+</Modal>
 
 <!-- Modals — using the existing Modal primitive so the auth/RBAC + state
      wiring stays untouched. Page-level conversion of these popovers to
@@ -985,304 +958,34 @@
 </Modal>
 
 <style>
-  .stacks-frame {
-    display: flex;
-    flex-direction: column;
-    gap: 28px;
-    max-width: 1480px;
-    padding-bottom: 48px;
+  .st-attn {
+    border: 1px solid var(--warn-bd);
+    background: var(--warn-bg);
+    border-radius: 9px;
+    padding: 4px 14px;
   }
-
-  /* ─────── Header ────── */
-  .stacks-header {
+  .st-attn-h {
     display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 24px;
-    flex-wrap: wrap;
-  }
-  .stacks-header-text { min-width: 0; max-width: 80ch; flex: 1 1 40ch; }
-  .stacks-title {
-    /* `display: flex` (not inline-flex) forces the title onto its own
-       line below the eyebrow — matches the editorial pattern where
-       eyebrow and title stack vertically. */
-    display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
+    align-items: center;
     gap: 8px;
-    font-size: 26px;
-    line-height: 1.2;
-    letter-spacing: -0.02em;
-    margin-top: 10px;
-  }
-  .stacks-title-meta {
-    font-family: var(--font-mono);
+    min-height: 36px;
+    color: var(--warn);
     font-size: 13px;
-    color: var(--fg-subtle);
-    font-weight: 400;
-    letter-spacing: 0.02em;
   }
-  .stacks-code {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-muted);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    padding: 1px 5px;
-    border-radius: 3px;
-  }
-
-  /* ─────── Banners ────── */
-  .stacks-banner {
+  .st-attn-h b { color: var(--fg); font-weight: 600; }
+  .st-attn-row {
     display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 14px;
-    padding: 14px 16px;
-    border-radius: 6px;
-  }
-  .stacks-banner-warn {
-    border: 1px solid color-mix(in srgb, var(--color-warning-500) 40%, var(--border));
-    background: color-mix(in srgb, var(--color-warning-500) 6%, transparent);
-  }
-  .stacks-banner-info {
-    border: 1px solid color-mix(in srgb, var(--color-brand-500) 30%, var(--border));
-    background: color-mix(in srgb, var(--color-brand-500) 5%, transparent);
-  }
-  :global(.stacks-banner-icon-warn) { color: var(--color-warning-400); margin-top: 4px; flex-shrink: 0; }
-  :global(.stacks-banner-icon-info) { color: var(--color-brand-400); margin-top: 4px; flex-shrink: 0; }
-  .stacks-banner-title {
-    font-size: 13.5px;
-    color: var(--fg);
-    font-weight: 500;
-  }
-  .stacks-banner-body {
-    margin: 6px 0 0;
-    font-size: 12.5px;
-    color: var(--fg-muted);
-    line-height: 1.55;
-    max-width: 80ch;
-  }
-  .stacks-banner-list {
-    margin: 12px 0 0;
-    padding: 0;
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .stacks-banner-row {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 8px 12px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--surface);
-    color: inherit;
-    text-decoration: none;
-  }
-  .stacks-banner-row:hover { border-color: var(--border-strong); }
-  .stacks-banner-row-name {
-    font-family: var(--font-mono);
-    font-size: 12.5px;
-    color: var(--fg);
-    font-weight: 500;
-    flex-shrink: 0;
-  }
-  .stacks-banner-row-meta {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg-subtle);
-    flex: 1;
-    min-width: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .stacks-banner-row-cta {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--accent-fg);
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    flex-shrink: 0;
-  }
-
-  /* ─────── Filter bar — tabs left, search/sort pushed right ────── */
-  .stacks-tabs {
-    align-items: center;
-    border-bottom: 1px solid var(--border);
-    flex-wrap: wrap;
-  }
-  .stacks-tabs-right {
-    margin-left: auto;
-    display: inline-flex;
-    align-items: center;
-    gap: 18px;
-    padding: 6px 0;
-  }
-  .stacks-search {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    width: 200px;
-  }
-  :global(.stacks-search-icon) {
-    position: absolute;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--fg-subtle);
-    pointer-events: none;
-  }
-  .stacks-search-input {
-    padding: 4px 0 4px 22px;
-    border-bottom: 1px solid var(--border);
-    font-size: 12px;
-    width: 100%;
-  }
-  .stacks-search-input:focus { border-bottom-color: var(--color-brand-500); }
-  .stacks-sort {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .stacks-sort-label {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--fg-subtle);
-  }
-  .stacks-sort-select {
-    background: transparent;
-    border: 0;
-    border-bottom: 1px solid var(--border);
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    padding: 4px 18px 4px 0;
-    cursor: pointer;
-  }
-  .stacks-sort-select:focus { outline: none; border-bottom-color: var(--color-brand-500); }
-
-  /* ─────── List — transparent surface, hairline-only row dividers ────── */
-  .stacks-list {
-    margin-top: 8px;
-    border-top: 1px solid var(--border);
-  }
-  .stacks-skeleton {
-    padding: 16px 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .stacks-empty {
-    padding: 32px 0;
-    display: flex;
-    flex-direction: column;
+    grid-template-columns: 200px minmax(0, 1fr) auto;
     gap: 12px;
-    align-items: flex-start;
-    border-top: 1px solid var(--border);
-  }
-  .stacks-empty-title {
-    font-size: 14px;
+    align-items: center;
+    min-height: 36px;
+    border-top: 1px solid var(--warn-bd);
     color: var(--fg);
-    font-weight: 500;
-  }
-  .stacks-empty-body {
-    margin: 0;
-    color: var(--fg-muted);
+    text-decoration: none;
     font-size: 13px;
-    line-height: 1.6;
-    max-width: 60ch;
   }
-  .stacks-empty-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .stacks-row-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .stacks-row-id {
-    font-size: 13.5px;
-    color: var(--fg);
-    font-weight: 500;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .stacks-row-meta {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-    letter-spacing: 0.04em;
-  }
-  .stacks-row-services {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    align-items: center;
-    min-width: 0;
-  }
-  .stacks-row-service {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    padding: 1px 6px;
-    border-radius: 3px;
-    border: 1px solid var(--border);
-    color: var(--fg-subtle);
-  }
-  .stacks-row-service.running { color: var(--fg-muted); border-color: var(--border-strong); }
-  .stacks-row-service-more {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-  }
-  .stacks-row-service-empty {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg-subtle);
-    font-style: normal;
-  }
-
-  .stacks-row-host {
-    display: inline-flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 4px;
-    min-width: 0;
-  }
-  .stacks-row-host-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 1px 6px 1px 5px;
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-muted);
-  }
-
-  .stacks-row-uptime {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg-muted);
-    white-space: nowrap;
-  }
-  :global(.stacks-row-uptime-icon) { color: var(--color-success-400); flex-shrink: 0; }
-  .stacks-row-uptime-muted { color: var(--fg-subtle); }
-
-  .stacks-row-arrow { color: var(--fg-subtle); display: inline-flex; align-items: center; }
-
-  :global(.animate-spin) { animation: stacks-spin 0.9s linear infinite; }
-  @keyframes stacks-spin { to { transform: rotate(360deg); } }
+  .st-attn-row:hover .st-attn-cta { text-decoration: underline; }
+  .st-attn-cta { color: var(--accent); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .st-adopt { display: flex; flex-direction: column; gap: 12px; }
+  .st-adopt p { margin: 0; }
 </style>
