@@ -15,10 +15,10 @@ import (
 	"sort"
 	"time"
 
-	dtypes "github.com/docker/docker/api/types"
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	dnetwork "github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/errdefs"
 )
 
 // bootstrapConfig is the minimal Caddy config we seed into the config
@@ -78,9 +78,9 @@ func (s *Service) EnableProxy(ctx context.Context) error {
 	cli := s.docker.Raw()
 
 	var imageID string
-	if img, _, err := cli.ImageInspectWithRaw(ctx, s.image); err == nil {
+	if img, err := cli.ImageInspect(ctx, s.image); err == nil {
 		imageID = img.ID
-	} else if !errdefs.IsNotFound(err) {
+	} else if !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("image inspect: %w", err)
 	}
 
@@ -97,7 +97,7 @@ func (s *Service) EnableProxy(ctx context.Context) error {
 		if err := s.createProxy(ctx, &existing); err != nil {
 			return err
 		}
-	case errdefs.IsNotFound(err):
+	case cerrdefs.IsNotFound(err):
 		if err := s.createProxy(ctx, nil); err != nil {
 			return err
 		}
@@ -116,7 +116,7 @@ func (s *Service) EnableProxy(ctx context.Context) error {
 // matchesSpec checks the fields of an existing container that decide
 // what runs and with which privileges. The spec label alone is not
 // enough: anyone who can create a container can copy it.
-func (s *Service) matchesSpec(c *dtypes.ContainerJSON, imageID string) bool {
+func (s *Service) matchesSpec(c *container.InspectResponse, imageID string) bool {
 	if c.ContainerJSONBase == nil || c.Config == nil || c.HostConfig == nil {
 		return false
 	}
@@ -139,13 +139,13 @@ func (s *Service) matchesSpec(c *dtypes.ContainerJSON, imageID string) bool {
 
 // createProxy pulls the image if needed, removes old (when set) and
 // creates + starts a fresh container.
-func (s *Service) createProxy(ctx context.Context, old *dtypes.ContainerJSON) error {
+func (s *Service) createProxy(ctx context.Context, old *container.InspectResponse) error {
 	cli := s.docker.Raw()
-	if _, _, err := cli.ImageInspectWithRaw(ctx, s.image); err != nil {
-		if !errdefs.IsNotFound(err) {
+	if _, err := cli.ImageInspect(ctx, s.image); err != nil {
+		if !cerrdefs.IsNotFound(err) {
 			return fmt.Errorf("image inspect: %w", err)
 		}
-		rc, err := cli.ImagePull(ctx, s.image, dtypes.ImagePullOptions{})
+		rc, err := cli.ImagePull(ctx, s.image, image.PullOptions{})
 		if err != nil {
 			return fmt.Errorf("image pull %s: %w", s.image, err)
 		}
@@ -158,7 +158,7 @@ func (s *Service) createProxy(ctx context.Context, old *dtypes.ContainerJSON) er
 
 	if old != nil {
 		_ = cli.ContainerStop(ctx, old.ID, container.StopOptions{})
-		if err := cli.ContainerRemove(ctx, old.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+		if err := cli.ContainerRemove(ctx, old.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 			return fmt.Errorf("remove outdated proxy container: %w", err)
 		}
 	}
@@ -193,7 +193,7 @@ func (s *Service) createProxy(ctx context.Context, old *dtypes.ContainerJSON) er
 	if err != nil {
 		return fmt.Errorf("build bootstrap tar: %w", err)
 	}
-	if err := cli.CopyToContainer(ctx, resp.ID, "/config", tarStream, dtypes.CopyToContainerOptions{}); err != nil {
+	if err := cli.CopyToContainer(ctx, resp.ID, "/config", tarStream, container.CopyToContainerOptions{}); err != nil {
 		return fmt.Errorf("seed bootstrap config: %w", err)
 	}
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
@@ -264,7 +264,7 @@ func (s *Service) DisableProxy(ctx context.Context) error {
 	cli := s.docker.Raw()
 	info, err := cli.ContainerInspect(ctx, ProxyContainerName)
 	if err != nil {
-		if errdefs.IsNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			s.enabled.Store(false)
 			return nil
 		}

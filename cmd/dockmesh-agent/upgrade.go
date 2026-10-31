@@ -168,3 +168,79 @@ func fileSHA256(p string) (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
+
+// pathBinary is where the installer puts a root-owned copy of the agent so
+// `dockmesh-agent --version` works for any user. The unit refreshes it at
+// every start; the agent itself can't, as ProtectSystem=strict keeps /usr
+// read-only for it.
+const pathBinary = "/usr/local/bin/dockmesh-agent"
+
+// legacyOpenBinDir serves installs whose pathBinary is still a symlink into
+// the data dir, which other users can't follow while the data dir is 0700.
+// It makes the data dir traversable (0711) and bin/ readable, after first
+// removing group and other access from every other entry in the data dir.
+// Re-running the installer replaces the symlink with a copy and closes the
+// data dir again.
+func legacyOpenBinDir(dataDir string) {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	legacyOpenBinDirFor(dataDir, exe, pathBinary)
+}
+
+func legacyOpenBinDirFor(dataDir, exe, link string) {
+	fi, err := os.Lstat(link)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return
+	}
+	target, err := filepath.EvalSymlinks(link)
+	exe, eerr := filepath.EvalSymlinks(exe)
+	bin, berr := filepath.EvalSymlinks(filepath.Join(dataDir, "bin"))
+	if err != nil || eerr != nil || berr != nil || target != exe || filepath.Dir(exe) != bin {
+		return
+	}
+	// A data dir that also holds a server's files is never opened.
+	for _, f := range []string{"dockmesh.db", "dockmesh.env", filepath.Join("data", "dockmesh.db")} {
+		if _, err := os.Stat(filepath.Join(dataDir, f)); err == nil {
+			return
+		}
+	}
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		slog.Warn("open agent binary dir", "path", dataDir, "err", err)
+		return
+	}
+	for _, e := range entries {
+		if e.Name() == "bin" || e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		p := filepath.Join(dataDir, e.Name())
+		if !setMode(p, func(m os.FileMode) os.FileMode { return m &^ 0o077 }) {
+			return
+		}
+	}
+	setMode(filepath.Join(dataDir, "bin"), func(os.FileMode) os.FileMode { return 0o755 })
+	setMode(dataDir, func(os.FileMode) os.FileMode { return 0o711 })
+}
+
+// setMode applies mode(current) to p and logs a change. It reports false
+// when p could not be read or changed.
+func setMode(p string, mode func(os.FileMode) os.FileMode) bool {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		slog.Warn("open agent binary dir", "path", p, "err", err)
+		return false
+	}
+	from := fi.Mode().Perm()
+	to := mode(from)
+	if to == from {
+		return true
+	}
+	if err := os.Chmod(p, to); err != nil {
+		slog.Warn("open agent binary dir", "path", p, "err", err)
+		return false
+	}
+	slog.Info("agent data dir permissions changed", "path", p, "from", fmt.Sprintf("%04o", from), "to", fmt.Sprintf("%04o", to))
+	return true
+}

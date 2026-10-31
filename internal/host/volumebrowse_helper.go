@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -30,7 +30,7 @@ import (
 const (
 	// Pinned to the multi-arch index digest so a retagged or replaced
 	// image never runs with access to the volume.
-	helperImage = "alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f"
+	helperImage = "alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a"
 	helperMount = "/mnt/target"
 
 	helperMaxEntries   = 10000
@@ -300,8 +300,8 @@ func helperContainerConfig(volumeName, script string) (*container.Config, *conta
 // the volume mounted, collects its output and removes the container.
 func dockerHelperRunner(cli *client.Client, volumeName string) helperRunner {
 	return func(ctx context.Context, script string, limit int64) (helperResult, error) {
-		if _, _, err := cli.ImageInspectWithRaw(ctx, helperImage); err != nil {
-			rc, pullErr := cli.ImagePull(ctx, helperImage, dtypes.ImagePullOptions{})
+		if _, err := cli.ImageInspect(ctx, helperImage); err != nil {
+			rc, pullErr := cli.ImagePull(ctx, helperImage, image.PullOptions{})
 			if pullErr != nil {
 				return helperResult{}, fmt.Errorf("volume helper: pull %s: %w", helperImage, pullErr)
 			}

@@ -106,9 +106,10 @@ func (w *WebDAV) StorageInfo() (total, used int64, err error) {
 // gowebdav only writes from a reader, and a large archive must not sit in
 // memory.
 type webdavWriter struct {
-	client *gowebdav.Client
-	path   string
-	file   *os.File
+	client  *gowebdav.Client
+	path    string
+	file    *os.File
+	aborted bool
 }
 
 func (w *webdavWriter) Write(p []byte) (int, error) {
@@ -122,7 +123,22 @@ func (w *webdavWriter) Write(p []byte) (int, error) {
 	return w.file.Write(p)
 }
 
+// Abort drops the buffered upload; nothing reached the server yet.
+func (w *webdavWriter) Abort() error {
+	w.aborted = true
+	if w.file == nil {
+		return nil
+	}
+	name := w.file.Name()
+	_ = w.file.Close()
+	w.file = nil
+	return os.Remove(name)
+}
+
 func (w *webdavWriter) Close() error {
+	if w.aborted {
+		return nil
+	}
 	if w.file == nil {
 		return w.client.WriteStream(w.path, bytes.NewReader(nil), 0o644)
 	}

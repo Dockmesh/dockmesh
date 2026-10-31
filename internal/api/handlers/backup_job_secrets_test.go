@@ -9,7 +9,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/redact"
 )
 
-func TestJobFromRedactedTargetKeepsPassword(t *testing.T) {
+func TestJobTargetSecrets(t *testing.T) {
 	ctx := context.Background()
 	store := targets.NewTargetStore(openRedactionTestDB(t))
 	saved, err := store.Create(ctx, targets.TargetInput{
@@ -19,27 +19,25 @@ func TestJobFromRedactedTargetKeepsPassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &Handlers{BackupTargets: store}
-
-	// What the wizard copies from GET /backups/targets.
+	// A redacted target config, as a client may send it back.
 	redacted := redact.ToMap(redactTarget(saved).Config)
 	if redacted["password"] != "" || redacted["password_set"] != true {
 		t.Fatalf("target not redacted: %v", redacted)
 	}
+	inlinePrev := &backup.Job{TargetType: "smb", TargetConfig: map[string]any{"host": "nas", "share": "bk", "username": "u", "password": "old", "path": "backups"}}
 
 	tests := []struct {
 		name     string
 		targetID int64
+		prev     *backup.Job
 		mutate   func(map[string]any)
 		wantPass string
 		wantErr  bool
 	}{
-		{"picked saved target", saved.ID, nil, "s3cret", false},
-		{"typed password wins", saved.ID, func(m map[string]any) { m["password"] = "new" }, "new", false},
-		{"no target id, redacted copy", 0, nil, "", true},
-		{"other server", saved.ID, func(m map[string]any) { m["host"] = "evil" }, "", true},
-		{"other path", saved.ID, func(m map[string]any) { m["path"] = "elsewhere" }, "", true},
-		{"unknown target", 999, nil, "", true},
+		{"saved target referenced", saved.ID, nil, nil, "", false},
+		{"redacted copy without a target id", 0, nil, nil, "", true},
+		{"typed password", 0, nil, func(m map[string]any) { m["password"] = "new"; delete(m, "password_set") }, "new", false},
+		{"inline edit keeps the stored password", 0, inlinePrev, nil, "old", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -50,12 +48,12 @@ func TestJobFromRedactedTargetKeepsPassword(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(cfg)
 			}
-			in := &backup.JobInput{TargetType: "smb", TargetConfig: cfg}
-			err := h.resolveJobTargetSecrets(ctx, in, tc.targetID, nil)
+			in := &backup.JobInput{TargetID: tc.targetID, TargetType: "smb", TargetConfig: cfg}
+			err := resolveJobTargetSecrets(in, tc.prev)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
-			if tc.wantErr {
+			if tc.wantErr || tc.targetID > 0 {
 				return
 			}
 			got := redact.ToMap(in.TargetConfig)

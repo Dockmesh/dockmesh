@@ -72,8 +72,11 @@
   let availableStacks = $state<string[]>([]);
   let availableVolumes = $state<string[]>([]);
   let resourcesLoaded = $state(false);
+  let timezone = $state('');
+
   async function loadResources() {
     if (resourcesLoaded) return;
+    api.backups.schedule().then((s) => (timezone = s.timezone)).catch(() => {});
     try {
       const [stks, vols] = await Promise.all([
         api.stacks.list().catch(() => []),
@@ -108,6 +111,7 @@
       weekday = m.weekday;
       targetType = editing.target_type as typeof targetType;
       targetConfig = { ...(editing.target_config ?? {}) };
+      preTargetId = editing.target_id ?? -1;
       encrypt = editing.encrypt;
       keepN = editing.retention_count;
       keepDays = editing.retention_days;
@@ -182,10 +186,7 @@
       targetConfig = { path: defaultPath };
     } else {
       const t = targets.find((x) => x.id === id);
-      if (t) {
-        targetType = t.type as typeof targetType;
-        targetConfig = { ...(t.config ?? {}) };
-      }
+      if (t) targetType = t.type as typeof targetType;
     }
   }
 
@@ -224,9 +225,10 @@
       }
       const payload: BackupJobInput = {
         name: name.trim(),
+        host_id: editing?.host_id,
+        target_id: preTargetId !== -1 ? preTargetId : undefined,
         target_type: targetType,
         target_config: targetConfig,
-        target_id: preTargetId !== -1 ? preTargetId : undefined,
         sources,
         schedule: cronExpr,
         retention_count: keepN,
@@ -266,7 +268,7 @@
       if (t) return t.name;
     }
     const m = targetTypeMeta(targetType);
-    return `${m.label} (inline)`;
+    return `${m.label} (new)`;
   });
 </script>
 
@@ -419,6 +421,7 @@
           Will run <em class="ed-accent">{scheduleSummary}</em>.
           Cron: <span class="font-mono">{cronExpr}</span>.
           Next: <span class="font-mono">{nextFires(cronExpr)}</span>.
+          {#if timezone}Times are in <span class="font-mono">{timezone}</span>.{/if}
         </span>
       </div>
     </div>
@@ -431,7 +434,7 @@
     <div class="wiz-stack">
       <div class="wiz-field">
         <label class="wiz-field-label">Write to target</label>
-        <span class="wiz-field-hint">Pick a pre-configured target — or build one inline below.</span>
+        <span class="wiz-field-hint">Pick a saved target, or set up a new one below.</span>
         <div class="wiz-target-pick">
           {#each targets as t (t.id)}
             {@const m = targetTypeMeta(t.type)}
@@ -455,8 +458,8 @@
           <button type="button" class="wiz-target-pick-row wiz-target-pick-inline" class:active={preTargetId === -1} onclick={() => selectPreTarget(-1)}>
             <span class="wiz-target-glyph">+</span>
             <span class="wiz-target-pick-text">
-              <span class="wiz-target-pick-name">Inline target</span>
-              <span class="font-mono wiz-target-pick-meta">build below — won't be reusable</span>
+              <span class="wiz-target-pick-name">New target</span>
+              <span class="font-mono wiz-target-pick-meta">set up below, saved under the job name</span>
             </span>
           </button>
         </div>
@@ -464,7 +467,7 @@
 
       {#if preTargetId === -1}
         <div class="wiz-field">
-          <label class="wiz-field-label">Inline target type</label>
+          <label class="wiz-field-label">Target type</label>
           <div class="wiz-segctrl">
             {#each ['local', 'sftp', 'smb', 'webdav', 's3'] as t (t)}
               <button type="button" class="wiz-segctrl-btn" class:active={targetType === t} onclick={() => (targetType = t as typeof targetType)}>

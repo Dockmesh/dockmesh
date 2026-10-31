@@ -102,7 +102,8 @@ DOCKMESH_SETUP_FORCE=true
 
 Open the URL the installer printed (`http://<host>:8080/setup`). While setup mode is active, the rest of the UI and API answer with 503 and point to `/setup`.
 
-<!-- update after: restore: stage system restores and swap them in at startup -->
+To move an existing install to this machine instead, choose **Restore from a backup instead** on the first page and upload a system backup (plus the backup key file exported from the old server if the backup is encrypted). The server checks the backup, ends setup mode and restarts into the restored install; see [Disaster recovery](../operations/disaster-recovery.md).
+
 The wizard has seven steps:
 
 1. **Welcome** runs preflight checks: operating system, CPU, RAM, root disk space, Docker Engine, Docker socket, time synchronisation. A failed Docker check blocks the wizard.

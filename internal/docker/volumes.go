@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"regexp"
 
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/volume"
 )
@@ -54,6 +53,6 @@ func (c *Client) RemoveVolume(ctx context.Context, name string, force bool) erro
 	return c.cli.VolumeRemove(ctx, name, force)
 }
 
-func (c *Client) PruneVolumes(ctx context.Context) (dtypes.VolumesPruneReport, error) {
+func (c *Client) PruneVolumes(ctx context.Context) (volume.PruneReport, error) {
 	return c.cli.VolumesPrune(ctx, filters.NewArgs())
 }
