@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { fmtVersion } from '$lib/version';
   // Hosts list — editorial rebuild based on `Dockmesh Wizard (6)/hosts.jsx`.
   // Sticky upgrade-policy strip when connected_pending > 0; filter pills
   // (All/Online/Offline/Pending/Agents) + name/hostname/tag search; table
@@ -15,6 +14,7 @@
     type HostInfo
   } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
+  import { fmtVersion } from '$lib/version';
   import { Skeleton, EmptyState } from '$lib/components/ui';
   import { Eyebrow } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
@@ -181,7 +181,7 @@
     upgradingId = id;
     try {
       const res = await api.agents.upgrade(id);
-      toast.success('Upgrade dispatched', `${name} → v${res.version}`);
+      toast.success('Upgrade dispatched', `${name} → ${fmtVersion(res.version)}`);
       await loadAll();
     } catch (err) {
       toast.error('Upgrade failed', err instanceof ApiError ? err.message : undefined);

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { fmtVersion } from '$lib/version';
   import '../app.css';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
@@ -7,6 +6,7 @@
   import { hosts } from '$lib/stores/host.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import { api } from '$lib/api';
+  import { fmtVersion } from '$lib/version';
   import { toast } from '$lib/stores/toast.svelte';
   import { Toaster, ConfirmDialog, UpdateBanner, HealthDot } from '$lib/components/ui';
   import NotificationCenter from '$lib/components/ui/NotificationCenter.svelte';

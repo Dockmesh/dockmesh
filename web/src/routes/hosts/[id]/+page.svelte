@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { fmtVersion } from '$lib/version';
   // Host Detail — editorial rebuild based on `Dockmesh Wizard (6)/
   // host-detail.jsx`. Header strip + 6 tabs (Overview / Containers /
   // Stacks / Migrations / Tags / Maintenance) + drain modal preview.
@@ -9,6 +8,7 @@
   // (per-container metrics, host-affinity panel).
   import { untrack } from 'svelte';
   import { latest } from '$lib/latest';
+  import { fmtVersion } from '$lib/version';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import {
@@ -260,7 +260,7 @@
     upgradeBusy = true;
     try {
       const r = await api.agents.upgrade(id);
-      toast.success('Upgrade dispatched', `${hostName} → v${r.version}`);
+      toast.success('Upgrade dispatched', `${hostName} → ${fmtVersion(r.version)}`);
       await loadAll();
     } catch (err) {
       toast.error('Upgrade failed', err instanceof ApiError ? err.message : undefined);
@@ -422,7 +422,7 @@
               <dt>docker</dt><dd class="font-mono">{agent.docker_version || '—'}</dd>
               <dt>agent version</dt>
               <dd class="font-mono">
-                {agent.version || '—'}
+                {agent.version ? fmtVersion(agent.version) : '—'}
                 {#if needsUpgrade}<span class="ed-host-kv-warn">· server is on {fmtVersion(upgradePolicyVersion)}</span>{/if}
               </dd>
               <dt>cert fingerprint</dt><dd class="font-mono ed-host-kv-fingerprint">{agent.cert_fingerprint || '—'}</dd>
@@ -701,7 +701,7 @@
             {#if isLocal}
               Server self-update lives in System settings — not a per-host concern.
             {:else if !needsUpgrade}
-              {hostVersion ? `Already on v${hostVersion}.` : 'Version unknown.'} Nothing to do.
+              {hostVersion ? `Already on ${fmtVersion(hostVersion)}.` : 'Version unknown.'} Nothing to do.
             {:else}
               This host is on <span class="ed-accent-mono">{fmtVersion(hostVersion)}</span>. Server is on {fmtVersion(upgradePolicyVersion)}. Upgrades are zero-downtime — agent reconnects within ~10s.
             {/if}
