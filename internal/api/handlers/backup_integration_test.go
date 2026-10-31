@@ -31,7 +31,7 @@ func TestJobsFromSavedTargetsAgainstRealServers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// What the job wizard copies from the target list.
+			// A redacted target config, as a client may send it back.
 			picked := func() backup.JobInput {
 				return backup.JobInput{
 					Name: "nightly", TargetType: c.Type, TargetConfig: redactTarget(saved).Config,

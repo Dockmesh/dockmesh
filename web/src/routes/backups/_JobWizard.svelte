@@ -186,10 +186,7 @@
       targetConfig = { path: defaultPath };
     } else {
       const t = targets.find((x) => x.id === id);
-      if (t) {
-        targetType = t.type as typeof targetType;
-        targetConfig = { ...(t.config ?? {}) };
-      }
+      if (t) targetType = t.type as typeof targetType;
     }
   }
 
@@ -271,7 +268,7 @@
       if (t) return t.name;
     }
     const m = targetTypeMeta(targetType);
-    return `${m.label} (inline)`;
+    return `${m.label} (new)`;
   });
 </script>
 
@@ -470,7 +467,7 @@
 
       {#if preTargetId === -1}
         <div class="wiz-field">
-          <label class="wiz-field-label">Inline target type</label>
+          <label class="wiz-field-label">Target type</label>
           <div class="wiz-segctrl">
             {#each ['local', 'sftp', 'smb', 'webdav', 's3'] as t (t)}
               <button type="button" class="wiz-segctrl-btn" class:active={targetType === t} onclick={() => (targetType = t as typeof targetType)}>

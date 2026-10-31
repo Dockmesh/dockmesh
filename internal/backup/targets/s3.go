@@ -72,7 +72,7 @@ func (s *S3) Open(ctx context.Context, path string) (io.WriteCloser, error) {
 			PartSize:    s3PartSize,
 		})
 		return err
-	}, nil), nil
+	}), nil
 }
 
 func (s *S3) Read(ctx context.Context, path string) (io.ReadCloser, error) {

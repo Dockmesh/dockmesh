@@ -19,7 +19,7 @@ func TestJobTargetSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// What the wizard copies from GET /backups/targets.
+	// A redacted target config, as a client may send it back.
 	redacted := redact.ToMap(redactTarget(saved).Config)
 	if redacted["password"] != "" || redacted["password_set"] != true {
 		t.Fatalf("target not redacted: %v", redacted)
