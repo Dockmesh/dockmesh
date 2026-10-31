@@ -131,13 +131,13 @@
     drawerJob = null;
     drawerRun = r;
   }
-  function restoreRunFromDrawer(r: BackupRun, mode: 'in-place' | 'alongside' | 'download') {
+  function restoreRunFromDrawer(r: BackupRun, mode: 'in-place' | 'alongside' | 'download' | 'system') {
     if (mode === 'download') {
       downloadRunArchive(r);
       return;
     }
     closeDrawers();
-    openRestore(r, mode);
+    openRestore(r, mode === 'system' ? 'in-place' : mode);
   }
 
   async function downloadRunArchive(r: BackupRun) {

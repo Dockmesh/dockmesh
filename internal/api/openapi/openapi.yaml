@@ -3592,7 +3592,8 @@ paths:
         stack in the caller's role scope, and the host the stack is deployed
         on in scope (403). Runs whose job was deleted are admin-only
         (`system.update` with no host or role scope). System runs are never
-        restored here (409); use `dockmesh restore` on the server.
+        restored here (409); they are restored with `POST /restore/system`,
+        the setup wizard or `dockmesh restore`.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       requestBody:

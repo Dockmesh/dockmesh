@@ -133,8 +133,8 @@ var (
 	ErrEncryptUnavailable = errors.New("encryption needs secrets encryption enabled on the server (DOCKMESH_SECRETS_ENCRYPT_ENV)")
 	ErrRunNotFound        = errors.New("run not found")
 	// ErrSystemRestore refuses to unpack a system backup anywhere a
-	// container could read it; system backups go through `dockmesh restore`.
-	ErrSystemRestore  = errors.New("system backups can only be restored with `dockmesh restore` on the server")
+	// container could read it; system backups replace the whole install.
+	ErrSystemRestore  = errors.New("system backups can't be restored into a volume or stack; restore them as a whole (Restore the whole system, the setup wizard or `dockmesh restore`)")
 	ErrTargetNotFound = errors.New("backup target not found")
 )
 

@@ -87,7 +87,7 @@
     <div class="p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-danger-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] text-xs text-[var(--color-danger-400)]">
       Replaces this server's database, users, keys, settings and stack files with the backup's,
       then restarts Dockmesh. Volumes and running containers are not touched. The replaced files
-      are kept in the data directory under <span class="font-mono">.pre-restore</span>.
+      are kept next to the data and stacks directories (<span class="font-mono">.pre-restore</span>).
     </div>
 
     {#if phase === 'pick' || phase === 'staging'}

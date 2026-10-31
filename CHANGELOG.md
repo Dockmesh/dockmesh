@@ -48,7 +48,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   ("Restore from a backup instead"), including encrypted backups together with the key file
   exported from the original server. The backup is unpacked and checked next to the live
   files first; the server then restarts and swaps the restored files in before it opens the
-  database. The replaced files stay in the data directory under `.pre-restore`.
+  database. The replaced files are kept in `<data>/.pre-restore/<time>` and
+  `<stacks>.pre-restore-<time>`.
 
 ### Changed
 - Updating the image of a container that belongs to a stack now rebuilds it from the

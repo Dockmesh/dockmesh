@@ -10,7 +10,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/db"
 )
 
-// systemDB returns the bytes of a migrated database with one admin
+// systemDB returns the contents of a migrated database with one admin
 // named user.
 func systemDB(t *testing.T, user string) string {
 	t.Helper()

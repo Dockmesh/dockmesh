@@ -1,8 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -33,7 +33,7 @@ func runRestore(args []string) error {
 	fs := flag.NewFlagSet("restore", flag.ExitOnError)
 	from := fs.String("from", "", "path to a system-backup archive (.tar.gz or .tar.gz.age) — required")
 	keyFile := fs.String("key", "", "backup key file exported from the original install, for encrypted archives")
-	force := fs.Bool("force", false, "restore over a populated install (its files are kept under the data directory)")
+	force := fs.Bool("force", false, "restore over a populated install (its files are kept next to the data and stacks directories)")
 	dryRun := fs.Bool("dry-run", false, "list what would be restored without writing anything")
 	_ = fs.Parse(args)
 
@@ -96,22 +96,22 @@ func runRestore(args []string) error {
 	return nil
 }
 
-// plaintextArchive decrypts an age-encrypted archive with the key file.
+// plaintextArchive returns the archive as plaintext, decrypting it with
+// the key file if it is age-encrypted.
 func plaintextArchive(f io.Reader, keyFile string) (io.Reader, error) {
-	br := bufio.NewReaderSize(f, 64*1024)
-	if !restore.IsAgeEncrypted(br) {
-		return br, nil
+	var ids []age.Identity
+	if keyFile != "" {
+		b, err := os.ReadFile(keyFile)
+		if err != nil {
+			return nil, err
+		}
+		if ids, err = secrets.ParseKeyFile(b); err != nil {
+			return nil, fmt.Errorf("--key: %w", err)
+		}
 	}
-	if keyFile == "" {
+	r, err := restore.Plaintext(f, ids)
+	if errors.Is(err, restore.ErrEncryptedBackup) {
 		return nil, fmt.Errorf("the archive is encrypted; pass the backup key file exported from the original install with --key")
 	}
-	b, err := os.ReadFile(keyFile)
-	if err != nil {
-		return nil, err
-	}
-	ids, err := secrets.ParseKeyFile(b)
-	if err != nil {
-		return nil, fmt.Errorf("--key: %w", err)
-	}
-	return age.Decrypt(br, ids...)
+	return r, err
 }

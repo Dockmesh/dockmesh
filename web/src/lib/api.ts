@@ -931,6 +931,8 @@ export interface StagedRestore {
   source: string;
   files: number;
   bytes: number;
+  prev_dir?: string;
+  prev_stacks?: string;
 }
 
 export interface StageSystemRestoreResult {

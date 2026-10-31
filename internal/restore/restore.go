@@ -1,9 +1,8 @@
 // Package restore extracts Dockmesh system-backup tarballs back onto
-// disk + runs post-restore sanity checks. Shared code path for the
-// `dockmesh restore` CLI (cmd_restore.go) and the
-// `POST /api/v1/restore/upload` HTTP handler. Kept package-
-// free of CLI concerns (flag parsing, stdout progress) so both
-// callers can plug their own presentation.
+// disk + runs post-restore sanity checks. Shared by the `dockmesh
+// restore` CLI and the restore, verify and setup HTTP handlers; kept free
+// of CLI concerns (flag parsing, stdout progress) so each caller can
+// plug its own presentation.
 package restore
 
 import (
@@ -20,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"filippo.io/age"
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
 	_ "modernc.org/sqlite"
@@ -59,17 +59,31 @@ type SanityCheck struct {
 	Message string `json:"message,omitempty"`
 }
 
+// Plaintext returns the archive as plaintext, decrypting it with ids if it
+// is age-encrypted. ErrEncryptedBackup means it is encrypted and no ids
+// were given.
+func Plaintext(r io.Reader, ids []age.Identity) (io.Reader, error) {
+	br := bufio.NewReaderSize(r, 64*1024)
+	if !IsAgeEncrypted(br) {
+		return br, nil
+	}
+	if len(ids) == 0 {
+		return nil, ErrEncryptedBackup
+	}
+	return age.Decrypt(br, ids...)
+}
+
 // ErrEncryptedBackup is returned when the archive is still age-encrypted.
 var ErrEncryptedBackup = errors.New("archive is age-encrypted; supply the backup key file exported from the original install")
 
-// AgeHeader starts every age-encrypted file.
-const AgeHeader = "age-encryption.org/v1"
+// ageHeader starts every age-encrypted file.
+const ageHeader = "age-encryption.org/v1"
 
 // IsAgeEncrypted reports whether the buffered stream starts with an age
 // header, without consuming it.
 func IsAgeEncrypted(br *bufio.Reader) bool {
-	peek, _ := br.Peek(len(AgeHeader))
-	return string(peek) == AgeHeader
+	peek, _ := br.Peek(len(ageHeader))
+	return string(peek) == ageHeader
 }
 
 // Extract reads a gzipped tar from r and writes its contents to the
@@ -178,7 +192,7 @@ func CheckSafety(cfg *config.Config, force bool) error {
 	defer database.Close()
 	var users int
 	if err := database.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&users); err == nil && users > 0 {
-		return fmt.Errorf("db %q already has %d users — refusing to restore over a populated install. Use force to overwrite; the existing DB will be moved to %s.pre-restore-<ts>", cfg.DBPath, users, cfg.DBPath)
+		return fmt.Errorf("db %q already has %d users — refusing to restore over a populated install. Pass --force to replace it; the replaced files are kept in %s", cfg.DBPath, users, filepath.Join(filepath.Dir(cfg.DBPath), PreRestoreDir))
 	}
 	return nil
 }

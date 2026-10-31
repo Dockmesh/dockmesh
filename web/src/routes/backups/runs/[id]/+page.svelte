@@ -75,7 +75,7 @@
 
   let restorePreset = $state<'in-place' | 'alongside' | null>(null);
 
-  async function doRestore(mode: 'in-place' | 'alongside' | 'download') {
+  async function doRestore(mode: 'in-place' | 'alongside' | 'download' | 'system') {
     if (!run) return;
     if (mode === 'download') {
       try {
@@ -86,7 +86,7 @@
       }
       return;
     }
-    restorePreset = mode;
+    restorePreset = mode === 'system' ? 'in-place' : mode;
   }
 
   function fmtBytes(n: number): string {
@@ -141,16 +141,19 @@
     void copyWithToast(lines, 'Copied');
   }
 
-  const allRestoreModes: { id: 'in-place' | 'alongside' | 'download'; title: string; blurb: string; danger?: boolean }[] = [
+  const allRestoreModes: { id: 'in-place' | 'alongside' | 'download' | 'system'; title: string; blurb: string; danger?: boolean }[] = [
     { id: 'in-place', title: 'Restore in place', blurb: 'Replace current data on this dockmesh. Stops affected stacks first.', danger: true },
     { id: 'alongside', title: 'Restore alongside', blurb: 'Mount as new stacks with a -restored suffix. Original keeps running.' },
-    { id: 'download', title: 'Download archive', blurb: 'Download the decrypted .tar.gz for offline inspection.' }
+    { id: 'download', title: 'Download archive', blurb: 'Download the decrypted .tar.gz for offline inspection.' },
+    { id: 'system', title: 'Restore the whole system', blurb: "Replace this server's database, users and stack files with the backup's, then restart.", danger: true }
   ];
-  // System runs are restored with `dockmesh restore`; only an admin may download them.
+  // A system run replaces the whole install, so only an admin restores or downloads it.
   const systemRun = $derived(run?.sources?.some((s) => s.type === 'system') ?? false);
-  const restoreModes = $derived(allRestoreModes.filter((m) =>
-    m.id === 'download' ? allowed('backups.download') && (!systemRun || isAdmin()) : !systemRun
-  ));
+  const restoreModes = $derived(allRestoreModes.filter((m) => {
+    if (m.id === 'download') return allowed('backups.download') && (!systemRun || isAdmin());
+    if (m.id === 'system') return systemRun && isAdmin();
+    return !systemRun;
+  }));
 </script>
 
 {#if loading && !run}
@@ -306,7 +309,8 @@
             <Eyebrow>Restore</Eyebrow>
             <p class="bk-detail-block-body">
               {#if systemRun}
-                System backups are restored on the server with <code>dockmesh restore</code>.
+                Restoring a system backup replaces this server's database, users and stack files, then
+                restarts Dockmesh.
               {:else}
                 Pick how to restore this run. <strong>In-place</strong> replaces the current data;
                 <strong>alongside</strong> mounts as a copy with a <code>-restored</code> suffix;

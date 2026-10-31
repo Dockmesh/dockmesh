@@ -312,7 +312,7 @@ func main() {
 		slog.Error("applying the staged system restore failed; fix the error and start again", "err", err)
 		os.Exit(1)
 	} else if applied {
-		slog.Warn("system backup restored; the replaced files are kept under the data directory", "dir", restore.PreRestoreDir)
+		slog.Warn("system backup restored; the replaced files are kept next to the data and stacks directories", "dir", restore.PreRestoreDir)
 	}
 
 	database, err := db.Open(cfg.DBPath)
@@ -1100,7 +1100,10 @@ func main() {
 		RestoreConfig:  cfg,
 		RequestRestart: requestRestart,
 		FinishSetup: func() error {
-			envPath := filepath.Join(filepath.Dir(cfg.DBPath), "..", "dockmesh.env")
+			envPath := serverEnvFile(cfg.DBPath)
+			if envPath == "" {
+				return nil
+			}
 			if _, err := scrubEnvFlag(envPath, "DOCKMESH_SETUP_FORCE"); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
