@@ -59,7 +59,7 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   own sub-navigation. Ctrl+K (⌘K) searches pages, stacks, containers, hosts and settings.
 - Stacks, containers, templates, resources, topology and settings follow the new design.
   The containers list can be grouped by host or by stack, the container page shows CPU,
-  memory, network and disk I/O history in one chart with zoom and deploy markers, and CPU
+  memory, network and disk I/O history in charts with zoom and deploy markers, and CPU
   is shown as a share of all host cores. New templates list the placeholders found in the
   compose file so you can label them and set defaults. Settings are split into General,
   Updates and Encryption key.
