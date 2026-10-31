@@ -47,7 +47,7 @@
     </a>
     <button
       type="button"
-      class="collapse"
+      class="collapse-btn"
       onclick={() => (collapsed = !collapsed)}
       title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
       aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -141,7 +141,7 @@
   .logo { display: flex; align-items: center; gap: 10px; color: var(--fg); text-decoration: none; min-width: 0; }
   .logo b { font-size: 15px; letter-spacing: -0.01em; }
   .logo b span { color: var(--accent); }
-  .collapse {
+  .collapse-btn {
     margin-left: auto;
     width: 26px;
     height: 26px;
@@ -154,8 +154,8 @@
     align-items: center;
     justify-content: center;
   }
-  .collapsed .collapse { margin: 6px 0 0; }
-  .collapse:hover { border-color: var(--border); color: var(--fg); }
+  .collapsed .collapse-btn { margin: 6px 0 0; }
+  .collapse-btn:hover { border-color: var(--border); color: var(--fg); }
   .search {
     display: flex;
     align-items: center;

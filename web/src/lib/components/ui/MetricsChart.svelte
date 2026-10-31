@@ -155,10 +155,10 @@
       </div>
       <svg viewBox="0 0 {W} {H}" preserveAspectRatio="none" aria-hidden="true">
         {#each [25, 50, 75] as y (y)}
-          <line x1="0" x2={W} y1={H - y} y2={H - y} class="grid" vector-effect="non-scaling-stroke" />
+          <line x1="0" x2={W} y1={H - y} y2={H - y} class="gl" vector-effect="non-scaling-stroke" />
         {/each}
         {#each [0.25, 0.5, 0.75] as x (x)}
-          <line y1="0" y2={H} x1={x * W} x2={x * W} class="grid" vector-effect="non-scaling-stroke" />
+          <line y1="0" y2={H} x1={x * W} x2={x * W} class="gl" vector-effect="non-scaling-stroke" />
         {/each}
         {#each events as ev, i (i)}
           {#if ev.ts >= from && ev.ts <= to}
@@ -232,7 +232,7 @@
   .hd { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
   .t { font-size: var(--fs-sm); font-weight: 600; color: var(--subtle); }
   svg { display: block; width: 100%; height: 110px; margin-top: 4px; cursor: crosshair; }
-  .grid { stroke: var(--border); stroke-width: 0.6; }
+  .gl { stroke: var(--border); stroke-width: 0.6; }
   .xh { stroke: var(--fg); stroke-width: 1; opacity: 0.6; }
   .axis {
     display: flex;

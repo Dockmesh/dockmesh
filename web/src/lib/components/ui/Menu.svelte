@@ -124,7 +124,7 @@
   type="button"
   class={triggerClass}
   aria-label={trigger ? undefined : label}
-  title={trigger ? undefined : label}
+  title={label}
   aria-haspopup="menu"
   aria-expanded={open}
   aria-controls={open ? menuId : undefined}
