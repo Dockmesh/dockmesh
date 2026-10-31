@@ -142,6 +142,9 @@ var categories = map[string]string{
 	"audit.webhook_test":        CategorySystem,
 	"secrets.rotate":            CategorySystem,
 	"system.update_check":       CategorySystem,
+	"system.restore_stage":      CategorySystem,
+	"system.restore_apply":      CategorySystem,
+	"system.restore_discard":    CategorySystem,
 }
 
 // Category returns the category of an action. Actions without an entry,
