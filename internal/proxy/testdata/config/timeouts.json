@@ -1,0 +1,71 @@
+{
+  "admin": {
+    "listen": "127.0.0.1:2019",
+    "origins": [
+      "127.0.0.1:2019",
+      "localhost:2019"
+    ],
+    "enforce_origin": true
+  },
+  "apps": {
+    "http": {
+      "servers": {
+        "dockmesh": {
+          "listen": [
+            ":443"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "app.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {
+                      "dial": "10.0.0.5:8080"
+                    }
+                  ],
+                  "transport": {
+                    "protocol": "http",
+                    "dial_timeout": 30000000000,
+                    "read_timeout": 3600000000000,
+                    "write_timeout": 3600000000000
+                  }
+                }
+              ],
+              "terminal": true
+            }
+          ]
+        },
+        "dockmesh_http": {
+          "listen": [
+            ":80"
+          ],
+          "routes": []
+        }
+      }
+    },
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "subjects": [
+              "app.example.com"
+            ],
+            "issuers": [
+              {
+                "module": "acme"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

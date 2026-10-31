@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -18,7 +19,31 @@ type proxyRouteRequest struct {
 	TLSMode  string `json:"tls_mode"`
 	// Enabled is *bool so PUT bodies that omit the field keep the
 	// existing state; only an explicit false disables the route.
-	Enabled  *bool  `json:"enabled,omitempty"`
+	Enabled *bool `json:"enabled,omitempty"`
+	// Options stay raw so an omitted object (keep on update) can be
+	// told apart from an empty one (defaults).
+	Options json.RawMessage `json:"options,omitempty"`
+}
+
+// writeProxyRouteError maps validation errors of route writes to 4xx.
+// It reports false when err is not one of them.
+func writeProxyRouteError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, proxy.ErrDuplicateHost):
+		writeError(w, http.StatusConflict, "host already has a route")
+	case errors.Is(err, proxy.ErrWWWConflict):
+		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, proxy.ErrRouteNotFound):
+		writeError(w, http.StatusNotFound, "route not found")
+	case errors.Is(err, proxy.ErrInvalidTLSMode):
+		writeError(w, http.StatusBadRequest, "invalid tls_mode")
+	case errors.Is(err, proxy.ErrInvalidUpstream), errors.Is(err, proxy.ErrAdminUpstream),
+		errors.Is(err, proxy.ErrInvalidHost), errors.Is(err, proxy.ErrInvalidOptions):
+		writeError(w, http.StatusBadRequest, err.Error())
+	default:
+		return false
+	}
+	return true
 }
 
 // persistProxyEnabled stores the operator's choice so it is applied again
@@ -135,17 +160,15 @@ func (h *Handlers) CreateProxyRoute(w http.ResponseWriter, r *http.Request) {
 	if req.TLSMode == "" {
 		req.TLSMode = "auto"
 	}
-	route, err := h.Proxy.CreateRoute(r.Context(), req.Host, req.Upstream, req.TLSMode)
-	if errors.Is(err, proxy.ErrDuplicateHost) {
-		writeError(w, http.StatusConflict, "host already has a route")
-		return
-	}
-	if errors.Is(err, proxy.ErrInvalidTLSMode) {
-		writeError(w, http.StatusBadRequest, "invalid tls_mode")
-		return
-	}
-	if errors.Is(err, proxy.ErrInvalidUpstream) || errors.Is(err, proxy.ErrAdminUpstream) || errors.Is(err, proxy.ErrInvalidHost) {
+	opts, err := proxy.ParseOptions(req.Options)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	route, err := h.Proxy.CreateRoute(r.Context(), proxy.RouteSpec{
+		Host: req.Host, Upstream: req.Upstream, TLSMode: req.TLSMode, Options: opts,
+	})
+	if writeProxyRouteError(w, err) {
 		return
 	}
 	if err != nil {
@@ -176,9 +199,13 @@ func (h *Handlers) UpdateProxyRoute(w http.ResponseWriter, r *http.Request) {
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
-	err = h.Proxy.UpdateRoute(r.Context(), id, req.Upstream, req.TLSMode, enabled)
-	if errors.Is(err, proxy.ErrInvalidTLSMode) || errors.Is(err, proxy.ErrInvalidUpstream) || errors.Is(err, proxy.ErrAdminUpstream) || errors.Is(err, proxy.ErrInvalidHost) {
+	opts, err := proxy.ParseOptions(req.Options)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	err = h.Proxy.UpdateRoute(r.Context(), id, req.Upstream, req.TLSMode, enabled, opts)
+	if writeProxyRouteError(w, err) {
 		return
 	}
 	if err != nil {
@@ -214,8 +241,7 @@ func (h *Handlers) SetProxyRouteEnabled(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	err = h.Proxy.SetRouteEnabled(r.Context(), id, body.Enabled)
-	if errors.Is(err, proxy.ErrInvalidUpstream) || errors.Is(err, proxy.ErrAdminUpstream) || errors.Is(err, proxy.ErrInvalidHost) {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if writeProxyRouteError(w, err) {
 		return
 	}
 	if err != nil {
@@ -277,12 +303,38 @@ func (h *Handlers) GetProxyRouteMetrics(w http.ResponseWriter, r *http.Request) 
 	// No metrics for this host yet — return an empty zero-value slice so
 	// the caller renders "0 req/s" instead of a 404.
 	writeJSON(w, http.StatusOK, map[string]any{
-		"host":           host,
-		"requests":       0,
+		"host":                host,
+		"requests":            0,
 		"requests_per_second": 0,
-		"status_buckets": map[string]uint64{},
-		"p95_latency_ms": 0,
+		"status_buckets":      map[string]uint64{},
+		"p95_latency_ms":      0,
 	})
+}
+
+// GetProxyRouteConfig returns the Caddy config Dockmesh generates for
+// one site, read-only and with basic-auth hashes redacted.
+//
+//	GET /api/v1/proxy/routes/{id}/config
+func (h *Handlers) GetProxyRouteConfig(w http.ResponseWriter, r *http.Request) {
+	if h.Proxy == nil {
+		writeError(w, http.StatusServiceUnavailable, "proxy not configured")
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	preview, err := h.Proxy.SiteConfig(r.Context(), id)
+	if errors.Is(err, proxy.ErrRouteNotFound) {
+		writeError(w, http.StatusNotFound, "route not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
 }
 
 func (h *Handlers) DeleteProxyRoute(w http.ResponseWriter, r *http.Request) {

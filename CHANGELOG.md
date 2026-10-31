@@ -24,6 +24,15 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ## [Unreleased]
 
+### Added
+- Proxy routes take per-site options through the API: response streaming, upload streaming,
+  upstream timeouts, a request size limit, keeping WebSockets open across config reloads,
+  compression, several upstreams with load balancing and health checks, a www redirect,
+  serving HTTP alongside HTTPS, HSTS, basic auth, IP allow and deny lists, forward auth,
+  security headers, request and response headers, and an access log. Basic-auth passwords
+  are stored as bcrypt hashes and never returned. `GET /api/v1/proxy/routes/{id}/config`
+  shows the Caddy config a site gets. Existing routes keep their current behaviour.
+
 ### Changed
 - Updating the image of a container that belongs to a stack now rebuilds it from the
   stack's compose.yaml, together with the other replicas of its service, and records the
