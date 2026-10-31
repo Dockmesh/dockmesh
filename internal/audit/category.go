@@ -130,6 +130,7 @@ var categories = map[string]string{
 	"proxy.route_enabled":           CategoryChanges,
 	"proxy.route_disabled":          CategoryChanges,
 	"proxy.route_delete":            CategoryChanges,
+	"proxy.import":                  CategoryChanges,
 	"backup.accept_host_key":        CategoryChanges,
 	"backup.accept_target_host_key": CategoryChanges,
 

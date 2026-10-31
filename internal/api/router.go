@@ -780,6 +780,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermProxyCreate))
 				r.Post("/proxy/routes", h.CreateProxyRoute)
+				r.Post("/proxy/import", h.ImportProxyCaddyfile)
 				// Enable/disable the proxy itself is closer to "create
 				// the proxy stack" than route-level edit.
 				r.Post("/proxy/enable", h.ProxyEnable)

@@ -70,6 +70,10 @@ Each route can carry options in its `options` object (`POST /api/v1/proxy/routes
 
 A `PUT` without `options` keeps the stored ones; a `PUT` with `options` replaces them. Basic-auth passwords are stored as bcrypt hashes and never returned; send a user without `password` to keep its password. Values can't contain Caddy placeholders (`{…}`), and there's no way to add raw Caddy directives. `GET /api/v1/proxy/routes/{id}/config` returns the Caddy config Dockmesh generates for one site, with password hashes redacted. Users who can view proxy routes but not edit them (`proxy.update`) see header names with the values replaced by `********` and the forward-auth URL without its query, in the route list and in the config preview.
 
+### Importing a Caddyfile
+
+`POST /api/v1/proxy/import` with `{"caddyfile": "…", "dry_run": true}` shows how each site of an existing Caddyfile maps to a route and its options; without `dry_run` the sites are created **disabled**, so you can check them before they serve traffic. The proxy has to be running, because Caddy itself parses the file. Each site comes back as `ready`, `partial` (the `unsupported` list names what wasn't imported, such as `file_server`, path rules or placeholders like `{remote_host}`) or `skipped` (with the reason, for example a host that already has a route). `import <name>` works for snippets defined earlier in the same Caddyfile; imports of files or globs, imports with arguments, heredocs (`<<`), client certificate files and `{$ENV}` variables are refused, so paste that content instead. Because of that check, the word `import` can't appear anywhere else in the file either, not even in a comment. A block listing several names becomes one site per name, and a `www.` block that only redirects becomes the site's www redirect. Creating sites needs `proxy.create`.
+
 ## TLS modes
 
 | Mode | Label in the UI | Behaviour |

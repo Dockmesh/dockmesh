@@ -1,0 +1,26 @@
+{
+	email ops@example.com
+}
+
+files.example.org {
+	root * /srv/files
+	file_server browse
+}
+
+wiki.example.org, wiki2.example.org {
+	encode gzip
+	handle /api/* {
+		reverse_proxy wiki-api:3001
+	}
+	reverse_proxy wiki:3000 {
+		header_up X-Real-IP {remote_host}
+		transport http {
+			tls
+		}
+	}
+}
+
+app.example.org {
+	tls /certs/app.crt /certs/app.key
+	reverse_proxy 127.0.0.1:2019
+}

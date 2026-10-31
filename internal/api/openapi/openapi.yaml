@@ -6176,6 +6176,53 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /proxy/import:
+    post:
+      operationId: proxy.import_caddyfile
+      tags: [proxy]
+      summary: Import sites from a Caddyfile
+      description: |
+        Converts the Caddyfile with the running Caddy's `/adapt` admin endpoint
+        (the running config is not touched) and maps each site to a route with
+        options. Sites whose directives all map get status `ready`; sites with
+        directives that have no option get `partial` and list them in
+        `unsupported`; sites that can't be imported (no reverse_proxy, a host
+        that already has a route, an upstream or option that fails validation)
+        get `skipped` with `error`. Without `dry_run`, every `ready` and
+        `partial` site is created **disabled** and carries its `route_id`.
+        A site block with several names becomes one site per name; a
+        `www.<name>` block that only redirects to `<name>` becomes that site's
+        `www_redirect`. `import <name>` of a snippet defined earlier in the
+        same text is expanded before Caddy sees the file; imports of files or
+        globs, imports with arguments, heredocs, client certificate files and `{$ENV}`
+        substitution are rejected (400), as they would read files or the
+        environment of the proxy container.
+        Needs the proxy to be running (409 otherwise).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [caddyfile]
+              properties:
+                caddyfile: { type: string, maxLength: 262144 }
+                dry_run: { type: boolean, description: Only report, create nothing. }
+      responses:
+        "200":
+          description: Import result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxyImportResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The proxy is not running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /proxy/routes/{id}:
     parameters:
       - $ref: "#/components/parameters/IntIDPath"
@@ -9062,6 +9109,36 @@ components:
             access_log:
               type: boolean
               description: Write an access log line per request of this site to the proxy container's log.
+
+    ProxyImportResult:
+      type: object
+      required: [sites, global_unsupported, warnings]
+      properties:
+        sites:
+          type: array
+          items:
+            type: object
+            required: [host, upstream, tls_mode, options, status, unsupported]
+            properties:
+              host: { type: string }
+              upstream: { type: string }
+              tls_mode: { type: string, enum: [auto, internal, none] }
+              options: { $ref: "#/components/schemas/ProxySiteOptions" }
+              status: { type: string, enum: [ready, partial, skipped] }
+              unsupported:
+                type: array
+                items: { type: string }
+                description: Directives of this site that were not imported.
+              error: { type: string, description: Why a skipped site was not imported. }
+              route_id: { type: integer, format: int64, description: Set when the site was created (disabled). }
+        global_unsupported:
+          type: array
+          items: { type: string }
+          description: Global options and other parts of the file that apply to no single site and were not imported.
+        warnings:
+          type: array
+          items: { type: string }
+          description: Caddy's adapter warnings.
 
     ProxyHeader:
       type: object

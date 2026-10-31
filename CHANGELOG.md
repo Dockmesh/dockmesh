@@ -73,6 +73,10 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   are stored as bcrypt hashes and never returned. `GET /api/v1/proxy/routes/{id}/config`
   shows the Caddy config a site gets. Users without `proxy.update` see header values masked
   and the forward-auth URL without its query. Existing routes keep their current behaviour.
+- `POST /api/v1/proxy/import` reads a Caddyfile and creates its sites as disabled proxy
+  routes with the matching options. Directives without a matching option are listed per
+  site instead of being dropped, and `dry_run` shows the result without creating anything.
+  Snippets defined in the same file can be imported; imports of files can't.
 
 ### Changed
 - New look for the web UI: a calmer, flat design with equal light and dark themes that
