@@ -7,11 +7,9 @@
 // the `dockmesh` binary and run on the server host. dmctl only needs
 // a server URL and an API token to do anything.
 //
-// Config: ~/.config/dmctl/config.yaml (or %APPDATA%\dmctl\config.yaml
+// Config: ~/.config/dmctl/config.json (or %APPDATA%\dmctl\config.json
 // on Windows). Env vars `DMCTL_SERVER` / `DMCTL_TOKEN` win over the
 // config file. `--server` / `--token` flags win over env vars.
-//
-// P.12.9.
 package main
 
 import (

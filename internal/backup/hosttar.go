@@ -212,8 +212,7 @@ func tarStackWithVolumes(ctx context.Context, vts volumeTarSource, stackDir, sta
 	}
 
 	// --- Each volume -> volumes/<name>.tar.gz ----------------------------
-	// Buffered on disk one at a time for the outer tar header's size. Any
-	// volume that can't be read fails the backup.
+	// Buffered on disk one at a time for the outer tar header's size.
 	for _, vn := range volumeNames {
 		n, err := appendVolume(ctx, vts, tw, vn)
 		total += n

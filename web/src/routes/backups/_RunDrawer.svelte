@@ -2,11 +2,10 @@
   // Run drawer — right-side aside per backup-wizards.jsx::RunDrawer.
   // Shows status / size / duration / phase summary, the run error if
   // any, and the restore-flow with three modes (in-place / alongside /
-  // download). Per-run log streaming isn't backed yet (BackupRun has
-  // status + error but no log array) — placeholder block surfaces what
-  // we have and notes the rest is a follow-up.
+  // download).
   import { api, runRestorable, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
   import { Eyebrow } from '$lib/components/editorial';
+  import { allowed, isAdmin } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
   import {
@@ -97,11 +96,16 @@
   }
 
   const sp = $derived(statusPill(run.status));
-  const restoreModes: { id: 'in-place' | 'alongside' | 'download'; title: string; blurb: string; danger?: boolean }[] = [
+  const allRestoreModes: { id: 'in-place' | 'alongside' | 'download'; title: string; blurb: string; danger?: boolean }[] = [
     { id: 'in-place', title: 'Restore in place', blurb: 'Replace current data on this dockmesh. Stops affected stacks first.', danger: true },
     { id: 'alongside', title: 'Restore alongside', blurb: 'Mount as new stacks with a -restored suffix. Original keeps running.' },
-    { id: 'download', title: 'Download archive', blurb: 'Stream the encrypted .tar.age locally for offline inspection.' }
+    { id: 'download', title: 'Download archive', blurb: 'Download the decrypted .tar.gz for offline inspection.' }
   ];
+  // System runs are restored with `dockmesh restore`; only an admin may download them.
+  const systemRun = $derived(run.sources?.some((s) => s.type === 'system') ?? false);
+  const restoreModes = $derived(allRestoreModes.filter((m) =>
+    m.id === 'download' ? allowed('backups.download') && (!systemRun || isAdmin()) : !systemRun
+  ));
 
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape') onclose();
@@ -216,11 +220,15 @@
       <section class="bk-drawer-section bk-drawer-restore">
         <div class="bk-drawer-section-head">
           <Eyebrow>Restore</Eyebrow>
-          {#if !restoreOpen}
+          {#if !restoreOpen && restoreModes.length > 0}
             <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => (restoreOpen = true)}>show options</button>
           {/if}
         </div>
-        {#if !restoreOpen}
+        {#if systemRun && !restoreOpen}
+          <p class="bk-drawer-section-empty">
+            System backups are restored on the server with <code>dockmesh restore</code>.
+          </p>
+        {:else if !restoreOpen}
           <p class="bk-drawer-section-empty">
             This run produced a recoverable snapshot.
             <a href="#" class="bk-drawer-link" onclick={(e) => { e.preventDefault(); restoreOpen = true; }}>Open restore options</a>

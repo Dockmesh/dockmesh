@@ -10,6 +10,7 @@
   import { stackOps } from '$lib/stores/stackOps.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { autoRefresh } from '$lib/autorefresh';
+  import { latest } from '$lib/latest';
   import { hosts } from '$lib/stores/host.svelte';
   import {
     Plus,
@@ -94,7 +95,9 @@
   let adoptCompose = $state('');
   let adopting = $state(false);
 
+  const nextLoad = latest();
   async function load() {
+    const current = nextLoad();
     // Skeleton flicker fix — flip `loading` only on the FIRST load.
     // The 5s autoRefresh polling re-runs this function; if we toggled
     // `loading=true` every poll, the user saw the list flash to skeletons
@@ -110,6 +113,7 @@
           ? api.stacks.discovered(hosts.id).catch(() => [] as DiscoveredStack[])
           : Promise.resolve([] as DiscoveredStack[]),
       ]);
+      if (!current()) return;
       discoveredStacks = discovered;
       const containers: any[] = isFanOut(containersRaw) ? containersRaw.items : containersRaw;
 
@@ -157,9 +161,9 @@
         };
       });
     } catch (err) {
-      toast.error('Failed to load stacks', err instanceof ApiError ? err.message : undefined);
+      if (current()) toast.error('Failed to load stacks', err instanceof ApiError ? err.message : undefined);
     } finally {
-      loading = false;
+      if (current()) loading = false;
     }
   }
 
@@ -312,7 +316,7 @@
 
   $effect(() => {
     hosts.id;
-    load();
+    untrack(load);
   });
 
   $effect(() => autoRefresh(load, 5_000));
@@ -843,7 +847,7 @@
           disabled={creating}
         />
         <Input
-          label="Webhook secret (optional)"
+          label="Webhook secret (needed for push webhooks)"
           type="password"
           bind:value={newGit.webhook_secret as any}
           disabled={creating}

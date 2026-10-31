@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+
+	"github.com/dockmesh/dockmesh/internal/audit"
 )
 
 // ExportBackupKey returns the age private key used to encrypt stack .env
@@ -13,9 +15,12 @@ import (
 //
 //	GET /api/v1/system/backup-key/export
 //
-// Admin-only (wired at the router layer). Every call is audited so a
-// stolen key leaves a trail.
+// Admin-only. Every call is audited so a stolen key leaves a trail.
 func (h *Handlers) ExportBackupKey(w http.ResponseWriter, r *http.Request) {
+	if !h.callerIsAdmin(r) {
+		writeError(w, http.StatusForbidden, "only an admin can export the backup key")
+		return
+	}
 	if h.Secrets == nil {
 		writeError(w, http.StatusServiceUnavailable, "secrets service not configured")
 		return
@@ -25,7 +30,7 @@ func (h *Handlers) ExportBackupKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, "backup.key_export", "system", nil)
+	h.audit(r, audit.ActionBackupKeyExport, "system", nil)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="dockmesh-backup-key.txt"`)
 	w.Header().Set("X-Content-Type-Options", "nosniff")

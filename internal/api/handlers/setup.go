@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -49,6 +51,9 @@ func (h *Handlers) SetupServerInfo(w http.ResponseWriter, r *http.Request) {
 // SetupValidateDataDir is the live-validate Step 2 endpoint. Body:
 // `{ "path": "/data" }`. Returns the DataDirCheck struct verbatim.
 func (h *Handlers) SetupValidateDataDir(w http.ResponseWriter, r *http.Request) {
+	if !h.setupWindowOpen(w) {
+		return
+	}
 	var req struct {
 		Path string `json:"path"`
 	}
@@ -62,6 +67,9 @@ func (h *Handlers) SetupValidateDataDir(w http.ResponseWriter, r *http.Request) 
 // SetupValidateUser checks an existing-or-new system user choice.
 // Body: `{ "mode": "existing" | "create", "username": "dockmesh" }`.
 func (h *Handlers) SetupValidateUser(w http.ResponseWriter, r *http.Request) {
+	if !h.setupWindowOpen(w) {
+		return
+	}
 	var req struct {
 		Mode     string `json:"mode"`
 		Username string `json:"username"`
@@ -83,6 +91,9 @@ func (h *Handlers) SetupValidateUser(w http.ResponseWriter, r *http.Request) {
 // SetupTestURL is Step 5's "Test connection" button — issues a GET
 // against the supplied URL with a 5s timeout and reports back.
 func (h *Handlers) SetupTestURL(w http.ResponseWriter, r *http.Request) {
+	if !h.setupWindowOpen(w) {
+		return
+	}
 	var req struct {
 		URL          string `json:"url"`
 		ExpectHealth bool   `json:"expect_health"`
@@ -91,7 +102,7 @@ func (h *Handlers) SetupTestURL(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	writeJSON(w, http.StatusOK, setup.CheckURL(r.Context(), req.URL, req.ExpectHealth))
+	writeJSON(w, http.StatusOK, setup.CheckURL(r.Context(), req.URL, req.ExpectHealth, localPort(r)))
 }
 
 // SetupCommit kicks off the install. Returns 200 with a run_id; the
@@ -100,12 +111,7 @@ func (h *Handlers) SetupTestURL(w http.ResponseWriter, r *http.Request) {
 // the alternative (commit returns when done) would block the HTTP
 // connection for several seconds and lose intermediate events.
 func (h *Handlers) SetupCommit(w http.ResponseWriter, r *http.Request) {
-	if h.SetupState == nil || !h.SetupState.Active() {
-		writeError(w, http.StatusGone, "setup mode is no longer active")
-		return
-	}
-	if h.SetupState.Expired() {
-		writeError(w, http.StatusGone, "setup window expired — restart the dockmesh service to start a fresh window")
+	if !h.setupWindowOpen(w) {
 		return
 	}
 	var in setup.CommitInput
@@ -121,6 +127,24 @@ func (h *Handlers) SetupCommit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "install runner not wired")
 		return
 	}
+	if !h.SetupState.TryBeginCommit() {
+		writeError(w, http.StatusConflict, "an install is already running, or setup has finished or expired")
+		return
+	}
+	// An admin may have been created since boot, e.g. with the CLI.
+	if h.DB != nil {
+		exists, err := setup.AdminExists(r.Context(), h.DB)
+		if err != nil {
+			h.SetupState.EndCommit(false)
+			writeError(w, http.StatusInternalServerError, "could not check for existing admins")
+			return
+		}
+		if exists {
+			h.SetupState.EndCommit(true)
+			writeError(w, http.StatusConflict, "an account that can administer Dockmesh already exists, sign in instead")
+			return
+		}
+	}
 
 	runner := setup.NewRunner()
 	runID := uuid.NewString()
@@ -132,12 +156,8 @@ func (h *Handlers) SetupCommit(w http.ResponseWriter, r *http.Request) {
 		// runner uses its own background context.
 		ctx := context.Background()
 		runner.Run(ctx, in, h.SetupCommit_)
-		// Mark setup complete IF the runner ended without error AND
-		// we're still in setup mode. Idempotent — multiple commits
-		// after a successful one just re-mark it.
-		if done, err := runner.Done(); done && err == nil && h.SetupState != nil {
-			h.SetupState.Complete()
-		}
+		done, err := runner.Done()
+		h.SetupState.EndCommit(done && err == nil)
 		// Keep the runner around for a while so late subscribers can
 		// still read the event history. After 10 minutes drop it.
 		go func() {
@@ -150,6 +170,34 @@ func (h *Handlers) SetupCommit(w http.ResponseWriter, r *http.Request) {
 		"run_id":     runID,
 		"stream_url": "/api/v1/setup/stream/" + runID,
 	})
+}
+
+// localPort is the port of the listener that accepted r, 0 if unknown.
+func localPort(r *http.Request) uint16 {
+	addr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if !ok {
+		return 0
+	}
+	ap, err := netip.ParseAddrPort(addr.String())
+	if err != nil {
+		return 0
+	}
+	return ap.Port()
+}
+
+// setupWindowOpen answers 410 once setup is over or its window expired.
+// The probing endpoints are unauthenticated, so they only answer while
+// the wizard is actually waiting for its operator.
+func (h *Handlers) setupWindowOpen(w http.ResponseWriter) bool {
+	if h.SetupState == nil || !h.SetupState.Active() {
+		writeError(w, http.StatusGone, "setup mode is no longer active")
+		return false
+	}
+	if h.SetupState.Expired() {
+		writeError(w, http.StatusGone, "setup window expired — restart the dockmesh service to start a fresh window")
+		return false
+	}
+	return true
 }
 
 // SetupStream is the Server-Sent-Events endpoint Step 7's terminal

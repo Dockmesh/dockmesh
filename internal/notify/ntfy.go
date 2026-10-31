@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -64,8 +62,7 @@ func (c *ntfyChannel) Send(ctx context.Context, n Notification) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("%d %s: %s", resp.StatusCode, resp.Status, string(b))
+		return newStatusError("", resp)
 	}
 	return nil
 }

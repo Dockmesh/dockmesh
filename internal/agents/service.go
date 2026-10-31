@@ -11,10 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/pki"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -45,19 +47,26 @@ type Agent struct {
 	CertFingerprint string     `json:"cert_fingerprint,omitempty"`
 	LastSeenAt      *time.Time `json:"last_seen_at,omitempty"`
 	OnlineSince     *time.Time `json:"online_since,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	CertExpiresAt   *time.Time `json:"cert_expires_at,omitempty"`
+	// ProtocolVersion and UpdateRecommended describe the live session
+	// and are only set while the agent is online.
+	ProtocolVersion   int       `json:"protocol_version,omitempty"`
+	UpdateRecommended bool      `json:"update_recommended,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // CreateResult is what the admin sees right after creating an agent — the
 // install command they have to run on the remote host. The plaintext token
 // is shown exactly once.
 type CreateResult struct {
-	Agent       Agent  `json:"agent"`
-	Token       string `json:"token"`
-	EnrollURL   string `json:"enroll_url"`
-	AgentURL    string `json:"agent_url"`
-	InstallHint string `json:"install_hint"`
+	Agent          Agent     `json:"agent"`
+	Token          string    `json:"token"`
+	TokenExpiresAt time.Time `json:"token_expires_at"`
+	EnrollURL      string    `json:"enroll_url"`
+	AgentURL       string    `json:"agent_url"`
+	CAFingerprint  string    `json:"ca_fingerprint"`
+	InstallHint    string    `json:"install_hint"`
 }
 
 var (
@@ -65,6 +74,7 @@ var (
 	ErrNameTaken     = errors.New("agent name already exists")
 	ErrInvalidToken  = errors.New("invalid enrollment token")
 	ErrAlreadyOnline = errors.New("agent already connected")
+	ErrCertReplaced  = errors.New("agent certificate was replaced")
 )
 
 // Service owns the agents table + the in-memory map of active connections.
@@ -74,6 +84,8 @@ type Service struct {
 	publicURL string // public HTTPS URL of the main dockmesh server
 	agentURL  string // wss URL of the mTLS agent listener (e.g. wss://host:8443)
 	notifs    *notifications.Service
+	enrollTTL time.Duration
+	now       func() time.Time
 
 	mu        sync.RWMutex
 	connected map[string]*ConnectedAgent // keyed by agent id
@@ -92,7 +104,19 @@ type ConnectedAgent struct {
 	Name     string
 	Hello    HelloPayload
 	JoinedAt time.Time
-	send     chan Frame
+	// send is never closed: senders select on done instead, so a frame
+	// sent after the session ended fails rather than panics.
+	send      chan Frame
+	done      chan struct{}
+	closeOnce sync.Once
+	closeConn func()
+	// certFP and certNotAfter describe the client cert this session
+	// authenticated with.
+	certFP       string
+	certNotAfter time.Time
+	// renewing allows one renewal in flight, renewed one per session.
+	renewing atomic.Bool
+	renewed  atomic.Bool
 
 	pendingMu sync.Mutex
 	pending   map[string]chan Frame
@@ -101,17 +125,101 @@ type ConnectedAgent struct {
 	streams   map[string]*Stream
 }
 
+var (
+	ErrAgentGone     = errors.New("agent disconnected")
+	ErrSendQueueFull = errors.New("agent send queue full")
+)
+
+// enqueueTimeout caps how long a sender waits for room in the outbound
+// queue of a live but stalled connection.
+var enqueueTimeout = 10 * time.Second
+
+func newConnectedAgent(id, name string, closeConn func()) *ConnectedAgent {
+	return &ConnectedAgent{
+		ID:        id,
+		Name:      name,
+		JoinedAt:  time.Now(),
+		send:      make(chan Frame, 32),
+		done:      make(chan struct{}),
+		closeConn: closeConn,
+	}
+}
+
+// Done is closed once the session has ended.
+func (c *ConnectedAgent) Done() <-chan struct{} { return c.done }
+
+// shutdown ends the session: senders and waiters unblock and the socket
+// closes, which makes the read loop return.
+func (c *ConnectedAgent) shutdown() {
+	c.closeOnce.Do(func() {
+		close(c.done)
+		if c.closeConn != nil {
+			c.closeConn()
+		}
+	})
+}
+
+// UpdateRecommended is true for agents speaking an older protocol than
+// this server; features they lack are skipped or fail with a clear error.
+func (c *ConnectedAgent) UpdateRecommended() bool {
+	return c.Hello.ProtocolVersion < ProtocolVersion
+}
+
 func (c *ConnectedAgent) Send(f Frame) {
 	select {
+	case <-c.done:
 	case c.send <- f:
 	default:
 		// Drop on full — the agent will time out and reconnect.
 	}
 }
 
+// enqueue queues f for the outbound pump. It fails once the session has
+// ended, the context is done or the queue stayed full for enqueueTimeout.
+func (c *ConnectedAgent) enqueue(ctx context.Context, f Frame) error {
+	select {
+	case <-c.done:
+		return ErrAgentGone
+	default:
+	}
+	t := time.NewTimer(enqueueTimeout)
+	defer t.Stop()
+	select {
+	case c.send <- f:
+		return nil
+	case <-c.done:
+		return ErrAgentGone
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return ErrSendQueueFull
+	}
+}
+
+// requestTimeout bounds the wait for an agent's answer when the caller's
+// context has no earlier deadline. Deploys and scale-ups pull images and
+// exec_run carries backup pre-hooks such as database dumps, so they get
+// far more room than plain reads.
+func requestTimeout(frameType string) time.Duration {
+	switch frameType {
+	case FrameReqContainerExecRun:
+		return 30 * time.Minute
+	case FrameReqStackDeploy, FrameReqStackScale:
+		return 15 * time.Minute
+	case FrameReqAgentUpgrade:
+		return 11 * time.Minute
+	case FrameReqContainerStop, FrameReqContainerRestart, FrameReqContainerRemove,
+		FrameReqStackStop, FrameReqImageRemove, FrameReqImagePrune, FrameReqStackCheckScale:
+		return 3 * time.Minute
+	default:
+		return 30 * time.Second
+	}
+}
+
 // Request sends a request frame and blocks until a response with the
-// matching ID arrives, the context is cancelled, or the request times
-// out (30s). The frame's ID is overwritten with a fresh UUID.
+// matching ID arrives, the context is cancelled, the session ends or the
+// per-type timeout passes. On cancel or timeout the agent is told to
+// abandon the request. The frame's ID is overwritten with a fresh UUID.
 func (c *ConnectedAgent) Request(ctx context.Context, f Frame) (*ResponseEnvelope, error) {
 	ctx, span := rpcTracer.Start(ctx, "agent.rpc",
 		trace.WithSpanKind(trace.SpanKindClient),
@@ -121,6 +229,9 @@ func (c *ConnectedAgent) Request(ctx context.Context, f Frame) (*ResponseEnvelop
 			attribute.String("agent.name", c.Name),
 		))
 	defer span.End()
+
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout(f.Type))
+	defer cancel()
 
 	id := uuid.NewString()
 	f.ID = id
@@ -138,11 +249,9 @@ func (c *ConnectedAgent) Request(ctx context.Context, f Frame) (*ResponseEnvelop
 		c.pendingMu.Unlock()
 	}()
 
-	select {
-	case c.send <- f:
-	case <-ctx.Done():
-		span.SetStatus(codes.Error, ctx.Err().Error())
-		return nil, ctx.Err()
+	if err := c.enqueue(ctx, f); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("agent request %q: %w", f.Type, err)
 	}
 
 	select {
@@ -159,12 +268,30 @@ func (c *ConnectedAgent) Request(ctx context.Context, f Frame) (*ResponseEnvelop
 			return &env, fmt.Errorf("agent: %s", env.Error)
 		}
 		return &env, nil
+	case <-c.done:
+		span.SetStatus(codes.Error, ErrAgentGone.Error())
+		return nil, fmt.Errorf("agent request %q: %w", f.Type, ErrAgentGone)
 	case <-ctx.Done():
+		c.cancelRemote(id)
 		span.SetStatus(codes.Error, ctx.Err().Error())
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("agent request %q timed out: %w", f.Type, ctx.Err())
+		}
 		return nil, ctx.Err()
-	case <-time.After(30 * time.Second):
-		span.SetStatus(codes.Error, "timeout")
-		return nil, fmt.Errorf("agent request %q timed out", f.Type)
+	}
+}
+
+// cancelRemote asks the agent to abandon request id. Best effort: with a
+// full queue or an agent lacking the capability the request runs to the
+// end and its late response is discarded.
+func (c *ConnectedAgent) cancelRemote(id string) {
+	if !c.Hello.Has(CapRequestCancel) {
+		return
+	}
+	select {
+	case <-c.done:
+	case c.send <- Frame{Type: FrameReqCancel, ID: id}:
+	default:
 	}
 }
 
@@ -191,12 +318,32 @@ func NewService(db *sql.DB, p *pki.Manager, publicURL, agentURL string) *Service
 		pki:       p,
 		publicURL: publicURL,
 		agentURL:  agentURL,
+		enrollTTL: DefaultEnrollTokenTTL,
+		now:       time.Now,
 		connected: make(map[string]*ConnectedAgent),
+	}
+}
+
+// DefaultEnrollTokenTTL is how long an enrollment token stays valid when
+// DOCKMESH_AGENT_ENROLL_TOKEN_TTL is not set.
+const DefaultEnrollTokenTTL = 24 * time.Hour
+
+// SetEnrollTokenTTL overrides the enrollment-token lifetime. Non-positive
+// values keep the default.
+func (s *Service) SetEnrollTokenTTL(d time.Duration) {
+	if d > 0 {
+		s.enrollTTL = d
 	}
 }
 
 func (s *Service) PublicURL() string { return s.publicURL }
 func (s *Service) AgentURL() string  { return s.agentURL }
+
+// CAFingerprint is the SHA-256 of the agents CA the installer pins.
+func (s *Service) CAFingerprint() string { return s.pki.CAFingerprint() }
+
+// CACertPEM is the agents CA certificate handed to the installer.
+func (s *Service) CACertPEM() []byte { return s.pki.CACertPEM() }
 
 // -----------------------------------------------------------------------------
 // CRUD
@@ -211,11 +358,11 @@ func (s *Service) Create(ctx context.Context, name string) (*CreateResult, error
 	if err != nil {
 		return nil, err
 	}
-	tokenHash := hashToken(token)
+	expires := s.now().Add(s.enrollTTL)
 
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO agents (id, name, enrollment_token_hash, status)
-		VALUES (?, ?, ?, 'pending')`, id, name, tokenHash)
+		INSERT INTO agents (id, name, enrollment_token_hash, enrollment_token_expires_at, status)
+		VALUES (?, ?, ?, ?, 'pending')`, id, name, hashToken(token), sqliteTime(expires))
 	if err != nil {
 		return nil, ErrNameTaken
 	}
@@ -223,37 +370,25 @@ func (s *Service) Create(ctx context.Context, name string) (*CreateResult, error
 	if err != nil {
 		return nil, err
 	}
-	// One-line installer command — runs on the remote host as root,
-	// creates a dedicated dockmesh-agent service user, installs Docker
-	// if missing, drops a hardened systemd unit and starts the agent.
-	installHint := fmt.Sprintf(
-		"curl -fsSL %s/install/agent.sh?token=%s | sudo bash",
-		s.publicURL, token)
-
-	return &CreateResult{
-		Agent:       *a,
-		Token:       token,
-		EnrollURL:   s.publicURL + "/api/v1/agents/enroll",
-		AgentURL:    s.agentURL,
-		InstallHint: installHint,
-	}, nil
+	return s.createResult(a, token, expires), nil
 }
 
 // RotateEnrollToken generates a fresh enrollment token for an existing
-// agent, invalidating the previous one. Used when the original token
-// was leaked or lost — the agent DB row + cert chain are preserved.
-// Only allowed for agents that haven't yet completed enrollment OR for
-// explicit token rotation triggered by the operator. Returns the same
-// CreateResult shape so the UI can reuse the "install command" modal.
+// agent, invalidating the previous one. The host keeps its ID, so stacks,
+// tags and backup jobs bound to it survive a re-enroll; the old client
+// cert stops working once the new enrollment replaces its fingerprint.
 func (s *Service) RotateEnrollToken(ctx context.Context, id string) (*CreateResult, error) {
 	token, err := newToken()
 	if err != nil {
 		return nil, err
 	}
-	tokenHash := hashToken(token)
+	expires := s.now().Add(s.enrollTTL)
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE agents SET enrollment_token_hash = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?`, tokenHash, id)
+		UPDATE agents
+		   SET enrollment_token_hash = ?,
+		       enrollment_token_expires_at = ?,
+		       updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND status != 'revoked'`, hashToken(token), sqliteTime(expires), id)
 	if err != nil {
 		return nil, err
 	}
@@ -265,22 +400,96 @@ func (s *Service) RotateEnrollToken(ctx context.Context, id string) (*CreateResu
 	if err != nil {
 		return nil, err
 	}
+	return s.createResult(a, token, expires), nil
+}
+
+// ReissueAllEnrollTokens gives every non-revoked agent a fresh
+// enrollment token and drops its client cert, in one transaction. Used
+// after a CA rotation, when every agent has to enroll again.
+func (s *Service) ReissueAllEnrollTokens(ctx context.Context) ([]CreateResult, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM agents WHERE status != 'revoked' ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	expires := s.now().Add(s.enrollTTL)
+	tokens := make(map[string]string, len(ids))
+	for _, id := range ids {
+		token, err := newToken()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE agents
+			   SET enrollment_token_hash = ?,
+			       enrollment_token_expires_at = ?,
+			       cert_fingerprint = NULL,
+			       pending_cert_fingerprint = NULL,
+			       status = 'pending',
+			       updated_at = CURRENT_TIMESTAMP
+			 WHERE id = ?`, hashToken(token), sqliteTime(expires), id); err != nil {
+			return nil, err
+		}
+		tokens[id] = token
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	out := make([]CreateResult, 0, len(ids))
+	for _, id := range ids {
+		a, err := s.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *s.createResult(a, tokens[id], expires))
+	}
+	return out, nil
+}
+
+func (s *Service) createResult(a *Agent, token string, expires time.Time) *CreateResult {
+	fp := s.pki.CAFingerprint()
+	// The installer runs as root on the remote host: it creates a
+	// dedicated service user, installs Docker if missing and drops a
+	// hardened systemd unit. The ca= fingerprint lets the server refuse
+	// to render the script once the agents CA has rotated.
 	installHint := fmt.Sprintf(
-		"curl -fsSL %s/install/agent.sh?token=%s | sudo bash",
-		s.publicURL, token)
+		"curl -fsSL '%s/install/agent.sh?token=%s&ca=%s' | sudo bash",
+		s.publicURL, token, fp)
 	return &CreateResult{
-		Agent:       *a,
-		Token:       token,
-		EnrollURL:   s.publicURL + "/api/v1/agents/enroll",
-		AgentURL:    s.agentURL,
-		InstallHint: installHint,
-	}, nil
+		Agent:          *a,
+		Token:          token,
+		TokenExpiresAt: expires.UTC(),
+		EnrollURL:      s.EnrollURL(),
+		AgentURL:       s.agentURL,
+		CAFingerprint:  fp,
+		InstallHint:    installHint,
+	}
 }
 
 func (s *Service) List(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, status, version, os, arch, hostname, docker_version,
-		       cert_fingerprint, last_seen_at, online_since, created_at, updated_at
+		       cert_fingerprint, last_seen_at, online_since, cert_expires_at, created_at, updated_at
 		  FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -301,7 +510,7 @@ func (s *Service) List(ctx context.Context) ([]Agent, error) {
 func (s *Service) Get(ctx context.Context, id string) (*Agent, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, status, version, os, arch, hostname, docker_version,
-		       cert_fingerprint, last_seen_at, online_since, created_at, updated_at
+		       cert_fingerprint, last_seen_at, online_since, cert_expires_at, created_at, updated_at
 		  FROM agents WHERE id = ?`, id)
 	a, err := scanAgent(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -334,10 +543,12 @@ func (s *Service) fillStatus(a *Agent) {
 		return
 	}
 	s.mu.RLock()
-	_, ok := s.connected[a.ID]
+	ag, ok := s.connected[a.ID]
 	s.mu.RUnlock()
 	if ok {
 		a.Status = "online"
+		a.ProtocolVersion = ag.Hello.ProtocolVersion
+		a.UpdateRecommended = ag.UpdateRecommended()
 	} else if a.Status != "pending" {
 		a.Status = "offline"
 	}
@@ -352,11 +563,15 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 		return nil, ErrInvalidToken
 	}
 	tokenHash := hashToken(req.Token)
+	now := sqliteTime(s.now())
 
 	var id, name string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name FROM agents WHERE enrollment_token_hash = ? AND status = 'pending'`,
-		tokenHash).Scan(&id, &name)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, name FROM agents
+		 WHERE enrollment_token_hash = ?
+		   AND enrollment_token_expires_at > ?
+		   AND status != 'revoked'`,
+		tokenHash, now).Scan(&id, &name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrInvalidToken
 	}
@@ -364,15 +579,20 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 		return nil, err
 	}
 
-	certPEM, keyPEM, fingerprint, err := s.pki.IssueClientCert(id, 365*24*time.Hour)
+	certPEM, keyPEM, fingerprint, err := s.pki.IssueClientCert(id, ClientCertValidity)
 	if err != nil {
 		return nil, err
 	}
 
-	_, err = s.db.ExecContext(ctx, `
+	// The token predicate makes the claim atomic: of two concurrent
+	// enrollments with the same token only one UPDATE matches a row.
+	res, err := s.db.ExecContext(ctx, `
 		UPDATE agents
 		   SET enrollment_token_hash = NULL,
+		       enrollment_token_expires_at = NULL,
 		       cert_fingerprint = ?,
+		       pending_cert_fingerprint = NULL,
+		       cert_expires_at = ?,
 		       status = 'offline',
 		       hostname = ?,
 		       os = ?,
@@ -380,11 +600,21 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 		       version = ?,
 		       docker_version = ?,
 		       updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ?`,
-		fingerprint, req.Hostname, req.OS, req.Arch, req.Version, req.DockerVersion, id)
+		 WHERE id = ?
+		   AND enrollment_token_hash = ?
+		   AND enrollment_token_expires_at > ?
+		   AND status != 'revoked'`,
+		fingerprint, sqliteTime(s.now().Add(ClientCertValidity)), req.Hostname, req.OS, req.Arch, req.Version, req.DockerVersion,
+		id, tokenHash, now)
 	if err != nil {
 		return nil, err
 	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return nil, ErrInvalidToken
+	}
+	// A re-enrolled host replaces its credential; a session still open
+	// with the old cert must not outlive it or block the new agent.
+	s.disconnect(id)
 
 	return &EnrollResponse{
 		AgentID:    id,
@@ -401,8 +631,8 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*EnrollRespons
 func (s *Service) LookupByFingerprint(ctx context.Context, fingerprint string) (*Agent, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, status, version, os, arch, hostname, docker_version,
-		       cert_fingerprint, last_seen_at, online_since, created_at, updated_at
-		  FROM agents WHERE cert_fingerprint = ?`, fingerprint)
+		       cert_fingerprint, last_seen_at, online_since, cert_expires_at, created_at, updated_at
+		  FROM agents WHERE cert_fingerprint = ? OR pending_cert_fingerprint = ?`, fingerprint, fingerprint)
 	a, err := scanAgent(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -425,8 +655,11 @@ func (s *Service) markOnline(ctx context.Context, ag *ConnectedAgent, hello Hell
 
 	// Set online_since on the transition; preserve a previous value if
 	// the agent reconnected within a short window (briefly flapped) by
-	// only setting it when currently NULL.
-	_, err := s.db.ExecContext(ctx, `
+	// only setting it when currently NULL. The fingerprint is checked
+	// again because a re-enroll can replace it while this session waits
+	// for its hello; Enroll updates the row before it disconnects, so
+	// either this UPDATE misses or Enroll sees the map entry.
+	res, err := s.db.ExecContext(ctx, `
 		UPDATE agents
 		   SET status = 'online',
 		       hostname = ?,
@@ -437,17 +670,39 @@ func (s *Service) markOnline(ctx context.Context, ag *ConnectedAgent, hello Hell
 		       last_seen_at = CURRENT_TIMESTAMP,
 		       online_since = COALESCE(online_since, CURRENT_TIMESTAMP),
 		       updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ?`,
-		hello.Hostname, hello.OS, hello.Arch, hello.Version, hello.DockerVersion, ag.ID)
-	return err
+		 WHERE id = ?
+		   AND status NOT IN ('revoked', 'pending')
+		   AND (cert_fingerprint = ? OR pending_cert_fingerprint = ?)`,
+		hello.Hostname, hello.OS, hello.Arch, hello.Version, hello.DockerVersion, ag.ID, ag.certFP, ag.certFP)
+	if err == nil {
+		if n, _ := res.RowsAffected(); n != 1 {
+			err = ErrCertReplaced
+		}
+	}
+	if err != nil {
+		// The caller doesn't defer markOffline on failure, so the entry
+		// would otherwise refuse every later connection as a duplicate.
+		s.mu.Lock()
+		if s.connected[ag.ID] == ag {
+			delete(s.connected, ag.ID)
+		}
+		s.mu.Unlock()
+		return err
+	}
+	return nil
 }
 
 func (s *Service) markOffline(ag *ConnectedAgent) {
 	s.mu.Lock()
-	if cur, ok := s.connected[ag.ID]; ok && cur == ag {
+	cur, ok := s.connected[ag.ID]
+	if ok && cur == ag {
 		delete(s.connected, ag.ID)
 	}
 	s.mu.Unlock()
+	if ok && cur != ag {
+		// A newer session of the same agent is already online.
+		return
+	}
 	// Clear online_since on offline so the next online transition starts
 	// the uptime clock fresh. Compliance + UX both want this behaviour.
 	_, _ = s.db.Exec(`UPDATE agents SET status = 'offline', online_since = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, ag.ID)
@@ -458,6 +713,8 @@ func (s *Service) markOffline(ag *ConnectedAgent) {
 			Title:    "Agent offline: " + ag.Name,
 			Body:     "Heartbeat lost — checking again in a few seconds",
 			Link:     "/hosts/" + ag.ID,
+			Perm:     rbac.PermHostsView,
+			HostID:   ag.ID,
 		})
 	}
 }
@@ -466,15 +723,16 @@ func (s *Service) touchHeartbeat(ctx context.Context, id string) {
 	_, _ = s.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
 }
 
+// disconnect ends the live session of agent id, if any. The entry leaves
+// the registry right away so a replacement session isn't refused as a
+// duplicate while the old read loop winds down.
 func (s *Service) disconnect(id string) {
 	s.mu.Lock()
-	ag, ok := s.connected[id]
-	if ok {
-		delete(s.connected, id)
-	}
+	ag := s.connected[id]
+	delete(s.connected, id)
 	s.mu.Unlock()
 	if ag != nil {
-		close(ag.send)
+		ag.shutdown()
 	}
 }
 
@@ -517,9 +775,9 @@ type rowScanner interface {
 func scanAgent(r rowScanner) (*Agent, error) {
 	var a Agent
 	var version, osName, arch, hostname, dockerVersion, fingerprint sql.NullString
-	var lastSeen, onlineSince sql.NullTime
+	var lastSeen, onlineSince, certExpires sql.NullTime
 	if err := r.Scan(&a.ID, &a.Name, &a.Status, &version, &osName, &arch, &hostname,
-		&dockerVersion, &fingerprint, &lastSeen, &onlineSince, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		&dockerVersion, &fingerprint, &lastSeen, &onlineSince, &certExpires, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if version.Valid {
@@ -548,6 +806,10 @@ func scanAgent(r rowScanner) (*Agent, error) {
 		t := onlineSince.Time
 		a.OnlineSince = &t
 	}
+	if certExpires.Valid {
+		t := certExpires.Time
+		a.CertExpiresAt = &t
+	}
 	return &a, nil
 }
 
@@ -557,6 +819,12 @@ func newToken() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// sqliteTime renders t in the layout SQLite's CURRENT_TIMESTAMP and
+// datetime() use, so stored expiry values compare correctly as text.
+func sqliteTime(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05")
 }
 
 func hashToken(token string) string {

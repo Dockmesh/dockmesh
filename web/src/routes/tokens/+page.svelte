@@ -289,7 +289,7 @@
         <div>
           <div class="tok-perm-title">Admin-only</div>
           <p class="ed-subtitle tok-perm-blurb">
-            API token management requires the <em>user.manage</em> permission.
+            API token management requires the <em>tokens.manage_others</em> permission.
           </p>
         </div>
       </div>
@@ -403,6 +403,21 @@
                       <span class="dm-pill-dot"></span>expiring
                     </span>
                   {/if}
+                  {#if !t.revoked_at && t.legacy}
+                    <span
+                      class="dm-pill dm-pill-warning tok-mini-pill"
+                      title="Created before tokens had an owner. Works with its role, unlimited by any user's permissions. Recreate it and revoke this one."
+                    >
+                      <span class="dm-pill-dot"></span>legacy
+                    </span>
+                  {:else if !t.revoked_at && t.owner_missing}
+                    <span
+                      class="dm-pill dm-pill-danger tok-mini-pill"
+                      title="The user who owned this token was deleted, so it no longer works."
+                    >
+                      <span class="dm-pill-dot"></span>owner deleted
+                    </span>
+                  {/if}
                 </div>
                 <span class="tok-prefix">{t.prefix}…</span>
               </div>
@@ -447,8 +462,9 @@
         <div class="tok-hint-title">Using a token</div>
         <p class="tok-hint-blurb">
           Send it as <code class="tok-hint-code">Authorization: Bearer dmt_…</code>
-          on any API request. Tokens carry the role they were created with — scope narrowly to limit
-          blast radius if leaked.
+          on any API request. A token belongs to you: it never gets more than its role and your
+          current permissions and host scope allow, and it stops working if your account is
+          deleted. Pick a narrow role to limit the damage if it leaks.
         </p>
       </div>
     {/if}

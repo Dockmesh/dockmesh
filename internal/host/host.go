@@ -11,10 +11,12 @@ import (
 	"context"
 	"io"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/system"
-	dtypes "github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/volume"
 )
 
 // Host is what HTTP handlers call. Both LocalHost (wrapping the embedded
@@ -25,8 +27,8 @@ type Host interface {
 	Name() string
 
 	// Container reads
-	ListContainers(ctx context.Context, all bool) ([]dtypes.Container, error)
-	InspectContainer(ctx context.Context, id string) (dtypes.ContainerJSON, error)
+	ListContainers(ctx context.Context, all bool) ([]container.Summary, error)
+	InspectContainer(ctx context.Context, id string) (container.InspectResponse, error)
 
 	// Container mutations (slice 3.1.2.1)
 	StartContainer(ctx context.Context, id string) error
@@ -59,12 +61,12 @@ type Host interface {
 	StartExec(ctx context.Context, id string, cmd []string) (ExecSession, error)
 
 	// Resource lists + mutations
-	ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error)
-	InspectImage(ctx context.Context, id string) (dtypes.ImageInspect, error)
-	RemoveImage(ctx context.Context, id string, force bool) ([]dtypes.ImageDeleteResponseItem, error)
-	PruneImages(ctx context.Context) (dtypes.ImagesPruneReport, error)
-	ListNetworks(ctx context.Context) ([]dtypes.NetworkResource, error)
-	InspectNetwork(ctx context.Context, id string) (dtypes.NetworkResource, error)
+	ListImages(ctx context.Context, all bool) ([]image.Summary, error)
+	InspectImage(ctx context.Context, id string) (image.InspectResponse, error)
+	RemoveImage(ctx context.Context, id string, force bool) ([]image.DeleteResponse, error)
+	PruneImages(ctx context.Context) (image.PruneReport, error)
+	ListNetworks(ctx context.Context) ([]network.Inspect, error)
+	InspectNetwork(ctx context.Context, id string) (network.Inspect, error)
 	ListVolumes(ctx context.Context) ([]any, error)
 	InspectVolume(ctx context.Context, name string) (volume.Volume, error)
 

@@ -49,11 +49,14 @@ func (u *pipeUpload) Close() error {
 
 func (u *pipeUpload) Abort() error {
 	_ = u.pw.CloseWithError(errUploadAborted)
-	<-u.done
+	err := <-u.done
 	if u.discard != nil {
 		u.discard()
 	}
-	return nil
+	if errors.Is(err, errUploadAborted) {
+		return nil
+	}
+	return err
 }
 
 type eofReader struct {

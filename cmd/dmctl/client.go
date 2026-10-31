@@ -64,6 +64,16 @@ func newClient() (*Client, error) {
 	}, nil
 }
 
+// longRunning returns a client without the overall request timeout, for
+// calls the server runs synchronously (backups, stack deploys).
+func (c *Client) longRunning() *Client {
+	cp := *c
+	hc := *c.http
+	hc.Timeout = 0
+	cp.http = &hc
+	return &cp
+}
+
 // tryRefresh exchanges the saved refresh_token for a new access_token
 // when the server hands us back a 401 on an otherwise valid request.
 // On success, the new tokens are persisted to the config file so future

@@ -7,10 +7,10 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/docker/docker/api/types/image"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -47,10 +47,10 @@ type pullRequest struct {
 }
 
 // imageRow is the all-mode row type for ListImages. Embeds the docker
-// ImageSummary so its fields flatten into the final JSON alongside
+// image.Summary so its fields flatten into the final JSON alongside
 // host_id / host_name.
 type imageRow struct {
-	dtypes.ImageSummary
+	image.Summary
 	HostID   string `json:"host_id"`
 	HostName string `json:"host_name"`
 }
@@ -62,7 +62,7 @@ func (h *Handlers) ListImages(w http.ResponseWriter, r *http.Request) {
 	// All-mode: fan out. Each online host contributes its image list,
 	// tagged with host metadata per row.
 	if host.IsAll(hostID) && h.Hosts != nil {
-		targets := h.Hosts.PickAll(r.Context())
+		targets := h.hostsInReadScope(r, h.Hosts.PickAll(r.Context()))
 		res := host.FanOut(r.Context(), targets, func(ctx context.Context, hh host.Host) ([]imageRow, error) {
 			list, err := hh.ListImages(ctx, all)
 			if err != nil {
@@ -71,9 +71,9 @@ func (h *Handlers) ListImages(w http.ResponseWriter, r *http.Request) {
 			rows := make([]imageRow, len(list))
 			for i, im := range list {
 				rows[i] = imageRow{
-					ImageSummary: im,
-					HostID:       hh.ID(),
-					HostName:     hh.Name(),
+					Summary:  im,
+					HostID:   hh.ID(),
+					HostName: hh.Name(),
 				}
 			}
 			return rows, nil
@@ -89,6 +89,10 @@ func (h *Handlers) ListImages(w http.ResponseWriter, r *http.Request) {
 	target, err := h.pickHost(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if !h.inReadScope(r, target.ID(), "") {
+		writeError(w, http.StatusForbidden, "out of scope: your role does not include this host")
 		return
 	}
 	images, err := target.ListImages(r.Context(), all)
@@ -176,6 +180,9 @@ func (h *Handlers) InspectImage(w http.ResponseWriter, r *http.Request) {
 	target, err := h.pickHost(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
 	scopeReq := h.hostScopeReq(r.Context(), target.ID())

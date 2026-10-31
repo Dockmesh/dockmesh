@@ -1,6 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { auth } from '$lib/stores/auth.svelte';
+  import { auth, consumeSignOutReason } from '$lib/stores/auth.svelte';
   import { api, ApiError } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
   import { Eyebrow, Field } from '$lib/components/editorial';
@@ -10,6 +10,7 @@
   let password = $state('');
   let remember = $state(true);
   let error = $state('');
+  let notice = $state('');
   let loading = $state(false);
 
   // MFA step state
@@ -43,25 +44,28 @@
     }
   }
 
-  async function handleSSOHash() {
+  let ssoCodeHandled = false;
+  async function handleSSOCode() {
     if (typeof window === 'undefined') return;
-    const hash = window.location.hash.slice(1);
-    if (!hash) return;
-    const params = new URLSearchParams(hash);
-    const access = params.get('sso_access');
-    const refresh = params.get('sso_refresh');
-    if (!access || !refresh) return;
-
-    history.replaceState(null, '', window.location.pathname + window.location.search);
-    auth.setSession({ id: '', username: '', role: '' } as any, access, refresh);
+    // Tokens are never accepted from the URL; drop a stale-style fragment.
+    if (window.location.hash) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+    const p = new URLSearchParams(window.location.search);
+    const code = p.get('sso_code');
+    if (!code || ssoCodeHandled) return;
+    ssoCodeHandled = true;
+    p.delete('sso_code');
+    const qs = p.toString();
+    history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
     try {
-      const me = await api.users.me();
-      auth.setSession(me as any, access, refresh);
-      toast.success('Signed in via SSO', me.username);
+      const res = await api.auth.ssoExchange(code);
+      auth.setSession(res.user as any, res.access_token, res.refresh_token);
+      toast.success('Signed in via SSO', res.user.username);
       goto('/');
     } catch {
       auth.clear();
-      error = 'SSO callback failed to load profile';
+      error = 'SSO sign-in failed or expired, please try again';
     }
   }
 
@@ -70,13 +74,16 @@
     const p = new URLSearchParams(window.location.search);
     const e = p.get('sso_error');
     if (e) {
-      error = 'SSO failed: ' + decodeURIComponent(e);
+      error = 'SSO failed: ' + e;
       history.replaceState(null, '', window.location.pathname);
     }
   }
 
   $effect(() => {
-    handleSSOHash();
+    if (consumeSignOutReason() === 'session_outdated') {
+      notice = 'You were signed out because of a security update. Please sign in again.';
+    }
+    handleSSOCode();
     handleSSOErrorParam();
     loadProviders();
   });
@@ -97,10 +104,7 @@
         goto('/');
       }
     } catch (err) {
-      error =
-        err instanceof ApiError && err.status === 401
-          ? 'Invalid username or password'
-          : 'Login failed';
+      error = signInError(err, 'Invalid username or password', 'Login failed');
     } finally {
       loading = false;
     }
@@ -116,13 +120,18 @@
       auth.setSession(res.user, res.access_token, res.refresh_token);
       goto('/');
     } catch (err) {
-      error =
-        err instanceof ApiError && err.status === 401
-          ? 'Invalid code'
-          : 'Verification failed';
+      error = signInError(err, 'Invalid code', 'Verification failed');
     } finally {
       loading = false;
     }
+  }
+
+  // 423 and 429 carry the server's message with the wait time.
+  function signInError(err: unknown, invalid: string, fallback: string): string {
+    if (!(err instanceof ApiError)) return fallback;
+    if (err.status === 401) return invalid;
+    if (err.status === 423 || err.status === 429) return err.message;
+    return fallback;
   }
 
   function cancelMFA() {
@@ -163,6 +172,10 @@
   {#if !mfaToken}
     <form class="login-card" onsubmit={submit}>
       <Eyebrow>Sign in</Eyebrow>
+
+      {#if notice}
+        <p class="login-notice" role="status">{notice}</p>
+      {/if}
 
       <div class="login-fields">
         <Field label="Username">
@@ -404,6 +417,16 @@
     border: 0;
   }
 
+  .login-notice {
+    margin: 0;
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--color-warning-500) 40%, var(--border));
+    background: color-mix(in srgb, var(--color-warning-500) 8%, transparent);
+    border-radius: 5px;
+    color: var(--fg);
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
   .login-error {
     margin: 0;
     padding: 10px 12px;

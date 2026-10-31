@@ -63,8 +63,23 @@ func postJSON(ctx context.Context, hc *http.Client, url string, body []byte) err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("%d %s: %s", resp.StatusCode, resp.Status, string(b))
+		return newStatusError("", resp)
 	}
 	return nil
 }
+
+// statusError is a non-2xx answer from a channel endpoint. The body is
+// only part of Error() (the Test button); the stored delivery error uses
+// Status, because receivers often echo the request path, and with it a
+// webhook token, in their error pages.
+type statusError struct {
+	Status string
+	Body   string
+}
+
+func newStatusError(prefix string, resp *http.Response) *statusError {
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return &statusError{Status: prefix + resp.Status, Body: string(b)}
+}
+
+func (e *statusError) Error() string { return fmt.Sprintf("%s: %s", e.Status, e.Body) }

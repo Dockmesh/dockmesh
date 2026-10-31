@@ -76,14 +76,9 @@ func (s *Service) SetTimezone(ctx context.Context, name string) error {
 	return s.scheduleAll(ctx)
 }
 
-// Start moves inline job targets to saved targets, fails runs a previous
-// process left in state running, then schedules the enabled jobs.
+// Start fails runs a previous process left in state running, then
+// schedules the enabled jobs.
 func (s *Service) Start(ctx context.Context) error {
-	if n, err := s.store.migrateInlineTargets(ctx); err != nil {
-		slog.Warn("backup: move job targets to saved targets", "err", err)
-	} else if n > 0 {
-		slog.Info("backup: job targets moved to saved targets", "jobs", n)
-	}
 	if n, err := s.store.failInterruptedRuns(ctx); err != nil {
 		slog.Warn("backup: reconcile interrupted runs", "err", err)
 	} else if n > 0 {

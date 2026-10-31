@@ -104,9 +104,6 @@ type Run struct {
 	Sources    []Source   `json:"sources"`
 	// PrunedAt is set once the archive was deleted from the target.
 	PrunedAt *time.Time `json:"pruned_at,omitempty"`
-	// sha256Plain is false for runs whose SHA256 covers the stored
-	// (possibly encrypted) bytes rather than the plaintext archive.
-	sha256Plain bool
 }
 
 // Run statuses. A post-hook failure leaves an intact archive, so it is
@@ -135,5 +132,18 @@ var (
 	// service is disabled: the archive would be written in plaintext.
 	ErrEncryptUnavailable = errors.New("encryption needs secrets encryption enabled on the server (DOCKMESH_SECRETS_ENCRYPT_ENV)")
 	ErrRunNotFound        = errors.New("run not found")
-	ErrTargetNotFound     = errors.New("backup target not found")
+	// ErrSystemRestore refuses to unpack a system backup anywhere a
+	// container could read it; system backups go through `dockmesh restore`.
+	ErrSystemRestore  = errors.New("system backups can only be restored with `dockmesh restore` on the server")
+	ErrTargetNotFound = errors.New("backup target not found")
 )
+
+// HasSystemSource reports whether sources include the server itself.
+func HasSystemSource(sources []Source) bool {
+	for _, src := range sources {
+		if src.Type == "system" {
+			return true
+		}
+	}
+	return false
+}

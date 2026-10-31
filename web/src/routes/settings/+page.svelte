@@ -1,6 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { onMount } from 'svelte';
   import { api, ApiError } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
@@ -15,7 +15,7 @@
 
   onMount(() => {
     if (!allowed('system.update')) { goto('/'); return; }
-    const search = new URLSearchParams($page.url.search);
+    const search = new URLSearchParams(page.url.search);
     const tab = search.get('tab');
     const redirectMap: Record<string, string> = {
       account:    '/account',
@@ -28,12 +28,12 @@
       data:       '/backups',
     };
     if (tab && tab in redirectMap) {
-      goto(redirectMap[tab], { replaceState: true });
+      goto(redirectMap[tab], { replace: true });
       return;
     }
     const subParam = search.get('sub');
     if (subParam === 'data') {
-      goto('/backups', { replaceState: true });
+      goto('/backups', { replace: true });
       return;
     }
     loadAll();
@@ -361,6 +361,19 @@
             placeholder="wss://dockmesh.example.com:8443/connect"
             value={getSetting('agent_public_url')}
             onchange={(e) => setSetting('agent_public_url', (e.target as HTMLInputElement).value)}
+          />
+        </Field>
+
+        <Field
+          label="Trusted proxies"
+          hint="Comma-separated IPs or CIDRs of reverse proxies in front of Dockmesh. Only these may set the client address and HTTPS headers (X-Forwarded-For, X-Real-IP, X-Forwarded-Proto). Empty = localhost only."
+        >
+          <input
+            type="text"
+            class="dm-input set-input"
+            placeholder="10.0.0.5, 172.16.0.0/12"
+            value={getSetting('trusted_proxies')}
+            onchange={(e) => setSetting('trusted_proxies', (e.target as HTMLInputElement).value)}
           />
         </Field>
 

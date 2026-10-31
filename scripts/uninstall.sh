@@ -351,7 +351,7 @@ fi
 #      actually returns 0.
 if [ "$DO_USER" = "1" ] && [ "$OS" = "linux" ]; then
   if id dockmesh >/dev/null 2>&1; then
-    pkill -KILL -u dockmesh 2>/dev/null || true
+    run pkill -KILL -u dockmesh 2>/dev/null || true
     if run userdel dockmesh 2>/dev/null; then
       ok "removed 'dockmesh' system user"
     else

@@ -2,7 +2,8 @@
   // Rules tab — alert rules as Editorial cards with severity-coded
   // left border, sentence-style condition display, channels-used pills,
   // and per-row actions (mute / unmute / duplicate / enable-toggle / delete).
-  import { api, ApiError, type AlertRule, type AlertRuleInput, type NotificationChannel } from '$lib/api';
+  import { api, ApiError, type AlertRule, type NotificationChannel } from '$lib/api';
+  import { describeRule, fmtDuration, kindOf, ruleToInput } from './ruleKinds';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { Eyebrow } from '$lib/components/editorial';
@@ -56,11 +57,6 @@
     if (op === 'lt') return '<';
     return op;
   }
-  function fmtDuration(secs: number): string {
-    if (secs < 60) return `${secs}s`;
-    if (secs < 3600) return `${Math.round(secs / 60)}m`;
-    return `${Math.round(secs / 3600)}h`;
-  }
   function fmtRelTime(ts?: string): string {
     if (!ts) return 'never';
     const secs = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
@@ -68,22 +64,6 @@
     if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
     if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
     return `${Math.floor(secs / 86400)}d ago`;
-  }
-
-  function ruleToInput(r: AlertRule): AlertRuleInput {
-    return {
-      name: r.name,
-      container_filter: r.container_filter,
-      metric: r.metric,
-      operator: r.operator,
-      threshold: r.threshold,
-      duration_seconds: r.duration_seconds,
-      channel_ids: r.channel_ids ?? [],
-      enabled: r.enabled,
-      severity: r.severity || 'warning',
-      cooldown_seconds: r.cooldown_seconds || 300,
-      muted_until: r.muted_until ?? '',
-    };
   }
 
   async function toggleEnabled(r: AlertRule) {
@@ -161,7 +141,7 @@
       <BellRing size={20} strokeWidth={1.4} />
       <p class="rt-empty-title">No alert rules yet</p>
       <p class="ed-subtitle rt-empty-blurb">
-        Create a rule to monitor container metrics and notify a channel when thresholds are breached.
+        Create a rule to watch container metrics and events, hosts, disks, backups or certificates and notify a channel.
       </p>
       <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={onCreate}>
         <Plus size={12} strokeWidth={1.5} /> First rule
@@ -208,12 +188,16 @@
 
             <div class="rt-card-condition">
               <span class="rt-cond-word">fire when</span>
-              <span class="rt-cond-chip">{metricLabel(r.metric)}</span>
-              <span class="rt-cond-op">{opLabel(r.operator)}</span>
-              <span class="rt-cond-chip">{r.threshold}%</span>
-              {#if r.duration_seconds > 0}
-                <span class="rt-cond-word">for</span>
-                <span class="rt-cond-chip">{fmtDuration(r.duration_seconds)}</span>
+              {#if kindOf(r) === 'metric'}
+                <span class="rt-cond-chip">{metricLabel(r.metric)}</span>
+                <span class="rt-cond-op">{opLabel(r.operator)}</span>
+                <span class="rt-cond-chip">{r.threshold}%</span>
+                {#if r.duration_seconds > 0}
+                  <span class="rt-cond-word">for</span>
+                  <span class="rt-cond-chip">{fmtDuration(r.duration_seconds)}</span>
+                {/if}
+              {:else}
+                <span class="rt-cond-word">{describeRule(r)}</span>
               {/if}
             </div>
 
