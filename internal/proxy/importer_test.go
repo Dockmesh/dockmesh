@@ -136,7 +136,7 @@ func TestScreenCaddyfile(t *testing.T) {
 		ok   bool
 	}{
 		{"plain", "a.example.com {\n\treverse_proxy b:80\n}\n", true},
-		{"snippet import", "(common) {\n\tencode gzip\n}\na.example.com {\n\timport common\n\treverse_proxy b:80\n}\n", false},
+		{"unexpanded snippet import", "(common) {\n\tencode gzip\n}\na.example.com {\n\timport common\n\treverse_proxy b:80\n}\n", false},
 		{"snippet defined after a file import", "a.example.com {\n\timport /etc/passwd\n}\n(/etc/passwd) {\n}\n", false},
 		{"client ca file", "a.example.com {\n\ttls {\n\t\tclient_auth {\n\t\t\ttrusted_ca_cert_file /etc/passwd\n\t\t}\n\t}\n}\n", false},
 		{"file import", "a.example.com {\n\timport /data/caddy/certificates/x.key\n}\n", false},

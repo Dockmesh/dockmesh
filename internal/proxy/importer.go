@@ -61,7 +61,8 @@ func (s *Service) ImportCaddyfile(ctx context.Context, caddyfile string, dryRun 
 	if !s.Enabled() {
 		return nil, ErrProxyNotConfigured
 	}
-	if err := screenCaddyfile(caddyfile); err != nil {
+	caddyfile, err := prepareCaddyfile(caddyfile)
+	if err != nil {
 		return nil, err
 	}
 	adapted, warnings, err := adaptCaddyfile(ctx, caddyfile)
@@ -110,15 +111,27 @@ func (s *Service) ImportCaddyfile(ctx context.Context, caddyfile string, dryRun 
 }
 
 // fileReadingTokens are Caddyfile directives and subdirectives that make
-// the adapter read a file of the proxy container. `import` is refused
-// even for snippets: whether Caddy treats its argument as a snippet or a
-// path depends on parse order, which a text scan can't reproduce.
+// the adapter read a file of the proxy container. Snippet imports are
+// expanded before the screen, so any `import` left is refused.
 var fileReadingTokens = map[string]bool{
 	"import":                 true,
 	"client_auth":            true,
 	"trusted_ca_cert_file":   true,
 	"trusted_leaf_cert_file": true,
 	"trust_pool":             true,
+}
+
+// prepareCaddyfile expands snippet imports and screens the result, which
+// is the text sent to Caddy.
+func prepareCaddyfile(text string) (string, error) {
+	if len(text) > MaxCaddyfileSize {
+		return "", fmt.Errorf("%w: larger than %d KiB", ErrCaddyfileRejected, MaxCaddyfileSize>>10)
+	}
+	expanded, err := expandSnippets(text)
+	if err != nil {
+		return "", err
+	}
+	return expanded, screenCaddyfile(expanded)
 }
 
 // screenCaddyfile refuses what would make Caddy read anything but the
@@ -134,7 +147,11 @@ func screenCaddyfile(text string) error {
 		return fmt.Errorf("%w: environment variables ({$NAME}) are not supported", ErrCaddyfileRejected)
 	}
 	for _, f := range strings.Fields(text) {
-		if tok := strings.Trim(f, "\"`{}"); fileReadingTokens[tok] {
+		tok := strings.Trim(f, "\"`{}")
+		if tok == "import" {
+			return fmt.Errorf("%w: import is only accepted as import <snippet>, not quoted or in comments", ErrCaddyfileRejected)
+		}
+		if fileReadingTokens[tok] {
 			return fmt.Errorf("%w: %s is not supported; paste the file's content instead", ErrCaddyfileRejected, tok)
 		}
 	}
