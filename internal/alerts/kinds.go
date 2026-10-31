@@ -519,7 +519,10 @@ func (s *Service) evalDisk(ctx context.Context, r *Rule, hosts []HostMounts, now
 		if !s.inScope(r, hm.HostID, "") {
 			continue
 		}
+		seen := map[string]bool{}
 		for _, m := range hm.Mounts {
+			tgt := targetName(hm.HostID, hm.HostName, m.MountPoint)
+			seen[tgt] = true
 			if m.Total == 0 {
 				continue
 			}
@@ -530,7 +533,6 @@ func (s *Service) evalDisk(ctx context.Context, r *Rule, hosts []HostMounts, now
 			} else if r.ContainerFilter != m.MountPoint {
 				continue
 			}
-			tgt := targetName(hm.HostID, hm.HostName, m.MountPoint)
 			key := stateKey(r.ID, tgt)
 			firing := s.isFiring(key)
 			switch {
@@ -542,6 +544,24 @@ func (s *Service) evalDisk(ctx context.Context, r *Rule, hosts []HostMounts, now
 					m.MountPoint, hm.HostName, m.Percent), m.Percent, now)
 			}
 		}
+		s.resolveGoneMounts(ctx, r, hm, seen, now)
+	}
+}
+
+// resolveGoneMounts resolves this host's disk alerts whose mount is no
+// longer reported, e.g. after an unmount; nothing would clear them otherwise.
+func (s *Service) resolveGoneMounts(ctx context.Context, r *Rule, hm HostMounts, seen map[string]bool, now time.Time) {
+	prefix := stateKey(r.ID, targetName(hm.HostID, hm.HostName, "/"))
+	var gone []string
+	s.stateMu.Lock()
+	for key := range s.firing {
+		if tgt, ok := strings.CutPrefix(key, stateKey(r.ID, "")); ok && strings.HasPrefix(key, prefix) && !seen[tgt] {
+			gone = append(gone, tgt)
+		}
+	}
+	s.stateMu.Unlock()
+	for _, tgt := range gone {
+		s.resolveRule(ctx, r, tgt, fmt.Sprintf("Disk %s is no longer mounted", tgt), 0, now)
 	}
 }
 

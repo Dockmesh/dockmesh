@@ -229,6 +229,38 @@ func TestDiskUsage(t *testing.T) {
 	}
 }
 
+func TestDiskUsageResolvesGoneMounts(t *testing.T) {
+	stacks := system.Mount{MountPoint: "/var/lib/dockmesh/stacks", Total: 100, Percent: 95, Roles: []string{system.RoleStacks}}
+	root := system.Mount{MountPoint: "/", Total: 100, Percent: 20, Roles: []string{system.RoleDockerRoot}}
+	stalled := stacks
+	stalled.Total, stalled.Percent = 0, 0
+	tests := []struct {
+		name string
+		host string
+		next []system.Mount
+		want []string
+	}{
+		{"local mount unmounted", "local", []system.Mount{root}, []string{"fired", "resolved"}},
+		{"agent mount unmounted", "a1", []system.Mount{root}, []string{"fired", "resolved"}},
+		{"statfs timed out keeps the alert", "a1", []system.Mount{root, stalled}, []string{"fired"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, database := newEvalService(t)
+			r := eventRule(t, s, RuleInput{Kind: KindDiskUsage, Threshold: 90})
+			ctx := context.Background()
+			s.evalDisk(ctx, r, []HostMounts{{HostID: tt.host, HostName: "edge", Mounts: []system.Mount{root, stacks}}}, evalNow)
+			s.evalDisk(ctx, r, []HostMounts{
+				{HostID: tt.host, HostName: "edge", Mounts: tt.next},
+				{HostID: "a2", HostName: "edge2", Mounts: []system.Mount{root}},
+			}, evalNow.Add(time.Minute))
+			if got := statuses(t, database, r.ID); !equalStrings(got, tt.want) {
+				t.Fatalf("history = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBackupFailedOnlyAnnouncesNewRuns(t *testing.T) {
 	s, database := newEvalService(t)
 	r := eventRule(t, s, RuleInput{Kind: KindBackupFailed})
