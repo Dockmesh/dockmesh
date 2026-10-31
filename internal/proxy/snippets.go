@@ -53,10 +53,11 @@ func lexCaddyfile(s string) []cfToken {
 		t := cfToken{start: i, line: line}
 		var val strings.Builder
 		if r == '"' || r == '`' {
+			quote := s[i]
 			t.quoted = true
 			i++
-			for i < len(s) && s[i] != byte(r) {
-				if r == '"' && s[i] == '\\' && i+1 < len(s) {
+			for i < len(s) && s[i] != quote {
+				if quote == '"' && s[i] == '\\' && i+1 < len(s) {
 					if s[i+1] != '"' {
 						val.WriteByte('\\')
 					}
@@ -163,7 +164,8 @@ func (e *snippetExpander) expand(text string, stack []string) (string, error) {
 			i = end
 			continue
 		}
-		if !t.is("import") || !(newLine || toks[i-1].is("{") || toks[i-1].is("}")) {
+		directive := newLine || toks[i-1].is("{") || toks[i-1].is("}")
+		if !t.is("import") || !directive {
 			continue
 		}
 		var args []cfToken
