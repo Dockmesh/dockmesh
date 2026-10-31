@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -15,29 +17,48 @@ import (
 	"github.com/docker/docker/api/types/volume"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
+	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/system"
 )
 
+// LiveAgents resolves an agent id to its current session, or nil.
+type LiveAgents interface {
+	GetConnected(id string) *agents.ConnectedAgent
+}
+
 // RemoteHost proxies operations to a connected agent over its WebSocket
-// using the request/response protocol in internal/agents.
+// using the request/response protocol in internal/agents. The session is
+// looked up on every call, so a RemoteHost held across a reconnect talks
+// to the new session instead of a dead one.
 type RemoteHost struct {
-	id    string
-	name  string
-	agent *agents.ConnectedAgent
+	id     string
+	name   string
+	agents LiveAgents
 
 	afterDeploy DeployHook
 }
 
-func NewRemote(id, name string, ag *agents.ConnectedAgent) *RemoteHost {
-	return &RemoteHost{id: id, name: name, agent: ag}
+func NewRemote(id, name string, live LiveAgents) *RemoteHost {
+	return &RemoteHost{id: id, name: name, agents: live}
+}
+
+func (h *RemoteHost) live() (*agents.ConnectedAgent, error) {
+	if h.agents == nil {
+		return nil, ErrAgentOffline
+	}
+	if ag := h.agents.GetConnected(h.id); ag != nil {
+		return ag, nil
+	}
+	return nil, ErrAgentOffline
 }
 
 func (h *RemoteHost) ID() string   { return h.id }
 func (h *RemoteHost) Name() string { return h.name }
 
 func (h *RemoteHost) request(ctx context.Context, frameType string, payload any) (json.RawMessage, error) {
-	if h.agent == nil {
-		return nil, ErrAgentOffline
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
 	}
 	var raw json.RawMessage
 	if payload != nil {
@@ -47,7 +68,7 @@ func (h *RemoteHost) request(ctx context.Context, frameType string, payload any)
 		}
 		raw = b
 	}
-	env, err := h.agent.Request(ctx, agents.Frame{Type: frameType, Payload: raw})
+	env, err := ag.Request(ctx, agents.Frame{Type: frameType, Payload: raw})
 	if err != nil {
 		return nil, err
 	}
@@ -117,10 +138,11 @@ func (h *RemoteHost) KillContainer(ctx context.Context, id, signal string) error
 }
 
 func (h *RemoteHost) ContainerLogs(ctx context.Context, id, tail string, follow bool) (io.ReadCloser, error) {
-	if h.agent == nil {
-		return nil, ErrAgentOffline
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
 	}
-	stream, err := h.agent.OpenStream(ctx, "logs", id, map[string]any{
+	stream, err := ag.OpenStream(ctx, "logs", id, map[string]any{
 		"tail":   tail,
 		"follow": follow,
 	})
@@ -131,17 +153,19 @@ func (h *RemoteHost) ContainerLogs(ctx context.Context, id, tail string, follow 
 }
 
 func (h *RemoteHost) ContainerStats(ctx context.Context, id string) (io.ReadCloser, error) {
-	if h.agent == nil {
-		return nil, ErrAgentOffline
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
 	}
-	return h.agent.OpenStream(ctx, "stats", id, nil)
+	return ag.OpenStream(ctx, "stats", id, nil)
 }
 
 func (h *RemoteHost) StartExec(ctx context.Context, id string, cmd []string) (ExecSession, error) {
-	if h.agent == nil {
-		return nil, ErrAgentOffline
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
 	}
-	stream, err := h.agent.OpenStream(ctx, "exec", id, map[string]any{
+	stream, err := ag.OpenStream(ctx, "exec", id, map[string]any{
 		"cmd": cmd,
 		// Sensible TTY defaults; the browser sends a resize as soon as it
 		// has measured xterm.fit so this rarely shows.
@@ -151,7 +175,10 @@ func (h *RemoteHost) StartExec(ctx context.Context, id string, cmd []string) (Ex
 	if err != nil {
 		return nil, err
 	}
-	return &remoteExecSession{stream: stream}, nil
+	// A stdin write waiting for credit only ends when the stream does, so
+	// the caller's cancel has to close it.
+	stop := context.AfterFunc(ctx, func() { _ = stream.Close() }) //nolint:contextcheck // runs after ctx is done
+	return &remoteExecSession{stream: stream, stop: stop}, nil
 }
 
 // remoteExecSession adapts an agent stream to the ExecSession interface.
@@ -160,6 +187,7 @@ func (h *RemoteHost) StartExec(ctx context.Context, id string, cmd []string) (Ex
 // uses an out-of-band stream.control frame.
 type remoteExecSession struct {
 	stream *agents.Stream
+	stop   func() bool
 }
 
 func (s *remoteExecSession) Read(p []byte) (int, error) { return s.stream.Read(p) }
@@ -172,7 +200,10 @@ func (s *remoteExecSession) Write(p []byte) (int, error) {
 func (s *remoteExecSession) Resize(rows, cols uint) error {
 	return s.stream.WriteControl("resize", map[string]any{"cols": cols, "rows": rows})
 }
-func (s *remoteExecSession) Close() error { return s.stream.Close() }
+func (s *remoteExecSession) Close() error {
+	s.stop()
+	return s.stream.Close()
+}
 
 // -----------------------------------------------------------------------------
 // Stack operations
@@ -292,6 +323,35 @@ func (h *RemoteHost) SystemMetrics(ctx context.Context) (system.Metrics, error) 
 	if err := json.Unmarshal(data, &out); err != nil {
 		return system.Metrics{}, fmt.Errorf("decode system metrics: %w", err)
 	}
+	mounts, err := h.DiskMounts(ctx)
+	if errors.Is(err, ErrMountsUnsupported) {
+		out.MountsUnsupported = true
+		return out, nil
+	}
+	if err != nil {
+		slog.Warn("agent disk mounts", "host", h.name, "err", err)
+		return out, nil
+	}
+	return system.ApplyMounts(out, mounts), nil
+}
+
+// DiskMounts returns the agent's per-mount disk usage.
+func (h *RemoteHost) DiskMounts(ctx context.Context) ([]system.Mount, error) {
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
+	}
+	if !ag.Hello.Has(agents.CapDiskMounts) {
+		return nil, ErrMountsUnsupported
+	}
+	data, err := h.request(ctx, agents.FrameReqSystemDisks, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out []system.Mount
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode disk mounts: %w", err)
+	}
 	return out, nil
 }
 
@@ -335,19 +395,98 @@ func (h *RemoteHost) VolumeBrowseEntries(ctx context.Context, name, subpath stri
 }
 
 // VolumeTar opens a volume_export stream on the remote agent and
-// returns an io.ReadCloser of the tar.gz bytes. FINDING-33.
+// returns an io.ReadCloser of the tar.gz bytes.
 // The agent ships raw docker hijack bytes (with 8-byte mux headers)
 // so we wrap the stream in a demuxer to recover stdout-only content.
 func (h *RemoteHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser, error) {
-	if h.agent == nil {
-		return nil, fmt.Errorf("agent connection unavailable")
+	ag, err := h.live()
+	if err != nil {
+		return nil, err
 	}
-	s, err := h.agent.OpenStream(ctx, "volume_export", "", map[string]any{"volume": name})
+	s, err := ag.OpenStream(ctx, "volume_export", "", map[string]any{"volume": name})
 	if err != nil {
 		return nil, fmt.Errorf("open volume_export stream: %w", err)
 	}
 	return &dockerMuxStripper{src: s}, nil
 }
+
+// ErrAgentTooOld is returned when the agent can't take a volume restore
+// (or not the requested mode); it needs the agent version that ships with
+// this server.
+var ErrAgentTooOld = errors.New("the agent on this host is too old to restore volumes; upgrade it from the Hosts page")
+
+// VolumeImport streams a tar.gz archive into the named volume on the
+// agent's host. replace empties the volume first. Returns tar's result.
+//
+//nolint:contextcheck // stream writes have no ctx; the AfterFunc below closes the stream when ctx ends
+func (h *RemoteHost) VolumeImport(ctx context.Context, name string, src io.Reader, replace bool) error {
+	ag, err := h.live()
+	if err != nil {
+		return err
+	}
+	// Without flow control the agent drops input that arrives faster than
+	// tar reads it, and an agent without the replace mode would merge.
+	if !ag.Hello.Has(agents.CapStreamCredit) || (replace && !ag.Hello.Has(agents.CapVolumeReplace)) {
+		return ErrAgentTooOld
+	}
+	if err := docker.CheckVolumeName(name); err != nil {
+		return err
+	}
+	s, err := ag.OpenStream(ctx, "volume_import", "", map[string]any{"volume": name, "replace": replace})
+	if err != nil {
+		return fmt.Errorf("open volume_import stream: %w", err)
+	}
+	defer s.Close()
+	// A write waiting for credit only ends when the stream does.
+	stop := context.AfterFunc(ctx, func() { _ = s.Close() })
+	defer stop()
+	stall := time.AfterFunc(importStall, func() { _ = s.Close() })
+	defer stall.Stop()
+
+	buf := make([]byte, 32*1024)
+	for {
+		n, rerr := src.Read(buf)
+		if n > 0 {
+			if err := s.WriteFrame(append([]byte(nil), buf[:n]...)); err != nil {
+				return fmt.Errorf("send archive: %w", err)
+			}
+			// An agent that stops taking data fails the restore instead
+			// of holding it open forever.
+			stall.Reset(importStall)
+		}
+		if errors.Is(rerr, io.EOF) {
+			break
+		}
+		if rerr != nil {
+			return fmt.Errorf("read archive: %w", rerr)
+		}
+	}
+	stall.Stop()
+	if err := s.CloseWrite(); err != nil {
+		return fmt.Errorf("finish upload: %w", err)
+	}
+	// The agent closes the stream once tar has exited; its error, if
+	// any, is what Read returns.
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.Discard, s)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("volume import on agent: %w", err)
+		}
+		return nil
+	case <-time.After(importStall):
+		return errors.New("volume import on agent: no result from tar")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// importStall bounds how long a volume import may make no progress.
+const importStall = 5 * time.Minute
 
 // dockerMuxStripper demuxes docker's attach-stream format: repeating
 //
@@ -413,15 +552,9 @@ func (d *dockerMuxStripper) Close() error {
 	return d.src.Close()
 }
 
-// ContainerExec runs a command in the remote container via a new frame.
-// Blocks until exit. Used by backup pre-hooks. The agent can already
-// exec via the "exec" stream (interactive TTY) but we want request/
-// response semantics here; piggy-back on the existing exec-stream but
-// wait for it to close.
+// ContainerExec runs a command in the remote container and blocks until
+// it exits. Used by backup pre-hooks.
 func (h *RemoteHost) ContainerExec(ctx context.Context, containerID string, cmd []string) ([]byte, int, error) {
-	if h.agent == nil {
-		return nil, -1, fmt.Errorf("agent connection unavailable")
-	}
 	data, err := h.request(ctx, agents.FrameReqContainerExecRun,
 		agents.ContainerExecRunReq{Container: containerID, Cmd: cmd, MaxOutputBytes: 1 << 20})
 	if err != nil {

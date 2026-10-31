@@ -26,13 +26,12 @@ func TestJobsFromSavedTargetsAgainstRealServers(t *testing.T) {
 			ctx := context.Background()
 			svc, database := integration.NewService(t)
 			store := targets.NewTargetStore(database)
-			h := &Handlers{Backups: svc, BackupTargets: store}
 
 			saved, err := store.Create(ctx, targets.TargetInput{Name: "nas", Type: c.Type, Config: c.Config})
 			if err != nil {
 				t.Fatal(err)
 			}
-			// What the job wizard copies from the target list.
+			// A redacted target config, as a client may send it back.
 			picked := func() backup.JobInput {
 				return backup.JobInput{
 					Name: "nightly", TargetType: c.Type, TargetConfig: redactTarget(saved).Config,
@@ -45,24 +44,28 @@ func TestJobsFromSavedTargetsAgainstRealServers(t *testing.T) {
 
 			t.Run("job from a saved target runs", func(t *testing.T) {
 				in := picked()
-				if err := h.resolveJobTargetSecrets(ctx, &in, saved.ID, nil); err != nil {
+				in.TargetID = saved.ID
+				if err := resolveJobTargetSecrets(&in, nil); err != nil {
 					t.Fatal(err)
 				}
 				job, err := svc.CreateJob(ctx, in)
 				if err != nil {
 					t.Fatal(err)
 				}
+				if job.TargetID != saved.ID {
+					t.Fatalf("job references target %d, want %d", job.TargetID, saved.ID)
+				}
 				run, err := svc.RunNow(ctx, job.ID)
 				if err != nil || run.Status != "success" {
 					t.Fatalf("run: %v %+v", err, run)
 				}
 
-				// Editing the job returns the redacted config; the secret must survive it.
+				// Editing the job keeps the reference; the secret stays on the target.
 				edit := backup.JobInput{
-					Name: job.Name, TargetType: job.TargetType, TargetConfig: redactJob(job).TargetConfig,
+					Name: job.Name, TargetID: job.TargetID, TargetType: job.TargetType, TargetConfig: redactJob(job).TargetConfig,
 					Sources: job.Sources, Enabled: true, RetentionCount: 3,
 				}
-				if err := h.resolveJobTargetSecrets(ctx, &edit, 0, job); err != nil {
+				if err := resolveJobTargetSecrets(&edit, job); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := svc.UpdateJob(ctx, job.ID, edit); err != nil {
@@ -76,32 +79,28 @@ func TestJobsFromSavedTargetsAgainstRealServers(t *testing.T) {
 
 			t.Run("redacted copy without a target id is refused", func(t *testing.T) {
 				in := picked()
-				if err := h.resolveJobTargetSecrets(ctx, &in, 0, nil); err == nil {
+				if err := resolveJobTargetSecrets(&in, nil); err == nil {
 					t.Fatal("job with a blank secret was accepted")
 				}
 			})
 
-			t.Run("another server needs the secret again", func(t *testing.T) {
+			t.Run("config sent with a target id is ignored", func(t *testing.T) {
 				in := picked()
+				in.Name = "nightly-other"
+				in.TargetID = saved.ID
 				cfg := maps.Clone(redact.ToMap(in.TargetConfig))
 				cfg[locationField[c.Type]] = "other.example.org"
 				in.TargetConfig = cfg
-				if err := h.resolveJobTargetSecrets(ctx, &in, saved.ID, nil); err == nil {
-					t.Fatal("saved secret was handed to a different server")
-				}
-			})
-
-			t.Run("retyped secret wins", func(t *testing.T) {
-				in := picked()
-				cfg := maps.Clone(redact.ToMap(in.TargetConfig))
-				cfg[c.Secret] = "typed-by-user"
-				delete(cfg, c.Secret+redact.SetSuffix)
-				in.TargetConfig = cfg
-				if err := h.resolveJobTargetSecrets(ctx, &in, saved.ID, nil); err != nil {
+				job, err := svc.CreateJob(ctx, in)
+				if err != nil {
 					t.Fatal(err)
 				}
-				if got := redact.ToMap(in.TargetConfig)[c.Secret]; got != "typed-by-user" {
-					t.Fatalf("%s = %v", c.Secret, got)
+				if m := redact.ToMap(job.TargetConfig); len(m) != 0 {
+					t.Fatalf("job kept an inline config next to its target: %v", m)
+				}
+				run, err := svc.RunNow(ctx, job.ID)
+				if err != nil || run.Status != "success" {
+					t.Fatalf("run against the saved target: %v %+v", err, run)
 				}
 			})
 		})

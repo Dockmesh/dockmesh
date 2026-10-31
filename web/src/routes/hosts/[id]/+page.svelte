@@ -22,6 +22,7 @@
   import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
+  import MountTable from '$lib/components/MountTable.svelte';
   import {
     ChevronLeft, RefreshCw, ArrowDownToLine, Trash2, Terminal,
     X, Check, AlertTriangle, Info
@@ -422,9 +423,11 @@
               <dt>agent version</dt>
               <dd class="font-mono">
                 {agent.version || '—'}
-                {#if needsUpgrade}<span class="ed-host-kv-warn">· server is on v{upgradePolicyVersion}</span>{/if}
+                {#if needsUpgrade}<span class="ed-host-kv-warn">· server is on v{upgradePolicyVersion}</span>
+                {:else if agent.update_recommended}<span class="ed-host-kv-warn">· agent update recommended</span>{/if}
               </dd>
               <dt>cert fingerprint</dt><dd class="font-mono ed-host-kv-fingerprint">{agent.cert_fingerprint || '—'}</dd>
+              <dt>cert expires</dt><dd class="font-mono">{agent.cert_expires_at ? fmtDate(agent.cert_expires_at) : '—'}</dd>
               <dt>last seen</dt><dd class="font-mono">{fmtAgo(agent.last_seen_at)}</dd>
               <dt>online since</dt><dd class="font-mono">{agent.online_since ? `${fmtAgo(agent.online_since)} (${fmtUptime(agent.online_since)} up)` : '—'}</dd>
               <dt>enrolled</dt><dd class="font-mono">{fmtDate(agent.created_at)}</dd>
@@ -477,6 +480,13 @@
             </div>
           </div>
         </div>
+
+        {#if metrics && (metrics.mounts?.length || metrics.mounts_unsupported)}
+          <div class="ed-host-card ed-host-mounts">
+            <div class="ed-host-card-title">Disks</div>
+            <MountTable mounts={metrics.mounts} unsupported={metrics.mounts_unsupported} />
+          </div>
+        {/if}
 
         <!-- Stacks deployed here (Overview block) -->
         <div class="ed-host-card ed-host-stacks-block">
@@ -953,6 +963,7 @@
     padding: 16px 18px;
   }
   .ed-host-identity { grid-column: span 7; }
+  .ed-host-mounts { grid-column: 1 / -1; }
   .ed-host-snapshot { grid-column: span 5; display: flex; flex-direction: column; gap: 12px; }
   .ed-host-stacks-block { grid-column: span 7; }
   .ed-host-mig-block { grid-column: span 5; }

@@ -478,7 +478,12 @@ func (h *LocalHost) RollingReplace(ctx context.Context, name, composeYAML, envCo
 // (dev builds) the system package stub returns zero values so the
 // dashboard still renders without crashing.
 func (h *LocalHost) SystemMetrics(ctx context.Context) (system.Metrics, error) {
-	return system.Collect(), nil
+	return system.CollectWithMounts(ctx), nil
+}
+
+// DiskMounts returns this host's per-mount disk usage.
+func (h *LocalHost) DiskMounts(ctx context.Context) ([]system.Mount, error) {
+	return system.LocalMounts(ctx), nil
 }
 
 // silence unused import if volume isn't otherwise referenced

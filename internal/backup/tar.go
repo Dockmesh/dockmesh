@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
@@ -48,8 +49,8 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 		},
 	}
 	hostCfg := &container.HostConfig{
-		AutoRemove: false,
-		Binds:      []string{volumeName + ":/source:ro"},
+		Binds:     []string{volumeName + ":/source:ro"},
+		LogConfig: docker.HelperLogConfig,
 	}
 	resp, err := cli.ContainerCreate(ctx, cfg, hostCfg, nil, nil, "")
 	if err != nil {
@@ -74,24 +75,14 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 
 	pr, pw := io.Pipe()
 	go func() {
-		defer hijack.Close()
 		// Demux multiplexed stdout/stderr; tar bytes go to pw, stderr is
 		// captured for the error message in case the helper fails.
 		var stderr stderrBuf
 		_, copyErr := stdcopy.StdCopy(pw, &stderr, hijack.Reader)
-
-		statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
-		var waitErr error
-		var status int64
-		select {
-		case s := <-statusCh:
-			status = s.StatusCode
-		case e := <-errCh:
-			waitErr = e
-		case <-ctx.Done():
-			waitErr = ctx.Err()
-		}
-		_ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		hijack.Close()
+		// A failed copy means the reader went away; tar must not keep
+		// running into a stream nobody reads.
+		status, waitErr := docker.FinishHelper(ctx, cli, resp.ID, copyErr != nil)
 
 		switch {
 		case waitErr != nil:
@@ -110,7 +101,8 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 
 // untarVolume streams a gzipped tar archive into a named volume by
 // running `tar xzf -` inside a helper that mounts the volume read-write.
-func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src io.Reader) error {
+// replace empties the volume first.
+func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src io.Reader, replace bool) error {
 	if dc == nil {
 		return errors.New("docker unavailable")
 	}
@@ -124,7 +116,7 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 
 	cfg := &container.Config{
 		Image:        helperImage,
-		Cmd:          []string{"sh", "-c", "tar xzf - -C /dest"},
+		Cmd:          []string{"sh", "-c", agents.VolumeImportScript(replace)},
 		AttachStdin:  true,
 		AttachStderr: true,
 		OpenStdin:    true,
@@ -137,12 +129,17 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 	hostCfg := &container.HostConfig{
 		AutoRemove: false,
 		Binds:      []string{volumeName + ":/dest"},
+		LogConfig:  docker.HelperLogConfig,
 	}
 	resp, err := cli.ContainerCreate(ctx, cfg, hostCfg, nil, nil, "")
 	if err != nil {
 		return fmt.Errorf("create restore helper: %w", err)
 	}
-	defer func() { _ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true}) }()
+	defer func() {
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), docker.HelperTimeout)
+		defer cancel()
+		_ = cli.ContainerRemove(rctx, resp.ID, container.RemoveOptions{Force: true})
+	}()
 
 	hijack, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
 		Stream: true,

@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -42,7 +44,8 @@ func tarVolumeHelper(ctx context.Context, dc *docker.Client, volumeName string) 
 			"dockmesh.component": "backup-helper",
 		},
 	}, &container.HostConfig{
-		Binds: []string{volumeName + ":/source:ro"},
+		Binds:     []string{volumeName + ":/source:ro"},
+		LogConfig: docker.HelperLogConfig,
 	}, nil, nil, "")
 	if err != nil {
 		return nil, fmt.Errorf("create helper: %w", err)
@@ -75,11 +78,12 @@ type volumeTarStream struct {
 	hijack   io.Reader
 	closeFn  func()
 	leftover []byte
+	// done is set once tar's output ended; a Close before that stops it.
+	done bool
 }
 
 type dockerClient interface {
-	ContainerRemove(ctx context.Context, id string, opts container.RemoveOptions) error
-	ContainerWait(ctx context.Context, id string, condition container.WaitCondition) (<-chan container.WaitResponse, <-chan error)
+	docker.HelperAPI
 }
 
 func (s *volumeTarStream) Read(p []byte) (int, error) {
@@ -92,6 +96,10 @@ func (s *volumeTarStream) Read(p []byte) (int, error) {
 	}
 	var hdr [8]byte
 	if _, err := io.ReadFull(s.hijack, hdr[:]); err != nil {
+		if errors.Is(err, io.EOF) {
+			s.done = true
+			return 0, s.exitErr()
+		}
 		return 0, err
 	}
 	size := binary.BigEndian.Uint32(hdr[4:8])
@@ -113,17 +121,26 @@ func (s *volumeTarStream) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-func (s *volumeTarStream) Close() error {
-	s.closeFn()
-	// Best-effort wait for exit + remove helper.
-	waitCtx, cancel := context.WithCancel(context.Background())
+// exitErr turns the end of the output into io.EOF only when tar exited 0;
+// otherwise the archive is incomplete and the reader must see an error.
+func (s *volumeTarStream) exitErr() error {
+	waitCtx, cancel := context.WithTimeout(s.ctx, time.Minute)
 	defer cancel()
 	waitCh, errCh := s.cli.ContainerWait(waitCtx, s.id, container.WaitConditionNotRunning)
 	select {
-	case <-waitCh:
-	case <-errCh:
+	case w := <-waitCh:
+		if w.StatusCode != 0 {
+			return fmt.Errorf("tar exit %d", w.StatusCode)
+		}
+		return io.EOF
+	case err := <-errCh:
+		return fmt.Errorf("wait for tar: %w", err)
 	}
-	_ = s.cli.ContainerRemove(context.Background(), s.id, container.RemoveOptions{Force: true})
+}
+
+func (s *volumeTarStream) Close() error {
+	s.closeFn()
+	_, _ = docker.FinishHelper(s.ctx, s.cli, s.id, !s.done)
 	return nil
 }
 

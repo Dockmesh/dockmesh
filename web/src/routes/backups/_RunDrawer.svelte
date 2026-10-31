@@ -1,9 +1,7 @@
 <script lang="ts">
-  // Run drawer — right-side aside per backup-wizards.jsx::RunDrawer.
-  // Shows status / size / duration / phase summary, the run error if
-  // any, and the restore-flow with three modes (in-place / alongside /
-  // download).
-  import { api, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
+  // Run drawer: status, size, duration, error, log and the restore modes
+  // (in-place / alongside / download).
+  import { api, runRestorable, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
   import { Eyebrow } from '$lib/components/editorial';
   import { allowed, isAdmin } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
@@ -17,7 +15,7 @@
     job?: BackupJob;
     target?: BackupTarget;
     onclose: () => void;
-    onrestore: (r: BackupRun, mode: 'in-place' | 'alongside' | 'download') => void;
+    onrestore: (r: BackupRun, mode: 'in-place' | 'alongside' | 'download' | 'system') => void;
   }
   let { run, job, target, onclose, onrestore }: Props = $props();
 
@@ -73,6 +71,7 @@
   function statusPill(s: string): { cls: string; label: string } {
     if (s === 'success') return { cls: 'dm-pill-success', label: 'success' };
     if (s === 'failed') return { cls: 'dm-pill-danger', label: 'failed' };
+    if (s === 'success_with_warnings') return { cls: 'dm-pill-warning', label: 'warnings' };
     if (s === 'running') return { cls: 'dm-pill', label: 'running' };
     return { cls: 'dm-pill-neutral', label: s };
   }
@@ -95,16 +94,19 @@
   }
 
   const sp = $derived(statusPill(run.status));
-  const allRestoreModes: { id: 'in-place' | 'alongside' | 'download'; title: string; blurb: string; danger?: boolean }[] = [
+  const allRestoreModes: { id: 'in-place' | 'alongside' | 'download' | 'system'; title: string; blurb: string; danger?: boolean }[] = [
     { id: 'in-place', title: 'Restore in place', blurb: 'Replace current data on this dockmesh. Stops affected stacks first.', danger: true },
     { id: 'alongside', title: 'Restore alongside', blurb: 'Mount as new stacks with a -restored suffix. Original keeps running.' },
-    { id: 'download', title: 'Download archive', blurb: 'Download the decrypted .tar.gz for offline inspection.' }
+    { id: 'download', title: 'Download archive', blurb: 'Download the decrypted .tar.gz for offline inspection.' },
+    { id: 'system', title: 'Restore the whole system', blurb: "Replace this server's database, users and stack files with the backup's, then restart.", danger: true }
   ];
-  // System runs are restored with `dockmesh restore`; only an admin may download them.
+  // A system run replaces the whole install, so only an admin restores or downloads it.
   const systemRun = $derived(run.sources?.some((s) => s.type === 'system') ?? false);
-  const restoreModes = $derived(allRestoreModes.filter((m) =>
-    m.id === 'download' ? allowed('backups.download') && (!systemRun || isAdmin()) : !systemRun
-  ));
+  const restoreModes = $derived(allRestoreModes.filter((m) => {
+    if (m.id === 'download') return allowed('backups.download') && (!systemRun || isAdmin());
+    if (m.id === 'system') return systemRun && isAdmin();
+    return !systemRun;
+  }));
 
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape') onclose();
@@ -127,7 +129,7 @@
           <span class="bk-drawer-fail">Failed in {fmtDuration(run.started_at, run.finished_at)} — no data written.</span>
         {:else if run.status === 'running'}
           Running… size + duration update on completion.
-        {:else if run.status === 'success'}
+        {:else if run.status === 'success' || run.status === 'success_with_warnings'}
           Wrote <em class="ed-accent">{fmtBytes(run.size_bytes)}</em>
           {#if target} to <em class="ed-accent">{target.name}</em>{/if}
           in {fmtDuration(run.started_at, run.finished_at)}.
@@ -215,7 +217,7 @@
     </section>
 
     <!-- Restore flow -->
-    {#if run.status === 'success'}
+    {#if runRestorable(run)}
       <section class="bk-drawer-section bk-drawer-restore">
         <div class="bk-drawer-section-head">
           <Eyebrow>Restore</Eyebrow>
@@ -225,7 +227,8 @@
         </div>
         {#if systemRun && !restoreOpen}
           <p class="bk-drawer-section-empty">
-            System backups are restored on the server with <code>dockmesh restore</code>.
+            Restoring a system backup replaces this server's database, users and stack files, then
+            restarts Dockmesh.
           </p>
         {:else if !restoreOpen}
           <p class="bk-drawer-section-empty">
@@ -256,7 +259,7 @@
     <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={copyDetails}>
       <Copy size={11} strokeWidth={1.5} /> Copy details
     </button>
-    {#if run.status === 'success'}
+    {#if runRestorable(run)}
       <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => (restoreOpen = true)}>
         <Undo2 size={11} strokeWidth={1.5} /> Restore
       </button>

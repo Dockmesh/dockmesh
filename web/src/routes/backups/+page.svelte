@@ -2,13 +2,11 @@
   // Backups — editorial rebuild based on `Dockmesh Wizard (6)/backups.jsx`.
   // Header with the "restore is the only test that matters" quote, stat
   // banner, ed-tabs strip Jobs / Runs / Targets, jobs+targets as card
-  // grids per the mockup, runs as a cleaner editorial table. Wizards
-  // and the restore modal stay on the legacy `Modal` component for now —
-  // they're functional and the editorial rebuild of those is a follow-up.
+  // grids per the mockup, runs as a cleaner editorial table.
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { api, ApiError } from '$lib/api';
+  import { api, ApiError, runRestorable, targetUsage } from '$lib/api';
   import type { BackupJob, BackupJobInput, BackupRun, BackupSource, BackupHook, BackupTarget } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
@@ -18,6 +16,8 @@
   import TargetDrawer from './_TargetDrawer.svelte';
   import JobWizard from './_JobWizard.svelte';
   import TargetWizard from './_TargetWizard.svelte';
+  import RestoreDialog from './_RestoreDialog.svelte';
+  import SystemRestoreDialog from './_SystemRestoreDialog.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { autoRefresh } from '$lib/autorefresh';
@@ -64,6 +64,7 @@
     if (last.status === 'failed') return 'failed';
     if (last.status === 'running') return 'running';
     if (last.status === 'success') return 'ok';
+    if (last.status === 'success_with_warnings') return 'warn';
     return 'idle';
   }
   function statusDot(s: string): 'ok-dot' | 'warn-dot' | 'fail-dot' | 'neutral-dot' {
@@ -130,17 +131,13 @@
     drawerJob = null;
     drawerRun = r;
   }
-  // Restore from RunDrawer routes through the existing restore-modal
-  // flow so the confirm-text validation stays in one place. Each mode
-  // opens the same restore modal with a pre-set context (the modal
-  // text adapts in a follow-up).
-  function restoreRunFromDrawer(r: BackupRun, mode: 'in-place' | 'alongside' | 'download') {
+  function restoreRunFromDrawer(r: BackupRun, mode: 'in-place' | 'alongside' | 'download' | 'system') {
     if (mode === 'download') {
       downloadRunArchive(r);
       return;
     }
     closeDrawers();
-    openRestore(r);
+    openRestore(r, mode === 'system' ? 'in-place' : mode);
   }
 
   async function downloadRunArchive(r: BackupRun) {
@@ -212,10 +209,10 @@
   }
 
   // Restore modal
-  let showRestore = $state(false);
   let restoreRun = $state<BackupRun | null>(null);
-  let restoreVolume = $state('');
-  let restoreConfirm = $state('');
+  let restorePreset = $state<'in-place' | 'alongside'>('alongside');
+  let systemRestoreOpen = $state(false);
+  let systemRestoreRun = $state<BackupRun | null>(null);
 
   // Runs filters
   let runJobFilter = $state('');
@@ -507,6 +504,7 @@
   function statusVariant(s: string): 'success' | 'warning' | 'danger' | 'info' | 'default' {
     if (s === 'success') return 'success';
     if (s === 'failed') return 'danger';
+    if (s === 'success_with_warnings') return 'warning';
     if (s === 'running') return 'info';
     return 'default';
   }
@@ -644,6 +642,8 @@
   }
 
   function pendingHostKey(j: BackupJob): boolean {
+    const t = j.target_id ? targetById(j.target_id) : undefined;
+    if (t) return targetPendingHostKey(t);
     return j.target_type === 'sftp' && !!(j.target_config as { host_key_pending?: string } | null)?.host_key_pending;
   }
 
@@ -690,41 +690,20 @@
 
   async function toggleJob(j: BackupJob) {
     try {
-      const input: BackupJobInput = { name: j.name, host_id: j.host_id, target_type: j.target_type, target_config: j.target_config, sources: j.sources, schedule: j.schedule, retention_count: j.retention_count, retention_days: j.retention_days, encrypt: j.encrypt, pre_hooks: j.pre_hooks, post_hooks: j.post_hooks, enabled: !j.enabled };
+      const input: BackupJobInput = { name: j.name, host_id: j.host_id, target_id: j.target_id, target_type: j.target_type, target_config: j.target_config, sources: j.sources, schedule: j.schedule, retention_count: j.retention_count, retention_days: j.retention_days, encrypt: j.encrypt, pre_hooks: j.pre_hooks, post_hooks: j.post_hooks, enabled: !j.enabled };
       await api.backups.updateJob(j.id, input);
       await loadJobs();
     } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
   }
 
-  function openRestore(r: BackupRun) {
-    restoreRun = r; restoreConfirm = '';
-    // Stack-typed runs default to "restore as same name". Volume runs
-    // default to "<source>-restored" — the legacy non-destructive
-    // pattern. The UI already shows the appropriate label per kind.
-    const stackSrc = r.sources.find(s => s.type === 'stack');
-    if (stackSrc) {
-      restoreVolume = stackSrc.name;
-    } else {
-      const vol = r.sources.find(s => s.type === 'volume');
-      restoreVolume = vol ? `${vol.name}-restored` : '';
+  function openRestore(r: BackupRun, preset: 'in-place' | 'alongside' = 'alongside') {
+    if (r.sources.some((s) => s.type === 'system')) {
+      systemRestoreRun = r;
+      systemRestoreOpen = true;
+      return;
     }
-    showRestore = true;
-  }
-  async function doRestore() {
-    if (!restoreRun || restoreConfirm !== restoreVolume) return;
-    const isStack = restoreRun.sources.some(s => s.type === 'stack');
-    try {
-      if (isStack) {
-        const res = await api.backups.restoreStack(restoreRun.id, restoreVolume.trim());
-        toast.success('Stack restored', `${res.files_restored.length} file(s), ${res.volumes_restored.length} volume(s) into ${res.stack_name}`);
-      } else {
-        await api.backups.restore(restoreRun.id, restoreVolume.trim());
-        toast.success('Restored', restoreVolume);
-      }
-      showRestore = false;
-    } catch (err) {
-      toast.error('Restore failed', err instanceof ApiError ? err.message : undefined);
-    }
+    restorePreset = preset;
+    restoreRun = r;
   }
 
   function addSource() { jSources = [...jSources, { type: 'volume', name: '' }]; }
@@ -865,7 +844,7 @@
       <div class="bk-job-grid">
         {#each sortedJobs as j (j.id)}
           {@const SrcIcon = jobSourceIcon(j)}
-          {@const target = targetById(j.target_type === 'inline' ? -1 : -1)}
+          {@const target = targetById(j.target_id ?? -1)}
           {@const tgtMeta = targetTypeMeta(j.target_type)}
           {@const last = jobLastRun(j.name)}
           {@const status = jobStatusFor(j.name)}
@@ -911,7 +890,7 @@
               <div class="bk-job-card-target-text">
                 <span class="bk-target-glyph">{tgtMeta.glyph}</span>
                 <div class="bk-job-card-target-info">
-                  <span class="bk-job-card-target-name">{j.target_type === 'inline' ? 'inline target' : tgtMeta.label}</span>
+                  <span class="bk-job-card-target-name">{target ? target.name : tgtMeta.label}</span>
                   <span class="font-mono bk-job-card-target-meta">{j.target_type}</span>
                 </div>
               </div>
@@ -988,6 +967,11 @@
         </p>
       </div>
       <div class="ed-actions">
+        {#if allowed('system.upgrade')}
+          <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => { systemRestoreRun = null; systemRestoreOpen = true; }}>
+            Restore system from file…
+          </button>
+        {/if}
         <div class="bk-seg-radio">
           <button type="button" class="bk-seg-radio-item" class:active={runsView === 'timeline'} onclick={() => (runsView = 'timeline')}>Timeline</button>
           <button type="button" class="bk-seg-radio-item" class:active={runsView === 'list'} onclick={() => (runsView = 'list')}>List</button>
@@ -1083,6 +1067,8 @@
             <span>
               {#if r.status === 'success'}
                 <span class="dm-pill dm-pill-success bk-mini-pill"><span class="dm-pill-dot"></span> success</span>
+              {:else if r.status === 'success_with_warnings'}
+                <span class="dm-pill dm-pill-warning bk-mini-pill" title={r.error}><span class="dm-pill-dot"></span> warnings</span>
               {:else if r.status === 'failed'}
                 <span class="dm-pill dm-pill-danger bk-mini-pill"><span class="dm-pill-dot"></span> failed</span>
               {:else if r.status === 'running'}
@@ -1095,7 +1081,9 @@
             <span class="font-mono bk-runs-cell right">{fmtDuration(r.started_at, r.finished_at)}</span>
             <span class="font-mono bk-runs-cell right">{fmtBytes(r.size_bytes)}</span>
             <span class="bk-runs-actions">
-              {#if r.status === 'success' && !r.sources?.some((s) => s.type === 'system')}
+              {#if r.pruned_at}
+                <span class="bk-runs-cell" title="Archive removed">pruned</span>
+              {:else if runRestorable(r) && !r.sources?.some((s) => s.type === 'system')}
                 <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" title="Restore" onclick={(e) => { e.stopPropagation(); openRestore(r); }}>
                   <Undo2 size={11} strokeWidth={1.5} />
                 </button>
@@ -1262,6 +1250,9 @@
 <!-- Target modal -->
 <Modal bind:open={showTarget} title={editingTarget ? `Edit: ${editingTarget.name}` : 'New backup target'} maxWidth="max-w-lg">
   <form onsubmit={saveTarget} class="space-y-4" id="target-form">
+    {#if editingTarget && editingTarget.job_count != null}
+      <p class="text-xs text-[var(--fg-muted)]">{targetUsage(editingTarget.job_count)}</p>
+    {/if}
     <Input label="Name" bind:value={tName} placeholder="My NAS" />
 
     <!-- Type selector as visual cards -->
@@ -1673,27 +1664,13 @@
   {/snippet}
 </Modal>
 
-<!-- Restore modal with confirmation -->
-<Modal bind:open={showRestore} title="Restore backup" maxWidth="max-w-md">
-  {#if restoreRun}
-    <div class="space-y-4">
-      <div class="p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-warning-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-warning-500)_30%,transparent)] text-xs text-[var(--color-warning-400)]">
-        This will untar the archive into a Docker volume. Existing data in the target volume will be <strong>overwritten</strong>. Stop any container using the volume first.
-      </div>
-      <Input label="Destination volume name" bind:value={restoreVolume} hint="Will be created if it doesn't exist" />
-      <div>
-        <label for="restore-confirm" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Type the volume name to confirm</label>
-        <input id="restore-confirm" type="text" class="dm-input text-sm font-mono" bind:value={restoreConfirm} placeholder={restoreVolume} />
-      </div>
-    </div>
-  {/if}
-  {#snippet footer()}
-    <Button variant="secondary" onclick={() => (showRestore = false)}>Cancel</Button>
-    <Button variant="danger" onclick={doRestore} disabled={!restoreVolume.trim() || restoreConfirm !== restoreVolume}>
-      <Undo2 class="w-4 h-4" /> Restore
-    </Button>
-  {/snippet}
-</Modal>
+<RestoreDialog
+  run={restoreRun}
+  preset={restorePreset}
+  originHost={jobs.find((j) => j.id === restoreRun?.job_id)?.host_id ?? ''}
+  onclose={() => (restoreRun = null)}
+/>
+<SystemRestoreDialog open={systemRestoreOpen} run={systemRestoreRun} onclose={() => (systemRestoreOpen = false)} />
 
 <style>
   .bk-page { display: block; }

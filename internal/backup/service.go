@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/docker"
@@ -30,9 +31,22 @@ type Service struct {
 	secrets *secrets.Service
 	paths   SystemPaths
 
-	cron     *cron.Cron
 	mu       sync.Mutex
+	cron     *cron.Cron
+	started  bool
+	tzName   string // backups.timezone; empty = server time zone
 	entryIDs map[int64]cron.EntryID
+	running  map[int64]bool
+	stopping bool
+
+	restoreMu    sync.Mutex
+	restoring    map[string]bool
+	restoreSlots int
+
+	// runCtx is cancelled on Stop.
+	runCtx    context.Context
+	cancelRun context.CancelFunc
+	runs      sync.WaitGroup
 
 	notices *notices.Service
 }
@@ -45,15 +59,19 @@ func (s *Service) SetNotices(n *notices.Service) {
 
 func NewService(db *sql.DB, dc *docker.Client, sm *stacks.Manager, sec *secrets.Service, paths SystemPaths) *Service {
 	st := newStore(db)
+	runCtx, cancel := context.WithCancel(context.Background())
 	return &Service{
-		store:    st,
-		exec:     newExecutor(st, db, dc, nil, sm, sec, paths),
-		docker:   dc,
-		stacks:   sm,
-		secrets:  sec,
-		paths:    paths,
-		cron:     cron.New(),
-		entryIDs: make(map[int64]cron.EntryID),
+		store:     st,
+		exec:      newExecutor(st, db, dc, nil, sm, sec, paths),
+		docker:    dc,
+		stacks:    sm,
+		secrets:   sec,
+		paths:     paths,
+		cron:      newCron(time.Local),
+		entryIDs:  make(map[int64]cron.EntryID),
+		running:   make(map[int64]bool),
+		runCtx:    runCtx,
+		cancelRun: cancel,
 	}
 }
 
@@ -75,60 +93,17 @@ func (s *Service) SetHostResolver(hr hostResolver) {
 	s.exec.hosts = hr
 }
 
-// Start loads enabled jobs and schedules them.
-func (s *Service) Start(ctx context.Context) error {
-	jobs, err := s.store.listJobs(ctx)
-	if err != nil {
-		return err
-	}
-	for _, j := range jobs {
-		if !j.Enabled || j.Schedule == "" {
-			continue
-		}
-		_ = s.schedule(&j)
-	}
-	s.cron.Start()
-	return nil
-}
-
-func (s *Service) Stop() {
-	if s.cron != nil {
-		<-s.cron.Stop().Done()
-	}
-}
-
-// schedule (re)registers a job's cron entry.
-func (s *Service) schedule(j *Job) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if id, ok := s.entryIDs[j.ID]; ok {
-		s.cron.Remove(id)
-		delete(s.entryIDs, j.ID)
-	}
-	if !j.Enabled || j.Schedule == "" {
-		return nil
-	}
-	jobID := j.ID
-	id, err := s.cron.AddFunc(j.Schedule, func() {
-		bg := context.Background()
-		fresh, err := s.store.getJob(bg, jobID)
-		if err != nil {
-			return
-		}
-		_, _ = s.exec.Run(bg, fresh)
-	})
-	if err != nil {
-		return err
-	}
-	s.entryIDs[j.ID] = id
-	return nil
-}
-
 // -----------------------------------------------------------------------------
 // public API used by handlers
 // -----------------------------------------------------------------------------
 
-func (s *Service) ListJobs(ctx context.Context) ([]Job, error) { return s.store.listJobs(ctx) }
+func (s *Service) ListJobs(ctx context.Context) ([]Job, error) {
+	jobs, err := s.store.listJobs(ctx)
+	for i := range jobs {
+		jobs[i].NextRunAt = s.nextRun(jobs[i].ID)
+	}
+	return jobs, err
+}
 
 // UnencryptableJobs lists enabled jobs set to encrypt while secrets
 // encryption is off; their runs fail instead of writing plaintext.
@@ -150,7 +125,11 @@ func (s *Service) UnencryptableJobs(ctx context.Context) ([]string, error) {
 }
 
 func (s *Service) GetJob(ctx context.Context, id int64) (*Job, error) {
-	return s.store.getJob(ctx, id)
+	j, err := s.store.getJob(ctx, id)
+	if err == nil {
+		j.NextRunAt = s.nextRun(id)
+	}
+	return j, err
 }
 
 // DefaultLocalPath is the directory the wizards suggest for a local target.
@@ -164,13 +143,10 @@ func canEncrypt(sec *secrets.Service) bool { return sec != nil && sec.Enabled() 
 
 // checkJobInput applies the save-time rules that depend on the server:
 // encryption needs secrets (a disabled job may keep the flag, so it can
-// still be switched off), and local paths must be inside the allowed roots.
+// still be switched off). Local paths are checked when the target is built.
 func (s *Service) checkJobInput(in JobInput) error {
 	if in.Encrypt && in.Enabled && !s.canEncrypt() {
 		return ErrEncryptUnavailable
-	}
-	if in.TargetType == "local" {
-		return targets.CheckLocalConfig(in.TargetConfig)
 	}
 	return nil
 }
@@ -185,7 +161,9 @@ func (s *Service) CreateJob(ctx context.Context, in JobInput) (*Job, error) {
 	if err := s.checkJobInput(in); err != nil {
 		return nil, err
 	}
-	in.TargetConfig = targets.KeepHostKey("", nil, in.TargetType, in.TargetConfig)
+	if err := s.attachTarget(ctx, &in, nil); err != nil {
+		return nil, err
+	}
 	id, err := s.store.createJob(ctx, in)
 	if err != nil {
 		return nil, err
@@ -221,7 +199,9 @@ func (s *Service) UpdateJob(ctx context.Context, id int64, in JobInput) (*Job, e
 	if err != nil {
 		return nil, err
 	}
-	in.TargetConfig = targets.KeepHostKey(prev.TargetType, prev.TargetConfig, in.TargetType, in.TargetConfig)
+	if err := s.attachTarget(ctx, &in, prev); err != nil {
+		return nil, err
+	}
 	if err := s.store.updateJob(ctx, id, in); err != nil {
 		return nil, err
 	}
@@ -283,9 +263,9 @@ func normalizeInput(in JobInput) JobInput {
 }
 
 // checkJobName rejects names that would share an archive directory with
-// another job: retention deletes whatever is under the job's directory, so
-// a shared one lets one job delete another's backups. The system job's
-// directory is reserved for jobs with a system source. id is 0 on create.
+// another job, which keeps folders on the target unambiguous for people
+// browsing them. The system job's directory is reserved for jobs with a
+// system source. id is 0 on create.
 func (s *Service) checkJobName(ctx context.Context, id int64, in JobInput) error {
 	dir := sanitize(in.Name)
 	if dir == "" {
@@ -306,23 +286,53 @@ func (s *Service) checkJobName(ctx context.Context, id int64, in JobInput) error
 	return nil
 }
 
+// JobsUsingTarget lists the jobs, deleted ones included, that write to a
+// saved target. Changing the target changes where all of them write.
+func (s *Service) JobsUsingTarget(ctx context.Context, targetID int64) ([]Job, error) {
+	return s.store.jobsUsingTarget(ctx, targetID)
+}
+
 func (s *Service) DeleteJob(ctx context.Context, id int64) error {
-	s.mu.Lock()
-	if cid, ok := s.entryIDs[id]; ok {
-		s.cron.Remove(cid)
-		delete(s.entryIDs, id)
-	}
-	s.mu.Unlock()
+	s.unschedule(id)
 	return s.store.deleteJob(ctx, id)
 }
 
-// RunNow triggers a job manually and blocks until it finishes.
+// RunNow runs a job and blocks until it finishes.
 func (s *Service) RunNow(ctx context.Context, id int64) (*Run, error) {
 	j, err := s.store.getJob(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	if !s.claim(id) {
+		return nil, ErrJobRunning
+	}
+	defer s.release(id)
 	return s.exec.Run(ctx, j)
+}
+
+// StartRun starts a job in the background and returns its run record
+// right away, so the run doesn't depend on the HTTP request that asked
+// for it. Poll GetRun for the outcome.
+func (s *Service) StartRun(ctx context.Context, id int64) (*Run, error) {
+	j, err := s.store.getJob(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !s.claim(id) {
+		return nil, ErrJobRunning
+	}
+	runID, err := s.exec.begin(ctx, j)
+	if err != nil {
+		s.release(id)
+		return nil, err
+	}
+	s.runs.Add(1)
+	go func() {
+		defer s.runs.Done()
+		defer s.release(id)
+		_, _ = s.exec.complete(s.runCtx, j, runID)
+	}()
+	return s.store.getRun(ctx, runID)
 }
 
 func (s *Service) ListRuns(ctx context.Context, limit int) ([]Run, error) {
@@ -352,10 +362,16 @@ func (s *Service) ReadRun(ctx context.Context, runID int64) (io.ReadCloser, erro
 	if err != nil {
 		return nil, err
 	}
-	if run.Status != "success" {
-		return nil, errors.New("can only read from a successful run")
+	return s.openRun(ctx, run, nil)
+}
+
+// openRun opens a run's archive as plaintext. rawTap, when set, also
+// receives the bytes exactly as they are stored on the target.
+func (s *Service) openRun(ctx context.Context, run *Run, rawTap io.Writer) (io.ReadCloser, error) {
+	if !run.Restorable() {
+		return nil, ErrNotRestorable
 	}
-	job, err := s.store.getJob(ctx, run.JobID)
+	job, err := s.store.getJobForRun(ctx, run.JobID)
 	if err != nil {
 		return nil, err
 	}
@@ -367,6 +383,9 @@ func (s *Service) ReadRun(ctx context.Context, runID int64) (io.ReadCloser, erro
 	if err != nil {
 		return nil, err
 	}
+	if rawTap != nil {
+		src = &tappedReader{Reader: io.TeeReader(src, rawTap), Closer: src}
+	}
 	if !run.Encrypted {
 		return src, nil
 	}
@@ -375,160 +394,13 @@ func (s *Service) ReadRun(ctx context.Context, runID int64) (io.ReadCloser, erro
 		_ = src.Close()
 		return nil, err
 	}
-	return &readRunCloser{r: dec, underlying: src}, nil
+	// Closing the decrypting reader closes src.
+	return dec, nil
 }
 
-// readRunCloser closes the decrypt wrapper then the underlying source.
-type readRunCloser struct {
-	r          io.ReadCloser
-	underlying io.ReadCloser
-}
-
-func (c *readRunCloser) Read(p []byte) (int, error) { return c.r.Read(p) }
-func (c *readRunCloser) Close() error {
-	err1 := c.r.Close()
-	err2 := c.underlying.Close()
-	if err1 != nil {
-		return err1
-	}
-	return err2
-}
-
-// Restore fetches the run's archive from its target, decrypts if needed,
-// and untars it into the named destination volume.
-func (s *Service) Restore(ctx context.Context, runID int64, destVolume string) error {
-	run, err := s.store.getRun(ctx, runID)
-	if err != nil {
-		return err
-	}
-	if HasSystemSource(run.Sources) {
-		return ErrSystemRestore
-	}
-	if run.Status != "success" {
-		return errors.New("can only restore from a successful run")
-	}
-	job, err := s.store.getJob(ctx, run.JobID)
-	if err != nil {
-		return err
-	}
-	target, err := jobTarget(ctx, s.store, s.notices, job)
-	if err != nil {
-		return err
-	}
-	src, err := fetchArchive(ctx, target, run)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-
-	var reader = src
-	if run.Encrypted {
-		dec, err := wrapDecrypt(src, s.secrets)
-		if err != nil {
-			return err
-		}
-		defer dec.Close()
-		reader = dec
-	}
-
-	if len(run.Sources) > 0 && run.Sources[0].Type == "stack" {
-		// destVolume is reused for stack restores: it carries the
-		// target stack name (the volumes inside the archive are
-		// named per their original project, so the caller picks
-		// "restore as stack X"). When empty, fall back to the
-		// source name from the run.
-		stackName := destVolume
-		if stackName == "" && len(run.Sources) > 0 {
-			stackName = run.Sources[0].Name
-		}
-		if stackName == "" {
-			return errors.New("stack restore: target stack name is required")
-		}
-		return s.restoreStack(ctx, stackName, reader)
-	}
-	return untarVolume(ctx, s.docker, destVolume, reader)
-}
-
-// CheckRestoreTarget rejects a dest_volume that isn't a volume name before
-// any archive is read, for runs that restore into a volume.
-func (s *Service) CheckRestoreTarget(ctx context.Context, runID int64, destVolume string) error {
-	run, err := s.store.getRun(ctx, runID)
-	if err != nil {
-		return err
-	}
-	if len(run.Sources) > 0 && run.Sources[0].Type == "stack" {
-		return nil
-	}
-	return docker.CheckVolumeName(destVolume)
-}
-
-// StackRestoreReport tells the caller what actually happened on a stack
-// restore — files extracted, volumes restored, anything skipped — so
-// the UI can show a list rather than a flat success/fail.
-type StackRestoreReport struct {
-	StackName       string   `json:"stack_name"`
-	FilesRestored   []string `json:"files_restored"`
-	VolumesRestored []string `json:"volumes_restored"`
-	Warnings        []string `json:"warnings,omitempty"`
-}
-
-// RestoreStack is the explicit entry point for a stack-typed run. Same
-// shape as Restore but always returns the structured report. Used by
-// the new POST /backups/runs/{id}/restore-stack endpoint and by the
-// stack-detail recovery panel ("Restore from last backup" card).
-func (s *Service) RestoreStack(ctx context.Context, runID int64, targetStack string) (*StackRestoreReport, error) {
-	run, err := s.store.getRun(ctx, runID)
-	if err != nil {
-		return nil, err
-	}
-	if HasSystemSource(run.Sources) {
-		return nil, ErrSystemRestore
-	}
-	if run.Status != "success" {
-		return nil, errors.New("can only restore from a successful run")
-	}
-	if len(run.Sources) == 0 || run.Sources[0].Type != "stack" {
-		return nil, errors.New("run is not a stack backup")
-	}
-	if targetStack == "" {
-		targetStack = run.Sources[0].Name
-	}
-	job, err := s.store.getJob(ctx, run.JobID)
-	if err != nil {
-		return nil, err
-	}
-	target, err := jobTarget(ctx, s.store, s.notices, job)
-	if err != nil {
-		return nil, err
-	}
-	src, err := fetchArchive(ctx, target, run)
-	if err != nil {
-		return nil, err
-	}
-	defer src.Close()
-
-	var reader io.Reader = src
-	if run.Encrypted {
-		dec, err := wrapDecrypt(src, s.secrets)
-		if err != nil {
-			return nil, err
-		}
-		defer dec.Close()
-		reader = dec
-	}
-
-	report := &StackRestoreReport{StackName: targetStack}
-	if err := s.restoreStackInto(ctx, targetStack, reader, report); err != nil {
-		return report, err
-	}
-	return report, nil
-}
-
-// restoreStack is the legacy single-error wrapper kept around for the
-// old Restore() entry point. New code should call RestoreStack.
-func (s *Service) restoreStack(ctx context.Context, stackName string, reader io.Reader) error {
-	report := &StackRestoreReport{StackName: stackName}
-	return s.restoreStackInto(ctx, stackName, reader, report)
+type tappedReader struct {
+	io.Reader
+	io.Closer
 }
 
 func buildTarget(typ string, cfg any) (targets.Target, error) {
@@ -551,18 +423,15 @@ func validateJob(in JobInput) error {
 	if in.Name == "" {
 		return errors.New("name required")
 	}
-	if in.TargetType == "" {
-		return errors.New("target_type required")
+	if in.TargetID == 0 && in.TargetType == "" {
+		return errors.New("target_id or target_type required")
 	}
 	if len(in.Sources) == 0 {
 		return errors.New("at least one source required")
 	}
 	if len(in.Sources) > 1 {
-		// P.13.5: rather than letting jobs land in the DB with multiple
-		// sources and silently truncating to the first one at run time
-		// (the old behaviour, which produced incomplete backups under
-		// the radar), reject up front. Operators who need to back up
-		// several things create one job per source.
+		// The executor handles exactly one source; operators who need to
+		// back up several things create one job per source.
 		return errors.New("exactly one source per job — create one job per stack/volume/system you want to back up")
 	}
 	for _, src := range in.Sources {

@@ -31,12 +31,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -45,6 +47,7 @@ import (
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
@@ -59,18 +62,6 @@ import (
 
 	"github.com/dockmesh/dockmesh/pkg/version"
 )
-
-// agentVersion returns the build-stamped version so `make build`
-// flags -X pkg/version.Version=… actually surface in the UI + in
-// the upgrade decision. Previously this was a hardcoded const so
-// every install showed "0.1.0-dev" regardless of the binary hash.
-func agentVersion() string {
-	v := version.Version
-	if version.Commit != "" && version.Commit != "none" {
-		return v + "+" + version.Commit
-	}
-	return v
-}
 
 type agentConfig struct {
 	dataDir        string
@@ -154,11 +145,30 @@ func main() {
 		os.Exit(1)
 	}
 
-	tlsCfg, err := loadTLS(certPath, keyPath, caPath)
+	if err := finishPendingRenewal(certPath, keyPath); err != nil {
+		slog.Error("finish cert renewal", "err", err)
+		os.Exit(1)
+	}
+	store, err := newCertStore(certPath, keyPath, caPath)
 	if err != nil {
 		slog.Error("tls config", "err", err)
 		os.Exit(1)
 	}
+	if time.Now().After(store.notAfter()) {
+		slog.Error("client certificate expired: re-issue the enrollment token on the host page and re-run "+
+			"the installer on this host (the host keeps its ID)", "expired", store.notAfter())
+		if cfg.token != "" && cfg.enrollURL != "" {
+			if err := enroll(cfg, certPath, keyPath, caPath, urlPath); err != nil {
+				slog.Error("re-enrollment with the configured token failed", "err", err)
+			} else if err := store.load(); err != nil {
+				slog.Error("load re-enrolled cert", "err", err)
+				os.Exit(1)
+			} else {
+				slog.Info("re-enrolled with a new client certificate")
+			}
+		}
+	}
+	tlsCfg := store.tlsConfig()
 	upgradeOrigin.dialURL = dialURL
 	upgradeOrigin.tls = tlsCfg
 
@@ -179,29 +189,31 @@ func main() {
 	// reports a smoothed value.
 	system.StartSampler(ctx)
 
-	// Reconnect loop with exponential backoff capped at 60s.
-	backoff := time.Second
+	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(os.Getpid()))) //nolint:gosec // reconnect jitter, not a secret
+	attempt := 0
 	for ctx.Err() == nil {
-		err := runOnce(ctx, dialURL, tlsCfg)
+		started := time.Now()
+		err := runOnce(ctx, dialURL, tlsCfg, store)
 		if ctx.Err() != nil {
 			break
 		}
+		if time.Since(started) >= stableSession {
+			attempt = 0
+		}
+		delay := reconnectDelay(attempt, rng)
+		attempt++
 		if err != nil {
-			slog.Warn("disconnected, reconnecting", "err", err, "backoff", backoff)
+			slog.Warn("disconnected, reconnecting", "err", err, "backoff", delay)
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(backoff):
-		}
-		backoff *= 2
-		if backoff > 60*time.Second {
-			backoff = 60 * time.Second
+		case <-time.After(delay):
 		}
 	}
 }
 
-func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
+func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *certStore) error {
 	u, err := url.Parse(dialURL)
 	if err != nil {
 		return fmt.Errorf("parse url: %w", err)
@@ -216,17 +228,20 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 		return fmt.Errorf("dial: %w", err)
 	}
 	defer conn.Close()
+	conn.SetReadLimit(agents.MaxFrameBytes)
 
 	// Send hello
 	hostname, _ := os.Hostname()
 	dockerVersion := dockerDaemonVersion(ctx)
 	hello := agents.HelloPayload{
-		Version:       version.Version,
-		Commit:        version.Commit,
-		OS:            runtime.GOOS,
-		Arch:          runtime.GOARCH,
-		Hostname:      hostname,
-		DockerVersion: dockerVersion,
+		Version:         version.Version,
+		Commit:          version.Commit,
+		OS:              runtime.GOOS,
+		Arch:            runtime.GOARCH,
+		Hostname:        hostname,
+		DockerVersion:   dockerVersion,
+		ProtocolVersion: agents.ProtocolVersion,
+		Capabilities:    agentCapabilities,
 	}
 	helloBytes, _ := json.Marshal(hello)
 	if err := writeFrame(conn, agents.Frame{Type: agents.FrameAgentHello, Payload: helloBytes}); err != nil {
@@ -234,7 +249,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 	}
 
 	// Wait for welcome
-	conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
 	_, raw, err := conn.ReadMessage()
 	if err != nil {
 		return fmt.Errorf("welcome read: %w", err)
@@ -245,13 +260,15 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 	}
 	var welcome agents.WelcomePayload
 	_ = json.Unmarshal(f.Payload, &welcome)
-	slog.Info("connected", "agent_id", welcome.AgentID, "agent_name", welcome.AgentName, "server", welcome.ServerVersion)
+	slog.Info("connected", "agent_id", welcome.AgentID, "agent_name", welcome.AgentName,
+		"server", welcome.ServerVersion, "protocol", welcome.ProtocolVersion)
 
-	conn.SetReadDeadline(time.Time{})
+	_ = conn.SetReadDeadline(time.Now().Add(serverSilence))
 
-	// Heartbeat ticker
 	ctxConn, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// A failed write closes the socket so the read loop doesn't wait on
+	// a dead connection.
 	go func() {
 		t := time.NewTicker(15 * time.Second)
 		defer t.Stop()
@@ -263,29 +280,40 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 				count := dockerContainerCount(ctxConn)
 				hb, _ := json.Marshal(agents.HeartbeatPayload{TS: time.Now().Unix(), ContainerCount: count})
 				if err := writeFrame(conn, agents.Frame{Type: agents.FrameAgentHeartbeat, Payload: hb}); err != nil {
+					_ = conn.Close()
 					return
 				}
 			}
 		}
 	}()
+	if slices.Contains(welcome.Capabilities, agents.CapCertRenew) {
+		go renewLoop(ctxConn, conn, store)
+	} else if time.Until(store.notAfter()) < agents.RenewBefore {
+		slog.Warn("client cert expires soon and this server can't renew it; update the server",
+			"expires", store.notAfter())
+	}
 
-	// Shared docker client for request handlers (re-created on each
-	// request would be wasteful; one per connection is fine).
+	// One docker client and compose service per connection. The wrapper
+	// runs a health monitor that only stops on Close.
 	dockerCli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		slog.Warn("docker client init failed — agent will only respond to pings", "err", err)
 	}
+	var cs *compose.Service
 	if dockerCli != nil {
-		defer dockerCli.Close()
+		wrapped := dockerwrap.Wrap(dockerCli) //nolint:contextcheck // the monitor stops on Close, deferred below
+		defer wrapped.Close()
+		cs = compose.NewService(wrapped, nil)
 	}
+	system.SetRolePathsFn(agentRolePaths(dockerCli))
 
-	// Read loop: handle server pings + request/response frames.
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
 			cancel()
 			return err
 		}
+		_ = conn.SetReadDeadline(time.Now().Add(serverSilence))
 		var f agents.Frame
 		if err := json.Unmarshal(raw, &f); err != nil {
 			continue
@@ -296,12 +324,19 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 			if err := writeFrame(conn, agents.Frame{Type: agents.FrameAgentPong, Payload: pong}); err != nil {
 				return err
 			}
+		case agents.FrameRes:
+			deliverResponse(f)
+		case agents.FrameReqCancel:
+			cancelRequest(f.ID)
 		case agents.FrameStreamOpen:
 			var open agents.StreamOpen
 			if err := json.Unmarshal(f.Payload, &open); err != nil {
 				continue
 			}
-			go startStream(ctxConn, conn, dockerCli, open)
+			// Registered before the goroutine starts so input that
+			// follows the open frame finds the stream.
+			reg := registerStream(ctxConn, open)
+			go startStream(conn, dockerCli, open, reg) //nolint:contextcheck // reg.ctx derives from ctxConn
 
 		case agents.FrameStreamData:
 			// Server → agent data on an existing stream (exec stdin).
@@ -309,7 +344,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 			if err := json.Unmarshal(f.Payload, &sd); err != nil {
 				continue
 			}
-			deliverStreamInput(sd.StreamID, sd.Data)
+			deliverStreamInput(conn, sd.StreamID, sd.Data)
 
 		case agents.FrameStreamControl:
 			var sc agents.StreamControl
@@ -324,10 +359,15 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 			closeStream(sc.StreamID)
 
 		default:
-			// Anything starting with req. is a server-initiated request.
-			// Handle it in a goroutine so a slow handler can't block the
-			// read loop (and therefore the heartbeat too).
-			go handleRequest(ctxConn, conn, dockerCli, f)
+			// Anything else is a server request, handled in its own
+			// goroutine so a slow handler can't block the read loop.
+			reqCtx, reqCancel := context.WithCancel(ctxConn)
+			trackRequest(f.ID, reqCancel)
+			go func(f agents.Frame) {
+				defer untrackRequest(f.ID)
+				defer reqCancel()
+				handleRequest(reqCtx, conn, dockerCli, cs, f)
+			}(f)
 		}
 	}
 }
@@ -336,27 +376,51 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 // Stream registry — tracks running goroutines so stream.close can cancel them.
 // -----------------------------------------------------------------------------
 
-// streamReg tracks a single in-flight stream on the agent side. Logs and
-// stats only need cancel; exec also needs a writer (stdin) and a resize
-// hook for control frames.
+// streamReg tracks a single in-flight stream on the agent side. With
+// flow control (the server sent a window) outbound data waits for credit
+// and inbound data is acknowledged once written; without it, input that
+// overflows the queue fails the stream.
 type streamReg struct {
+	id     string
+	ctx    context.Context
 	cancel context.CancelFunc
-	stdin  io.Writer                   // nil for non-bidirectional streams
-	resize func(rows, cols uint) error // nil if not resizable
+	credit *agents.Credit // nil without flow control
+
+	input   chan []byte   // server → agent data (stdin, import)
+	eof     chan struct{} // closed when the server ends its direction
+	eofOnce sync.Once
+
+	mu     sync.Mutex
+	resize func(rows, cols uint) error
 }
 
 var (
 	streamMu  sync.Mutex
 	streamMap = map[string]*streamReg{}
-	streamWMu sync.Mutex // serialises writeFrame() so concurrent streams don't interleave WS frames
 )
 
-func registerStream(id string, cancel context.CancelFunc) *streamReg {
-	r := &streamReg{cancel: cancel}
+func registerStream(parent context.Context, open agents.StreamOpen) *streamReg {
+	ctx, cancel := context.WithCancel(parent)
+	r := &streamReg{
+		id:     open.StreamID,
+		ctx:    ctx,
+		cancel: cancel,
+		input:  make(chan []byte, agents.StreamWindow),
+		eof:    make(chan struct{}),
+	}
+	if n := agents.CreditCount(open.Params["window"]); n > 0 {
+		r.credit = agents.NewCredit(n)
+	}
 	streamMu.Lock()
-	streamMap[id] = r
+	streamMap[open.StreamID] = r
 	streamMu.Unlock()
 	return r
+}
+
+func lookupStream(id string) *streamReg {
+	streamMu.Lock()
+	defer streamMu.Unlock()
+	return streamMap[id]
 }
 
 func deregisterStream(id string) {
@@ -377,36 +441,46 @@ func closeStream(id string) {
 	}
 }
 
-// deliverStreamInput is called when the server sends stream.data on an
-// already-open stream — used to push exec stdin to the docker side.
-func deliverStreamInput(id string, data []byte) {
-	streamMu.Lock()
-	r, ok := streamMap[id]
-	streamMu.Unlock()
-	if !ok || r.stdin == nil {
+// deliverStreamInput queues server → agent data without blocking the
+// read loop. A server that ignores the window overflows the queue, which
+// fails the stream instead of dropping bytes.
+func deliverStreamInput(conn *websocket.Conn, id string, data []byte) {
+	r := lookupStream(id)
+	if r == nil {
 		return
 	}
-	_, _ = r.stdin.Write(data)
+	select {
+	case r.input <- data:
+	default:
+		closeStream(id)
+		sendStreamClose(conn, id, "stream input overflow")
+	}
 }
 
-// deliverStreamControl handles out-of-band control ops (currently only
-// exec resize).
+// deliverStreamControl handles the resize, credit and eof control ops.
 func deliverStreamControl(id, op string, params map[string]any) {
-	streamMu.Lock()
-	r, ok := streamMap[id]
-	streamMu.Unlock()
-	if !ok {
+	r := lookupStream(id)
+	if r == nil {
 		return
 	}
 	switch op {
+	case agents.StreamOpCredit:
+		if r.credit != nil {
+			r.credit.Add(agents.CreditCount(params["n"]))
+		}
+	case agents.StreamOpEOF:
+		r.eofOnce.Do(func() { close(r.eof) })
 	case "resize":
-		if r.resize == nil {
+		r.mu.Lock()
+		resize := r.resize
+		r.mu.Unlock()
+		if resize == nil {
 			return
 		}
 		cols := uintFromAny(params["cols"])
 		rows := uintFromAny(params["rows"])
 		if cols > 0 && rows > 0 {
-			_ = r.resize(rows, cols)
+			_ = resize(rows, cols)
 		}
 	}
 }
@@ -423,74 +497,152 @@ func uintFromAny(v any) uint {
 	return 0
 }
 
-// safeWriteFrame is the agent's only WS write path. Holding the mutex
-// guarantees that stream.data chunks from concurrent streams don't
-// interleave inside the same WS message — gorilla/websocket panics if
-// two goroutines try to write at once.
-func safeWriteFrame(conn *websocket.Conn, f agents.Frame) error {
-	streamWMu.Lock()
-	defer streamWMu.Unlock()
-	return writeFrame(conn, f)
+// sendData writes one stream.data frame, waiting for credit first when
+// the stream is flow controlled.
+func (r *streamReg) sendData(conn *websocket.Conn, data []byte) error {
+	if r.credit != nil {
+		if err := r.credit.Acquire(r.ctx, nil); err != nil {
+			return err
+		}
+	}
+	payload, _ := json.Marshal(agents.StreamData{StreamID: r.id, Data: data})
+	return writeFrame(conn, agents.Frame{Type: agents.FrameStreamData, Payload: payload})
+}
+
+// pumpOutput copies src to the server as stream.data frames until EOF
+// (nil) or an error.
+func (r *streamReg) pumpOutput(conn *websocket.Conn, src io.Reader, bufSize int) error {
+	buf := make([]byte, bufSize)
+	for {
+		n, rerr := src.Read(buf)
+		if n > 0 {
+			if err := r.sendData(conn, append([]byte(nil), buf[:n]...)); err != nil {
+				return err
+			}
+		}
+		if rerr == io.EOF {
+			return nil
+		}
+		if rerr != nil {
+			return rerr
+		}
+	}
+}
+
+// pumpInput writes queued server data to dst until the server sends eof
+// (nil, after the queue is drained) or the stream ends (ctx error).
+// Written frames are acknowledged in batches.
+func (r *streamReg) pumpInput(conn *websocket.Conn, dst io.Writer) error {
+	written := 0
+	write := func(chunk []byte) error {
+		if _, err := dst.Write(chunk); err != nil {
+			return err
+		}
+		if r.credit == nil {
+			return nil
+		}
+		if written++; written >= agents.GrantBatch {
+			payload, _ := json.Marshal(agents.StreamControl{StreamID: r.id, Op: agents.StreamOpCredit, Params: map[string]any{"n": written}})
+			written = 0
+			return writeFrame(conn, agents.Frame{Type: agents.FrameStreamControl, Payload: payload})
+		}
+		return nil
+	}
+	for {
+		select {
+		case chunk := <-r.input:
+			if err := write(chunk); err != nil {
+				return err
+			}
+		case <-r.eof:
+			for {
+				select {
+				case chunk := <-r.input:
+					if err := write(chunk); err != nil {
+						return err
+					}
+				default:
+					return nil
+				}
+			}
+		case <-r.ctx.Done():
+			return r.ctx.Err()
+		}
+	}
 }
 
 // startStream dispatches to the right reader for the requested stream
-// kind. New kinds (stats, exec) get added here.
-func startStream(parent context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen) {
+// kind.
+func startStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) {
+	defer deregisterStream(open.StreamID)
+	defer reg.cancel()
 	if cli == nil {
 		sendStreamClose(conn, open.StreamID, "docker daemon unavailable")
 		return
 	}
-	ctx, cancel := context.WithCancel(parent)
-	reg := registerStream(open.StreamID, cancel)
-	defer deregisterStream(open.StreamID)
-	defer cancel()
-
+	var err error
 	switch open.Kind {
 	case "logs":
-		runLogStream(ctx, conn, cli, open)
+		err = runLogStream(conn, cli, open, reg)
 	case "stats":
-		runStatsStream(ctx, conn, cli, open)
+		err = runStatsStream(conn, cli, open, reg)
 	case "exec":
-		runExecStream(ctx, conn, cli, open, reg)
+		err = runExecStream(conn, cli, open, reg)
 	case "volume_export":
-		runVolumeExportStream(ctx, conn, cli, open)
+		err = runVolumeExportStream(conn, cli, open, reg)
 	case "volume_import":
-		runVolumeImportStream(ctx, conn, cli, open, reg)
+		err = runVolumeImportStream(conn, cli, open, reg)
+	case "events":
+		err = runEventsStream(conn, cli, reg)
 	default:
-		sendStreamClose(conn, open.StreamID, "unknown stream kind: "+open.Kind)
+		err = errors.New("unknown stream kind: " + open.Kind)
 	}
-}
-
-func runStatsStream(ctx context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen) {
-	resp, err := cli.ContainerStats(ctx, open.Container, true)
-	if err != nil {
-		sendStreamClose(conn, open.StreamID, err.Error())
+	if reg.ctx.Err() != nil {
+		// The server closed the stream or the session ended.
 		return
 	}
-	defer resp.Body.Close()
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	sendStreamClose(conn, open.StreamID, msg)
+}
 
-	buf := make([]byte, 4096)
+// runEventsStream forwards Docker container events, one JSON object per
+// chunk, for the server's event alerts.
+func runEventsStream(conn *websocket.Conn, cli *client.Client, reg *streamReg) error {
+	msgs, errs := cli.Events(reg.ctx, events.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("type", string(events.ContainerEventType))),
+	})
 	for {
-		n, rerr := resp.Body.Read(buf)
-		if n > 0 {
-			payload, _ := json.Marshal(agents.StreamData{StreamID: open.StreamID, Data: append([]byte(nil), buf[:n]...)})
-			if werr := safeWriteFrame(conn, agents.Frame{Type: agents.FrameStreamData, Payload: payload}); werr != nil {
-				return
+		select {
+		case <-reg.ctx.Done():
+			return nil
+		case err := <-errs:
+			return err
+		case m := <-msgs:
+			data, err := json.Marshal(m)
+			if err != nil {
+				continue
 			}
-		}
-		if rerr != nil {
-			if rerr == io.EOF || ctx.Err() != nil {
-				sendStreamClose(conn, open.StreamID, "")
-			} else {
-				sendStreamClose(conn, open.StreamID, rerr.Error())
+			if err := reg.sendData(conn, data); err != nil {
+				return err
 			}
-			return
 		}
 	}
 }
 
-func runExecStream(ctx context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) {
-	// Decode params
+func runStatsStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) error {
+	resp, err := cli.ContainerStats(reg.ctx, open.Container, true)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return reg.pumpOutput(conn, resp.Body, 4096)
+}
+
+func runExecStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) error {
+	ctx := reg.ctx
 	cmdSlice := []string{"/bin/sh"}
 	if raw, ok := open.Params["cmd"].([]any); ok {
 		out := make([]string, 0, len(raw))
@@ -512,50 +664,29 @@ func runExecStream(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		Cmd:          cmdSlice,
 	})
 	if err != nil {
-		sendStreamClose(conn, open.StreamID, err.Error())
-		return
+		return err
 	}
 	hijack, err := cli.ContainerExecAttach(ctx, createResp.ID, container.ExecStartOptions{Tty: true})
 	if err != nil {
-		sendStreamClose(conn, open.StreamID, err.Error())
-		return
+		return err
 	}
 	defer hijack.Close()
 
-	// Wire up the registry hooks so deliverStreamInput / deliverStreamControl
-	// can reach this exec instance.
-	reg.stdin = hijack.Conn
-	reg.resize = func(rows, cols uint) error {
+	resize := func(rows, cols uint) error {
 		return cli.ContainerExecResize(ctx, createResp.ID, container.ResizeOptions{Height: rows, Width: cols})
 	}
-
-	// Apply the initial size if the client passed one in StreamOpen.Params.
+	reg.mu.Lock()
+	reg.resize = resize
+	reg.mu.Unlock()
 	if c, r := uintFromAny(open.Params["cols"]), uintFromAny(open.Params["rows"]); c > 0 && r > 0 {
-		_ = reg.resize(r, c)
+		_ = resize(r, c)
 	}
 
-	// Pump exec stdout → server as stream.data frames.
-	buf := make([]byte, 4096)
-	for {
-		n, rerr := hijack.Reader.Read(buf)
-		if n > 0 {
-			payload, _ := json.Marshal(agents.StreamData{StreamID: open.StreamID, Data: append([]byte(nil), buf[:n]...)})
-			if werr := safeWriteFrame(conn, agents.Frame{Type: agents.FrameStreamData, Payload: payload}); werr != nil {
-				return
-			}
-		}
-		if rerr != nil {
-			if rerr == io.EOF || ctx.Err() != nil {
-				sendStreamClose(conn, open.StreamID, "")
-			} else {
-				sendStreamClose(conn, open.StreamID, rerr.Error())
-			}
-			return
-		}
-	}
+	go func() { _ = reg.pumpInput(conn, hijack.Conn) }()
+	return reg.pumpOutput(conn, hijack.Reader, 4096)
 }
 
-func runLogStream(ctx context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen) {
+func runLogStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) error {
 	tail, _ := open.Params["tail"].(string)
 	if tail == "" {
 		tail = "100"
@@ -564,7 +695,7 @@ func runLogStream(ctx context.Context, conn *websocket.Conn, cli *client.Client,
 	if v, ok := open.Params["follow"].(bool); ok {
 		follow = v
 	}
-	rc, err := cli.ContainerLogs(ctx, open.Container, container.LogsOptions{
+	rc, err := cli.ContainerLogs(reg.ctx, open.Container, container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     follow,
@@ -572,188 +703,159 @@ func runLogStream(ctx context.Context, conn *websocket.Conn, cli *client.Client,
 		Timestamps: true,
 	})
 	if err != nil {
-		sendStreamClose(conn, open.StreamID, err.Error())
-		return
+		return err
 	}
 	defer rc.Close()
-
-	buf := make([]byte, 8192)
-	for {
-		n, rerr := rc.Read(buf)
-		if n > 0 {
-			payload, _ := json.Marshal(agents.StreamData{StreamID: open.StreamID, Data: append([]byte(nil), buf[:n]...)})
-			if werr := safeWriteFrame(conn, agents.Frame{Type: agents.FrameStreamData, Payload: payload}); werr != nil {
-				return
-			}
-		}
-		if rerr != nil {
-			if rerr == io.EOF || ctx.Err() != nil {
-				sendStreamClose(conn, open.StreamID, "")
-			} else {
-				sendStreamClose(conn, open.StreamID, rerr.Error())
-			}
-			return
-		}
-	}
+	return reg.pumpOutput(conn, rc, 8192)
 }
 
 func sendStreamClose(conn *websocket.Conn, id, errMsg string) {
 	payload, _ := json.Marshal(agents.StreamClose{StreamID: id, Error: errMsg})
-	_ = safeWriteFrame(conn, agents.Frame{Type: agents.FrameStreamClose, Payload: payload})
+	_ = writeFrame(conn, agents.Frame{Type: agents.FrameStreamClose, Payload: payload})
+}
+
+const helperImage = "busybox:latest"
+
+// helperTimeout bounds cleanup and exit-status calls that must still run
+// after the stream's context is gone.
+const helperTimeout = 60 * time.Second
+
+func ensureHelperImage(ctx context.Context, cli *client.Client) error {
+	if _, err := cli.ImageInspect(ctx, helperImage); err == nil {
+		return nil
+	}
+	rc, err := cli.ImagePull(ctx, helperImage, image.PullOptions{})
+	if err != nil {
+		return fmt.Errorf("pull busybox: %w", err)
+	}
+	_, _ = io.Copy(io.Discard, rc)
+	return rc.Close()
+}
+
+// removeHelper deletes a helper container on a fresh context, so it is
+// also removed when the stream was cancelled.
+func removeHelper(cli *client.Client, id string) {
+	ctx, cancel := context.WithTimeout(context.Background(), helperTimeout)
+	defer cancel()
+	if err := cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true}); err != nil {
+		slog.Warn("remove volume helper container", "id", id, "err", err)
+	}
+}
+
+// helperExit waits for a helper container and turns a non-zero exit into
+// an error.
+func helperExit(cli *client.Client, id string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), helperTimeout)
+	defer cancel()
+	statusCh, errCh := cli.ContainerWait(ctx, id, container.WaitConditionNotRunning)
+	select {
+	case s := <-statusCh:
+		if s.StatusCode != 0 {
+			return fmt.Errorf("tar exit %d", s.StatusCode)
+		}
+		return nil
+	case err := <-errCh:
+		return err
+	}
 }
 
 // runVolumeExportStream creates a temporary busybox container that mounts
 // the named volume read-only and runs `tar czf - -C /source .`, streaming
-// the gzipped archive to the server via stream.data frames. Used by
-// RemoteHost.VolumeTar for volume backups.
-func runVolumeExportStream(ctx context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen) {
+// the gzipped archive to the server via stream.data frames. tar's exit
+// status decides whether the stream ends cleanly.
+func runVolumeExportStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) error {
+	ctx := reg.ctx
 	volumeName, _ := open.Params["volume"].(string)
 	if err := dockerwrap.CheckVolumeName(volumeName); err != nil {
-		sendStreamClose(conn, open.StreamID, err.Error())
-		return
+		return err
 	}
-
-	const helperImage = "busybox:latest"
-	// Ensure helper image exists.
-	if _, err := cli.ImageInspect(ctx, helperImage); err != nil {
-		rc, pullErr := cli.ImagePull(ctx, helperImage, image.PullOptions{})
-		if pullErr != nil {
-			sendStreamClose(conn, open.StreamID, "pull busybox: "+pullErr.Error())
-			return
-		}
-		_, _ = io.Copy(io.Discard, rc)
-		rc.Close()
+	if err := ensureHelperImage(ctx, cli); err != nil {
+		return err
 	}
-
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:        helperImage,
 		Cmd:          []string{"sh", "-c", "tar czf - -C /source ."},
 		AttachStdout: true,
 		AttachStderr: true,
 	}, &container.HostConfig{
-		Binds: []string{volumeName + ":/source:ro"},
+		Binds:     []string{volumeName + ":/source:ro"},
+		LogConfig: container.LogConfig{Type: "none"},
 	}, nil, nil, "")
 	if err != nil {
-		sendStreamClose(conn, open.StreamID, "create helper: "+err.Error())
-		return
+		return fmt.Errorf("create helper: %w", err)
 	}
-	defer func() { _ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true}) }()
+	defer removeHelper(cli, resp.ID)
 
 	hijack, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
 		Stream: true, Stdout: true, Stderr: true,
 	})
 	if err != nil {
-		sendStreamClose(conn, open.StreamID, "attach: "+err.Error())
-		return
+		return fmt.Errorf("attach: %w", err)
 	}
 	defer hijack.Close()
 
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		sendStreamClose(conn, open.StreamID, "start: "+err.Error())
-		return
+		return fmt.Errorf("start: %w", err)
 	}
-
-	buf := make([]byte, 32*1024)
-	for {
-		n, rerr := hijack.Reader.Read(buf)
-		if n > 0 {
-			payload, _ := json.Marshal(agents.StreamData{StreamID: open.StreamID, Data: append([]byte(nil), buf[:n]...)})
-			if werr := safeWriteFrame(conn, agents.Frame{Type: agents.FrameStreamData, Payload: payload}); werr != nil {
-				return
-			}
-		}
-		if rerr != nil {
-			break
-		}
+	if err := reg.pumpOutput(conn, hijack.Reader, 32*1024); err != nil {
+		return err
 	}
-	sendStreamClose(conn, open.StreamID, "")
+	return helperExit(cli, resp.ID)
 }
 
 // runVolumeImportStream creates a temporary busybox container that mounts
 // the named volume and pipes incoming stream.data frames into `tar xzf -`.
-// Uses the existing stdin delivery mechanism (reg.stdin) so the server
-// can push bytes via deliverStreamInput. When the server closes the
-// stream, we close stdin and wait for tar to finish.
-func runVolumeImportStream(ctx context.Context, conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) {
+// Data that arrives before the helper runs waits in the stream's input
+// queue. The server ends its data with an eof control; the agent then
+// closes tar's stdin and reports tar's exit status in stream.close.
+func runVolumeImportStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) error {
+	ctx := reg.ctx
 	volumeName, _ := open.Params["volume"].(string)
+	replace, _ := open.Params["replace"].(bool)
 	if err := dockerwrap.CheckVolumeName(volumeName); err != nil {
-		sendStreamClose(conn, open.StreamID, err.Error())
-		return
+		return err
 	}
-
-	const helperImage = "busybox:latest"
-	if _, err := cli.ImageInspect(ctx, helperImage); err != nil {
-		rc, pullErr := cli.ImagePull(ctx, helperImage, image.PullOptions{})
-		if pullErr != nil {
-			sendStreamClose(conn, open.StreamID, "pull busybox: "+pullErr.Error())
-			return
-		}
-		_, _ = io.Copy(io.Discard, rc)
-		rc.Close()
+	if err := ensureHelperImage(ctx, cli); err != nil {
+		return err
 	}
-
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:       helperImage,
-		Cmd:         []string{"sh", "-c", "tar xzf - -C /dest"},
+		Cmd:         []string{"sh", "-c", agents.VolumeImportScript(replace)},
 		AttachStdin: true,
 		OpenStdin:   true,
 		StdinOnce:   true,
 	}, &container.HostConfig{
-		Binds: []string{volumeName + ":/dest"},
+		Binds:     []string{volumeName + ":/dest"},
+		LogConfig: container.LogConfig{Type: "none"},
 	}, nil, nil, "")
 	if err != nil {
-		sendStreamClose(conn, open.StreamID, "create helper: "+err.Error())
-		return
+		return fmt.Errorf("create helper: %w", err)
 	}
-	defer func() { _ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true}) }()
+	defer removeHelper(cli, resp.ID)
 
 	hijack, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
 		Stream: true, Stdin: true,
 	})
 	if err != nil {
-		sendStreamClose(conn, open.StreamID, "attach: "+err.Error())
-		return
+		return fmt.Errorf("attach: %w", err)
 	}
 	defer hijack.Close()
 
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		sendStreamClose(conn, open.StreamID, "start: "+err.Error())
-		return
+		return fmt.Errorf("start: %w", err)
 	}
-
-	// Wire the stream registry's stdin to the hijacked connection so
-	// deliverStreamInput() pushes bytes directly into the tar helper.
-	reg.stdin = hijack.Conn
-
-	// Wait for the container to exit (stdin will be closed when the
-	// server sends stream.close, which triggers closeStream → cancel).
-	<-ctx.Done()
+	if err := reg.pumpInput(conn, hijack.Conn); err != nil {
+		return err
+	}
 	_ = hijack.CloseWrite()
-
-	waitCtx, waitCancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer waitCancel()
-	statusCh, errCh := cli.ContainerWait(waitCtx, resp.ID, container.WaitConditionNotRunning)
-	select {
-	case s := <-statusCh:
-		if s.StatusCode != 0 {
-			sendStreamClose(conn, open.StreamID, fmt.Sprintf("tar exit %d", s.StatusCode))
-			return
-		}
-	case e := <-errCh:
-		sendStreamClose(conn, open.StreamID, e.Error())
-		return
-	case <-waitCtx.Done():
-		sendStreamClose(conn, open.StreamID, "tar timeout")
-		return
-	}
-	sendStreamClose(conn, open.StreamID, "")
+	return helperExit(cli, resp.ID)
 }
 
 // -----------------------------------------------------------------------------
 // Request handlers
 // -----------------------------------------------------------------------------
 
-func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client, f agents.Frame) {
+func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client, cs *compose.Service, f agents.Frame) {
 	if cli == nil {
 		sendResponse(conn, f.ID, agents.ResponseEnvelope{OK: false, Error: "docker daemon unavailable"})
 		return
@@ -944,10 +1046,13 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		// the agent side via the protocol. Slice P.6.
 		respond(conn, f.ID, system.Collect(), nil)
 
+	case agents.FrameReqSystemDisks:
+		respond(conn, f.ID, system.LocalMounts(ctx), nil)
+
 	case agents.FrameReqStackDeploy:
 		var req agents.StackDeployReq
 		_ = json.Unmarshal(f.Payload, &req)
-		res, err := agentDeployStack(ctx, cli, req)
+		res, err := agentDeployStack(ctx, cs, req)
 		respond(conn, f.ID, res, err)
 
 	case agents.FrameReqStackStop:
@@ -957,7 +1062,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 			respond(conn, f.ID, nil, err)
 			return
 		}
-		err := compose.NewService(dockerwrap.Wrap(cli), nil).Stop(ctx, req.Name)
+		err := cs.Stop(ctx, req.Name)
 		respond(conn, f.ID, struct{}{}, err)
 
 	case agents.FrameReqStackStatus:
@@ -967,19 +1072,19 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 			respond(conn, f.ID, nil, err)
 			return
 		}
-		out, err := compose.NewService(dockerwrap.Wrap(cli), nil).Status(ctx, req.Name)
+		out, err := cs.Status(ctx, req.Name)
 		respond(conn, f.ID, out, err)
 
 	case agents.FrameReqStackScale:
 		var req agents.StackScaleReq
 		_ = json.Unmarshal(f.Payload, &req)
-		res, err := agentScaleService(ctx, cli, req)
+		res, err := agentScaleService(ctx, cs, req)
 		respond(conn, f.ID, res, err)
 
 	case agents.FrameReqStackCheckScale:
 		var req agents.StackCheckScaleReq
 		_ = json.Unmarshal(f.Payload, &req)
-		res, err := agentCheckScale(ctx, cli, req)
+		res, err := agentCheckScale(ctx, cs, req)
 		respond(conn, f.ID, res, err)
 
 	case agents.FrameReqAgentUpgrade:
@@ -1033,7 +1138,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 
 // agentDeployStack stages compose+env into a tmpdir, parses, and runs the
 // shared executor against the local docker daemon.
-func agentDeployStack(ctx context.Context, cli *client.Client, req agents.StackDeployReq) (*compose.DeployResult, error) {
+func agentDeployStack(ctx context.Context, cs *compose.Service, req agents.StackDeployReq) (*compose.DeployResult, error) {
 	if err := stacks.ValidateName(req.Name); err != nil {
 		return nil, err
 	}
@@ -1060,7 +1165,7 @@ func agentDeployStack(ctx context.Context, cli *client.Client, req agents.StackD
 	if err != nil {
 		return nil, err
 	}
-	return compose.NewService(dockerwrap.Wrap(cli), nil).DeployProject(ctx, proj)
+	return cs.DeployProject(ctx, proj)
 }
 
 // agentLoadStaged parses the staged compose file and points relative bind
@@ -1087,7 +1192,7 @@ func agentLoadStaged(ctx context.Context, dir, name, env string) (*composetypes.
 	return proj, nil
 }
 
-func agentScaleService(ctx context.Context, cli *client.Client, req agents.StackScaleReq) (*compose.ScaleResult, error) {
+func agentScaleService(ctx context.Context, cs *compose.Service, req agents.StackScaleReq) (*compose.ScaleResult, error) {
 	if err := stacks.ValidateName(req.Name); err != nil {
 		return nil, err
 	}
@@ -1100,10 +1205,10 @@ func agentScaleService(ctx context.Context, cli *client.Client, req agents.Stack
 	if err != nil {
 		return nil, err
 	}
-	return compose.NewService(dockerwrap.Wrap(cli), nil).ScaleService(ctx, proj, req.Service, req.Replicas)
+	return cs.ScaleService(ctx, proj, req.Service, req.Replicas)
 }
 
-func agentCheckScale(ctx context.Context, cli *client.Client, req agents.StackCheckScaleReq) (*compose.ScaleCheck, error) {
+func agentCheckScale(ctx context.Context, cs *compose.Service, req agents.StackCheckScaleReq) (*compose.ScaleCheck, error) {
 	if err := stacks.ValidateName(req.Name); err != nil {
 		return nil, err
 	}
@@ -1116,7 +1221,29 @@ func agentCheckScale(ctx context.Context, cli *client.Client, req agents.StackCh
 	if err != nil {
 		return nil, err
 	}
-	return compose.NewService(dockerwrap.Wrap(cli), nil).CheckScale(ctx, proj, req.Service)
+	return cs.CheckScale(ctx, proj, req.Service)
+}
+
+// agentRolePaths labels the filesystems holding Docker, containerd, the
+// stacks dir and the agent's data dir in the disk report.
+func agentRolePaths(cli *client.Client) system.RolePathsFn {
+	return func(ctx context.Context) []system.RolePath {
+		dir := dataDir()
+		paths := []system.RolePath{
+			{Role: system.RoleContainerdRoot, Path: system.ContainerdRoot()},
+			{Role: system.RoleData, Path: dir},
+			{Role: system.RoleStacks, Path: filepath.Join(dir, "stacks")},
+		}
+		if cli == nil {
+			return paths
+		}
+		ictx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		if info, err := cli.Info(ictx); err == nil && info.DockerRootDir != "" {
+			paths = append(paths, system.RolePath{Role: system.RoleDockerRoot, Path: info.DockerRootDir})
+		}
+		return paths
+	}
 }
 
 func respond(conn *websocket.Conn, id string, data any, err error) {
@@ -1141,11 +1268,7 @@ func sendResponse(conn *websocket.Conn, id string, env agents.ResponseEnvelope) 
 // TLS
 // -----------------------------------------------------------------------------
 
-func loadTLS(certPath, keyPath, caPath string) (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
-	if err != nil {
-		return nil, err
-	}
+func newCertStore(certPath, keyPath, caPath string) (*certStore, error) {
 	caPEM, err := os.ReadFile(caPath)
 	if err != nil {
 		return nil, err
@@ -1154,11 +1277,11 @@ func loadTLS(certPath, keyPath, caPath string) (*tls.Config, error) {
 	if !pool.AppendCertsFromPEM(caPEM) {
 		return nil, errors.New("ca cert not parseable")
 	}
-	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      pool,
-		MinVersion:   tls.VersionTLS12,
-	}, nil
+	s := &certStore{certPath: certPath, keyPath: keyPath, roots: pool}
+	if err := s.load(); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // -----------------------------------------------------------------------------

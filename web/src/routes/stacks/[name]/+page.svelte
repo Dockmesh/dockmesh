@@ -2,7 +2,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { untrack } from 'svelte';
-  import { api, ApiError, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments, type StackCleanupPlan } from '$lib/api';
+  import { api, ApiError, runRestorable, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments, type StackCleanupPlan } from '$lib/api';
   import { Button, Card, Badge, Skeleton, Modal } from '$lib/components/ui';
   import { Eyebrow, StatusPill, EdRow, EdMetric } from '$lib/components/editorial';
   import { ArrowRight, ExternalLink } from 'lucide-svelte';
@@ -1391,9 +1391,8 @@
   async function loadLatestBackupRun() {
     try {
       const runs = await api.backups.listRuns(200);
-      // Find the newest successful stack-typed run for THIS stack.
       const match = runs.find(r =>
-        r.status === 'success' &&
+        runRestorable(r) &&
         r.sources?.some(s => s.type === 'stack' && s.name === name)
       );
       latestBackupRun = match
@@ -1431,7 +1430,7 @@
     }))) return;
     restoreBusy = true;
     try {
-      const res = await api.backups.restoreStack(latestBackupRun.id, name);
+      const res = await api.backups.restoreStack(latestBackupRun.id, { target_stack: name, mode: 'replace' });
       // Pull the freshly restored compose back into the editor.
       const detail = await api.stacks.get(name);
       compose = detail.compose;
