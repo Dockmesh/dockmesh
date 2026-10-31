@@ -173,7 +173,10 @@ func (h *RemoteHost) StartExec(ctx context.Context, id string, cmd []string) (Ex
 	if err != nil {
 		return nil, err
 	}
-	return &remoteExecSession{stream: stream}, nil
+	// A stdin write waiting for credit only ends when the stream does, so
+	// the caller's cancel has to close it.
+	stop := context.AfterFunc(ctx, func() { _ = stream.Close() }) //nolint:contextcheck // runs after ctx is done
+	return &remoteExecSession{stream: stream, stop: stop}, nil
 }
 
 // remoteExecSession adapts an agent stream to the ExecSession interface.
@@ -182,6 +185,7 @@ func (h *RemoteHost) StartExec(ctx context.Context, id string, cmd []string) (Ex
 // uses an out-of-band stream.control frame.
 type remoteExecSession struct {
 	stream *agents.Stream
+	stop   func() bool
 }
 
 func (s *remoteExecSession) Read(p []byte) (int, error) { return s.stream.Read(p) }
@@ -194,7 +198,10 @@ func (s *remoteExecSession) Write(p []byte) (int, error) {
 func (s *remoteExecSession) Resize(rows, cols uint) error {
 	return s.stream.WriteControl("resize", map[string]any{"cols": cols, "rows": rows})
 }
-func (s *remoteExecSession) Close() error { return s.stream.Close() }
+func (s *remoteExecSession) Close() error {
+	s.stop()
+	return s.stream.Close()
+}
 
 // -----------------------------------------------------------------------------
 // Stack operations
@@ -465,11 +472,8 @@ func (d *dockerMuxStripper) Close() error {
 	return d.src.Close()
 }
 
-// ContainerExec runs a command in the remote container via a new frame.
-// Blocks until exit. Used by backup pre-hooks. The agent can already
-// exec via the "exec" stream (interactive TTY) but we want request/
-// response semantics here; piggy-back on the existing exec-stream but
-// wait for it to close.
+// ContainerExec runs a command in the remote container and blocks until
+// it exits. Used by backup pre-hooks.
 func (h *RemoteHost) ContainerExec(ctx context.Context, containerID string, cmd []string) ([]byte, int, error) {
 	data, err := h.request(ctx, agents.FrameReqContainerExecRun,
 		agents.ContainerExecRunReq{Container: containerID, Cmd: cmd, MaxOutputBytes: 1 << 20})
