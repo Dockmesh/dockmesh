@@ -27,8 +27,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 ### Added
 - `GET /api/v1/attention` lists what needs attention in your scope: offline hosts, restarting,
   unhealthy or failed containers, failed backup jobs, firing alerts, proxy certificates
-  expiring within 30 days and open action-required notices, plus agents on a different build
-  than the server and image updates as information, most severe first.
+  expiring within 30 days and open action-required notices. Agents on a different build than
+  the server and available image updates are listed as information. Items are sorted most
+  severe first.
 - Alert rules for events: container restart loops, OOM kills, unhealthy containers and
   unexpected stops (on the server and on agents), offline hosts, disk usage per mount,
   failed or overdue backups and proxy TLS certificates close to expiry. Rules can be limited

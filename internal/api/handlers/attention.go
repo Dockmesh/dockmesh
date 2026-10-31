@@ -361,7 +361,7 @@ func (h *Handlers) alertVisible(r *http.Request, f alerts.FiringAlert, container
 	case f.Kind == alerts.KindHostOffline || f.Kind == alerts.KindDiskUsage:
 		return h.inReadScope(r, f.HostID, "")
 	default:
-		return containers[f.HostID+"|"+f.Target]
+		return containers[f.HostID+"|"+alertContainerName(f.Target)]
 	}
 }
 
@@ -378,8 +378,18 @@ func alertObject(f alerts.FiringAlert) AttentionObject {
 	case alerts.KindCertExpiry:
 		return AttentionObject{Type: "domain", ID: f.Target, Name: f.Target}
 	default:
-		return AttentionObject{Type: "container", ID: f.Target, Name: f.Target, HostID: f.HostID}
+		name := alertContainerName(f.Target)
+		return AttentionObject{Type: "container", ID: name, Name: name, HostID: f.HostID}
 	}
+}
+
+// alertContainerName strips the "<host name>/" the alert engine puts in
+// front of containers on agents; container names cannot contain a slash.
+func alertContainerName(target string) string {
+	if i := strings.LastIndexByte(target, '/'); i >= 0 {
+		return target[i+1:]
+	}
+	return target
 }
 
 // alertDuplicates maps the alert kinds that report the same problem as

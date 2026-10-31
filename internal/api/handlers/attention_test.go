@@ -38,6 +38,10 @@ func newAttentionEnv(t *testing.T) *authzEnv {
 	e := newAuthzEnv(t)
 	e.h.Backups = backup.NewService(e.db, nil, nil, nil, backup.SystemPaths{})
 	e.h.Alerts = alerts.NewService(e.db, nil)
+	remote := attentionRow("c6", "worker", "web", "restarting", "Restarting (1) 2 seconds ago")
+	remote.HostID, remote.HostName = "a1", "agent1"
+	remoteOK := attentionRow("c7", "worker2", "web", "running", "Up 1 hour")
+	remoteOK.HostID, remoteOK.HostName = "a1", "agent1"
 	e.h.attentionRows = func(context.Context) []containerRow {
 		return []containerRow{
 			attentionRow("c1", "web-1", "web", "running", "Up 2 hours (unhealthy)"),
@@ -45,6 +49,7 @@ func newAttentionEnv(t *testing.T) *authzEnv {
 			attentionRow("c3", "web-migrate", "web", "exited", "Exited (2) 1 hour ago"),
 			attentionRow("c4", "web-cron", "web", "exited", "Exited (0) 1 hour ago"),
 			attentionRow("c5", "cache", "", "running", "Up 3 days"),
+			remote, remoteOK,
 		}
 	}
 	e.router.With(middleware.NewAuth(e.h.Auth)).Get("/attention", e.h.Attention)
@@ -101,6 +106,8 @@ func newAttentionEnv(t *testing.T) *authzEnv {
 	fire(905, "", "app.example.com", "fired") // listed as a certificate already
 	fire(905, "", "old.example.com", "fired")
 	fire(906, "", "web-nightly", "fired")
+	fire(901, "a1", "agent1/worker", "fired") // same problem as the restarting agent container
+	fire(901, "a1", "agent1/worker2", "fired")
 
 	soon, later := 5, 60
 	soonAt, laterAt := time.Now().Add(5*24*time.Hour), time.Now().Add(60*24*time.Hour)
@@ -129,6 +136,7 @@ func TestAttentionScope(t *testing.T) {
 		{"boss", []string{
 			"alert_firing:900:db-1",
 			"alert_firing:901:web-migrate",
+			"alert_firing:901:agent1/worker2",
 			"alert_firing:903:edge",
 			"alert_firing:904:/var/lib/docker",
 			"alert_firing:905:old.example.com",
@@ -138,11 +146,14 @@ func TestAttentionScope(t *testing.T) {
 			"backup_failed:2",
 			"backup_failed:3",
 			"container_restarting:local:c2",
+			"container_restarting:a1:c6",
 			"container_exited:local:c3",
 			"container_unhealthy:local:c1",
 		}},
 		{"web", []string{
 			"alert_firing:901:web-migrate",
+			"alert_firing:901:agent1/worker2",
+			"container_restarting:a1:c6",
 			"cert_expiring:1",
 			"backup_failed:2",
 			"container_exited:local:c3",
@@ -150,6 +161,7 @@ func TestAttentionScope(t *testing.T) {
 		}},
 		{"narrow", []string{
 			"container_restarting:local:c2",
+			"container_restarting:a1:c6",
 			"container_exited:local:c3",
 			"container_unhealthy:local:c1",
 		}},
