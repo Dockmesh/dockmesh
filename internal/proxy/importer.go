@@ -117,21 +117,18 @@ func (s *Service) ImportCaddyfile(ctx context.Context, caddyfile string, dryRun 
 	return res, nil
 }
 
-// fileReadingTokens are Caddyfile directives and subdirectives that make
+// fileReadingWords are Caddyfile directives and subdirectives that make
 // the adapter read a file of the proxy container.
-var fileReadingTokens = map[string]bool{
-	"client_auth":            true,
-	"trusted_ca_cert_file":   true,
-	"trusted_leaf_cert_file": true,
-	"trust_pool":             true,
-}
+var fileReadingWords = []string{"client_auth", "trusted_ca_cert_file", "trusted_leaf_cert_file", "trust_pool"}
 
 // prepareCaddyfile expands snippet imports and screens the result, which
-// is the text sent to Caddy. The screen works on words of the raw text,
-// so whatever Caddy's lexer rewrites inside a token is refused: a lone CR
-// or a byte order mark is dropped (`imp\rort` is one token to Caddy), and
-// a heredoc strips its closing marker's padding, which may be any text,
-// from each line (`zzimport` with marker `zzX`).
+// is the text sent to Caddy. The screen looks for substrings of the raw
+// text, so it doesn't depend on where Caddy's lexer splits tokens (it
+// does without whitespace after a closing quote: `"import"/path`). What
+// Caddy's lexer drops inside a token is refused, as it could join a word
+// the screen doesn't see: a lone CR or a byte order mark (`imp\rort`),
+// and a heredoc's closing-marker padding, which may be any text and is
+// stripped from each line (`zzimport` with marker `zzX`).
 func prepareCaddyfile(text string) (string, error) {
 	if len(text) > MaxCaddyfileSize {
 		return "", fmt.Errorf("%w: larger than %d KiB", ErrCaddyfileRejected, MaxCaddyfileSize>>10)
@@ -159,13 +156,12 @@ func screenCaddyfile(text string) error {
 	if strings.Contains(text, "{$") {
 		return fmt.Errorf("%w: environment variables ({$NAME}) are not supported", ErrCaddyfileRejected)
 	}
-	for _, f := range strings.Fields(text) {
-		tok := strings.Trim(f, "\"`{}")
-		if tok == "import" {
-			return fmt.Errorf("%w: import is only accepted as import <snippet>, not quoted or in comments", ErrCaddyfileRejected)
-		}
-		if fileReadingTokens[tok] {
-			return fmt.Errorf("%w: %s is not supported; paste the file's content instead", ErrCaddyfileRejected, tok)
+	if strings.Contains(text, "import") {
+		return fmt.Errorf("%w: the word import is only accepted as import <snippet>, also not in comments or values", ErrCaddyfileRejected)
+	}
+	for _, w := range fileReadingWords {
+		if strings.Contains(text, w) {
+			return fmt.Errorf("%w: %s is not supported; paste the file's content instead", ErrCaddyfileRejected, w)
 		}
 	}
 	return nil
