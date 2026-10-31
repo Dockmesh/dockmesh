@@ -3609,6 +3609,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "422":
           description: "Verification failed — see `sanity.checks` for the failed check(s) or `encrypted: true` if the archive is encrypted."
           content:

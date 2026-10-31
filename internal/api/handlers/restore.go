@@ -109,6 +109,10 @@ func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.Backups.VerifyRun(r.Context(), id)
+	if errors.Is(err, backup.ErrNotRestorable) {
+		writeError(w, http.StatusConflict, backup.ErrNotRestorable.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
