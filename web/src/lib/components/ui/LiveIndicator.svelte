@@ -1,9 +1,7 @@
 <script lang="ts">
   import { RefreshCw } from 'lucide-svelte';
 
-  // "Live · updated 4 s ago" with a refresh button. Replaces per-page
-  // re-poll buttons: pages keep polling and pass the time of the last
-  // successful load.
+  // Pages keep polling and pass the time of their last successful load.
   let {
     updatedAt,
     onrefresh,

@@ -104,8 +104,8 @@
     }
   });
 
-  // Sidebar counts: stacks, containers (warn when some are unhealthy or
-  // stopped) and hosts (bad when one is offline). Follows the lens.
+  // Sidebar counts: stacks, containers (warn when some are unhealthy) and
+  // hosts (bad when one is offline). Follows the lens.
   let counts = $state<{ stacks?: number; containers?: number; unhealthy?: number }>({});
   async function refreshCounts() {
     if (!auth.isAuthenticated) return;
@@ -117,7 +117,7 @@
     counts = {
       stacks: stacks?.length,
       containers: summary?.total,
-      unhealthy: summary ? summary.unhealthy : undefined
+      unhealthy: summary?.unhealthy
     };
   }
   $effect(() => {
@@ -448,7 +448,7 @@
   .scrim { display: none; }
 
   @media (max-width: 900px) {
-    .app :global(.side) {
+    .app :global(.app-side) {
       position: fixed;
       left: 0;
       top: 0;
@@ -456,7 +456,7 @@
       transition: transform 0.15s;
       z-index: 60;
     }
-    .app.mobile-open :global(.side) { transform: none; }
+    .app.mobile-open :global(.app-side) { transform: none; }
     .scrim { display: block; position: fixed; inset: 0; background: var(--overlay); z-index: 50; border: 0; }
     .mob { display: inline-flex !important; }
     .topbar { padding: 0 12px; }

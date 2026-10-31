@@ -15,8 +15,7 @@
   import MetricsChart, { type ChartEvent, type ChartSeries } from './ui/MetricsChart.svelte';
   import Segmented from './ui/Segmented.svelte';
 
-  // "Container resources": the X1 chart fed by the stored history
-  // (/containers/{id}/metrics) and, for the live range, by the stats
+  // Stored history feeds the time ranges; the live range uses the stats
   // websocket samples the page already receives.
   let {
     id,
