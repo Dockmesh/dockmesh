@@ -125,6 +125,16 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   It takes `--key` for encrypted archives; `--skip-sanity` is gone, the checks always run.
 
 ### Fixed
+- `dockmesh-agent --version` works for users other than root. The installer now puts a
+  root-owned copy of the agent in `/usr/local/bin` instead of a symlink into the agent's data
+  directory, and the agent's service refreshes that copy at every start. Agents installed
+  earlier still have the symlink: after upgrading to this release they make the data directory
+  traversable (not listable) and remove group and other access from everything else in it. Re-running the agent
+  install command is optional and replaces the symlink with the copy and closes the data
+  directory again.
+- Versions are no longer shown as "vv0.4.2" on the host pages and in the host switcher.
+- The disabled OIDC option in the invite dialog explains that SSO users get their account at
+  their first sign-in, instead of showing an internal note.
 - The resources page no longer fails to load when images have never been scanned.
 - Logs and terminal links in the containers list open those tabs instead of the overview.
 - Updating a container's image no longer loses its anonymous volumes (`-v /data` or a

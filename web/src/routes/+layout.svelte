@@ -7,6 +7,7 @@
   import { hosts } from '$lib/stores/host.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import { api } from '$lib/api';
+  import { fmtVersion } from '$lib/version';
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { Toaster, ConfirmDialog, UpdateBanner } from '$lib/components/ui';
@@ -157,14 +158,14 @@
     if (h.kind === 'all') return 'fleet-wide';
     if (h.id === 'local') {
       if (!serverInfo) return 'local';
-      return `v${serverInfo.version} · ${fmtUptimeShort(serverInfo.uptime_seconds)}`;
+      return `${fmtVersion(serverInfo.version)} · ${fmtUptimeShort(serverInfo.uptime_seconds)}`;
     }
     const a = agentsByID[h.id];
     if (!a) return h.status;
     if (a.status !== 'online') return a.status;
     const up = fmtUptimeFromISO(a.online_since);
     if (!a.version) return up ?? 'online';
-    return up ? `v${a.version} · ${up}` : `v${a.version}`;
+    return up ? `${fmtVersion(a.version)} · ${up}` : fmtVersion(a.version);
   }
 
   const lensItems = $derived.by<MenuItem[]>(() => {

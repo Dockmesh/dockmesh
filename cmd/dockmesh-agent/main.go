@@ -113,6 +113,7 @@ func main() {
 		slog.Error("data dir", "err", err)
 		os.Exit(1)
 	}
+	legacyOpenBinDir(cfg.dataDir)
 
 	certPath := filepath.Join(cfg.dataDir, "agent.crt")
 	keyPath := filepath.Join(cfg.dataDir, "agent.key")

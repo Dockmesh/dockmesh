@@ -283,6 +283,12 @@ if [[ -n "$OLD_DATA_DIR" && -d "$OLD_DATA_DIR" ]]; then
   log "moving agent files out of the server's data directory $OLD_DATA_DIR to $DATA_DIR"
   install -d -m 0700 -o "$RUN_USER" -g "$RUN_GROUP" "$DATA_DIR"
   migrate_agent_files "$OLD_DATA_DIR" "$DATA_DIR"
+  # An agent that found the old /usr/local/bin symlink opened this dir to
+  # 0711; close what stays behind unless a server lives in it.
+  if [[ "$(stat -c '%a %U' "$OLD_DATA_DIR")" == "711 $RUN_USER" &&
+        ! -e "$OLD_DATA_DIR/dockmesh.db" && ! -e "$OLD_DATA_DIR/dockmesh.env" ]]; then
+    chmod 0700 "$OLD_DATA_DIR"
+  fi
   if [[ $AS_ROOT -eq 0 ]]; then
     usermod -d "$DATA_DIR" "$RUN_USER" 2>/dev/null || true
   fi
@@ -304,11 +310,30 @@ if [[ -f "$DATA_DIR/agent.crt" ]] || [[ -f "$DATA_DIR/agent.key" ]] || [[ -d "$D
   rm -rf "$DATA_DIR/certs" "$DATA_DIR/staging"
 fi
 
+# install_path_copy replaces dest (a file or an old symlink) with a
+# root-owned copy of src, leaving the symlink's target alone. src lives in
+# a directory the service user owns, so it is read as that user: root only
+# publishes what the user could read anyway, even if src is a symlink.
+install_path_copy() {
+  local src="$1" dest="$2" user="$3" group="$4" tmp
+  tmp="$(mktemp "$(dirname "$dest")/.dockmesh-agent.XXXXXX")" || return 1
+  if [[ "$user" == root ]]; then
+    cat -- "$src" >"$tmp" || { rm -f "$tmp"; return 1; }
+  else
+    setpriv --reuid="$user" --regid="$group" --clear-groups cat -- "$src" >"$tmp" || { rm -f "$tmp"; return 1; }
+  fi
+  chmod 0755 "$tmp" && chown root:root "$tmp" && mv -f "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
+}
+# end install_path_copy
+
 # -----------------------------------------------------------------------------
 # Filesystem layout
 # -----------------------------------------------------------------------------
 log "creating directories"
 install -d -m 0700 -o "$RUN_USER" -g "$RUN_GROUP" "$DATA_DIR"
+# An agent that finds the old /usr/local/bin symlink opens its data dir
+# to 0711; the copy below doesn't need that.
+chmod 0700 "$DATA_DIR"
 install -d -m 0750 -o root -g "$RUN_GROUP" "$ENV_DIR"
 
 # -----------------------------------------------------------------------------
@@ -321,6 +346,7 @@ install -d -m 0750 -o root -g "$RUN_GROUP" "$ENV_DIR"
 BIN_DIR="$DATA_DIR/bin"
 AGENT_BIN="$BIN_DIR/dockmesh-agent"
 install -d -m 0750 -o "$RUN_USER" -g "$RUN_GROUP" "$BIN_DIR"
+chmod 0750 "$BIN_DIR"
 
 TMP_BIN="$(mktemp)"
 log "downloading agent binary from $BINARY_URL"
@@ -334,10 +360,21 @@ chmod 0755 "$TMP_BIN"
 install -m 0755 -o "$RUN_USER" -g "$RUN_GROUP" "$TMP_BIN" "$AGENT_BIN"
 rm -f "$TMP_BIN"
 
-# Keep a symlink at /usr/local/bin/dockmesh-agent for convenience —
-# `dockmesh-agent --version` on a user shell still works, but the
-# systemd unit runs the real path in $DATA_DIR/bin.
-ln -sf "$AGENT_BIN" /usr/local/bin/dockmesh-agent
+# A root-owned copy at /usr/local/bin/dockmesh-agent lets any user run
+# `dockmesh-agent --version` without reaching into $DATA_DIR. The systemd
+# unit runs the real path in $DATA_DIR/bin and refreshes the copy at every
+# start, so it follows self-upgrades.
+PATH_BIN=/usr/local/bin/dockmesh-agent
+REFRESH_SCRIPT="$ENV_DIR/refresh-path-copy"
+{
+  echo '#!/bin/bash'
+  declare -f install_path_copy
+  printf 'install_path_copy %q %q %q %q
+' "$AGENT_BIN" "$PATH_BIN" "$RUN_USER" "$RUN_GROUP"
+} >"$REFRESH_SCRIPT"
+chown root:root "$REFRESH_SCRIPT"
+chmod 0755 "$REFRESH_SCRIPT"
+"$REFRESH_SCRIPT" || log "warning: could not copy the agent to $PATH_BIN"
 
 log "installed: $($AGENT_BIN --version 2>&1 | head -1 || echo dockmesh-agent)"
 
@@ -390,6 +427,7 @@ Requires=docker.service
 Type=simple
 $USER_LINES
 EnvironmentFile=$ENV_FILE
+ExecStartPre=-+$REFRESH_SCRIPT
 ExecStart=$AGENT_BIN
 Restart=always
 RestartSec=10s
