@@ -306,7 +306,7 @@ func (s *Service) ListFiltered(ctx context.Context, f ListFilter) ([]Entry, erro
 		if len(actions) == 0 {
 			actions = []string{""}
 		}
-		query += ` AND a.action ` + not + `IN (?` + strings.Repeat(`, ?`, len(actions)-1) + `)`
+		query += ` AND a.action ` + not + `IN (?` + strings.Repeat(`, ?`, len(actions)-1) + `)` //nolint:gosec // only placeholders; the actions are bound
 		for _, a := range actions {
 			args = append(args, a)
 		}
