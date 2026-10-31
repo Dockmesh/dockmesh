@@ -168,7 +168,10 @@ func TestSiteOptionsValidate(t *testing.T) {
 		{"header placeholder", "auto", SiteOptions{Headers: HeaderOptions{ResponseSet: []Header{{Name: "X-Leak", Value: "{env.JWT_SECRET}"}}}}, "headers.response_set"},
 		{"header newline", "auto", SiteOptions{Headers: HeaderOptions{RequestSet: []Header{{Name: "X-A", Value: "a\r\nX-B: b"}}}}, "headers.request_set"},
 		{"header bad name", "auto", SiteOptions{Headers: HeaderOptions{RequestRemove: []string{"X:A"}}}, "headers.request_remove"},
-		{"www on www host", "auto", SiteOptions{Routing: RoutingOptions{WWWRedirect: true}}, ""},
+		{"www redirect", "auto", SiteOptions{Routing: RoutingOptions{WWWRedirect: true}}, ""},
+		{"hash with placeholder", "auto", SiteOptions{Access: AccessOptions{BasicAuth: []BasicAuthUser{{Username: "a", Hash: "$2a$10${file./config/caddy/autosave.json}AAAAAAAAAAAAAAAAAAAAAAAAAA"}}}}, "access.basic_auth"},
+		{"hash cost too high", "auto", SiteOptions{Access: AccessOptions{BasicAuth: []BasicAuthUser{{Username: "a", Hash: "$2a$31$" + testHash[7:]}}}}, "access.basic_auth"},
+		{"wildcard header delete", "auto", SiteOptions{Headers: HeaderOptions{ResponseRemove: []string{"*"}}}, "headers.response_remove"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -15,8 +15,8 @@ import (
 )
 
 // SiteOptions are the structured per-site settings a route can carry on
-// top of host → upstream. The zero value is what every route got before
-// options existed: Caddy's defaults with HTTP redirected to HTTPS.
+// top of host → upstream. The zero value is Caddy's defaults with HTTP
+// redirected to HTTPS.
 type SiteOptions struct {
 	Routing     RoutingOptions     `json:"routing"`
 	HTTPS       HTTPSOptions       `json:"https"`
@@ -155,8 +155,14 @@ const (
 
 var lbPolicies = map[string]bool{"": true, "round_robin": true, "least_conn": true, "first": true, "client_ip_hash": true}
 
-// headerNameRe is an RFC 9110 token.
-var headerNameRe = regexp.MustCompile("^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}$")
+// headerNameRe is an RFC 9110 token without `*`, which Caddy reads as
+// "every header" in deletes.
+var headerNameRe = regexp.MustCompile("^[A-Za-z0-9!#$%&'+.^_`|~-]{1,128}$")
+
+// bcryptHashRe is a complete bcrypt hash. The cost is capped because
+// Caddy verifies it on every request with credentials; anything else in
+// the string would reach Caddy, which expands placeholders in it.
+var bcryptHashRe = regexp.MustCompile(`^\$2[aby]\$(0[4-9]|1[0-4])\$[./A-Za-z0-9]{53}$`)
 
 // hasPlaceholderOrControl refuses values Caddy would expand: a `{...}`
 // placeholder in a header can read files and environment variables of
@@ -258,7 +264,7 @@ func (a *AccessOptions) validate() error {
 			return optErr("access.basic_auth", "username %q is listed twice", u.Username)
 		}
 		seen[u.Username] = true
-		if _, err := bcrypt.Cost([]byte(u.Hash)); err != nil {
+		if !bcryptHashRe.MatchString(u.Hash) {
 			return optErr("access.basic_auth", "user %q has no password", u.Username)
 		}
 	}
