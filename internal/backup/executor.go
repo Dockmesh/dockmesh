@@ -408,13 +408,22 @@ func (l *localBackupTarget) VolumeImport(ctx context.Context, name string, src i
 }
 
 func (l *localBackupTarget) VolumeInUse(ctx context.Context, name string) ([]string, error) {
+	// Paused and restarting containers come back while the volume is
+	// rewritten, so only stopped ones don't count.
 	list, err := l.dc.Raw().ContainerList(ctx, container.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("volume", name), filters.Arg("status", "running")),
+		All:     true,
+		Filters: filters.NewArgs(filters.Arg("volume", name)),
 	})
 	if err != nil {
 		return nil, err
 	}
-	return containerNames(list), nil
+	active := list[:0]
+	for _, c := range list {
+		if c.State != container.StateExited && c.State != container.StateDead && c.State != container.StateCreated {
+			active = append(active, c)
+		}
+	}
+	return containerNames(active), nil
 }
 
 func containerNames(list []container.Summary) []string {

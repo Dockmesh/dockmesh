@@ -126,7 +126,7 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 
 	cfg := &container.Config{
 		Image:        helperImage,
-		Cmd:          []string{"sh", "-c", untarScript(replace)},
+		Cmd:          []string{"sh", "-c", agents.VolumeImportScript(replace)},
 		AttachStdin:  true,
 		AttachStderr: true,
 		OpenStdin:    true,
@@ -188,13 +188,6 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 		return fmt.Errorf("restore tar exit %d", exitCode)
 	}
 	return nil
-}
-
-func untarScript(replace bool) string {
-	if replace {
-		return agents.VolumeReplaceScript
-	}
-	return "tar xzf - -C /dest"
 }
 
 func ensureHelperImage(ctx context.Context, dc *docker.Client) error {

@@ -265,10 +265,15 @@ type StackCheckScaleReq struct {
 	Service string `json:"service"`
 }
 
-// VolumeReplaceScript is the helper command for a volume restore that
-// replaces the contents: the globs cover dotfiles, and rm -f ignores
-// patterns that match nothing.
-const VolumeReplaceScript = "rm -rf /dest/..?* /dest/.[!.]* /dest/* && tar xzf - -C /dest"
+// VolumeImportScript is the helper command that extracts a restore into
+// /dest. With replace the volume is emptied first: the globs cover
+// dotfiles, and rm -f ignores patterns that match nothing.
+func VolumeImportScript(replace bool) string {
+	if replace {
+		return "rm -rf /dest/..?* /dest/.[!.]* /dest/* && tar xzf - -C /dest"
+	}
+	return "tar xzf - -C /dest"
+}
 
 // VolumeTarReq identifies the volume for tar export/import.
 type VolumeTarReq struct {

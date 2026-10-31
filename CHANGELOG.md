@@ -82,6 +82,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   fails the stack restore instead of being reported as a warning. Restoring a stack under
   another name gives the copy its own volumes instead of writing into the original stack's.
   Restoring onto a remote host needs the agent from this release.
+- A restore downloads the archive once, checks it against the recorded checksum, verifies it
+  and restores from that same copy. Only one restore at a time may write a given volume or
+  stack, at most two restores run at once, and replacing a volume's contents needs a backup
+  with a recorded checksum (older backups can still be merged). Restoring a stack as a copy
+  under another name leaves volumes with a fixed name alone and lists them in the result.
 
 ### Fixed
 - Updating a container's image no longer loses its anonymous volumes (`-v /data` or a
@@ -154,6 +159,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - A proxy route can no longer forward to the proxy's own admin API, which would have let anyone
   reaching the proxy change its configuration. The admin API now also refuses requests from
   browsers on other sites.
+- Restoring a stack backup writes that stack's compose file and environment, so it now needs
+  the "Edit stacks" permission ("Create stacks" for a new name), the stack within your role
+  scope, and the host the stack is deployed on within your scope. Before, `backups.restore` on
+  the backup's host was enough to overwrite or create any stack, also for users limited to
+  certain hosts.
 
 ## [0.4.2] - 2026-10-30 [recommended]
 

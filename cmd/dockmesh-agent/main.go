@@ -802,15 +802,6 @@ func runVolumeExportStream(conn *websocket.Conn, cli *client.Client, open agents
 	return helperExit(cli, resp.ID)
 }
 
-// untarScript extracts stdin into /dest; replace empties the volume first,
-// dotfiles included.
-func untarScript(replace bool) string {
-	if replace {
-		return agents.VolumeReplaceScript
-	}
-	return "tar xzf - -C /dest"
-}
-
 // runVolumeImportStream creates a temporary busybox container that mounts
 // the named volume and pipes incoming stream.data frames into `tar xzf -`.
 // Data that arrives before the helper runs waits in the stream's input
@@ -828,7 +819,7 @@ func runVolumeImportStream(conn *websocket.Conn, cli *client.Client, open agents
 	}
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:       helperImage,
-		Cmd:         []string{"sh", "-c", untarScript(replace)},
+		Cmd:         []string{"sh", "-c", agents.VolumeImportScript(replace)},
 		AttachStdin: true,
 		OpenStdin:   true,
 		StdinOnce:   true,

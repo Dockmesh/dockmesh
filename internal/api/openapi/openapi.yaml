@@ -3518,7 +3518,10 @@ paths:
         overwrites the archived files and keeps everything else.
 
         Requires the job's host and the destination host within the
-        caller's scope (403). Runs whose job was deleted are admin-only
+        caller's scope (403). Stack runs write the target stack's files, so
+        they also need `stacks.update` (`stacks.create` for a new name), the
+        stack in the caller's role scope, and the host the stack is deployed
+        on in scope (403). Runs whose job was deleted are admin-only
         (`system.update` with no host or role scope). System runs are never
         restored here (409); use `dockmesh restore` on the server.
       parameters:
@@ -3539,7 +3542,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: Run is a system backup, not restorable (failed, pruned), or a volume to replace is in use.
+          description: Run is a system backup or not restorable (failed, pruned); a volume to replace is in use; another restore writes the same volume or stack, or too many restores run; replace was asked for a run without a recorded checksum; or the destination agent is too old.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -3561,7 +3564,10 @@ paths:
         `dest_volume`) names the stack.
 
         Requires the job's host and the destination host within the
-        caller's scope (403). Runs whose job was deleted are admin-only
+        caller's scope (403). Stack runs write the target stack's files, so
+        they also need `stacks.update` (`stacks.create` for a new name), the
+        stack in the caller's role scope, and the host the stack is deployed
+        on in scope (403). Runs whose job was deleted are admin-only
         (`system.update` with no host or role scope). System runs are never
         restored here (409); use `dockmesh restore` on the server.
       parameters:
@@ -3582,7 +3588,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: Run is a system backup, not restorable (failed, pruned), or the volume to replace is in use.
+          description: Run is a system backup or not restorable (failed, pruned); the volume to replace is in use; another restore writes the same volume, or too many restores run; replace was asked for a run without a recorded checksum; or the destination agent is too old.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

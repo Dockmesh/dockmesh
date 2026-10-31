@@ -30,7 +30,7 @@ func (r *registryResolver) Pick(id string) (hostBackupTarget, error) {
 	return &hostBackupAdapter{h: h}, nil
 }
 
-// hostBackupAdapter narrows host.Host down to the two methods the
+// hostBackupAdapter narrows host.Host down to the methods the
 // backup executor needs. Other host capabilities stay encapsulated.
 type hostBackupAdapter struct {
 	h host.Host

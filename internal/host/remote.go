@@ -447,12 +447,12 @@ func (h *RemoteHost) VolumeImport(ctx context.Context, name string, src io.Reade
 	for {
 		n, rerr := src.Read(buf)
 		if n > 0 {
-			// An agent that stops reading fails the restore instead of
-			// holding it open forever.
-			stall.Reset(importStall)
 			if err := s.WriteFrame(append([]byte(nil), buf[:n]...)); err != nil {
 				return fmt.Errorf("send archive: %w", err)
 			}
+			// An agent that stops taking data fails the restore instead
+			// of holding it open forever.
+			stall.Reset(importStall)
 		}
 		if errors.Is(rerr, io.EOF) {
 			break

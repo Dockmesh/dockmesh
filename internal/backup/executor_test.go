@@ -48,6 +48,12 @@ func (f *fakeHost) ContainerExec(_ context.Context, container string, cmd []stri
 	return nil, f.hookExit[container], nil
 }
 
+func (f *fakeHost) VolumeImport(context.Context, string, io.Reader, bool) error {
+	return errors.New("fakeHost: import not supported")
+}
+
+func (f *fakeHost) VolumeInUse(context.Context, string) ([]string, error) { return nil, nil }
+
 func tarGz(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -446,8 +452,3 @@ func TestRunNotificationAudience(t *testing.T) {
 		})
 	}
 }
-func (f *fakeHost) VolumeImport(context.Context, string, io.Reader, bool) error {
-	return errors.New("fakeHost: import not supported")
-}
-
-func (f *fakeHost) VolumeInUse(context.Context, string) ([]string, error) { return nil, nil }

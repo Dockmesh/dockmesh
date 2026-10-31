@@ -39,6 +39,10 @@ type Service struct {
 	running  map[int64]bool
 	stopping bool
 
+	restoreMu    sync.Mutex
+	restoring    map[string]bool
+	restoreSlots int
+
 	// runCtx is cancelled on Stop.
 	runCtx    context.Context
 	cancelRun context.CancelFunc

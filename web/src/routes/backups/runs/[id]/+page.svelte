@@ -649,6 +649,4 @@
     white-space: nowrap;
   }
   :global(.bk-detail-job-link-arrow) { color: var(--fg-subtle); }
-
-  .bk-detail-spacer { flex: 1; }
 </style>

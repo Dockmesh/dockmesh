@@ -12,6 +12,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/redact"
 	"github.com/go-chi/chi/v5"
@@ -418,18 +419,11 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 		h.writeRoleScopeDenied(w, r, rbac.PermBackupsRestore, scopeReq, "")
 		return
 	}
-	src := h.hostScopeReq(r.Context(), origin)
-	dst := h.hostScopeReq(r.Context(), opts.HostID)
 	if kind == "stack" {
-		src.StackName = run.Sources[0].Name
-		dst.StackName = opts.Target
-		if dst.StackName == "" {
-			dst.StackName = src.StackName
+		if opts.Target == "" {
+			opts.Target = run.Sources[0].Name
 		}
-	}
-	for _, req := range []rbac.ScopeRequest{src, dst} {
-		if !h.checkRoleScope(r, req) {
-			h.writeRoleScopeDenied(w, r, rbac.PermBackupsRestore, req, "")
+		if !h.requireStackRestoreTarget(w, r, opts.Target, opts.HostID) {
 			return
 		}
 	}
@@ -442,7 +436,8 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 	case errors.Is(err, docker.ErrInvalidVolumeName):
 		writeError(w, http.StatusBadRequest, "dest_volume must be a Docker volume name, not a path")
 		return
-	case errors.Is(err, backup.ErrNotRestorable), errors.Is(err, backup.ErrSystemRestore), errors.As(err, &inUse):
+	case errors.Is(err, backup.ErrNotRestorable), errors.Is(err, backup.ErrSystemRestore), errors.Is(err, backup.ErrRestoreBusy),
+		errors.Is(err, backup.ErrUnverifiedReplace), errors.Is(err, host.ErrAgentTooOld), errors.As(err, &inUse):
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	case errors.Is(err, backup.ErrArchiveInvalid), errors.Is(err, backup.ErrArchiveMismatch):
@@ -456,6 +451,40 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 		"kind": report.Kind, "target": opts.Target, "host": report.HostID, "mode": report.Mode,
 	})
 	writeJSON(w, http.StatusOK, report)
+}
+
+// requireStackRestoreTarget guards writing a stack's files from a backup:
+// it replaces compose.yaml and .env like PUT /stacks/{name} (or creates
+// the stack like POST /stacks), so it needs that permission and the
+// stack's scope, on the restore host and on the host the stack is
+// deployed to.
+func (h *Handlers) requireStackRestoreTarget(w http.ResponseWriter, r *http.Request, stack, hostID string) bool {
+	perm := rbac.PermStacksCreate
+	if h.Stacks != nil {
+		if _, err := h.Stacks.Get(stack); err == nil {
+			perm = rbac.PermStacksUpdate
+		}
+	}
+	if !roleAllows(r, perm) {
+		writeError(w, http.StatusForbidden, "restoring stack "+stack+" needs the "+string(perm)+" permission")
+		return false
+	}
+	if scopeReq := h.stackScopeReq(r.Context(), "", stack); !h.checkRoleScope(r, scopeReq) {
+		h.writeRoleScopeDenied(w, r, perm, scopeReq, "stack "+stack)
+		return false
+	}
+	if !h.requireStackScope(w, r, perm, hostID, stack) {
+		return false
+	}
+	if h.Deployments != nil {
+		if dep, err := h.Deployments.Get(r.Context(), stack); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return false
+		} else if dep != nil && dep.HostID != hostID && !h.requireStackScope(w, r, perm, dep.HostID, stack) {
+			return false
+		}
+	}
+	return true
 }
 
 // syncBackupNameNotice re-evaluates the shared-archive-folder notice after
