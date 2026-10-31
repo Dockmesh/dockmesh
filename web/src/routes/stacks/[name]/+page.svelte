@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { untrack } from 'svelte';
   import { api, ApiError, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments, type StackCleanupPlan } from '$lib/api';
@@ -25,7 +25,7 @@
   const stackHost = $derived(isAllHosts(hosts.id) ? deploymentHostId : hosts.id);
   const isRemote = $derived(stackHost !== 'local');
 
-  const name = $derived($page.params.name);
+  const name = $derived(page.params.name);
 
   // Scope-aware: stack-update / .deploy also require role-scope to cover
   // this stack's name (and host if known). Unscoped roles short-circuit

@@ -7,7 +7,7 @@
   // they're functional and the editorial rebuild of those is a follow-up.
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { api, ApiError } from '$lib/api';
   import type { BackupJob, BackupJobInput, BackupRun, BackupSource, BackupHook, BackupTarget } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
@@ -74,7 +74,7 @@
   }
 
   type Tab = 'jobs' | 'runs' | 'targets';
-  let tab = $state<Tab>((new URLSearchParams($page.url.search).get('tab') as Tab) || 'jobs');
+  let tab = $state<Tab>((new URLSearchParams(page.url.search).get('tab') as Tab) || 'jobs');
 
   // Runs view — Timeline (default, mockup pattern) vs List. Timeline
   // groups by day with colored timeline-blocks per run; List is the

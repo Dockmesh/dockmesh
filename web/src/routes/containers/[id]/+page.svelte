@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api, ApiError } from '$lib/api';
   import { tick } from 'svelte';
@@ -44,10 +44,10 @@
     ArrowRight
   } from 'lucide-svelte';
 
-  const id = $derived($page.params.id);
+  const id = $derived(page.params.id);
   // Resolve the host: prefer the URL ?host=… (set when the user navigated
   // here from a remote-host listing), otherwise the global selection.
-  const targetHost = $derived($page.url.searchParams.get('host') || hosts.id);
+  const targetHost = $derived(page.url.searchParams.get('host') || hosts.id);
   const isRemote = $derived(targetHost !== 'local');
 
   let info = $state<any>(null);
@@ -907,7 +907,7 @@
     if (info) {
       const svc = info.Config?.Labels?.['com.docker.compose.service'];
       const proj = info.Config?.Labels?.['com.docker.compose.project'];
-      const fromStack = $page.url.searchParams.get('from') === 'stack';
+      const fromStack = page.url.searchParams.get('from') === 'stack';
       const name = svc || containerName(info) || id.slice(0, 12);
       if (fromStack && proj) {
         pageContext.set(name, [

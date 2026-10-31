@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"strings"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/distribution/reference"
-	dtypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
 )
 
 var rollbackSuffix = regexp.MustCompile(`-?rollback-\d+$`)
@@ -59,7 +59,7 @@ func repoDigestFor(ref string, repoDigests []string) string {
 
 // imageDigest is the registry digest of img for ref, or its local ID
 // when it has none (built or loaded locally).
-func imageDigest(img *dtypes.ImageInspect, ref string) string {
+func imageDigest(img *image.InspectResponse, ref string) string {
 	if d := repoDigestFor(ref, img.RepoDigests); d != "" {
 		return d
 	}
@@ -124,7 +124,7 @@ func (s *Service) pruneRollbackTags(ctx context.Context, cli *client.Client, ref
 		return
 	}
 	for _, t := range rollbackTagsToPrune(ref, tags, s.rollbackKeep) {
-		if _, err := cli.ImageRemove(ctx, t, dtypes.ImageRemoveOptions{}); err != nil && !errdefs.IsNotFound(err) {
+		if _, err := cli.ImageRemove(ctx, t, image.RemoveOptions{}); err != nil && !cerrdefs.IsNotFound(err) {
 			slog.Info("updater: rollback tag kept", "tag", t, "err", err)
 			continue
 		}

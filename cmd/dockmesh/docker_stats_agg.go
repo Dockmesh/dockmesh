@@ -7,9 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dockmesh/dockmesh/internal/docker"
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
 // aggregateDockerStats fans out `ContainerStatsOneShot` across every
@@ -62,7 +61,7 @@ func aggregateDockerStats(parent context.Context, cli *docker.Client) (cpuPercen
 			}
 			defer resp.Body.Close()
 
-			var stats dtypes.StatsJSON
+			var stats container.StatsResponse
 			if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
 				return
 			}
@@ -111,7 +110,7 @@ func aggregateDockerStats(parent context.Context, cli *docker.Client) (cpuPercen
 //
 // The "percent of one core" convention means a container saturating
 // 2 cores reads 200%, matching `docker stats` display.
-func dockerContainerCPU(s *dtypes.StatsJSON) float64 {
+func dockerContainerCPU(s *container.StatsResponse) float64 {
 	cpuDelta := float64(s.CPUStats.CPUUsage.TotalUsage) - float64(s.PreCPUStats.CPUUsage.TotalUsage)
 	systemDelta := float64(s.CPUStats.SystemUsage) - float64(s.PreCPUStats.SystemUsage)
 	if systemDelta <= 0 || cpuDelta <= 0 {
@@ -131,7 +130,7 @@ func dockerContainerCPU(s *dtypes.StatsJSON) float64 {
 // a single container in bytes. `Usage - cache` is the convention
 // `docker stats` uses for the MEM USAGE column — cache pages are
 // reclaimable at any time, counting them would overstate pressure.
-func dockerContainerMem(s *dtypes.StatsJSON) uint64 {
+func dockerContainerMem(s *container.StatsResponse) uint64 {
 	used := s.MemoryStats.Usage
 	if cache, ok := s.MemoryStats.Stats["cache"]; ok && cache < used {
 		used -= cache

@@ -22,7 +22,7 @@ What a stack backup does not contain: bind-mounted host paths and anything outsi
 <!-- update after: backups: keep retention per job, fail on partial or missing data -->
 If the stack's compose file cannot be parsed, or a volume cannot be read, the run still reports success and the archive is missing that data. The run log does not mention skipped data, so after the first run of every new job download the archive and check that it contains `volumes/<name>.tar.gz` for every volume you expect.
 
-Jobs created in the web UI always read volumes from the local host; the wizard has no host picker. A `volume` job for a remote host can be created through the API by setting `host_id`, and the data then streams through the server. The agent stream can drop chunks under load, so archives of remote volumes may be silently incomplete; test-restore them. Volume backups use a small helper container (`alpine:3.19`), which Dockmesh pulls if it is missing.
+Jobs created in the web UI always read volumes from the local host; the wizard has no host picker. A `volume` job for a remote host can be created through the API by setting `host_id`, and the data then streams through the server. The agent stream can drop chunks under load, so archives of remote volumes may be silently incomplete; test-restore them. Volume backups use a small helper container (`alpine:3.24`), which Dockmesh pulls if it is missing.
 
 ## Targets
 

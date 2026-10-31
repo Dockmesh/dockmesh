@@ -39,6 +39,7 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - Proxy route upstreams must be `host:port` and may not point at the proxy's own admin API,
   and a route's host may not be `localhost`, a loopback address or a bare `*`. Existing routes
   that break these rules stop being served and are listed in a notice for admins.
+- Updated the bundled libraries, including the Docker SDK (28.5), SvelteKit 3 and Vite 8.
 
 ### Fixed
 - Updating a container's image no longer loses its anonymous volumes (`-v /data` or a

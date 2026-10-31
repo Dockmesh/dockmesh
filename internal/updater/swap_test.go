@@ -9,7 +9,6 @@ import (
 	"sync"
 	"testing"
 
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 )
@@ -61,12 +60,12 @@ func (f *fakeDocker) client(t *testing.T) *client.Client {
 	return cli
 }
 
-func oldContainer() *dtypes.ContainerJSON {
-	return &dtypes.ContainerJSON{
-		ContainerJSONBase: &dtypes.ContainerJSONBase{
+func oldContainer() *container.InspectResponse {
+	return &container.InspectResponse{
+		ContainerJSONBase: &container.ContainerJSONBase{
 			ID:         "old",
 			Name:       "/web",
-			State:      &dtypes.ContainerState{Running: true},
+			State:      &container.State{Running: true},
 			HostConfig: &container.HostConfig{},
 		},
 		Config: &container.Config{Image: "nginx:1.27"},

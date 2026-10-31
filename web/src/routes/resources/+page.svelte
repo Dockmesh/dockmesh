@@ -12,7 +12,7 @@
   // links to the existing /networks?topology=1 graph until that gets
   // its own slice.
   import { untrack } from 'svelte';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import {
     api, ApiError, isFanOut,
     type ScanReport, type Severity
@@ -38,7 +38,7 @@
   // tab buttons set it directly. No URL syncing on click, no goto, no
   // $effect — just like the rest of the app.
   type Tab = 'images' | 'volumes' | 'networks';
-  let tab = $state<Tab>(((new URLSearchParams($page.url.search).get('tab')) as Tab) || 'images');
+  let tab = $state<Tab>(((new URLSearchParams(page.url.search).get('tab')) as Tab) || 'images');
 
   // ───────── Permissions
   const canImageCreate = $derived(allowed('images.create'));

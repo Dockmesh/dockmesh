@@ -4,7 +4,7 @@
   // expose a single-run getter; we pull listRuns(500) and pluck the
   // match. Cheap enough for a homelab and avoids a backend slice
   // before this UI lands.
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api, ApiError, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
   import { Eyebrow } from '$lib/components/editorial';
@@ -18,7 +18,7 @@
     ChevronLeft, Copy, RefreshCw, ArrowRight, AlertTriangle, Lock, Undo2, Box
   } from 'lucide-svelte';
 
-  const id = $derived(parseInt($page.params.id, 10));
+  const id = $derived(parseInt(page.params.id, 10));
 
   $effect(() => {
     pageContext.set(`Run #${id}`);

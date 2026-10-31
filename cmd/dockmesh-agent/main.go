@@ -31,9 +31,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os/exec"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -43,17 +43,18 @@ import (
 
 	dockerwrap "github.com/dockmesh/dockmesh/internal/docker"
 
+	composetypes "github.com/compose-spec/compose-go/v2/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
+	"github.com/docker/docker/client"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/system"
-	composetypes "github.com/compose-spec/compose-go/v2/types"
-	dtypes "github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
 	"github.com/gorilla/websocket"
 
 	"github.com/dockmesh/dockmesh/pkg/version"
@@ -340,7 +341,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config) error {
 // hook for control frames.
 type streamReg struct {
 	cancel context.CancelFunc
-	stdin  io.Writer                  // nil for non-bidirectional streams
+	stdin  io.Writer                   // nil for non-bidirectional streams
 	resize func(rows, cols uint) error // nil if not resizable
 }
 
@@ -503,7 +504,7 @@ func runExecStream(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		}
 	}
 
-	createResp, err := cli.ContainerExecCreate(ctx, open.Container, dtypes.ExecConfig{
+	createResp, err := cli.ContainerExecCreate(ctx, open.Container, container.ExecOptions{
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -514,7 +515,7 @@ func runExecStream(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		sendStreamClose(conn, open.StreamID, err.Error())
 		return
 	}
-	hijack, err := cli.ContainerExecAttach(ctx, createResp.ID, dtypes.ExecStartCheck{Tty: true})
+	hijack, err := cli.ContainerExecAttach(ctx, createResp.ID, container.ExecStartOptions{Tty: true})
 	if err != nil {
 		sendStreamClose(conn, open.StreamID, err.Error())
 		return
@@ -614,8 +615,8 @@ func runVolumeExportStream(ctx context.Context, conn *websocket.Conn, cli *clien
 
 	const helperImage = "busybox:latest"
 	// Ensure helper image exists.
-	if _, _, err := cli.ImageInspectWithRaw(ctx, helperImage); err != nil {
-		rc, pullErr := cli.ImagePull(ctx, helperImage, dtypes.ImagePullOptions{})
+	if _, err := cli.ImageInspect(ctx, helperImage); err != nil {
+		rc, pullErr := cli.ImagePull(ctx, helperImage, image.PullOptions{})
 		if pullErr != nil {
 			sendStreamClose(conn, open.StreamID, "pull busybox: "+pullErr.Error())
 			return
@@ -681,8 +682,8 @@ func runVolumeImportStream(ctx context.Context, conn *websocket.Conn, cli *clien
 	}
 
 	const helperImage = "busybox:latest"
-	if _, _, err := cli.ImageInspectWithRaw(ctx, helperImage); err != nil {
-		rc, pullErr := cli.ImagePull(ctx, helperImage, dtypes.ImagePullOptions{})
+	if _, err := cli.ImageInspect(ctx, helperImage); err != nil {
+		rc, pullErr := cli.ImagePull(ctx, helperImage, image.PullOptions{})
 		if pullErr != nil {
 			sendStreamClose(conn, open.StreamID, "pull busybox: "+pullErr.Error())
 			return
@@ -801,7 +802,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		if maxOut <= 0 {
 			maxOut = 1 << 20
 		}
-		exec, err := cli.ContainerExecCreate(ctx, req.Container, dtypes.ExecConfig{
+		exec, err := cli.ContainerExecCreate(ctx, req.Container, container.ExecOptions{
 			Cmd:          req.Cmd,
 			AttachStdout: true,
 			AttachStderr: true,
@@ -810,7 +811,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 			respond(conn, f.ID, nil, err)
 			break
 		}
-		attach, err := cli.ContainerExecAttach(ctx, exec.ID, dtypes.ExecStartCheck{})
+		attach, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecStartOptions{})
 		if err != nil {
 			respond(conn, f.ID, nil, err)
 			break
@@ -845,19 +846,19 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		respond(conn, f.ID, struct{}{}, err)
 
 	case agents.FrameReqImageList:
-		list, err := cli.ImageList(ctx, dtypes.ImageListOptions{All: false})
+		list, err := cli.ImageList(ctx, image.ListOptions{All: false})
 		respond(conn, f.ID, list, err)
 
 	case agents.FrameReqImageInspect:
 		var req agents.ResourceIDReq
 		_ = json.Unmarshal(f.Payload, &req)
-		info, _, err := cli.ImageInspectWithRaw(ctx, req.ID)
+		info, err := cli.ImageInspect(ctx, req.ID)
 		respond(conn, f.ID, info, err)
 
 	case agents.FrameReqImageRemove:
 		var req agents.ImageRemoveReq
 		_ = json.Unmarshal(f.Payload, &req)
-		deleted, err := cli.ImageRemove(ctx, req.ID, dtypes.ImageRemoveOptions{Force: req.Force, PruneChildren: true})
+		deleted, err := cli.ImageRemove(ctx, req.ID, image.RemoveOptions{Force: req.Force, PruneChildren: true})
 		respond(conn, f.ID, deleted, err)
 
 	case agents.FrameReqImagePrune:
@@ -865,13 +866,13 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		respond(conn, f.ID, report, err)
 
 	case agents.FrameReqNetworkList:
-		list, err := cli.NetworkList(ctx, dtypes.NetworkListOptions{})
+		list, err := cli.NetworkList(ctx, network.ListOptions{})
 		respond(conn, f.ID, list, err)
 
 	case agents.FrameReqNetworkInspect:
 		var req agents.ResourceIDReq
 		_ = json.Unmarshal(f.Payload, &req)
-		net, err := cli.NetworkInspect(ctx, req.ID, dtypes.NetworkInspectOptions{})
+		net, err := cli.NetworkInspect(ctx, req.ID, network.InspectOptions{})
 		respond(conn, f.ID, net, err)
 
 	case agents.FrameReqVolumeInspect:

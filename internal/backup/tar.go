@@ -7,14 +7,14 @@ import (
 	"io"
 	"net"
 
-	"github.com/dockmesh/dockmesh/internal/docker"
-	dtypes "github.com/docker/docker/api/types"
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/errdefs"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
-const helperImage = "alpine:3.19"
+const helperImage = "alpine:3.24"
 
 // tarVolume runs `tar czf - -C /source .` inside an alpine helper that
 // mounts the named volume read-only and streams the gzipped archive on
@@ -38,8 +38,8 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 	}
 
 	cfg := &container.Config{
-		Image: helperImage,
-		Cmd:   []string{"sh", "-c", "tar czf - -C /source ."},
+		Image:        helperImage,
+		Cmd:          []string{"sh", "-c", "tar czf - -C /source ."},
 		AttachStdout: true,
 		AttachStderr: true,
 		Labels: map[string]string{
@@ -56,7 +56,7 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 		return nil, fmt.Errorf("create helper: %w", err)
 	}
 
-	hijack, err := cli.ContainerAttach(ctx, resp.ID, dtypes.ContainerAttachOptions{
+	hijack, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
 		Stream: true,
 		Stdout: true,
 		Stderr: true,
@@ -123,12 +123,12 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 	}
 
 	cfg := &container.Config{
-		Image: helperImage,
-		Cmd:   []string{"sh", "-c", "tar xzf - -C /dest"},
-		AttachStdin: true,
+		Image:        helperImage,
+		Cmd:          []string{"sh", "-c", "tar xzf - -C /dest"},
+		AttachStdin:  true,
 		AttachStderr: true,
-		OpenStdin: true,
-		StdinOnce: true,
+		OpenStdin:    true,
+		StdinOnce:    true,
 		Labels: map[string]string{
 			"dockmesh.managed":   "true",
 			"dockmesh.component": "backup-helper",
@@ -144,7 +144,7 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 	}
 	defer func() { _ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true}) }()
 
-	hijack, err := cli.ContainerAttach(ctx, resp.ID, dtypes.ContainerAttachOptions{
+	hijack, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
 		Stream: true,
 		Stdin:  true,
 		Stderr: true,
@@ -190,12 +190,12 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 
 func ensureHelperImage(ctx context.Context, dc *docker.Client) error {
 	cli := dc.Raw()
-	if _, _, err := cli.ImageInspectWithRaw(ctx, helperImage); err == nil {
+	if _, err := cli.ImageInspect(ctx, helperImage); err == nil {
 		return nil
-	} else if !errdefs.IsNotFound(err) {
+	} else if !cerrdefs.IsNotFound(err) {
 		return err
 	}
-	rc, err := cli.ImagePull(ctx, helperImage, dtypes.ImagePullOptions{})
+	rc, err := cli.ImagePull(ctx, helperImage, image.PullOptions{})
 	if err != nil {
 		return fmt.Errorf("pull %s: %w", helperImage, err)
 	}
