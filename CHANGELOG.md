@@ -26,8 +26,7 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ### Added
 - Every audit log entry has a category (`changes`, `access`, `auth` or `system`), and the audit
-  API filters by it with `?category=`; file reads, exec sessions and backup downloads now count
-  as access instead of system.
+  API filters by it with `?category=`.
 
 ### Changed
 - Updating the image of a container that belongs to a stack now rebuilds it from the
