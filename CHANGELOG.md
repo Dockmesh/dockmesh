@@ -43,6 +43,13 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - Backup schedules run in the time zone set in `backups.timezone` (an IANA name such as
   `Europe/Berlin`); without it they use the server's time zone, which the job wizard now
   shows next to the schedule.
+- System backups can be restored from the UI (Backups → a system run → Restore, or "Restore
+  system from file" for an uploaded archive) and from the setup wizard of a fresh install
+  ("Restore from a backup instead"), including encrypted backups together with the key file
+  exported from the original server. The backup is unpacked and checked next to the live
+  files first; the server then restarts and swaps the restored files in before it opens the
+  database. The replaced files are kept in `<data>/.pre-restore/<time>` and
+  `<stacks>.pre-restore-<time>`.
 
 ### Changed
 - Updating the image of a container that belongs to a stack now rebuilds it from the
@@ -87,6 +94,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   stack, at most two restores run at once, and replacing a volume's contents needs a backup
   with a recorded checksum (older backups can still be merged). Restoring a stack as a copy
   under another name leaves volumes with a fixed name alone and lists them in the result.
+- `dockmesh restore` uses the same staged swap: a restore that stops halfway no longer leaves
+  stacks and data overwritten next to the old database, and it finishes on the next start.
+  It takes `--key` for encrypted archives; `--skip-sanity` is gone, the checks always run.
 
 ### Fixed
 - Updating a container's image no longer loses its anonymous volumes (`-v /data` or a
@@ -151,6 +161,10 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   staying "running".
 - Backup runs that were still running when the server stopped are marked failed at the
   next start instead of showing "running" forever.
+- Volume backups no longer keep a copy of the archive in Docker's container log of their
+  helper, which took several times the archive's size on the server's disk while the backup
+  ran. A backup that fails midway stops and removes its helper container instead of leaving it
+  running until the next restart.
 
 ### Security
 - A rollback now only accepts update-history entries of the container it is called for, and

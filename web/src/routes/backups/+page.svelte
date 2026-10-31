@@ -17,6 +17,7 @@
   import JobWizard from './_JobWizard.svelte';
   import TargetWizard from './_TargetWizard.svelte';
   import RestoreDialog from './_RestoreDialog.svelte';
+  import SystemRestoreDialog from './_SystemRestoreDialog.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { autoRefresh } from '$lib/autorefresh';
@@ -130,13 +131,13 @@
     drawerJob = null;
     drawerRun = r;
   }
-  function restoreRunFromDrawer(r: BackupRun, mode: 'in-place' | 'alongside' | 'download') {
+  function restoreRunFromDrawer(r: BackupRun, mode: 'in-place' | 'alongside' | 'download' | 'system') {
     if (mode === 'download') {
       downloadRunArchive(r);
       return;
     }
     closeDrawers();
-    openRestore(r, mode);
+    openRestore(r, mode === 'system' ? 'in-place' : mode);
   }
 
   async function downloadRunArchive(r: BackupRun) {
@@ -210,6 +211,8 @@
   // Restore modal
   let restoreRun = $state<BackupRun | null>(null);
   let restorePreset = $state<'in-place' | 'alongside'>('alongside');
+  let systemRestoreOpen = $state(false);
+  let systemRestoreRun = $state<BackupRun | null>(null);
 
   // Runs filters
   let runJobFilter = $state('');
@@ -694,6 +697,11 @@
   }
 
   function openRestore(r: BackupRun, preset: 'in-place' | 'alongside' = 'alongside') {
+    if (r.sources.some((s) => s.type === 'system')) {
+      systemRestoreRun = r;
+      systemRestoreOpen = true;
+      return;
+    }
     restorePreset = preset;
     restoreRun = r;
   }
@@ -959,6 +967,11 @@
         </p>
       </div>
       <div class="ed-actions">
+        {#if allowed('system.upgrade')}
+          <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => { systemRestoreRun = null; systemRestoreOpen = true; }}>
+            Restore system from file…
+          </button>
+        {/if}
         <div class="bk-seg-radio">
           <button type="button" class="bk-seg-radio-item" class:active={runsView === 'timeline'} onclick={() => (runsView = 'timeline')}>Timeline</button>
           <button type="button" class="bk-seg-radio-item" class:active={runsView === 'list'} onclick={() => (runsView = 'list')}>List</button>
@@ -1657,6 +1670,7 @@
   originHost={jobs.find((j) => j.id === restoreRun?.job_id)?.host_id ?? ''}
   onclose={() => (restoreRun = null)}
 />
+<SystemRestoreDialog open={systemRestoreOpen} run={systemRestoreRun} onclose={() => (systemRestoreOpen = false)} />
 
 <style>
   .bk-page { display: block; }

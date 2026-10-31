@@ -15,7 +15,7 @@
     job?: BackupJob;
     target?: BackupTarget;
     onclose: () => void;
-    onrestore: (r: BackupRun, mode: 'in-place' | 'alongside' | 'download') => void;
+    onrestore: (r: BackupRun, mode: 'in-place' | 'alongside' | 'download' | 'system') => void;
   }
   let { run, job, target, onclose, onrestore }: Props = $props();
 
@@ -94,16 +94,19 @@
   }
 
   const sp = $derived(statusPill(run.status));
-  const allRestoreModes: { id: 'in-place' | 'alongside' | 'download'; title: string; blurb: string; danger?: boolean }[] = [
+  const allRestoreModes: { id: 'in-place' | 'alongside' | 'download' | 'system'; title: string; blurb: string; danger?: boolean }[] = [
     { id: 'in-place', title: 'Restore in place', blurb: 'Replace current data on this dockmesh. Stops affected stacks first.', danger: true },
     { id: 'alongside', title: 'Restore alongside', blurb: 'Mount as new stacks with a -restored suffix. Original keeps running.' },
-    { id: 'download', title: 'Download archive', blurb: 'Download the decrypted .tar.gz for offline inspection.' }
+    { id: 'download', title: 'Download archive', blurb: 'Download the decrypted .tar.gz for offline inspection.' },
+    { id: 'system', title: 'Restore the whole system', blurb: "Replace this server's database, users and stack files with the backup's, then restart.", danger: true }
   ];
-  // System runs are restored with `dockmesh restore`; only an admin may download them.
+  // A system run replaces the whole install, so only an admin restores or downloads it.
   const systemRun = $derived(run.sources?.some((s) => s.type === 'system') ?? false);
-  const restoreModes = $derived(allRestoreModes.filter((m) =>
-    m.id === 'download' ? allowed('backups.download') && (!systemRun || isAdmin()) : !systemRun
-  ));
+  const restoreModes = $derived(allRestoreModes.filter((m) => {
+    if (m.id === 'download') return allowed('backups.download') && (!systemRun || isAdmin());
+    if (m.id === 'system') return systemRun && isAdmin();
+    return !systemRun;
+  }));
 
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape') onclose();
@@ -224,7 +227,8 @@
         </div>
         {#if systemRun && !restoreOpen}
           <p class="bk-drawer-section-empty">
-            System backups are restored on the server with <code>dockmesh restore</code>.
+            Restoring a system backup replaces this server's database, users and stack files, then
+            restarts Dockmesh.
           </p>
         {:else if !restoreOpen}
           <p class="bk-drawer-section-empty">

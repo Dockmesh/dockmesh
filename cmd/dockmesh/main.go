@@ -9,12 +9,13 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"os"
 	"net/url"
+	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -23,14 +24,13 @@ import (
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/api"
+	"github.com/dockmesh/dockmesh/internal/api/handlers"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/apitokens"
-	"github.com/dockmesh/dockmesh/internal/backup"
-	"github.com/dockmesh/dockmesh/internal/hosttags"
-	"github.com/dockmesh/dockmesh/internal/backup/targets"
-	"github.com/dockmesh/dockmesh/internal/api/handlers"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
+	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/config"
 	"github.com/dockmesh/dockmesh/internal/db"
@@ -39,6 +39,8 @@ import (
 	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/globalenv"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/hosttags"
+	"github.com/dockmesh/dockmesh/internal/invites"
 	"github.com/dockmesh/dockmesh/internal/ldapauth"
 	"github.com/dockmesh/dockmesh/internal/metrics"
 	"github.com/dockmesh/dockmesh/internal/migration"
@@ -49,23 +51,23 @@ import (
 	"github.com/dockmesh/dockmesh/internal/oidc"
 	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/dockmesh/dockmesh/internal/proxy"
-	"github.com/dockmesh/dockmesh/internal/saml"
 	"github.com/dockmesh/dockmesh/internal/rbac"
-	"github.com/dockmesh/dockmesh/internal/scaling"
-	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/registries"
+	"github.com/dockmesh/dockmesh/internal/restore"
+	"github.com/dockmesh/dockmesh/internal/saml"
+	"github.com/dockmesh/dockmesh/internal/scaling"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/selfupdate"
+	"github.com/dockmesh/dockmesh/internal/settings"
 	"github.com/dockmesh/dockmesh/internal/setup"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/dockmesh/dockmesh/internal/telemetry"
 	"github.com/dockmesh/dockmesh/internal/templates"
-	"github.com/dockmesh/dockmesh/internal/invites"
 	"github.com/dockmesh/dockmesh/internal/updater"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"github.com/dockmesh/dockmesh/pkg/version"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 //go:embed all:web_dist
@@ -191,7 +193,22 @@ func countServicesString(n int) string {
 	return fmt.Sprintf("%d services", n)
 }
 
+// restartRequested makes main exit with exitRestart after a normal
+// shutdown, so the service manager starts it again (systemd
+// Restart=on-failure, Docker restart policies). Used to apply a staged
+// system restore.
+var restartRequested atomic.Bool
+
+const exitRestart = 75
+
 func main() {
+	// Registered first so it runs after every other deferred cleanup.
+	defer func() {
+		if restartRequested.Load() {
+			slog.Info("exiting for restart")
+			os.Exit(exitRestart)
+		}
+	}()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
@@ -286,6 +303,22 @@ func main() {
 			defer scancel()
 			_ = otelShutdown(sctx)
 		}()
+	}
+
+	// A staged system restore is swapped in before anything opens the
+	// database. If the swap stops halfway it resumes on the next start;
+	// serving from a half-swapped install is never an option.
+	if applied, err := restore.ApplyStaged(cfg); err != nil {
+		slog.Error("applying the staged system restore failed; fix the error and start again", "err", err)
+		os.Exit(1)
+	} else if applied {
+		slog.Warn("system backup restored; the replaced files are kept next to the data and stacks directories", "dir", restore.PreRestoreDir)
+		// The config read secrets.env (the token signing secret) from the
+		// replaced install; the restored one has to be used from now on.
+		if cfg, err = config.Load(); err != nil {
+			slog.Error("config load after the restore failed", "err", err)
+			os.Exit(1)
+		}
 	}
 
 	database, err := db.Open(cfg.DBPath)
@@ -753,11 +786,11 @@ func main() {
 		if notifSvc != nil {
 			if deployErr != nil {
 				_, _ = notifSvc.Emit(ctx, notifications.EmitInput{
-					Kind:     notifications.KindDeployFail,
-					Severity: notifications.SevError,
-					Title:    "Git auto-deploy failed: " + stackName,
-					Body:     deployErr.Error(),
-					Link:     "/stacks/" + stackName,
+					Kind:      notifications.KindDeployFail,
+					Severity:  notifications.SevError,
+					Title:     "Git auto-deploy failed: " + stackName,
+					Body:      deployErr.Error(),
+					Link:      "/stacks/" + stackName,
 					Perm:      rbac.PermStacksView,
 					HostID:    "local",
 					StackName: stackName,
@@ -772,11 +805,11 @@ func main() {
 					body = "synced to " + shaShort + " — " + countServicesString(len(res.Services))
 				}
 				_, _ = notifSvc.Emit(ctx, notifications.EmitInput{
-					Kind:     notifications.KindDeployOK,
-					Severity: notifications.SevSuccess,
-					Title:    "Git auto-deploy: " + stackName,
-					Body:     body,
-					Link:     "/stacks/" + stackName,
+					Kind:      notifications.KindDeployOK,
+					Severity:  notifications.SevSuccess,
+					Title:     "Git auto-deploy: " + stackName,
+					Body:      body,
+					Link:      "/stacks/" + stackName,
 					Perm:      rbac.PermStacksView,
 					HostID:    "local",
 					StackName: stackName,
@@ -895,6 +928,18 @@ func main() {
 
 	loginLimiter := handlers.NewLoginLimiter()
 
+	restartCh := make(chan struct{}, 1)
+	requestRestart := func() {
+		restartRequested.Store(true)
+		// Let the response reach the client before the listener closes.
+		time.AfterFunc(time.Second, func() {
+			select {
+			case restartCh <- struct{}{}:
+			default:
+			}
+		})
+	}
+
 	// P.14.2: install-wizard commit function. Built here because it
 	// needs auth.Service + settings.Store + the configured paths.
 	// Idempotent — re-running the wizard against an already-set-up
@@ -1010,45 +1055,45 @@ func main() {
 	handlers.SetSetupVersionString(version.Version)
 
 	h := handlers.New(handlers.Deps{
-		DB:           database,
-		Auth:         authSvc,
-		Audit:        auditSvc,
-		Docker:       dockerCli,
-		Stacks:       stacksMgr,
-		Deployments:  deployStore,
-		DeployHistory: deployHistoryStore,
-		DeployTracker: deployTracker,
-		Notifications: notifSvc,
-		Notices:       noticesSvc,
-		Dependencies: depStore,
-		Compose:      composeSvc,
-		LoginLimiter: loginLimiter,
-		Scanner:      scannerSvc,
-		ScanStore:    scanStore,
-		Proxy:        proxySvc,
-		Updater:      updaterSvc,
-		UpdateWatcher: updateWatcher,
-		OIDC:         oidcSvc,
-		SAML:         samlSvc,
-		LDAP:         ldapSvc,
-		OAuth2:       oauth2Svc,
-		Metrics:      metricsCol,
-		Notify:       notifySvc,
-		Alerts:       alertsSvc,
-		Backups:       backupSvc,
-		BackupTargets: backupTargetStore,
-		Secrets:       secretsSvc,
-		Migrations:   migrationSvc,
-		Drains:       drainSvc,
-		Agents:       agentsSvc,
-		Hosts:        hostRegistry,
-		HostTags:     hostTagsSvc,
-		Roles:        rolesStore,
-		Settings:     settingsStore,
-		GlobalEnv:    globalEnvStore,
-		APITokens:    apiTokensSvc,
-		Registries:   registriesSvc,
-		GitSource:    gitSourceSvc,
+		DB:             database,
+		Auth:           authSvc,
+		Audit:          auditSvc,
+		Docker:         dockerCli,
+		Stacks:         stacksMgr,
+		Deployments:    deployStore,
+		DeployHistory:  deployHistoryStore,
+		DeployTracker:  deployTracker,
+		Notifications:  notifSvc,
+		Notices:        noticesSvc,
+		Dependencies:   depStore,
+		Compose:        composeSvc,
+		LoginLimiter:   loginLimiter,
+		Scanner:        scannerSvc,
+		ScanStore:      scanStore,
+		Proxy:          proxySvc,
+		Updater:        updaterSvc,
+		UpdateWatcher:  updateWatcher,
+		OIDC:           oidcSvc,
+		SAML:           samlSvc,
+		LDAP:           ldapSvc,
+		OAuth2:         oauth2Svc,
+		Metrics:        metricsCol,
+		Notify:         notifySvc,
+		Alerts:         alertsSvc,
+		Backups:        backupSvc,
+		BackupTargets:  backupTargetStore,
+		Secrets:        secretsSvc,
+		Migrations:     migrationSvc,
+		Drains:         drainSvc,
+		Agents:         agentsSvc,
+		Hosts:          hostRegistry,
+		HostTags:       hostTagsSvc,
+		Roles:          rolesStore,
+		Settings:       settingsStore,
+		GlobalEnv:      globalEnvStore,
+		APITokens:      apiTokensSvc,
+		Registries:     registriesSvc,
+		GitSource:      gitSourceSvc,
 		Templates:      templatesSvc,
 		Invites:        invitesSvc,
 		AuditRetention: auditRetention,
@@ -1058,7 +1103,19 @@ func main() {
 		SelfUpdate:     selfUpdateChk,
 		SetupState:     setupState,
 		SetupCommit_:   setupCommit,
-		RBACv2Enforce:  cfg.RBACv2Enforce,
+		RestoreConfig:  cfg,
+		RequestRestart: requestRestart,
+		FinishSetup: func() error {
+			envPath := serverEnvFile(cfg.DBPath)
+			if envPath == "" {
+				return nil
+			}
+			if _, err := scrubEnvFlag(envPath, "DOCKMESH_SETUP_FORCE"); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			return nil
+		},
+		RBACv2Enforce: cfg.RBACv2Enforce,
 	})
 	router := api.NewRouter(h, authSvc, webFS, cfg.MetricsAuth, setupState)
 
@@ -1141,7 +1198,10 @@ func main() {
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	<-stop
+	select {
+	case <-stop:
+	case <-restartCh:
+	}
 
 	// P.12.2 — graceful shutdown.
 	//

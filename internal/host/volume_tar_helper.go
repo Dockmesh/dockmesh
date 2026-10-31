@@ -44,7 +44,8 @@ func tarVolumeHelper(ctx context.Context, dc *docker.Client, volumeName string) 
 			"dockmesh.component": "backup-helper",
 		},
 	}, &container.HostConfig{
-		Binds: []string{volumeName + ":/source:ro"},
+		Binds:     []string{volumeName + ":/source:ro"},
+		LogConfig: docker.HelperLogConfig,
 	}, nil, nil, "")
 	if err != nil {
 		return nil, fmt.Errorf("create helper: %w", err)
@@ -77,11 +78,12 @@ type volumeTarStream struct {
 	hijack   io.Reader
 	closeFn  func()
 	leftover []byte
+	// done is set once tar's output ended; a Close before that stops it.
+	done bool
 }
 
 type dockerClient interface {
-	ContainerRemove(ctx context.Context, id string, opts container.RemoveOptions) error
-	ContainerWait(ctx context.Context, id string, condition container.WaitCondition) (<-chan container.WaitResponse, <-chan error)
+	docker.HelperAPI
 }
 
 func (s *volumeTarStream) Read(p []byte) (int, error) {
@@ -95,6 +97,7 @@ func (s *volumeTarStream) Read(p []byte) (int, error) {
 	var hdr [8]byte
 	if _, err := io.ReadFull(s.hijack, hdr[:]); err != nil {
 		if errors.Is(err, io.EOF) {
+			s.done = true
 			return 0, s.exitErr()
 		}
 		return 0, err
@@ -137,15 +140,7 @@ func (s *volumeTarStream) exitErr() error {
 
 func (s *volumeTarStream) Close() error {
 	s.closeFn()
-	// Best-effort wait for exit + remove helper.
-	waitCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	waitCh, errCh := s.cli.ContainerWait(waitCtx, s.id, container.WaitConditionNotRunning)
-	select {
-	case <-waitCh:
-	case <-errCh:
-	}
-	_ = s.cli.ContainerRemove(context.Background(), s.id, container.RemoveOptions{Force: true})
+	_, _ = docker.FinishHelper(s.ctx, s.cli, s.id, !s.done)
 	return nil
 }
 

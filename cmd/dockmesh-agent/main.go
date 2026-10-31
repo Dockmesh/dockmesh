@@ -778,7 +778,8 @@ func runVolumeExportStream(conn *websocket.Conn, cli *client.Client, open agents
 		AttachStdout: true,
 		AttachStderr: true,
 	}, &container.HostConfig{
-		Binds: []string{volumeName + ":/source:ro"},
+		Binds:     []string{volumeName + ":/source:ro"},
+		LogConfig: container.LogConfig{Type: "none"},
 	}, nil, nil, "")
 	if err != nil {
 		return fmt.Errorf("create helper: %w", err)
@@ -824,7 +825,8 @@ func runVolumeImportStream(conn *websocket.Conn, cli *client.Client, open agents
 		OpenStdin:   true,
 		StdinOnce:   true,
 	}, &container.HostConfig{
-		Binds: []string{volumeName + ":/dest"},
+		Binds:     []string{volumeName + ":/dest"},
+		LogConfig: container.LogConfig{Type: "none"},
 	}, nil, nil, "")
 	if err != nil {
 		return fmt.Errorf("create helper: %w", err)

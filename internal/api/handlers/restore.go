@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"strconv"
@@ -27,20 +28,8 @@ func (h *Handlers) VerifyUploadedBackup(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusForbidden, "only an admin can verify system backups")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, uploadLimit+(1<<20))
-	// Up to 32 MiB in memory, the rest spills to a temp file.
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			writeError(w, http.StatusRequestEntityTooLarge, "backup larger than 1 GiB")
-			return
-		}
-		writeError(w, http.StatusBadRequest, "parse multipart: "+err.Error())
-		return
-	}
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "missing 'file' part in form")
+	file, header, ok := parseBackupUpload(w, r)
+	if !ok {
 		return
 	}
 	defer file.Close()
@@ -138,7 +127,8 @@ func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// verifySystemRun streams a system run through ExtractToTemp + Sanity.
+// verifySystemRun streams the run through ExtractToTemp + Sanity and
+// adds the hash check.
 func (h *Handlers) verifySystemRun(w http.ResponseWriter, r *http.Request, id int64) {
 	src, hashCheck, err := h.Backups.OpenRunHashed(r.Context(), id)
 	if err != nil {
@@ -215,3 +205,25 @@ func sanitizeExtractErr(err error, tmpDir string) string {
 // data combined is usually tens of MB). Larger uploads indicate
 // either a misconfigured backup or an attempted DoS.
 const uploadLimit = 1 << 30
+
+// parseBackupUpload reads the multipart "file" part of a backup upload,
+// capped at uploadLimit. Up to 32 MiB stay in memory, the rest spills to
+// a temp file.
+func parseBackupUpload(w http.ResponseWriter, r *http.Request) (multipart.File, *multipart.FileHeader, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, uploadLimit+(1<<20))
+	if err := r.ParseMultipartForm(32 << 20); err != nil { //nolint:gosec // the body is capped by MaxBytesReader above
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeError(w, http.StatusRequestEntityTooLarge, "backup larger than 1 GiB")
+			return nil, nil, false
+		}
+		writeError(w, http.StatusBadRequest, "parse multipart: "+err.Error())
+		return nil, nil, false
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "missing 'file' part in form")
+		return nil, nil, false
+	}
+	return file, header, true
+}

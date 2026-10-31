@@ -926,6 +926,41 @@ export interface BackupRun {
   pruned_at?: string;
 }
 
+export interface StagedRestore {
+  staged_at: string;
+  source: string;
+  files: number;
+  bytes: number;
+  prev_dir?: string;
+  prev_stacks?: string;
+}
+
+export interface StageSystemRestoreResult {
+  staged?: StagedRestore;
+  counts?: { files: number; bytes: number };
+  sanity?: { passed: boolean; summary?: string; checks: { name: string; status: string; message?: string }[] };
+}
+
+// uploadSystemBackup posts a system backup (and optional key file) as
+// multipart. 422 carries the failed restore checks, so it is returned.
+export async function uploadSystemBackup(
+  url: string,
+  file: File,
+  key?: File | null,
+  token?: string | null,
+  extraHeaders: Record<string, string> = {}
+): Promise<StageSystemRestoreResult & { error?: string; restarting?: boolean }> {
+  const form = new FormData();
+  form.append('file', file);
+  if (key) form.append('key', key);
+  const headers: Record<string, string> = { ...extraHeaders };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(url, { method: 'POST', headers, body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok && !(res.status === 422 && data?.sanity)) throw new ApiError(data?.error ?? res.statusText, res.status);
+  return data;
+}
+
 export interface BackupRestoreOptions {
   dest_volume?: string;
   target_stack?: string;
@@ -1989,7 +2024,16 @@ export const api = {
       return data as BackupVerifyResult;
     },
     verifyRun: (runId: number) =>
-      request<BackupVerifyResult>(`/backups/runs/${runId}/verify`, { method: 'POST' })
+      request<BackupVerifyResult>(`/backups/runs/${runId}/verify`, { method: 'POST' }),
+    // System restore: stage (from a run or an upload), then apply, which
+    // restarts the server. Nothing live changes before apply.
+    stagedSystemRestore: () => request<{ staged: StagedRestore | null }>('/restore/system'),
+    stageSystemRestoreFromRun: (runId: number) =>
+      request<StageSystemRestoreResult>('/restore/system', { method: 'POST', body: JSON.stringify({ run_id: runId }) }),
+    stageSystemRestoreUpload: (file: File, key?: File | null) =>
+      uploadSystemBackup(`${BASE}/restore/system`, file, key, auth.accessToken),
+    applySystemRestore: () => request<{ restarting: boolean }>('/restore/system/apply', { method: 'POST' }),
+    discardSystemRestore: () => request<void>('/restore/system', { method: 'DELETE' })
   },
 
   users: {
