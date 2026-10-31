@@ -9,11 +9,13 @@ import (
 	"io/fs"
 	"strings"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/system"
-	dtypes "github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/volume"
 )
 
 // RemoteHost proxies operations to a connected agent over its WebSocket
@@ -52,29 +54,29 @@ func (h *RemoteHost) request(ctx context.Context, frameType string, payload any)
 	return env.Data, nil
 }
 
-func (h *RemoteHost) ListContainers(ctx context.Context, all bool) ([]dtypes.Container, error) {
+func (h *RemoteHost) ListContainers(ctx context.Context, all bool) ([]container.Summary, error) {
 	data, err := h.request(ctx, agents.FrameReqContainerList, agents.ContainerListReq{All: all})
 	if err != nil {
 		return nil, err
 	}
-	var out []dtypes.Container
+	var out []container.Summary
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("decode containers: %w", err)
 	}
 	if out == nil {
-		out = []dtypes.Container{}
+		out = []container.Summary{}
 	}
 	return out, nil
 }
 
-func (h *RemoteHost) InspectContainer(ctx context.Context, id string) (dtypes.ContainerJSON, error) {
+func (h *RemoteHost) InspectContainer(ctx context.Context, id string) (container.InspectResponse, error) {
 	data, err := h.request(ctx, agents.FrameReqContainerInspect, agents.ContainerIDReq{ID: id})
 	if err != nil {
-		return dtypes.ContainerJSON{}, err
+		return container.InspectResponse{}, err
 	}
-	var out dtypes.ContainerJSON
+	var out container.InspectResponse
 	if err := json.Unmarshal(data, &out); err != nil {
-		return dtypes.ContainerJSON{}, fmt.Errorf("decode inspect: %w", err)
+		return container.InspectResponse{}, fmt.Errorf("decode inspect: %w", err)
 	}
 	return out, nil
 }
@@ -160,7 +162,7 @@ type remoteExecSession struct {
 	stream *agents.Stream
 }
 
-func (s *remoteExecSession) Read(p []byte) (int, error)  { return s.stream.Read(p) }
+func (s *remoteExecSession) Read(p []byte) (int, error) { return s.stream.Read(p) }
 func (s *remoteExecSession) Write(p []byte) (int, error) {
 	if err := s.stream.WriteFrame(p); err != nil {
 		return 0, err
@@ -215,49 +217,49 @@ func (h *RemoteHost) StackStatus(ctx context.Context, name string) ([]compose.St
 	return out, nil
 }
 
-func (h *RemoteHost) ListImages(ctx context.Context, all bool) ([]dtypes.ImageSummary, error) {
+func (h *RemoteHost) ListImages(ctx context.Context, all bool) ([]image.Summary, error) {
 	data, err := h.request(ctx, agents.FrameReqImageList, map[string]bool{"all": all})
 	if err != nil {
 		return nil, err
 	}
-	var out []dtypes.ImageSummary
+	var out []image.Summary
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("decode images: %w", err)
 	}
 	if out == nil {
-		out = []dtypes.ImageSummary{}
+		out = []image.Summary{}
 	}
 	return out, nil
 }
 
 // InspectImage asks the agent for one image's full ImageInspect record.
-// Same shape as Docker SDK's ImageInspectWithRaw on the local daemon,
+// Same shape as Docker SDK's ImageInspect on the local daemon,
 // just round-tripped over the agent WebSocket. Returns the docker
 // "no such image" error verbatim when missing so the handler can map
 // to 404.
-func (h *RemoteHost) InspectImage(ctx context.Context, id string) (dtypes.ImageInspect, error) {
+func (h *RemoteHost) InspectImage(ctx context.Context, id string) (image.InspectResponse, error) {
 	data, err := h.request(ctx, agents.FrameReqImageInspect, agents.ResourceIDReq{ID: id})
 	if err != nil {
-		return dtypes.ImageInspect{}, err
+		return image.InspectResponse{}, err
 	}
-	var out dtypes.ImageInspect
+	var out image.InspectResponse
 	if err := json.Unmarshal(data, &out); err != nil {
-		return dtypes.ImageInspect{}, fmt.Errorf("decode image inspect: %w", err)
+		return image.InspectResponse{}, fmt.Errorf("decode image inspect: %w", err)
 	}
 	return out, nil
 }
 
-func (h *RemoteHost) ListNetworks(ctx context.Context) ([]dtypes.NetworkResource, error) {
+func (h *RemoteHost) ListNetworks(ctx context.Context) ([]network.Inspect, error) {
 	data, err := h.request(ctx, agents.FrameReqNetworkList, nil)
 	if err != nil {
 		return nil, err
 	}
-	var out []dtypes.NetworkResource
+	var out []network.Inspect
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("decode networks: %w", err)
 	}
 	if out == nil {
-		out = []dtypes.NetworkResource{}
+		out = []network.Inspect{}
 	}
 	return out, nil
 }
@@ -293,14 +295,14 @@ func (h *RemoteHost) SystemMetrics(ctx context.Context) (system.Metrics, error) 
 	return out, nil
 }
 
-func (h *RemoteHost) InspectNetwork(ctx context.Context, id string) (dtypes.NetworkResource, error) {
+func (h *RemoteHost) InspectNetwork(ctx context.Context, id string) (network.Inspect, error) {
 	data, err := h.request(ctx, agents.FrameReqNetworkInspect, agents.ResourceIDReq{ID: id})
 	if err != nil {
-		return dtypes.NetworkResource{}, err
+		return network.Inspect{}, err
 	}
-	var out dtypes.NetworkResource
+	var out network.Inspect
 	if err := json.Unmarshal(data, &out); err != nil {
-		return dtypes.NetworkResource{}, fmt.Errorf("decode network inspect: %w", err)
+		return network.Inspect{}, fmt.Errorf("decode network inspect: %w", err)
 	}
 	return out, nil
 }
@@ -348,7 +350,9 @@ func (h *RemoteHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser,
 }
 
 // dockerMuxStripper demuxes docker's attach-stream format: repeating
-//   [stream_id(1), 0, 0, 0, size(4 BE)] + <size bytes>
+//
+//	[stream_id(1), 0, 0, 0, size(4 BE)] + <size bytes>
+//
 // across arbitrary chunk boundaries. Only stream_id=1 (stdout) is
 // forwarded; stderr (stream_id=2) is discarded. Used by RemoteHost
 // backup path.
@@ -478,26 +482,26 @@ func agentBrowseError(err error) error {
 	return err
 }
 
-func (h *RemoteHost) RemoveImage(ctx context.Context, id string, force bool) ([]dtypes.ImageDeleteResponseItem, error) {
+func (h *RemoteHost) RemoveImage(ctx context.Context, id string, force bool) ([]image.DeleteResponse, error) {
 	data, err := h.request(ctx, agents.FrameReqImageRemove, agents.ImageRemoveReq{ID: id, Force: force})
 	if err != nil {
 		return nil, err
 	}
-	var out []dtypes.ImageDeleteResponseItem
+	var out []image.DeleteResponse
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("decode image remove: %w", err)
 	}
 	return out, nil
 }
 
-func (h *RemoteHost) PruneImages(ctx context.Context) (dtypes.ImagesPruneReport, error) {
+func (h *RemoteHost) PruneImages(ctx context.Context) (image.PruneReport, error) {
 	data, err := h.request(ctx, agents.FrameReqImagePrune, nil)
 	if err != nil {
-		return dtypes.ImagesPruneReport{}, err
+		return image.PruneReport{}, err
 	}
-	var out dtypes.ImagesPruneReport
+	var out image.PruneReport
 	if err := json.Unmarshal(data, &out); err != nil {
-		return dtypes.ImagesPruneReport{}, fmt.Errorf("decode image prune: %w", err)
+		return image.PruneReport{}, fmt.Errorf("decode image prune: %w", err)
 	}
 	return out, nil
 }

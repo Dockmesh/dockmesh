@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 )
 
 // NormalizedStats is the minimal stats payload the UI needs. Computed
@@ -57,7 +57,7 @@ func (c *Client) StreamStats(ctx context.Context, containerID string) (<-chan No
 			if ctx.Err() != nil {
 				return
 			}
-			var s types.StatsJSON
+			var s container.StatsResponse
 			if err := dec.Decode(&s); err != nil {
 				if err != io.EOF && ctx.Err() == nil {
 					errCh <- err
@@ -78,9 +78,9 @@ func (c *Client) StreamStats(ctx context.Context, containerID string) (<-chan No
 // Normalize is the exported version of normalize() so handlers that
 // stream raw stats (local or via remote agent) can convert frame-by-frame
 // without reimplementing the formulas.
-func Normalize(s *types.StatsJSON) NormalizedStats { return normalize(s) }
+func Normalize(s *container.StatsResponse) NormalizedStats { return normalize(s) }
 
-func normalize(s *types.StatsJSON) NormalizedStats {
+func normalize(s *container.StatsResponse) NormalizedStats {
 	// CPU % — Linux formula (Windows path omitted; concept §10 targets Linux).
 	cpuDelta := float64(s.CPUStats.CPUUsage.TotalUsage - s.PreCPUStats.CPUUsage.TotalUsage)
 	sysDelta := float64(s.CPUStats.SystemUsage - s.PreCPUStats.SystemUsage)

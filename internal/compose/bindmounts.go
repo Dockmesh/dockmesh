@@ -14,9 +14,9 @@ import (
 	"strings"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"gopkg.in/yaml.v3"
 )
@@ -240,8 +240,8 @@ const bindCopyHelperImage = "busybox:1.36"
 // and keeps the files' owners and modes, which a database directory needs;
 // the helper's mount namespace keeps the archive inside dest.
 func copyBindData(ctx context.Context, cli *client.Client, containerID, srcPath, dest string) (int, error) {
-	if _, _, err := cli.ImageInspectWithRaw(ctx, bindCopyHelperImage); err != nil {
-		rc, err := cli.ImagePull(ctx, bindCopyHelperImage, dtypes.ImagePullOptions{})
+	if _, err := cli.ImageInspect(ctx, bindCopyHelperImage); err != nil {
+		rc, err := cli.ImagePull(ctx, bindCopyHelperImage, image.PullOptions{})
 		if err != nil {
 			return 0, fmt.Errorf("pull helper image: %w", err)
 		}
@@ -272,7 +272,7 @@ func copyBindData(ctx context.Context, cli *client.Client, containerID, srcPath,
 		files = n
 		pw.CloseWithError(err)
 	}()
-	if err := cli.CopyToContainer(ctx, helper.ID, "/dest", pr, dtypes.CopyToContainerOptions{CopyUIDGID: true}); err != nil {
+	if err := cli.CopyToContainer(ctx, helper.ID, "/dest", pr, container.CopyToContainerOptions{CopyUIDGID: true}); err != nil {
 		pr.CloseWithError(err)
 		return files, err
 	}

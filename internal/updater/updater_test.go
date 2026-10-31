@@ -8,14 +8,13 @@ import (
 	"testing"
 	"time"
 
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/dockmesh/dockmesh/internal/db"
 )
 
 func TestCarryVolumes(t *testing.T) {
-	old := []dtypes.MountPoint{
+	old := []container.MountPoint{
 		{Type: mount.TypeVolume, Name: "3f9a", Destination: "/data", RW: true},
 		{Type: mount.TypeVolume, Name: "named", Destination: "/named", RW: true},
 		{Type: mount.TypeVolume, Name: "c0de", Destination: "/compose-anon", RW: true},
@@ -185,8 +184,8 @@ func TestWatcherPersistsChecks(t *testing.T) {
 
 func TestAcquireSerialisesPerStack(t *testing.T) {
 	s := NewService(nil, nil)
-	web := &dtypes.ContainerJSON{ContainerJSONBase: &dtypes.ContainerJSONBase{Name: "/app-web-1"}}
-	db := &dtypes.ContainerJSON{ContainerJSONBase: &dtypes.ContainerJSONBase{Name: "/app-db-1"}}
+	web := &container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{Name: "/app-web-1"}}
+	db := &container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{Name: "/app-db-1"}}
 	st := &stackTarget{stack: "app"}
 
 	release, err := s.acquire(web, st)

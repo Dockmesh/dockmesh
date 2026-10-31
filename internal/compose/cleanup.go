@@ -7,11 +7,13 @@ import (
 	"sort"
 	"strings"
 
-	dtypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/image"
+
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/errdefs"
 )
 
 // CleanupOpts picks which project-scoped docker resources to remove for
@@ -61,7 +63,7 @@ func (s *Service) CleanupPreview(ctx context.Context, stackName string) (*Cleanu
 	// Networks labelled with this project.
 	netFilter := filters.NewArgs()
 	netFilter.Add("label", LabelProject+"="+stackName)
-	nets, err := cli.NetworkList(ctx, dtypes.NetworkListOptions{Filters: netFilter})
+	nets, err := cli.NetworkList(ctx, network.ListOptions{Filters: netFilter})
 	if err != nil {
 		return nil, fmt.Errorf("list networks: %w", err)
 	}
@@ -147,12 +149,12 @@ func (s *Service) Cleanup(ctx context.Context, stackName string, opts CleanupOpt
 	if opts.Networks {
 		netFilter := filters.NewArgs()
 		netFilter.Add("label", LabelProject+"="+stackName)
-		nets, err := cli.NetworkList(ctx, dtypes.NetworkListOptions{Filters: netFilter})
+		nets, err := cli.NetworkList(ctx, network.ListOptions{Filters: netFilter})
 		if err != nil {
 			return nil, fmt.Errorf("list networks: %w", err)
 		}
 		for _, n := range nets {
-			if err := cli.NetworkRemove(ctx, n.ID); err != nil && !errdefs.IsNotFound(err) {
+			if err := cli.NetworkRemove(ctx, n.ID); err != nil && !cerrdefs.IsNotFound(err) {
 				res.Errors = append(res.Errors, fmt.Sprintf("network %s: %v", n.Name, err))
 				continue
 			}
@@ -171,7 +173,7 @@ func (s *Service) Cleanup(ctx context.Context, stackName string, opts CleanupOpt
 			if v == nil {
 				continue
 			}
-			if err := cli.VolumeRemove(ctx, v.Name, false); err != nil && !errdefs.IsNotFound(err) {
+			if err := cli.VolumeRemove(ctx, v.Name, false); err != nil && !cerrdefs.IsNotFound(err) {
 				res.Errors = append(res.Errors, fmt.Sprintf("volume %s: %v", v.Name, err))
 				continue
 			}
@@ -187,7 +189,7 @@ func (s *Service) Cleanup(ctx context.Context, stackName string, opts CleanupOpt
 			return nil, fmt.Errorf("image preview: %w", err)
 		}
 		for _, img := range plan.Images {
-			if _, err := cli.ImageRemove(ctx, img, dtypes.ImageRemoveOptions{PruneChildren: true}); err != nil && !errdefs.IsNotFound(err) {
+			if _, err := cli.ImageRemove(ctx, img, image.RemoveOptions{PruneChildren: true}); err != nil && !cerrdefs.IsNotFound(err) {
 				res.Errors = append(res.Errors, fmt.Sprintf("image %s: %v", img, err))
 				continue
 			}

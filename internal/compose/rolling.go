@@ -9,10 +9,9 @@ import (
 	"time"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	dtypes "github.com/docker/docker/api/types"
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -219,7 +218,7 @@ func (s *Service) RollingReplace(ctx context.Context, proj *composetypes.Project
 	// rollback knows what to revert. Only populated on successful replace.
 	var done []replacedReplica
 
-	replaceOne := func(idx int, oldC dtypes.Container) error {
+	replaceOne := func(idx int, oldC container.Summary) error {
 		replicaIdx := replicaIndex(oldC, proj.Name+"-"+serviceName+"-")
 		containerName := fmt.Sprintf("%s-%s-%d", proj.Name, serviceName, replicaIdx)
 
@@ -283,9 +282,9 @@ func (s *Service) RollingReplace(ctx context.Context, proj *composetypes.Project
 }
 
 // stopFirstReplace: stop + remove old, then create + start + wait-healthy new.
-func stopFirstReplace(ctx context.Context, cli *client.Client, oldC dtypes.Container, containerName string, proj *composetypes.Project, svc composetypes.ServiceConfig, netNames map[string]string) (string, error) {
+func stopFirstReplace(ctx context.Context, cli *client.Client, oldC container.Summary, containerName string, proj *composetypes.Project, svc composetypes.ServiceConfig, netNames map[string]string) (string, error) {
 	_ = cli.ContainerStop(ctx, oldC.ID, container.StopOptions{})
-	if err := cli.ContainerRemove(ctx, oldC.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+	if err := cli.ContainerRemove(ctx, oldC.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 		return "", fmt.Errorf("remove old: %w", err)
 	}
 	cfg, hostCfg, netCfg, err := serviceToContainerConfig(proj, svc, netNames)
@@ -307,7 +306,7 @@ func stopFirstReplace(ctx context.Context, cli *client.Client, oldC dtypes.Conta
 
 // startFirstReplace: create sibling with a temp name, wait healthy,
 // then stop+remove old and rename new into the original slot.
-func startFirstReplace(ctx context.Context, cli *client.Client, oldC dtypes.Container, containerName string, proj *composetypes.Project, svc composetypes.ServiceConfig, netNames map[string]string) (string, error) {
+func startFirstReplace(ctx context.Context, cli *client.Client, oldC container.Summary, containerName string, proj *composetypes.Project, svc composetypes.ServiceConfig, netNames map[string]string) (string, error) {
 	tempName := containerName + "-new"
 	// Cleanup any leftover from a prior aborted run.
 	if prev, err := cli.ContainerInspect(ctx, tempName); err == nil {
@@ -336,7 +335,7 @@ func startFirstReplace(ctx context.Context, cli *client.Client, oldC dtypes.Cont
 
 	// Sibling is healthy — tear down the old one and promote.
 	_ = cli.ContainerStop(ctx, oldC.ID, container.StopOptions{})
-	if err := cli.ContainerRemove(ctx, oldC.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+	if err := cli.ContainerRemove(ctx, oldC.ID, container.RemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 		// Rollback: the old container is lingering, can't claim the name.
 		_ = cli.ContainerStop(ctx, resp.ID, container.StopOptions{})
 		_ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})

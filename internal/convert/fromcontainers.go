@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	dtypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"gopkg.in/yaml.v3"
 )
 
@@ -35,7 +35,7 @@ type composeProject struct {
 //
 // projectName is required (passed in rather than read from labels) so
 // the caller controls naming when several containers might disagree.
-func FromContainers(projectName string, insp []dtypes.ContainerJSON) (*Result, error) {
+func FromContainers(projectName string, insp []container.InspectResponse) (*Result, error) {
 	if projectName == "" {
 		return nil, errors.New("project name is required")
 	}
@@ -46,7 +46,7 @@ func FromContainers(projectName string, insp []dtypes.ContainerJSON) (*Result, e
 	// Group containers by compose service label. A service can have N
 	// replicas; we take the first as the template and warn if the others
 	// drift in any field that affects the compose definition.
-	byService := map[string][]dtypes.ContainerJSON{}
+	byService := map[string][]container.InspectResponse{}
 	for _, c := range insp {
 		svc := strings.TrimSpace(c.Config.Labels["com.docker.compose.service"])
 		if svc == "" {
@@ -95,7 +95,7 @@ func FromContainers(projectName string, insp []dtypes.ContainerJSON) (*Result, e
 // serviceFromInspect maps one ContainerJSON onto a compose service.
 // Fields are translated conservatively — anything we can't represent
 // cleanly in compose v3 ends up in Warnings rather than silently lost.
-func serviceFromInspect(svcName string, c dtypes.ContainerJSON) (service, []string) {
+func serviceFromInspect(svcName string, c container.InspectResponse) (service, []string) {
 	s := service{Image: c.Config.Image}
 	var warnings []string
 

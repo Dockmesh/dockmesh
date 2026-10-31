@@ -7,10 +7,10 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/docker/docker/api/types/image"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -50,7 +50,7 @@ type pullRequest struct {
 // ImageSummary so its fields flatten into the final JSON alongside
 // host_id / host_name.
 type imageRow struct {
-	dtypes.ImageSummary
+	image.Summary
 	HostID   string `json:"host_id"`
 	HostName string `json:"host_name"`
 }
@@ -71,9 +71,9 @@ func (h *Handlers) ListImages(w http.ResponseWriter, r *http.Request) {
 			rows := make([]imageRow, len(list))
 			for i, im := range list {
 				rows[i] = imageRow{
-					ImageSummary: im,
-					HostID:       hh.ID(),
-					HostName:     hh.Name(),
+					Summary:  im,
+					HostID:   hh.ID(),
+					HostName: hh.Name(),
 				}
 			}
 			return rows, nil

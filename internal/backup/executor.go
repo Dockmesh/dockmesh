@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notices"
@@ -20,7 +21,6 @@ import (
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
-	dtypes "github.com/docker/docker/api/types"
 )
 
 // Executor turns a Job into a Run: pre-hooks → tar → encrypt → upload →
@@ -330,13 +330,13 @@ func (l *localBackupTarget) VolumeTar(ctx context.Context, name string) (io.Read
 
 func (l *localBackupTarget) ContainerExec(ctx context.Context, containerID string, cmd []string) ([]byte, int, error) {
 	cli := l.dc.Raw()
-	exec, err := cli.ContainerExecCreate(ctx, containerID, dtypes.ExecConfig{
+	exec, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		Cmd: cmd, AttachStdout: true, AttachStderr: true,
 	})
 	if err != nil {
 		return nil, -1, err
 	}
-	attach, err := cli.ContainerExecAttach(ctx, exec.ID, dtypes.ExecStartCheck{})
+	attach, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecStartOptions{})
 	if err != nil {
 		return nil, -1, err
 	}
@@ -449,4 +449,3 @@ func encryptionFor(job *Job, sec *secrets.Service) *secrets.Service {
 	}
 	return sec
 }
-

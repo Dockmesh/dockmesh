@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -300,8 +300,8 @@ func helperContainerConfig(volumeName, script string) (*container.Config, *conta
 // the volume mounted, collects its output and removes the container.
 func dockerHelperRunner(cli *client.Client, volumeName string) helperRunner {
 	return func(ctx context.Context, script string, limit int64) (helperResult, error) {
-		if _, _, err := cli.ImageInspectWithRaw(ctx, helperImage); err != nil {
-			rc, pullErr := cli.ImagePull(ctx, helperImage, dtypes.ImagePullOptions{})
+		if _, err := cli.ImageInspect(ctx, helperImage); err != nil {
+			rc, pullErr := cli.ImagePull(ctx, helperImage, image.PullOptions{})
 			if pullErr != nil {
 				return helperResult{}, fmt.Errorf("volume helper: pull %s: %w", helperImage, pullErr)
 			}
