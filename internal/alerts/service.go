@@ -948,23 +948,29 @@ func boolInt(b bool) int {
 	return 0
 }
 
-// FiringAlert is one (rule, container) pair whose latest history row is
-// a fire without a matching resolve.
+// FiringAlert is one (rule, target) pair whose latest history row is a
+// fire without a matching resolve. Target is the container, host, mount,
+// backup job or domain the rule's kind watches; HostID is empty for the
+// kinds that belong to no host.
 type FiringAlert struct {
-	RuleID        int64
-	RuleName      string
-	Severity      string
-	ContainerName string
-	Message       string
-	Since         time.Time
+	RuleID   int64
+	RuleName string
+	Kind     string
+	Severity string
+	HostID   string
+	Target   string
+	Message  string
+	Since    time.Time
 }
 
 // Firing lists the alerts that are currently firing on enabled rules,
-// read from alert_history so the result survives a restart.
+// read from alert_history so the result survives a restart. One-shot
+// kinds are left out: they never resolve, so their last fire is history,
+// not a state.
 func (s *Service) Firing(ctx context.Context) ([]FiringAlert, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT h.rule_id, r.name, COALESCE(r.severity, ''), h.container_name,
-		       COALESCE(h.message, ''), h.occurred_at
+		SELECT h.rule_id, r.name, r.kind, COALESCE(r.severity, ''), h.host_id,
+		       h.container_name, COALESCE(h.message, ''), h.occurred_at
 		FROM alert_history h
 		JOIN (
 			SELECT rule_id, container_name, MAX(id) AS max_id
@@ -972,8 +978,8 @@ func (s *Service) Firing(ctx context.Context) ([]FiringAlert, error) {
 			GROUP BY rule_id, container_name
 		) latest ON h.id = latest.max_id
 		JOIN alert_rules r ON r.id = h.rule_id
-		WHERE h.status = 'fired' AND r.enabled = 1
-		ORDER BY h.occurred_at DESC`)
+		WHERE h.status = 'fired' AND r.enabled = 1 AND r.kind NOT IN (?, ?)
+		ORDER BY h.occurred_at DESC`, KindOOM, KindBackupFailed)
 	if err != nil {
 		return nil, fmt.Errorf("list firing alerts: %w", err)
 	}
@@ -981,7 +987,7 @@ func (s *Service) Firing(ctx context.Context) ([]FiringAlert, error) {
 	out := []FiringAlert{}
 	for rows.Next() {
 		var f FiringAlert
-		if err := rows.Scan(&f.RuleID, &f.RuleName, &f.Severity, &f.ContainerName, &f.Message, &f.Since); err != nil {
+		if err := rows.Scan(&f.RuleID, &f.RuleName, &f.Kind, &f.Severity, &f.HostID, &f.Target, &f.Message, &f.Since); err != nil {
 			return nil, fmt.Errorf("scan firing alert: %w", err)
 		}
 		out = append(out, f)

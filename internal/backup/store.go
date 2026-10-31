@@ -340,7 +340,7 @@ func (s *store) latestRuns(ctx context.Context) ([]Run, error) {
 	return s.queryRuns(ctx, `
 		SELECT id, job_id, job_name, status, started_at, finished_at,
 		       size_bytes, COALESCE(target_path, ''), COALESCE(sha256, ''),
-		       encrypted, COALESCE(error, ''), sources_json
+		       encrypted, COALESCE(error, ''), sources_json, pruned_at
 		FROM backup_runs
 		WHERE id IN (SELECT MAX(id) FROM backup_runs GROUP BY job_id)
 		ORDER BY id DESC`)

@@ -9,17 +9,18 @@ import (
 	"testing"
 	"time"
 
-	dtypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 func attentionRow(id, name, stack, state, status string) containerRow {
 	return containerRow{
-		Container: dtypes.Container{
+		Summary: container.Summary{
 			ID:     id,
 			Names:  []string{"/" + name},
 			State:  state,
@@ -71,16 +72,50 @@ func newAttentionEnv(t *testing.T) *authzEnv {
 		}
 		exec(`INSERT INTO backup_runs (job_id, job_name, status, error, sources_json) VALUES (?, ?, ?, 'disk full', ?)`, i+1, j.name, status, j.sources)
 	}
-	exec(`INSERT INTO alert_rules (id, name, metric, operator, threshold, severity) VALUES (900, 'High CPU', 'cpu_percent', 'gt', 90, 'critical')`)
-	exec(`INSERT INTO alert_history (rule_id, rule_name, container_name, status, message) VALUES (900, 'High CPU', 'db-1', 'fired', 'cpu high')`)
-	exec(`INSERT INTO alert_history (rule_id, rule_name, container_name, status, message) VALUES (900, 'High CPU', 'web-1', 'fired', 'cpu high')`)
-	exec(`INSERT INTO alert_history (rule_id, rule_name, container_name, status, message) VALUES (900, 'High CPU', 'web-1', 'resolved', 'ok')`)
+	rules := []struct {
+		id         int
+		name, kind string
+	}{
+		{900, "High CPU", alerts.KindMetric},
+		{901, "Restart loop", alerts.KindRestartLoop},
+		{902, "OOM", alerts.KindOOM},
+		{903, "Host offline", alerts.KindHostOffline},
+		{904, "Disk", alerts.KindDiskUsage},
+		{905, "Cert", alerts.KindCertExpiry},
+		{906, "Overdue", alerts.KindBackupMissed},
+	}
+	for _, rl := range rules {
+		exec(`INSERT INTO alert_rules (id, name, kind, metric, operator, threshold, severity) VALUES (?, ?, ?, 'cpu_percent', 'gt', 90, 'critical')`, rl.id, rl.name, rl.kind)
+	}
+	fire := func(rule int, hostID, target, status string) {
+		exec(`INSERT INTO alert_history (rule_id, rule_name, host_id, container_name, status, message) VALUES (?, 'r', ?, ?, ?, 'm')`, rule, hostID, target, status)
+	}
+	fire(900, "local", "db-1", "fired")
+	fire(900, "local", "web-1", "fired")
+	fire(900, "local", "web-1", "resolved")
+	fire(901, "local", "db-1", "fired")        // same problem as the restarting container
+	fire(901, "local", "web-migrate", "fired") // not restarting now: stays
+	fire(902, "local", "web-1", "fired")       // one-shot: never listed
+	fire(903, "h2", "edge", "fired")
+	fire(904, "local", "/var/lib/docker", "fired")
+	fire(905, "", "app.example.com", "fired") // listed as a certificate already
+	fire(905, "", "old.example.com", "fired")
+	fire(906, "", "web-nightly", "fired")
+
+	soon, later := 5, 60
+	soonAt, laterAt := time.Now().Add(5*24*time.Hour), time.Now().Add(60*24*time.Hour)
+	e.h.attentionCertRoutes = func(context.Context) ([]proxy.Route, error) {
+		return []proxy.Route{
+			{ID: 1, Host: "app.example.com", Enabled: true, CertDaysLeft: &soon, CertValidTo: &soonAt},
+			{ID: 2, Host: "far.example.com", Enabled: true, CertDaysLeft: &later, CertValidTo: &laterAt},
+		}, nil
+	}
 	return e
 }
 
 func TestAttentionScope(t *testing.T) {
 	e := newAttentionEnv(t)
-	views := []rbac.Perm{rbac.PermContainersView, rbac.PermBackupsView, rbac.PermAlertsView, rbac.PermHostsView}
+	views := []rbac.Perm{rbac.PermContainersView, rbac.PermBackupsView, rbac.PermAlertsView, rbac.PermHostsView, rbac.PermProxyView}
 	e.role("web-team", views, rbac.Scope{ScopeType: "stack", ScopeValue: "web"})
 	e.role("containers-only", []rbac.Perm{rbac.PermContainersView})
 	e.user("boss", "admin")
@@ -93,6 +128,12 @@ func TestAttentionScope(t *testing.T) {
 	}{
 		{"boss", []string{
 			"alert_firing:900:db-1",
+			"alert_firing:901:web-migrate",
+			"alert_firing:903:edge",
+			"alert_firing:904:/var/lib/docker",
+			"alert_firing:905:old.example.com",
+			"alert_firing:906:web-nightly",
+			"cert_expiring:1",
 			"backup_failed:1",
 			"backup_failed:2",
 			"backup_failed:3",
@@ -101,6 +142,8 @@ func TestAttentionScope(t *testing.T) {
 			"container_unhealthy:local:c1",
 		}},
 		{"web", []string{
+			"alert_firing:901:web-migrate",
+			"cert_expiring:1",
 			"backup_failed:2",
 			"container_exited:local:c3",
 			"container_unhealthy:local:c1",

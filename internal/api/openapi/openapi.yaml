@@ -6817,17 +6817,21 @@ paths:
       tags: [overview]
       summary: What needs attention in the caller's scope
       description: |
-        Aggregates, from existing state: offline hosts and agents on a
-        different version than the server (`hosts.view`), restarting,
-        unhealthy and non-zero exited containers (`containers.view`), the
-        failed last run of each enabled backup job (`backups.view`), firing
-        alerts (`alerts.view`), image updates (`images.view`), proxy
-        certificates expiring within 30 days (`proxy.view`, unscoped callers
-        only) and the caller's open action-required notices. A source is
-        skipped when the caller lacks its permission, and items outside the
-        caller's host or role scope are left out, so any authenticated
-        caller may call this. Sorted by severity, then newest first; items
-        without `since` come last within their severity.
+        Aggregates, from existing state: offline hosts (`hosts.view`),
+        restarting, unhealthy and non-zero exited containers
+        (`containers.view`), the failed last run of each enabled backup job
+        (`backups.view`), proxy certificates expiring within 30 days
+        (`proxy.view`), firing alerts (`alerts.view`) and the caller's open
+        action-required notices, plus agents on a different build than the
+        server (`hosts.view`) and image updates (`images.view`) as `info`.
+        A firing alert is left out when another source lists the same
+        problem for the same object. A source is skipped when the caller
+        lacks its permission, and items outside the caller's host or role
+        scope are left out; scoped callers see no alerts of the kinds that
+        belong to no host (backups, certificates), as in the alert history.
+        Any authenticated caller may call this. Sorted by severity, then
+        newest first; items without `since` come last within their
+        severity.
       responses:
         "200":
           description: Items, most severe first.
@@ -7571,7 +7575,7 @@ components:
           type: object
           required: [type, id]
           properties:
-            type: { type: string, enum: [host, container, backup_job, image, proxy_route, notice] }
+            type: { type: string, enum: [host, container, mount, backup_job, image, proxy_route, domain, notice] }
             id: { type: string }
             name: { type: string }
             host_id: { type: string }

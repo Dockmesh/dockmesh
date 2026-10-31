@@ -12,9 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/pkg/version"
 )
@@ -79,14 +81,14 @@ func (h *Handlers) Attention(w http.ResponseWriter, r *http.Request) {
 	if allowed(rbac.PermBackupsView) {
 		items = append(items, h.attentionBackups(r)...)
 	}
-	if allowed(rbac.PermAlertsView) {
-		items = append(items, h.attentionAlerts(r, rows)...)
-	}
 	if allowed(rbac.PermImagesView) {
 		items = append(items, h.attentionImageUpdates(rows, allowed(rbac.PermContainersView))...)
 	}
-	if allowed(rbac.PermProxyView) && h.callerUnscoped(r) {
+	if allowed(rbac.PermProxyView) {
 		items = append(items, h.attentionCerts(r)...)
+	}
+	if allowed(rbac.PermAlertsView) {
+		items = append(items, h.attentionAlerts(r, rows, attentionCovered(items))...)
 	}
 	items = append(items, h.attentionNotices(r)...)
 	sortAttention(items)
@@ -121,7 +123,7 @@ func listContainerRows(ctx context.Context, targets []host.Host) []containerRow 
 		rows := make([]containerRow, len(list))
 		for i, c := range list {
 			rows[i] = containerRow{
-				Container:    c,
+				Summary:      c,
 				HostID:       hh.ID(),
 				HostName:     hh.Name(),
 				HealthStatus: parseHealthFromStatus(c.Status),
@@ -169,8 +171,8 @@ func (h *Handlers) attentionHosts(r *http.Request) []AttentionItem {
 			out = append(out, AttentionItem{
 				ID:       "agent_outdated:" + a.ID,
 				Kind:     "agent_outdated",
-				Severity: attentionWarning,
-				Title:    a.Name + " runs a different agent version",
+				Severity: attentionInfo,
+				Title:    a.Name + " runs a different agent build",
 				Detail:   fmt.Sprintf("Agent %s, server %s.", orUnknown(v), version.Version),
 				Link:     link,
 				Object:   obj,
@@ -305,10 +307,12 @@ func (h *Handlers) backupJobVisible(r *http.Request, j backup.Job) bool {
 	return true
 }
 
-// attentionAlerts lists firing alerts. Alert state is keyed by container
-// name only, so scoped callers see an alert only when a container of
-// that name is in their scope.
-func (h *Handlers) attentionAlerts(r *http.Request, rows []containerRow) []AttentionItem {
+// attentionAlerts lists firing alerts. Scoped callers see container
+// alerts for containers in their scope, host alerts for hosts in their
+// scope and, like in the alert history, no alerts of the kinds that
+// belong to no host. An alert that reports what another source already
+// lists for the same object is left out.
+func (h *Handlers) attentionAlerts(r *http.Request, rows []containerRow, covered map[string]bool) []AttentionItem {
 	if h.Alerts == nil {
 		return nil
 	}
@@ -320,11 +324,15 @@ func (h *Handlers) attentionAlerts(r *http.Request, rows []containerRow) []Atten
 	unscoped := h.callerUnscoped(r)
 	visible := map[string]bool{}
 	for _, c := range rows {
-		visible[containerName(c.Names)] = true
+		visible[c.HostID+"|"+containerName(c.Names)] = true
 	}
 	var out []AttentionItem
 	for _, f := range firing {
-		if !unscoped && !visible[f.ContainerName] {
+		obj := alertObject(f)
+		if kind, ok := alertDuplicates[f.Kind]; ok && covered[attentionKey(kind, obj)] {
+			continue
+		}
+		if !unscoped && !h.alertVisible(r, f, visible) {
 			continue
 		}
 		severity := f.Severity
@@ -333,15 +341,75 @@ func (h *Handlers) attentionAlerts(r *http.Request, rows []containerRow) []Atten
 		}
 		since := f.Since
 		out = append(out, AttentionItem{
-			ID:       "alert_firing:" + strconv.FormatInt(f.RuleID, 10) + ":" + f.ContainerName,
+			ID:       "alert_firing:" + strconv.FormatInt(f.RuleID, 10) + ":" + f.Target,
 			Kind:     "alert_firing",
 			Severity: severity,
 			Title:    f.RuleName + " is firing",
 			Detail:   f.Message,
 			Link:     "/alerts",
-			Object:   AttentionObject{Type: "container", ID: f.ContainerName, Name: f.ContainerName},
+			Object:   obj,
 			Since:    &since,
 		})
+	}
+	return out
+}
+
+func (h *Handlers) alertVisible(r *http.Request, f alerts.FiringAlert, containers map[string]bool) bool {
+	switch {
+	case f.HostID == "":
+		return false
+	case f.Kind == alerts.KindHostOffline || f.Kind == alerts.KindDiskUsage:
+		return h.inReadScope(r, f.HostID, "")
+	default:
+		return containers[f.HostID+"|"+f.Target]
+	}
+}
+
+// alertObject names what a firing alert is about; the rule kind decides
+// what its target is.
+func alertObject(f alerts.FiringAlert) AttentionObject {
+	switch f.Kind {
+	case alerts.KindHostOffline:
+		return AttentionObject{Type: "host", ID: f.HostID, Name: f.Target, HostID: f.HostID}
+	case alerts.KindDiskUsage:
+		return AttentionObject{Type: "mount", ID: f.Target, Name: f.Target, HostID: f.HostID}
+	case alerts.KindBackupMissed:
+		return AttentionObject{Type: "backup_job", ID: f.Target, Name: f.Target}
+	case alerts.KindCertExpiry:
+		return AttentionObject{Type: "domain", ID: f.Target, Name: f.Target}
+	default:
+		return AttentionObject{Type: "container", ID: f.Target, Name: f.Target, HostID: f.HostID}
+	}
+}
+
+// alertDuplicates maps the alert kinds that report the same problem as
+// another source to that source's item kind.
+var alertDuplicates = map[string]string{
+	alerts.KindHostOffline:      "host_offline",
+	alerts.KindRestartLoop:      "container_restarting",
+	alerts.KindUnhealthy:        "container_unhealthy",
+	alerts.KindContainerStopped: "container_exited",
+	alerts.KindCertExpiry:       "cert_expiring",
+}
+
+// attentionKey identifies a problem with an object across sources: a
+// container by host and name, a host by id, a certificate by domain.
+func attentionKey(kind string, o AttentionObject) string {
+	switch o.Type {
+	case "container":
+		return kind + "|" + o.HostID + "|" + o.Name
+	case "host":
+		return kind + "|" + o.HostID
+	default:
+		return kind + "|" + o.Name
+	}
+}
+
+// attentionCovered collects the problems the other sources report.
+func attentionCovered(items []AttentionItem) map[string]bool {
+	out := make(map[string]bool, len(items))
+	for _, it := range items {
+		out[attentionKey(it.Kind, it.Object)] = true
 	}
 	return out
 }
@@ -389,11 +457,19 @@ func (h *Handlers) attentionImageUpdates(rows []containerRow, showNames bool) []
 	return out
 }
 
+// attentionCerts lists certificates close to expiry. Proxy routes are
+// server-wide and belong to no host, so proxy.view alone decides.
 func (h *Handlers) attentionCerts(r *http.Request) []AttentionItem {
-	if h.Proxy == nil || !h.Proxy.Enabled() {
+	var routes []proxy.Route
+	var err error
+	switch {
+	case h.attentionCertRoutes != nil:
+		routes, err = h.attentionCertRoutes(r.Context())
+	case h.Proxy != nil && h.Proxy.Enabled():
+		routes, err = h.Proxy.RouteCerts(r.Context())
+	default:
 		return nil
 	}
-	routes, err := h.Proxy.RouteCerts(r.Context())
 	if err != nil {
 		slog.Warn("attention: proxy routes", "err", err)
 		return nil
