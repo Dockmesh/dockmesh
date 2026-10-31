@@ -760,6 +760,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/proxy/routes/{id}/config", h.GetProxyRouteConfig)
 				r.Get("/proxy/metrics", h.GetProxyMetrics)
 				r.Get("/proxy/acme-events", h.ListACMEEvents)
+				r.Get("/proxy/version", h.GetProxyVersion)
+				r.Get("/proxy/settings", h.GetProxySettings)
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermProxyCreate))
@@ -772,6 +774,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Use(middleware.RequirePerm(rbac.PermProxyUpdate))
 				r.Put("/proxy/routes/{id}", h.UpdateProxyRoute)
 				r.Patch("/proxy/routes/{id}/enabled", h.SetProxyRouteEnabled)
+				r.Put("/proxy/version", h.SetProxyVersion)
+				r.Post("/proxy/version/rollback", h.RollbackProxyVersion)
+				r.Put("/proxy/settings", h.UpdateProxySettings)
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermProxyDelete))

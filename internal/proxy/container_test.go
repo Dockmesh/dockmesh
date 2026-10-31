@@ -28,7 +28,7 @@ func managedContainer(s *Service, imageID string) *dtypes.ContainerJSON {
 func TestMatchesSpec(t *testing.T) {
 	s := NewService(nil, nil, false)
 	const img = "sha256:caddy"
-	if !s.matchesSpec(managedContainer(s, img), img) {
+	if !matchesSpec(managedContainer(s, img), s.currentImage(), img) {
 		t.Fatal("managed container rejected")
 	}
 	tamper := []struct {
@@ -47,7 +47,7 @@ func TestMatchesSpec(t *testing.T) {
 	for _, tt := range tamper {
 		c := managedContainer(s, img)
 		tt.mod(c)
-		if s.matchesSpec(c, img) {
+		if matchesSpec(c, s.currentImage(), img) {
 			t.Errorf("%s: tampered container kept", tt.name)
 		}
 	}

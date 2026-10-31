@@ -54,8 +54,12 @@ var proxyBinds = []string{
 }
 
 func (s *Service) specHash() string {
+	return specHashFor(s.currentImage())
+}
+
+func specHashFor(img string) string {
 	h := sha256.New()
-	for _, part := range [][]string{{s.image}, proxyCmd, proxyBinds, {proxyNetworkMode, proxyRestartPolicy}} {
+	for _, part := range [][]string{{img}, proxyCmd, proxyBinds, {proxyNetworkMode, proxyRestartPolicy}} {
 		for _, p := range part {
 			h.Write([]byte(p))
 			h.Write([]byte{0})
@@ -76,17 +80,18 @@ func (s *Service) EnableProxy(ctx context.Context) error {
 	s.lifecycle.Lock()
 	defer s.lifecycle.Unlock()
 	cli := s.docker.Raw()
+	img := s.currentImage()
 
 	var imageID string
-	if img, _, err := cli.ImageInspectWithRaw(ctx, s.image); err == nil {
-		imageID = img.ID
+	if inspected, _, err := cli.ImageInspectWithRaw(ctx, img); err == nil {
+		imageID = inspected.ID
 	} else if !errdefs.IsNotFound(err) {
 		return fmt.Errorf("image inspect: %w", err)
 	}
 
 	existing, err := cli.ContainerInspect(ctx, ProxyContainerName)
 	switch {
-	case err == nil && imageID != "" && s.matchesSpec(&existing, imageID):
+	case err == nil && imageID != "" && matchesSpec(&existing, img, imageID):
 		if existing.State == nil || !existing.State.Running {
 			if err := cli.ContainerStart(ctx, existing.ID, container.StartOptions{}); err != nil {
 				return fmt.Errorf("container start: %w", err)
@@ -94,11 +99,11 @@ func (s *Service) EnableProxy(ctx context.Context) error {
 		}
 	case err == nil:
 		slog.Info("proxy: replacing container that doesn't match the managed spec", "container", existing.ID[:12])
-		if err := s.createProxy(ctx, &existing); err != nil {
+		if err := s.createProxy(ctx, img, &existing); err != nil {
 			return err
 		}
 	case errdefs.IsNotFound(err):
-		if err := s.createProxy(ctx, nil); err != nil {
+		if err := s.createProxy(ctx, img, nil); err != nil {
 			return err
 		}
 	default:
@@ -116,12 +121,12 @@ func (s *Service) EnableProxy(ctx context.Context) error {
 // matchesSpec checks the fields of an existing container that decide
 // what runs and with which privileges. The spec label alone is not
 // enough: anyone who can create a container can copy it.
-func (s *Service) matchesSpec(c *dtypes.ContainerJSON, imageID string) bool {
+func matchesSpec(c *dtypes.ContainerJSON, img, imageID string) bool {
 	if c.ContainerJSONBase == nil || c.Config == nil || c.HostConfig == nil {
 		return false
 	}
 	h := c.HostConfig
-	return c.Config.Labels[specLabel] == s.specHash() &&
+	return c.Config.Labels[specLabel] == specHashFor(img) &&
 		c.Config.Labels["dockmesh.component"] == "proxy" &&
 		c.Image == imageID &&
 		reflect.DeepEqual([]string(c.Config.Cmd), proxyCmd) &&
@@ -137,17 +142,17 @@ func (s *Service) matchesSpec(c *dtypes.ContainerJSON, imageID string) bool {
 		len(h.VolumesFrom) == 0
 }
 
-// createProxy pulls the image if needed, removes old (when set) and
+// createProxy pulls img if needed, removes old (when set) and
 // creates + starts a fresh container.
-func (s *Service) createProxy(ctx context.Context, old *dtypes.ContainerJSON) error {
+func (s *Service) createProxy(ctx context.Context, img string, old *dtypes.ContainerJSON) error {
 	cli := s.docker.Raw()
-	if _, _, err := cli.ImageInspectWithRaw(ctx, s.image); err != nil {
+	if _, _, err := cli.ImageInspectWithRaw(ctx, img); err != nil {
 		if !errdefs.IsNotFound(err) {
 			return fmt.Errorf("image inspect: %w", err)
 		}
-		rc, err := cli.ImagePull(ctx, s.image, dtypes.ImagePullOptions{})
+		rc, err := cli.ImagePull(ctx, img, dtypes.ImagePullOptions{})
 		if err != nil {
-			return fmt.Errorf("image pull %s: %w", s.image, err)
+			return fmt.Errorf("image pull %s: %w", img, err)
 		}
 		if _, err := io.Copy(io.Discard, rc); err != nil {
 			rc.Close()
@@ -164,12 +169,12 @@ func (s *Service) createProxy(ctx context.Context, old *dtypes.ContainerJSON) er
 	}
 
 	cfg := &container.Config{
-		Image: s.image,
+		Image: img,
 		Cmd:   proxyCmd,
 		Labels: map[string]string{
 			"dockmesh.managed":   "true",
 			"dockmesh.component": "proxy",
-			specLabel:            s.specHash(),
+			specLabel:            specHashFor(img),
 		},
 	}
 	hostCfg := &container.HostConfig{

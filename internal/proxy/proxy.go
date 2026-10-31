@@ -88,11 +88,21 @@ type noticeSetter interface {
 }
 
 type Service struct {
-	db      *sql.DB
-	docker  *docker.Client
-	enabled atomic.Bool
-	image   string
-	notices noticeSetter
+	db       *sql.DB
+	docker   *docker.Client
+	enabled  atomic.Bool
+	notices  noticeSetter
+	settings SettingsStore
+
+	// image is the Caddy image to run; imageOverride is set when it
+	// comes from DOCKMESH_PROXY_IMAGE. switchMu serialises version
+	// switches.
+	imageMu       sync.RWMutex
+	image         string
+	imageOverride bool
+	switchMu      sync.Mutex
+	// startProxy replaces startAndVerify in tests.
+	startProxy func(ctx context.Context) error
 
 	// lifecycle serialises EnableProxy/DisableProxy; mu guards config
 	// pushes and metrics.
@@ -118,7 +128,8 @@ func (s *Service) Enabled() bool { return s.enabled.Load() }
 // the pinned default.
 func (s *Service) SetImage(image string) {
 	if image != "" {
-		s.image = image
+		s.setImage(image)
+		s.imageOverride = true
 	}
 }
 
@@ -147,7 +158,7 @@ func (s *Service) desiredConfig(ctx context.Context) (*caddyConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg, blocked := buildConfig(routes)
+	cfg, blocked := buildConfig(routes, s.ProxySettings())
 	if s.notices != nil {
 		err := s.notices.Set(ctx, len(blocked) > 0, notices.RaiseInput{
 			Key:      noticeKeyBlocked,
@@ -223,11 +234,11 @@ func (s *Service) CreateRoute(ctx context.Context, spec RouteSpec) (*Route, erro
 	return route, nil
 }
 
-// UpdateRoute replaces the upstream, TLS mode and enabled state of an
-// existing route, and its options unless opts is nil. enabled=false
-// keeps the row but excludes it from the generated config so traffic
-// stops flowing without losing config.
-func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode string, enabled bool, opts *SiteOptions) error {
+// UpdateRoute replaces the upstream and TLS mode of an existing route,
+// its enabled state unless enabled is nil and its options unless opts is
+// nil. A disabled route stays in the table but is left out of the
+// generated config, so traffic stops without losing config.
+func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode string, enabled *bool, opts *SiteOptions) error {
 	if err := validateTLSMode(tlsMode); err != nil {
 		return err
 	}
@@ -249,9 +260,13 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode s
 	if err != nil {
 		return err
 	}
+	on := cur.Enabled
+	if enabled != nil {
+		on = *enabled
+	}
 	_, err = s.db.ExecContext(ctx,
 		`UPDATE proxy_routes SET upstream = ?, tls_mode = ?, enabled = ?, options = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		upstream, tlsMode, boolToInt(enabled), raw, id)
+		upstream, tlsMode, boolToInt(on), raw, id)
 	if err != nil {
 		return err
 	}
@@ -334,7 +349,7 @@ func (s *Service) SiteConfig(ctx context.Context, id int64) (*SitePreview, error
 			one.Options.Routing.WWWRedirect = false
 		}
 	}
-	cfg, blocked := buildConfigWith([]Route{one}, true)
+	cfg, blocked := buildConfigWith([]Route{one}, s.ProxySettings(), true)
 	cfg.Admin = nil
 	return &SitePreview{RouteID: id, Enabled: site.Enabled, Blocked: len(blocked) > 0, Config: cfg}, nil
 }

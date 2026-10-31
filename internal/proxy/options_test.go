@@ -62,7 +62,7 @@ func TestBuildConfigGolden(t *testing.T) {
 			if err := tt.route.Options.validate(tt.route.Host, tt.route.TLSMode); err != nil {
 				t.Fatalf("fixture invalid: %v", err)
 			}
-			cfg, blocked := buildConfig([]Route{tt.route})
+			cfg, blocked := buildConfig([]Route{tt.route}, Settings{})
 			if len(blocked) > 0 {
 				t.Fatalf("blocked = %v", blocked)
 			}
@@ -101,7 +101,7 @@ func TestBuildConfigDefaultsMatchLegacyOutput(t *testing.T) {
 	cfg, _ := buildConfig([]Route{
 		{Host: "a.example.com", Upstream: "10.0.0.5:8080", TLSMode: "auto", Enabled: true, Options: stored},
 		{Host: "b.lan", Upstream: "10.0.0.6:80", TLSMode: "none", Enabled: true, Options: stored},
-	})
+	}, Settings{})
 	got, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestBuildConfigWWWRedirectYieldsToRealSite(t *testing.T) {
 	cfg, _ := buildConfig([]Route{
 		site("auto", SiteOptions{Routing: RoutingOptions{WWWRedirect: true}}),
 		{Host: "www.app.example.com", Upstream: "10.0.0.9:80", TLSMode: "auto", Enabled: true},
-	})
+	}, Settings{})
 	for _, p := range cfg.Apps.TLS.Automation.Policies {
 		if p.Subjects[0] == "app.example.com" && len(p.Subjects) != 1 {
 			t.Fatalf("www name claimed by the redirect: %v", p.Subjects)
@@ -131,7 +131,7 @@ func TestBuildConfigWWWRedirectYieldsToRealSite(t *testing.T) {
 func TestBuildConfigBlocksInvalidStoredOptions(t *testing.T) {
 	bad := site("auto", SiteOptions{Access: AccessOptions{BasicAuth: []BasicAuthUser{{Username: "x"}}}})
 	unreadable := Route{Host: "b.example.com", Upstream: "10.0.0.5:80", TLSMode: "auto", Enabled: true, optionsErr: errors.New("bad json")}
-	_, blocked := buildConfig([]Route{bad, unreadable})
+	_, blocked := buildConfig([]Route{bad, unreadable}, Settings{})
 	if len(blocked) != 2 {
 		t.Fatalf("blocked = %v", blocked)
 	}
@@ -277,14 +277,14 @@ func TestRouteOptionsLifecycle(t *testing.T) {
 
 	// Updating without options keeps them; resending a user without a
 	// password keeps its hash.
-	if err := s.UpdateRoute(ctx, r.ID, "10.0.0.3:80", "auto", true, nil); err != nil {
+	if err := s.UpdateRoute(ctx, r.ID, "10.0.0.3:80", "auto", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := s.getRoute(ctx, r.ID); got.Options.Access.BasicAuth[0].Hash != hash || !got.Options.Performance.FlushImmediately {
 		t.Fatalf("options lost on update without options: %+v", got.Options)
 	}
 	keep := SiteOptions{Access: AccessOptions{BasicAuth: []BasicAuthUser{{Username: "marcel"}}}}
-	if err := s.UpdateRoute(ctx, r.ID, "10.0.0.3:80", "auto", true, &keep); err != nil {
+	if err := s.UpdateRoute(ctx, r.ID, "10.0.0.3:80", "auto", nil, &keep); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.getRoute(ctx, r.ID)
@@ -293,10 +293,10 @@ func TestRouteOptionsLifecycle(t *testing.T) {
 	}
 
 	hsts := SiteOptions{HTTPS: HTTPSOptions{HSTS: true}}
-	if err := s.UpdateRoute(ctx, r.ID, "10.0.0.3:80", "none", true, &hsts); !errors.Is(err, ErrInvalidOptions) {
+	if err := s.UpdateRoute(ctx, r.ID, "10.0.0.3:80", "none", nil, &hsts); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("hsts on tls none: err = %v", err)
 	}
-	if err := s.UpdateRoute(ctx, 999, "10.0.0.3:80", "auto", true, nil); !errors.Is(err, ErrRouteNotFound) {
+	if err := s.UpdateRoute(ctx, 999, "10.0.0.3:80", "auto", nil, nil); !errors.Is(err, ErrRouteNotFound) {
 		t.Fatalf("missing route: err = %v", err)
 	}
 
