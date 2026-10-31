@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/proxy"
@@ -354,4 +355,51 @@ func (h *Handlers) DeleteProxyRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(r, "proxy.route_delete", idStr, nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ImportProxyCaddyfile maps the sites of a Caddyfile to routes with
+// options. Importable sites are created disabled unless dry_run is set;
+// what can't be mapped is reported per site.
+//
+//	POST /api/v1/proxy/import
+func (h *Handlers) ImportProxyCaddyfile(w http.ResponseWriter, r *http.Request) {
+	if h.Proxy == nil {
+		writeError(w, http.StatusServiceUnavailable, "proxy not configured")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 2*proxy.MaxCaddyfileSize)
+	var req struct {
+		Caddyfile string `json:"caddyfile"`
+		DryRun    bool   `json:"dry_run"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if strings.TrimSpace(req.Caddyfile) == "" {
+		writeError(w, http.StatusBadRequest, "caddyfile required")
+		return
+	}
+	res, err := h.Proxy.ImportCaddyfile(r.Context(), req.Caddyfile, req.DryRun)
+	switch {
+	case errors.Is(err, proxy.ErrProxyNotConfigured):
+		writeError(w, http.StatusConflict, "start the proxy first: Caddy reads the Caddyfile")
+		return
+	case errors.Is(err, proxy.ErrCaddyfileRejected), errors.Is(err, proxy.ErrCaddyfileInvalid):
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !req.DryRun {
+		var created []string
+		for _, s := range res.Sites {
+			if s.RouteID != 0 {
+				created = append(created, s.Host)
+			}
+		}
+		h.audit(r, "proxy.import", "", map[string]any{"created": created, "sites": len(res.Sites)})
+	}
+	writeJSON(w, http.StatusOK, res)
 }
