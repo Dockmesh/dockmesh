@@ -74,6 +74,7 @@ var (
 	ErrNameTaken     = errors.New("agent name already exists")
 	ErrInvalidToken  = errors.New("invalid enrollment token")
 	ErrAlreadyOnline = errors.New("agent already connected")
+	ErrCertReplaced  = errors.New("agent certificate was replaced")
 )
 
 // Service owns the agents table + the in-memory map of active connections.
@@ -654,8 +655,11 @@ func (s *Service) markOnline(ctx context.Context, ag *ConnectedAgent, hello Hell
 
 	// Set online_since on the transition; preserve a previous value if
 	// the agent reconnected within a short window (briefly flapped) by
-	// only setting it when currently NULL.
-	_, err := s.db.ExecContext(ctx, `
+	// only setting it when currently NULL. The fingerprint is checked
+	// again because a re-enroll can replace it while this session waits
+	// for its hello; Enroll updates the row before it disconnects, so
+	// either this UPDATE misses or Enroll sees the map entry.
+	res, err := s.db.ExecContext(ctx, `
 		UPDATE agents
 		   SET status = 'online',
 		       hostname = ?,
@@ -666,8 +670,15 @@ func (s *Service) markOnline(ctx context.Context, ag *ConnectedAgent, hello Hell
 		       last_seen_at = CURRENT_TIMESTAMP,
 		       online_since = COALESCE(online_since, CURRENT_TIMESTAMP),
 		       updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ?`,
-		hello.Hostname, hello.OS, hello.Arch, hello.Version, hello.DockerVersion, ag.ID)
+		 WHERE id = ?
+		   AND status NOT IN ('revoked', 'pending')
+		   AND (cert_fingerprint = ? OR pending_cert_fingerprint = ?)`,
+		hello.Hostname, hello.OS, hello.Arch, hello.Version, hello.DockerVersion, ag.ID, ag.certFP, ag.certFP)
+	if err == nil {
+		if n, _ := res.RowsAffected(); n != 1 {
+			err = ErrCertReplaced
+		}
+	}
 	if err != nil {
 		// The caller doesn't defer markOffline on failure, so the entry
 		// would otherwise refuse every later connection as a duplicate.
