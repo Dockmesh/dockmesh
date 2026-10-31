@@ -145,7 +145,7 @@ func TestPumpInputDrainsBeforeEOFAndGrantsCredit(t *testing.T) {
 	f := recvFrame(t, frames)
 	var sc agents.StreamControl
 	_ = json.Unmarshal(f.Payload, &sc)
-	if sc.Op != agents.StreamOpCredit || agents.CreditCount(sc.Params) != agents.GrantBatch {
+	if sc.Op != agents.StreamOpCredit || agents.CreditCount(sc.Params["n"]) != agents.GrantBatch {
 		t.Fatalf("got %s %+v, want a credit grant", f.Type, sc)
 	}
 }

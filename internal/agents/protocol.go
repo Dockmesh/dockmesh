@@ -128,6 +128,10 @@ const (
 // skips what they lack and recommends an update.
 const ProtocolVersion = 2
 
+// MaxFrameBytes bounds one inbound frame on either side; the largest
+// legitimate ones are 1 MiB file reads and exec output, base64-encoded.
+const MaxFrameBytes = 16 << 20
+
 // Capabilities exchanged in hello / welcome.
 const (
 	CapRequestCancel = "req.cancel"    // agent: honours FrameReqCancel

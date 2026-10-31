@@ -38,6 +38,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -61,18 +62,6 @@ import (
 
 	"github.com/dockmesh/dockmesh/pkg/version"
 )
-
-// agentVersion returns the build-stamped version so `make build`
-// flags -X pkg/version.Version=… actually surface in the UI + in
-// the upgrade decision. Previously this was a hardcoded const so
-// every install showed "0.1.0-dev" regardless of the binary hash.
-func agentVersion() string {
-	v := version.Version
-	if version.Commit != "" && version.Commit != "none" {
-		return v + "+" + version.Commit
-	}
-	return v
-}
 
 type agentConfig struct {
 	dataDir        string
@@ -239,7 +228,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 		return fmt.Errorf("dial: %w", err)
 	}
 	defer conn.Close()
-	conn.SetReadLimit(maxFrameBytes)
+	conn.SetReadLimit(agents.MaxFrameBytes)
 
 	// Send hello
 	hostname, _ := os.Hostname()
@@ -274,8 +263,6 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 	slog.Info("connected", "agent_id", welcome.AgentID, "agent_name", welcome.AgentName,
 		"server", welcome.ServerVersion, "protocol", welcome.ProtocolVersion)
 
-	// The server pings every 30s, so silence means it is gone even if
-	// the TCP connection still looks open.
 	_ = conn.SetReadDeadline(time.Now().Add(serverSilence))
 
 	ctxConn, cancel := context.WithCancel(ctx)
@@ -299,7 +286,7 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 			}
 		}
 	}()
-	if hasCapability(welcome.Capabilities, agents.CapCertRenew) {
+	if slices.Contains(welcome.Capabilities, agents.CapCertRenew) {
 		go renewLoop(ctxConn, conn, store)
 	} else if time.Until(store.notAfter()) < agents.RenewBefore {
 		slog.Warn("client cert expires soon and this server can't renew it; update the server",
@@ -421,7 +408,7 @@ func registerStream(parent context.Context, open agents.StreamOpen) *streamReg {
 		input:  make(chan []byte, agents.StreamWindow),
 		eof:    make(chan struct{}),
 	}
-	if n := agents.CreditCount(map[string]any{"n": open.Params["window"]}); n > 0 {
+	if n := agents.CreditCount(open.Params["window"]); n > 0 {
 		r.credit = agents.NewCredit(n)
 	}
 	streamMu.Lock()
@@ -479,7 +466,7 @@ func deliverStreamControl(id, op string, params map[string]any) {
 	switch op {
 	case agents.StreamOpCredit:
 		if r.credit != nil {
-			r.credit.Add(agents.CreditCount(params))
+			r.credit.Add(agents.CreditCount(params["n"]))
 		}
 	case agents.StreamOpEOF:
 		r.eofOnce.Do(func() { close(r.eof) })

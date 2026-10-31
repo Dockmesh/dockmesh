@@ -215,7 +215,7 @@ func TestStreamCreditBackpressure(t *testing.T) {
 	}
 	var open StreamOpen
 	_ = json.Unmarshal(nextFrame(t, ag).Payload, &open)
-	if CreditCount(map[string]any{"n": open.Params["window"]}) != StreamWindow {
+	if CreditCount(open.Params["window"]) != StreamWindow {
 		t.Fatalf("stream.open params %v lack the window", open.Params)
 	}
 
@@ -232,7 +232,7 @@ func TestStreamCreditBackpressure(t *testing.T) {
 	f := nextFrame(t, ag)
 	var sc StreamControl
 	_ = json.Unmarshal(f.Payload, &sc)
-	if f.Type != FrameStreamControl || sc.Op != StreamOpCredit || CreditCount(sc.Params) != GrantBatch {
+	if f.Type != FrameStreamControl || sc.Op != StreamOpCredit || CreditCount(sc.Params["n"]) != GrantBatch {
 		t.Fatalf("got %s %+v, want a credit grant of %d", f.Type, sc, GrantBatch)
 	}
 }
@@ -351,7 +351,7 @@ func TestStreamOversizedChunkFails(t *testing.T) {
 
 func TestCreditCountClamps(t *testing.T) {
 	for _, v := range []any{float64(0), float64(-3), float64(1e300), "64", nil} {
-		if n := CreditCount(map[string]any{"n": v}); n != 0 {
+		if n := CreditCount(v); n != 0 {
 			t.Errorf("CreditCount(%v) = %d, want 0", v, n)
 		}
 	}

@@ -18,8 +18,6 @@ const (
 	// serverSilence is how long the agent waits without any frame before
 	// it treats the server as gone. The server pings every 30s.
 	serverSilence = 90 * time.Second
-	// maxFrameBytes bounds one inbound frame (compose files, stdin).
-	maxFrameBytes = 16 << 20
 	// stableSession is how long a session must last for the next
 	// reconnect to start over at the immediate first attempt.
 	stableSession = time.Minute
@@ -124,13 +122,4 @@ func askServer(ctx context.Context, conn *websocket.Conn, frameType string, payl
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-
-func hasCapability(caps []string, name string) bool {
-	for _, c := range caps {
-		if c == name {
-			return true
-		}
-	}
-	return false
 }

@@ -32,9 +32,6 @@ var upgrader = websocket.Upgrader{
 }
 
 const (
-	// maxFrameBytes bounds one inbound frame; the largest legitimate
-	// ones are 1 MiB file reads and exec output, base64-encoded.
-	maxFrameBytes  = 16 << 20
 	maxRenewBytes  = 16 << 10
 	heartbeatGrace = 60 * time.Second
 	pingInterval   = 30 * time.Second
@@ -72,7 +69,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ag := newConnectedAgent(agent.ID, agent.Name, func() { _ = conn.Close() })
 	ag.certFP = fp
 	ag.certNotAfter = peer.NotAfter
-	conn.SetReadLimit(maxFrameBytes)
+	conn.SetReadLimit(MaxFrameBytes)
 
 	// Wait for the hello frame before marking the agent online so the DB
 	// reflects the most up-to-date hostinfo.
@@ -116,7 +113,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	welcome, _ := json.Marshal(WelcomePayload{
 		AgentID:         agent.ID,
 		AgentName:       agent.Name,
-		ServerVersion:   ServerVersion(),
+		ServerVersion:   version.Label(),
 		ProtocolVersion: ProtocolVersion,
 		Capabilities:    serverCapabilities,
 	})
@@ -189,14 +186,6 @@ func (h *WSHandler) pump(ag *ConnectedAgent, conn *websocket.Conn) {
 
 // serverCapabilities is what this server offers agents in the welcome.
 var serverCapabilities = []string{CapStreamCredit, CapCertRenew}
-
-// ServerVersion is the build label agents see in the welcome.
-func ServerVersion() string {
-	if version.Commit != "" && version.Commit != "none" {
-		return version.Version + "+" + version.Commit
-	}
-	return version.Version
-}
 
 func writeFrame(conn *websocket.Conn, f Frame) error {
 	b, err := json.Marshal(f)

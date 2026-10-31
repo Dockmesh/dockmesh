@@ -58,11 +58,11 @@ func (c *Credit) Add(n int) {
 // credit frame doesn't follow every single data frame.
 const GrantBatch = StreamWindow / 4
 
-// CreditCount decodes the count of a StreamOpCredit control frame (or a
-// window); anything outside 1..StreamWindow counts as 0.
-func CreditCount(params map[string]any) int {
+// CreditCount decodes the "n" of a StreamOpCredit control frame or the
+// "window" of a stream open; anything outside 1..StreamWindow counts as 0.
+func CreditCount(raw any) int {
 	var n float64
-	switch v := params["n"].(type) {
+	switch v := raw.(type) {
 	case float64:
 		n = v
 	case int:

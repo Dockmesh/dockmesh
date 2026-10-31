@@ -40,7 +40,6 @@ type Stream struct {
 	finishOnce sync.Once
 	err        error // terminal error, written before done closes; nil = EOF
 
-	credit     bool    // flow control negotiated with the agent
 	sendCredit *Credit // server → agent frames we may still send
 
 	// Only Read touches these.
@@ -60,7 +59,6 @@ func (c *ConnectedAgent) OpenStream(ctx context.Context, kind, container string,
 		done:     make(chan struct{}),
 	}
 	if c.Hello.Has(CapStreamCredit) {
-		s.credit = true
 		s.sendCredit = NewCredit(StreamWindow)
 		withWindow := make(map[string]any, len(params)+1)
 		for k, v := range params {
@@ -185,7 +183,7 @@ func (s *Stream) Read(p []byte) (int, error) {
 // that can't be queued would stall the agent for good, so that fails
 // the stream.
 func (s *Stream) grant() error {
-	if !s.credit {
+	if s.sendCredit == nil {
 		return nil
 	}
 	s.consumed++
@@ -248,7 +246,7 @@ func (c *ConnectedAgent) routeStreamFrame(f Frame) {
 			return
 		}
 		if s := c.lookupStream(sc.StreamID); s != nil && sc.Op == StreamOpCredit && s.sendCredit != nil {
-			s.sendCredit.Add(CreditCount(sc.Params))
+			s.sendCredit.Add(CreditCount(sc.Params["n"]))
 		}
 
 	case FrameStreamClose:
