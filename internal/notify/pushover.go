@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -82,8 +81,7 @@ func (c *pushoverChannel) Send(ctx context.Context, n Notification) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("pushover %d: %s", resp.StatusCode, string(b))
+		return newStatusError("pushover ", resp)
 	}
 	return nil
 }

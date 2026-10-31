@@ -1,15 +1,18 @@
 package handlers
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/gitsource"
+	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -53,7 +56,8 @@ func (h *Handlers) ConfigureGitSource(w http.ResponseWriter, r *http.Request) {
 	}
 	src, err := h.GitSource.Configure(r.Context(), name, in)
 	if errors.Is(err, gitsource.ErrInvalidAuthKind) || errors.Is(err, gitsource.ErrPollTooShort) ||
-		errors.Is(err, gitsource.ErrStackNameInvalid) || errors.Is(err, gitsource.ErrPathOutsideRepo) {
+		errors.Is(err, gitsource.ErrStackNameInvalid) || errors.Is(err, gitsource.ErrPathOutsideRepo) ||
+		errors.Is(err, gitsource.ErrWebhookSecretShort) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -64,9 +68,10 @@ func (h *Handlers) ConfigureGitSource(w http.ResponseWriter, r *http.Request) {
 	// First sync fills the stack FS. Save the config either way (so the
 	// user can fix creds and retry) but surface sync failure with 422 +
 	// clear `sync_ok: false` so the UI can display it loudly instead of
-	// silently pretending the connect succeeded. Fixes FINDING-9.
+	// silently pretending the connect succeeded.
 	syncResult, syncErr := h.GitSource.Sync(r.Context(), name)
 	h.audit(r, "stack.git_configure", name, map[string]any{"repo": in.RepoURL})
+	h.syncGitWebhookNotice(r.Context())
 	res := map[string]any{
 		"source":  src,
 		"sync_ok": syncErr == nil,
@@ -95,6 +100,7 @@ func (h *Handlers) DeleteGitSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, "stack.git_disconnect", name, nil)
+	h.syncGitWebhookNotice(r.Context())
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -111,6 +117,16 @@ func (h *Handlers) SyncGitSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no git source configured")
 		return
 	}
+	if errors.Is(err, stacks.ErrModifiedOutside) {
+		changed, _ := h.Stacks.ModifiedOutside(name)
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": stacks.ErrModifiedOutside.Error(),
+			"code":  "modified_outside",
+			"stack": name,
+			"files": changed,
+		})
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -120,16 +136,15 @@ func (h *Handlers) SyncGitSource(w http.ResponseWriter, r *http.Request) {
 }
 
 // GitWebhook is the PUBLIC endpoint GitHub / GitLab / Gitea POST to on
-// push events. If the stack's source has a webhook_secret configured,
-// we verify the HMAC before kicking off the sync. Signature formats:
+// push events. The stack's source must have a webhook_secret and the
+// request must carry a matching signature:
 //
 //   - GitHub:  X-Hub-Signature-256: sha256=<hex>
 //   - GitLab:  X-Gitlab-Token: <secret>   (plain shared secret)
 //   - Gitea:   X-Gitea-Signature: <hex>   (sha256 HMAC, like GitHub)
 //
-// No auth is required if no secret is configured — the caller just
-// has to know the stack name. That is weaker than signed webhooks but
-// matches what Portainer ships as the default.
+// Without a secret the webhook is disabled: anyone who knows the stack
+// name could otherwise trigger syncs and auto-deploys.
 func (h *Handlers) GitWebhook(w http.ResponseWriter, r *http.Request) {
 	if h.GitSource == nil {
 		writeError(w, http.StatusServiceUnavailable, "git source service not configured")
@@ -142,31 +157,44 @@ func (h *Handlers) GitWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "read body")
 		return
 	}
+	// Unknown stack, missing secret and bad signature all get the same 401
+	// so the public endpoint doesn't reveal which stacks exist.
 	secret, err := h.GitSource.WebhookSecret(r.Context(), name)
-	if errors.Is(err, gitsource.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "no git source configured")
+	switch {
+	case errors.Is(err, gitsource.ErrNotFound):
+		writeError(w, http.StatusUnauthorized, "webhook rejected")
+		return
+	case err != nil:
+		slog.Warn("git webhook secret lookup failed", "stack", name, "err", err)
+		writeError(w, http.StatusInternalServerError, "webhook lookup failed")
+		return
+	case secret == "":
+		slog.Info("git webhook rejected: no webhook secret set", "stack", name)
+		writeError(w, http.StatusUnauthorized, "webhook rejected")
+		return
+	case !verifyWebhookSignature(r, body, secret):
+		writeError(w, http.StatusUnauthorized, "webhook rejected")
 		return
 	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+	trigger := h.gitWebhookTrigger
+	if trigger == nil {
+		trigger = h.GitSource.TriggerSync
 	}
-	if secret != "" {
-		if !verifyWebhookSignature(r, body, secret) {
-			writeError(w, http.StatusUnauthorized, "signature mismatch")
-			return
-		}
-	}
-	// Sync in the background so we don't block the webhook sender.
-	// Webhooks are fire-and-forget — the provider retries on timeout.
-	go func() {
-		if _, err := h.GitSource.Sync(r.Context(), name); err != nil {
-			// Already recorded on the row by the service; just log.
-			_ = err
-		}
-	}()
+	trigger(r.Context(), name)
 	h.audit(r, "stack.git_webhook", name, nil)
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "sync queued"})
+}
+
+// syncGitWebhookNotice re-evaluates the missing-webhook-secret notice after
+// a git source changed. Failures only delay the notice until the next
+// change or restart.
+func (h *Handlers) syncGitWebhookNotice(ctx context.Context) {
+	if h.GitSource == nil || h.Notices == nil {
+		return
+	}
+	if err := h.GitSource.SyncWebhookNotice(ctx, h.Notices); err != nil {
+		slog.Warn("git webhook notice update failed", "err", err)
+	}
 }
 
 // verifyWebhookSignature checks the incoming signature against the

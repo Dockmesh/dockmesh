@@ -53,7 +53,6 @@ import (
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/scaling"
 	"github.com/dockmesh/dockmesh/internal/settings"
-	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/registries"
 	"github.com/dockmesh/dockmesh/internal/scanner"
 	"github.com/dockmesh/dockmesh/internal/secrets"
@@ -72,15 +71,35 @@ import (
 //go:embed all:web_dist
 var webDist embed.FS
 
+// loadedEnvFile is the env file loadEnvFileFromArgs read, empty when the
+// environment came from elsewhere (systemd's EnvironmentFile=, a shell).
+var loadedEnvFile string
+
+// serverEnvFile names the env file this server most likely runs with: the
+// one loaded from --env-file or the default location, else the file
+// install.sh writes next to the data dir. Empty when neither is known.
+func serverEnvFile(dbPath string) string {
+	if loadedEnvFile != "" {
+		return loadedEnvFile
+	}
+	if dbPath == "" {
+		return ""
+	}
+	guess := filepath.Clean(filepath.Join(filepath.Dir(dbPath), "..", "dockmesh.env"))
+	if _, err := os.Stat(guess); err == nil {
+		return guess
+	}
+	return ""
+}
+
 // loadEnvFileFromArgs scans os.Args for --env-file=PATH or
 // --env-file PATH, loads that file as KEY=VALUE env vars (skipping
 // `#`-prefixed comments + blank lines), and strips the flag out of
 // os.Args so the rest of the process never sees it.
 //
 // If no --env-file was passed, we also try the default location where
-// `dockmesh init` writes its env file (/var/lib/dockmesh/dockmesh.env
-// on Linux, /usr/local/var/dockmesh/dockmesh.env on macOS). This lets
-// CLI commands like `sudo dockmesh admin list-users` find the DB + PKI
+// install.sh and `dockmesh init` write the env file (see defaultEnvFiles).
+// This lets CLI commands like `sudo dockmesh admin list-users` find the DB + PKI
 // without the operator having to source the file or pass --env-file
 // every time.
 //
@@ -109,32 +128,36 @@ func loadEnvFileFromArgs() error {
 		keep = append(keep, arg)
 		i++
 	}
-	if path == "" {
+	explicit := path != ""
+	if !explicit {
 		// Auto-detect a well-known env file location. Only load if the
 		// operator hasn't already set DOCKMESH_DB_PATH in their shell —
 		// an explicit env var always wins over the auto-loaded file.
 		if _, already := os.LookupEnv("DOCKMESH_DB_PATH"); already {
 			return nil
 		}
-		for _, candidate := range []string{
-			"/var/lib/dockmesh/dockmesh.env",      // Linux default
-			"/usr/local/var/dockmesh/dockmesh.env", // macOS default
-		} {
-			if _, err := os.Stat(candidate); err == nil {
-				path = candidate
-				break
-			}
-		}
+		path = firstExistingFile(defaultEnvFiles)
 		if path == "" {
 			return nil
 		}
 	} else {
 		os.Args = keep
 	}
-	data, err := os.ReadFile(path)
+	var data []byte
+	var err error
+	if explicit {
+		data, err = os.ReadFile(path) // #nosec G703 -- explicit --env-file chosen by the operator running the CLI
+	} else {
+		data, err = readTrustedEnvFile(path)
+		if errors.Is(err, errUntrustedEnvFile) {
+			fmt.Fprintf(os.Stderr, "dockmesh: not loading %s (%v); pass --env-file to use it\n", path, err)
+			return nil
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
+	loadedEnvFile = path
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -290,25 +313,26 @@ func main() {
 			slog.Error("bootstrap failed", "err", err)
 			os.Exit(1)
 		} else if created {
-			slog.Warn("bootstrap admin created — store this password, it will not be shown again",
-				"username", username, "password", password)
+			// Straight to the console, not slog: structured logs get shipped
+			// to aggregators and kept, the password must not be.
+			slog.Warn("bootstrap admin created, the password was printed to the console once", "username", username)
+			fmt.Fprintf(os.Stderr, "\nBootstrap admin created. Store this password, it will not be shown again:\n  username: %s\n  password: %s\n\n", username, password)
 		}
 	}
 
-	// P.14.1: setup-mode state. Active when no admin user exists in the
-	// DB, or when the force-flag pins it on. Used by the gating
+	// Setup-mode state. Active when no admin user exists in the
+	// DB; the force flag never reopens it over an admin. Used by the gating
 	// middleware to redirect a freshly-installed server's URL to /setup
 	// instead of the login screen.
-	setupState, err := setup.NewFromDB(ctx, database)
+	setupState, setupForceIgnored, err := setup.NewForBoot(ctx, database, cfg.SetupForce)
 	if err != nil {
 		slog.Error("setup state init failed", "err", err)
 		os.Exit(1)
 	}
-	if cfg.SetupForce {
-		// Pin active even if an admin exists (used during dev for the
-		// wizard, never normal-operation). Status output makes this
-		// visible.
-		setupState = setup.NewForced()
+	setupEnvFile := serverEnvFile(cfg.DBPath)
+	if setupForceIgnored {
+		slog.Warn("DOCKMESH_SETUP_FORCE ignored: an admin account exists, the setup wizard stays closed — remove the flag from the env file",
+			"env_file", setupEnvFile)
 	}
 	if setupState.Active() {
 		slog.Warn("server starting in setup-mode — finish the install wizard at /setup",
@@ -379,6 +403,8 @@ func main() {
 		slog.Info("secrets encryption enabled", "recipient", secretsSvc.PublicRecipient())
 	}
 
+	system.SetRolePathsFn(serverRolePaths(database, dockerCli, cfg.StacksRoot, filepath.Dir(cfg.DBPath)))
+
 	stacksMgr, err := stacks.NewManager(cfg.StacksRoot, secretsSvc)
 	if err != nil {
 		slog.Error("stacks manager init failed", "err", err)
@@ -418,14 +444,15 @@ func main() {
 	// decision is made below once the settings store is loaded so the
 	// DB-backed `proxy_enabled` setting outranks the env var default.
 	proxySvc := proxy.NewService(database, dockerCli, false)
+	proxySvc.SetImage(cfg.ProxyImage)
 	updaterSvc := updater.NewService(dockerCli, database)
+	updaterSvc.SetRollbackKeep(cfg.UpdateRollbackKeep)
 	// Background image-update watcher: every 30 minutes asks each
 	// running container's registry for a fresher manifest. Result is
 	// surfaced via /api/v1/images/updates and as image_update_available
-	// on the container list. Local-host only — remote agents would need
-	// their own watcher; deferred.
-	updateWatcher := updater.NewWatcher(dockerCli, 30*time.Minute)
-	updateWatcher.Start(ctx)
+	// on the container list. Local host only. Started once the notifier
+	// and registry credentials are wired.
+	updateWatcher := updater.NewWatcher(dockerCli, database, 30*time.Minute)
 	defer updateWatcher.Stop()
 	oidcSvc := oidc.NewService(database, authSvc, secretsSvc, cfg.BaseURL)
 	samlSvc := saml.NewService(database, authSvc, secretsSvc, cfg.BaseURL)
@@ -481,6 +508,12 @@ func main() {
 	if err := backupSvc.MarkAutoCreatedJobsForReview(ctx); err != nil {
 		slog.Warn("backup default review migration", "err", err)
 	}
+	// Before seedLocalBackupRoots, so a kept legacy directory becomes an
+	// allowed root on the first start.
+	sysPathFrom, sysPathTo, err := backupSvc.MigrateSystemJobPath(ctx)
+	if err != nil {
+		slog.Warn("system backup path migration", "err", err)
+	}
 	defer backupSvc.Stop()
 
 	// Auto-scaling controller (P.8). The ScaleFunc closure routes through
@@ -528,7 +561,13 @@ func main() {
 		// agent listener port. Operator should override via env in prod.
 		agentPublic = deriveAgentURL(cfg.BaseURL, cfg.AgentListen)
 	}
+	if h := urlHostname(agentPublic); cfg.AgentListen != "" && h != "" && !pkiMgr.ServerCertCovers(h) {
+		slog.Warn("agent server certificate does not cover the agent public host; agents dialing it will fail TLS verification",
+			"host", h, "cert_sans", pkiMgr.ServerCertSANs(),
+			"fix", "dockmesh ca reissue-server --add-san "+h+", then restart")
+	}
 	agentsSvc := agents.NewService(database, pkiMgr, cfg.BaseURL, agentPublic)
+	agentsSvc.SetEnrollTokenTTL(cfg.AgentEnrollTokenTTL)
 	hostRegistry := host.NewRegistry(dockerCli, agentsSvc)
 
 	// Wire host routing into the backup executor so jobs with host_id
@@ -566,22 +605,6 @@ func main() {
 	selfUpdateChk := selfupdate.New(settingsStore, version.Version)
 	selfUpdateChk.Start(ctx)
 
-	// Proxy: the boot-time config flag is just the *default* — the
-	// DB-backed `proxy_enabled` setting overrides it so an admin
-	// flipping the toggle persists across restarts without env-var
-	// edits. If enabled, bring the Caddy container up now (idempotent
-	// — EnableProxy removes any stale container + reseeds bootstrap
-	// config + pushes the current routes).
-	if settingsStore.GetBool("proxy_enabled", cfg.ProxyEnabled) {
-		if err := proxySvc.EnableProxy(ctx); err != nil {
-			slog.Warn("proxy boot-up failed — toggle off/on in Settings once Docker is reachable", "err", err)
-		}
-	}
-	// Start the ACME event tailer regardless of current proxy state —
-	// the loop is dormant when the proxy is disabled and reconnects
-	// automatically once the container appears.
-	proxySvc.StartACMETailer(ctx)
-
 	globalEnvStore := globalenv.NewStore(database)
 
 	// RBAC v2: DB-backed custom roles with in-memory cache.
@@ -616,6 +639,11 @@ func main() {
 	noticesSvc.Register("backups.local-roots-review", func(ctx context.Context, n *notices.Service) error {
 		return syncSeededRootsNotice(ctx, n, settingsStore)
 	})
+	noticesSvc.Register(saml.RekeyNoticeKey, samlSvc.SyncRekeyNotice)
+	noticesSvc.RegisterRefresh(saml.RekeyNoticeKey, samlSvc.SyncRekeyNotice)
+	noticesSvc.Register("backups.system-job-path", func(ctx context.Context, n *notices.Service) error {
+		return raiseSystemPathNotice(ctx, n, sysPathFrom, sysPathTo)
+	})
 	noticesSvc.Register("backups.encrypt-unavailable", func(ctx context.Context, n *notices.Service) error {
 		return syncUnencryptableNotice(ctx, n, backupSvc)
 	})
@@ -631,6 +659,25 @@ func main() {
 		}
 	})
 	noticesSvc.Register("api-tokens.legacy", apiTokensSvc.SyncLegacyNotice)
+	proxySvc.SetNotices(noticesSvc)
+
+	// Proxy: the boot-time config flag is just the *default* — the
+	// DB-backed `proxy_enabled` setting overrides it so an admin
+	// flipping the toggle persists across restarts without env-var
+	// edits. If enabled, reconcile the Caddy container (kept when its
+	// spec is current) and push the current routes.
+	if _, err := proxySvc.Reconcile(ctx, settingsStore, cfg.ProxyEnabled); err != nil {
+		slog.Warn("proxy boot-up failed — toggle off/on in Settings once Docker is reachable", "err", err)
+	}
+	// Start the ACME event tailer regardless of current proxy state —
+	// the loop is dormant when the proxy is disabled and reconnects
+	// automatically once the container appears.
+	proxySvc.StartACMETailer(ctx)
+	proxySvc.StartWatchdog(ctx, 30*time.Second, func() bool {
+		return settingsStore.GetBool("proxy_enabled", cfg.ProxyEnabled)
+	})
+	noticesSvc.Register("backups.job-name-collision", backupSvc.SyncNameCollisionNotice)
+	noticesSvc.Register(setup.ForceIgnoredNoticeKey, setup.ForceNoticeCheck(setupForceIgnored, setupEnvFile))
 
 	// Wire the registries service into every code path that pulls an
 	// image. Without this, compose deploys + the "update image" button
@@ -638,6 +685,7 @@ func main() {
 	// private registries (GHCR, ECR, Quay, …) reply 401.
 	composeSvc.SetAuthResolver(registriesSvc)
 	updaterSvc.SetAuthResolver(registriesSvc)
+	updateWatcher.SetAuthResolver(registriesSvc)
 	hostRegistry.Local().SetAuthResolver(registriesSvc)
 	hostRegistry.Local().SetStackDirResolver(stacksMgr.Dir)
 
@@ -652,6 +700,7 @@ func main() {
 	// auto-deploy closure below can write an entry per git-triggered
 	// deploy — without that, /deployments only ever shows manual ones.
 	deployHistoryStore := stacks.NewHistoryStore(database)
+	updaterSvc.SetStacks(stacksMgr, deployHistoryStore)
 
 	// Git-backed stacks (P.11.11). Cache dir sits under the DB data
 	// dir so operators who override DOCKMESH_DB_PATH get the matching
@@ -704,6 +753,9 @@ func main() {
 					Title:    "Git auto-deploy failed: " + stackName,
 					Body:     deployErr.Error(),
 					Link:     "/stacks/" + stackName,
+					Perm:      rbac.PermStacksView,
+					HostID:    "local",
+					StackName: stackName,
 				})
 			} else if res != nil {
 				shaShort := ""
@@ -720,6 +772,9 @@ func main() {
 					Title:    "Git auto-deploy: " + stackName,
 					Body:     body,
 					Link:     "/stacks/" + stackName,
+					Perm:      rbac.PermStacksView,
+					HostID:    "local",
+					StackName: stackName,
 				})
 			}
 		}
@@ -752,6 +807,7 @@ func main() {
 		return res, nil
 	}
 	gitSourceSvc = gitsource.New(database, secretsSvc, stacksMgr, gitCacheDir, gitDeploy)
+	noticesSvc.Register("git-webhook.no-secret", gitSourceSvc.SyncWebhookNotice)
 	gitSourceSvc.Start(ctx)
 	defer gitSourceSvc.Stop()
 
@@ -793,10 +849,12 @@ func main() {
 	// FrameReqAgentUpgrade to pending agents based on policy.
 	agentUpgrade := agents.NewUpgradeController(agentsSvc, settingsStore)
 	agentUpgrade.Start(ctx)
+	go agentsSvc.RunCertNotices(ctx, noticesSvc)
 
 	// Host tags (P.11.2). In-memory cache loaded once at startup; kept
 	// fresh after every mutation via Load() inside the service.
 	hostTagsSvc := hosttags.New(database)
+	notifSvc.SetAccessChecker(&notifications.RBACAccess{Users: authSvc, Roles: rolesStore, Tags: hostTagsSvc})
 	if err := hostTagsSvc.Load(ctx); err != nil {
 		slog.Warn("host tags load", "err", err)
 	}
@@ -815,14 +873,22 @@ func main() {
 	// constructed. Producers tolerate nil — if we forgot to wire one,
 	// it just stays silent instead of crashing.
 	alertsSvc.SetNotifier(notifSvc)
+	alertsSvc.SetNotices(noticesSvc)
+	alertsSvc.SetSources(alertSources(hostRegistry, hostTagsSvc, proxySvc))
 	backupSvc.SetNotifier(notifSvc)
 	backupSvc.SetNotices(noticesSvc)
+	noticesSvc.Register(backup.RepairNoticeKey, func(ctx context.Context, n *notices.Service) error {
+		return repairJobSecretsOnce(ctx, settingsStore, backupSvc, backupTargetStore, n, func(j backup.Job, target string) {
+			auditSvc.Write(ctx, "", audit.ActionBackupJobRepaired, j.Name, map[string]any{"job_id": j.ID, "target": target})
+		})
+	})
 	updateWatcher.SetNotifier(notifSvc)
+	updateWatcher.Start(ctx)
 	agentsSvc.SetNotifier(notifSvc)
 	selfUpdateChk.SetNotifier(notifSvc)
 	migrationSvc.SetNotifier(notifSvc)
 
-	loginLimiter := ratelimit.New(10, time.Minute, 5*time.Minute)
+	loginLimiter := handlers.NewLoginLimiter()
 
 	// P.14.2: install-wizard commit function. Built here because it
 	// needs auth.Service + settings.Store + the configured paths.
@@ -831,42 +897,28 @@ func main() {
 	// warnings for the user-create and admin-create steps.
 	setupCommit := func(commitCtx context.Context, in setup.CommitInput, emit func(step, msg, status string)) error {
 		// Step 1 — service user. Skips entirely when we're not root,
-		// because both useradd and usermod need root and the wizard
-		// usually runs as the dockmesh user (non-root). The install
-		// script that ships in P.14.5 creates the user BEFORE starting
-		// the service, so first-install operators never hit this path.
-		// During re-runs we also skip the docker-group add when the
-		// user is already in the group, instead of running usermod
-		// only to log a no-op or a permission failure.
+		// because useradd needs root and the wizard usually runs as the
+		// dockmesh user (non-root). The install script creates the user
+		// before starting the service, so first-install operators never
+		// hit this path. Only a user created right here is added to the
+		// docker group: the wizard is unauthenticated, and docker group
+		// membership is root-equivalent, so it never grants that to an
+		// account that already exists.
 		isRoot := os.Geteuid() == 0
 		if in.ServiceUser.Mode == "create" {
 			if !isRoot {
 				emit("user.create", "skipping — wizard process is not root, install script handles user creation", "warn")
 			} else {
 				emit("user.create", "creating system user '"+in.ServiceUser.Username+"'", "info")
-				if err := setup.CreateSystemUser(in.ServiceUser.Username, in.ServiceUser.AddDocker); err != nil {
+				if err := setup.CreateSystemUser(in.ServiceUser.Username, in.AddsToDockerGroup()); err != nil {
 					emit("user.create", err.Error(), "fail")
 					return err
 				}
 				emit("user.create", "system user created", "ok")
 			}
-		} else if in.ServiceUser.AddDocker {
-			// Existing-user path: only run usermod if the user isn't
-			// already a docker-group member, and only when root.
-			check := setup.CheckSystemUser(in.ServiceUser.Username)
-			switch {
-			case check.InDockerGroup:
-				emit("user.docker_group", in.ServiceUser.Username+" is already in docker group", "ok")
-			case !isRoot:
-				emit("user.docker_group", "skipping — wizard process is not root, add "+in.ServiceUser.Username+" to docker group manually if needed", "warn")
-			default:
-				emit("user.docker_group", "adding "+in.ServiceUser.Username+" to docker group", "info")
-				if err := setup.AddToDockerGroup(in.ServiceUser.Username); err != nil {
-					emit("user.docker_group", err.Error(), "warn")
-				} else {
-					emit("user.docker_group", "added to docker group", "ok")
-				}
-			}
+		} else if check := setup.CheckSystemUser(in.ServiceUser.Username); !check.InDockerGroup {
+			emit("user.docker_group", in.ServiceUser.Username+" is not in the docker group — run 'sudo usermod -aG docker "+
+				in.ServiceUser.Username+"' if it needs Docker access", "warn")
 		}
 
 		// Step 2 — data directory. We only ensure existence + ownership;
@@ -911,8 +963,12 @@ func main() {
 		// exists in the DB), the next service restart should NOT
 		// re-enter setup mode — drop the flag so a regular boot lands
 		// the operator on the login screen.
-		envPath := filepath.Join(filepath.Dir(cfg.DBPath), "..", "dockmesh.env")
-		if cleaned, derr := scrubEnvFlag(envPath, "DOCKMESH_SETUP_FORCE"); derr == nil && cleaned {
+		envPath := serverEnvFile(cfg.DBPath)
+		if envPath == "" {
+			if cfg.SetupForce {
+				emit("setup_flag", "env file not located — remove DOCKMESH_SETUP_FORCE from it manually (default "+setup.DefaultEnvFile+")", "warn")
+			}
+		} else if cleaned, derr := scrubEnvFlag(envPath, "DOCKMESH_SETUP_FORCE"); derr == nil && cleaned {
 			emit("setup_flag", "removed DOCKMESH_SETUP_FORCE from "+envPath+" — next boot will not re-enter setup mode", "ok")
 		} else if derr != nil {
 			emit("setup_flag", "could not scrub setup flag: "+derr.Error()+" (manual edit may be needed)", "warn")
@@ -1033,11 +1089,14 @@ func main() {
 		} else {
 			agentMux := http.NewServeMux()
 			agentMux.Handle("/connect", agents.NewWSHandler(agentsSvc, pkiMgr))
+			agentMux.Handle(agents.EnrollPath, agents.EnrollHandler(agentsSvc))
+			agentMux.Handle(agents.BinaryPath, agents.BinaryHandler(agentsSvc))
 			agentSrv := &http.Server{
 				Addr:              cfg.AgentListen,
 				Handler:           agentMux,
 				TLSConfig:         tlsCfg,
 				ReadHeaderTimeout: 10 * time.Second,
+				IdleTimeout:       2 * time.Minute,
 			}
 			go func() {
 				slog.Info("agent mtls listening", "addr", cfg.AgentListen, "public_url", agentPublic)
@@ -1178,6 +1237,14 @@ func scrubEnvFlag(path, key string) (bool, error) {
 		return false, nil
 	}
 	return true, os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o600)
+}
+
+func urlHostname(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }
 
 func deriveAgentURL(baseURL, listen string) string {

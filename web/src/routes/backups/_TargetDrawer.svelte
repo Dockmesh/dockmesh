@@ -58,7 +58,7 @@
   const meta = $derived(targetTypeMeta(target.type));
   const cfgEntries = $derived(
     target.config && typeof target.config === 'object'
-      ? Object.entries(target.config as Record<string, any>)
+      ? Object.entries(target.config as Record<string, any>).filter(([k]) => !k.endsWith('_set'))
       : []
   );
 

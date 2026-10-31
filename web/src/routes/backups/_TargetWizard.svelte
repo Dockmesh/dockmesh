@@ -6,6 +6,7 @@
   import { api, ApiError, type BackupTarget } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
   import { Eyebrow } from '$lib/components/editorial';
+  import { stepValid, type TargetType } from '$lib/backupTargetForm';
   import WizardShell from './_WizardShell.svelte';
   import { Check, X, RefreshCw, AlertTriangle } from 'lucide-svelte';
 
@@ -25,10 +26,10 @@
   let step = $state(0);
   let busy = $state(false);
 
-  type TargetType = 'local' | 'sftp' | 'smb' | 'webdav' | 's3';
   let type = $state<TargetType>('local');
   let name = $state('new-target');
-  let cfg = $state<Record<string, any>>({ path: './data/backups' });
+  let cfg = $state<Record<string, any>>({ path: '' });
+  let defaultPath = $state('');
 
   // Test state. We start in 'idle' on each step-3 entry — the operator
   // explicitly clicks "Run test" to fire the probe. That avoids burning
@@ -64,7 +65,11 @@
     } else {
       type = 'local';
       name = 'new-target';
-      cfg = { path: './data/backups' };
+      cfg = { path: defaultPath };
+      void api.backups.localPath().then((p) => {
+        defaultPath = p;
+        if (!editing && !cfg.path) cfg = { ...cfg, path: p };
+      });
     }
   });
 
@@ -75,10 +80,28 @@
     checks = checks.map((c) => (c.id === id ? { ...c, state } : c));
   }
 
+  let hostKeyChanged = $state(false);
+  let acceptingKey = $state(false);
+
+  async function acceptHostKey() {
+    if (!editing) return;
+    acceptingKey = true;
+    try {
+      await api.backups.acceptTargetHostKey(editing.id);
+      toast.success('Host key accepted');
+      await runTest();
+    } catch (err) {
+      toast.error('Could not accept host key', err instanceof ApiError ? err.message : (err as Error).message);
+    } finally {
+      acceptingKey = false;
+    }
+  }
+
   async function runTest() {
     if (testState === 'testing') return;
     testState = 'testing';
     testResult = null;
+    hostKeyChanged = false;
     resetChecks();
     testStartedAt = Date.now();
     // Walk the checklist visually. Real test happens in one round-trip;
@@ -110,6 +133,12 @@
           // Phases after the failure stay idle.
         }
         testState = 'fail';
+        if (editing && type === 'sftp' && errLower.includes('host key changed')) {
+          // The unsaved-config test cannot record the new key; the stored
+          // target's own test does, which is what Accept works on.
+          await api.backups.testTarget(editing.id).catch(() => null);
+          hostKeyChanged = true;
+        }
       }
     } catch (err) {
       testDurationMs = Date.now() - testStartedAt;
@@ -119,19 +148,7 @@
     }
   }
 
-  // Validation per step
-  const step0Valid = $derived(name.trim().length > 0);
-  const step1Valid = $derived.by(() => {
-    if (type === 'local') return !!cfg.path;
-    if (type === 'sftp') return !!cfg.host && !!cfg.username;
-    if (type === 'smb') return !!cfg.host && !!cfg.share;
-    if (type === 'webdav') return !!cfg.url && !!cfg.username;
-    if (type === 's3') return !!cfg.endpoint && !!cfg.bucket && !!cfg.access_key;
-    return false;
-  });
-  const step2Valid = $derived(true); // Save Anyway is always allowed
-  const stepValidities = [step0Valid, step1Valid, step2Valid];
-  const canContinue = $derived(stepValidities[step]);
+  const canContinue = $derived(stepValid(step, name, type, cfg));
 
   async function finish() {
     busy = true;
@@ -217,7 +234,7 @@
         <div class="wiz-field">
           <label class="wiz-field-label" for="t-path">Path</label>
           <span class="wiz-field-hint">Absolute path. Must be writable by the dockmesh service user.</span>
-          <input id="t-path" class="wiz-input wiz-input-mono" placeholder="./data/backups" value={cfg.path ?? ''} oninput={(e) => (cfg = { ...cfg, path: (e.currentTarget as HTMLInputElement).value })} />
+          <input id="t-path" class="wiz-input wiz-input-mono" placeholder={defaultPath || '/srv/backups'} value={cfg.path ?? ''} oninput={(e) => (cfg = { ...cfg, path: (e.currentTarget as HTMLInputElement).value })} />
         </div>
       {:else if type === 'sftp'}
         <div class="wiz-grid-2">
@@ -239,6 +256,11 @@
             <label class="wiz-field-label" for="t-pass">Password</label>
             <input id="t-pass" class="wiz-input wiz-input-mono" type="password" value={cfg.password ?? ''} oninput={(e) => (cfg = { ...cfg, password: (e.currentTarget as HTMLInputElement).value })} />
           </div>
+        </div>
+        <div class="wiz-field">
+          <label class="wiz-field-label" for="t-key">Private key (optional)</label>
+          <span class="wiz-field-hint">PEM or OpenSSH private key, used instead of or besides the password. Stored encrypted, never shown again.{cfg.private_key_set && !cfg.private_key ? ' A key is saved; leave empty to keep it.' : ''}</span>
+          <textarea id="t-key" class="wiz-input wiz-input-mono" rows="4" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" value={cfg.private_key ?? ''} oninput={(e) => (cfg = { ...cfg, private_key: (e.currentTarget as HTMLTextAreaElement).value })}></textarea>
         </div>
         <div class="wiz-field">
           <label class="wiz-field-label" for="t-rpath">Remote path</label>
@@ -297,6 +319,11 @@
           <span class="wiz-field-hint">Subfolder under the WebDAV endpoint. Created if missing.</span>
           <input id="t-path" class="wiz-input wiz-input-mono" placeholder="/backups" value={cfg.path ?? ''} oninput={(e) => (cfg = { ...cfg, path: (e.currentTarget as HTMLInputElement).value })} />
         </div>
+        <div class="wiz-field">
+          <label class="wiz-field-label" for="t-ca">Custom CA certificate (optional)</label>
+          <span class="wiz-field-hint">PEM certificate to trust for an https endpoint signed by a private CA.</span>
+          <textarea id="t-ca" class="wiz-input wiz-input-mono" rows="3" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----" value={cfg.ca_cert ?? ''} oninput={(e) => (cfg = { ...cfg, ca_cert: (e.currentTarget as HTMLTextAreaElement).value })}></textarea>
+        </div>
       {:else if type === 's3'}
         <div class="wiz-grid-2">
           <div class="wiz-field">
@@ -322,6 +349,22 @@
             <input id="t-sk" class="wiz-input wiz-input-mono" type="password" value={cfg.secret_key ?? ''} oninput={(e) => (cfg = { ...cfg, secret_key: (e.currentTarget as HTMLInputElement).value })} />
           </div>
         </div>
+        <div class="wiz-field">
+          <label class="wiz-field-label" for="t-prefix">Prefix (optional)</label>
+          <span class="wiz-field-hint">Folder inside the bucket, nested levels allowed (backups/dockmesh).</span>
+          <input id="t-prefix" class="wiz-input wiz-input-mono" placeholder="backups/dockmesh" value={cfg.prefix ?? ''} oninput={(e) => (cfg = { ...cfg, prefix: (e.currentTarget as HTMLInputElement).value })} />
+        </div>
+        <label class="wiz-check">
+          <input type="checkbox" checked={!!cfg.use_ssl} onchange={(e) => (cfg = { ...cfg, use_ssl: (e.currentTarget as HTMLInputElement).checked })} />
+          <span>Use TLS (https). Required by AWS, Wasabi, B2 and most hosted services.</span>
+        </label>
+        {#if cfg.use_ssl}
+          <div class="wiz-field">
+            <label class="wiz-field-label" for="t-ca">Custom CA certificate (optional)</label>
+            <span class="wiz-field-hint">PEM certificate to trust for an endpoint signed by a private CA.</span>
+            <textarea id="t-ca" class="wiz-input wiz-input-mono" rows="3" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----" value={cfg.ca_cert ?? ''} oninput={(e) => (cfg = { ...cfg, ca_cert: (e.currentTarget as HTMLTextAreaElement).value })}></textarea>
+          </div>
+        {/if}
       {/if}
     </div>
   {/if}
@@ -386,6 +429,11 @@
               <strong>Connection test failed.</strong>
               <span class="font-mono wiz-test-err">{testResult.error || 'unknown error'}</span>
             </span>
+            {#if hostKeyChanged}
+              <button type="button" class="dm-btn dm-btn-danger dm-btn-xs" onclick={acceptHostKey} disabled={acceptingKey} title="Trust the key the server presents now">
+                Accept new host key
+              </button>
+            {/if}
           </div>
         {:else if testState === 'idle'}
           <p class="wiz-test-hint font-mono">Click "Run test" to validate the connection. You can also save without testing — the next backup run will surface any error.</p>
@@ -396,6 +444,7 @@
 </WizardShell>
 
 <style>
+  .wiz-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--fg-muted, inherit); }
   .wiz-stack { display: flex; flex-direction: column; gap: 18px; }
   .wiz-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 

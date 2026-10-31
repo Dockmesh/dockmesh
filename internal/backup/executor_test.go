@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // fakeHost serves volume archives from memory and records hook calls.
@@ -46,10 +47,6 @@ func (f *fakeHost) ContainerExec(_ context.Context, container string, cmd []stri
 	f.calls = append(f.calls, container+":"+strings.Join(cmd, " "))
 	return nil, f.hookExit[container], nil
 }
-
-type errReader struct{ err error }
-
-func (e errReader) Read([]byte) (int, error) { return 0, e.err }
 
 func tarGz(t *testing.T, files map[string]string) []byte {
 	t.Helper()
@@ -125,8 +122,8 @@ func TestRetentionKeepsNewestAndIgnoresOtherJobs(t *testing.T) {
 	svc, fake, root := newExecTest(t, false)
 	ctx := context.Background()
 
-	// Same name once sanitized: the old layout put both into jobs/db-prod.
-	in := volumeJob("DB Prod", root)
+	// A name that prefixes another: prefix-listing targets used to mix them.
+	in := volumeJob("db", root)
 	in.RetentionCount = 2
 	job, err := svc.CreateJob(ctx, in)
 	if err != nil {
@@ -172,7 +169,7 @@ func TestRetentionKeepsNewestAndIgnoresOtherJobs(t *testing.T) {
 	if pruned.PrunedAt == nil || pruned.Restorable() {
 		t.Fatalf("oldest run should be pruned: %+v", pruned)
 	}
-	if !strings.HasPrefix(runs[3].TargetPath, "jobs/"+itoa(job.ID)+"-db-prod/") {
+	if !strings.HasPrefix(runs[3].TargetPath, "jobs/"+itoa(job.ID)+"-db/") {
 		t.Fatalf("archive path not keyed by job id: %s", runs[3].TargetPath)
 	}
 }
@@ -300,7 +297,7 @@ func TestVerifyHash(t *testing.T) {
 	}
 }
 
-func TestVerifyLegacyCiphertextHash(t *testing.T) {
+func TestEncryptedRunHashCoversStoredBytes(t *testing.T) {
 	svc, _, root := newExecTest(t, true)
 	ctx := context.Background()
 	in := volumeJob("v", root)
@@ -313,18 +310,16 @@ func TestVerifyLegacyCiphertextHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// What older versions stored: the hash of the encrypted file.
 	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(run.TargetPath)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.store.db.Exec(`UPDATE backup_runs SET sha256 = ?, sha256_plain = 0 WHERE id = ?`,
-		sha256Hex(data), run.ID); err != nil {
-		t.Fatal(err)
+	if run.SHA256 != sha256Hex(data) {
+		t.Fatalf("run sha256 %s, stored file %s", run.SHA256, sha256Hex(data))
 	}
 	res, err := svc.VerifyRun(ctx, run.ID)
 	if err != nil || !res.Passed || !res.SHA256OK {
-		t.Fatalf("legacy hash should verify: %v %+v", err, res)
+		t.Fatalf("encrypted run should verify: %v %+v", err, res)
 	}
 }
 
@@ -424,5 +419,30 @@ func TestStackArchiveVolumes(t *testing.T) {
 	}
 	if _, err := tarStackWithVolumes(ctx, fake, dir, "web", io.Discard); err == nil {
 		t.Fatal("unparseable compose must fail the backup")
+	}
+}
+
+func TestRunNotificationAudience(t *testing.T) {
+	tests := []struct {
+		name         string
+		job          Job
+		wantPerm     rbac.Perm
+		wantHost     string
+		wantUnscoped bool
+	}{
+		{"local volume job", Job{Sources: []Source{{Type: "volume", Name: "pg"}}}, rbac.PermBackupsView, "local", false},
+		{"agent host job", Job{HostID: "h1", Sources: []Source{{Type: "stack", Name: "web"}}}, rbac.PermBackupsView, "h1", false},
+		{"system job", Job{Sources: []Source{{Type: "system"}}}, rbac.PermSystemUpdate, "local", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := runNotification(&tt.job, 7)
+			if in.Perm != tt.wantPerm || in.HostID != tt.wantHost || in.Unscoped != tt.wantUnscoped {
+				t.Errorf("got perm %q host %q unscoped %v", in.Perm, in.HostID, in.Unscoped)
+			}
+			if in.Link != "/backups/runs/7" || in.UserID != "" {
+				t.Errorf("link %q user %q", in.Link, in.UserID)
+			}
+		})
 	}
 }

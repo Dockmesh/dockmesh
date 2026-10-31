@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net/url"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -125,7 +124,7 @@ func stacksDeployCmd() *cobra.Command {
 				q.Set("environment", env)
 			}
 			var res map[string]any
-			if err := c.request("POST", "/api/v1/stacks/"+url.PathEscape(args[0])+"/deploy", q, nil, &res); err != nil {
+			if err := c.longRunning().request("POST", "/api/v1/stacks/"+url.PathEscape(args[0])+"/deploy", q, nil, &res); err != nil {
 				return err
 			}
 			return printResult(res, func() ([]string, [][]string) {
@@ -199,7 +198,7 @@ func stacksLogsCmd() *cobra.Command {
 is specified, only that service is followed; otherwise all services are
 interleaved with a '[service]' prefix per line.
 
-Use --no-follow for a one-shot dump of recent lines.`,
+Without --follow, the recent lines are printed once and the command exits.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := newClient()
@@ -254,8 +253,6 @@ Use --no-follow for a one-shot dump of recent lines.`,
 					firstErr = err
 				}
 			}
-			// Reserved for later: richer exit codes per-service.
-			_ = strings.Builder{}
 			return firstErr
 		},
 	}

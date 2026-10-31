@@ -16,6 +16,9 @@ const (
 	KeyScannerEnabled  = "scanner_enabled"
 	KeyBaseURL         = "base_url"
 	KeyAgentPublicURL  = "agent_public_url"
+	// KeyTrustedProxies lists the proxy CIDRs whose forwarding headers
+	// are believed (see internal/clientip).
+	KeyTrustedProxies = "trusted_proxies"
 )
 
 // Entry is one row in the settings table.
@@ -124,6 +127,7 @@ func envForKey(key string) string {
 		KeyScannerEnabled: "DOCKMESH_SCANNER_ENABLED",
 		KeyBaseURL:        "DOCKMESH_BASE_URL",
 		KeyAgentPublicURL: "DOCKMESH_AGENT_PUBLIC_URL",
+		KeyTrustedProxies: "DOCKMESH_TRUSTED_PROXIES",
 	}
 	if envName, ok := envMap[key]; ok {
 		return os.Getenv(envName)

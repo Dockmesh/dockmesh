@@ -22,6 +22,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
+  import SAMLRekeyCard from './_SAMLRekeyCard.svelte';
   import {
     Plus, Trash2, Edit2, Globe, Copy,
   } from 'lucide-svelte';
@@ -150,6 +151,7 @@
             admin_group: p.admin_group,
             operator_group: p.operator_group,
             default_role: p.default_role,
+            allow_email_link: !!p.allow_email_link,
             enabled: !p.enabled,
           };
           await api.oidc.update(p.id, payload);
@@ -169,6 +171,7 @@
             email_field: p.email_field,
             groups_field: p.groups_field,
             default_role: p.default_role,
+            allow_email_link: !!p.allow_email_link,
             group_mappings: p.group_mappings,
             enabled: !p.enabled,
           });
@@ -179,10 +182,12 @@
             display_name: p.display_name,
             idp_metadata_xml: '', // keep existing
             nameid_format: p.nameid_format,
+            subject_attribute: p.subject_attribute ?? '',
             username_attribute: p.username_attribute,
             email_attribute: p.email_attribute,
             groups_attribute: p.groups_attribute,
             default_role: p.default_role,
+            allow_email_link: !!p.allow_email_link,
             group_mappings: p.group_mappings,
             enabled: !p.enabled,
           });
@@ -204,6 +209,7 @@
             group_search_base: p.group_search_base ?? '',
             group_membership_attribute: p.group_membership_attribute,
             default_role: p.default_role,
+            allow_email_link: !!p.allow_email_link,
             group_mappings: p.group_mappings,
             enabled: !p.enabled,
           });
@@ -320,13 +326,17 @@
       </div>
     </header>
 
+    {#if allowed('system.update')}
+      <SAMLRekeyCard />
+    {/if}
+
     {#if !allowed('system.update')}
       <div class="dm-card auth-permission-block">
         <Globe size={18} strokeWidth={1.5} />
         <div>
           <div class="auth-perm-title">Admin-only</div>
           <p class="ed-subtitle auth-perm-blurb">
-            Authentication configuration requires the <em>user.manage</em> permission.
+            Authentication configuration requires the <em>system.update</em> permission.
           </p>
         </div>
       </div>

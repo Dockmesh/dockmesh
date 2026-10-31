@@ -5,8 +5,11 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
+	"github.com/dockmesh/dockmesh/internal/clientip"
 	"github.com/dockmesh/dockmesh/internal/rbac"
+	"github.com/dockmesh/dockmesh/internal/settings"
 )
 
 // ListSettings returns all DB-backed settings for the System tab.
@@ -17,7 +20,26 @@ func (h *Handlers) ListSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []any{})
 		return
 	}
-	writeJSON(w, http.StatusOK, h.Settings.All())
+	writeJSON(w, http.StatusOK, publicSettings(h.Settings.All()))
+}
+
+// The audit webhook keys are managed through /audit/webhook, which is gated
+// by audit.write; the HMAC secret must never be readable and the URL can
+// carry a receiver token.
+var auditWebhookSettingKeys = map[string]bool{
+	audit.WebhookURLKey:    true,
+	audit.WebhookSecretKey: true,
+	audit.WebhookFilterKey: true,
+}
+
+func publicSettings(all []settings.Entry) []settings.Entry {
+	out := make([]settings.Entry, 0, len(all))
+	for _, e := range all {
+		if !auditWebhookSettingKeys[e.Key] {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // UpdateSettings writes one or more settings and, for toggle keys like
@@ -45,6 +67,18 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, e := range entries {
+		if auditWebhookSettingKeys[e.Key] {
+			writeError(w, http.StatusBadRequest, e.Key+" is managed via /audit/webhook")
+			return
+		}
+		if e.Key == settings.KeyTrustedProxies {
+			if _, err := clientip.ParseList(e.Value); err != nil {
+				writeError(w, http.StatusBadRequest, "trusted proxies: "+err.Error())
+				return
+			}
+		}
+	}
+	for _, e := range entries {
 		// Where local backups may be written is as powerful as replacing the
 		// server binary, so it needs that permission rather than settings
 		// access.
@@ -68,7 +102,7 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		h.applySettingSideEffect(r, e.Key, e.Value)
 	}
-	writeJSON(w, http.StatusOK, h.Settings.All())
+	writeJSON(w, http.StatusOK, publicSettings(h.Settings.All()))
 }
 
 // applySettingSideEffect runs the lifecycle hooks tied to a setting
@@ -78,6 +112,8 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 // Docker daemon.
 func (h *Handlers) applySettingSideEffect(r *http.Request, key, value string) {
 	switch key {
+	case settings.KeyTrustedProxies:
+		h.proxyNotice.reset(r.Context())
 	case "proxy_enabled":
 		if h.Proxy == nil {
 			return

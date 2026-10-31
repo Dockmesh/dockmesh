@@ -46,26 +46,28 @@ var (
 	ErrPathOutsideRepo  = errors.New("path_in_repo must be a relative path inside the repository")
 )
 
+var ErrWebhookSecretShort = fmt.Errorf("webhook_secret must be at least %d characters", minWebhookSecretLen)
+
 // Source is the DB-backed row, returned to handlers with secrets
 // redacted via the Has* flags instead of raw values.
 type Source struct {
-	StackName       string     `json:"stack_name"`
-	RepoURL         string     `json:"repo_url"`
-	Branch          string     `json:"branch"`
-	PathInRepo      string     `json:"path_in_repo"`
-	AuthKind        string     `json:"auth_kind"`
-	Username        string     `json:"username,omitempty"`
-	HasPassword     bool       `json:"has_password"`
-	HasSSHKey       bool       `json:"has_ssh_key"`
-	AutoDeploy      bool       `json:"auto_deploy"`
-	PollIntervalSec int        `json:"poll_interval_sec"`
-	HasWebhookSecret bool      `json:"has_webhook_secret"`
-	LastSyncSHA     string     `json:"last_sync_sha,omitempty"`
-	LastSyncAt      *time.Time `json:"last_sync_at,omitempty"`
-	LastSyncError   string     `json:"last_sync_error,omitempty"`
-	LastEnvDrift    *EnvDrift  `json:"last_env_drift,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	StackName        string     `json:"stack_name"`
+	RepoURL          string     `json:"repo_url"`
+	Branch           string     `json:"branch"`
+	PathInRepo       string     `json:"path_in_repo"`
+	AuthKind         string     `json:"auth_kind"`
+	Username         string     `json:"username,omitempty"`
+	HasPassword      bool       `json:"has_password"`
+	HasSSHKey        bool       `json:"has_ssh_key"`
+	AutoDeploy       bool       `json:"auto_deploy"`
+	PollIntervalSec  int        `json:"poll_interval_sec"`
+	HasWebhookSecret bool       `json:"has_webhook_secret"`
+	LastSyncSHA      string     `json:"last_sync_sha,omitempty"`
+	LastSyncAt       *time.Time `json:"last_sync_at,omitempty"`
+	LastSyncError    string     `json:"last_sync_error,omitempty"`
+	LastEnvDrift     *EnvDrift  `json:"last_env_drift,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 // Input is the CRUD payload. Empty password / ssh_key on update = keep
@@ -112,16 +114,25 @@ type Service struct {
 
 	stop chan struct{}
 	wg   sync.WaitGroup
+
+	syncMu    sync.Mutex
+	stackMu   map[string]*sync.Mutex
+	triggered map[string]bool // stack -> another sync was requested while one ran
+
+	// syncFn replaces the clone/copy/deploy body in tests.
+	syncFn func(ctx context.Context, stackName string) (*SyncResult, error)
 }
 
 func New(db *sql.DB, secretsSvc *secrets.Service, stacksMgr *stacks.Manager, cacheDir string, deploy DeployFunc) *Service {
 	return &Service{
-		db:       db,
-		secrets:  secretsSvc,
-		stacks:   stacksMgr,
-		cacheDir: cacheDir,
-		deploy:   deploy,
-		stop:     make(chan struct{}),
+		db:        db,
+		secrets:   secretsSvc,
+		stacks:    stacksMgr,
+		cacheDir:  cacheDir,
+		deploy:    deploy,
+		stop:      make(chan struct{}),
+		stackMu:   make(map[string]*sync.Mutex),
+		triggered: make(map[string]bool),
 	}
 }
 
@@ -130,6 +141,11 @@ func New(db *sql.DB, secretsSvc *secrets.Service, stacksMgr *stacks.Manager, cac
 func (s *Service) Start(ctx context.Context) {
 	if err := os.MkdirAll(s.cacheDir, 0o700); err != nil {
 		slog.Warn("gitsource cache dir", "err", err, "path", s.cacheDir)
+	}
+	if n, err := s.EncryptLegacyWebhookSecrets(ctx); err != nil {
+		slog.Warn("gitsource: encrypt stored webhook secrets", "err", err)
+	} else if n > 0 {
+		slog.Info("gitsource: encrypted stored webhook secrets", "count", n)
 	}
 	s.wg.Add(1)
 	go s.pollLoop(ctx)
@@ -151,7 +167,7 @@ func (s *Service) Get(ctx context.Context, stackName string) (*Source, error) {
 		       password_encrypted IS NOT NULL AS has_password,
 		       ssh_key_encrypted IS NOT NULL AS has_ssh_key,
 		       auto_deploy, poll_interval_sec,
-		       webhook_secret IS NOT NULL AS has_webhook_secret,
+		       COALESCE(webhook_secret, '') <> '' AS has_webhook_secret,
 		       COALESCE(last_sync_sha, ''),
 		       last_sync_at,
 		       COALESCE(last_sync_error, ''),
@@ -231,7 +247,11 @@ func (s *Service) Configure(ctx context.Context, stackName string, in Input) (*S
 	case in.ClearWebhook:
 		webhook = nil
 	case in.WebhookSecret != "":
-		webhook = in.WebhookSecret
+		enc, err := s.encryptWebhookSecret(in.WebhookSecret)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt webhook secret: %w", err)
+		}
+		webhook = enc
 	}
 
 	if existing == nil {
@@ -312,14 +332,77 @@ func (s *Service) WebhookSecret(ctx context.Context, stackName string) (string, 
 	if !secret.Valid {
 		return "", nil
 	}
-	return secret.String, nil
+	return s.decryptWebhookSecret(secret.String)
 }
 
 // -----------------------------------------------------------------------------
 // Sync — clone/pull + copy into the stack's FS location
 // -----------------------------------------------------------------------------
 
+// webhookSyncTimeout bounds a webhook-triggered sync, which outlives the
+// request that queued it.
+const webhookSyncTimeout = 10 * time.Minute
+
+// Sync pulls the stack's repo and copies it into the stack. Syncs of the
+// same stack (poller, manual, webhook) run one at a time, since they share
+// the clone dir and the stack files.
 func (s *Service) Sync(ctx context.Context, stackName string) (*SyncResult, error) {
+	mu := s.stackLock(stackName)
+	mu.Lock()
+	defer mu.Unlock()
+	if s.syncFn != nil {
+		return s.syncFn(ctx, stackName)
+	}
+	return s.sync(ctx, stackName)
+}
+
+func (s *Service) stackLock(stackName string) *sync.Mutex {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	mu, ok := s.stackMu[stackName]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.stackMu[stackName] = mu
+	}
+	return mu
+}
+
+// TriggerSync starts a background sync for a webhook delivery and returns
+// at once. Deliveries arriving while one runs collapse into a single
+// follow-up sync, so replaying a delivery can't pile up syncs or deploys.
+func (s *Service) TriggerSync(ctx context.Context, stackName string) {
+	s.syncMu.Lock()
+	if _, running := s.triggered[stackName]; running {
+		s.triggered[stackName] = true
+		s.syncMu.Unlock()
+		return
+	}
+	s.triggered[stackName] = false
+	s.syncMu.Unlock()
+
+	base := context.WithoutCancel(ctx)
+	go func() {
+		for {
+			runCtx, cancel := context.WithTimeout(base, webhookSyncTimeout)
+			if _, err := s.Sync(runCtx, stackName); err != nil {
+				slog.Warn("git webhook sync failed", "stack", stackName, "err", err)
+			}
+			cancel()
+
+			s.syncMu.Lock()
+			again := s.triggered[stackName]
+			if !again {
+				delete(s.triggered, stackName)
+				s.syncMu.Unlock()
+				return
+			}
+			s.triggered[stackName] = false
+			s.syncMu.Unlock()
+		}
+	}()
+}
+
+func (s *Service) sync(ctx context.Context, stackName string) (*SyncResult, error) {
 	src, err := s.Get(ctx, stackName)
 	if err != nil {
 		return nil, err
@@ -345,6 +428,17 @@ func (s *Service) Sync(ctx context.Context, stackName string) (*SyncResult, erro
 	// Always copy on first sync (when LastSyncSHA is empty) so the
 	// stack's FS gets populated, even if the repo already matches.
 	if res.Changed || src.LastSyncSHA == "" {
+		// Before copying: the copy merges the stack's current .env and
+		// records the result as written by Dockmesh, which would hide
+		// changes made outside it from the deploy check.
+		if s.stacks != nil {
+			if _, gerr := s.stacks.Get(stackName); gerr == nil {
+				if err := s.stacks.CheckGitDeploy(ctx, stackName); err != nil {
+					s.recordSyncError(ctx, stackName, err)
+					return nil, err
+				}
+			}
+		}
 		drift, err := s.copyIntoStack(cloneDir, src.PathInRepo, stackName)
 		if err != nil {
 			s.recordSyncError(ctx, stackName, err)
@@ -815,12 +909,19 @@ func validateInput(in Input) error {
 	if in.PollIntervalSec != 0 && in.PollIntervalSec < 60 {
 		return ErrPollTooShort
 	}
+	// Only new secrets are checked; shorter ones stored earlier keep working.
+	if in.WebhookSecret != "" && len(in.WebhookSecret) < minWebhookSecretLen {
+		return ErrWebhookSecretShort
+	}
 	p := filepath.ToSlash(in.PathInRepo)
 	if strings.HasPrefix(p, "/") || filepath.IsAbs(in.PathInRepo) || slices.Contains(strings.Split(p, "/"), "..") {
 		return ErrPathOutsideRepo
 	}
 	return nil
 }
+
+// minWebhookSecretLen keeps webhook secrets out of guessing range.
+const minWebhookSecretLen = 16
 
 func safeStackName(s string) bool {
 	if s == "" || strings.ContainsAny(s, `/\:*?"<>|`) {

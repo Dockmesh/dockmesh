@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/dockmesh/dockmesh/internal/db"
 )
@@ -136,6 +139,45 @@ func TestRaiseIsIdempotentAndReopens(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Title != "second" || got[0].Dismissed {
 		t.Fatalf("reopened notice should carry new content and no dismissal, got %+v", got)
+	}
+}
+
+func TestRaiseWhileOtherWritersCommit(t *testing.T) {
+	s, database := newTestService(t)
+	ctx := context.Background()
+	stop := make(chan struct{})
+	var writers sync.WaitGroup
+	writers.Add(1)
+	go func() {
+		defer writers.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_, _ = database.Exec(`INSERT INTO notices (key, audience, severity, title) VALUES (?, 'all', 'info', 'noise')`,
+				fmt.Sprintf("noise-%d", i))
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	var raisers sync.WaitGroup
+	errs := make(chan error, 40)
+	for i := 0; i < 40; i++ {
+		raisers.Add(1)
+		go func() {
+			defer raisers.Done()
+			errs <- s.Raise(ctx, RaiseInput{Key: fmt.Sprintf("k-%d", i), Audience: All(), Severity: SevInfo, Title: "t"})
+		}()
+	}
+	raisers.Wait()
+	close(stop)
+	writers.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("raise under concurrent writes: %v", err)
+		}
 	}
 }
 
@@ -281,4 +323,50 @@ func mustOpen(t *testing.T, s *Service) []Notice {
 		t.Fatal(err)
 	}
 	return open
+}
+
+func TestBullets(t *testing.T) {
+	tests := []struct {
+		name  string
+		items []string
+		want  string
+	}{
+		{name: "two items", items: []string{"web", "db"}, want: "Stacks:\n- web\n- db\nFix them."},
+		{name: "one item", items: []string{"web"}, want: "Stacks:\n- web\nFix them."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := "Stacks:" + Bullets(tt.items) + "Fix them."; got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRefreshRunsOnlyWhileOpen(t *testing.T) {
+	s, _ := newTestService(t)
+	ctx := context.Background()
+	calls := 0
+	s.RegisterRefresh("timed", func(ctx context.Context, s *Service) error {
+		calls++
+		return s.Resolve(ctx, "timed")
+	})
+
+	if _, err := s.ForViewer(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatalf("refresh ran %d times with no open notice", calls)
+	}
+
+	if err := s.Raise(ctx, RaiseInput{Key: "timed", Audience: Admins(), Severity: SevInfo, Title: "ends soon"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ForViewer(ctx, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || len(got) != 0 {
+		t.Fatalf("calls = %d, listed = %v; want the refresh to resolve the notice before listing", calls, keys(got))
+	}
 }

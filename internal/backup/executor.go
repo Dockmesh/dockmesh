@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -15,11 +16,12 @@ import (
 	"strings"
 	"time"
 
-	dtypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
@@ -146,7 +148,10 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	if err != nil {
 		return fail(fmt.Sprintf("open target %q", relPath), err), nil
 	}
-	stored := &countingWriter{w: w}
+	// The hash covers the bytes as stored on the target (ciphertext for
+	// encrypted runs), which read-back, verify and restore check against.
+	hasher := sha256.New()
+	stored := &countingWriter{w: w, h: hasher}
 	encW, err := wrapEncrypt(stored, encryptionFor(job, e.secrets))
 	if err != nil {
 		_ = abortWriter(stored)
@@ -155,11 +160,8 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 		return out, nil
 	}
 
-	// The hash covers the plaintext archive, so verify can recompute it
-	// from any copy, decrypted or not.
-	hasher := sha256.New()
 	e.logf(ctx, runID, "info", "streaming %d source(s) → %s", len(job.Sources), relPath)
-	if _, err := e.streamSources(ctx, job.Sources, hostTarget, io.MultiWriter(encW, hasher)); err != nil {
+	if _, err := e.streamSources(ctx, job.Sources, hostTarget, encW); err != nil {
 		_ = abortWriter(encW)
 		out = fail("stream sources", err)
 		out.path = e.removePartial(ctx, runID, target, w, relPath)
@@ -172,6 +174,13 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	}
 	sum := hex.EncodeToString(hasher.Sum(nil))
 	e.logf(ctx, runID, "info", "wrote %d bytes, sha256=%s", stored.n, sum[:12])
+	if err := readBack(ctx, target, relPath, stored.n, sum); err != nil {
+		e.logf(ctx, runID, "error", "%s", err)
+		out = runOutcome{status: StatusFailed, size: stored.n, err: err}
+		out.path = e.removePartial(ctx, runID, target, w, relPath)
+		return out, nil
+	}
+	e.logf(ctx, runID, "info", "read back %d bytes, sha256 matches", stored.n)
 	return runOutcome{status: StatusSuccess, size: stored.n, path: relPath, sum: sum}, target
 }
 
@@ -207,7 +216,7 @@ func (e *Executor) notifyRun(ctx context.Context, job *Job, runID int64, out run
 	if e.notifs == nil {
 		return
 	}
-	in := notifications.EmitInput{Link: fmt.Sprintf("/backups/runs/%d", runID)}
+	in := runNotification(job, runID)
 	switch out.status {
 	case StatusSuccess:
 		in.Kind, in.Severity = notifications.KindBackupOK, notifications.SevSuccess
@@ -226,6 +235,22 @@ func (e *Executor) notifyRun(ctx context.Context, job *Job, runID int64, out run
 		}
 	}
 	_, _ = e.notifs.Emit(ctx, in)
+}
+
+// runNotification addresses a run notification to the users who may open
+// the run: unscoped admins for system jobs, otherwise backup viewers whose
+// scope covers the job's host.
+func runNotification(job *Job, runID int64) notifications.EmitInput {
+	in := notifications.EmitInput{
+		Link:   fmt.Sprintf("/backups/runs/%d", runID),
+		Perm:   rbac.PermBackupsView,
+		HostID: defaultStr(job.HostID, "local"),
+	}
+	if HasSystemSource(job.Sources) {
+		in.Perm = rbac.PermSystemUpdate
+		in.Unscoped = true
+	}
+	return in
 }
 
 func defaultStr(v, fallback string) string {
@@ -351,13 +376,13 @@ func (l *localBackupTarget) VolumeTar(ctx context.Context, name string) (io.Read
 
 func (l *localBackupTarget) ContainerExec(ctx context.Context, containerID string, cmd []string) ([]byte, int, error) {
 	cli := l.dc.Raw()
-	exec, err := cli.ContainerExecCreate(ctx, containerID, dtypes.ExecConfig{
+	exec, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		Cmd: cmd, AttachStdout: true, AttachStderr: true,
 	})
 	if err != nil {
 		return nil, -1, err
 	}
-	attach, err := cli.ContainerExecAttach(ctx, exec.ID, dtypes.ExecStartCheck{})
+	attach, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecStartOptions{})
 	if err != nil {
 		return nil, -1, err
 	}
@@ -429,12 +454,14 @@ func (e *Executor) deleteArchive(ctx context.Context, target targets.Target, r R
 // countingWriter counts the bytes stored on the target.
 type countingWriter struct {
 	w io.WriteCloser
+	h hash.Hash
 	n int64
 }
 
 func (c *countingWriter) Write(p []byte) (int, error) {
 	n, err := c.w.Write(p)
 	c.n += int64(n)
+	c.h.Write(p[:n])
 	return n, err
 }
 

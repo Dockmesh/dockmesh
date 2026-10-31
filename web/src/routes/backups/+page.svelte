@@ -5,8 +5,9 @@
   // grids per the mockup, runs as a cleaner editorial table. Wizards
   // and the restore modal stay on the legacy `Modal` component for now —
   // they're functional and the editorial rebuild of those is a follow-up.
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { api, ApiError, runRestorable } from '$lib/api';
   import type { BackupJob, BackupJobInput, BackupRun, BackupSource, BackupHook, BackupTarget } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
@@ -37,16 +38,11 @@
   function jobSourceLabel(j: BackupJob): string {
     if (j.sources.length === 0) return 'no source';
     const s = j.sources[0];
-    // Backend additionally accepts a 'system' source type for the
-    // dockmesh-system meta-bundle (DB + stacks + CA). The TS interface
-    // pre-dates that addition and only lists volume / stack — cast at
-    // the call site rather than widening the public type.
-    const t = s.type as string;
-    if (t === 'system') return 'dockmesh-system';
-    return `${t}: ${s.name}`;
+    if (s.type === 'system') return 'dockmesh-system';
+    return `${s.type}: ${s.name}`;
   }
   function jobSourceIcon(j: BackupJob) {
-    const t = (j.sources[0]?.type as string | undefined) ?? '';
+    const t = j.sources[0]?.type;
     if (t === 'stack') return Layers;
     if (t === 'volume') return HardDrive;
     if (t === 'system') return LayoutDashboard;
@@ -79,7 +75,7 @@
   }
 
   type Tab = 'jobs' | 'runs' | 'targets';
-  let tab = $state<Tab>((new URLSearchParams($page.url.search).get('tab') as Tab) || 'jobs');
+  let tab = $state<Tab>((new URLSearchParams(page.url.search).get('tab') as Tab) || 'jobs');
 
   // Runs view — Timeline (default, mockup pattern) vs List. Timeline
   // groups by day with colored timeline-blocks per run; List is the
@@ -168,7 +164,14 @@
   // Structured form fields
   let jName = $state('');
   let jTargetType = $state<'local' | 's3'>('local');
-  let jLocalPath = $state('./data/backups');
+  let jLocalPath = $state('');
+  let defaultLocalPath = $state('');
+  onMount(() => {
+    void api.backups.localPath().then((p) => {
+      defaultLocalPath = p;
+      if (!jLocalPath) jLocalPath = p;
+    });
+  });
   let jS3Endpoint = $state('');
   let jS3Bucket = $state('');
   let jS3AccessKey = $state('');
@@ -230,7 +233,7 @@
   let tSaving = $state(false);
 
   const targetTypes = [
-    { value: 'local', label: 'Local Directory', icon: '💾', fields: [{ key: 'path', label: 'Path', placeholder: './data/backups' }] },
+    { value: 'local', label: 'Local Directory', icon: '💾', fields: [{ key: 'path', label: 'Path', placeholder: '/srv/backups' }] },
     { value: 'sftp', label: 'SFTP (SSH)', icon: '🔐', fields: [{ key: 'host', label: 'Host', placeholder: 'nas.local' }, { key: 'port', label: 'Port', placeholder: '22' }, { key: 'username', label: 'Username', placeholder: '' }, { key: 'password', label: 'Password', placeholder: '' }, { key: 'path', label: 'Remote path', placeholder: '/backups' }] },
     { value: 'smb', label: 'SMB / NAS', icon: '📁', fields: [{ key: 'host', label: 'Server', placeholder: '192.168.1.100' }, { key: 'port', label: 'Port', placeholder: '445' }, { key: 'share', label: 'Share name', placeholder: 'backups' }, { key: 'username', label: 'Username', placeholder: '' }, { key: 'password', label: 'Password', placeholder: '' }, { key: 'path', label: 'Path within share', placeholder: 'dockmesh' }] },
     { value: 'webdav', label: 'WebDAV (Nextcloud)', icon: '☁️', fields: [{ key: 'url', label: 'WebDAV URL', placeholder: 'https://nextcloud.example.com/remote.php/dav/files/user/' }, { key: 'username', label: 'Username', placeholder: '' }, { key: 'password', label: 'Password', placeholder: '' }, { key: 'path', label: 'Path', placeholder: '/backups' }] },
@@ -512,7 +515,7 @@
 
   // Job CRUD
   function resetForm() {
-    jName = ''; jTargetType = 'local'; jLocalPath = './data/backups';
+    jName = ''; jTargetType = 'local'; jLocalPath = defaultLocalPath;
     jS3Endpoint = ''; jS3Bucket = ''; jS3AccessKey = ''; jS3SecretKey = ''; jS3Region = ''; jS3SSL = true;
     jSources = []; jSchedule = '0 3 * * *';
     jRetentionCount = 7; jRetentionDays = 0; jEncrypt = false; jEnabled = true;
@@ -587,7 +590,7 @@
       jS3AccessKey = cfg.access_key ?? ''; jS3SecretKey = cfg.secret_key ?? '';
       jS3Region = cfg.region ?? ''; jS3SSL = cfg.use_ssl !== false;
     } else {
-      jLocalPath = cfg.path ?? './data/backups';
+      jLocalPath = cfg.path ?? defaultLocalPath;
     }
     // P.13.5: keep at most one source on edit. Older multi-source
     // jobs that pre-date the validation are reduced to their first
@@ -689,7 +692,7 @@
 
   async function toggleJob(j: BackupJob) {
     try {
-      const input: BackupJobInput = { name: j.name, target_type: j.target_type, target_config: j.target_config, sources: j.sources, schedule: j.schedule, retention_count: j.retention_count, retention_days: j.retention_days, encrypt: j.encrypt, pre_hooks: j.pre_hooks, post_hooks: j.post_hooks, enabled: !j.enabled };
+      const input: BackupJobInput = { name: j.name, host_id: j.host_id, target_type: j.target_type, target_config: j.target_config, sources: j.sources, schedule: j.schedule, retention_count: j.retention_count, retention_days: j.retention_days, encrypt: j.encrypt, pre_hooks: j.pre_hooks, post_hooks: j.post_hooks, enabled: !j.enabled };
       await api.backups.updateJob(j.id, input);
       await loadJobs();
     } catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
@@ -1098,7 +1101,7 @@
             <span class="bk-runs-actions">
               {#if r.pruned_at}
                 <span class="bk-runs-cell" title="Archive removed by retention">pruned</span>
-              {:else if runRestorable(r)}
+              {:else if runRestorable(r) && !r.sources?.some((s) => s.type === 'system')}
                 <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" title="Restore" onclick={(e) => { e.stopPropagation(); openRestore(r); }}>
                   <Undo2 size={11} strokeWidth={1.5} />
                 </button>
@@ -1500,7 +1503,7 @@
           </select>
         </div>
         {#if jTargetType === 'local'}
-          <Input label="Path" bind:value={jLocalPath} placeholder="./data/backups" />
+          <Input label="Path" bind:value={jLocalPath} placeholder={defaultLocalPath || '/srv/backups'} />
         {:else if jTargetType === 's3'}
           <div class="grid grid-cols-2 gap-3">
             <Input label="Endpoint" bind:value={jS3Endpoint} placeholder="s3.amazonaws.com" />

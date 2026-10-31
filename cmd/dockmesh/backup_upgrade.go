@@ -98,9 +98,27 @@ func syncSeededRootsNotice(ctx context.Context, n *notices.Service, st *settings
 		Severity: notices.SevInfo,
 		Title:    "Review allowed local backup directories",
 		Body: "Local backup targets may now only write below allowed directories. These were " +
-			"added because existing jobs use them: " + strings.Join(extras, ", ") + ". Keep or " +
+			"added because existing jobs use them:" + notices.Bullets(extras) + "Keep or " +
 			"remove them in the " + targets.LocalRootsSetting + " setting.",
 		Link: "/settings",
+	})
+}
+
+// raiseSystemPathNotice tells admins where the system backup job writes
+// after its relative path was made absolute on this start.
+func raiseSystemPathNotice(ctx context.Context, n *notices.Service, from, to string) error {
+	if to == "" {
+		return nil
+	}
+	return n.Raise(ctx, notices.RaiseInput{
+		Key:      "backups.system-job-path",
+		Audience: notices.Admins(),
+		Severity: notices.SevInfo,
+		Title:    "System backup directory changed",
+		Body: "The system backup job had the relative path " + from + ", which depended on the " +
+			"directory Dockmesh was started from. It now writes to " + to + ". Existing archives " +
+			"were not moved.",
+		Link: "/backups",
 	})
 }
 
@@ -118,9 +136,24 @@ func syncUnencryptableNotice(ctx context.Context, n *notices.Service, svc *backu
 		Severity: notices.SevCritical,
 		Title:    "Encrypted backup jobs can't run",
 		Body: "Secrets encryption is turned off on this server, so these jobs, which are set to " +
-			"encrypt, fail instead of writing unencrypted archives: " + strings.Join(jobs, ", ") +
-			". Turn secrets encryption back on (DOCKMESH_SECRETS_ENCRYPT_ENV) or switch off " +
+			"encrypt, fail instead of writing unencrypted archives:" + notices.Bullets(jobs) +
+			"Turn secrets encryption back on (DOCKMESH_SECRETS_ENCRYPT_ENV) or switch off " +
 			"encryption for each job.",
 		Link: "/backups",
 	})
+}
+
+const jobRepairDoneSetting = "backups.job_repair_done"
+
+// repairJobSecretsOnce runs the job secret repair for the first start
+// after the upgrade that fixed the wizard and never again, so a secret
+// left blank on purpose later is not filled in behind the owner's back.
+func repairJobSecretsOnce(ctx context.Context, st *settings.Store, svc *backup.Service, ts *targets.TargetStore, n *notices.Service, onRepair func(backup.Job, string)) error {
+	if st.Get(jobRepairDoneSetting, "") != "" {
+		return nil
+	}
+	if err := svc.RepairJobSecrets(ctx, ts, n, onRepair); err != nil {
+		return err
+	}
+	return st.Set(ctx, jobRepairDoneSetting, "done")
 }
