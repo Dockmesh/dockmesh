@@ -6194,7 +6194,7 @@ paths:
         `www.<name>` block that only redirects to `<name>` becomes that site's
         `www_redirect`. `import <name>` of a snippet defined earlier in the
         same text is expanded before Caddy sees the file; imports of files or
-        globs, imports with arguments, client certificate files and `{$ENV}`
+        globs, imports with arguments, heredocs, client certificate files and `{$ENV}`
         substitution are rejected (400), as they would read files or the
         environment of the proxy container.
         Needs the proxy to be running (409 otherwise).

@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -19,14 +18,11 @@ type cfToken struct {
 
 func (t cfToken) is(text string) bool { return !t.quoted && t.text == text }
 
-var heredocMarker = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
-
-func continuation(s string) bool {
-	return strings.HasPrefix(s, "\\\n") || strings.HasPrefix(s, "\\\r\n")
-}
+func continuation(s string) bool { return strings.HasPrefix(s, "\\\n") }
 
 // lexCaddyfile splits text into tokens following Caddy's lexer for
-// quotes, backticks, comments, line continuations and heredocs.
+// quotes, backticks, comments and line continuations. Heredocs and CRs
+// are refused by prepareCaddyfile before.
 func lexCaddyfile(s string) []cfToken {
 	var toks []cfToken
 	line := 1
@@ -76,29 +72,8 @@ func lexCaddyfile(s string) []cfToken {
 				if unicode.IsSpace(r) || continuation(s[i:]) {
 					break
 				}
-				if r == '\\' && val.Len() == 0 && strings.HasPrefix(s[i+1:], "<") {
-					val.WriteByte('<')
-					i += 2
-					continue
-				}
 				val.WriteString(s[i : i+n])
 				i += n
-			}
-			text := val.String()
-			rest := strings.TrimPrefix(s[i:], "\r")
-			if marker, ok := strings.CutPrefix(text, "<<"); ok && s[t.start] != '\\' &&
-				strings.HasPrefix(rest, "\n") && heredocMarker.MatchString(marker) {
-				body := rest[1:]
-				content := body
-				i = len(s)
-				if end := strings.Index(body, marker); end >= 0 {
-					content = body[:end]
-					i = len(s) - len(body) + end + len(marker)
-				}
-				line += 1 + strings.Count(content, "\n")
-				t.quoted = true
-				val.Reset()
-				val.WriteString(content)
 			}
 		}
 		t.text = val.String()

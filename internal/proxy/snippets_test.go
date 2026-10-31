@@ -33,6 +33,9 @@ func TestPrepareCaddyfile(t *testing.T) {
 		{"carriage return inside client_auth", "a.example.com {\n\ttls {\n\t\tclient\r_auth {\n\t\t\ttrusted_ca_cert\r_file /etc/passwd\n\t\t}\n\t}\n}\n", false, nil},
 		{"two byte order marks", "\xef\xbb\xbf\xef\xbb\xbfimport /etc/passwd\n", false, nil},
 		{"byte order mark inside import", "a.example.com {\n\t\xef\xbb\xbfimport /etc/passwd\n}\n", false, nil},
+		{"heredoc padding forms import", "a.example.com {\n\t<<X\nzzimport\nzzX /etc/passwd\n}\n", false, nil},
+		{"heredoc padding forms client_auth", "a.example.com {\n\ttls {\n\t\t<<X\nzzclient_auth\nzzX {\n\t\t\ttrusted_ca_cert_file /etc/passwd\n\t\t}\n\t}\n}\n", false, nil},
+		{"heredoc in a response", "a.example.com {\n\trespond <<EOF\n\t\tok\n\t\tEOF\n}\n", false, nil},
 		{"unused snippet is dropped", "(x) {\n\timport /etc/passwd\n}\na.example.com {\n}\n", true, nil},
 		{"snippet defined after the import", "a.example.com {\n\timport common\n}\n" + common, false, nil},
 		{"path named like a later snippet", "a.example.com {\n\timport /etc/passwd\n}\n(/etc/passwd) {\n}\n", false, nil},
@@ -79,12 +82,12 @@ func TestPrepareCaddyfile(t *testing.T) {
 }
 
 func TestLexCaddyfile(t *testing.T) {
-	text := "a {\n\t\"q \\\" x\" `b t` # c\n\tk \\\n\t\tv\n\trespond <<EOF\n\t\timport x\n\t\tEOF 200\n\t\\<<x\n}\n"
+	text := "a {\n\t\"q \\\" x\" `b t` # c\n\tk \\\n\t\tv\n\trespond \"multi\nline\" 200\n}\n"
 	var got []string
 	for _, tok := range lexCaddyfile(text) {
 		got = append(got, fmt.Sprintf("%d:%s", tok.line, tok.text))
 	}
-	want := []string{"1:a", "1:{", `2:q " x`, "2:b t", "3:k", "3:v", "4:respond", "4:\t\timport x\n\t\t", "6:200", "7:<<x", "8:}"}
+	want := []string{"1:a", "1:{", `2:q " x`, "2:b t", "3:k", "3:v", "4:respond", "4:multi\nline", "5:200", "6:}"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("tokens = %q\nwant     %q", got, want)
 	}
