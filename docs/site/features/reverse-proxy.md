@@ -54,6 +54,22 @@ Caddy runs with host networking, so it reaches containers through ports publishe
 
 Every change sends the whole config to Caddy's `/load` endpoint, with no container restart. A route can be switched off with its toggle and keeps its settings. Routes need `proxy.create`, `proxy.update` and `proxy.delete`. Reading them needs `proxy.view`.
 
+## Site options
+
+<!-- update after: proxy: per-site options (UI) -->
+Each route can carry options in its `options` object (`POST /api/v1/proxy/routes`, `PUT /api/v1/proxy/routes/{id}`). The UI doesn't show them yet. An empty object keeps Caddy's defaults, so existing routes behave as before.
+
+| Section | Options |
+|---|---|
+| `performance` | `flush_immediately` (stream responses, for SSE and live logs), `buffer_requests` (off streams uploads to the app), `dial_timeout`, `read_timeout`, `write_timeout` (`30s`, `1h`, up to `168h`), `max_body_bytes`, `stream_close_delay` (keeps WebSockets open after a config change), `compression` |
+| `routing` | `extra_upstreams`, `lb_policy` (`round_robin`, `least_conn`, `first`, `client_ip_hash`), `health_path`, `www_redirect` |
+| `https` | `allow_http` (serve HTTP too instead of redirecting), `hsts` |
+| `access` | `basic_auth` users, `ip_mode` (`allow` or `deny`) with `ip_ranges`, `forward_auth` (`url`, `copy_headers`) |
+| `headers` | `security` (nosniff, SAMEORIGIN framing, strict referrer), `request_set`, `request_remove`, `response_set`, `response_remove` |
+| `logs` | `access_log` (one line per request in `docker logs dockmesh-proxy`) |
+
+A `PUT` without `options` keeps the stored ones; a `PUT` with `options` replaces them. Basic-auth passwords are stored as bcrypt hashes and never returned; send a user without `password` to keep its password. Values can't contain Caddy placeholders (`{…}`), and there's no way to add raw Caddy directives. `GET /api/v1/proxy/routes/{id}/config` returns the Caddy config Dockmesh generates for one site, with password hashes redacted. Users who can view proxy routes but not edit them (`proxy.update`) see header names with the values replaced by `********` and the forward-auth URL without its query, in the route list and in the config preview.
+
 ## TLS modes
 
 | Mode | Label in the UI | Behaviour |

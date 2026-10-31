@@ -1,0 +1,43 @@
+{
+  "admin": {
+    "listen": "127.0.0.1:2019",
+    "origins": [
+      "127.0.0.1:2019",
+      "localhost:2019"
+    ],
+    "enforce_origin": true
+  },
+  "apps": {
+    "http": {
+      "servers": {
+        "dockmesh_http": {
+          "listen": [
+            ":80"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "app.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {
+                      "dial": "10.0.0.5:8080"
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "admin": {
+    "listen": "127.0.0.1:2019",
+    "origins": [
+      "127.0.0.1:2019",
+      "localhost:2019"
+    ],
+    "enforce_origin": true
+  },
+  "apps": {
+    "http": {
+      "servers": {
+        "dockmesh": {
+          "listen": [
+            ":443"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "app.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "authentication",
+                  "providers": {
+                    "http_basic": {
+                      "accounts": [
+                        {
+                          "username": "marcel",
+                          "password": "$2a$04$LJ3FMD0CUmp0L58htuEqR.j9XBgCTxlHttAycaIOV10mIFLQNOS2y"
+                        }
+                      ],
+                      "hash": {
+                        "algorithm": "bcrypt"
+                      },
+                      "hash_cache": {}
+                    }
+                  }
+                },
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {
+                      "dial": "10.0.0.5:8080"
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            }
+          ]
+        },
+        "dockmesh_http": {
+          "listen": [
+            ":80"
+          ],
+          "routes": []
+        }
+      }
+    },
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "subjects": [
+              "app.example.com"
+            ],
+            "issuers": [
+              {
+                "module": "acme"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

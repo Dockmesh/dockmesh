@@ -6139,6 +6139,10 @@ paths:
       operationId: proxy.list_routes
       tags: [proxy]
       summary: List configured proxy routes
+      description: |
+        Callers without `proxy.update` get the values of `headers.request_set`
+        and `headers.response_set` replaced by `********` and
+        `access.forward_auth.url` without its query.
       responses:
         "200":
           description: Routes.
@@ -6229,6 +6233,31 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+
+  /proxy/routes/{id}/config:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    get:
+      operationId: proxy.route_config
+      tags: [proxy]
+      summary: Generated Caddy config for one site (read-only preview)
+      description: |
+        The Caddy JSON config Dockmesh generates for this site alone, as it
+        would be served when enabled. Basic-auth password hashes are replaced
+        by `REDACTED`; the admin section is left out. `blocked` is true when
+        the stored route fails validation and is not served. For callers
+        without `proxy.update` the config is built with header values masked
+        and the forward-auth URL's query removed, as in the route list.
+      responses:
+        "200":
+          description: Preview.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxySitePreview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /proxy/routes/{id}/metrics:
     parameters:
@@ -8868,6 +8897,7 @@ components:
         cert_valid_from: { type: string, format: date-time }
         cert_valid_to: { type: string, format: date-time }
         cert_days_left: { type: integer }
+        options: { $ref: "#/components/schemas/ProxySiteOptions" }
 
     ProxyRouteInput:
       type: object
@@ -8889,6 +8919,156 @@ components:
           enum: [auto, internal, none]
           description: Defaults to `auto` on create.
         enabled: { type: boolean }
+        options:
+          allOf:
+            - $ref: "#/components/schemas/ProxySiteOptions"
+          description: |
+            Per-site options. Omitted on update: the stored options are kept.
+            Sent: they replace the stored options and fields left out take their
+            default. A basic-auth user sent without `password` keeps the stored
+            password of the same username. Invalid options are rejected with 400
+            naming the field (`options.<section>.<field>: ...`); a www redirect
+            onto a name that is a site of its own is rejected with 409.
+
+    ProxySitePreview:
+      type: object
+      required: [route_id, enabled, blocked, config]
+      properties:
+        route_id: { type: integer, format: int64 }
+        enabled: { type: boolean }
+        blocked: { type: boolean }
+        config:
+          type: object
+          additionalProperties: true
+          description: Caddy JSON config (`apps.http`, `apps.tls`) for this site.
+
+    ProxySiteOptions:
+      type: object
+      description: |
+        Structured per-site proxy options. Every field defaults to Caddy's
+        behaviour, so an empty object serves the site as a plain reverse proxy
+        with HTTP redirected to HTTPS. Values are never passed to Caddy as raw
+        directives; strings containing `{`, `}` or control characters are
+        rejected.
+      properties:
+        routing:
+          type: object
+          properties:
+            extra_upstreams:
+              type: array
+              maxItems: 16
+              items: { type: string }
+              description: More `host:port` upstreams load-balanced with `upstream`; same rules as `upstream`.
+            lb_policy:
+              type: string
+              enum: ["", round_robin, least_conn, first, client_ip_hash]
+              description: Empty is Caddy's default (random).
+            health_path:
+              type: string
+              description: Path for active health checks of every upstream, e.g. `/health`. Empty disables them.
+            www_redirect:
+              type: boolean
+              description: Also serve `www.<host>` with a permanent redirect to `<host>`. Not allowed for wildcard, IP or `www.` hosts.
+        https:
+          type: object
+          properties:
+            allow_http:
+              type: boolean
+              description: Serve a TLS site on plain HTTP too instead of redirecting HTTP to HTTPS.
+            hsts:
+              type: boolean
+              description: "Send `Strict-Transport-Security: max-age=31536000`. Needs `tls_mode` auto or internal."
+        performance:
+          type: object
+          properties:
+            flush_immediately:
+              type: boolean
+              description: Pass each chunk of the response on at once (`flush_interval -1`), for SSE, live logs and streaming downloads.
+            buffer_requests:
+              type: boolean
+              description: Buffer up to 4 MiB of the request body before sending it upstream. Off (default) streams uploads.
+            dial_timeout: { type: string, example: 30s, description: "Connect timeout, Go duration from 1s to 168h. Empty: Caddy default." }
+            read_timeout: { type: string, example: 1h, description: "Upstream read timeout, Go duration from 1s to 168h. Empty: no limit." }
+            write_timeout: { type: string, example: 1h, description: "Upstream write timeout, Go duration from 1s to 168h. Empty: no limit." }
+            max_body_bytes:
+              type: integer
+              format: int64
+              minimum: 0
+              description: Largest request body accepted (413 above it). 0 means no limit.
+            stream_close_delay:
+              type: string
+              example: 5m
+              description: Keep WebSockets and other streams open this long after a config reload. Empty closes them on reload.
+            compression: { type: boolean, description: Compress responses with zstd or gzip. }
+        access:
+          type: object
+          properties:
+            basic_auth:
+              type: array
+              maxItems: 32
+              items:
+                type: object
+                required: [username]
+                properties:
+                  username: { type: string, maxLength: 64 }
+                  password:
+                    type: string
+                    writeOnly: true
+                    minLength: 8
+                    maxLength: 72
+                    description: Stored as a bcrypt hash; never returned.
+            ip_mode:
+              type: string
+              enum: ["", allow, deny]
+              description: "`allow` answers 403 to clients outside `ip_ranges`, `deny` to clients inside. Uses the client address after trusted proxies."
+            ip_ranges:
+              type: array
+              maxItems: 256
+              items: { type: string, example: 192.168.10.0/24 }
+              description: IP addresses or CIDR ranges, stored in CIDR form.
+            forward_auth:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  example: http://authelia:9091/api/verify?rd=https://auth.example.org
+                  description: Auth service URL; a 2xx answer lets the request through, any other answer is returned to the client.
+                copy_headers:
+                  type: array
+                  items: { type: string }
+                  description: Headers copied from the auth answer onto the request, e.g. `Remote-User`.
+        headers:
+          type: object
+          properties:
+            security:
+              type: boolean
+              description: "Adds `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN` and `Referrer-Policy: strict-origin-when-cross-origin`."
+            request_set:
+              type: array
+              items: { $ref: "#/components/schemas/ProxyHeader" }
+            request_remove:
+              type: array
+              items: { type: string }
+            response_set:
+              type: array
+              items: { $ref: "#/components/schemas/ProxyHeader" }
+            response_remove:
+              type: array
+              items: { type: string }
+        logs:
+          type: object
+          properties:
+            access_log:
+              type: boolean
+              description: Write an access log line per request of this site to the proxy container's log.
+
+    ProxyHeader:
+      type: object
+      required: [name, value]
+      properties:
+        name: { type: string }
+        value: { type: string, maxLength: 4096 }
 
     DrainPlan:
       type: object
