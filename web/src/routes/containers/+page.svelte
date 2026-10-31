@@ -1,16 +1,5 @@
 <script lang="ts">
-  // Containers — fleet-wide list. The sister-view to /resources: lists
-  // every Docker container across every reachable host. /stacks renders
-  // per-stack containers in its own detail screen — this page is the
-  // operator surface for "I don't know which stack this container
-  // belongs to" / "bulk-stop everything on this host".
-  //
-  // Slice 1: editorial rebuild on existing backend surface. Inline
-  // CPU/Mem live, restart-count, image-update indicator are deferred to
-  // Slice 2 (backend additions noted in the punch-list).
-  //
-  // RBAC: still uses v1 strings (container.control, container.exec).
-  // Migration to v2.1 happens in the consolidated backend slice.
+  // Every container on the hosts in the lens, including ones no stack manages.
   import { untrack } from 'svelte';
   import { api, ApiError, isFanOut } from '$lib/api';
   import { latest } from '$lib/latest';
@@ -58,7 +47,7 @@
   let stateFilter = $state<StateFilter>('all');
 
   // Sort
-  type SortKey = 'urgency' | 'name' | 'state' | 'image' | 'stack' | 'uptime';
+  type SortKey = 'urgency' | 'name' | 'state' | 'image' | 'uptime';
   let sortKey = $state<SortKey>('urgency');
 
   type View = 'list' | 'host' | 'stack';
@@ -90,7 +79,6 @@
     return null;
   }
   function uptime(c: Container): string {
-    if (c.State !== 'running') return c.Status || '—';
     if (!c.Created) return '—';
     const secs = Math.floor(Date.now() / 1000) - c.Created;
     if (secs < 60) return `${secs}s`;
@@ -186,7 +174,6 @@
           case 'name':  cmp = nameOf(a).localeCompare(nameOf(b)); break;
           case 'state': cmp = a.State.localeCompare(b.State); break;
           case 'image': cmp = a.Image.localeCompare(b.Image); break;
-          case 'stack': cmp = (stackOf(a) ?? '').localeCompare(stackOf(b) ?? ''); break;
           case 'uptime': cmp = (a.Created ?? 0) - (b.Created ?? 0); break;
         }
         return sortAsc ? cmp : -cmp;

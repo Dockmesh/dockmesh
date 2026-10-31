@@ -1,16 +1,5 @@
 <script lang="ts">
-  // Resources — Images / Volumes / Networks combined.
-  // Editorial rebuild of the three legacy pages in one shell. Mockup:
-  // `Dockmesh Wizard (6)/resources.jsx`. Tab strip switches the body;
-  // the global host picker (topbar) drives the host filter for every
-  // tab. Per-tab: SummaryStrip metrics, FilterPills + Search toolbar,
-  // resource-table with bulk actions, then per-tab specifics.
-  //
-  // We intentionally consolidated: the old /images, /volumes, /networks
-  // routes still exist as deep-link fallbacks, but the sidebar entry
-  // is now a single "Resources". Topology preview footer in Networks
-  // links to the existing /networks?topology=1 graph until that gets
-  // its own slice.
+  // Images, volumes and networks of the hosts in the lens, one tab each.
   import { untrack } from 'svelte';
   import { page } from '$app/state';
   import {
@@ -32,10 +21,7 @@
     AlertTriangle, Package, ArrowUpRight
   } from 'lucide-svelte';
 
-  // Same pattern as /users (Users · Roles tab strip): URL ?tab=… is the
-  // initial deep-link only; once mounted, tab is plain $state and the
-  // tab buttons set it directly. No URL syncing on click, no goto, no
-  // $effect — just like the rest of the app.
+  // ?tab= picks the initial tab only.
   type Tab = 'images' | 'volumes' | 'networks';
   let tab = $state<Tab>(((new URLSearchParams(page.url.search).get('tab')) as Tab) || 'images');
 
@@ -69,11 +55,7 @@
   let imageSearch = $state('');
   let imageFilter = $state<'all' | 'used' | 'unused' | 'dangling' | 'vulnerable'>('all');
   let imageSelected = $state<Set<string>>(new Set());
-  // scanCache holds the most recent scan summary per image-ref (RepoTags[0]
-  // or sha256 id when the image is dangling). Populated lazily on image
-  // list load — every visible row gets a GetScan probe; 404 means
-  // "never scanned" and we render "not scanned" in the cell. Updated
-  // in-place when a fresh scan completes.
+  // Latest scan report per image ref (RepoTags[0], or the id when dangling).
   let scanCache = $state<Map<string, ScanReport>>(new Map());
   let scanAllBusy = $state(false);
 
@@ -112,14 +94,11 @@
       if (current()) imagesLoading = false;
     }
   }
-  // Backend marshals an empty []ScanVuln as JSON null (Go nil-slice
-  // semantics), so we have to defensively coerce vulnerabilities to []
-  // before storing — otherwise `report.vulnerabilities.length` blows
-  // up with "Cannot read properties of null (reading 'length')".
   // GET /images/{id}/scan answers {"scanned": false} for an image that was
   // never scanned; that is "not scanned", not a report without findings.
   function normalizeScanReport(rep: ScanReport | null): ScanReport | null {
     if (!rep || rep.scanned === false || !rep.summary) return null;
+    // An empty finding list arrives as null.
     if (!rep.vulnerabilities) rep.vulnerabilities = [];
     return rep;
   }
@@ -921,10 +900,6 @@
                 <span class="font-mono muted">—</span>
               {/if}
             </span>
-            <!-- CVE cell. Three states match the mockup:
-                 • not scanned (no entry in scanCache): muted text + scan button
-                 • clean (scan ran, 0 vulns): green check pill
-                 • findings: severity badges per non-zero severity, mockup-style "C N / H N / M N / L N" -->
             <div class="res-cve-cell">
               {#if !cve}
                 <span class="font-mono muted res-cve-empty">not scanned</span>
@@ -1211,8 +1186,6 @@
         {/each}
       </div>
 
-      <!-- Topology preview card — links to the standalone /topology page
-           where the full dagre graph + side panel + live updates live. -->
       <a href="/topology" class="dm-card res-topology">
         <div class="res-topology-text">
           <Eyebrow>Topology · live</Eyebrow>
@@ -1462,32 +1435,6 @@
 <style>
   .resources-page { display: block; }
 
-  .res-header { max-width: 70ch; margin-bottom: 24px; }
-  .res-title { font-size: 26px; }
-  .res-subtitle {
-    margin-top: 4px;
-    color: var(--fg-muted);
-    font-size: 13.5px;
-    line-height: 1.6;
-  }
-
-  .res-tabs { margin-top: 8px; }
-  .res-tabs-spacer { flex: 1; }
-  .res-cleanup-btn { color: var(--fg-subtle); margin-bottom: 1px; }
-  .res-cleanup-btn:hover { color: var(--fg); }
-
-  /* Summary metric strip — 4 ed-metric tiles. */
-  .res-summary {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 10px;
-    margin-top: 24px;
-  }
-  .res-summary :global(.ed-metric-value.warn) { color: var(--color-warning-400); }
-  @media (max-width: 720px) {
-    .res-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  }
-
   /* Toolbar row above the table — search + pills + actions on one
      line with sensible wrap. */
   .res-toolbar {
@@ -1510,17 +1457,8 @@
     transform: translateY(-50%);
     color: var(--fg-subtle);
   }
-  /* Search input: underline-only style per the editorial language. The
-     ed-underline-input class lives in app.css (used by the hosts page
-     filter bar too). Padding-left makes room for the absolute icon. */
   .res-search-input { padding-left: 20px; font-size: 12px; }
 
-  /* Segmented filter control — matches the resources mockup. Single
-     border around the whole group with internal border-right separators
-     between buttons; counts render as inline subtle-grey numbers (NOT
-     the .ed-count square badge, which would be too busy in this dense
-     row). The square-count convention still applies elsewhere — tab
-     counts, sidebar counters etc. */
   .res-segctrl-label { margin-right: 2px; }
   .res-segctrl {
     display: inline-flex;
@@ -1552,10 +1490,6 @@
   }
   .res-segctrl-btn.active .seg-count { color: var(--fg-muted); }
 
-  /* Prune button — local override of dm-btn-secondary so the visuals
-     line up exactly with the mockup: transparent bg, hairline border,
-     subtle grey text, gentle hover. The trailing dm-pill-warning count
-     is tinted via res-action-pill below. */
   .res-prune-btn {
     display: inline-flex;
     align-items: center;
@@ -1623,10 +1557,6 @@
     align-items: center;
     gap: 6px;
   }
-  /* Whole row name is the link target — operator clicks anywhere on the
-     repo:tag / volume name / network name area to open the detail page.
-     Inheriting underline=none + hover-accent preserves the visual
-     consistency with the rest of the editorial system. */
   .res-col-tag-link {
     text-decoration: none;
     color: inherit;
@@ -1722,9 +1652,6 @@
     .res-topology-mini { display: none; }
   }
 
-  /* CVE cell — three render modes (not scanned / clean / findings).
-     "Findings" shows mockup-style severity counts: "C 1 H 3 M 6 L 14".
-     Whole cell is a button so a click anywhere re-opens the scan. */
   .res-cve-cell {
     display: inline-flex;
     align-items: center;
@@ -1770,10 +1697,6 @@
   .cve-m { color: var(--color-warning-400); background: color-mix(in srgb, var(--color-warning-500) 14%, transparent); }
   .cve-l { color: var(--fg-subtle); background: var(--bg-elevated); }
 
-  /* Volume / network name cell — plain text (the old separate detail
-     pages were removed; modernization slice will reintroduce a drawer
-     or dedicated page). The title attribute keeps the full name on
-     hover for long ones. */
   .res-name-text {
     color: var(--fg);
     overflow: hidden;

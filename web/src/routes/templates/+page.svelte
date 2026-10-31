@@ -20,7 +20,7 @@
   let templates = $state<StackTemplate[]>([]);
   let loading = $state(true);
   let search = $state('');
-  let sortKey = $state<'name' | 'recent'>('name');
+  let sortKey = $state<'name' | 'source'>('name');
 
   // Deploy drawer
   let deployOpen = $state(false);
@@ -30,13 +30,16 @@
   let editOpen = $state(false);
   let editingId = $state<number | null>(null);
   let editTab = $state<'compose' | 'parameters'>('compose');
-  let editForm = $state<StackTemplateInput>({
-    slug: '',
-    name: '',
-    description: '',
-    compose: 'services:\n  app:\n    image: alpine:3.20\n',
-    parameters: [],
-  });
+  function blankTemplate(): StackTemplateInput {
+    return {
+      slug: '',
+      name: '',
+      description: '',
+      compose: 'services:\n  app:\n    image: alpine:3.20\n    restart: unless-stopped\n',
+      parameters: [],
+    };
+  }
+  let editForm = $state<StackTemplateInput>(blankTemplate());
   let editBusy = $state(false);
   let slugTouched = $state(false);
   let editErr = $state<string | null>(null);
@@ -65,12 +68,11 @@
         (t.description ?? '').toLowerCase().includes(q),
       );
     }
-    if (sortKey === 'name') {
-      arr.sort((a, b) => a.name.localeCompare(b.name));
-    } else {
-      // recent — best-effort using id descending (no updated_at in DTO today)
-      arr.sort((a, b) => b.id - a.id);
-    }
+    arr.sort((a, b) =>
+      sortKey === 'source'
+        ? Number(a.builtin) - Number(b.builtin) || a.name.localeCompare(b.name)
+        : a.name.localeCompare(b.name),
+    );
     return arr;
   });
 
@@ -80,9 +82,7 @@
     custom: templates.filter((t) => !t.builtin).length,
   });
 
-  // Image extraction from compose — clientside regex. Captures the
-  // first whitespace + image: line per service; deduplicates; collapses
-  // ${VAR} substitutions to "?" so the pill stays short.
+  // Short image names (no registry, no tag) for the list; ${VAR} shows as "?".
   function extractImages(compose: string): string[] {
     if (!compose) return [];
     const out = new Set<string>();
@@ -90,17 +90,12 @@
     let m: RegExpExecArray | null;
     while ((m = re.exec(compose)) !== null) {
       let img = m[1].trim();
-      // Strip inline comments
       const hashIdx = img.indexOf('#');
       if (hashIdx > 0) img = img.slice(0, hashIdx).trim();
-      // Strip quotes
       if ((img.startsWith('"') && img.endsWith('"')) || (img.startsWith("'") && img.endsWith("'"))) {
         img = img.slice(1, -1);
       }
-      // Collapse ${VAR} for display
       img = img.replace(/\$\{[^}]+\}/g, '?');
-      // Just the image-name without tag for the pill, and without
-      // registry prefix
       const shortName = img.split(':')[0].split('/').pop() ?? img;
       out.add(shortName);
     }
@@ -115,13 +110,7 @@
 
   function openNewTemplate() {
     editingId = null;
-    editForm = {
-      slug: '',
-      name: '',
-      description: '',
-      compose: 'services:\n  app:\n    image: alpine:3.20\n    restart: unless-stopped\n',
-      parameters: [],
-    };
+    editForm = blankTemplate();
     editTab = 'compose';
     editErr = null;
     slugTouched = false;
@@ -296,7 +285,7 @@
         <span role="columnheader">Description</span>
         <span role="columnheader">Images</span>
         <span role="columnheader">Parameters</span>
-        <span role="columnheader"><button type="button" onclick={() => (sortKey = 'recent')}>Source{sortKey === 'recent' ? ' ↓' : ''}</button></span>
+        <span role="columnheader"><button type="button" onclick={() => (sortKey = 'source')}>Source{sortKey === 'source' ? ' ↓' : ''}</button></span>
         <span role="columnheader"></span>
       </div>
       {#each filtered as t (t.id)}

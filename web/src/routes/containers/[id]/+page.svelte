@@ -6,14 +6,28 @@
   import { Terminal as XTerm } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
   import '@xterm/xterm/css/xterm.css';
-  import { Card, Badge, Button, Skeleton, StatusChip, Tabs, Menu } from '$lib/components/ui';
+  import {
+    Skeleton,
+    StatusChip,
+    Tabs,
+    Menu
+  } from '$lib/components/ui';
   import type { MenuItem } from '$lib/components/ui/Menu.svelte';
-  import { EdMetric, Sparkline } from '$lib/components/editorial';
+  import { EdMetric } from '$lib/components/editorial';
   import ContainerMetrics from '$lib/components/ContainerMetrics.svelte';
   import type { ChartEvent } from '$lib/components/ui/MetricsChart.svelte';
-  // Files-tab icons. FilesIcon kept for the tab navigation chip;
-  // Folder/FileText/Link2 are used inside the file browser rows.
-  import { Image as FilesIcon, Search, Folder, File as FileIcon, Link2, Upload, ChevronRight, Save, X as XIcon, Pencil } from 'lucide-svelte';
+  import {
+    Image as FilesIcon,
+    Search,
+    Folder,
+    File as FileIcon,
+    Link2,
+    Upload,
+    ChevronRight,
+    Save,
+    X as XIcon,
+    Pencil
+  } from 'lucide-svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
@@ -22,28 +36,17 @@
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import type { UpdatePreview, UpdateHistoryEntry } from '$lib/api';
   import {
-    ChevronLeft,
     Play,
     Square,
     RotateCw,
-    Trash2,
     FileText,
     Terminal as TerminalIcon,
-    Activity,
-    Code2,
     Trash,
-    Link as LinkIcon,
     Download,
     Undo2,
     ExternalLink,
     Package,
-    Info,
-    Network,
-    HardDrive,
-    Tag,
-    Pause,
     PlayCircle,
-    Zap,
     ArrowRight
   } from 'lucide-svelte';
 
@@ -58,6 +61,7 @@
   // Scope-aware perm gates: containers.update / .exec also require the
   // caller's role-scope to cover this container's host + stack (if any).
   const ctxStack = $derived(info?.Config?.Labels?.['com.docker.compose.project'] as string | undefined);
+  const ctxService = $derived(info?.Config?.Labels?.['com.docker.compose.service'] as string | undefined);
   const ctxHost = $derived(targetHost);
   const canControl = $derived(allowed('containers.update', { stack: ctxStack, host: ctxHost }));
   const canExec = $derived(allowed('containers.exec', { stack: ctxStack, host: ctxHost }));
@@ -410,15 +414,6 @@
   // updatePreview-dependent deriveds are declared further down, right
   // after `let updatePreview = …`, to avoid TDZ.
 
-  // For remote hosts in 3.1.2.4: Logs / Stats / Terminal / Inspect work.
-  // Updates is still local-only (image pulls live on the central server's
-  // docker daemon — that one comes in 3.1.3 with stack deploy).
-  $effect(() => {
-    if (isRemote && tab === 'updates') {
-      tab = 'inspect';
-    }
-  });
-
   // Updates state
   let updatePreview = $state<UpdatePreview | null>(null);
   let updateHistory = $state<UpdateHistoryEntry[]>([]);
@@ -487,7 +482,6 @@
   }
   let stats = $state<StatsSample | null>(null);
   let statsHistory = $state<StatsSample[]>([]);
-  let statsConnected = $state(false);
   let statsWs: WebSocket | null = null;
 
   // Exec
@@ -687,7 +681,6 @@
       const sock = new WebSocket(`${proto}//${location.host}/api/v1/ws/stats/${id}?ticket=${ticket}${hostQs}`);
       statsWs = sock;
       statsWs.onopen = () => {
-        statsConnected = true;
         statsReconnectAttempt = 0;
       };
       statsWs.onmessage = (ev) => {
@@ -700,7 +693,6 @@
       };
       statsWs.onclose = () => {
         if (statsWs !== sock) return;
-        statsConnected = false;
         scheduleStatsReconnect();
       };
     } catch {
@@ -723,7 +715,6 @@
     statsUserClosed = true;
     if (statsReconnectTimer) { clearTimeout(statsReconnectTimer); statsReconnectTimer = null; }
     if (statsWs) { statsWs.close(); statsWs = null; }
-    statsConnected = false;
   }
 
   // ---------- Exec ----------
@@ -914,16 +905,6 @@
     return (inf?.Name ?? '').replace(/^\//, '');
   }
 
-  function portList(inf: any): string {
-    if (!inf?.NetworkSettings?.Ports) return '—';
-    const out: string[] = [];
-    for (const [priv, bindings] of Object.entries(inf.NetworkSettings.Ports)) {
-      if (Array.isArray(bindings) && bindings.length > 0) {
-        for (const b of bindings as any[]) out.push(`${b.HostPort}→${priv}`);
-      }
-    }
-    return out.join(', ') || '—';
-  }
 
   function formatBytes(n: number): string {
     if (n < 1024) return `${n} B`;
@@ -932,14 +913,6 @@
     return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
   }
 
-  function sparkPath(values: number[], max: number, w: number, h: number): string {
-    if (values.length === 0) return '';
-    const m = max || Math.max(1, ...values);
-    const stepX = w / Math.max(1, values.length - 1);
-    return values
-      .map((v, i) => `${i === 0 ? 'M' : 'L'}${(i * stepX).toFixed(1)},${(h - (v / m) * h).toFixed(1)}`)
-      .join(' ');
-  }
 
   // JSON syntax highlighting for Inspect tab
   function highlightJSON(obj: any): string {
@@ -974,15 +947,6 @@
     return result;
   }
 
-  function sparkArea(values: number[], max: number, w: number, h: number): string {
-    if (values.length === 0) return '';
-    const m = max || Math.max(1, ...values);
-    const stepX = w / Math.max(1, values.length - 1);
-    const pts = values
-      .map((v, i) => `${(i * stepX).toFixed(1)},${(h - (v / m) * h).toFixed(1)}`)
-      .join(' L');
-    return `M0,${h} L${pts} L${w},${h} Z`;
-  }
 
   const statusTone = $derived.by<{ tone: 'ok' | 'warn' | 'bad' | 'off'; label: string }>(() => {
     const st = info?.State;
@@ -1065,11 +1029,9 @@
       <Skeleton width="70%" height="1rem" />
     </div>
   {:else if info}
-    {@const projectLabel = info.Config?.Labels?.['com.docker.compose.project']}
-    {@const serviceLabel = info.Config?.Labels?.['com.docker.compose.service']}
 
     <header class="dm-ph ctn-ph">
-      <h1>{serviceLabel || containerName(info) || id.slice(0, 12)}</h1>
+      <h1>{ctxService || containerName(info) || id.slice(0, 12)}</h1>
       <StatusChip tone={statusTone.tone} label={statusTone.label} title={info.State?.Status} />
       <span class="dm-sub dm-mono ctn-ph-sub">
         {imageTag ? `${imageTag} · ` : ''}{info.State?.Running ? `up ${fmtRelTime(info.State?.StartedAt).replace(' ago', '')}` : 'not running'}{(info.RestartCount ?? 0) > 0 ? ` · ${info.RestartCount} restart${info.RestartCount === 1 ? '' : 's'}` : ''} · {hostName} · {id.slice(0, 12)}
@@ -1101,8 +1063,6 @@
 
   <!-- Tab panels -->
   {#if tab === 'overview' && info}
-    {@const projectLabel2 = info.Config?.Labels?.['com.docker.compose.project']}
-    {@const serviceLabel2 = info.Config?.Labels?.['com.docker.compose.service']}
     {@const envLines = (info.Config?.Env ?? []) as string[]}
     {@const portsMap = (info.NetworkSettings?.Ports ?? {}) as Record<string, Array<{HostIp: string; HostPort: string}> | null>}
     {@const portRows = Object.entries(portsMap).map(([k, v]) => ({
@@ -1298,9 +1258,6 @@
         </section>
       </div>
 
-      <!-- Right rail. Mounts / Networks / Endpoints sit on `.dm-card`
-           (filled background); Stack context uses `.dm-card-flat`
-           (border only, transparent) — same chrome as the mockup. -->
       <aside class="ctn-overview-rail">
         <section class="dm-card ctn-rail-card">
           <h3 class="ctn-h3">Mounts · {mounts.length}</h3>
@@ -1339,15 +1296,15 @@
           {/if}
         </section>
 
-        {#if projectLabel2}
+        {#if ctxStack}
           <section class="dm-card-flat ctn-rail-card">
             <h3 class="ctn-h3">Stack context</h3>
             <p class="ctn-stack-blurb">
-              Service <em class="ed-accent">{serviceLabel2 || '—'}</em> of stack
-              <em class="ed-accent">{projectLabel2}</em>.
+              Service <em class="ed-accent">{ctxService || '—'}</em> of stack
+              <em class="ed-accent">{ctxStack}</em>.
             </p>
-            <a href={`/stacks/${encodeURIComponent(projectLabel2)}`} class="dm-btn dm-btn-secondary dm-btn-sm ctn-stack-link">
-              ↑ Open {projectLabel2}
+            <a href={`/stacks/${encodeURIComponent(ctxStack)}`} class="dm-btn dm-btn-secondary dm-btn-sm ctn-stack-link">
+              ↑ Open {ctxStack}
             </a>
           </section>
         {/if}
@@ -1607,11 +1564,7 @@
           {/if}
 
           {#if updatePreview.latest_release?.body}
-            <!-- Release notes — render the upstream body verbatim in a
-                 framed text block. We tried parsing it into a tagged
-                 bullet list, but real release bodies are often prose
-                 (Vaultwarden, Caddy, …), so the structured list lost
-                 information. The text block keeps everything. -->
+            <!-- Release bodies are often prose, so they are shown verbatim. -->
             <section class="ctn-block">
               <div class="ctn-updates-release-head">
                 <div class="ctn-updates-release-title">
@@ -1637,10 +1590,6 @@
             </section>
           {/if}
 
-          <!-- Image facts mini-grid — only the data we actually have:
-               size on the registry, push time, local digest. No fake
-               "size delta" or "CVEs resolved" since we don't compute
-               those yet. -->
           {#if updatePreview.local_size || updatePreview.remote_size || updatePreview.remote_last_updated || updatePreview.current_digest}
             <section class="ctn-block">
               <h3 class="ctn-h3">
@@ -1797,7 +1746,7 @@
     {@const netEntries = Object.entries(info.NetworkSettings?.Networks ?? {}) as Array<[string, any]>}
     {@const portsMap2 = (info.NetworkSettings?.Ports ?? {}) as Record<string, Array<{HostIp: string; HostPort: string}> | null>}
     {@const portRows2 = Object.entries(portsMap2).map(([k, v]) => ({ port: k, bindings: (v ?? []) as Array<{HostIp: string; HostPort: string}> }))}
-    <div class="ctn-network-pane-v2">
+    <div class="ctn-network-pane">
       <!-- LEFT: Connected networks -->
       <div>
         <h3 class="ctn-h3">Connected networks</h3>
@@ -2101,7 +2050,6 @@
 </section>
 
 <style>
-  /* ─────────── Editorial container-detail layout ─────────── */
   .ctn-frame { gap: 18px; }
   .ctn-ph h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40ch; }
   .ctn-ph-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
@@ -2109,98 +2057,9 @@
   .ctn-h3 :global(em) { color: var(--fg); }
   .ctn-skeleton { display: flex; flex-direction: column; gap: 10px; }
 
-  .ctn-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 24px;
-    flex-wrap: wrap;
-  }
-  .ctn-header-text { min-width: 0; max-width: 80ch; flex: 1 1 40ch; }
-  .ctn-title {
-    font-size: 24px;
-    line-height: 1.2;
-    letter-spacing: -0.02em;
-    margin-top: 8px;
-  }
-  /* Container service-names look right in mono-bold (programmatic identity)
-     — override the global .ed-title em italic-serif treatment. */
-  .ctn-title :global(em) {
-    font-family: var(--font-mono);
-    font-style: normal;
-    font-weight: 700;
-    color: var(--fg);
-    letter-spacing: -0.01em;
-  }
-  /* Meta row sits on its OWN line below the title — status pill + version
-     pill + uptime + host + id. Mockup-faithful. */
-  .ctn-meta-row {
-    margin-top: 12px;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 12px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-subtle);
-    letter-spacing: 0.02em;
-  }
   .ctn-meta-sep { color: var(--border-strong); }
-  .ctn-meta-cell { color: var(--fg-subtle); }
-  .ctn-meta-pill { font-size: 9.5px; }
 
-  /* Action cluster + more menu */
-  .ctn-actions { gap: 6px; }
-  .ctn-btn-kill { color: var(--color-danger-400); }
-  .ctn-btn-kill:hover { color: var(--color-danger-500); background: color-mix(in srgb, var(--color-danger-500) 10%, transparent); }
-  .ctn-more-wrap { position: relative; }
-  .ctn-more-btn { padding: 0.35rem 0.55rem; }
-  .ctn-more-dots {
-    font-family: var(--font-mono);
-    font-size: 14px;
-    letter-spacing: 0;
-    line-height: 1;
-    transform: translateY(-3px);
-  }
-  .ctn-more-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 30;
-    background: transparent;
-    border: 0;
-    cursor: default;
-  }
-  .ctn-more-menu {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    min-width: 180px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    padding: 4px;
-    z-index: 40;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  }
-  .ctn-more-item {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 7px 10px;
-    background: transparent;
-    border: 0;
-    color: var(--fg);
-    font-size: 12.5px;
-    cursor: pointer;
-    text-align: left;
-    border-radius: 4px;
-    font-family: inherit;
-  }
-  .ctn-more-item:hover { background: var(--surface-hover); }
-  .ctn-more-item-danger { color: var(--color-danger-400); }
-  .ctn-more-item-danger:hover { background: color-mix(in srgb, var(--color-danger-500) 12%, transparent); }
-  .ctn-more-sep { height: 1px; background: var(--border); margin: 4px 0; }
+  .ctn-meta-pill { font-size: 9.5px; }
 
   .ctn-remote {
     display: inline-flex;
@@ -2216,29 +2075,6 @@
   }
   .ctn-remote-bullet { color: var(--color-brand-400); font-weight: 700; }
 
-  .ctn-tabs { margin-top: 6px; }
-
-  .ctn-stats {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 12px;
-    margin-top: 14px;
-  }
-  .ctn-stats-pending {
-    margin-top: 14px;
-    padding: 18px 0;
-    color: var(--fg-muted);
-    font-size: 13px;
-    text-align: center;
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  /* ─────────── 2-column overview ──────────
-     Right rail is fixed 320px (smaller than the left main column) per
-     the mockup's grid: `minmax(0, 1fr) 320px`. Mounts/Networks/Endpoints
-     get filled-card chrome (`.dm-card`); Stack-context uses the flat
-     border-only variant (`.dm-card-flat`). */
   .ctn-overview {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 320px;
@@ -2290,7 +2126,6 @@
   }
   .ctn-kv-env-pair { color: var(--fg-muted); }
   .ctn-kv-env-pair .secret { color: var(--fg-subtle); font-style: normal; }
-  .ctn-kv-env-more { color: var(--fg-subtle); font-style: normal; }
 
   /* ─────────── Health ──────────
      Bordered container wraps the row(s) — even a single row gets the
@@ -2333,13 +2168,6 @@
     white-space: pre-wrap;
     max-height: 140px;
     overflow: auto;
-  }
-
-  /* Network tile dual-line layout — compact label/value head row. */
-  .ctn-net-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
   }
 
   /* Identity env show-more button */
@@ -2457,14 +2285,14 @@
   :global(.ctn-endpoint-icon) { color: var(--fg-subtle); flex-shrink: 0; }
 
   /* ─────────── Network tab — 2-column with bottom throughput row ─────────── */
-  .ctn-network-pane-v2 {
+  .ctn-network-pane {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 24px;
     margin-top: 14px;
   }
   @media (max-width: 1100px) {
-    .ctn-network-pane-v2 { grid-template-columns: 1fr; }
+    .ctn-network-pane { grid-template-columns: 1fr; }
   }
   .ctn-network-list {
     margin-top: 12px;
@@ -2538,25 +2366,6 @@
     gap: 12px;
   }
 
-  /* legacy network-pane styles kept for backward compat (not used by v2) */
-  .ctn-network-pane {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    margin-top: 14px;
-  }
-  .ctn-network-card {
-    padding: 16px 20px 18px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .ctn-network-card-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
   .ctn-inline-link {
     font-family: var(--font-mono);
     font-size: 11px;
@@ -2565,22 +2374,7 @@
     text-decoration: none;
   }
   .ctn-inline-link:hover { color: var(--fg); }
-  .ctn-network-kv {
-    margin: 0;
-    display: grid;
-    grid-template-columns: 90px 1fr;
-    column-gap: 14px;
-    row-gap: 6px;
-    font-family: var(--font-mono);
-    font-size: 12px;
-  }
-  .ctn-network-kv dt {
-    color: var(--fg-subtle);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: lowercase;
-  }
-  .ctn-network-kv dd { margin: 0; color: var(--fg); word-break: break-all; }
+
   .ctn-network-empty {
     padding: 32px 28px;
     border: 1px dashed var(--border-strong);
@@ -2592,8 +2386,6 @@
   }
   .ctn-network-empty p { margin: 0; }
 
-  /* ─────────── Files tab — table chrome to mirror the mockup, with
-                an honest "no backend yet" full-row state. ─────────── */
   .ctn-files-pane {
     display: flex;
     flex-direction: column;
@@ -3333,28 +3125,6 @@
     color: var(--fg-subtle);
     letter-spacing: 0.02em;
   }
-  .ctn-updates-history-spacer { flex: 1; }
-
-  /* Inspect pane — JSON viewer in a single editorial card. */
-  .ctn-inspect-card { padding: 0; overflow: hidden; }
-  .ctn-inspect-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 18px;
-    border-bottom: 1px solid var(--border);
-  }
-  .ctn-inspect-body {
-    margin: 0;
-    padding: 18px;
-    max-height: 60vh;
-    min-height: 320px;
-    overflow: auto;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    line-height: 1.6;
-    color: var(--fg);
-  }
 
   /* JSON syntax highlighting */
   :global(.json-view .json-key) { color: #7dd3fc; }
@@ -3363,12 +3133,10 @@
   :global(.json-view .json-bool) { color: #c4b5fd; }
   :global(.json-view .json-null) { color: #94a3b8; font-style: normal; }
 
-  /* Log line colorization */
-  :global(.log-line) { color: #d4d4d4; }
-  :global(.log-line .log-ts) { color: #6b7280; }
-  :global(.log-line .log-error) { color: #f87171; font-weight: 600; }
-  :global(.log-line .log-warn) { color: #fbbf24; }
-  :global(.log-line .log-info) { color: #60a5fa; }
-  :global(.log-line .log-debug) { color: #6b7280; }
-  :global(.log-line .log-ok) { color: #4ade80; }
+  .ctn-log-msg :global(.log-ts) { color: var(--subtle); }
+  .ctn-log-msg :global(.log-error) { color: var(--bad); font-weight: 600; }
+  .ctn-log-msg :global(.log-warn) { color: var(--warn); }
+  .ctn-log-msg :global(.log-info) { color: var(--accent); }
+  .ctn-log-msg :global(.log-debug) { color: var(--subtle); }
+  .ctn-log-msg :global(.log-ok) { color: var(--ok); }
 </style>

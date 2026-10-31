@@ -16,7 +16,7 @@
       goto(allowed('registries.view') ? '/registries' : '/', { replace: true });
       return;
     }
-    // Old deep links (?tab=…) from before the sections moved.
+    // Legacy ?tab= deep links.
     const search = new URLSearchParams(page.url.search);
     const tab = search.get('tab');
     const redirectMap: Record<string, string> = {

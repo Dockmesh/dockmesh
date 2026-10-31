@@ -18,7 +18,6 @@
   const canWrite = $derived(allowed('stacks.create'));
   const canDeploy = $derived(allowed('stacks.deploy'));
   const canAdopt = $derived(allowed('stacks.adopt'));
-  const isRemote = $derived(hosts.id !== 'local');
 
   type SortMode = 'name' | 'state' | 'deployed';
   let sortMode = $state<SortMode>('state');
@@ -91,11 +90,7 @@
   const nextLoad = latest();
   async function load() {
     const current = nextLoad();
-    // Skeleton flicker fix — flip `loading` only on the FIRST load.
-    // The 5s autoRefresh polling re-runs this function; if we toggled
-    // `loading=true` every poll, the user saw the list flash to skeletons
-    // every 5 seconds. Subsequent loads silently update stackCards in
-    // place, no visual jitter. (Same pattern the dashboard uses.)
+    // Skeleton only on the first load; polls update the list in place.
     const isFirstLoad = untrack(() => stackCards.length === 0);
     if (isFirstLoad) loading = true;
     refreshing = true;
@@ -444,9 +439,6 @@
     }
   }
 
-  // Title is the page identity, not a narrative. Inline mono counter
-  // appended ("· 10 on 3 hosts") echoes the mockup's restraint — the
-  // narrative-italic-accent style is reserved for the dashboard.
   const subtitleLine = $derived.by(() => {
     const totalHosts = hosts.available.filter((h) => h.kind !== 'all').length;
     const base = `${counts.all} stack${counts.all === 1 ? '' : 's'}`;
@@ -635,10 +627,6 @@
   </div>
 </Modal>
 
-<!-- Modals — using the existing Modal primitive so the auth/RBAC + state
-     wiring stays untouched. Page-level conversion of these popovers to
-     EditorialModal will land in a follow-up slice; the important part for
-     this slice is that the LIST page reads editorial. -->
 <Modal bind:open={showCreate} title="Create stack" maxWidth="max-w-3xl">
   <form onsubmit={create} class="space-y-4" id="create-stack-form">
     <div class="flex items-center justify-between">
