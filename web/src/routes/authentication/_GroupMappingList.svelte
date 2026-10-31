@@ -23,7 +23,7 @@
     roles,
     groupClaim,
     title = 'Group → role mappings',
-    hint = 'Map IdP group claim values to Dockmesh roles. First match wins.',
+    hint = 'Map IdP group claim values to Dockmesh roles. If a user is in several mapped groups, the one the IdP lists last decides.',
   }: Props = $props();
 
   const builtIns = ['viewer', 'operator', 'deployer', 'host-admin', 'admin'] as const;

@@ -13,17 +13,17 @@ import (
 
 	"strings"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/compose"
-	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/convert"
+	"github.com/dockmesh/dockmesh/internal/gitsource"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/dockmesh/dockmesh/internal/stacks/adopt"
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -97,7 +97,7 @@ func (h *Handlers) ListStacks(w http.ResponseWriter, r *http.Request) {
 	// only on a remote agent stay at 0 until we batch across hosts.
 	containerCounts := map[string]int{}
 	if h.Docker != nil {
-		if running, err := h.Docker.Raw().ContainerList(r.Context(), dtypes.ContainerListOptions{All: false}); err == nil {
+		if running, err := h.Docker.Raw().ContainerList(r.Context(), container.ListOptions{All: false}); err == nil {
 			for _, c := range running {
 				if c.Labels == nil {
 					continue
@@ -225,7 +225,7 @@ func (h *Handlers) RecoverStack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no running containers carry the compose project label "+name)
 		return
 	}
-	insps := make([]dtypes.ContainerJSON, 0, len(matching))
+	insps := make([]container.InspectResponse, 0, len(matching))
 	for _, id := range matching {
 		insp, ierr := target.InspectContainer(r.Context(), id)
 		if ierr != nil {
@@ -310,6 +310,10 @@ func (h *Handlers) GetStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	d, err := h.Stacks.Get(name)
 	if err == nil {
+		d.MountsStackDir = compose.MountsProjectDir(d.Compose)
+		if d.ModifiedOutside, err = h.Stacks.ModifiedOutside(name); err != nil {
+			slog.Warn("stack file checksums", "stack", name, "err", err)
+		}
 		writeJSON(w, http.StatusOK, d)
 		return
 	}
@@ -416,6 +420,7 @@ func (h *Handlers) CreateStackFromGit(w http.ResponseWriter, r *http.Request) {
 	}
 	syncRes, syncErr := h.GitSource.Sync(r.Context(), req.Name)
 	h.audit(r, audit.ActionStackCreate, req.Name, map[string]any{"git": req.Git.RepoURL, "from_git": true})
+	h.syncGitWebhookNotice(r.Context())
 
 	res := map[string]any{
 		"source":  src,
@@ -478,10 +483,10 @@ func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 	if h.Dependencies != nil && r.URL.Query().Get("force") != "true" {
 		if deps, err := h.Dependencies.Dependents(r.Context(), name); err == nil && len(deps) > 0 {
 			writeJSON(w, http.StatusConflict, map[string]any{
-				"error":       "stack has dependents",
-				"dependents":  deps,
+				"error":        "stack has dependents",
+				"dependents":   deps,
 				"force_needed": true,
-				"message":     "The following stacks depend on this one: " + strings.Join(deps, ", ") + ". Re-send with ?force=true to delete anyway; their depends_on edges will be purged.",
+				"message":      "The following stacks depend on this one: " + strings.Join(deps, ", ") + ". Re-send with ?force=true to delete anyway; their depends_on edges will be purged.",
 			})
 			return
 		}
@@ -619,6 +624,9 @@ func (h *Handlers) CleanupPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	if target == nil {
 		writeError(w, http.StatusServiceUnavailable, "no host available")
+		return
+	}
+	if !h.requireStackScope(w, r, rbac.PermStacksDelete, target.ID(), name) {
 		return
 	}
 	plan, err := target.CleanupPreview(r.Context(), name)
@@ -765,6 +773,9 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
 		return
 	}
+	if !h.checkStackFiles(w, r, name) {
+		return
+	}
 
 	// Dependency resolution (P.12.7). For any declared prerequisite
 	// stack whose containers aren't already running, deploy it first
@@ -798,6 +809,14 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 			}
 			if satisfied {
 				continue
+			}
+			depScope := h.stackScopeReq(r.Context(), target.ID(), depName)
+			if !h.checkRoleScope(r, depScope) {
+				h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, depScope, "dependency stack "+depName)
+				return
+			}
+			if !h.checkStackFiles(w, r, depName) {
+				return
 			}
 			depDetail, dErr := h.Stacks.Get(depName)
 			if dErr != nil {
@@ -873,8 +892,8 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 	// — a sync failure must not block the deploy response.
 	h.syncStackToAgent(r.Context(), target.ID(), name, detail.Compose, detail.Env)
 	h.audit(r, audit.ActionStackDeploy, name, map[string]any{
-		"services":       len(res.Services),
-		"host":           target.ID(),
+		"services":      len(res.Services),
+		"host":          target.ID(),
 		"deps_deployed": depsDeployed,
 	})
 	out := map[string]any{
@@ -887,6 +906,35 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		out["dependencies_deployed"] = depsDeployed
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// checkStackFiles refuses to deploy stack files changed outside Dockmesh
+// until the request confirms them with ?confirm_external=1, which records
+// them as reviewed.
+func (h *Handlers) checkStackFiles(w http.ResponseWriter, r *http.Request, name string) bool {
+	changed, err := h.Stacks.ModifiedOutside(name)
+	if err != nil {
+		writeStackError(w, err)
+		return false
+	}
+	if len(changed) == 0 {
+		return true
+	}
+	if r.URL.Query().Get("confirm_external") != "1" {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": stacks.ErrModifiedOutside.Error(),
+			"code":  "modified_outside",
+			"stack": name,
+			"files": changed,
+		})
+		return false
+	}
+	if err := h.Stacks.AcceptExternal(r.Context(), name); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	h.audit(r, "stack.accept_external_changes", name, map[string]any{"files": changed})
+	return true
 }
 
 // deployErrorStatus classifies a deploy failure into the right HTTP
@@ -1003,10 +1051,10 @@ func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
 	if h.Dependencies != nil && r.URL.Query().Get("force") != "true" {
 		if deps, err := h.Dependencies.Dependents(r.Context(), name); err == nil && len(deps) > 0 {
 			writeJSON(w, http.StatusConflict, map[string]any{
-				"error":       "stack has live dependents",
-				"dependents":  deps,
+				"error":        "stack has live dependents",
+				"dependents":   deps,
 				"force_needed": true,
-				"message":     "The following stacks depend on this one: " + strings.Join(deps, ", ") + ". Stopping it will likely break them. Re-send with ?force=true to stop anyway.",
+				"message":      "The following stacks depend on this one: " + strings.Join(deps, ", ") + ". Stopping it will likely break them. Re-send with ?force=true to stop anyway.",
 			})
 			return
 		}
@@ -1032,6 +1080,9 @@ func (h *Handlers) StackStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	if !h.requireStackScope(w, r, rbac.PermStacksView, target.ID(), name) {
+		return
+	}
 	status, err := target.StackStatus(r.Context(), name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

@@ -233,7 +233,8 @@ func (h *Handlers) WSLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	rc, err := target.ContainerLogs(ctx, containerID, tail, true) //nolint:contextcheck // ctx derives from r.Context()
+	follow := r.URL.Query().Get("follow") != "0"
+	rc, err := target.ContainerLogs(ctx, containerID, tail, follow) //nolint:contextcheck // ctx derives from r.Context()
 	if err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
 		return
@@ -255,7 +256,9 @@ func (h *Handlers) WSLogs(w http.ResponseWriter, r *http.Request) {
 			line = line[8:]
 		}
 		if err := conn.WriteMessage(websocket.TextMessage, line); err != nil {
-			break
+			return
 		}
 	}
+	_ = conn.WriteMessage(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 }

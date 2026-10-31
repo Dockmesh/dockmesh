@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/dockmesh/dockmesh/internal/docker"
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
+	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
 const volumeTarHelperImage = "busybox:latest"
@@ -19,10 +19,13 @@ const volumeTarHelperImage = "busybox:latest"
 // cleans up the helper container on Close. Shared between LocalHost's
 // VolumeTar (backup path) and callers that want a raw tar stream.
 func tarVolumeHelper(ctx context.Context, dc *docker.Client, volumeName string) (io.ReadCloser, error) {
+	if err := docker.CheckVolumeName(volumeName); err != nil {
+		return nil, err
+	}
 	cli := dc.Raw()
 	// ensure helper image present
-	if _, _, err := cli.ImageInspectWithRaw(ctx, volumeTarHelperImage); err != nil {
-		rc, pullErr := cli.ImagePull(ctx, volumeTarHelperImage, dtypes.ImagePullOptions{})
+	if _, err := cli.ImageInspect(ctx, volumeTarHelperImage); err != nil {
+		rc, pullErr := cli.ImagePull(ctx, volumeTarHelperImage, image.PullOptions{})
 		if pullErr != nil {
 			return nil, fmt.Errorf("pull %s: %w", volumeTarHelperImage, pullErr)
 		}
@@ -66,11 +69,11 @@ func tarVolumeHelper(ctx context.Context, dc *docker.Client, volumeName string) 
 }
 
 type volumeTarStream struct {
-	ctx     context.Context
-	cli     dockerClient
-	id      string
-	hijack  io.Reader
-	closeFn func()
+	ctx      context.Context
+	cli      dockerClient
+	id       string
+	hijack   io.Reader
+	closeFn  func()
 	leftover []byte
 }
 
@@ -128,7 +131,7 @@ func (s *volumeTarStream) Close() error {
 // merged stdout/stderr. Used for backup pre-hooks.
 func execHelper(ctx context.Context, dc *docker.Client, containerID string, cmd []string) ([]byte, int, error) {
 	cli := dc.Raw()
-	exec, err := cli.ContainerExecCreate(ctx, containerID, dtypes.ExecConfig{
+	exec, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -136,7 +139,7 @@ func execHelper(ctx context.Context, dc *docker.Client, containerID string, cmd 
 	if err != nil {
 		return nil, -1, err
 	}
-	attach, err := cli.ContainerExecAttach(ctx, exec.ID, dtypes.ExecStartCheck{})
+	attach, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecStartOptions{})
 	if err != nil {
 		return nil, -1, err
 	}

@@ -34,11 +34,13 @@ changed and why, and how you tested it.
 |---|---|
 | `go` | `go vet ./...` and `go test -race ./...` (includes the OpenAPI drift test) |
 | `lint` | golangci-lint, reporting only issues your change introduces |
-| `web` | `svelte-check` and the frontend build |
+| `web` | `svelte-check`, unit tests (Vitest) and the frontend build |
 | `build` | server, agent and `dmctl` for linux and macOS on amd64 and arm64 |
 | `licenses` | Go and npm production dependencies must use AGPL-compatible licenses |
 
-CodeQL also scans each PR.
+CodeQL also scans each PR. The `govulncheck` job reports known
+vulnerabilities in code Dockmesh calls; it fails when a fixed version
+exists.
 
 ### Changelog
 
@@ -56,10 +58,13 @@ go vet ./...
 go test -race ./...        # -race needs cgo (gcc); drop the flag if you have none
 
 # Frontend
-cd web && npm ci && npm run check && npm run build && cd ..
+cd web && npm ci && npm run check && npm test && npm run build && cd ..
 
 # Lint
-golangci-lint run          # v1.64.x, as configured in .golangci.yml
+golangci-lint run          # v2.x, as configured in .golangci.yml
+
+# Vulnerabilities in code paths Dockmesh calls
+govulncheck ./...
 ```
 
 `make test` and `make lint` wrap the same commands. The Playwright suite

@@ -33,6 +33,9 @@ export class EventStream {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private attempt = 0;
   private stopped = false;
+  // Bumped by stop(); a connect() whose ticket resolves after a stop (or a
+  // stop + start) must not open a second socket.
+  private gen = 0;
   private readonly backoff: number[];
 
   constructor(private readonly opts: EventStreamOptions) {
@@ -46,6 +49,7 @@ export class EventStream {
 
   stop = () => {
     this.stopped = true;
+    this.gen++;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -69,6 +73,7 @@ export class EventStream {
 
   private async connect() {
     if (this.stopped) return;
+    const gen = this.gen;
     this.setStatus(this.attempt === 0 ? 'connecting' : 'reconnecting');
 
     let ticket: string;
@@ -76,11 +81,11 @@ export class EventStream {
       const res = await api.ws.ticket('system.view');
       ticket = res.ticket;
     } catch {
-      this.scheduleReconnect();
+      if (gen === this.gen) this.scheduleReconnect();
       return;
     }
 
-    if (this.stopped) return;
+    if (gen !== this.gen) return;
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${proto}//${location.host}/api/v1/ws/events?ticket=${ticket}`;

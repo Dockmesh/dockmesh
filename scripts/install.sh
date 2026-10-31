@@ -14,6 +14,7 @@
 #    DOCKMESH_NO_SUDO         1 to skip sudo        (default: sudo if not root)
 #    DOCKMESH_FORCE           1 to reinstall even if already on latest version
 #    DOCKMESH_NO_SCANNER      1 to skip Grype CVE scanner install (default: install)
+#    DOCKMESH_SKIP_CHECKSUM   1 to install without checksum verification (default: verify)
 #    NO_COLOR                 1 to disable ANSI colors
 #
 #  What this script does:
@@ -24,11 +25,10 @@
 #    - Downloads + sha256-verifies the release tarball
 #    - Installs the binary to $DOCKMESH_INSTALL_DIR
 #    - On upgrade: backs up the old binary, auto-restarts the systemd service
-#    - On fresh install: hands off to `sudo dockmesh init` for setup
+#    - On fresh install: starts the service so you can finish setup in the web wizard
 #
-#  This script never touches DB/admin/systemd-unit state on fresh installs —
-#  all of that lives in `dockmesh init`, which runs interactively and is
-#  idempotent (safe to re-run).
+#  The admin account and public URL are set in the web wizard at /setup;
+#  `dockmesh init` remains available for scripted, non-interactive setups.
 # ============================================================================
 set -euo pipefail
 
@@ -180,6 +180,145 @@ get_time() {
 }
 
 # ------------------------------------------------------------------
+#  Env file helpers (exercised by scripts/install_test.go)
+#
+#  The data dir belongs to the service user, so anything in it may be a
+#  link planted to make root write elsewhere. Files are only created with
+#  O_EXCL (bash noclobber), which never follows a link, and moved into
+#  place with rename.
+# ------------------------------------------------------------------
+
+# Env files of an earlier install at the script's default data dirs.
+ENV_FILE_CANDIDATES=(/var/lib/dockmesh/dockmesh.env /data/dockmesh.env /usr/local/var/dockmesh/dockmesh.env)
+
+# Copy FILE to FILE.bak, or to FILE.bak.<timestamp>.<random> when FILE.bak
+# already exists, so the first backup (usually the hand-tuned original) is
+# never overwritten by a later reinstall. Prints the backup path.
+backup_env_file() {
+  local f="$1"
+  if $USE_SUDO test -L "$f.bak"; then
+    die "refusing to back up $f: $f.bak is a symlink — remove it and re-run"
+  fi
+  # shellcheck disable=SC2016
+  $USE_SUDO bash -c 'set -C; umask 077
+    for b in "$1.bak" "$1.bak.$(date +%Y%m%d%H%M%S).$RANDOM" "$1.bak.$(date +%Y%m%d%H%M%S).$RANDOM"; do
+      if { cat -- "$1" >"$b"; } 2>/dev/null; then printf "%s" "$b"; exit 0; fi
+    done
+    exit 1' _ "$f" || die "could not back up $f"
+}
+
+# Succeeds only on a host without an earlier install: no service unit, no
+# env file at the default locations, and none of the given paths (target
+# env file, databases) present. A directory we can't look into counts as
+# "present". Without the flag the server opens the wizard by itself when
+# no admin exists.
+setup_flag_wanted() {
+  local p dir
+  if [ "${HAS_SYSTEMD_UNIT:-0}" = "1" ] || [ "${HAS_LAUNCHD_UNIT:-0}" = "1" ]; then
+    return 1
+  fi
+  for p in "${ENV_FILE_CANDIDATES[@]}" "$@"; do
+    [ -n "$p" ] || continue
+    if $USE_SUDO test -e "$p" || $USE_SUDO test -L "$p"; then
+      return 1
+    fi
+    dir="$(dirname "$p")"
+    if $USE_SUDO test -d "$dir" && ! $USE_SUDO test -x "$dir"; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# write_env_file ENV_FILE DATA_DIR ASSET_DIR [OWNER]
+write_env_file() {
+  local env_file="$1" data_dir="$2" asset_dir="$3" owner="${4:-}"
+  local old_db="" bak="" setup_line="" tmp
+  if $USE_SUDO test -L "$env_file"; then
+    die "refusing to write $env_file: it is a symlink — remove it and re-run"
+  fi
+  if $USE_SUDO test -d "$env_file"; then
+    die "refusing to write $env_file: it is a directory"
+  fi
+  if $USE_SUDO test -e "$env_file"; then
+    old_db="$($USE_SUDO grep -E '^[[:space:]]*(export[[:space:]]+)?DOCKMESH_DB_PATH=' "$env_file" | tail -n 1 | sed -E 's/^[^=]*=//' | tr -d "\"'" || true)"
+  fi
+  if setup_flag_wanted "$env_file" "$data_dir/data/dockmesh.db" "$old_db"; then
+    setup_line="DOCKMESH_SETUP_FORCE=true"
+  else
+    info "earlier install found — setup wizard not forced open"
+  fi
+  if $USE_SUDO test -e "$env_file"; then
+    bak="$(backup_env_file "$env_file")" || exit 1
+    ok "env backup      $bak"
+  fi
+  # shellcheck disable=SC2016
+  tmp="$($USE_SUDO bash -c 'set -C; umask 077
+    for i in 1 2 3; do
+      t="$1.new.$$.$RANDOM"
+      if { cat >"$t"; } 2>/dev/null; then printf "%s" "$t"; exit 0; fi
+    done
+    exit 1' _ "$env_file" <<EOF
+# Written by install.sh — minimal bootstrap config so the install
+# wizard can take over. The wizard removes DOCKMESH_SETUP_FORCE on
+# successful commit; this file stays as the live config afterwards.
+DOCKMESH_HTTP_ADDR=:8080
+DOCKMESH_AGENT_LISTEN=:8443
+DOCKMESH_DB_PATH=$data_dir/data/dockmesh.db
+DOCKMESH_STACKS_ROOT=$data_dir/stacks
+DOCKMESH_SECRETS_PATH=$data_dir/data/secrets.env
+DOCKMESH_SECRETS_KEY_PATH=$data_dir/data/secrets.age-key
+DOCKMESH_AUDIT_GENESIS_PATH=$data_dir/data/audit-genesis.sha256
+DOCKMESH_INSTALL_SCRIPT=$asset_dir/install-agent.sh
+DOCKMESH_BINARY_DIR=$asset_dir/bin
+$setup_line
+EOF
+  )" || die "could not create a temp file next to $env_file"
+  if [ -n "$owner" ]; then
+    $USE_SUDO chown -h "$owner" "$tmp"
+  fi
+  $USE_SUDO mv -f "$tmp" "$env_file"
+}
+
+# systemd_unit_loaded avoids `systemctl list-unit-files | grep -q`: under
+# pipefail grep -q exits on the first match, systemctl gets SIGPIPE and the
+# whole pipeline reports failure intermittently.
+systemd_unit_loaded() {
+  [ "$(systemctl show -p LoadState --value dockmesh.service 2>/dev/null)" = "loaded" ]
+}
+
+# service_runs_new_binary succeeds when dockmesh.service has a main process
+# that is not $1 (the PID from before the restart) and whose executable was
+# not replaced underneath it.
+service_runs_new_binary() {
+  local old_pid="$1" pid exe
+  pid="$(systemctl show -p MainPID --value dockmesh 2>/dev/null || true)"
+  { [ -n "$pid" ] && [ "$pid" != "0" ] && [ "$pid" != "$old_pid" ]; } || return 1
+  exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+  case "$exe" in *" (deleted)") return 1 ;; esac
+  return 0
+}
+
+# install_agent_binaries copies the agent binaries from an extracted release
+# ($1) into $2/bin. Linux tarballs carry one per architecture; older ones and
+# the macOS tarballs carry a single dockmesh-agent for the host's own $3-$4.
+install_agent_binaries() {
+  local src="$1" asset_dir="$2" os="$3" arch="$4" f name found=0
+  for f in "$src"/dockmesh-agent-linux-*; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f")"
+    $USE_SUDO install -m 0755 "$f" "$asset_dir/bin/$name"
+    ok "agent binary    $asset_dir/bin/$name"
+    found=1
+  done
+  if [ "$found" = "0" ] && [ -f "$src/dockmesh-agent" ]; then
+    name="dockmesh-agent-${os}-${arch}"
+    $USE_SUDO install -m 0755 "$src/dockmesh-agent" "$asset_dir/bin/$name"
+    ok "agent binary    $asset_dir/bin/$name"
+  fi
+}
+
+# ------------------------------------------------------------------
 #  Banner
 # ------------------------------------------------------------------
 cat >&2 <<BANNER
@@ -238,7 +377,7 @@ SYSTEMD_PID=""
 HAS_LAUNCHD_UNIT=0
 LAUNCHD_ACTIVE=0
 if command -v systemctl >/dev/null 2>&1; then
-  if systemctl list-unit-files dockmesh.service 2>/dev/null | grep -q '^dockmesh\.service'; then
+  if systemd_unit_loaded; then
     HAS_SYSTEMD_UNIT=1
     systemctl is-active --quiet dockmesh   && SYSTEMD_ACTIVE=1
     systemctl is-enabled --quiet dockmesh  && SYSTEMD_ENABLED=1
@@ -619,19 +758,21 @@ step_done
 #  [4]  Verify checksum
 # ------------------------------------------------------------------
 step 4 $TOTAL_STEPS "Verifying"
-if curl -fsSL --retry 2 -o "$TMP/checksums.txt" "$CHECKSUMS_URL" 2>/dev/null; then
-  EXPECTED="$(grep " ${TARBALL}$" "$TMP/checksums.txt" | awk '{print $1}' || true)"
-  if [ -n "$EXPECTED" ]; then
-    ACTUAL="$(sha256_of "$TMP/$TARBALL")"
-    if [ "$EXPECTED" != "$ACTUAL" ]; then
-      die "checksum mismatch — expected $EXPECTED got $ACTUAL"
-    fi
-    ok "sha256          ${EXPECTED:0:16}…${EXPECTED: -16}"
-  else
-    warn "no checksum entry for $TARBALL — continuing without verification"
-  fi
+if [ "${DOCKMESH_SKIP_CHECKSUM:-0}" = "1" ]; then
+  warn "checksum verification skipped — DOCKMESH_SKIP_CHECKSUM=1"
 else
-  warn "no checksums.txt published for $DM_VERSION — continuing without verification"
+  if ! curl -fsSL --retry 2 -o "$TMP/checksums.txt" "$CHECKSUMS_URL" 2>/dev/null; then
+    die "no checksums.txt published for $DM_VERSION — refusing to install an unverified binary (DOCKMESH_SKIP_CHECKSUM=1 overrides)"
+  fi
+  EXPECTED="$(grep " ${TARBALL}$" "$TMP/checksums.txt" | awk '{print $1}' || true)"
+  if [ -z "$EXPECTED" ]; then
+    die "no checksum entry for $TARBALL — refusing to install an unverified binary (DOCKMESH_SKIP_CHECKSUM=1 overrides)"
+  fi
+  ACTUAL="$(sha256_of "$TMP/$TARBALL")"
+  if [ "$EXPECTED" != "$ACTUAL" ]; then
+    die "checksum mismatch — expected $EXPECTED got $ACTUAL"
+  fi
+  ok "sha256          ${EXPECTED:0:16}…${EXPECTED: -16}"
 fi
 step_done
 
@@ -680,13 +821,10 @@ if [ "$IS_UPGRADE" = "1" ]; then
   fi
 
   # Refresh agent assets on upgrade too — they carry the bundled
-  # install-agent.sh + host-matched agent binary for enrollment.
+  # install-agent.sh + the agent binaries for enrollment.
   $USE_SUDO mkdir -p "$ASSET_DIR/bin"
   [ -f "$TMP/install-agent.sh" ] && $USE_SUDO install -m 0755 "$TMP/install-agent.sh" "$ASSET_DIR/install-agent.sh"
-  if [ -f "$TMP/dockmesh-agent" ]; then
-    AGENT_NAME="dockmesh-agent-${OS}-${ARCH}"
-    $USE_SUDO install -m 0755 "$TMP/dockmesh-agent" "$ASSET_DIR/bin/$AGENT_NAME"
-  fi
+  install_agent_binaries "$TMP" "$ASSET_DIR" "$OS" "$ARCH"
   ok "agent assets    $ASSET_DIR/"
 
   # ----------------------------------------------------------------
@@ -755,25 +893,32 @@ if [ "$IS_UPGRADE" = "1" ]; then
     fi
     info "restarting dockmesh.service..."
     RESTART_T0=$(get_time)
-    if $USE_SUDO systemctl restart dockmesh 2>/dev/null; then
-      # Wait for the service to come back healthy. We probe the systemd
-      # state rather than HTTP because the listen port is whatever the
-      # user configured — we don't know it from here.
-      for i in 1 2 3 4 5 6 7 8 9 10; do
-        sleep 0.5
-        systemctl is-active --quiet dockmesh && break
-      done
-      RESTART_T1=$(get_time)
-      DOWNTIME=$(awk "BEGIN { printf \"%.1f\", $RESTART_T1 - $RESTART_T0 }")
-      if systemctl is-active --quiet dockmesh; then
-        ok "service restarted"
-        ok "health OK       downtime ${DOWNTIME}s"
-      else
-        fail "service failed to start — see: journalctl -u dockmesh --since '1 min ago'"
-      fi
-    else
-      warn "restart failed — run manually: $USE_SUDO systemctl restart dockmesh"
+    if ! $USE_SUDO systemctl restart dockmesh; then
+      die "restart failed — the new binary is installed but the old one may still be running. Run: $USE_SUDO systemctl restart dockmesh"
     fi
+    # Probe the systemd state rather than HTTP because the listen port is
+    # whatever the user configured.
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      sleep 0.5
+      systemctl is-active --quiet dockmesh && break
+    done
+    RESTART_T1=$(get_time)
+    DOWNTIME=$(awk "BEGIN { printf \"%.1f\", $RESTART_T1 - $RESTART_T0 }")
+    if ! systemctl is-active --quiet dockmesh; then
+      die "service failed to start — see: journalctl -u dockmesh --since '1 min ago'"
+    fi
+    if ! service_runs_new_binary "$SYSTEMD_PID"; then
+      die "dockmesh.service is still running the old binary — run: $USE_SUDO systemctl restart dockmesh"
+    fi
+    ok "service restarted"
+    ok "health OK       downtime ${DOWNTIME}s"
+    RUNNING_VERSION="$("$INSTALL_DIR/dockmesh" --version 2>/dev/null | head -1 || true)"
+    case "$RUNNING_VERSION" in
+      *"$DM_VERSION"*) ok "running         $RUNNING_VERSION" ;;
+      *) die "installed binary reports '${RUNNING_VERSION:-unknown}', expected $DM_VERSION" ;;
+    esac
+  else
+    warn "no systemd unit found — restart dockmesh manually to run the new version"
   fi
   step_done
 
@@ -844,11 +989,7 @@ if [ -f "$TMP/install-agent.sh" ]; then
   $USE_SUDO install -m 0755 "$TMP/install-agent.sh" "$ASSET_DIR/install-agent.sh"
   ok "agent installer $ASSET_DIR/install-agent.sh"
 fi
-if [ -f "$TMP/dockmesh-agent" ]; then
-  AGENT_NAME="dockmesh-agent-${OS}-${ARCH}"
-  $USE_SUDO install -m 0755 "$TMP/dockmesh-agent" "$ASSET_DIR/bin/$AGENT_NAME"
-  ok "agent binary    $ASSET_DIR/bin/$AGENT_NAME"
-fi
+install_agent_binaries "$TMP" "$ASSET_DIR" "$OS" "$ARCH"
 ok "mode            0755 (root:root)"
 step_done
 
@@ -914,24 +1055,10 @@ else
   # wizard's commit handler scrubs that flag at the end so a future
   # service restart behaves normally.
   ENV_FILE="$DATA_DIR/dockmesh.env"
-  $USE_SUDO tee "$ENV_FILE" >/dev/null <<EOF
-# Written by install.sh — minimal bootstrap config so the install
-# wizard can take over. The wizard removes DOCKMESH_SETUP_FORCE on
-# successful commit; this file stays as the live config afterwards.
-DOCKMESH_HTTP_ADDR=:8080
-DOCKMESH_AGENT_LISTEN=:8443
-DOCKMESH_DB_PATH=$DATA_DIR/data/dockmesh.db
-DOCKMESH_STACKS_ROOT=$DATA_DIR/stacks
-DOCKMESH_SECRETS_PATH=$DATA_DIR/data/secrets.env
-DOCKMESH_SECRETS_KEY_PATH=$DATA_DIR/data/secrets.age-key
-DOCKMESH_AUDIT_GENESIS_PATH=$DATA_DIR/data/audit-genesis.sha256
-DOCKMESH_INSTALL_SCRIPT=$ASSET_DIR/install-agent.sh
-DOCKMESH_BINARY_DIR=$ASSET_DIR/bin
-DOCKMESH_SETUP_FORCE=true
-EOF
-  $USE_SUDO chmod 600 "$ENV_FILE"
   if [ "$OS" = "linux" ]; then
-    $USE_SUDO chown dockmesh:docker "$ENV_FILE"
+    write_env_file "$ENV_FILE" "$DATA_DIR" "$ASSET_DIR" dockmesh:docker
+  else
+    write_env_file "$ENV_FILE" "$DATA_DIR" "$ASSET_DIR"
   fi
   ok "env file        $ENV_FILE"
 

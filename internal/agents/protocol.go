@@ -176,9 +176,12 @@ type ContainerKillReq struct {
 }
 
 // AgentUpgradeReq tells the agent to download a new binary and restart.
+// Current agents fetch the binary from the agent listener over mTLS and
+// verify SHA256; BinaryURL is only used by agents that predate that.
 type AgentUpgradeReq struct {
 	BinaryURL string `json:"binary_url"` // https://server/install/dockmesh-agent-linux-amd64
 	Version   string `json:"version"`    // expected version after upgrade
+	SHA256    string `json:"sha256"`     // hex SHA-256 of the binary at BinaryURL
 }
 
 type ResourceIDReq struct {

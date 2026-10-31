@@ -16,6 +16,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/notify"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 var (
@@ -43,9 +44,9 @@ type Rule struct {
 	CooldownSeconds int        `json:"cooldown_seconds"` // suppress re-notify for this long
 	MutedUntil      *time.Time `json:"muted_until,omitempty"`
 	// MuteSchedule is a JSON-encoded MuteSchedule (see schedule.go) for
-	// recurring quiet-hours. When non-empty and IsMutedNow returns true
-	// at fire time, notifications are suppressed (but firing state and
-	// history still update so the UI shows the rule is breached).
+	// recurring quiet-hours. While it (or MutedUntil) is active, fire and
+	// resolve notifications are suppressed, but firing state and history
+	// still update so the UI shows the rule is breached.
 	MuteSchedule string `json:"mute_schedule"`
 	// Builtin rules ship with the server (P.11.5). The UI marks them
 	// with a badge and disables the Delete action. Admins can still
@@ -597,19 +598,29 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, container string, value
 	// rule has no external channels set, operators want a durable trail
 	// in the UI.
 	if s.notifs != nil {
-		sev := notifications.SevWarning
-		if r.Severity == "critical" {
-			sev = notifications.SevError
-		} else if r.Severity == "info" {
-			sev = notifications.SevInfo
-		}
-		_, _ = s.notifs.Emit(ctx, notifications.EmitInput{
-			Kind:     notifications.KindAlertFire,
-			Severity: sev,
-			Title:    "Alert firing: " + r.Name,
-			Body:     msg,
-			Link:     "/alerts",
-		})
+		_, _ = s.notifs.Emit(ctx, alertNotification(r, msg))
+	}
+}
+
+// alertNotification addresses a firing alert to alert viewers whose scope
+// covers the local host: rules are evaluated against the server's own
+// container metrics only.
+func alertNotification(r *Rule, msg string) notifications.EmitInput {
+	sev := notifications.SevWarning
+	switch r.Severity {
+	case "critical":
+		sev = notifications.SevError
+	case "info":
+		sev = notifications.SevInfo
+	}
+	return notifications.EmitInput{
+		Kind:     notifications.KindAlertFire,
+		Severity: sev,
+		Title:    "Alert firing: " + r.Name,
+		Body:     msg,
+		Link:     "/alerts",
+		Perm:     rbac.PermAlertsView,
+		HostID:   "local",
 	}
 }
 

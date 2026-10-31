@@ -16,7 +16,7 @@ type ExecSession struct {
 // StartExec creates and attaches an interactive exec instance.
 // The caller must Close() the returned HijackedResponse.
 func (c *Client) StartExec(ctx context.Context, containerID string, cmd []string) (*ExecSession, error) {
-	resp, err := c.cli.ContainerExecCreate(ctx, containerID, types.ExecConfig{
+	resp, err := c.cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -26,7 +26,7 @@ func (c *Client) StartExec(ctx context.Context, containerID string, cmd []string
 	if err != nil {
 		return nil, err
 	}
-	hijack, err := c.cli.ContainerExecAttach(ctx, resp.ID, types.ExecStartCheck{Tty: true})
+	hijack, err := c.cli.ContainerExecAttach(ctx, resp.ID, container.ExecStartOptions{Tty: true})
 	if err != nil {
 		return nil, err
 	}

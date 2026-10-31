@@ -280,7 +280,7 @@ func LocalMounts(ctx context.Context) []Mount {
 		mountsDone = make(chan struct{})
 		// Detached from ctx: one caller giving up must not cancel the refresh
 		// the next callers are waiting for.
-		go refreshMounts(mountsDone) //nolint:contextcheck
+		go refreshMounts(context.WithoutCancel(ctx), mountsDone)
 	}
 	done := mountsDone
 	mountsMu.Unlock()
@@ -297,8 +297,8 @@ func LocalMounts(ctx context.Context) []Mount {
 	return mountsCache
 }
 
-func refreshMounts(done chan struct{}) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func refreshMounts(ctx context.Context, done chan struct{}) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	var paths []RolePath
 	if fn := rolePathsFn.Load(); fn != nil {

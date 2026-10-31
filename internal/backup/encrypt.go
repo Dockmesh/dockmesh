@@ -49,11 +49,11 @@ func wrapDecrypt(src io.ReadCloser, sec *secrets.Service) (io.ReadCloser, error)
 	if sec == nil || !sec.Enabled() {
 		return src, nil
 	}
-	id, err := sec.Identity()
+	ids, err := sec.Identities()
 	if err != nil {
 		return nil, err
 	}
-	r, err := age.Decrypt(src, id)
+	r, err := age.Decrypt(src, ids...)
 	if err != nil {
 		return nil, err
 	}

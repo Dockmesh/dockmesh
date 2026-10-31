@@ -49,7 +49,7 @@ func newEnrollCmd() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout())
 				fmt.Fprintln(cmd.OutOrStdout(), "  "+hint)
 				fmt.Fprintln(cmd.OutOrStdout())
-				fmt.Fprintln(cmd.OutOrStdout(), "The enrollment token is valid for a single use and ~15 minutes.")
+				fmt.Fprintln(cmd.OutOrStdout(), "The enrollment token is valid for a single use and expires after 24 hours by default.")
 			} else {
 				// Fall back to showing the raw JSON so nothing is lost.
 				return printResult(res, nil)
