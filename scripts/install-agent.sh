@@ -283,6 +283,12 @@ if [[ -n "$OLD_DATA_DIR" && -d "$OLD_DATA_DIR" ]]; then
   log "moving agent files out of the server's data directory $OLD_DATA_DIR to $DATA_DIR"
   install -d -m 0700 -o "$RUN_USER" -g "$RUN_GROUP" "$DATA_DIR"
   migrate_agent_files "$OLD_DATA_DIR" "$DATA_DIR"
+  # An agent that found the old /usr/local/bin symlink opened this dir to
+  # 0711; close what stays behind unless a server lives in it.
+  if [[ "$(stat -c '%a %U' "$OLD_DATA_DIR")" == "711 $RUN_USER" &&
+        ! -e "$OLD_DATA_DIR/dockmesh.db" && ! -e "$OLD_DATA_DIR/dockmesh.env" ]]; then
+    chmod 0700 "$OLD_DATA_DIR"
+  fi
   if [[ $AS_ROOT -eq 0 ]]; then
     usermod -d "$DATA_DIR" "$RUN_USER" 2>/dev/null || true
   fi
