@@ -32,6 +32,13 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   security headers, request and response headers, and an access log. Basic-auth passwords
   are stored as bcrypt hashes and never returned. `GET /api/v1/proxy/routes/{id}/config`
   shows the Caddy config a site gets. Existing routes keep their current behaviour.
+- The Caddy version of the proxy can be switched between the versions tested with this
+  release (`/api/v1/proxy/version`), with a rollback to the previous one. A version that
+  doesn't come up with the current config is rolled back automatically. While
+  `DOCKMESH_PROXY_IMAGE` is set the version can't be changed.
+- Proxy settings for the ACME account email, the certificate authority (Let's Encrypt,
+  its staging environment, or ZeroSSL) and trusting Cloudflare as a proxy in front of
+  Caddy (`/api/v1/proxy/settings`).
 
 ### Changed
 - Updating the image of a container that belongs to a stack now rebuilds it from the
@@ -50,6 +57,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   that break these rules stop being served and are listed in a notice for admins.
 
 ### Fixed
+- Updating a proxy route without `enabled` no longer switches a disabled route back on,
+  and the update returns the saved route.
 - Updating a container's image no longer loses its anonymous volumes (`-v /data` or a
   `VOLUME` in the image); the new container gets the old volumes.
 - A failed image update no longer leaves the container deleted: the old container is kept

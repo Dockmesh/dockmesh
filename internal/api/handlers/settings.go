@@ -3,11 +3,13 @@ package handlers
 import (
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/clientip"
+	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/settings"
 )
@@ -69,6 +71,11 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	for _, e := range entries {
 		if auditWebhookSettingKeys[e.Key] {
 			writeError(w, http.StatusBadRequest, e.Key+" is managed via /audit/webhook")
+			return
+		}
+		// The settings page sends every key back; only a change is refused.
+		if slices.Contains(proxy.ManagedSettingKeys, e.Key) && h.Settings.Get(e.Key, "") != e.Value {
+			writeError(w, http.StatusBadRequest, e.Key+" is managed via /proxy/settings and /proxy/version")
 			return
 		}
 		if e.Key == settings.KeyTrustedProxies {

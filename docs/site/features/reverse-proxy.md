@@ -70,6 +70,12 @@ Each route can carry options in its `options` object (`POST /api/v1/proxy/routes
 
 A `PUT` without `options` keeps the stored ones; a `PUT` with `options` replaces them. Basic-auth passwords are stored as bcrypt hashes and never returned; send a user without `password` to keep its password. Values can't contain Caddy placeholders (`{…}`), and there's no way to add raw Caddy directives. `GET /api/v1/proxy/routes/{id}/config` returns the Caddy config Dockmesh generates for one site, with password hashes redacted.
 
+## Caddy version and proxy settings
+
+`GET /api/v1/proxy/version` lists the Caddy versions tested with your Dockmesh release (pinned by digest) and the one that runs. `PUT /api/v1/proxy/version` with `{"version": "2.11.6"}` recreates the proxy container with that version; if Caddy doesn't come up with the current config, the previous version is started again and the call fails with 502. `POST /api/v1/proxy/version/rollback` goes back to the version before the last switch, whose image is kept until the next switch. Without a chosen version the proxy follows the default of each Dockmesh release. With `DOCKMESH_PROXY_IMAGE` set, the version can't be changed here.
+
+`PUT /api/v1/proxy/settings` sets `acme_email` (expiry notices; required for ZeroSSL), `acme_ca` (empty for Let's Encrypt, `letsencrypt_staging` for tests, or `zerossl`) and `trusted_proxies` (`cloudflare` trusts Cloudflare's published edge ranges, so IP filters and logs see the visitor's address). Switching versions and changing settings needs `proxy.update` and is recorded in the audit log.
+
 ## TLS modes
 
 | Mode | Label in the UI | Behaviour |

@@ -25,9 +25,16 @@ type caddyHTTP struct {
 }
 
 type caddyServer struct {
-	Listen []string         `json:"listen"`
-	Routes []caddyRoute     `json:"routes"`
-	Logs   *caddyServerLogs `json:"logs,omitempty"`
+	Listen          []string         `json:"listen"`
+	Routes          []caddyRoute     `json:"routes"`
+	Logs            *caddyServerLogs `json:"logs,omitempty"`
+	TrustedProxies  *caddyIPSource   `json:"trusted_proxies,omitempty"`
+	ClientIPHeaders []string         `json:"client_ip_headers,omitempty"`
+}
+
+type caddyIPSource struct {
+	Source string   `json:"source"`
+	Ranges []string `json:"ranges"`
 }
 
 type caddyServerLogs struct {
@@ -164,6 +171,8 @@ type caddyAutomationPolicy struct {
 
 type caddyIssuer struct {
 	Module string `json:"module"`
+	CA     string `json:"ca,omitempty"`
+	Email  string `json:"email,omitempty"`
 }
 
 const (
@@ -183,11 +192,11 @@ const redactedHash = "REDACTED"
 // in the :443 server; Caddy adds their HTTP->HTTPS redirects to the :80
 // server after the host-matched plain routes, so a TLS site with
 // allow_http is served by a copy of its routes in the :80 server.
-func buildConfig(routes []Route) (*caddyConfig, []string) {
-	return buildConfigWith(routes, false)
+func buildConfig(routes []Route, g Settings) (*caddyConfig, []string) {
+	return buildConfigWith(routes, g, false)
 }
 
-func buildConfigWith(routes []Route, redact bool) (*caddyConfig, []string) {
+func buildConfigWith(routes []Route, g Settings, redact bool) (*caddyConfig, []string) {
 	cfg := &caddyConfig{
 		Admin: &caddyAdmin{Listen: adminAddr, Origins: adminOrigins, EnforceOrigin: true},
 		Apps:  caddyApps{HTTP: caddyHTTP{Servers: map[string]caddyServer{}}},
@@ -234,13 +243,13 @@ func buildConfigWith(routes []Route, redact bool) (*caddyConfig, []string) {
 		if wwwHost != "" {
 			subjects = append(subjects, wwwHost)
 		}
-		issuer := "acme"
+		issuer := g.acmeIssuer()
 		if r.TLSMode == "internal" {
-			issuer = "internal"
+			issuer = caddyIssuer{Module: "internal"}
 		}
 		policies = append(policies, caddyAutomationPolicy{
 			Subjects: subjects,
-			Issuers:  []caddyIssuer{{Module: issuer}},
+			Issuers:  []caddyIssuer{issuer},
 		})
 		secure = append(secure, site...)
 		if o.Logs.AccessLog {
@@ -256,9 +265,9 @@ func buildConfigWith(routes []Route, redact bool) (*caddyConfig, []string) {
 	if plain == nil {
 		plain = []caddyRoute{}
 	}
-	cfg.Apps.HTTP.Servers[serverHTTP] = caddyServer{Listen: []string{":80"}, Routes: plain, Logs: serverLogs(plainLogs)}
+	cfg.Apps.HTTP.Servers[serverHTTP] = caddyServer{Listen: []string{":80"}, Routes: plain, Logs: serverLogs(plainLogs), TrustedProxies: g.trustedProxies(), ClientIPHeaders: g.clientIPHeaders()}
 	if len(secure) > 0 {
-		cfg.Apps.HTTP.Servers[serverHTTPS] = caddyServer{Listen: []string{":443"}, Routes: secure, Logs: serverLogs(secureLogs)}
+		cfg.Apps.HTTP.Servers[serverHTTPS] = caddyServer{Listen: []string{":443"}, Routes: secure, Logs: serverLogs(secureLogs), TrustedProxies: g.trustedProxies(), ClientIPHeaders: g.clientIPHeaders()}
 	}
 	if len(policies) > 0 {
 		cfg.Apps.TLS = &caddyTLS{Automation: caddyAutomation{Policies: policies}}

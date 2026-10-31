@@ -14,7 +14,7 @@ func TestBuildConfigSplitsPlainAndTLS(t *testing.T) {
 		{Host: "off.lan", Upstream: "127.0.0.1:3002", TLSMode: "auto", Enabled: false},
 		{Host: "evil.lan", Upstream: "localhost:2019", TLSMode: "none", Enabled: true},
 	}
-	cfg, blocked := buildConfig(routes)
+	cfg, blocked := buildConfig(routes, Settings{})
 
 	if len(blocked) != 1 || blocked[0] != "evil.lan" {
 		t.Fatalf("blocked = %v", blocked)
@@ -42,7 +42,7 @@ func TestBuildConfigSplitsPlainAndTLS(t *testing.T) {
 }
 
 func TestBuildConfigWithoutTLSRoutesHasNoHTTPSServer(t *testing.T) {
-	cfg, _ := buildConfig([]Route{{Host: "a.lan", Upstream: "192.0.2.2:80", TLSMode: "none", Enabled: true}})
+	cfg, _ := buildConfig([]Route{{Host: "a.lan", Upstream: "192.0.2.2:80", TLSMode: "none", Enabled: true}}, Settings{})
 	if _, ok := cfg.Apps.HTTP.Servers[serverHTTPS]; ok {
 		t.Fatal("HTTPS server present without TLS routes")
 	}
@@ -102,7 +102,7 @@ func TestCheckUpstream(t *testing.T) {
 }
 
 func TestSameConfig(t *testing.T) {
-	cfg, _ := buildConfig([]Route{{Host: "a.lan", Upstream: "192.0.2.2:80", TLSMode: "auto", Enabled: true}})
+	cfg, _ := buildConfig([]Route{{Host: "a.lan", Upstream: "192.0.2.2:80", TLSMode: "auto", Enabled: true}}, Settings{})
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +163,7 @@ func TestBuildConfigSkipsStoredUnsafeRoutes(t *testing.T) {
 		{Host: "localhost", Upstream: "192.0.2.2:80", TLSMode: "none", Enabled: true},
 		{Host: "a.example.com", Upstream: "tcp/127.0.0.1:2019", TLSMode: "none", Enabled: true},
 		{Host: "b.example.com", Upstream: "{http.request.header.X-Up}", TLSMode: "none", Enabled: true},
-	})
+	}, Settings{})
 	if len(blocked) != 3 {
 		t.Fatalf("blocked = %v", blocked)
 	}
