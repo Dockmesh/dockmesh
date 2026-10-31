@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -313,6 +314,46 @@ func TestReleaseRejectsEmptySection(t *testing.T) {
 	}
 }
 
+// cut returns a changelog where the base's Unreleased entry moved into a
+// new version section with n highlights.
+func cut(version string, n int) string {
+	var hl string
+	if n > 0 {
+		hl = "### Highlights\n" + strings.Repeat("- A highlight.\n", n) + "\n"
+	}
+	return "# Changelog\n\n## [Unreleased]\n\n## [" + version + "] - 2026-10-20 [normal]\n\n" + hl +
+		"### Fixed\n- Old entry.\n\n## [0.3.3] - 2026-10-01 [normal]\n\n### Fixed\n- x\n"
+}
+
+func TestReleaseRequiresHighlightsForMinor(t *testing.T) {
+	tests := []struct {
+		version string
+		n       int
+		wantErr string
+	}{
+		{"0.4.0", 3, ""},
+		{"0.4.0", 0, "has 0"},
+		{"0.4.0-rc.1", 1, "has 1"},
+		{"0.3.4", 0, ""},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%s/%d", tt.version, tt.n), func(t *testing.T) {
+			dir := t.TempDir()
+			cl := writeFile(t, dir, "CHANGELOG.md", cut(tt.version, tt.n))
+			err := run([]string{"release", "-changelog", cl, "-version", tt.version, "-notes", filepath.Join(dir, "n"), "-manifest", filepath.Join(dir, "m")}, &bytes.Buffer{})
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("err = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestCheckCommand(t *testing.T) {
 	base := "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Old entry.\n\n## [0.3.3] - 2026-10-01 [normal]\n\n### Fixed\n- x\n"
 	tests := []struct {
@@ -325,7 +366,17 @@ func TestCheckCommand(t *testing.T) {
 		{"untouched", base, base, "was not changed"},
 		{"whitespace only", base, strings.Replace(base, "### Fixed\n- Old", "### Fixed\n\n- Old", 1), "was not changed"},
 		{"only a released section changed", base, strings.Replace(base, "- x\n", "- y\n", 1), "was not changed"},
-		{"release cut from unreleased", base, "# Changelog\n\n## [Unreleased]\n\n## [0.4.0] - 2026-10-20 [normal]\n\n### Fixed\n- Old entry.\n\n## [0.3.3] - 2026-10-01 [normal]\n\n### Fixed\n- x\n", ""},
+		{"minor release cut with highlights", base, cut("0.4.0", 3), ""},
+		{"minor release cut with four highlights", base, cut("0.4.0", 4), ""},
+		{"minor release cut without highlights", base, cut("0.4.0", 0), "needs 3 or 4 ### Highlights bullets, has 0"},
+		{"minor release cut with two highlights", base, cut("0.4.0", 2), "has 2"},
+		{"minor release cut with five highlights", base, cut("0.4.0", 5), "has 5"},
+		{"patch release cut without highlights", base, cut("0.3.4", 0), ""},
+		{"patch release cut with one highlight", base, cut("0.3.4", 1), ""},
+		{"unreleased highlights are optional", base, strings.Replace(base, "### Fixed\n- Old entry.\n", "### Highlights\n- One.\n\n### Fixed\n- Old entry.\n- New entry.\n", 1), ""},
+		{"old minor release without highlights is not rechecked",
+			"# Changelog\n\n## [Unreleased]\n\n## [0.3.0] - 2026-09-01 [normal]\n\n### Fixed\n- x\n",
+			"# Changelog\n\n## [Unreleased]\n\n### Fixed\n- y\n\n## [0.3.0] - 2026-09-01 [normal]\n\n### Fixed\n- x\n", ""},
 		{"no base changelog yet", "", base, ""},
 		{"head has no unreleased", base, "# Changelog\n", "no [Unreleased] section"},
 		{"malformed head", base, base + "\n### Removed\n- z\n", "unknown subsection"},

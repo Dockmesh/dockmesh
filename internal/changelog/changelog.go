@@ -208,6 +208,19 @@ func (s *Section) Empty() bool {
 	return len(s.Added)+len(s.Changed)+len(s.Fixed)+len(s.Security)+len(s.Advisories)+len(s.Actions) == 0
 }
 
+// CheckHighlights reports an error when s is a minor release (X.Y.0)
+// without three or four Highlights. Patch releases and Unreleased may
+// leave them out.
+func (s *Section) CheckHighlights() error {
+	if !strings.HasSuffix(strings.SplitN(s.Version, "-", 2)[0], ".0") {
+		return nil
+	}
+	if n := len(s.Highlights); n < 3 || n > 4 {
+		return fmt.Errorf("[%s] is a minor release and needs 3 or 4 ### Highlights bullets, has %d", s.Version, n)
+	}
+	return nil
+}
+
 // Find returns the section for version, accepting a leading "v" as in git tags.
 func Find(sections []*Section, version string) *Section {
 	v := strings.TrimPrefix(version, "v")

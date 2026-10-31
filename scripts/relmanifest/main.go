@@ -63,6 +63,9 @@ func runRelease(args []string, stdout io.Writer) error {
 	if s.Empty() {
 		return fmt.Errorf("section [%s] has no entries", s.Version)
 	}
+	if err := s.CheckHighlights(); err != nil {
+		return err
+	}
 	manifest, err := ManifestJSON(s)
 	if err != nil {
 		return err
@@ -107,6 +110,13 @@ func runCheck(args []string, stdout io.Writer) error {
 	} else if !errors.Is(statErr, fs.ErrNotExist) {
 		return statErr
 	}
+	if baseSections != nil {
+		for _, s := range newReleases(head, baseSections) {
+			if err := s.CheckHighlights(); err != nil {
+				return err
+			}
+		}
+	}
 	if changelog.UnreleasedBody(head) == changelog.UnreleasedBody(baseSections) && !hasNewRelease(head, baseSections) {
 		return errors.New("CHANGELOG.md [Unreleased] was not changed; add an entry, or label the PR no-changelog if users won't notice the change")
 	}
@@ -117,12 +127,17 @@ func runCheck(args []string, stdout io.Writer) error {
 // hasNewRelease reports whether head carries a versioned section that base
 // lacks, i.e. the PR cuts a release and moves the Unreleased entries into it.
 func hasNewRelease(head, base []*changelog.Section) bool {
+	return len(newReleases(head, base)) > 0
+}
+
+func newReleases(head, base []*changelog.Section) []*changelog.Section {
+	var out []*changelog.Section
 	for _, s := range head {
 		if s.Version != changelog.Unreleased && changelog.Find(base, s.Version) == nil {
-			return true
+			out = append(out, s)
 		}
 	}
-	return false
+	return out
 }
 
 func parseFile(path string) ([]*changelog.Section, error) {
