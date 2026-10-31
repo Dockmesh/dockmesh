@@ -41,7 +41,15 @@
 
   // Target
   let targetType = $state<'local' | 's3' | 'sftp' | 'smb' | 'webdav'>('local');
-  let targetConfig = $state<Record<string, any>>({ path: './data/backups' });
+  let targetConfig = $state<Record<string, any>>({ path: '' });
+  let defaultPath = $state('');
+  $effect(() => {
+    if (!open) return;
+    void api.backups.localPath().then((p) => {
+      defaultPath = p;
+      if (!editing && targetType === 'local' && !targetConfig.path) targetConfig = { ...targetConfig, path: p };
+    });
+  });
   let encrypt = $state(true);
   // Selected pre-configured target (-1 = inline / build-on-the-fly).
   let preTargetId = $state<number>(-1);
@@ -119,7 +127,7 @@
       weekday = 0;
       cronExpr = '0 3 * * *';
       targetType = 'local';
-      targetConfig = { path: './data/backups' };
+      targetConfig = { path: defaultPath };
       encrypt = true;
       keepN = 14;
       keepDays = 30;
@@ -171,7 +179,7 @@
     if (id === -1) {
       // back to inline-mode defaults
       targetType = 'local';
-      targetConfig = { path: './data/backups' };
+      targetConfig = { path: defaultPath };
     } else {
       const t = targets.find((x) => x.id === id);
       if (t) {
@@ -218,6 +226,7 @@
         name: name.trim(),
         target_type: targetType,
         target_config: targetConfig,
+        target_id: preTargetId !== -1 ? preTargetId : undefined,
         sources,
         schedule: cronExpr,
         retention_count: keepN,
@@ -469,7 +478,7 @@
           <div class="wiz-field">
             <label class="wiz-field-label" for="t-path">Path</label>
             <span class="wiz-field-hint">Absolute path, must be writable by dockmesh.</span>
-            <input id="t-path" class="wiz-input wiz-input-mono" placeholder="./data/backups" value={targetConfig.path ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, path: (e.currentTarget as HTMLInputElement).value })} />
+            <input id="t-path" class="wiz-input wiz-input-mono" placeholder={defaultPath || '/srv/backups'} value={targetConfig.path ?? ''} oninput={(e) => (targetConfig = { ...targetConfig, path: (e.currentTarget as HTMLInputElement).value })} />
           </div>
         {:else if targetType === 'sftp'}
           <div class="wiz-grid-2">

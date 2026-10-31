@@ -3,7 +3,7 @@
   // auto-refresh on the active tab. Tabs and modals split into private
   // components for clarity.
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { api, ApiError } from '$lib/api';
   import type {
     AlertRule, NotificationChannel, AlertHistoryEntry,
@@ -26,13 +26,13 @@
   // URL-driven tab state with two-way binding (replaceState so back/fwd
   // navigates the page itself, not the tab).
   let tab = $state<Tab>(
-    (new URLSearchParams($page.url.search).get('tab') as Tab) || 'rules',
+    (new URLSearchParams(page.url.search).get('tab') as Tab) || 'rules',
   );
   function setTab(t: Tab) {
     tab = t;
-    const url = new URL($page.url);
+    const url = new URL(page.url.href);
     url.searchParams.set('tab', t);
-    goto(url.pathname + url.search, { replaceState: true, noScroll: true, keepFocus: true });
+    goto(url.pathname + url.search, { replace: true, reset: false });
   }
 
   let channels = $state<NotificationChannel[]>([]);

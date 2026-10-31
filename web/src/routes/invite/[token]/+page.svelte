@@ -2,7 +2,7 @@
   // Public invite redeem page. The token in the URL is shown by the
   // backend without auth and consumed by submitting username + password.
   // No SMTP — admin shared this link manually.
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api, ApiError } from '$lib/api';
   import { auth } from '$lib/stores/auth.svelte';
@@ -10,7 +10,7 @@
   import { Eyebrow, Field } from '$lib/components/editorial';
   import { ArrowRight, Sun, Moon, ShieldAlert } from 'lucide-svelte';
 
-  const token = $derived($page.params.token);
+  const token = $derived(page.params.token);
 
   let preview = $state<{ role: string; scope_tags: string[]; email_hint?: string; expires_at: string } | null>(null);
   let loadError = $state<string | null>(null);

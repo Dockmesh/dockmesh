@@ -289,7 +289,7 @@
         <div>
           <div class="tok-perm-title">Admin-only</div>
           <p class="ed-subtitle tok-perm-blurb">
-            API token management requires the <em>user.manage</em> permission.
+            API token management requires the <em>tokens.manage_others</em> permission.
           </p>
         </div>
       </div>

@@ -21,7 +21,10 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
-	r.Use(chimw.RealIP)
+	if h.ClientIPs != nil {
+		r.Use(h.ClientIPs.Middleware)
+	}
+	r.Use(middleware.SecurityHeaders(middleware.ContentSecurityPolicy(middleware.InlineScriptHashes(webFS))))
 	r.Use(middleware.Logging)
 	r.Use(chimw.Recoverer)
 	r.Use(cors.Handler(cors.Options{
@@ -67,10 +70,10 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 		r.Get("/setup/status", h.SetupStatus)
 		r.Get("/setup/preflight", h.SetupPreflight)
 		r.Get("/setup/server-info", h.SetupServerInfo)
-		r.Post("/setup/validate-data-dir", h.SetupValidateDataDir)
-		r.Post("/setup/validate-user", h.SetupValidateUser)
-		r.Post("/setup/test-url", h.SetupTestURL)
-		r.Post("/setup/commit", h.SetupCommit)
+		r.With(middleware.RequireSetupHeader).Post("/setup/validate-data-dir", h.SetupValidateDataDir)
+		r.With(middleware.RequireSetupHeader).Post("/setup/validate-user", h.SetupValidateUser)
+		r.With(middleware.RequireSetupHeader).Post("/setup/test-url", h.SetupTestURL)
+		r.With(middleware.RequireSetupHeader).Post("/setup/commit", h.SetupCommit)
 		r.Get("/setup/stream/{run_id}", h.SetupStream)
 
 		// OpenAPI 3.1 spec + Swagger UI (P.11.10). Public — the spec
@@ -84,6 +87,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 		r.Post("/auth/mfa", h.LoginMFA)
 		r.Post("/auth/logout", h.Logout)
 		r.Post("/auth/refresh", h.Refresh)
+		r.Post("/auth/sso/exchange", h.SSOExchange)
 
 		// OIDC flow is public — state is carried in a signed cookie.
 		r.Get("/auth/oidc/providers", h.ListOIDCProvidersPublic)
@@ -127,6 +131,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.NewAuth(authSvc))
+			r.Use(h.StackScope)
 
 			// Self-service routes (any authenticated user)
 			r.Get("/me", h.Me)
@@ -189,20 +194,17 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/containers/{id}", h.InspectContainer)
 				// Historical metrics are read-only data, not a control action.
 				r.Get("/containers/{id}/metrics", h.GetMetrics)
-				// File browser (read-only) — list dir + read text preview +
-				// stream raw file bytes for download. Write goes through a
-				// separate group keyed on containers.exec because uploading
-				// a file is effectively code injection.
-				r.Get("/containers/{id}/files", h.BrowseContainerFiles)
-				r.Get("/containers/{id}/files/content", h.ReadContainerFile)
-				r.Get("/containers/{id}/files/download", h.DownloadContainerFile)
 				r.Get("/hosts/{id}/stats/containers", h.BatchContainerStats)
 			})
 
-			// File-write into a container is gated on containers.exec
-			// because the blast radius is the same as a shell session.
+			// Container file access, read and write, is gated on
+			// containers.exec: files hold the same secrets a shell
+			// reaches, and anyone with a shell can read them anyway.
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermContainersExec))
+				r.Get("/containers/{id}/files", h.BrowseContainerFiles)
+				r.Get("/containers/{id}/files/content", h.ReadContainerFile)
+				r.Get("/containers/{id}/files/download", h.DownloadContainerFile)
 				r.Post("/containers/{id}/files", h.WriteContainerFile)
 			})
 
@@ -510,8 +512,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			})
 
 			// -------------------------- DISASTER RECOVERY --------------------
-			// Backup verification (P.12.4) — destructive precursor to
-			// a real restore, so backups.restore is the right gate.
+			// Backup verification reads the whole archive like a restore
+			// would; the handlers add host scope and keep system backups
+			// admin-only.
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermBackupsRestore))
 				r.Post("/restore/verify", h.VerifyUploadedBackup)
@@ -610,6 +613,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Put("/saml/providers/{id}", h.UpdateSAMLProvider)
 				r.Delete("/saml/providers/{id}", h.DeleteSAMLProvider)
 				r.Post("/saml/providers/{id}/test", h.TestSAMLProvider)
+				r.Get("/saml/rekey", h.GetSAMLRekey)
+				r.Post("/saml/rekey/end", h.EndSAMLRekey)
 			})
 
 			// -------------------------- LDAP ADMIN ---------------------------
@@ -661,15 +666,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 
 			// -------------------------- AGENTS (admin) -----------------------
 			// "Agents" is the technical name for the binary that runs on
-			// remote hosts; the user-facing concept is "host". hosts.update
-			// gates lifecycle (drain/upgrade/rotate); hosts.delete gates
-			// revoke; ListAgents is admin-shaped for now (acts like a
-			// hosts admin view), so all routes ride on hosts.update.
-			// "Agents" is the technical name for the binary that runs on
 			// remote hosts; the user-facing concept is "host". POST /agents
-			// = enroll a new host (hosts.create); upgrade/rotate/drain
-			// touch existing hosts (hosts.update); DELETE = revoke
-			// (hosts.delete); GETs = hosts.view.
+			// and rotate-token mint enrollment tokens (hosts.create), since
+			// a rotated token re-enrolls the host; upgrade touches existing
+			// hosts (hosts.update); DELETE = revoke (hosts.delete);
+			// GETs = hosts.view.
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermHostsView))
 				r.Get("/agents", h.ListAgents)
@@ -679,11 +680,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermHostsCreate))
 				r.Post("/agents", h.CreateAgent)
+				r.Post("/agents/{id}/rotate-token", h.RotateAgentEnrollToken)
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermHostsUpdate))
 				r.Post("/agents/{id}/upgrade", h.UpgradeAgent)
-				r.Post("/agents/{id}/rotate-token", h.RotateAgentEnrollToken)
 				r.Put("/agents/upgrade-policy", h.UpdateAgentUpgradePolicy)
 				r.Post("/agents/upgrade-policy/run", h.RunAgentUpgradeEvaluation)
 			})
@@ -698,13 +699,15 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/backups/jobs", h.ListBackupJobs)
 				r.Get("/backups/jobs/{id}", h.GetBackupJob)
 				r.Get("/backups/targets", h.ListBackupTargets)
+				r.Get("/backups/local-path", h.BackupLocalPath)
 				r.Get("/backups/runs", h.ListBackupRuns)
 				r.Get("/backups/runs/{id}", h.GetBackupRun)
 				r.Get("/backups/runs/{id}/log", h.GetBackupRunLog)
-				// Archive download is gated by backups.view: anyone
-				// who can list runs can also pull the bytes for one
-				// they own. Restore-grade access stays under
-				// backups.restore.
+			})
+			r.Group(func(r chi.Router) {
+				// Archives are decrypted server-side and carry secrets;
+				// the handler adds host scope and admin-only system archives.
+				r.Use(middleware.RequirePerm(rbac.PermBackupsDownload))
 				r.Get("/backups/runs/{id}/archive", h.DownloadBackupArchive)
 			})
 			r.Group(func(r chi.Router) {
@@ -718,9 +721,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Use(middleware.RequirePerm(rbac.PermBackupsUpdate))
 				r.Put("/backups/jobs/{id}", h.UpdateBackupJob)
 				r.Post("/backups/jobs/{id}/run", h.RunBackupJob)
+				r.Post("/backups/jobs/{id}/accept-host-key", h.AcceptBackupHostKey)
 				r.Post("/backups/jobs/{id}/review/{mode}", h.AcknowledgeBackupJobReview)
 				r.Put("/backups/targets/{id}", h.UpdateBackupTarget)
 				r.Post("/backups/targets/{id}/test", h.TestBackupTarget)
+				r.Post("/backups/targets/{id}/accept-host-key", h.AcceptBackupTargetHostKey)
 				r.Put("/backups/system/enabled", h.SetBackupEnabled)
 			})
 			r.Group(func(r chi.Router) {
@@ -731,12 +736,11 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermBackupsRestore))
 				r.Post("/backups/runs/{id}/restore", h.RestoreBackup)
-				// P.13.3: stack-typed runs need their own entry point so
-				// the restore actually writes stack/<rel> + each volume
-				// instead of returning the legacy "not implemented" stub.
+				// Stack-typed runs need their own entry point that writes
+				// stack/<rel> plus each volume.
 				r.Post("/backups/runs/{id}/restore-stack", h.RestoreStackBackup)
-				// Backup-key export is sensitive material that lets you
-				// decrypt every backup blob — gate behind backups.restore.
+				// The key decrypts every backup and stored secret; the
+				// handler additionally requires an admin.
 				r.Get("/system/backup-key/export", h.ExportBackupKey)
 			})
 			r.Group(func(r chi.Router) {

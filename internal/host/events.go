@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/dockmesh/dockmesh/internal/agents"
@@ -24,7 +23,7 @@ func (h *LocalHost) ContainerEvents(ctx context.Context) (<-chan events.Message,
 	if h.cli == nil {
 		return nil, errors.New("docker unavailable")
 	}
-	msgs, errs := h.cli.Raw().Events(ctx, types.EventsOptions{
+	msgs, errs := h.cli.Raw().Events(ctx, events.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("type", string(events.ContainerEventType))),
 	})
 	out := make(chan events.Message, 16)

@@ -1,11 +1,7 @@
 package main
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -25,23 +21,6 @@ func cliLoadConfig() (*config.Config, error) {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 	return cfg, nil
-}
-
-// newCATOken generates a fresh enrollment token (32 random bytes, b64url).
-// Matches the format agents.newToken() produces internally — duplicated
-// here rather than exported to keep the agents package surface clean.
-func newCATOken() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
-}
-
-// hashCAToken mirrors agents.hashToken — SHA-256 hex.
-func hashCAToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
 }
 
 // loadCLIDB opens the DB + runs pending migrations. Subcommands use
@@ -106,6 +85,8 @@ Database:
 Agent PKI:
   ca export              Export the agent CA public cert (--out ca.pem)
   ca rotate              Rotate the agent CA (new key; all agents must re-enroll)
+  ca reissue-server      Add names/IPs to the agent listener cert, same CA
+                         (--add-san <name-or-ip>; use when moving to a new address)
 
 Agent enrollment:
   enroll create          Generate a new enrollment token (--name)

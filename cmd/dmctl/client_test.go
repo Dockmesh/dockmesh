@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 )
 
 // TestClientRequest_Success exercises the happy path: bearer auth,
@@ -72,4 +73,37 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+func TestDecodeContainerList(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want int
+	}{
+		{"single host array", `[{"id":"a"},{"id":"b"}]`, 2},
+		{"all hosts envelope", `{"items":[{"id":"a","host_id":"h1"}],"unreachable_hosts":[]}`, 1},
+		{"empty envelope", `{"items":null}`, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := decodeContainerList([]byte(tt.in))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != tt.want {
+				t.Errorf("len = %d, want %d", len(got), tt.want)
+			}
+		})
+	}
+}
+
+func TestLongRunningDropsTimeout(t *testing.T) {
+	c := &Client{http: &http.Client{Timeout: 60 * time.Second}}
+	if got := c.longRunning().http.Timeout; got != 0 {
+		t.Errorf("longRunning timeout = %v, want 0", got)
+	}
+	if c.http.Timeout != 60*time.Second {
+		t.Errorf("original client modified: %v", c.http.Timeout)
+	}
 }

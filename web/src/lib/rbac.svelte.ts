@@ -36,6 +36,7 @@ export type Perm =
   | 'tokens.view' | 'tokens.create' | 'tokens.delete' | 'tokens.manage_others'
   // Backups
   | 'backups.view' | 'backups.create' | 'backups.update' | 'backups.delete' | 'backups.restore'
+  | 'backups.download'
   // Proxy
   | 'proxy.view' | 'proxy.create' | 'proxy.update' | 'proxy.delete'
   // Alerts
@@ -73,6 +74,7 @@ const FALLBACK_ROLE_PERMS: Record<string, Perm[]> = {
     'roles.view', 'roles.create', 'roles.update', 'roles.delete',
     'tokens.view', 'tokens.create', 'tokens.delete', 'tokens.manage_others',
     'backups.view', 'backups.create', 'backups.update', 'backups.delete', 'backups.restore',
+    'backups.download',
     'proxy.view', 'proxy.create', 'proxy.update', 'proxy.delete',
     'alerts.view', 'alerts.create', 'alerts.update', 'alerts.delete',
     'templates.view', 'templates.create', 'templates.update', 'templates.delete',
@@ -92,11 +94,12 @@ const FALLBACK_ROLE_PERMS: Record<string, Perm[]> = {
     'users.view', 'roles.view',
     'tokens.view', 'tokens.create', 'tokens.delete',
     'backups.view', 'backups.create', 'backups.update', 'backups.delete', 'backups.restore',
+    'backups.download',
     'proxy.view', 'proxy.create', 'proxy.update', 'proxy.delete',
     'alerts.view', 'alerts.create', 'alerts.update', 'alerts.delete',
     'templates.view', 'templates.create', 'templates.update', 'templates.delete',
     'audit.view', 'audit.export',
-    'system.view', 'system.update',
+    'system.view',
     'metrics.view',
   ],
   deployer: [
@@ -177,6 +180,13 @@ function scopeOK(opts?: AllowOpts): boolean {
 export function allowed(perm: Perm, opts?: AllowOpts): boolean {
   if (!userPerms().includes(perm)) return false;
   return scopeOK(opts);
+}
+
+/** system.update with no role scope; the backend also rejects callers with user scope tags. */
+export function isAdmin(): boolean {
+  if (!userPerms().includes('system.update')) return false;
+  const s = auth.user?.scopes;
+  return !s || (s.stacks.length === 0 && s.hosts.length === 0 && s.host_tags.length === 0);
 }
 
 /**

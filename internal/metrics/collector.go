@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/docker"
-	dtypes "github.com/docker/docker/api/types"
 )
 
 // Retention controls how long each resolution is kept. Rows older than
@@ -152,7 +152,7 @@ type sample struct {
 // endpoint produces CPU=0 because there is no prior reading to delta
 // against.
 func fetchOneShot(ctx context.Context, cli interface {
-	ContainerStats(context.Context, string, bool) (dtypes.ContainerStats, error)
+	ContainerStats(context.Context, string, bool) (container.StatsResponseReader, error)
 }, id string) (*sample, error) {
 	resp, err := cli.ContainerStats(ctx, id, true)
 	if err != nil {
@@ -161,7 +161,7 @@ func fetchOneShot(ctx context.Context, cli interface {
 	defer resp.Body.Close()
 
 	dec := json.NewDecoder(resp.Body)
-	var s dtypes.StatsJSON
+	var s container.StatsResponse
 	// Skip the first frame — PreCPUStats is empty so CPU% = 0.
 	if err := dec.Decode(&s); err != nil {
 		return nil, err

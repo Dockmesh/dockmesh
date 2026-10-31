@@ -3,6 +3,7 @@ package targets
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -19,6 +20,8 @@ type S3Config struct {
 	AccessKey string `json:"access_key"`
 	SecretKey string `json:"secret_key"`
 	UseSSL    bool   `json:"use_ssl"`
+	// CACert is an optional PEM bundle trusted in addition to the system roots.
+	CACert string `json:"ca_cert,omitempty"`
 }
 
 type S3 struct {
@@ -39,10 +42,15 @@ func NewS3(raw any) (*S3, error) {
 	if cfg.Region == "" {
 		cfg.Region = "us-east-1"
 	}
+	tr, err := transferTransportWithCA(cfg.CACert)
+	if err != nil {
+		return nil, fmt.Errorf("s3: %w", err)
+	}
 	cli, err := minio.New(cfg.Endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
-		Secure: cfg.UseSSL,
-		Region: cfg.Region,
+		Creds:     credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
+		Secure:    cfg.UseSSL,
+		Region:    cfg.Region,
+		Transport: tr,
 	})
 	if err != nil {
 		return nil, err

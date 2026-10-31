@@ -19,7 +19,10 @@
   } from 'lucide-svelte';
   import DeployDrawer from './_DeployDrawer.svelte';
 
-  const canDeploy = $derived(allowed('stacks.create'));
+  const canDeploy = $derived(allowed('stacks.deploy'));
+  const canCreate = $derived(allowed('templates.create'));
+  const canUpdate = $derived(allowed('templates.update'));
+  const canDelete = $derived(allowed('templates.delete'));
 
   let templates = $state<StackTemplate[]>([]);
   let loading = $state(true);
@@ -204,7 +207,7 @@
           {/if}
         </p>
       </div>
-      {#if canDeploy}
+      {#if canCreate}
         <button
           type="button"
           class="dm-btn dm-btn-ghost dm-btn-sm"
@@ -261,7 +264,7 @@
           Built-in templates should seed on first boot. If you see this, the seed
           may have failed — restart Dockmesh or add a custom template.
         </p>
-        {#if canDeploy}
+        {#if canCreate}
           <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={openNewTemplate}>
             <Plus size={12} strokeWidth={1.5} /> New custom template
           </button>
@@ -325,7 +328,7 @@
                 >
                   <Download size={11} strokeWidth={1.5} />
                 </a>
-                {#if canDeploy && !t.builtin}
+                {#if canUpdate && !t.builtin}
                   <button
                     type="button"
                     class="tpl-icon-btn"
@@ -335,6 +338,8 @@
                   >
                     <Edit2 size={11} strokeWidth={1.5} />
                   </button>
+                {/if}
+                {#if canDelete && !t.builtin}
                   <button
                     type="button"
                     class="tpl-icon-btn tpl-icon-danger"

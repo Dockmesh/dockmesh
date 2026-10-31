@@ -11,7 +11,9 @@
   //
   // RBAC: still uses v1 strings (container.control, container.exec).
   // Migration to v2.1 happens in the consolidated backend slice.
+  import { untrack } from 'svelte';
   import { api, ApiError, isFanOut } from '$lib/api';
+  import { latest } from '$lib/latest';
   import { goto } from '$app/navigation';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
@@ -193,10 +195,13 @@
     onStatus: (s) => { connStatus = s; },
   });
 
+  const nextLoad = latest();
   async function load() {
+    const current = nextLoad();
     loading = true;
     try {
       const res = await api.containers.list(showStopped, hosts.id);
+      if (!current()) return;
       if (isFanOut(res)) {
         containers = res.items as Container[];
         unreachable = res.unreachable_hosts;
@@ -205,21 +210,19 @@
         unreachable = [];
       }
     } catch (err) {
-      toast.error('Failed to load', err instanceof ApiError ? err.message : undefined);
+      if (current()) toast.error('Failed to load', err instanceof ApiError ? err.message : undefined);
     } finally {
-      loading = false;
+      if (current()) loading = false;
     }
   }
 
-  let prevHost = hosts.id;
   $effect(() => {
-    const cur = hosts.id;
-    if (cur !== prevHost) { prevHost = cur; load(); }
+    hosts.id; showStopped;
+    untrack(load);
   });
 
   $effect(() => {
-    load();
-    stream.start();
+    untrack(() => stream.start());
     return () => {
       stream.stop();
       if (reloadTimer) clearTimeout(reloadTimer);
@@ -383,7 +386,7 @@
     </div>
 
     <label class="ctn-show-stopped">
-      <input type="checkbox" bind:checked={showStopped} onchange={load} />
+      <input type="checkbox" bind:checked={showStopped} />
       <span>show stopped</span>
     </label>
 

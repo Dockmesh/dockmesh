@@ -505,6 +505,7 @@ body {
   .dm-pill-warning { color: var(--color-warning-400); border-color: color-mix(in srgb, var(--color-warning-500) 40%, var(--border)); }
   .dm-pill-danger  { color: var(--color-danger-400);  border-color: color-mix(in srgb, var(--color-danger-500)  40%, var(--border)); }
   .dm-pill-neutral { color: var(--fg-subtle); }
+  .dm-pill-info    { color: var(--color-brand-400);   border-color: color-mix(in srgb, var(--color-brand-500)   40%, var(--border)); }
 
   /* Numeric count badge — square corners, mono, subtle, with a hairline
      border. Used for tab counts, filter-pill counts, "N items"
@@ -1231,7 +1232,14 @@ body {
     background: transparent;
   }
   .app-page > * { position: relative; z-index: 1; }
+  /* Banners above the page share its column: same left edge, padding and
+     maximum width as .app-page. */
+  .app-band {
+    padding: 16px 36px 0;
+    max-width: 1480px;
+  }
   @media (max-width: 768px) {
+    .app-band { padding: 12px 18px 0; }
     .app-page { padding: 18px 18px 48px; }
     .app-topbar { padding: 0 18px; }
   }

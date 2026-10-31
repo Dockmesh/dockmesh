@@ -65,9 +65,10 @@ func enrollCreate(args []string) error {
 
 	agentPublic := cfg.AgentPublicURL
 	if agentPublic == "" {
-		agentPublic = cfg.BaseURL
+		agentPublic = deriveAgentURL(cfg.BaseURL, cfg.AgentListen)
 	}
 	svc := agents.NewService(database, mgr, cfg.BaseURL, agentPublic)
+	svc.SetEnrollTokenTTL(cfg.AgentEnrollTokenTTL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

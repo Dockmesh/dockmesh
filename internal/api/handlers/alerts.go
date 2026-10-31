@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -22,7 +23,12 @@ func (h *Handlers) ListNotificationChannels(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusOK, []notify.Channel{})
 		return
 	}
-	writeJSON(w, http.StatusOK, h.Notify.Channels())
+	list := h.Notify.Channels()
+	out := make([]*notify.Channel, len(list))
+	for i := range list {
+		out[i] = redactChannel(&list[i])
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *Handlers) CreateNotificationChannel(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +51,7 @@ func (h *Handlers) CreateNotificationChannel(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	h.audit(r, "notify.channel_create", c.Type, map[string]string{"name": c.Name})
-	writeJSON(w, http.StatusCreated, c)
+	writeJSON(w, http.StatusCreated, redactChannel(c))
 }
 
 func (h *Handlers) UpdateNotificationChannel(w http.ResponseWriter, r *http.Request) {
@@ -63,13 +69,29 @@ func (h *Handlers) UpdateNotificationChannel(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	for _, prev := range h.Notify.Channels() {
+		if prev.ID == id && prev.Type == in.Type {
+			cfg, err := keepConfig(in.Config, prev.Config, notifySecrets(in.Type))
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			kept, err := json.Marshal(cfg)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid config")
+				return
+			}
+			in.Config = kept
+			break
+		}
+	}
 	c, err := h.Notify.Update(r.Context(), id, in)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	h.audit(r, "notify.channel_update", strconv.FormatInt(id, 10), nil)
-	writeJSON(w, http.StatusOK, c)
+	writeJSON(w, http.StatusOK, redactChannel(c))
 }
 
 func (h *Handlers) DeleteNotificationChannel(w http.ResponseWriter, r *http.Request) {

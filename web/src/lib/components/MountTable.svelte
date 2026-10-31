@@ -46,7 +46,7 @@
       </tr>
     </thead>
     <tbody>
-      {#each mounts as m (m.mount_point)}
+      {#each mounts as m, i (`${m.mount_point}|${m.fs_type}|${i}`)}
         <tr>
           <td class="mt-path font-mono" title={m.fs_type}>{m.mount_point}</td>
           <td>

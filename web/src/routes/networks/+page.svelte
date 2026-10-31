@@ -5,9 +5,9 @@
   // editorial detail.
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   onMount(() => {
-    const dest = $page.url.searchParams.get('topology') === '1' ? '/topology' : '/resources?tab=networks';
-    goto(dest, { replaceState: true });
+    const dest = page.url.searchParams.get('topology') === '1' ? '/topology' : '/resources?tab=networks';
+    goto(dest, { replace: true });
   });
 </script>

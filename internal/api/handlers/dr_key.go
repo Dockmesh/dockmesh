@@ -3,6 +3,9 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"sync"
+
+	"github.com/dockmesh/dockmesh/internal/audit"
 )
 
 // ExportBackupKey returns the age private key used to encrypt stack .env
@@ -12,9 +15,12 @@ import (
 //
 //	GET /api/v1/system/backup-key/export
 //
-// Admin-only (wired at the router layer). Every call is audited so a
-// stolen key leaves a trail.
+// Admin-only. Every call is audited so a stolen key leaves a trail.
 func (h *Handlers) ExportBackupKey(w http.ResponseWriter, r *http.Request) {
+	if !h.callerIsAdmin(r) {
+		writeError(w, http.StatusForbidden, "only an admin can export the backup key")
+		return
+	}
 	if h.Secrets == nil {
 		writeError(w, http.StatusServiceUnavailable, "secrets service not configured")
 		return
@@ -24,7 +30,7 @@ func (h *Handlers) ExportBackupKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, "backup.key_export", "system", nil)
+	h.audit(r, audit.ActionBackupKeyExport, "system", nil)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="dockmesh-backup-key.txt"`)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -32,14 +38,13 @@ func (h *Handlers) ExportBackupKey(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(body))
 }
 
-// RotateSecretsKey generates a new age key, re-encrypts every stack
-// `.env.age` against it, atomically swaps the in-memory key for the
-// live server, and archives the old key to .../secrets.age-key.old.
-// Equivalent to the `dockmesh secrets rotate` CLI — but runs in the
-// same process so no service restart is needed (FINDING-52: running
-// server kept using old key in RAM while CLI had already written the
-// new one to disk → every stack read 500'd with "decrypt: identity did
-// not match any of the recipients").
+var rotateMu sync.Mutex
+
+// RotateSecretsKey generates a new age key, records old and new key in
+// the key history, re-encrypts every stack `.env.age` against the new key,
+// then atomically replaces the key file and the in-memory key.
+// Equivalent to the `dockmesh secrets rotate` CLI, but runs in-process so
+// no restart is needed.
 //
 //	POST /api/v1/system/secrets/rotate
 //
@@ -57,12 +62,23 @@ func (h *Handlers) RotateSecretsKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "secrets encryption is disabled on this server")
 		return
 	}
+	// Two overlapping rotations would each write a history without the
+	// other's new key.
+	if !rotateMu.TryLock() {
+		writeError(w, http.StatusConflict, "a key rotation is already running")
+		return
+	}
+	defer rotateMu.Unlock()
 	// Snapshot the current key before mutating it so the re-encryption
 	// walk below can still decrypt legacy .env.age files.
 	oldSnap := h.Secrets.Snapshot()
 	newSvc, err := h.Secrets.RotateInMemory()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("generate new key: %v", err))
+		return
+	}
+	if err := h.Secrets.PrepareRotation(newSvc); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	count, err := h.Stacks.ReencryptAllBetween(oldSnap, newSvc)
