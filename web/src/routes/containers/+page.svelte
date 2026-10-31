@@ -21,13 +21,10 @@
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
   import { EventStream, type ConnStatus } from '$lib/events';
-  import { Eyebrow } from '$lib/components/editorial';
-  import { Skeleton } from '$lib/components/ui';
-  import {
-    Box, Play, Square, RotateCw, Trash2, RefreshCw, Server,
-    AlertTriangle, Search, FileText, Terminal, Activity,
-    MoreVertical, Pause, Settings, Copy,
-  } from 'lucide-svelte';
+  import { Skeleton, StatusChip, StatBar, Segmented, LiveIndicator, Menu, EmptyState } from '$lib/components/ui';
+  import type { MenuItem } from '$lib/components/ui/Menu.svelte';
+  import type { Tone } from '$lib/components/ui/StatusChip.svelte';
+  import { Box, AlertTriangle } from 'lucide-svelte';
 
   const canControl = $derived(allowed('containers.update'));
   const canExec = $derived(allowed('containers.exec'));
@@ -51,39 +48,32 @@
   let containers = $state<Container[]>([]);
   let unreachable = $state<Array<{ host_id: string; host_name: string; reason: string }>>([]);
   let loading = $state(true);
-  let showStopped = $state(true);
+  let lastLoaded = $state<number | null>(null);
   let connStatus = $state<ConnStatus>('connecting');
-  const live = $derived(connStatus === 'live');
   let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Search + filter
   let search = $state('');
-  type StateFilter = 'all' | 'running' | 'stopped' | 'unhealthy';
+  type StateFilter = 'all' | 'running' | 'attention' | 'stopped' | 'standalone';
   let stateFilter = $state<StateFilter>('all');
 
   // Sort
-  type SortKey = 'name' | 'state' | 'image' | 'stack' | 'uptime';
-  let sortKey = $state<SortKey>('name');
+  type SortKey = 'urgency' | 'name' | 'state' | 'image' | 'stack' | 'uptime';
+  let sortKey = $state<SortKey>('urgency');
+
+  type View = 'list' | 'host' | 'stack';
+  let view = $state<View>(
+    ((typeof localStorage !== 'undefined' && localStorage.getItem('dm_containers_view')) as View) || 'list'
+  );
+  $effect(() => {
+    localStorage.setItem('dm_containers_view', view);
+  });
   let sortAsc = $state(true);
 
   // Bulk selection
   let selected = $state<Set<string>>(new Set());
   let bulkBusy = $state(false);
 
-  // Row more-menu
-  let openMenuId = $state<string | null>(null);
-  let menuRoot = $state<HTMLElement | null>(null);
-
-  $effect(() => {
-    if (!openMenuId) return;
-    function onDocDown(e: MouseEvent) {
-      if (!menuRoot) return;
-      if (e.target instanceof Node && menuRoot.contains(e.target)) return;
-      openMenuId = null;
-    }
-    window.addEventListener('mousedown', onDocDown);
-    return () => window.removeEventListener('mousedown', onDocDown);
-  });
 
   // ── Helpers ──────────────────────────────────────────────────────────
   function nameOf(c: Container): string {
@@ -108,11 +98,13 @@
     if (secs < 86400) return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
     return `${Math.floor(secs / 86400)}d ${Math.floor((secs % 86400) / 3600)}h`;
   }
-  function detailHref(c: Container): string {
+  function detailHref(c: Container, tab?: string): string {
     const h = c.host_id ?? hosts.id;
-    if (isAll && h) return `/containers/${c.Id}?host=${h}`;
-    if (h && h !== 'local') return `/containers/${c.Id}?host=${h}`;
-    return `/containers/${c.Id}`;
+    const q = new URLSearchParams();
+    if (h && h !== 'local') q.set('host', h);
+    if (tab) q.set('tab', tab);
+    const qs = q.toString();
+    return `/containers/${c.Id}${qs ? '?' + qs : ''}`;
   }
   function exitCodeFromStatus(s: string | undefined): number | null {
     if (!s) return null;
@@ -124,19 +116,48 @@
     if (idx < 0 || idx < image.lastIndexOf('/')) return { name: image, tag: null };
     return { name: image.slice(0, idx), tag: image.slice(idx + 1) };
   }
-  function stateTone(s: string): 'ok' | 'warn' | 'fail' | 'neutral' {
-    if (s === 'running') return 'ok';
-    if (s === 'restarting') return 'warn';
-    if (s === 'dead') return 'fail';
-    return 'neutral';
+  function statusOf(c: Container): { tone: Tone; label: string } {
+    const health = parseHealth(c.Status);
+    if (c.State === 'running') {
+      if (health === 'unhealthy') return { tone: 'warn', label: 'unhealthy' };
+      if (health === 'starting') return { tone: 'warn', label: 'starting' };
+      return { tone: 'ok', label: 'running' };
+    }
+    if (c.State === 'restarting' || c.State === 'paused') return { tone: 'warn', label: c.State };
+    if (c.State === 'dead') return { tone: 'bad', label: 'dead' };
+    const exit = exitCodeFromStatus(c.Status);
+    if (c.State === 'exited' && exit !== null && exit !== 0) return { tone: 'bad', label: `exited ${exit}` };
+    return { tone: 'off', label: c.State || 'unknown' };
+  }
+  function needsAttention(c: Container): boolean {
+    const t = statusOf(c).tone;
+    return t === 'warn' || t === 'bad';
+  }
+  const TONE_ORDER: Record<Tone, number> = { bad: 0, warn: 1, ok: 2, acc: 2, off: 3 };
+
+  function shortImage(name: string): string {
+    return name.split('/').pop() ?? name;
+  }
+  function portsLabel(c: Container): string {
+    const pub = (c.Ports ?? []).filter((p) => p.PublicPort);
+    if (pub.length === 0) return (c.Ports ?? []).length ? 'internal' : '—';
+    const first = `:${pub[0].PublicPort}`;
+    return pub.length > 1 ? `${first} +${pub.length - 1}` : first;
+  }
+  function portsTitle(c: Container): string {
+    return (c.Ports ?? []).map((p) => (p.PublicPort ? `${p.PublicPort}:${p.PrivatePort}/${p.Type}` : `${p.PrivatePort}/${p.Type}`)).join(', ');
+  }
+  function sortArrow(k: SortKey): string {
+    return sortKey === k ? (sortAsc ? ' ↑' : ' ↓') : '';
   }
 
   // ── Counts + derived ────────────────────────────────────────────────
   const counts = $derived({
     all: containers.length,
     running: containers.filter((c) => c.State === 'running').length,
+    attention: containers.filter(needsAttention).length,
     stopped: containers.filter((c) => c.State !== 'running' && c.State !== 'restarting').length,
-    unhealthy: containers.filter((c) => parseHealth(c.Status) === 'unhealthy').length,
+    standalone: containers.filter((c) => !stackOf(c)).length,
   });
 
   const visible = $derived(
@@ -144,7 +165,8 @@
       .filter((c) => {
         if (stateFilter === 'running') return c.State === 'running';
         if (stateFilter === 'stopped') return c.State !== 'running' && c.State !== 'restarting';
-        if (stateFilter === 'unhealthy') return parseHealth(c.Status) === 'unhealthy';
+        if (stateFilter === 'attention') return needsAttention(c);
+        if (stateFilter === 'standalone') return !stackOf(c);
         return true;
       })
       .filter((c) => {
@@ -158,6 +180,9 @@
       .sort((a, b) => {
         let cmp = 0;
         switch (sortKey) {
+          case 'urgency':
+            cmp = TONE_ORDER[statusOf(a).tone] - TONE_ORDER[statusOf(b).tone] || nameOf(a).localeCompare(nameOf(b));
+            break;
           case 'name':  cmp = nameOf(a).localeCompare(nameOf(b)); break;
           case 'state': cmp = a.State.localeCompare(b.State); break;
           case 'image': cmp = a.Image.localeCompare(b.Image); break;
@@ -178,6 +203,70 @@
     if (next.has(id)) next.delete(id); else next.add(id);
     selected = next;
   }
+  const cols = $derived(
+    view === 'host'
+      ? '22px 14px minmax(220px, 2.2fr) 120px minmax(140px, 1.4fr) 110px 90px 40px'
+      : '22px 14px minmax(220px, 2.2fr) 120px 110px minmax(140px, 1.4fr) 110px 90px 40px'
+  );
+
+  interface Group {
+    key: string;
+    label: string;
+    sub: string;
+    href?: string;
+    tone: string;
+    items: Container[];
+  }
+  const groups = $derived.by<Group[]>(() => {
+    const map = new Map<string, Group>();
+    for (const c of visible) {
+      let key: string;
+      let g: Omit<Group, 'items' | 'tone'>;
+      if (view === 'host') {
+        key = c.host_id ?? hosts.id;
+        g = { key, label: c.host_name || (hosts.selected?.name ?? 'local'), sub: '' };
+      } else {
+        const st = stackOf(c);
+        key = st ?? '__standalone';
+        g = st
+          ? { key, label: st, sub: '', href: `/stacks/${encodeURIComponent(st)}` }
+          : { key, label: 'Standalone', sub: 'not managed by Dockmesh' };
+      }
+      if (!map.has(key)) map.set(key, { ...g, tone: '', items: [] });
+      map.get(key)!.items.push(c);
+    }
+    const out = [...map.values()];
+    for (const g of out) {
+      const worst = Math.min(...g.items.map((c) => TONE_ORDER[statusOf(c).tone]));
+      g.tone = worst === 0 ? 'bad' : worst === 1 ? 'warn' : worst === 2 ? 'ok' : '';
+      g.sub = [g.sub, `${g.items.length} container${g.items.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+    }
+    return out.sort((a, b) => (a.key === '__standalone' ? 1 : b.key === '__standalone' ? -1 : a.label.localeCompare(b.label)));
+  });
+
+  function rowMenu(c: Container): MenuItem[] {
+    const running = c.State === 'running';
+    const stack = stackOf(c);
+    const items: MenuItem[] = [
+      { label: 'Open', kbd: '↵', href: detailHref(c) },
+      { label: 'Logs', href: detailHref(c, 'logs') },
+    ];
+    if (canExec) items.push({ label: 'Terminal', href: detailHref(c, 'exec'), disabled: !running });
+    items.push({ label: 'Inspect', href: detailHref(c, 'inspect') });
+    if (canControl) {
+      items.push({ separator: true });
+      if (running) {
+        items.push({ label: 'Restart', onclick: () => action(c, 'restart') }, { label: 'Stop', onclick: () => action(c, 'stop') });
+      } else {
+        items.push({ label: 'Start', onclick: () => action(c, 'start') });
+      }
+    }
+    items.push({ separator: true }, { label: 'Copy ID', onclick: () => copyId(c.Id) });
+    if (stack) items.push({ label: `Open stack ${stack}`, href: `/stacks/${encodeURIComponent(stack)}` });
+    if (canControl) items.push({ separator: true }, { label: 'Remove…', danger: true, onclick: () => action(c, 'remove') });
+    return items;
+  }
+
   function toggleSort(key: SortKey) {
     if (sortKey === key) sortAsc = !sortAsc;
     else { sortKey = key; sortAsc = true; }
@@ -200,7 +289,7 @@
     const current = nextLoad();
     loading = true;
     try {
-      const res = await api.containers.list(showStopped, hosts.id);
+      const res = await api.containers.list(true, hosts.id);
       if (!current()) return;
       if (isFanOut(res)) {
         containers = res.items as Container[];
@@ -209,6 +298,7 @@
         containers = res as Container[];
         unreachable = [];
       }
+      lastLoaded = Date.now();
     } catch (err) {
       if (current()) toast.error('Failed to load', err instanceof ApiError ? err.message : undefined);
     } finally {
@@ -217,7 +307,7 @@
   }
 
   $effect(() => {
-    hosts.id; showStopped;
+    hosts.id;
     untrack(load);
   });
 
@@ -230,17 +320,13 @@
   });
 
   // ── Actions ─────────────────────────────────────────────────────────
-  async function action(c: Container, op: 'start' | 'stop' | 'restart' | 'pause' | 'unpause' | 'remove') {
+  async function action(c: Container, op: 'start' | 'stop' | 'restart' | 'remove') {
     const targetHost = c.host_id ?? hosts.id;
     try {
       if (op === 'start')   await api.containers.start(c.Id, targetHost);
       else if (op === 'stop')    await api.containers.stop(c.Id, targetHost);
       else if (op === 'restart') await api.containers.restart(c.Id, targetHost);
-      else if (op === 'pause' || op === 'unpause') {
-        // Not exposed on the api wrapper yet — fall through gracefully.
-        toast.info(op, 'Not yet wired in this build');
-        return;
-      } else {
+      else {
         if (!(await confirm.ask({
           title: 'Remove container',
           message: `Remove container "${nameOf(c)}"?`,
@@ -253,8 +339,6 @@
       await load();
     } catch (err) {
       toast.error(`${op} failed`, err instanceof ApiError ? err.message : undefined);
-    } finally {
-      openMenuId = null;
     }
   }
 
@@ -286,973 +370,209 @@
 
   function copyId(id: string) {
     void copyWithToast(id, 'ID copied');
-    openMenuId = null;
   }
 </script>
 
-<section class="ctn">
-  <!-- ─────────────────────────── Header ─────────────────────────── -->
-  <header class="ctn-header">
-    <div class="ctn-header-text">
-      <h1 class="ed-title ctn-title">Containers</h1>
-      <p class="ed-subtitle ctn-subtitle">
-        {counts.all} container{counts.all === 1 ? '' : 's'} · {counts.running} running{counts.unhealthy > 0 ? ` · ${counts.unhealthy} unhealthy` : ''}{counts.stopped > 0 ? ` · ${counts.stopped} stopped` : ''} · {isAll ? 'fleet-wide' : hosts.selected?.name ?? 'local'}
-      </p>
-    </div>
-    <div class="ctn-conn" data-state={live ? 'live' : connStatus}>
-      <span class="ctn-conn-dot"></span>
-      <span class="ctn-conn-text">
-        {#if live}docker events · streaming
-        {:else if connStatus === 'reconnecting'}reconnecting…
-        {:else if connStatus === 'connecting'}connecting…
-        {:else}offline{/if}
-      </span>
-    </div>
-  </header>
-
-  <!-- ────────────────── Summary tiles ──────────────────── -->
-  <div class="ctn-summary">
-    <div class="ctn-metric">
-      <span class="ctn-metric-label">Containers</span>
-      <span class="ctn-metric-value">{counts.all}</span>
-      <span class="ctn-metric-meta">{counts.running} running</span>
-    </div>
-    <div class="ctn-metric" data-tone={counts.unhealthy > 0 ? 'warn' : 'ok'}>
-      <span class="ctn-metric-label">Unhealthy</span>
-      <span class="ctn-metric-value">{counts.unhealthy}</span>
-      <span class="ctn-metric-meta">
-        {counts.unhealthy > 0 ? 'running but failing checks' : 'all clear'}
-      </span>
-    </div>
-    <div class="ctn-metric">
-      <span class="ctn-metric-label">Stopped</span>
-      <span class="ctn-metric-value">{counts.stopped}</span>
-      <span class="ctn-metric-meta">exited · paused · created</span>
-    </div>
-    <div class="ctn-metric">
-      <span class="ctn-metric-label">Hosts</span>
-      <span class="ctn-metric-value">
-        {isAll ? hosts.available.length : 1}
-        {#if unreachable.length > 0}
-          <span class="ctn-metric-unreach">· {unreachable.length} down</span>
-        {/if}
-      </span>
-      <span class="ctn-metric-meta">{isAll ? 'across fleet' : 'lens scoped'}</span>
-    </div>
+<section class="dm-page">
+  <div class="dm-ph">
+    <h1>Containers</h1>
+    <span class="dm-sub">{counts.all}</span>
+    <span class="dm-sp"></span>
+    <LiveIndicator updatedAt={lastLoaded} onrefresh={load} busy={loading} paused={connStatus === 'closed'} />
   </div>
 
-  <!-- ────────────────── Unreachable banner ─────────────── -->
+  <div class="dm-toolbar">
+    <Segmented
+      label="Filter containers"
+      bind:value={stateFilter}
+      options={[
+        { key: 'all', label: 'All', count: counts.all },
+        { key: 'running', label: 'Running', count: counts.running },
+        { key: 'attention', label: 'Attention', count: counts.attention },
+        { key: 'stopped', label: 'Stopped', count: counts.stopped },
+        { key: 'standalone', label: 'Standalone', count: counts.standalone }
+      ]}
+    />
+    <span class="dm-sp"></span>
+    <input type="search" class="dm-filter" placeholder="Filter name, stack, image, id…" aria-label="Filter containers" bind:value={search} style="width: 240px" />
+    <Segmented
+      label="Layout"
+      bind:value={view}
+      options={[
+        { key: 'list', label: 'List' },
+        { key: 'host', label: 'By host' },
+        { key: 'stack', label: 'By stack' }
+      ]}
+    />
+  </div>
+
+  <StatBar
+    items={[
+      { label: 'Running', value: `${counts.running} of ${counts.all}` },
+      {
+        label: 'Needs attention',
+        value: counts.attention,
+        note: containers.filter(needsAttention).slice(0, 3).map((c) => `${nameOf(c)} ${statusOf(c).label}`).join(' · '),
+        tone: counts.attention ? 'warn' : ''
+      },
+      { label: 'Stopped', value: counts.stopped },
+      {
+        label: 'Hosts',
+        value: isAll ? hosts.available.length : 1,
+        note: unreachable.length ? `${unreachable.length} unreachable` : isAll ? 'all hosts' : (hosts.selected?.name ?? ''),
+        tone: unreachable.length ? 'bad' : ''
+      }
+    ]}
+  />
+
   {#if unreachable.length > 0}
-    <div class="ctn-unreach" role="alert">
-      <AlertTriangle size={14} strokeWidth={1.5} class="ctn-unreach-icon" />
-      <span class="ctn-unreach-text">
-        <strong>{unreachable.length} host{unreachable.length === 1 ? '' : 's'} unreachable</strong>
-        — {unreachable.map((u) => u.host_name).join(', ')}.
-        Containers from these hosts are missing from the list.
-      </span>
+    <div class="ct-warn" role="alert">
+      <AlertTriangle size={14} strokeWidth={1.8} />
+      <span><b>{unreachable.length} host{unreachable.length === 1 ? '' : 's'} unreachable</b> · {unreachable.map((u) => u.host_name).join(', ')}. Their containers are missing from the list.</span>
     </div>
   {/if}
 
-  <!-- ────────────────── Toolbar ────────────────────────── -->
-  <div class="ctn-toolbar">
-    <div class="ctn-search">
-      <Search size={12} strokeWidth={1.5} class="ctn-search-icon" />
-      <input
-        type="search"
-        placeholder="search name · image · stack · id…"
-        bind:value={search}
-        class="ed-underline-input ctn-search-input"
-      />
-    </div>
-
-    <div class="ctn-filter" role="tablist">
-      {#each [
-        { id: 'all'       as const, label: 'all',       n: counts.all },
-        { id: 'running'   as const, label: 'running',   n: counts.running },
-        { id: 'stopped'   as const, label: 'stopped',   n: counts.stopped },
-        { id: 'unhealthy' as const, label: 'unhealthy', n: counts.unhealthy },
-      ] as opt}
-        {#if opt.id !== 'unhealthy' || counts.unhealthy > 0}
-          <button
-            type="button"
-            class="ctn-filter-pill"
-            class:ctn-filter-active={stateFilter === opt.id}
-            onclick={() => (stateFilter = opt.id)}
-          >
-            {opt.label}<span class="ctn-filter-count">{opt.n}</span>
-          </button>
-        {/if}
-      {/each}
-    </div>
-
-    <label class="ctn-show-stopped">
-      <input type="checkbox" bind:checked={showStopped} />
-      <span>show stopped</span>
-    </label>
-
-    <span class="ctn-spacer"></span>
-
-    <button
-      type="button"
-      class="dm-btn dm-btn-ghost dm-btn-sm"
-      onclick={load}
-      disabled={loading}
-      title="Refresh"
-    >
-      <RefreshCw size={12} strokeWidth={1.5} class={loading ? 'ctn-spin' : ''} />
-      Refresh
-    </button>
-  </div>
-
-  <!-- ────────────────── Bulk action bar ────────────────── -->
   {#if selected.size > 0 && canControl}
-    <div class="ctn-bulkbar">
-      <span class="ctn-bulkbar-count">{selected.size} selected</span>
-      <div class="ctn-bulkbar-actions">
-        <button
-          type="button"
-          class="dm-btn dm-btn-ghost dm-btn-xs"
-          onclick={() => bulkAction('start')}
-          disabled={bulkBusy}
-        >
-          <Play size={11} strokeWidth={1.5} /> Start
-        </button>
-        <button
-          type="button"
-          class="dm-btn dm-btn-ghost dm-btn-xs"
-          onclick={() => bulkAction('stop')}
-          disabled={bulkBusy}
-        >
-          <Square size={11} strokeWidth={1.5} /> Stop
-        </button>
-        <button
-          type="button"
-          class="dm-btn dm-btn-ghost dm-btn-xs"
-          onclick={() => bulkAction('restart')}
-          disabled={bulkBusy}
-        >
-          <RotateCw size={11} strokeWidth={1.5} /> Restart
-        </button>
-        <button
-          type="button"
-          class="dm-btn dm-btn-ghost dm-btn-xs ctn-danger-btn"
-          onclick={() => bulkAction('remove')}
-          disabled={bulkBusy}
-        >
-          <Trash2 size={11} strokeWidth={1.5} /> Remove
-        </button>
-        <button
-          type="button"
-          class="dm-btn dm-btn-ghost dm-btn-xs"
-          onclick={() => (selected = new Set())}
-        >
-          Clear
-        </button>
-      </div>
+    <div class="ct-bulk" role="region" aria-label="Bulk actions">
+      <b>{selected.size} selected</b>
+      <span class="dm-sp"></span>
+      <button type="button" class="dm-btn dm-btn-sm" onclick={() => bulkAction('start')} disabled={bulkBusy}>Start</button>
+      <button type="button" class="dm-btn dm-btn-sm" onclick={() => bulkAction('stop')} disabled={bulkBusy}>Stop</button>
+      <button type="button" class="dm-btn dm-btn-sm" onclick={() => bulkAction('restart')} disabled={bulkBusy}>Restart</button>
+      <button type="button" class="dm-btn dm-btn-sm dm-btn-danger" onclick={() => bulkAction('remove')} disabled={bulkBusy}>Remove…</button>
+      <button type="button" class="dm-btn dm-btn-sm dm-btn-ghost" onclick={() => (selected = new Set())}>Clear</button>
     </div>
   {/if}
 
-  <!-- ────────────────── Table ───────────────────────────── -->
   {#if loading && containers.length === 0}
-    <div class="ctn-loading">
-      <Skeleton width="100%" height="6rem" />
+    <div class="dm-tbl">
+      {#each Array(6) as _, i (i)}
+        <div class="dm-tr" style="grid-template-columns: 1fr"><Skeleton width="50%" height="0.9rem" /></div>
+      {/each}
     </div>
   {:else if containers.length === 0}
-    <div class="ctn-empty">
-      <Box size={20} strokeWidth={1.4} />
-      <p class="ctn-empty-title">No containers</p>
-      <p class="ed-subtitle ctn-empty-blurb">
-        Deploy a stack or pull an image to get started.
-      </p>
-    </div>
-  {:else if visible.length === 0}
-    <div class="ctn-empty">
-      <Eyebrow>no match</Eyebrow>
-      <p class="ctn-empty-title">No containers match this filter.</p>
-    </div>
+    <EmptyState icon={Box} title="No containers" description="Deploy a stack or start a template to get started." />
   {:else}
-    <div class="ctn-table" bind:this={menuRoot}>
-      <div class="ctn-row ctn-row-head" data-with-host={isAll}>
-        {#if canControl}
-          <span class="ctn-col-check">
-            <input type="checkbox" checked={allSelected} onchange={toggleAll} />
-          </span>
-        {/if}
-        <button type="button" class="ctn-h" onclick={() => toggleSort('name')}>
-          name · stack
-          <span class="ctn-h-arrow">{sortKey === 'name' ? (sortAsc ? '▲' : '▼') : '·'}</span>
-        </button>
-        <button type="button" class="ctn-h" onclick={() => toggleSort('state')}>
-          state
-          <span class="ctn-h-arrow">{sortKey === 'state' ? (sortAsc ? '▲' : '▼') : '·'}</span>
-        </button>
-        <span class="ctn-h">health</span>
-        <button type="button" class="ctn-h" onclick={() => toggleSort('image')}>
-          image
-          <span class="ctn-h-arrow">{sortKey === 'image' ? (sortAsc ? '▲' : '▼') : '·'}</span>
-        </button>
-        <button type="button" class="ctn-h" onclick={() => toggleSort('uptime')}>
-          uptime
-          <span class="ctn-h-arrow">{sortKey === 'uptime' ? (sortAsc ? '▲' : '▼') : '·'}</span>
-        </button>
-        <span class="ctn-h">ports</span>
-        {#if isAll}
-          <span class="ctn-h">host</span>
-        {/if}
-        <span class="ctn-h ctn-h-right">·</span>
+    <div class="dm-tbl" role="table" aria-label="Containers">
+      <div class="dm-tr dm-th" role="row" style="grid-template-columns: {cols}">
+        <span role="columnheader">
+          {#if canControl}<input type="checkbox" checked={allSelected} onchange={toggleAll} aria-label="Select all visible containers" />{/if}
+        </span>
+        <span role="columnheader"></span>
+        <span role="columnheader"><button type="button" onclick={() => toggleSort('name')}>Name{sortArrow('name')}</button></span>
+        <span role="columnheader"><button type="button" onclick={() => toggleSort('state')}>Status{sortArrow('state')}</button></span>
+        {#if view !== 'host'}<span role="columnheader">Host</span>{/if}
+        <span role="columnheader"><button type="button" onclick={() => toggleSort('image')}>Image{sortArrow('image')}</button></span>
+        <span role="columnheader">Ports</span>
+        <span role="columnheader"><button type="button" onclick={() => toggleSort('uptime')}>Uptime{sortArrow('uptime')}</button></span>
+        <span role="columnheader" class="dm-tr-menu">
+          {#if sortKey !== 'urgency'}<button type="button" onclick={() => { sortKey = 'urgency'; sortAsc = true; }} title="Back to urgency order">reset</button>{/if}
+        </span>
       </div>
 
-      {#each visible as c (c.Id)}
-        {@const running = c.State === 'running'}
-        {@const stack = stackOf(c)}
-        {@const health = parseHealth(c.Status)}
-        {@const tone = stateTone(c.State)}
-        {@const exit = exitCodeFromStatus(c.Status)}
-        {@const img = imageNameAndTag(c.Image)}
-        <div
-          class="ctn-row"
-          class:ctn-row-selected={selected.has(c.Id)}
-          data-with-host={isAll}
-        >
-          {#if canControl}
-            <span class="ctn-col-check">
-              <input
-                type="checkbox"
-                checked={selected.has(c.Id)}
-                onchange={() => toggleOne(c.Id)}
-              />
+      {#if view === 'list'}
+        {#each visible as c (c.Id + (c.host_id ?? ''))}
+          {@render row(c)}
+        {:else}
+          <div class="dm-empty">No containers match.</div>
+        {/each}
+      {:else}
+        {#each groups as g (g.key)}
+          <div class="dm-tr dm-grp" role="row" style="grid-template-columns: 14px minmax(0, 1fr) auto auto">
+            <span><span class="dm-dot {g.tone}"></span></span>
+            <span class="dm-trunc">
+              {#if g.href}<a class="ct-glink" href={g.href}>{g.label}</a>{:else}<b>{g.label}</b>{/if}
+              <span class="dm-dim"> {g.sub}</span>
             </span>
-          {/if}
-
-          <div class="ctn-cell-name">
-            <a href={detailHref(c)} class="ctn-name" title={nameOf(c)}>
-              {nameOf(c)}
-            </a>
-            <div class="ctn-name-sub">
-              {#if stack}
-                <a href="/stacks/{stack}" class="ctn-stack-link">stack: {stack}</a>
-              {:else}
-                <span class="ctn-stack-none">standalone</span>
-              {/if}
-              <span class="ctn-id">{c.Id.slice(0, 12)}</span>
-            </div>
-          </div>
-
-          <div class="ctn-cell-state" data-tone={tone}>
-            <span class="ctn-state-dot" data-tone={tone}></span>
-            <span class="ctn-state-label">{c.State}</span>
-            {#if exit !== null && c.State === 'exited'}
-              <span class="ctn-state-exit">({exit})</span>
-            {/if}
-            {#if c.restart_count && c.restart_count > 0}
-              <span class="ctn-restart-chip" class:ctn-restart-warn={c.restart_count >= 5}
-                title="Container has restarted {c.restart_count}x since its last (re)create">
-                ↻{c.restart_count}
-              </span>
-            {/if}
-          </div>
-
-          <div class="ctn-cell-health">
-            {#if health === 'healthy'}
-              <span class="ctn-state-dot" data-tone="ok"></span>
-              <span class="ctn-health-text ctn-health-ok">healthy</span>
-            {:else if health === 'unhealthy'}
-              <span class="ctn-state-dot" data-tone="fail"></span>
-              <span class="ctn-health-text ctn-health-fail">unhealthy</span>
-            {:else if health === 'starting'}
-              <span class="ctn-state-dot" data-tone="warn"></span>
-              <span class="ctn-health-text ctn-health-warn">starting</span>
+            <span class="dm-num dm-dim">{g.items.filter((c) => c.State === 'running').length} running</span>
+            {#if g.key === '__standalone' && allowed('stacks.adopt')}
+              <a class="dm-btn dm-btn-sm" href="/stacks">Adopt…</a>
             {:else}
-              <span class="ctn-health-text ctn-muted">—</span>
+              <span></span>
             {/if}
           </div>
-
-          <div class="ctn-cell-image" title={c.Image}>
-            <span class="ctn-image-name">{img.name}</span>
-            {#if img.tag}
-              <span class="ctn-image-sep">:</span>
-              <span class="ctn-image-tag">{img.tag}</span>
-            {/if}
-            {#if c.image_update_available}
-              <span class="ctn-image-update" title="A newer image is available upstream">↑</span>
-            {/if}
-          </div>
-
-          <span class="ctn-cell-mono">{uptime(c)}</span>
-
-          <div class="ctn-cell-ports">
-            {#if c.Ports && c.Ports.length > 0}
-              {@const published = c.Ports.filter((p) => p.PublicPort)}
-              {@const internal = c.Ports.filter((p) => !p.PublicPort)}
-              {#each published.slice(0, 3) as p}
-                <span class="ctn-port-pill ctn-port-pub">
-                  {p.PublicPort}:{p.PrivatePort}
-                </span>
-              {/each}
-              {#if internal.length > 0 && published.length < 3}
-                {#each internal.slice(0, 3 - published.length) as p}
-                  <span class="ctn-port-pill ctn-port-int">
-                    {p.PrivatePort}/{p.Type}
-                  </span>
-                {/each}
-              {/if}
-              {#if c.Ports.length > 3}
-                <span class="ctn-port-more">+{c.Ports.length - 3}</span>
-              {/if}
-            {:else}
-              <span class="ctn-muted">—</span>
-            {/if}
-          </div>
-
-          {#if isAll}
-            <span class="ctn-cell-host">
-              <Server size={10} strokeWidth={1.5} />
-              {c.host_name || 'local'}
-            </span>
-          {/if}
-
-          <div class="ctn-cell-actions">
-            <a href="{detailHref(c)}#logs" class="ctn-icon-btn" title="Logs">
-              <FileText size={12} strokeWidth={1.5} />
-            </a>
-            {#if canExec}
-              <a href="{detailHref(c)}#exec" class="ctn-icon-btn" title="Exec — open shell" class:ctn-icon-disabled={!running}>
-                <Terminal size={12} strokeWidth={1.5} />
-              </a>
-            {/if}
-            {#if canControl}
-              {#if running}
-                <button
-                  type="button"
-                  class="ctn-icon-btn"
-                  title="Stop"
-                  onclick={() => action(c, 'stop')}
-                >
-                  <Square size={12} strokeWidth={1.5} />
-                </button>
-              {:else}
-                <button
-                  type="button"
-                  class="ctn-icon-btn"
-                  title="Start"
-                  onclick={() => action(c, 'start')}
-                >
-                  <Play size={12} strokeWidth={1.5} />
-                </button>
-              {/if}
-              <button
-                type="button"
-                class="ctn-icon-btn"
-                title="More"
-                aria-label="More actions"
-                onclick={(e) => { e.stopPropagation(); openMenuId = openMenuId === c.Id ? null : c.Id; }}
-              >
-                <MoreVertical size={12} strokeWidth={1.5} />
-              </button>
-              {#if openMenuId === c.Id}
-                <div class="ctn-menu" role="menu">
-                  <button
-                    type="button"
-                    class="ctn-menu-item"
-                    onclick={() => action(c, 'restart')}
-                    disabled={!running}
-                  >
-                    <RotateCw size={11} strokeWidth={1.5} /> Restart
-                  </button>
-                  <a href="{detailHref(c)}#stats" class="ctn-menu-item" onclick={() => (openMenuId = null)}>
-                    <Activity size={11} strokeWidth={1.5} /> Stats
-                  </a>
-                  <a href={detailHref(c)} class="ctn-menu-item" onclick={() => (openMenuId = null)}>
-                    <Settings size={11} strokeWidth={1.5} /> Inspect
-                  </a>
-                  <button
-                    type="button"
-                    class="ctn-menu-item"
-                    onclick={() => action(c, running ? 'pause' : 'unpause')}
-                    disabled={!running}
-                  >
-                    <Pause size={11} strokeWidth={1.5} /> {running ? 'Pause' : 'Unpause'}
-                  </button>
-                  <button
-                    type="button"
-                    class="ctn-menu-item"
-                    onclick={() => copyId(c.Id)}
-                  >
-                    <Copy size={11} strokeWidth={1.5} /> Copy ID
-                  </button>
-                  <div class="ctn-menu-sep"></div>
-                  <button
-                    type="button"
-                    class="ctn-menu-item ctn-menu-danger"
-                    onclick={() => action(c, 'remove')}
-                  >
-                    <Trash2 size={11} strokeWidth={1.5} /> Remove
-                  </button>
-                </div>
-              {/if}
-            {/if}
-          </div>
-        </div>
-      {/each}
+          {#each g.items as c (c.Id + (c.host_id ?? ''))}
+            {@render row(c)}
+          {/each}
+        {:else}
+          <div class="dm-empty">No containers match.</div>
+        {/each}
+      {/if}
     </div>
   {/if}
 </section>
 
+{#snippet row(c: Container)}
+  {@const running = c.State === 'running'}
+  {@const stack = stackOf(c)}
+  {@const st = statusOf(c)}
+  {@const img = imageNameAndTag(c.Image)}
+  <div
+    class="dm-tr dm-click"
+    class:dm-sel={selected.has(c.Id)}
+    role="row"
+    style="grid-template-columns: {cols}"
+    tabindex="0"
+    onclick={() => goto(detailHref(c))}
+    onkeydown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) goto(detailHref(c)); }}
+  >
+    <span role="cell">
+      {#if canControl}
+        <input
+          type="checkbox"
+          checked={selected.has(c.Id)}
+          onclick={(e) => e.stopPropagation()}
+          onchange={() => toggleOne(c.Id)}
+          aria-label="Select {nameOf(c)}"
+        />
+      {/if}
+    </span>
+    <span role="cell"><span class="dm-dot {st.tone === 'off' ? '' : st.tone}"></span></span>
+    <span role="cell" class="dm-nm">
+      <a href={detailHref(c)} onclick={(e) => e.stopPropagation()} title={nameOf(c)}>{nameOf(c)}</a>
+      <small>
+        {#if stack}{#if view !== 'stack'}{`stack ${stack} · `}{/if}{:else}<span class="ct-standalone">standalone</span>{' · '}{/if}<span class="dm-mono">{c.Id.slice(0, 12)}</span>{#if c.restart_count}<span class:ct-restarts={c.restart_count >= 5} title="Restarted {c.restart_count} times since it was created"> · ↻{c.restart_count}</span>{/if}
+      </small>
+    </span>
+    <span role="cell"><StatusChip tone={st.tone} label={st.label} title={c.Status} /></span>
+    {#if view !== 'host'}<span role="cell" class="dm-num dm-dim">{c.host_name || (isAll ? 'local' : (hosts.selected?.name ?? 'local'))}</span>{/if}
+    <span role="cell" class="dm-num" title={c.Image}>
+      <span class="dm-dim">{shortImage(img.name)}</span>{#if img.tag}:{img.tag}{/if}
+      {#if c.image_update_available}<span class="ct-upd" title="A newer image is available"> · update</span>{/if}
+    </span>
+    <span role="cell" class="dm-num dm-dim" title={portsTitle(c)}>{portsLabel(c)}</span>
+    <span role="cell" class="dm-num dm-dim">{running ? uptime(c) : '—'}</span>
+    <span role="cell" class="dm-tr-menu">
+      <Menu label="Actions for {nameOf(c)}" items={rowMenu(c)} />
+    </span>
+  </div>
+{/snippet}
+
 <style>
-  .ctn {
+  .ct-warn {
     display: flex;
-    flex-direction: column;
-    gap: 18px;
-  }
-
-  /* ── Header ─────────────────────────────────────────────────── */
-  .ctn-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 24px;
-    flex-wrap: wrap;
-  }
-  .ctn-header-text { min-width: 0; max-width: 70ch; }
-  .ctn-title {
-    font-size: 28px;
-    line-height: 1.1;
-    margin-top: 12px;
-  }
-  .ctn-subtitle {
-    margin-top: 8px;
-    max-width: 70ch;
-  }
-  .ctn-conn {
-    display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 5px 10px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--bg-elevated);
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg-subtle);
-    flex-shrink: 0;
-  }
-  .ctn-conn-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 999px;
-    background: var(--border-strong);
-  }
-  .ctn-conn[data-state="live"] .ctn-conn-dot {
-    background: var(--color-success-400);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success-500) 18%, transparent);
-    animation: ctn-blink 2.2s infinite;
-  }
-  .ctn-conn[data-state="reconnecting"] .ctn-conn-dot {
-    background: var(--color-warning-400);
-    animation: ctn-blink 1.2s infinite;
-  }
-  @keyframes ctn-blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-  }
-
-  /* ── Summary tiles ──────────────────────────────────────────── */
-  .ctn-summary {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 10px;
+    padding: 9px 14px;
+    border: 1px solid var(--bad-bd);
+    background: var(--bad-bg);
+    border-radius: 9px;
+    font-size: 13px;
+    color: var(--bad);
   }
-  .ctn-metric {
-    padding: 12px 14px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--surface);
+  .ct-warn span { color: var(--fg); }
+  .ct-bulk {
     display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .ctn-metric[data-tone="warn"] {
-    border-color: color-mix(in srgb, var(--color-warning-500) 35%, var(--border));
-  }
-  .ctn-metric-label {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--fg-subtle);
-  }
-  .ctn-metric-value {
-    font-size: 22px;
-    color: var(--fg);
-    font-weight: 500;
-    line-height: 1.2;
-  }
-  .ctn-metric[data-tone="warn"] .ctn-metric-value {
-    color: var(--color-warning-400);
-  }
-  .ctn-metric-meta {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-  }
-  .ctn-metric-unreach {
-    color: var(--color-warning-400);
-    margin-left: 4px;
-    font-size: 14px;
-  }
-
-  /* ── Unreachable banner ─────────────────────────────────────── */
-  .ctn-unreach {
-    padding: 10px 12px;
-    border: 1px solid color-mix(in srgb, var(--color-warning-500) 35%, var(--border));
-    background: color-mix(in srgb, var(--color-warning-500) 6%, var(--surface));
-    border-radius: 5px;
-    display: flex;
-    gap: 10px;
-    align-items: flex-start;
-    color: var(--fg-muted);
-    font-size: 12px;
-    line-height: 1.5;
-  }
-  .ctn-unreach :global(.ctn-unreach-icon) { color: var(--color-warning-400); flex-shrink: 0; margin-top: 1px; }
-  .ctn-unreach-text strong { color: var(--color-warning-400); font-weight: 500; }
-
-  /* ── Toolbar ────────────────────────────────────────────────── */
-  .ctn-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    flex-wrap: wrap;
-  }
-  .ctn-search {
-    position: relative;
-    flex: 0 1 320px;
-    min-width: 220px;
-  }
-  .ctn-search :global(.ctn-search-icon) {
-    position: absolute;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--fg-subtle);
-    pointer-events: none;
-  }
-  .ctn-search-input {
-    padding-left: 18px;
-    font-size: 12.5px;
-    font-family: var(--font-mono);
-  }
-  .ctn-filter {
-    display: inline-flex;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    overflow: hidden;
-  }
-  .ctn-filter-pill {
-    padding: 4px 9px;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    line-height: 1.2;
-    letter-spacing: 0.04em;
-    color: var(--fg-subtle);
-    background: transparent;
-    border: 0;
-    border-right: 1px solid var(--border);
-    cursor: pointer;
-  }
-  .ctn-filter-pill:last-child { border-right: 0; }
-  .ctn-filter-pill:hover { color: var(--fg); }
-  .ctn-filter-active {
-    background: var(--bg-elevated);
-    color: var(--fg);
-  }
-  .ctn-filter-count {
-    margin-left: 5px;
-    color: var(--fg-subtle);
-    font-size: 9.5px;
-  }
-  .ctn-filter-active .ctn-filter-count { color: var(--fg-muted); }
-  .ctn-show-stopped {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11.5px;
-    color: var(--fg-subtle);
-    font-family: var(--font-mono);
-    cursor: pointer;
-  }
-  .ctn-show-stopped input { accent-color: var(--color-brand-500); }
-  .ctn-spacer { flex: 1; }
-  .ctn-spin { animation: ctn-spin 0.9s linear infinite; }
-  @keyframes ctn-spin {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
-  }
-
-  /* ── Bulk action bar ────────────────────────────────────────── */
-  .ctn-bulkbar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 14px;
-    border: 1px solid color-mix(in srgb, var(--color-brand-500) 35%, var(--border));
-    border-radius: 5px;
-    background: color-mix(in srgb, var(--color-brand-500) 5%, var(--surface));
-  }
-  .ctn-bulkbar-count {
-    font-size: 12.5px;
-    font-weight: 500;
-    color: var(--fg);
-  }
-  .ctn-bulkbar-actions {
-    display: flex;
-    gap: 6px;
-    margin-left: auto;
-    flex-wrap: wrap;
-  }
-  .ctn-danger-btn { color: var(--color-danger-400); }
-
-  /* ── Table ──────────────────────────────────────────────────── */
-  .ctn-table {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    overflow: visible;
-  }
-  .ctn-row {
-    display: grid;
-    grid-template-columns:
-      28px
-      minmax(220px, 1.4fr)
-      110px
-      100px
-      minmax(180px, 1.2fr)
-      80px
-      minmax(140px, 1fr)
-      120px;
-    gap: 14px;
-    align-items: center;
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--border-subtle);
-    position: relative;
-  }
-  .ctn-row[data-with-host="true"] {
-    grid-template-columns:
-      28px
-      minmax(220px, 1.4fr)
-      110px
-      100px
-      minmax(180px, 1.2fr)
-      80px
-      minmax(140px, 1fr)
-      110px
-      120px;
-  }
-  .ctn-row:last-child { border-bottom: 0; }
-  .ctn-row-head {
-    background: var(--bg-elevated);
-    border-bottom: 1px solid var(--border);
-    padding: 10px 14px;
-  }
-  .ctn-row-selected {
-    background: color-mix(in srgb, var(--color-brand-500) 4%, transparent);
-  }
-
-  .ctn-col-check input { accent-color: var(--color-brand-500); }
-  .ctn-h {
-    background: transparent;
-    border: 0;
-    padding: 0;
-    text-align: left;
-    cursor: pointer;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--fg-subtle);
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .ctn-h:hover { color: var(--fg); }
-  .ctn-h-arrow {
-    color: var(--fg-subtle);
-    font-size: 8px;
-  }
-  .ctn-h-right { text-align: right; justify-content: flex-end; }
-
-  /* Cells */
-  .ctn-cell-name { min-width: 0; }
-  .ctn-name {
-    font-family: var(--font-mono);
-    font-size: 12.5px;
-    color: var(--fg);
-    text-decoration: none;
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .ctn-name:hover {
-    color: var(--accent-fg);
-    text-decoration: underline;
-    text-underline-offset: 3px;
-  }
-  .ctn-name-sub {
-    margin-top: 3px;
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-  }
-  .ctn-stack-link {
-    color: var(--accent-fg);
-    text-decoration: none;
-  }
-  .ctn-stack-link:hover { text-decoration: underline; text-underline-offset: 3px; }
-  .ctn-stack-none { color: var(--fg-subtle); }
-  .ctn-id { color: var(--fg-subtle); }
-
-  .ctn-cell-state {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .ctn-state-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 999px;
-    background: var(--border-strong);
-    flex-shrink: 0;
-  }
-  .ctn-state-dot[data-tone="ok"]   { background: var(--color-success-500); }
-  .ctn-state-dot[data-tone="warn"] { background: var(--color-warning-500); animation: ctn-blink 1.2s infinite; }
-  .ctn-state-dot[data-tone="fail"] { background: var(--color-danger-500); }
-  .ctn-state-label {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-muted);
-  }
-  .ctn-cell-state[data-tone="ok"]   .ctn-state-label { color: var(--color-success-400); }
-  .ctn-cell-state[data-tone="warn"] .ctn-state-label { color: var(--color-warning-400); }
-  .ctn-cell-state[data-tone="fail"] .ctn-state-label { color: var(--color-danger-400); }
-  .ctn-state-exit {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--fg-subtle);
-  }
-  .ctn-restart-chip {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    padding: 1px 5px;
-    margin-left: 4px;
-    border-radius: 3px;
-    background: var(--surface-hover);
-    color: var(--fg-muted);
-    border: 1px solid var(--border-subtle);
-  }
-  .ctn-restart-warn {
-    color: var(--color-warning-400);
-    background: color-mix(in srgb, var(--color-warning-500) 10%, transparent);
-    border-color: color-mix(in srgb, var(--color-warning-500) 30%, transparent);
-  }
-  .ctn-image-update {
-    display: inline-block;
-    margin-left: 4px;
-    padding: 0 4px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--color-success-400);
-    background: color-mix(in srgb, var(--color-success-500) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-success-500) 30%, transparent);
-    border-radius: 3px;
-  }
-
-  .ctn-cell-health {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-  }
-  .ctn-health-text { font-family: var(--font-mono); font-size: 11px; }
-  .ctn-health-ok   { color: var(--color-success-400); }
-  .ctn-health-fail { color: var(--color-danger-400); }
-  .ctn-health-warn { color: var(--color-warning-400); }
-  .ctn-muted { color: var(--fg-subtle); }
-
-  .ctn-cell-image {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-muted);
-  }
-  .ctn-image-sep { color: var(--fg-subtle); }
-  .ctn-image-tag { color: var(--accent-fg); }
-
-  .ctn-cell-mono {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg-muted);
-  }
-
-  .ctn-cell-ports {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    align-items: center;
-    min-width: 0;
-    overflow: hidden;
-  }
-  .ctn-port-pill {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    padding: 1px 6px;
-    border-radius: 999px;
-    border: 1px solid var(--border-subtle);
-  }
-  .ctn-port-pub {
-    color: var(--color-success-400);
-    border-color: color-mix(in srgb, var(--color-success-500) 35%, var(--border));
-    background: color-mix(in srgb, var(--color-success-500) 6%, transparent);
-  }
-  .ctn-port-int {
-    color: var(--fg-subtle);
-  }
-  .ctn-port-more {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--fg-subtle);
-    align-self: center;
-  }
-
-  .ctn-cell-host {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 7px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 3px;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--fg-muted);
-    width: fit-content;
-  }
-
-  .ctn-cell-actions {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    justify-content: flex-end;
-    position: relative;
-  }
-  .ctn-icon-btn {
-    width: 24px;
-    height: 24px;
-    background: transparent;
-    border: 0;
-    border-radius: 4px;
-    color: var(--fg-muted);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    text-decoration: none;
-    font: inherit;
-  }
-  .ctn-icon-btn:hover {
-    color: var(--fg);
-    background: var(--surface-hover);
-  }
-  .ctn-icon-disabled {
-    opacity: 0.35;
-    pointer-events: none;
-  }
-
-  /* Row more-menu */
-  .ctn-menu {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
-    z-index: 30;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    padding: 4px;
-    min-width: 160px;
-    box-shadow: 0 12px 30px rgba(2, 6, 23, 0.4);
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-  }
-  .ctn-menu-item {
-    display: inline-flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 10px;
-    background: transparent;
-    border: 0;
-    border-radius: 3px;
-    cursor: pointer;
-    text-align: left;
-    font-size: 12px;
-    color: var(--fg);
-    font: inherit;
-    text-decoration: none;
-    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--accent);
+    border-radius: var(--r-lg);
+    background: var(--accent-soft);
   }
-  .ctn-menu-item:hover { background: var(--surface-hover); }
-  .ctn-menu-item:disabled {
-    color: var(--fg-subtle);
-    cursor: not-allowed;
-    opacity: 0.5;
-  }
-  .ctn-menu-danger { color: var(--color-danger-400); }
-  .ctn-menu-sep {
-    height: 1px;
-    background: var(--border-subtle);
-    margin: 2px 0;
-  }
-
-  /* ── Loading / empty ────────────────────────────────────────── */
-  .ctn-loading { padding: 0; }
-  .ctn-empty {
-    padding: 44px 24px;
-    text-align: center;
-    border: 1px dashed var(--border);
-    border-radius: 6px;
-    color: var(--fg-subtle);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-  }
-  .ctn-empty-title {
-    margin: 8px 0 0;
-    font-size: 16px;
-    color: var(--fg);
-    font-weight: 500;
-  }
-  .ctn-empty-blurb {
-    margin: 0;
-    max-width: 50ch;
-  }
-
-  /* ── Responsive ─────────────────────────────────────────────── */
-  @media (max-width: 1100px) {
-    .ctn-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .ctn-row,
-    .ctn-row[data-with-host="true"] {
-      grid-template-columns: 28px minmax(0, 1fr) auto;
-      grid-auto-flow: row;
-    }
-    .ctn-row > :nth-child(n+4) {
-      grid-column: 2 / -1;
-    }
-    .ctn-row-head { display: none; }
-  }
+  .ct-glink { color: var(--fg); font-weight: 600; text-decoration: none; }
+  .ct-glink:hover { text-decoration: underline; }
+  .ct-standalone { color: var(--warn); }
+  .ct-restarts { color: var(--warn); }
+  .ct-upd { color: var(--accent); }
 </style>
