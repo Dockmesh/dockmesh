@@ -44,9 +44,9 @@ type Rule struct {
 	CooldownSeconds int        `json:"cooldown_seconds"` // suppress re-notify for this long
 	MutedUntil      *time.Time `json:"muted_until,omitempty"`
 	// MuteSchedule is a JSON-encoded MuteSchedule (see schedule.go) for
-	// recurring quiet-hours. When non-empty and IsMutedNow returns true
-	// at fire time, notifications are suppressed (but firing state and
-	// history still update so the UI shows the rule is breached).
+	// recurring quiet-hours. While it (or MutedUntil) is active, fire and
+	// resolve notifications are suppressed, but firing state and history
+	// still update so the UI shows the rule is breached.
 	MuteSchedule string `json:"mute_schedule"`
 	// Builtin rules ship with the server (P.11.5). The UI marks them
 	// with a badge and disables the Delete action. Admins can still

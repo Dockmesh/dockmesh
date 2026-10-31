@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -116,6 +117,13 @@ func historyOf(t *testing.T, database *sql.DB, ruleID int64) []historyRow {
 	return out
 }
 
+func wantHistory(t *testing.T, database *sql.DB, ruleID int64, want ...historyRow) {
+	t.Helper()
+	if got := historyOf(t, database, ruleID); !slices.Equal(got, want) {
+		t.Fatalf("history = %+v, want %+v", got, want)
+	}
+}
+
 // run feeds one sample per 30s tick and evaluates two seconds after each.
 func run(t *testing.T, s *Service, database *sql.DB, r *Rule, start time.Time, values ...float64) {
 	t.Helper()
@@ -154,16 +162,7 @@ func TestEvalFiresOnceAndResolves(t *testing.T) {
 	r := createRule(t, s, RuleInput{DurationSeconds: 120, CooldownSeconds: 1})
 
 	run(t, s, database, r, evalNow, 95, 95, 95, 95, 95, 95, 50, 95, 95, 50, 50, 50)
-	got := historyOf(t, database, r.ID)
-	want := []historyRow{{"fired", true}, {"resolved", true}}
-	if len(got) != len(want) {
-		t.Fatalf("history = %+v, want %+v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("history[%d] = %+v, want %+v", i, got[i], want[i])
-		}
-	}
+	wantHistory(t, database, r.ID, historyRow{"fired", true}, historyRow{"resolved", true})
 
 	stats, err := s.RuleStatsByID(context.Background(), r.ID, 7)
 	if err != nil {
@@ -179,16 +178,7 @@ func TestEvalCooldownSuppressesRenotify(t *testing.T) {
 	r := createRule(t, s, RuleInput{DurationSeconds: 60, CooldownSeconds: 3600})
 
 	run(t, s, database, r, evalNow, 95, 95, 95, 50, 50, 50, 95, 95, 95, 50, 50, 50)
-	got := historyOf(t, database, r.ID)
-	want := []historyRow{{"fired", true}, {"resolved", true}, {"fired", false}, {"resolved", false}}
-	if len(got) != len(want) {
-		t.Fatalf("history = %+v, want %+v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("history[%d] = %+v, want %+v", i, got[i], want[i])
-		}
-	}
+	wantHistory(t, database, r.ID, historyRow{"fired", true}, historyRow{"resolved", true}, historyRow{"fired", false}, historyRow{"resolved", false})
 }
 
 func TestEvalMutedUntilSuppressesFireAndResolve(t *testing.T) {
@@ -197,16 +187,7 @@ func TestEvalMutedUntilSuppressesFireAndResolve(t *testing.T) {
 	r := createRule(t, s, RuleInput{DurationSeconds: 60, MutedUntil: until})
 
 	run(t, s, database, r, evalNow, 95, 95, 95, 50, 50, 50)
-	got := historyOf(t, database, r.ID)
-	want := []historyRow{{"fired", false}, {"resolved", false}}
-	if len(got) != len(want) {
-		t.Fatalf("history = %+v, want %+v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("history[%d] = %+v, want %+v", i, got[i], want[i])
-		}
-	}
+	wantHistory(t, database, r.ID, historyRow{"fired", false}, historyRow{"resolved", false})
 }
 
 func TestEvalResolveRespectsMuteSchedule(t *testing.T) {
@@ -221,16 +202,7 @@ func TestEvalResolveRespectsMuteSchedule(t *testing.T) {
 	}
 	run(t, s, database, r, evalNow.Add(90*time.Second), 50, 50, 50)
 
-	got := historyOf(t, database, r.ID)
-	want := []historyRow{{"fired", true}, {"resolved", false}}
-	if len(got) != len(want) {
-		t.Fatalf("history = %+v, want %+v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("history[%d] = %+v, want %+v", i, got[i], want[i])
-		}
-	}
+	wantHistory(t, database, r.ID, historyRow{"fired", true}, historyRow{"resolved", false})
 }
 
 func TestLoadFiringStateRestoresCooldown(t *testing.T) {
