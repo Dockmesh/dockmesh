@@ -8,7 +8,7 @@
   // (per-container metrics, host-affinity panel).
   import { untrack } from 'svelte';
   import { latest } from '$lib/latest';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import {
     api, ApiError,
@@ -27,9 +27,9 @@
     X, Check, AlertTriangle, Info
   } from 'lucide-svelte';
 
-  const id = $derived($page.params.id);
+  const id = $derived(page.params.id);
   const isLocal = $derived(id === 'local');
-  const tabFromQuery = $derived(($page.url.searchParams.get('tab') ?? 'overview') as TabId);
+  const tabFromQuery = $derived((page.url.searchParams.get('tab') ?? 'overview') as TabId);
 
   type TabId = 'overview' | 'containers' | 'stacks' | 'migrations' | 'tags' | 'maintenance';
   let tab = $state<TabId>('overview');

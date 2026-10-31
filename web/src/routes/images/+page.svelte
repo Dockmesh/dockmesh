@@ -5,5 +5,5 @@
   // sensible. Detail pages (none currently) would still resolve.
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  onMount(() => goto('/resources?tab=images', { replaceState: true }));
+  onMount(() => goto('/resources?tab=images', { replace: true }));
 </script>
