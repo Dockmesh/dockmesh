@@ -188,11 +188,26 @@ func (s *store) listRuns(ctx context.Context, limit int) ([]Run, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	return s.queryRuns(ctx, `
 		SELECT id, job_id, job_name, status, started_at, finished_at,
 		       size_bytes, COALESCE(target_path, ''), COALESCE(sha256, ''),
 		       encrypted, COALESCE(error, ''), sources_json
 		FROM backup_runs ORDER BY id DESC LIMIT ?`, limit)
+}
+
+// latestRuns returns the most recent run of every job that has one.
+func (s *store) latestRuns(ctx context.Context) ([]Run, error) {
+	return s.queryRuns(ctx, `
+		SELECT id, job_id, job_name, status, started_at, finished_at,
+		       size_bytes, COALESCE(target_path, ''), COALESCE(sha256, ''),
+		       encrypted, COALESCE(error, ''), sources_json
+		FROM backup_runs
+		WHERE id IN (SELECT MAX(id) FROM backup_runs GROUP BY job_id)
+		ORDER BY id DESC`)
+}
+
+func (s *store) queryRuns(ctx context.Context, query string, args ...any) ([]Run, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

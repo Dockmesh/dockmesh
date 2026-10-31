@@ -761,3 +761,44 @@ func boolInt(b bool) int {
 	}
 	return 0
 }
+
+// FiringAlert is one (rule, container) pair whose latest history row is
+// a fire without a matching resolve.
+type FiringAlert struct {
+	RuleID        int64
+	RuleName      string
+	Severity      string
+	ContainerName string
+	Message       string
+	Since         time.Time
+}
+
+// Firing lists the alerts that are currently firing on enabled rules,
+// read from alert_history so the result survives a restart.
+func (s *Service) Firing(ctx context.Context) ([]FiringAlert, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT h.rule_id, r.name, COALESCE(r.severity, ''), h.container_name,
+		       COALESCE(h.message, ''), h.occurred_at
+		FROM alert_history h
+		JOIN (
+			SELECT rule_id, container_name, MAX(id) AS max_id
+			FROM alert_history
+			GROUP BY rule_id, container_name
+		) latest ON h.id = latest.max_id
+		JOIN alert_rules r ON r.id = h.rule_id
+		WHERE h.status = 'fired' AND r.enabled = 1
+		ORDER BY h.occurred_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list firing alerts: %w", err)
+	}
+	defer rows.Close()
+	out := []FiringAlert{}
+	for rows.Next() {
+		var f FiringAlert
+		if err := rows.Scan(&f.RuleID, &f.RuleName, &f.Severity, &f.ContainerName, &f.Message, &f.Since); err != nil {
+			return nil, fmt.Errorf("scan firing alert: %w", err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}

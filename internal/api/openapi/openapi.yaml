@@ -98,6 +98,8 @@ tags:
     description: Stack templates with parameter substitution (P.11.12) — built-in library + user-created.
   - name: secrets
     description: age-encrypted secrets service state.
+  - name: overview
+    description: Aggregated views for the overview page.
 
 paths:
   # -----------------------------------------------------------------------
@@ -6595,6 +6597,33 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Notice" }
 
+  /attention:
+    get:
+      operationId: attention.list
+      tags: [overview]
+      summary: What needs attention in the caller's scope
+      description: |
+        Aggregates, from existing state: offline hosts and agents on a
+        different version than the server (`hosts.view`), restarting,
+        unhealthy and non-zero exited containers (`containers.view`), the
+        failed last run of each enabled backup job (`backups.view`), firing
+        alerts (`alerts.view`), image updates (`images.view`), proxy
+        certificates expiring within 30 days (`proxy.view`, unscoped callers
+        only) and the caller's open action-required notices. A source is
+        skipped when the caller lacks its permission, and items outside the
+        caller's host or role scope are left out, so any authenticated
+        caller may call this. Sorted by severity, then newest first; items
+        without `since` come last within their severity.
+      responses:
+        "200":
+          description: Items, most severe first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AttentionItem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /notices/{id}/dismiss:
     post:
       operationId: notices.dismiss
@@ -7311,6 +7340,28 @@ components:
         error:
           type: string
           example: invalid credentials
+
+    AttentionItem:
+      type: object
+      required: [id, kind, severity, title, link, object]
+      properties:
+        id: { type: string, description: "Stable per condition, e.g. `backup_failed:3`." }
+        kind:
+          type: string
+          enum: [host_offline, agent_outdated, container_restarting, container_unhealthy, container_exited, backup_failed, alert_firing, image_update, cert_expiring, notice]
+        severity: { type: string, enum: [critical, warning, info] }
+        title: { type: string }
+        detail: { type: string, description: One line of context. }
+        link: { type: string, description: "In-app path, e.g. /hosts/abc or /containers/123?host=abc." }
+        object:
+          type: object
+          required: [type, id]
+          properties:
+            type: { type: string, enum: [host, container, backup_job, image, proxy_route, notice] }
+            id: { type: string }
+            name: { type: string }
+            host_id: { type: string }
+        since: { type: string, format: date-time, description: When the condition started or was last observed; absent when unknown. }
 
     Notice:
       type: object

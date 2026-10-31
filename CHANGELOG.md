@@ -24,6 +24,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ## [Unreleased]
 
+### Added
+- `GET /api/v1/attention` lists what needs attention in your scope: offline hosts, agents on
+  another version than the server, restarting, unhealthy or failed containers, failed backup
+  jobs, firing alerts, image updates, proxy certificates expiring within 30 days and open
+  action-required notices, most severe first.
+
 ### Changed
 - Updating the image of a container that belongs to a stack now rebuilds it from the
   stack's compose.yaml, together with the other replicas of its service, and records the

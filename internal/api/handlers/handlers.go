@@ -113,6 +113,8 @@ type Handlers struct {
 	// router mounts its middleware.
 	ClientIPs   *clientip.Resolver
 	proxyNotice *proxyNotice
+	// attentionRows replaces the container fan-out of GET /attention in tests.
+	attentionRows func(ctx context.Context) []containerRow
 	// gitWebhookTrigger replaces GitSource.TriggerSync in tests.
 	gitWebhookTrigger func(ctx context.Context, stackName string)
 }
