@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/notifications"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/settings"
 )
 
@@ -239,6 +240,7 @@ func (c *Checker) CheckNow(ctx context.Context) error {
 				Title:    "Dockmesh " + rel.TagName + " available",
 				Body:     "Current version: " + c.current,
 				Link:     "/settings?tab=system",
+				Perm:     rbac.PermSystemUpgrade,
 			})
 		}
 	}

@@ -5,11 +5,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/docker/docker/api/types/network"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
-	dtypes "github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/network"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -21,7 +20,7 @@ type networkRequest struct {
 
 // networkRow is the all-mode row type for ListNetworks.
 type networkRow struct {
-	dtypes.NetworkResource
+	network.Inspect
 	HostID   string `json:"host_id"`
 	HostName string `json:"host_name"`
 }
@@ -30,19 +29,19 @@ func (h *Handlers) ListNetworks(w http.ResponseWriter, r *http.Request) {
 	hostID := r.URL.Query().Get("host")
 
 	if host.IsAll(hostID) && h.Hosts != nil {
-		targets := h.Hosts.PickAll(r.Context())
+		targets := h.filterHostsByScope(r, h.Hosts.PickAll(r.Context()))
 		res := host.FanOut(r.Context(), targets, func(ctx context.Context, hh host.Host) ([]networkRow, error) {
 			list, err := hh.ListNetworks(ctx)
 			if err != nil {
 				return nil, err
 			}
-			list = enrichNetworkMembers(ctx, hh, list)
+			list = enrichNetworkMembers(ctx, hh, h.filterNetworksByScope(r, hh.ID(), list))
 			rows := make([]networkRow, len(list))
 			for i, n := range list {
 				rows[i] = networkRow{
-					NetworkResource: n,
-					HostID:          hh.ID(),
-					HostName:        hh.Name(),
+					Inspect:  n,
+					HostID:   hh.ID(),
+					HostName: hh.Name(),
 				}
 			}
 			return rows, nil
@@ -58,13 +57,31 @@ func (h *Handlers) ListNetworks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	if !h.requireHostAccess(w, r, target.ID()) {
+		return
+	}
 	nets, err := target.ListNetworks(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	nets = enrichNetworkMembers(r.Context(), target, nets)
+	nets = enrichNetworkMembers(r.Context(), target, h.filterNetworksByScope(r, target.ID(), nets))
 	writeJSON(w, http.StatusOK, nets)
+}
+
+// filterNetworksByScope keeps the networks on hostID the caller may see;
+// compose networks count as part of their stack.
+func (h *Handlers) filterNetworksByScope(r *http.Request, hostID string, in []network.Inspect) []network.Inspect {
+	if h.callerUnscoped(r) {
+		return in
+	}
+	out := make([]network.Inspect, 0, len(in))
+	for _, n := range in {
+		if h.inReadScope(r, hostID, n.Labels["com.docker.compose.project"]) {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // enrichNetworkMembers populates each network's Containers map by
@@ -78,7 +95,7 @@ func (h *Handlers) ListNetworks(w http.ResponseWriter, r *http.Request) {
 // Best-effort: if the container list fails, we return the unenriched
 // network list rather than 500 — the UI can still render everything
 // except the container counts.
-func enrichNetworkMembers(ctx context.Context, h host.Host, nets []dtypes.NetworkResource) []dtypes.NetworkResource {
+func enrichNetworkMembers(ctx context.Context, h host.Host, nets []network.Inspect) []network.Inspect {
 	if len(nets) == 0 {
 		return nets
 	}
@@ -90,7 +107,7 @@ func enrichNetworkMembers(ctx context.Context, h host.Host, nets []dtypes.Networ
 	// container list populates NetworkSettings.Networks keyed by
 	// network *name*, with NetworkID embedded — we key our index by
 	// NetworkID because that's what matches the NetworkList response.
-	idx := make(map[string]map[string]dtypes.EndpointResource)
+	idx := make(map[string]map[string]network.EndpointResource)
 	for _, c := range containers {
 		if c.NetworkSettings == nil {
 			continue
@@ -105,7 +122,7 @@ func enrichNetworkMembers(ctx context.Context, h host.Host, nets []dtypes.Networ
 			}
 			inner, ok := idx[endpoint.NetworkID]
 			if !ok {
-				inner = make(map[string]dtypes.EndpointResource)
+				inner = make(map[string]network.EndpointResource)
 				idx[endpoint.NetworkID] = inner
 			}
 			inner[c.ID] = endpointToResource(name, endpoint)
@@ -119,7 +136,7 @@ func enrichNetworkMembers(ctx context.Context, h host.Host, nets []dtypes.Networ
 		// Preserve any pre-existing Containers entries (shouldn't happen
 		// for a plain NetworkList response but defensive doesn't hurt).
 		if nets[i].Containers == nil {
-			nets[i].Containers = make(map[string]dtypes.EndpointResource, len(members))
+			nets[i].Containers = make(map[string]network.EndpointResource, len(members))
 		}
 		for id, ep := range members {
 			nets[i].Containers[id] = ep
@@ -128,8 +145,8 @@ func enrichNetworkMembers(ctx context.Context, h host.Host, nets []dtypes.Networ
 	return nets
 }
 
-func endpointToResource(name string, ep *network.EndpointSettings) dtypes.EndpointResource {
-	return dtypes.EndpointResource{
+func endpointToResource(name string, ep *network.EndpointSettings) network.EndpointResource {
+	return network.EndpointResource{
 		Name:        name,
 		EndpointID:  ep.EndpointID,
 		MacAddress:  ep.MacAddress,
@@ -147,6 +164,10 @@ func (h *Handlers) InspectNetwork(w http.ResponseWriter, r *http.Request) {
 	net, err := target.InspectNetwork(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if !h.inReadScope(r, target.ID(), net.Labels["com.docker.compose.project"]) {
+		writeError(w, http.StatusForbidden, "out of scope: your role does not include this network")
 		return
 	}
 	writeJSON(w, http.StatusOK, net)

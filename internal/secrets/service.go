@@ -1,5 +1,5 @@
 // Package secrets wraps filippo.io/age for at-rest encryption of stack
-// `.env` files (concept §15.2 Phase 2). The plaintext never touches disk
+// `.env` files. The plaintext never touches disk
 // when secrets are enabled: we decrypt to memory, hand the values to the
 // compose loader, and the DB/filesystem only ever hold the ciphertext.
 package secrets
@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +25,14 @@ type Service struct {
 	mu         sync.RWMutex
 	identity   *age.X25519Identity
 	recipients []age.Recipient
+	// previous holds every other key from the history file. Decrypt tries
+	// them after the current one, so data encrypted before (or during an
+	// interrupted) rotation stays readable.
+	previous []*age.X25519Identity
 }
+
+// historyPath is where keys other than the current one are kept.
+func (s *Service) historyPath() string { return s.keyPath + ".history" }
 
 // New returns a Service that loads or creates the age key at keyPath.
 // If enabled is false the Service is a no-op passthrough.
@@ -51,22 +59,25 @@ func (s *Service) PublicRecipient() string {
 	return s.identity.Recipient().String()
 }
 
-// Identity returns the loaded X25519 identity. Used by callers that need
-// to decrypt with the same key (e.g. the backup restore path).
-func (s *Service) Identity() (age.Identity, error) {
+// Identities returns the current key followed by every previous one, for
+// callers that decrypt with age directly (the backup restore path).
+func (s *Service) Identities() ([]age.Identity, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.identity == nil {
 		return nil, errors.New("secrets service has no identity loaded")
 	}
-	return s.identity, nil
+	ids := []age.Identity{s.identity}
+	for _, p := range s.previous {
+		ids = append(ids, p)
+	}
+	return ids, nil
 }
 
 // ExportKeyFile returns the age-keygen-compatible key file contents so
-// operators can save the DR key out of band. Fixes FINDING-37: without
-// a way to retrieve this file the server's own encrypted backup can't
-// be decrypted after a total server loss (key lives inside the
-// encrypted archive — chicken-and-egg).
+// operators can save the DR key out of band: without it the server's own
+// encrypted backup can't be decrypted after a total server loss (the key
+// lives inside the encrypted archive).
 //
 // Format: age-keygen-compatible — dockmesh or `age` CLI can consume it.
 func (s *Service) ExportKeyFile() (string, error) {
@@ -75,11 +86,9 @@ func (s *Service) ExportKeyFile() (string, error) {
 	if s.identity == nil {
 		return "", errors.New("secrets service has no identity loaded")
 	}
-	pub := s.identity.Recipient().String()
-	sec := s.identity.String()
-	return "# created: " + time.Now().UTC().Format(time.RFC3339) + "\n" +
-		"# public key: " + pub + "\n" +
-		sec + "\n", nil
+	// The current key first (parseKeyFile takes it as current), then the
+	// previous ones so backups from before a rotation can be restored.
+	return formatKeys(append([]*age.X25519Identity{s.identity}, s.previous...)...), nil
 }
 
 // Snapshot returns a detached, read-only copy of the current Service
@@ -94,14 +103,15 @@ func (s *Service) Snapshot() *Service {
 		keyPath:    "",
 		identity:   s.identity,
 		recipients: append([]age.Recipient(nil), s.recipients...),
+		previous:   append([]*age.X25519Identity(nil), s.previous...),
 	}
 }
 
 // RotateInMemory generates a fresh key and returns a second Service
 // that wraps it without touching disk. Callers use this pair to
-// re-encrypt legacy ciphertexts (old=existing service, new=returned
-// value). Commit the rotation with AdoptAndPersist once the migration
-// succeeds; discard the returned Service to abort.
+// re-encrypt existing ciphertexts (old=existing service, new=returned
+// value): call PrepareRotation before re-encrypting and AdoptAndPersist
+// afterwards; discard the returned Service to abort.
 func (s *Service) RotateInMemory() (*Service, error) {
 	id, err := age.GenerateX25519Identity()
 	if err != nil {
@@ -115,10 +125,31 @@ func (s *Service) RotateInMemory() (*Service, error) {
 	}, nil
 }
 
-// AdoptAndPersist atomically swaps the live service's in-memory
-// identity to match newSvc and persists newSvc's private key to
-// keyPath. The previous key file is moved to keyPath+".old" so legacy
-// external backups can still be decrypted out-of-band.
+// PrepareRotation records the current and the new key in the history file
+// before anything is re-encrypted. Whatever step a rotation is interrupted
+// at, both keys stay available to Decrypt after a restart.
+func (s *Service) PrepareRotation(newSvc *Service) error {
+	if newSvc == nil || newSvc.identity == nil {
+		return errors.New("rotate: new service has no identity")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.identity == nil {
+		return errors.New("rotate: live service has no identity")
+	}
+	keys := append([]*age.X25519Identity{s.identity, newSvc.identity}, s.previous...)
+	if err := writeFileAtomic(s.historyPath(), []byte(formatKeys(keys...)), 0o400); err != nil {
+		return fmt.Errorf("write key history: %w", err)
+	}
+	// Stacks re-encrypted before a failure must stay readable without a
+	// restart, so the new key is known for decryption right away.
+	s.previous = append(s.previous, newSvc.identity)
+	return nil
+}
+
+// AdoptAndPersist makes newSvc's key the current one: it atomically
+// replaces the key file and swaps the in-memory identity. Call
+// PrepareRotation first so the old key is in the history.
 //
 // Returns the old recipient so callers can surface it in audit logs.
 func (s *Service) AdoptAndPersist(newSvc *Service) (oldRecipient string, err error) {
@@ -131,39 +162,122 @@ func (s *Service) AdoptAndPersist(newSvc *Service) (oldRecipient string, err err
 		return "", errors.New("adopt: live service has no identity")
 	}
 	oldRecipient = s.identity.Recipient().String()
-	// Move current key aside. Stat/rename rather than clobber the
-	// .old slot — the previous .old may itself be needed to decrypt
-	// a backup sitting in S3 somewhere; we only keep N-1.
-	oldPath := s.keyPath + ".old"
-	_ = os.Remove(oldPath)
-	if err := os.Rename(s.keyPath, oldPath); err != nil {
-		return oldRecipient, fmt.Errorf("archive old key: %w", err)
-	}
-	content := fmt.Sprintf(
-		"# created: %s\n# public key: %s\n%s\n",
-		time.Now().UTC().Format(time.RFC3339),
-		newSvc.identity.Recipient(), newSvc.identity,
-	)
-	if err := os.WriteFile(s.keyPath, []byte(content), 0o400); err != nil {
-		// Roll back so the service stays usable.
-		_ = os.Rename(oldPath, s.keyPath)
+	if err := writeFileAtomic(s.keyPath, []byte(formatKeys(newSvc.identity)), 0o400); err != nil {
 		return oldRecipient, fmt.Errorf("write new key: %w", err)
+	}
+	previous := []*age.X25519Identity{s.identity}
+	for _, p := range s.previous {
+		if p.String() != newSvc.identity.String() {
+			previous = append(previous, p)
+		}
 	}
 	s.identity = newSvc.identity
 	s.recipients = []age.Recipient{newSvc.identity.Recipient()}
+	s.previous = previous
 	return oldRecipient, nil
+}
+
+func formatKeys(ids ...*age.X25519Identity) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# created: %s\n", time.Now().UTC().Format(time.RFC3339))
+	for _, id := range ids {
+		fmt.Fprintf(&b, "# public key: %s\n%s\n", id.Recipient(), id)
+	}
+	return b.String()
+}
+
+// writeFileAtomic writes data to a temp file next to path, syncs it and
+// renames it over path, so a crash leaves either the old or the new
+// content, never a missing or partial file.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, perm); err != nil {
+		return err
+	}
+	// Windows refuses to rename over a read-only file; the old file is
+	// replaced in the next step anyway.
+	_ = os.Chmod(path, 0o600)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		d.Close()
+	}
+	return nil
 }
 
 func (s *Service) loadOrCreateKey() error {
 	b, err := os.ReadFile(s.keyPath)
 	switch {
 	case err == nil:
-		return s.parseKeyFile(b)
+		if err := s.parseKeyFile(b); err != nil {
+			return err
+		}
 	case errors.Is(err, os.ErrNotExist):
-		return s.generateKey()
+		if err := s.generateKey(); err != nil {
+			return err
+		}
 	default:
 		return err
 	}
+	return s.loadHistory()
+}
+
+// loadHistory reads previous keys from the history file and from the
+// ".old" file earlier versions left after a rotation.
+func (s *Service) loadHistory() error {
+	seen := map[string]bool{s.identity.String(): true}
+	for _, p := range s.previous {
+		seen[p.String()] = true
+	}
+	for _, path := range []string{s.historyPath(), s.keyPath + ".old"} {
+		legacy := path != s.historyPath()
+		b, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		var ids []*age.X25519Identity
+		if err == nil {
+			ids, err = parseIdentities(b)
+		}
+		if err != nil {
+			// The .old file is a leftover of earlier versions; it must not
+			// keep the server from starting.
+			if legacy {
+				slog.Warn("ignoring unreadable previous key file", "file", filepath.Base(path), "err", err)
+				continue
+			}
+			return fmt.Errorf("%s: %w", filepath.Base(path), err)
+		}
+		for _, id := range ids {
+			if !seen[id.String()] {
+				seen[id.String()] = true
+				s.previous = append(s.previous, id)
+			}
+		}
+	}
+	return nil
 }
 
 // parseKeyFile reads an age-keygen-style file. Supported layout:
@@ -172,23 +286,34 @@ func (s *Service) loadOrCreateKey() error {
 //   AGE-SECRET-KEY-1...
 // Lines beginning with "#" are skipped.
 func (s *Service) parseKeyFile(b []byte) error {
+	ids, err := parseIdentities(b)
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return errors.New("no AGE-SECRET-KEY line found in key file")
+	}
+	s.identity = ids[0]
+	s.recipients = []age.Recipient{ids[0].Recipient()}
+	// An exported key file lists earlier keys after the current one.
+	s.previous = ids[1:]
+	return nil
+}
+
+func parseIdentities(b []byte) ([]*age.X25519Identity, error) {
+	var ids []*age.X25519Identity
 	for _, line := range strings.Split(string(b), "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
 		if !strings.HasPrefix(line, "AGE-SECRET-KEY-") {
 			continue
 		}
 		id, err := age.ParseX25519Identity(line)
 		if err != nil {
-			return fmt.Errorf("parse identity: %w", err)
+			return nil, fmt.Errorf("parse identity: %w", err)
 		}
-		s.identity = id
-		s.recipients = []age.Recipient{id.Recipient()}
-		return nil
+		ids = append(ids, id)
 	}
-	return errors.New("no AGE-SECRET-KEY line found in key file")
+	return ids, nil
 }
 
 func (s *Service) generateKey() error {
@@ -196,11 +321,7 @@ func (s *Service) generateKey() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.keyPath), 0o700); err != nil {
-		return err
-	}
-	content := fmt.Sprintf("# public key: %s\n%s\n", id.Recipient(), id)
-	if err := os.WriteFile(s.keyPath, []byte(content), 0o400); err != nil {
+	if err := writeFileAtomic(s.keyPath, []byte(formatKeys(id)), 0o400); err != nil {
 		return err
 	}
 	s.identity = id
@@ -232,18 +353,17 @@ func (s *Service) Encrypt(plaintext []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Decrypt reverses Encrypt. Returns the input unchanged when the service
-// is disabled or when the bytes are not a valid age stream but look like
-// plaintext (backward compatibility with legacy `.env` files).
+// Decrypt reverses Encrypt, trying the current key and then every key in
+// the history. Returns the input unchanged when the service is disabled.
 func (s *Service) Decrypt(ciphertext []byte) ([]byte, error) {
-	s.mu.RLock()
-	id := s.identity
-	enabled := s.enabled
-	s.mu.RUnlock()
-	if !enabled || id == nil {
+	if !s.Enabled() {
 		return ciphertext, nil
 	}
-	r, err := age.Decrypt(bytes.NewReader(ciphertext), id)
+	ids, err := s.Identities()
+	if err != nil {
+		return ciphertext, nil
+	}
+	r, err := age.Decrypt(bytes.NewReader(ciphertext), ids...)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt: %w", err)
 	}
@@ -252,15 +372,4 @@ func (s *Service) Decrypt(ciphertext []byte) ([]byte, error) {
 		return nil, err
 	}
 	return out, nil
-}
-
-// ArchiveKey moves the current key file to keyPath + ".old" and forgets
-// the identity. Used by the rotation command before generating a fresh key.
-func (s *Service) ArchiveKey() error {
-	if _, err := os.Stat(s.keyPath); err != nil {
-		return err
-	}
-	old := s.keyPath + ".old"
-	_ = os.Remove(old)
-	return os.Rename(s.keyPath, old)
 }

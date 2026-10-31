@@ -3,82 +3,201 @@ package host
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/dockmesh/dockmesh/internal/docker"
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
 // Docker volumes live at /var/lib/docker/volumes/<name>/_data which is
-// root:root 0700 on most hosts. The Dockmesh process runs as an
-// unprivileged user, so direct filesystem access returns EACCES.
-//
-// These helpers spawn a short-lived alpine container that mounts the
-// target volume, runs a `find` to list or `cat` to read, and streams
-// output back via stdout. The container runs as root inside its own
-// namespace, so it sees volume contents without touching host perms.
-//
-// alpine:latest is ~5MB; most Dockmesh hosts have it already. If not,
-// Docker pulls it on the first browse and caches for subsequent runs.
+// root:root 0700 on most hosts, while the server and the agent run as
+// unprivileged users. When direct access is denied, a short-lived alpine
+// container mounts the volume read-only and lists or reads it as root
+// inside its own namespace.
 
-const helperImage = "alpine:latest"
+const (
+	// Pinned to the multi-arch index digest so a retagged or replaced
+	// image never runs with access to the volume.
+	helperImage = "alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a"
+	helperMount = "/mnt/target"
 
-// dockerClientFor is a tiny accessor so the helper can use the
-// package-level Raw() without pulling in the compose package's
-// conventions. LocalHost already holds a *docker.Client.
-func dockerClientFor(cli *docker.Client) *docker.Client { return cli }
+	helperMaxEntries   = 10000
+	helperListingLimit = 16 << 20
+	helperPidsLimit    = 64
+	helperMemoryLimit  = 64 << 20
+)
 
-// BrowseDirViaHelper lists one directory inside a Docker volume by
-// running `find` inside a throwaway alpine container.
-func BrowseDirViaHelper(ctx context.Context, cli *docker.Client, volumeName, sub string) ([]VolumeEntry, error) {
-	// Ensure the sub path is relative + sane. The ExtractMountpoint /
-	// SanitizeVolumePath helpers are filesystem-oriented; here we only
-	// need a path-relative check.
-	sub = strings.TrimPrefix(strings.TrimPrefix(sub, "/"), "./")
-	if strings.Contains(sub, "..") {
-		return nil, fmt.Errorf("invalid subpath")
+// Exit codes the helper scripts use to report containment and type
+// failures, so they map onto the same sentinels as direct access.
+const (
+	helperExitEscape   = 70
+	helperExitNotFound = 71
+	helperExitNotDir   = 72
+	helperExitNotFile  = 73
+)
+
+// BrowseVolumeOnHost lists sub inside the volume, reading the mountpoint
+// directly when this process may and through a helper container when not.
+func BrowseVolumeOnHost(ctx context.Context, cli *client.Client, volumeName, mountpoint, sub string) ([]VolumeEntry, error) {
+	if _, err := SanitizeVolumePath(mountpoint, sub); err != nil {
+		return nil, err
 	}
-
-	// Output format per line: <type>|<size>|<octal-mode>|<mtime>|<linkdest>|<name>
-	// BusyBox alpine's find doesn't have GNU's -printf, so we loop
-	// through `ls -A` and run `stat` per entry. Filenames with literal
-	// '|' or newlines will mis-parse (rare for container volumes); the
-	// browse UI skips unparseable rows rather than crashing.
-	mountTarget := "/mnt/target"
-	if sub != "" {
-		mountTarget = "/mnt/target/" + sub
+	if directAccessible(mountpoint) {
+		entries, err := BrowseVolume(mountpoint, sub)
+		if !errors.Is(err, fs.ErrPermission) {
+			return entries, err
+		}
 	}
-	script := `cd ` + shellEscape(mountTarget) + ` && ls -A | while IFS= read -r n; do
-  if [ -L "$n" ]; then
-    l=$(readlink "$n")
-    printf 'l|0|%s|%s|%s|%s\n' "$(stat -c '%a' "$n")" "$(stat -c '%Y' "$n")" "$l" "$n"
-  elif [ -d "$n" ]; then
-    printf 'd|%s|%s|%s||%s\n' "$(stat -c '%s' "$n")" "$(stat -c '%a' "$n")" "$(stat -c '%Y' "$n")" "$n"
+	return browseDirViaHelper(ctx, dockerHelperRunner(cli, volumeName), sub)
+}
+
+// ReadVolumeFileOnHost is the file-read counterpart of BrowseVolumeOnHost.
+func ReadVolumeFileOnHost(ctx context.Context, cli *client.Client, volumeName, mountpoint, sub string, maxBytes int64) (*VolumeFileResult, error) {
+	if _, err := SanitizeVolumePath(mountpoint, sub); err != nil {
+		return nil, err
+	}
+	if directAccessible(mountpoint) {
+		res, err := ReadVolumeFile(mountpoint, sub, maxBytes)
+		if !errors.Is(err, fs.ErrPermission) {
+			return res, err
+		}
+	}
+	return readFileViaHelper(ctx, dockerHelperRunner(cli, volumeName), sub, maxBytes)
+}
+
+func directAccessible(mountpoint string) bool {
+	_, err := os.Stat(mountpoint)
+	return err == nil
+}
+
+type helperResult struct {
+	stdout   string
+	stderr   string
+	exitCode int64
+}
+
+// helperRunner runs script and reads at most limit bytes of its output.
+type helperRunner func(ctx context.Context, script string, limit int64) (helperResult, error)
+
+// helperTarget maps sub onto the helper's mount, rejecting lexical
+// escapes before any container is started.
+func helperTarget(sub string) (string, error) {
+	if len(sub) > MaxBrowsePathLen {
+		return "", ErrVolumePathTooLong
+	}
+	full := path.Join(helperMount, strings.TrimPrefix(sub, "/"))
+	if full != helperMount && !strings.HasPrefix(full, helperMount+"/") {
+		return "", ErrVolumePathEscape
+	}
+	return full, nil
+}
+
+// helperResolveScript resolves the target with realpath inside the
+// helper and refuses anything that lands outside the volume mount, so a
+// symlink in the volume answers the same escape error as direct access.
+func helperResolveScript(target string) string {
+	return fmt.Sprintf(`t=%s
+[ -e "$t" ] || exit %d
+r=$(realpath "$t") || exit %d
+case "$r" in %s|%s/*) ;; *) exit %d ;; esac
+`, shellEscape(target), helperExitNotFound, helperExitNotFound, helperMount, helperMount, helperExitEscape)
+}
+
+func browseDirScript(target string) string {
+	// BusyBox find has no -printf, so stat runs per entry. Globbing ./*
+	// keeps names starting with '-' from being read as options, and names
+	// and link targets are base64 so a newline cannot forge a row.
+	// Output per line: <type>|<size>|<octal-mode>|<mtime>|<b64 linkdest>|<b64 name>
+	return helperResolveScript(target) + fmt.Sprintf(`[ -d "$r" ] || exit %d
+cd "$r" || exit %d
+i=0
+for p in ./* ./.[!.]* ./..?*; do
+  [ -e "$p" ] || [ -L "$p" ] || continue
+  i=$((i+1))
+  [ "$i" -le %d ] || break
+  n=$(printf '%%s' "${p#./}" | base64 | tr -d '\n')
+  m=$(stat -c '%%s|%%a|%%Y' "$p") || continue
+  if [ -L "$p" ]; then
+    l=$(readlink "$p" | tr -d '\n' | base64 | tr -d '\n')
+    printf 'l|%%s|%%s|%%s\n' "$m" "$l" "$n"
+  elif [ -d "$p" ]; then
+    printf 'd|%%s||%%s\n' "$m" "$n"
   else
-    printf 'f|%s|%s|%s||%s\n' "$(stat -c '%s' "$n")" "$(stat -c '%a' "$n")" "$(stat -c '%Y' "$n")" "$n"
+    printf 'f|%%s||%%s\n' "$m" "$n"
   fi
-done`
+done
+`, helperExitNotDir, helperExitNotFound, helperMaxEntries)
+}
 
-	raw, err := runHelperCommand(ctx, cli, volumeName, script)
+func readFileScript(target string, maxBytes int64) string {
+	// head -c stops after maxBytes so a huge file is never streamed whole.
+	return helperResolveScript(target) + fmt.Sprintf(`[ -f "$r" ] || exit %d
+stat -c '%%s' "$r" && head -c %d "$r"
+`, helperExitNotFile, maxBytes)
+}
+
+func helperExitError(res helperResult, target string) error {
+	switch res.exitCode {
+	case 0:
+		return nil
+	case helperExitEscape:
+		return ErrVolumePathEscape
+	case helperExitNotFound:
+		return fmt.Errorf("%s: %w", strings.TrimPrefix(target, helperMount), fs.ErrNotExist)
+	case helperExitNotDir:
+		return ErrVolumeNotDir
+	case helperExitNotFile:
+		return ErrVolumeNotFile
+	}
+	return fmt.Errorf("volume helper: exit %d: %s", res.exitCode, strings.TrimSpace(res.stderr))
+}
+
+func browseDirViaHelper(ctx context.Context, run helperRunner, sub string) ([]VolumeEntry, error) {
+	target, err := helperTarget(sub)
 	if err != nil {
 		return nil, err
 	}
+	res, err := run(ctx, browseDirScript(target), helperListingLimit)
+	if err != nil {
+		return nil, err
+	}
+	if err := helperExitError(res, target); err != nil {
+		return nil, err
+	}
+	return parseHelperListing(res.stdout), nil
+}
 
+// parseHelperListing skips rows it cannot parse and a last row that the
+// output limit cut off.
+func parseHelperListing(raw string) []VolumeEntry {
 	out := make([]VolumeEntry, 0)
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	lines := strings.Split(raw, "\n")
+	for _, line := range lines[:len(lines)-1] {
+		if len(out) >= helperMaxEntries {
+			break
+		}
+		parts := strings.Split(strings.TrimSpace(line), "|")
+		if len(parts) != 6 {
 			continue
 		}
-		parts := strings.SplitN(line, "|", 6)
-		if len(parts) != 6 {
+		name, err := base64.StdEncoding.DecodeString(parts[5])
+		if err != nil || len(name) == 0 {
+			continue
+		}
+		linkDest, err := base64.StdEncoding.DecodeString(parts[4])
+		if err != nil {
 			continue
 		}
 		sizeBytes, _ := strconv.ParseInt(parts[1], 10, 64)
@@ -86,7 +205,7 @@ done`
 		mtimeSecs, _ := strconv.ParseInt(parts[3], 10, 64)
 
 		entry := VolumeEntry{
-			Name:    parts[5],
+			Name:    string(name),
 			Size:    sizeBytes,
 			Mode:    fmt.Sprintf("%04o", modeOctal),
 			ModTime: time.Unix(mtimeSecs, 0),
@@ -96,46 +215,38 @@ done`
 			entry.Type = "dir"
 		case "l":
 			entry.Type = "symlink"
-			entry.LinkDest = parts[4]
+			entry.LinkDest = string(linkDest)
 		default:
 			entry.Type = "file"
 		}
 		out = append(out, entry)
 	}
-	return out, nil
+	return out
 }
 
-// ReadFileViaHelper returns the content of a file inside a Docker
-// volume, capped at maxBytes.
-func ReadFileViaHelper(ctx context.Context, cli *docker.Client, volumeName, sub string, maxBytes int64) (*VolumeFileResult, error) {
-	sub = strings.TrimPrefix(strings.TrimPrefix(sub, "/"), "./")
-	if strings.Contains(sub, "..") || sub == "" {
-		return nil, fmt.Errorf("invalid subpath")
-	}
+func readFileViaHelper(ctx context.Context, run helperRunner, sub string, maxBytes int64) (*VolumeFileResult, error) {
 	if maxBytes <= 0 {
 		maxBytes = 1 << 20
 	}
-
-	// head -c is safer than cat | head here — it reads at most N bytes
-	// even from a pipe, so we don't stream a 5GiB log file into
-	// container stdout just to throw most of it away.
-	script := fmt.Sprintf(
-		`stat -c '%%s' /mnt/target/%s && head -c %d /mnt/target/%s`,
-		shellEscape(sub), maxBytes, shellEscape(sub),
-	)
-
-	raw, err := runHelperCommand(ctx, cli, volumeName, script)
+	target, err := helperTarget(sub)
 	if err != nil {
 		return nil, err
 	}
+	res, err := run(ctx, readFileScript(target, maxBytes), maxBytes+4096)
+	if err != nil {
+		return nil, err
+	}
+	if err := helperExitError(res, target); err != nil {
+		return nil, err
+	}
 
-	// First line is the full file size, rest is up to maxBytes of content.
-	nl := strings.IndexByte(raw, '\n')
+	// First line is the full file size, the rest up to maxBytes of content.
+	nl := strings.IndexByte(res.stdout, '\n')
 	if nl < 0 {
 		return &VolumeFileResult{}, nil
 	}
-	totalSize, _ := strconv.ParseInt(strings.TrimSpace(raw[:nl]), 10, 64)
-	body := []byte(raw[nl+1:])
+	totalSize, _ := strconv.ParseInt(strings.TrimSpace(res.stdout[:nl]), 10, 64)
+	body := []byte(res.stdout[nl+1:])
 	if int64(len(body)) > maxBytes {
 		body = body[:maxBytes]
 	}
@@ -143,91 +254,103 @@ func ReadFileViaHelper(ctx context.Context, cli *docker.Client, volumeName, sub 
 		Size:      totalSize,
 		Content:   body,
 		Truncated: totalSize > int64(len(body)),
+		Binary:    looksBinary(body),
 	}, nil
 }
 
 // shellEscape wraps a path in single quotes and escapes internal
-// single quotes the POSIX way. Covers names with spaces / specials
-// without shelling out through a shell's argv parsing quirks.
+// single quotes the POSIX way.
 func shellEscape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// runHelperCommand is the shared spawn/attach/remove plumbing. Runs
-// `sh -c <script>` inside alpine:latest with the target volume mounted
-// at /mnt/target, returns combined stdout, and removes the container.
-// Errors include anything the alpine container wrote to stderr, so
-// permission or ENOENT inside the volume surface cleanly.
-func runHelperCommand(ctx context.Context, cli *docker.Client, volumeName, script string) (string, error) {
-	raw := dockerClientFor(cli).Raw()
-
-	// Pull alpine on demand. Best-effort — if it's already present
-	// docker returns immediately. If the pull fails (offline host),
-	// we surface a clear error.
-	if _, _, err := raw.ImageInspectWithRaw(ctx, helperImage); err != nil {
-		rc, pullErr := raw.ImagePull(ctx, helperImage, dtypes.ImagePullOptions{})
-		if pullErr != nil {
-			return "", fmt.Errorf("volume helper: pull %s: %w", helperImage, pullErr)
-		}
-		_, _ = io.Copy(io.Discard, rc)
-		rc.Close()
-	}
-
+func helperContainerConfig(volumeName, script string) (*container.Config, *container.HostConfig) {
+	pids := int64(helperPidsLimit)
 	cfg := &container.Config{
-		Image: helperImage,
-		Cmd:   []string{"sh", "-c", script},
+		Image:      helperImage,
+		Entrypoint: []string{"/bin/sh", "-c"},
+		Cmd:        []string{script},
 		Labels: map[string]string{
 			"com.dockmesh.helper": "volume-browse",
 		},
 	}
 	hostCfg := &container.HostConfig{
-		AutoRemove: false, // we remove manually so we can grab logs
+		NetworkMode:    "none",
 		ReadonlyRootfs: true,
+		// DAC_OVERRIDE lets root read files of any owner in the volume; the
+		// mount is read-only, so it grants no writes.
+		CapDrop:     []string{"ALL"},
+		CapAdd:      []string{"DAC_OVERRIDE"},
+		SecurityOpt: []string{"no-new-privileges"},
+		Resources: container.Resources{
+			PidsLimit: &pids,
+			Memory:    helperMemoryLimit,
+		},
 		Mounts: []mount.Mount{{
 			Type:     mount.TypeVolume,
 			Source:   volumeName,
-			Target:   "/mnt/target",
+			Target:   helperMount,
 			ReadOnly: true,
 		}},
 	}
-	createResp, err := raw.ContainerCreate(ctx, cfg, hostCfg, nil, nil, "")
-	if err != nil {
-		return "", fmt.Errorf("volume helper: create: %w", err)
-	}
-	defer raw.ContainerRemove(context.Background(), createResp.ID, container.RemoveOptions{Force: true})
+	return cfg, hostCfg
+}
 
-	if err := raw.ContainerStart(ctx, createResp.ID, container.StartOptions{}); err != nil {
-		return "", fmt.Errorf("volume helper: start: %w", err)
-	}
-
-	// Wait for the container to exit. Cap at 30s so a pathological
-	// script can't hang the browse forever.
-	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	statusCh, errCh := raw.ContainerWait(waitCtx, createResp.ID, container.WaitConditionNotRunning)
-	select {
-	case err := <-errCh:
-		if err != nil {
-			return "", fmt.Errorf("volume helper: wait: %w", err)
+// dockerHelperRunner runs a script in a throwaway helper container with
+// the volume mounted, collects its output and removes the container.
+func dockerHelperRunner(cli *client.Client, volumeName string) helperRunner {
+	return func(ctx context.Context, script string, limit int64) (helperResult, error) {
+		if _, err := cli.ImageInspect(ctx, helperImage); err != nil {
+			rc, pullErr := cli.ImagePull(ctx, helperImage, image.PullOptions{})
+			if pullErr != nil {
+				return helperResult{}, fmt.Errorf("volume helper: pull %s: %w", helperImage, pullErr)
+			}
+			_, _ = io.Copy(io.Discard, rc)
+			rc.Close()
 		}
-	case <-statusCh:
-	}
 
-	logs, err := raw.ContainerLogs(ctx, createResp.ID, container.LogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
-	})
-	if err != nil {
-		return "", fmt.Errorf("volume helper: logs: %w", err)
-	}
-	defer logs.Close()
+		cfg, hostCfg := helperContainerConfig(volumeName, script)
+		createResp, err := cli.ContainerCreate(ctx, cfg, hostCfg, nil, nil, "")
+		if err != nil {
+			return helperResult{}, fmt.Errorf("volume helper: create: %w", err)
+		}
+		defer func() {
+			_ = cli.ContainerRemove(context.WithoutCancel(ctx), createResp.ID, container.RemoveOptions{Force: true})
+		}()
 
-	var stdout, stderr bytes.Buffer
-	if _, err := stdcopy.StdCopy(&stdout, &stderr, logs); err != nil {
-		return "", fmt.Errorf("volume helper: stream: %w", err)
+		if err := cli.ContainerStart(ctx, createResp.ID, container.StartOptions{}); err != nil {
+			return helperResult{}, fmt.Errorf("volume helper: start: %w", err)
+		}
+
+		waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		var exitCode int64
+		statusCh, errCh := cli.ContainerWait(waitCtx, createResp.ID, container.WaitConditionNotRunning)
+		select {
+		case err := <-errCh:
+			if err != nil {
+				return helperResult{}, fmt.Errorf("volume helper: wait: %w", err)
+			}
+		case st := <-statusCh:
+			if st.Error != nil {
+				return helperResult{}, fmt.Errorf("volume helper: wait: %s", st.Error.Message)
+			}
+			exitCode = st.StatusCode
+		}
+
+		logs, err := cli.ContainerLogs(ctx, createResp.ID, container.LogsOptions{
+			ShowStdout: true,
+			ShowStderr: true,
+		})
+		if err != nil {
+			return helperResult{}, fmt.Errorf("volume helper: logs: %w", err)
+		}
+		defer logs.Close()
+
+		var stdout, stderr bytes.Buffer
+		if _, err := stdcopy.StdCopy(&stdout, &stderr, io.LimitReader(logs, limit)); err != nil {
+			return helperResult{}, fmt.Errorf("volume helper: stream: %w", err)
+		}
+		return helperResult{stdout: stdout.String(), stderr: stderr.String(), exitCode: exitCode}, nil
 	}
-	if stderr.Len() > 0 && stdout.Len() == 0 {
-		return "", fmt.Errorf("volume helper: %s", strings.TrimSpace(stderr.String()))
-	}
-	return stdout.String(), nil
 }

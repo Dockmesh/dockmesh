@@ -30,7 +30,7 @@ type backupRun struct {
 	Status    string `json:"status"`
 	StartedAt string `json:"started_at"`
 	EndedAt   string `json:"ended_at,omitempty"`
-	BytesOut  int64  `json:"bytes_out"`
+	SizeBytes int64  `json:"size_bytes"`
 	Error     string `json:"error,omitempty"`
 }
 
@@ -95,11 +95,14 @@ func backupRunCmd() *cobra.Command {
 				}
 				id = found
 			}
-			var out map[string]any
-			if err := c.request("POST", "/api/v1/backups/jobs/"+url.PathEscape(id)+"/run", nil, nil, &out); err != nil {
+			var run backupRun
+			if err := c.longRunning().request("POST", "/api/v1/backups/jobs/"+url.PathEscape(id)+"/run", nil, nil, &run); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Backup started: run_id=%v\n", out["run_id"])
+			fmt.Fprintf(cmd.OutOrStdout(), "Backup run %d: %s, %d bytes\n", run.ID, run.Status, run.SizeBytes)
+			if run.Error != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Error: %s\n", run.Error)
+			}
 			return nil
 		},
 	}
@@ -129,7 +132,7 @@ func backupRunsListCmd() *cobra.Command {
 						fmt.Sprint(r.JobID),
 						r.Status,
 						r.StartedAt,
-						fmt.Sprint(r.BytesOut),
+						fmt.Sprint(r.SizeBytes),
 						truncate(r.Error, 40),
 					})
 				}

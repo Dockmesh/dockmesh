@@ -177,6 +177,12 @@ func (r *Runner) Run(ctx context.Context, in CommitInput, fn CommitFunc) {
 	r.finish(nil)
 }
 
+// AddsToDockerGroup reports whether the install adds the service user to
+// the docker group. Only a user the wizard creates itself qualifies.
+func (in *CommitInput) AddsToDockerGroup() bool {
+	return in.ServiceUser.Mode == "create" && in.ServiceUser.AddDocker
+}
+
 // CreateSystemUser shells out to `useradd` to create the service user
 // when CommitInput.ServiceUser.Mode == "create". Returns silently if
 // the user already exists (idempotent — re-running the wizard is
@@ -202,18 +208,6 @@ func CreateSystemUser(username string, addDockerGroup bool) error {
 		if combined, cerr := cmd.CombinedOutput(); cerr != nil {
 			return fmt.Errorf("usermod -aG docker: %s: %w", string(combined), cerr)
 		}
-	}
-	return nil
-}
-
-// AddToDockerGroup adds an existing user to the docker group. Idempotent.
-func AddToDockerGroup(username string) error {
-	if runtime.GOOS != "linux" {
-		return errors.New("group management is only supported on linux")
-	}
-	cmd := exec.Command("usermod", "-aG", "docker", username)
-	if combined, cerr := cmd.CombinedOutput(); cerr != nil {
-		return fmt.Errorf("usermod -aG docker: %s: %w", string(combined), cerr)
 	}
 	return nil
 }

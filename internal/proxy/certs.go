@@ -79,4 +79,3 @@ func certIssuer(c *x509.Certificate) string {
 	}
 	return c.Issuer.String()
 }
-

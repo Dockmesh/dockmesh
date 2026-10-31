@@ -84,7 +84,7 @@ func (h *Handlers) ListGlobalEnv(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]enriched, len(vars))
 	for i, v := range vars {
-		out[i].Var = v
+		out[i].Var = *redactGlobalEnv(&v)
 		out[i].RefsCount = len(refMap[v.Key])
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -144,7 +144,7 @@ func (h *Handlers) CreateGlobalEnv(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, v)
+	writeJSON(w, http.StatusCreated, redactGlobalEnv(v))
 }
 
 func (h *Handlers) UpdateGlobalEnv(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +162,21 @@ func (h *Handlers) UpdateGlobalEnv(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	prev, err := h.GlobalEnv.Get(r.Context(), id)
+	if errors.Is(err, globalenv.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "variable not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Secret values are never sent to the client, so an empty value on a
+	// secret variable means "keep the stored one".
+	if prev.Encrypted && in.Value == "" {
+		in.Value = prev.Value
+		in.Encrypted = true
+	}
 	v, err := h.GlobalEnv.Update(r.Context(), id, in)
 	if err != nil {
 		if errors.Is(err, globalenv.ErrDuplicateKey) {
@@ -171,7 +186,16 @@ func (h *Handlers) UpdateGlobalEnv(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, v)
+	writeJSON(w, http.StatusOK, redactGlobalEnv(v))
+}
+
+// redactGlobalEnv blanks the value of a variable marked secret.
+func redactGlobalEnv(v *globalenv.Var) *globalenv.Var {
+	out := *v
+	if out.Encrypted {
+		out.Value = ""
+	}
+	return &out
 }
 
 func (h *Handlers) DeleteGlobalEnv(w http.ResponseWriter, r *http.Request) {

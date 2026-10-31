@@ -6,7 +6,7 @@
   // See project_users_roles_open.md + project_rbac_v2_spec.md memories.
   import { api, ApiError, type CustomRole, type PermissionInfo, type RoleScope, type HostInfo, type StackListEntry } from '$lib/api';
   import { onMount } from 'svelte';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { allowed } from '$lib/rbac.svelte';
   import { Skeleton, EmptyState } from '$lib/components/ui';
   import { Eyebrow } from '$lib/components/editorial';
@@ -21,7 +21,7 @@
   } from 'lucide-svelte';
 
   type Sub = 'users' | 'roles';
-  let sub = $state<Sub>((new URLSearchParams($page.url.search).get('sub') as Sub) || 'users');
+  let sub = $state<Sub>((new URLSearchParams(page.url.search).get('sub') as Sub) || 'users');
 
   // ─── Users state ──────────────────────────────────────────────────────
   interface UserRow {
@@ -30,6 +30,7 @@
     email?: string;
     role: string;
     scope_tags?: string[];
+    locked_until?: string;
   }
   let users = $state<UserRow[]>([]);
   let usersLoading = $state(true);
@@ -150,9 +151,8 @@
   let inviteRole = $state('viewer');
   let inviteScope = $state<Set<string>>(new Set(['__all__']));
   let inviteAuth = $state<'local' | 'oidc'>('local');
-  let inviteExpiry = $state<'1d' | '3d' | '7d' | '14d' | '30d'>('7d');
+  let inviteExpiry = $state<'1d' | '3d' | '7d'>('1d');
   let inviteEnforce2fa = $state(true);
-  let invitePassword = $state('');
   let inviteBusy = $state(false);
   // After sendInvitations() runs, this holds the generated links so
   // the admin can copy them out and share manually (no SMTP). Empty
@@ -223,6 +223,17 @@
   onMount(() => { loadAll(); });
 
   // ─── User actions ─────────────────────────────────────────────────────
+  async function unlockUser(u: UserRow) {
+    openMenu = null;
+    try {
+      await api.auth.unlockUser(u.id);
+      toast.success('Unlocked', u.username);
+      await loadAll();
+    } catch (err) {
+      toast.error('Unlock failed', err instanceof ApiError ? err.message : undefined);
+    }
+  }
+
   async function deleteUser(u: UserRow) {
     if (!(await confirm.ask({
       title: `Remove ${u.username}`,
@@ -262,6 +273,7 @@
           role: inviteRole,
           scope_tags: scopeTags,
           email_hint: email,
+          ttl_hours: { '1d': 24, '3d': 72, '7d': 168 }[inviteExpiry],
         });
         links.push({ email, url: res.accept_url });
       } catch (err) {
@@ -279,7 +291,6 @@
         'Copy each link and share it with the recipient',
       );
       inviteEmails = '';
-      invitePassword = '';
       await loadAll();
     }
   }
@@ -292,7 +303,6 @@
     showInvite = false;
     inviteLinks = [];
     inviteEmails = '';
-    invitePassword = '';
   }
 
   function toggleInviteScope(id: string) {
@@ -533,7 +543,7 @@
 <section class="ed-users">
   {#if !allowed('users.update')}
     <div class="dm-card" style="padding: 32px;">
-      <EmptyState icon={UsersIcon} title="Admin-only" description="User and role management requires user-manage permission." />
+      <EmptyState icon={UsersIcon} title="Admin-only" description="User and role management requires the users.update permission." />
     </div>
   {:else}
     <header class="ed-users-header">
@@ -627,6 +637,9 @@
                           {#if me?.id === u.id}
                             <span class="ed-user-self">— this is you</span>
                           {/if}
+                          {#if u.locked_until}
+                            <span class="dm-pill dm-pill-warning" title="Locked until {new Date(u.locked_until).toLocaleString()}">locked</span>
+                          {/if}
                         </span>
                       </div>
                     </div>
@@ -677,6 +690,15 @@
                           >
                             Edit role &amp; scope
                           </button>
+                          {#if u.locked_until}
+                            <button
+                              type="button"
+                              class="ed-user-menu-item"
+                              onclick={() => unlockUser(u)}
+                            >
+                              Unlock
+                            </button>
+                          {/if}
                           <button
                             type="button"
                             class="ed-user-menu-item"
@@ -1050,28 +1072,14 @@
 
         <div class="ed-invite-grid-2">
           <div class="ed-field">
-            <label class="ed-field-label">Initial password</label>
-            <input
-              type="text"
-              class="dm-input"
-              placeholder="Leave empty for random"
-              bind:value={invitePassword}
-            />
-            <p class="ed-field-hint" style="margin-top: 4px;">
-              {invitePassword ? 'Same password for every user above.' : 'A random 16-char password is generated per user.'}
-            </p>
-          </div>
-          <div class="ed-field">
             <label class="ed-field-label">
               Link expiry
-              <span class="ed-field-hint">used by email-link slice</span>
+              <span class="ed-field-hint">invitee sets their own password</span>
             </label>
-            <select class="dm-input" bind:value={inviteExpiry} disabled>
+            <select class="dm-input" bind:value={inviteExpiry}>
               <option value="1d">1 day</option>
               <option value="3d">3 days</option>
               <option value="7d">7 days</option>
-              <option value="14d">14 days</option>
-              <option value="30d">30 days</option>
             </select>
           </div>
         </div>
@@ -1083,7 +1091,7 @@
               {inviteEmailList.length === 1 ? 'user gets' : 'users get'} a
               <em class="ed-accent">{inviteRole}</em> account
               scoped to <em class="ed-accent">{inviteScope.has('__all__') ? 'all hosts' : `${inviteScope.size} tag${inviteScope.size === 1 ? '' : 's'}`}</em>.
-              {invitePassword ? 'Shared initial password.' : 'Random initial password per user.'}
+              Each gets a one-time link to set a password.
             </div>
           </div>
         {/if}

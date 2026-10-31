@@ -4,7 +4,7 @@
   // line + page header with actions). Lets operators bookmark / link
   // to a specific job and gives the run-history room to breathe on
   // wide screens.
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api, ApiError, type BackupJob, type BackupRun, type BackupTarget } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
@@ -19,7 +19,7 @@
     LayoutDashboard, Layers, HardDrive, Box
   } from 'lucide-svelte';
 
-  const id = $derived(parseInt($page.params.id, 10));
+  const id = $derived(parseInt(page.params.id, 10));
 
   $effect(() => {
     if (job) pageContext.set(job.name);

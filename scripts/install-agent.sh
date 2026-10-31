@@ -3,9 +3,9 @@
 # Dockmesh agent installer — concept §3.1.
 #
 # This script is templated by the dockmesh server at request time. The
-# {{ }} tokens are replaced with the real token, URLs and binary location
-# before being served, so the user only ever sees a single one-line curl
-# command in the UI.
+# {{ }} tokens are replaced with the real token, URLs, the agents CA and
+# the agent binary checksums before being served, so the user only ever
+# sees a single one-line curl command in the UI.
 #
 # Default mode creates a dedicated `dockmesh-agent` system user, locks it,
 # adds it to the `docker` group, and runs the agent under systemd with
@@ -23,7 +23,12 @@ TOKEN="{{TOKEN}}"
 SERVER_URL="{{SERVER_URL}}"
 ENROLL_URL="{{ENROLL_URL}}"
 AGENT_URL="{{AGENT_URL}}"
-BINARY_URL="{{BINARY_URL}}"
+CA_FINGERPRINT="{{CA_FINGERPRINT}}"
+BINARY_SHA256_AMD64="{{BINARY_SHA256_AMD64}}"
+BINARY_SHA256_ARM64="{{BINARY_SHA256_ARM64}}"
+read -r -d '' CA_CERT_PEM <<'CAPEM' || true
+{{CA_CERT_PEM}}
+CAPEM
 
 # -----------------------------------------------------------------------------
 # Flags
@@ -93,6 +98,66 @@ http_get() {
   fi
 }
 
+# agent_log_state classifies the agent's JSON log lines ($1) as connected,
+# failed (enrollment rejected) or waiting.
+agent_log_state() {
+  local logs="$1"
+  if grep -q '"msg":"connected"' <<<"$logs"; then
+    echo connected
+  elif grep -q '"msg":"enrollment failed"' <<<"$logs"; then
+    echo failed
+  else
+    echo waiting
+  fi
+}
+# end agent_log_state
+
+# is_server_data_dir succeeds if $1 is, or looks like, the Dockmesh server's
+# data directory. Agents installed by older releases defaulted to it.
+is_server_data_dir() {
+  local d="${1%/}"
+  case "$d" in
+    /var/lib/dockmesh|/data) return 0 ;;
+  esac
+  [[ -e "$d/dockmesh.db" || -e "$d/dockmesh.env" ]]
+}
+# end is_server_data_dir
+
+# migrate_agent_files moves the agent's own files from $1 to $2 and leaves
+# everything else in $1 alone.
+migrate_agent_files() {
+  local from="${1%/}" to="${2%/}" f
+  for f in agent.crt agent.key agent.url ca.crt enroll-ca.pem certs staging; do
+    if [[ -e "$from/$f" || -L "$from/$f" ]]; then
+      rm -rf "${to:?}/$f"
+      mv "$from/$f" "$to/$f"
+    fi
+  done
+  if [[ -e "$from/bin/dockmesh-agent" || -L "$from/bin/dockmesh-agent" ]]; then
+    mkdir -p "$to/bin"
+    mv -f "$from/bin/dockmesh-agent" "$to/bin/dockmesh-agent"
+    rmdir "$from/bin" 2>/dev/null || true
+  fi
+}
+# end migrate_agent_files
+
+# ensure_dir_owner refuses to take over an existing directory $1 unless it
+# belongs to the service user $2, or to root and is empty or already the
+# agent's (an earlier --as-root install).
+ensure_dir_owner() {
+  local owner
+  [[ -d "$1" ]] || return 0
+  owner="$(stat -c %U "$1")"
+  [[ "$owner" == "$2" ]] && return 0
+  if [[ "$owner" == root ]]; then
+    if [[ -e "$1/agent.crt" || -e "$1/bin/dockmesh-agent" || -z "$(ls -A "$1")" ]]; then
+      return 0
+    fi
+  fi
+  die "$1 already exists and belongs to $owner. Move it away or set a different DOCKMESH_DATA_DIR in /etc/dockmesh-agent/agent.env, then re-run."
+}
+# end ensure_dir_owner
+
 # -----------------------------------------------------------------------------
 # Pre-flight
 # -----------------------------------------------------------------------------
@@ -119,6 +184,18 @@ fi
 ARCH="$(detect_arch)"
 log "host: $(uname -s)/$ARCH  systemd: yes"
 log "server: $SERVER_URL"
+
+BINARY_URL="$SERVER_URL/install/dockmesh-agent-linux-$ARCH"
+case "$ARCH" in
+  amd64) BINARY_SHA256="$BINARY_SHA256_AMD64" ;;
+  arm64) BINARY_SHA256="$BINARY_SHA256_ARM64" ;;
+esac
+if [[ -z "$BINARY_SHA256" ]]; then
+  die "the server has no dockmesh-agent binary for linux/$ARCH bundled."
+fi
+if ! command -v sha256sum >/dev/null 2>&1; then
+  die "sha256sum is required to verify the agent binary (install coreutils)."
+fi
 
 # -----------------------------------------------------------------------------
 # Install missing tools
@@ -158,8 +235,22 @@ fi
 # -----------------------------------------------------------------------------
 RUN_USER=root
 RUN_GROUP=root
-DATA_DIR=/var/lib/dockmesh
 ENV_DIR=/etc/dockmesh-agent
+# The server defaults to /var/lib/dockmesh; an agent on the same host must not
+# share it. A re-run keeps the directory an earlier install already used,
+# unless that is the server's, in which case the agent's files move out.
+DATA_DIR=/var/lib/dockmesh-agent
+OLD_DATA_DIR=""
+if [[ -r "$ENV_DIR/agent.env" ]]; then
+  PREV_DATA_DIR="$(sed -n 's/^DOCKMESH_DATA_DIR=//p' "$ENV_DIR/agent.env" | head -1)"
+  if [[ -n "$PREV_DATA_DIR" ]]; then
+    if is_server_data_dir "$PREV_DATA_DIR"; then
+      OLD_DATA_DIR="$PREV_DATA_DIR"
+    else
+      DATA_DIR="$PREV_DATA_DIR"
+    fi
+  fi
+fi
 
 if [[ $AS_ROOT -eq 0 ]]; then
   RUN_USER=dockmesh-agent
@@ -185,6 +276,18 @@ else
   log "running as root (--as-root)"
 fi
 
+ensure_dir_owner "$DATA_DIR" "$RUN_USER"
+
+if [[ -n "$OLD_DATA_DIR" && -d "$OLD_DATA_DIR" ]]; then
+  systemctl stop dockmesh-agent 2>/dev/null || true
+  log "moving agent files out of the server's data directory $OLD_DATA_DIR to $DATA_DIR"
+  install -d -m 0700 -o "$RUN_USER" -g "$RUN_GROUP" "$DATA_DIR"
+  migrate_agent_files "$OLD_DATA_DIR" "$DATA_DIR"
+  if [[ $AS_ROOT -eq 0 ]]; then
+    usermod -d "$DATA_DIR" "$RUN_USER" 2>/dev/null || true
+  fi
+fi
+
 # -----------------------------------------------------------------------------
 # Stale-enrollment guard
 # -----------------------------------------------------------------------------
@@ -197,7 +300,7 @@ fi
 if [[ -f "$DATA_DIR/agent.crt" ]] || [[ -f "$DATA_DIR/agent.key" ]] || [[ -d "$DATA_DIR/certs" ]]; then
   systemctl stop dockmesh-agent 2>/dev/null || true
   log "detected existing enrollment in $DATA_DIR — removing certs so the new token takes effect"
-  rm -f "$DATA_DIR/agent.crt" "$DATA_DIR/agent.key" "$DATA_DIR/agent.url" "$DATA_DIR/ca.crt"
+  rm -f "$DATA_DIR/agent.crt" "$DATA_DIR/agent.key" "$DATA_DIR/agent.url" "$DATA_DIR/ca.crt" "$DATA_DIR/enroll-ca.pem"
   rm -rf "$DATA_DIR/certs" "$DATA_DIR/staging"
 fi
 
@@ -222,6 +325,11 @@ install -d -m 0750 -o "$RUN_USER" -g "$RUN_GROUP" "$BIN_DIR"
 TMP_BIN="$(mktemp)"
 log "downloading agent binary from $BINARY_URL"
 http_get "$BINARY_URL" "$TMP_BIN"
+GOT_SHA256="$(sha256sum "$TMP_BIN" | cut -d' ' -f1)"
+if [[ "$GOT_SHA256" != "$BINARY_SHA256" ]]; then
+  rm -f "$TMP_BIN"
+  die "agent binary checksum mismatch (expected $BINARY_SHA256, got $GOT_SHA256)"
+fi
 chmod 0755 "$TMP_BIN"
 install -m 0755 -o "$RUN_USER" -g "$RUN_GROUP" "$TMP_BIN" "$AGENT_BIN"
 rm -f "$TMP_BIN"
@@ -234,6 +342,14 @@ ln -sf "$AGENT_BIN" /usr/local/bin/dockmesh-agent
 log "installed: $($AGENT_BIN --version 2>&1 | head -1 || echo dockmesh-agent)"
 
 # -----------------------------------------------------------------------------
+# Agents CA (pinned by fingerprint for enrollment)
+# -----------------------------------------------------------------------------
+ENROLL_CA_FILE="$DATA_DIR/enroll-ca.pem"
+printf '%s\n' "$CA_CERT_PEM" > "$ENROLL_CA_FILE"
+chown "$RUN_USER":"$RUN_GROUP" "$ENROLL_CA_FILE"
+chmod 0644 "$ENROLL_CA_FILE"
+
+# -----------------------------------------------------------------------------
 # Environment file (holds the secret token + URLs)
 # -----------------------------------------------------------------------------
 ENV_FILE="$ENV_DIR/agent.env"
@@ -243,6 +359,8 @@ DOCKMESH_DATA_DIR=$DATA_DIR
 DOCKMESH_ENROLL_URL=$ENROLL_URL
 DOCKMESH_AGENT_URL=$AGENT_URL
 DOCKMESH_TOKEN=$TOKEN
+DOCKMESH_CA_FINGERPRINT=$CA_FINGERPRINT
+DOCKMESH_ENROLL_CA_FILE=$ENROLL_CA_FILE
 EOF
 chown root:"$RUN_GROUP" "$ENV_FILE"
 chmod 0640 "$ENV_FILE"
@@ -263,7 +381,7 @@ fi
 cat > "$UNIT_FILE" <<EOF
 [Unit]
 Description=Dockmesh Agent
-Documentation=https://github.com/BlinkMSP/dockmesh
+Documentation=https://github.com/Dockmesh/dockmesh
 After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
@@ -298,24 +416,33 @@ EOF
 # -----------------------------------------------------------------------------
 log "reloading systemd"
 systemctl daemon-reload
+START_TS="$(date +"%Y-%m-%d %H:%M:%S")"
 systemctl enable --now dockmesh-agent.service
 
-log "waiting for agent to connect"
-for i in 1 2 3 4 5 6 7 8 9 10; do
-  if systemctl is-active --quiet dockmesh-agent; then
-    break
-  fi
+AGENT_WAIT_SECS="${AGENT_WAIT_SECS:-60}"
+log "waiting for agent to connect (up to ${AGENT_WAIT_SECS}s)"
+STATE=waiting
+AGENT_LOGS=""
+for ((i = 0; i < AGENT_WAIT_SECS; i++)); do
+  AGENT_LOGS="$(journalctl -u dockmesh-agent --since "$START_TS" --no-pager -o cat 2>/dev/null || true)"
+  STATE="$(agent_log_state "$AGENT_LOGS")"
+  [[ "$STATE" != waiting ]] && break
   sleep 1
 done
 
-if systemctl is-active --quiet dockmesh-agent; then
-  printf '\n\033[1;32m✓\033[0m dockmesh-agent installed and running\n'
+if [[ "$STATE" == connected ]]; then
+  printf '\n\033[1;32m✓\033[0m dockmesh-agent installed and connected\n'
   printf '  user:    %s\n' "$RUN_USER"
   printf '  data:    %s\n' "$DATA_DIR"
   printf '  status:  systemctl status dockmesh-agent\n'
   printf '  logs:    journalctl -u dockmesh-agent -f\n'
 else
-  printf '\n\033[1;31m!!\033[0m dockmesh-agent failed to start. Recent logs:\n\n'
-  journalctl -u dockmesh-agent --no-pager -n 30 || true
+  if [[ "$STATE" == failed ]]; then
+    printf '\n\033[1;31m!!\033[0m the agent could not enroll. If the token expired or was already used, copy a fresh command from the Hosts page.\n'
+  else
+    printf '\n\033[1;31m!!\033[0m the agent did not connect to the server within %ss.\n' "$AGENT_WAIT_SECS"
+  fi
+  printf 'Last agent log lines:\n\n'
+  journalctl -u dockmesh-agent --no-pager -n 20 -o cat || true
   exit 1
 fi

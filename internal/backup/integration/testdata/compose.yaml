@@ -1,0 +1,32 @@
+# Test-only backup targets for the integration job. Never shipped.
+name: dm-it
+
+services:
+  smb:
+    build: ./samba
+    ports: ["127.0.0.1:1445:445"]
+    environment:
+      SMB_USER: backup
+      SMB_PASS: it-smb-pass
+      SMB_UID: "1002"
+
+  sftp:
+    image: atmoz/sftp:alpine@sha256:43dd1c023cf1bae487127d4b54660b0aee6e94c188a6599be36fb89ba115f961
+    ports: ["127.0.0.1:2222:22"]
+    volumes:
+      - ${IT_DIR}/sftp/users.conf:/etc/sftp/users.conf:ro
+      - ${IT_DIR}/sftp/client_ed25519.pub:/home/backup/.ssh/keys/client_ed25519.pub:ro
+
+  webdav:
+    image: rclone/rclone:1.75.2@sha256:2687085f718d3c628f7fdfb77c52a1d344332aed543110bb88088f2c70d43eb5
+    ports: ["127.0.0.1:8090:8090"]
+    command: ["serve", "webdav", "/data", "--addr", ":8090", "--config", "/dev/null"]
+    environment:
+      RCLONE_USER: backup
+      RCLONE_PASS: it-webdav-pass
+
+  garage:
+    image: dxflrs/garage:v2.5.0@sha256:677e5b758e4425a325b811c425c026bf35a4bf42f7ddbaa773de3f4fd779a5a5
+    ports: ["127.0.0.1:3900:3900"]
+    volumes:
+      - ./garage.toml:/etc/garage.toml:ro

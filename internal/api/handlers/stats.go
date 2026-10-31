@@ -7,12 +7,11 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
-
-	dtypes "github.com/docker/docker/api/types"
 )
 
 // WSStats streams normalized container stats over a WebSocket.
@@ -73,7 +72,7 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 		if ctx.Err() != nil {
 			return
 		}
-		var raw dtypes.StatsJSON
+		var raw container.StatsResponse
 		if err := dec.Decode(&raw); err != nil {
 			if err != io.EOF {
 				slog.Debug("stats decode", "err", err)

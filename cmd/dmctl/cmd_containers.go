@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -42,10 +44,14 @@ func containersListCmd() *cobra.Command {
 			}
 			q := c.withHost(url.Values{})
 			if all {
-				q.Set("all", "1")
+				q.Set("all", "true")
 			}
-			var cs []containerListEntry
-			if err := c.request("GET", "/api/v1/containers", q, nil, &cs); err != nil {
+			var raw json.RawMessage
+			if err := c.request("GET", "/api/v1/containers", q, nil, &raw); err != nil {
+				return err
+			}
+			cs, err := decodeContainerList(raw)
+			if err != nil {
 				return err
 			}
 			return printResult(cs, func() ([]string, [][]string) {
@@ -71,6 +77,25 @@ func containersListCmd() *cobra.Command {
 	return cmd
 }
 
+// decodeContainerList accepts both the plain array of a single host and the
+// {items, unreachable_hosts} envelope returned for --host all.
+func decodeContainerList(raw []byte) ([]containerListEntry, error) {
+	var cs []containerListEntry
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 && trimmed[0] == '{' {
+		var env struct {
+			Items []containerListEntry `json:"items"`
+		}
+		if err := json.Unmarshal(trimmed, &env); err != nil {
+			return nil, fmt.Errorf("decode containers: %w", err)
+		}
+		return env.Items, nil
+	}
+	if err := json.Unmarshal(raw, &cs); err != nil {
+		return nil, fmt.Errorf("decode containers: %w", err)
+	}
+	return cs, nil
+}
+
 func containersLogsCmd() *cobra.Command {
 	var tail string
 	var follow bool
@@ -87,7 +112,7 @@ func containersLogsCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&tail, "tail", "100", "Lines of history to show before following")
-	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow log output")
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Keep streaming new log lines (default: print the tail and exit)")
 	return cmd
 }
 

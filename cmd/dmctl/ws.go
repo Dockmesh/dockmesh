@@ -67,6 +67,8 @@ func streamContainerLogs(c *Client, containerID, tail string, follow bool, prefi
 	}
 	if follow {
 		q.Set("follow", "1")
+	} else {
+		q.Set("follow", "0")
 	}
 	if flagHost != "" {
 		q.Set("host", flagHost)
