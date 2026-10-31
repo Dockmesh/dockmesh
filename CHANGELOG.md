@@ -24,6 +24,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 
 ## [Unreleased]
 
+### Added
+- Every audit log entry has a category (`changes`, `access`, `auth` or `system`), and the audit
+  API filters by it with `?category=`; file reads, exec sessions and backup downloads now count
+  as access instead of system.
+
 ### Changed
 - Updating the image of a container that belongs to a stack now rebuilds it from the
   stack's compose.yaml, together with the other replicas of its service, and records the

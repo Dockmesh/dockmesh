@@ -4095,6 +4095,11 @@ paths:
         - name: user_id
           in: query
           schema: { type: string }
+          description: Only entries of this user (the user activity view).
+        - name: category
+          in: query
+          schema: { type: string, enum: [changes, access, auth, system] }
+          description: Only entries of this category; actions without a category count as `system`.
       responses:
         "200":
           description: Entries.
@@ -4103,6 +4108,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/AuditEntry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
@@ -8268,7 +8274,7 @@ components:
 
     AuditEntry:
       type: object
-      required: [id, ts, action]
+      required: [id, ts, action, category]
       description: |
         Tamper-evident: each row's `row_hash` chains to the previous
         entry's `prev_hash`. The genesis row anchors the chain against a
@@ -8279,6 +8285,14 @@ components:
         user_id: { type: string }
         username: { type: string }
         action: { type: string, example: container.start }
+        category:
+          type: string
+          enum: [changes, access, auth, system]
+          description: |
+            Derived from `action`: `changes` created, changed or removed
+            something; `access` read data (file browsing and reads, exec,
+            backup downloads); `auth` sign-in, sessions, tokens, MFA, SSO
+            and scope denials; `system` the server itself and the audit trail.
         target: { type: string }
         details: { type: string, description: JSON-encoded contextual metadata. }
         prev_hash: { type: string }

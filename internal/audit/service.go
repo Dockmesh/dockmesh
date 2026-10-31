@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -85,6 +86,7 @@ type Entry struct {
 	UserID   string    `json:"user_id,omitempty"`
 	Username string    `json:"username,omitempty"`
 	Action   string    `json:"action"`
+	Category string    `json:"category"`
 	Target   string    `json:"target,omitempty"`
 	Details  string    `json:"details,omitempty"`
 	PrevHash string    `json:"prev_hash,omitempty"`
@@ -259,9 +261,10 @@ func (s *Service) Write(ctx context.Context, userID, action, target string, deta
 // List returns the most recent entries, newest first.
 // ListFilter controls audit log filtering.
 type ListFilter struct {
-	Limit  int
-	Action string // filter by action prefix
-	UserID string // filter by user_id
+	Limit    int
+	Action   string // filter by action prefix
+	UserID   string // filter by user_id
+	Category string // one of Categories; empty = all
 }
 
 func (s *Service) List(ctx context.Context, limit int) ([]Entry, error) {
@@ -284,6 +287,29 @@ func (s *Service) ListFiltered(ctx context.Context, f ListFilter) ([]Entry, erro
 	if f.UserID != "" {
 		query += ` AND a.user_id = ?`
 		args = append(args, f.UserID)
+	}
+	if f.Category != "" {
+		// Unknown actions count as system, so system is everything not
+		// listed under another category.
+		var actions []string
+		not := ""
+		if f.Category == CategorySystem {
+			not = "NOT "
+			for _, c := range Categories {
+				if c != CategorySystem {
+					actions = append(actions, actionsIn(c)...)
+				}
+			}
+		} else {
+			actions = actionsIn(f.Category)
+		}
+		if len(actions) == 0 {
+			actions = []string{""}
+		}
+		query += ` AND a.action ` + not + `IN (?` + strings.Repeat(`, ?`, len(actions)-1) + `)`
+		for _, a := range actions {
+			args = append(args, a)
+		}
 	}
 	// Order by ts DESC so chronologically backdated rows (e.g. imported
 	// from another system, or test seed data) sort correctly. The hash
@@ -323,6 +349,7 @@ func (s *Service) ListFiltered(ctx context.Context, f ListFilter) ([]Entry, erro
 		if row.Valid {
 			e.RowHash = row.String
 		}
+		e.Category = Category(e.Action)
 		out = append(out, e)
 	}
 	return out, rows.Err()
