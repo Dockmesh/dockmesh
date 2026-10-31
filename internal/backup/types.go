@@ -10,38 +10,42 @@ import (
 
 // Job is one row of backup_jobs.
 type Job struct {
-	ID             int64      `json:"id"`
-	Name           string     `json:"name"`
-	HostID         string     `json:"host_id,omitempty"`
-	TargetType     string     `json:"target_type"`
-	TargetConfig   any        `json:"target_config"`
-	Sources        []Source   `json:"sources"`
-	Schedule       string     `json:"schedule"`
-	RetentionCount int        `json:"retention_count"`
-	RetentionDays  int        `json:"retention_days"`
-	Encrypt        bool       `json:"encrypt"`
-	PreHooks       []Hook     `json:"pre_hooks"`
-	PostHooks      []Hook     `json:"post_hooks"`
-	Enabled        bool       `json:"enabled"`
+	ID             int64    `json:"id"`
+	Name           string   `json:"name"`
+	HostID         string   `json:"host_id,omitempty"`
+	TargetID       int64    `json:"target_id,omitempty"`
+	TargetType     string   `json:"target_type"`
+	TargetConfig   any      `json:"target_config"`
+	Sources        []Source `json:"sources"`
+	Schedule       string   `json:"schedule"`
+	RetentionCount int      `json:"retention_count"`
+	RetentionDays  int      `json:"retention_days"`
+	Encrypt        bool     `json:"encrypt"`
+	PreHooks       []Hook   `json:"pre_hooks"`
+	PostHooks      []Hook   `json:"post_hooks"`
+	Enabled        bool     `json:"enabled"`
 	// NeedsReview is true when the job was auto-created by an older
 	// version of dockmesh and the operator has not yet confirmed they
-	// want to keep it. New installs never set this. P.13.2.
+	// want to keep it. New installs never set this.
 	NeedsReview  bool   `json:"needs_review,omitempty"`
 	ReviewReason string `json:"review_reason,omitempty"`
 	// ReviewAcked stays true forever once the operator clears the
 	// review (Keep / Disable). Used by the boot-time migration to
 	// skip jobs that were already reviewed in a previous boot.
-	ReviewAcked bool `json:"-"`
-	LastRunAt    *time.Time `json:"last_run_at,omitempty"`
-	NextRunAt    *time.Time `json:"next_run_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ReviewAcked bool       `json:"-"`
+	LastRunAt   *time.Time `json:"last_run_at,omitempty"`
+	NextRunAt   *time.Time `json:"next_run_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // JobInput is the create/update payload from the API.
 type JobInput struct {
-	Name           string   `json:"name"`
-	HostID         string   `json:"host_id,omitempty"` // empty or "local" → central daemon. P.12 multi-host backup.
+	Name   string `json:"name"`
+	HostID string `json:"host_id,omitempty"` // empty or "local" → central daemon
+	// TargetID picks a saved target. Without it, TargetType/TargetConfig
+	// describe a new target that is saved under the job's name.
+	TargetID       int64    `json:"target_id,omitempty"`
 	TargetType     string   `json:"target_type"`
 	TargetConfig   any      `json:"target_config"`
 	Sources        []Source `json:"sources"`
@@ -89,7 +93,7 @@ type Run struct {
 	ID         int64      `json:"id"`
 	JobID      int64      `json:"job_id"`
 	JobName    string     `json:"job_name"`
-	Status     string     `json:"status"`
+	Status     string     `json:"status"` // running | success | success_with_warnings | failed
 	StartedAt  time.Time  `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 	SizeBytes  int64      `json:"size_bytes"`
@@ -98,7 +102,26 @@ type Run struct {
 	Encrypted  bool       `json:"encrypted"`
 	Error      string     `json:"error,omitempty"`
 	Sources    []Source   `json:"sources"`
+	// PrunedAt is set once the archive was deleted from the target.
+	PrunedAt *time.Time `json:"pruned_at,omitempty"`
 }
+
+// Run statuses. A post-hook failure leaves an intact archive, so it is
+// a success with warnings rather than a failure.
+const (
+	StatusRunning             = "running"
+	StatusSuccess             = "success"
+	StatusSuccessWithWarnings = "success_with_warnings"
+	StatusFailed              = "failed"
+)
+
+// Restorable reports whether a run's archive can be read back.
+func (r *Run) Restorable() bool {
+	return (r.Status == StatusSuccess || r.Status == StatusSuccessWithWarnings) && r.PrunedAt == nil
+}
+
+// ErrNotRestorable is returned when a run failed or its archive is gone.
+var ErrNotRestorable = errors.New("run has no restorable archive (failed, still running, or removed by retention)")
 
 // Common errors.
 var (
@@ -108,10 +131,11 @@ var (
 	// ErrEncryptUnavailable refuses encrypted backups while the secrets
 	// service is disabled: the archive would be written in plaintext.
 	ErrEncryptUnavailable = errors.New("encryption needs secrets encryption enabled on the server (DOCKMESH_SECRETS_ENCRYPT_ENV)")
-	ErrRunNotFound       = errors.New("run not found")
+	ErrRunNotFound        = errors.New("run not found")
 	// ErrSystemRestore refuses to unpack a system backup anywhere a
-	// container could read it; system backups go through `dockmesh restore`.
-	ErrSystemRestore = errors.New("system backups can only be restored with `dockmesh restore` on the server")
+	// container could read it; system backups replace the whole install.
+	ErrSystemRestore  = errors.New("system backups can't be restored into a volume or stack; restore them as a whole (Restore the whole system, the setup wizard or `dockmesh restore`)")
+	ErrTargetNotFound = errors.New("backup target not found")
 )
 
 // HasSystemSource reports whether sources include the server itself.

@@ -49,6 +49,11 @@
     return c.type;
   }
 
+  function deliveryFailing(c: NotificationChannel): boolean {
+    if (!c.last_error_at) return false;
+    return !c.last_sent_at || new Date(c.last_error_at) > new Date(c.last_sent_at);
+  }
+
   async function toggleEnabled(c: NotificationChannel) {
     try {
       await api.alerts.updateChannel(c.id, {
@@ -56,6 +61,7 @@
         name: c.name,
         config: c.config,
         enabled: !c.enabled,
+        mute_schedule: c.mute_schedule ?? '',
       });
       await onReload();
     } catch (err) {
@@ -144,6 +150,12 @@
           <div class="ct-card-target" title={configSummary(c)}>
             {configSummary(c)}
           </div>
+
+          {#if deliveryFailing(c)}
+            <div class="ct-card-error" title={c.last_error}>
+              Delivery failed {new Date(c.last_error_at!).toLocaleString()}: {c.last_error}
+            </div>
+          {/if}
 
           <div class="ct-card-foot">
             <span class="ct-card-using">
@@ -303,6 +315,13 @@
   }
   .ct-pill-neutral { color: var(--fg-subtle); }
 
+  .ct-card-error {
+    font-size: 11px;
+    color: var(--color-danger-500);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .ct-card-target {
     font-family: var(--font-mono);
     font-size: 11px;

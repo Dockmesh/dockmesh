@@ -2,7 +2,7 @@
   // Standalone detail page for one backup target. Same layout as the
   // _TargetDrawer but with full-page editorial chrome — better for
   // copy-paste into runbooks ("here's the SFTP target we use…").
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api, ApiError, type BackupTarget, type BackupJob } from '$lib/api';
   import { Eyebrow } from '$lib/components/editorial';
@@ -15,7 +15,7 @@
     ChevronLeft, Edit, Trash2, RefreshCw, AlertTriangle, ArrowRight, Box
   } from 'lucide-svelte';
 
-  const id = $derived(parseInt($page.params.id, 10));
+  const id = $derived(parseInt(page.params.id, 10));
 
   $effect(() => {
     if (target) pageContext.set(target.name);
@@ -84,7 +84,7 @@
   }
 
   const usedPct = $derived(target && target.total_bytes > 0 ? (target.used_bytes / target.total_bytes) * 100 : 0);
-  const jobsHere = $derived(target ? jobs.filter((j) => j.target_type === target!.type) : []);
+  const jobsHere = $derived(target ? jobs.filter((j) => j.target_id === target!.id) : []);
 
   function fmtBytes(n: number): string {
     if (!n) return '—';

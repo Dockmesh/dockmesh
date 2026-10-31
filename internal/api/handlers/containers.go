@@ -7,24 +7,24 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/go-chi/chi/v5"
 )
 
 // containerRow is the all-mode row for ListContainers. The embedded
-// dtypes.Container marshals its fields flat alongside host_id / host_name
+// container.Summary marshals its fields flat alongside host_id / host_name
 // so the frontend reads everything off one JSON object instead of having
 // to follow a .row indirection.
 type containerRow struct {
-	dtypes.Container
-	HostID                string `json:"host_id"`
-	HostName              string `json:"host_name"`
-	HealthStatus          string `json:"health_status,omitempty"`        // healthy / unhealthy / starting / "" (none)
-	RestartCount          int    `json:"restart_count,omitempty"`         // populated via per-row inspect
-	ImageUpdateAvailable  bool   `json:"image_update_available,omitempty"` // from the update watcher cache
+	container.Summary
+	HostID               string `json:"host_id"`
+	HostName             string `json:"host_name"`
+	HealthStatus         string `json:"health_status,omitempty"`          // healthy / unhealthy / starting / "" (none)
+	RestartCount         int    `json:"restart_count,omitempty"`          // populated via per-row inspect
+	ImageUpdateAvailable bool   `json:"image_update_available,omitempty"` // from the update watcher cache
 }
 
 // parseHealthFromStatus extracts the healthcheck verdict from Docker's
@@ -111,7 +111,7 @@ func (h *Handlers) ListContainers(w http.ResponseWriter, r *http.Request) {
 				rows := make([]containerRow, len(list))
 				for i, c := range list {
 					rows[i] = containerRow{
-						Container:    c,
+						Summary:      c,
 						HostID:       hh.ID(),
 						HostName:     hh.Name(),
 						HealthStatus: parseHealthFromStatus(c.Status),
@@ -146,7 +146,7 @@ func (h *Handlers) ListContainers(w http.ResponseWriter, r *http.Request) {
 	rows := make([]containerRow, len(list))
 	for i, c := range list {
 		rows[i] = containerRow{
-			Container:    c,
+			Summary:      c,
 			HostID:       target.ID(),
 			HostName:     target.Name(),
 			HealthStatus: parseHealthFromStatus(c.Status),

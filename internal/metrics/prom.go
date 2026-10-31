@@ -209,8 +209,9 @@ func (m *PromMetrics) refresh(ctx context.Context) {
 		  FROM backup_jobs j
 		  LEFT JOIN backup_runs r ON r.id = (
 		    SELECT id FROM backup_runs
-		     WHERE job_id = j.id AND status = 'success'
-		     ORDER BY finished_at DESC LIMIT 1)`)
+		     WHERE job_id = j.id AND status IN ('success', 'success_with_warnings')
+		     ORDER BY finished_at DESC LIMIT 1)
+		 WHERE j.deleted_at IS NULL`)
 	if err == nil {
 		for rows.Next() {
 			var name string

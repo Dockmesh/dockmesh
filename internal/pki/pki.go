@@ -112,30 +112,60 @@ func (m *Manager) IssueClientCert(commonName string, validity time.Duration) (ce
 	if err != nil {
 		return nil, nil, "", err
 	}
-	serial, err := randomSerial()
+	certPEM, fingerprint, _, err = m.signClient(&key.PublicKey, commonName, validity)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	template := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: commonName, Organization: []string{"Dockmesh Agent"}},
-		NotBefore:    time.Now().Add(-1 * time.Minute),
-		NotAfter:     time.Now().Add(validity),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, m.caCert, &key.PublicKey, m.caKey)
-	if err != nil {
-		return nil, nil, "", err
-	}
-	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
 		return nil, nil, "", err
 	}
 	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	fingerprint = certFingerprint(der)
-	return
+	return certPEM, keyPEM, fingerprint, nil
+}
+
+// SignClientCSR issues a client cert for the key in a PEM CSR, so the
+// private key never leaves the agent. Only the key is taken from the
+// CSR; the subject is always commonName. Keys must be ECDSA P-256.
+func (m *Manager) SignClientCSR(csrPEM []byte, commonName string, validity time.Duration) (certPEM []byte, fingerprint string, notAfter time.Time, err error) {
+	block, _ := pem.Decode(csrPEM)
+	if block == nil || block.Type != "CERTIFICATE REQUEST" {
+		return nil, "", time.Time{}, errors.New("csr: no CERTIFICATE REQUEST PEM block")
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		return nil, "", time.Time{}, fmt.Errorf("csr: %w", err)
+	}
+	if err := csr.CheckSignature(); err != nil {
+		return nil, "", time.Time{}, fmt.Errorf("csr signature: %w", err)
+	}
+	pub, ok := csr.PublicKey.(*ecdsa.PublicKey)
+	if !ok || pub.Curve != elliptic.P256() {
+		return nil, "", time.Time{}, errors.New("csr: key must be ECDSA P-256")
+	}
+	return m.signClient(pub, commonName, validity)
+}
+
+func (m *Manager) signClient(pub *ecdsa.PublicKey, commonName string, validity time.Duration) ([]byte, string, time.Time, error) {
+	serial, err := randomSerial()
+	if err != nil {
+		return nil, "", time.Time{}, err
+	}
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: commonName, Organization: []string{"Dockmesh Agent"}},
+		NotBefore:    now.Add(-1 * time.Minute),
+		NotAfter:     now.Add(validity),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, m.caCert, pub, m.caKey)
+	if err != nil {
+		return nil, "", time.Time{}, err
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	return certPEM, certFingerprint(der), template.NotAfter, nil
 }
 
 // FingerprintFromCert returns the SHA-256 of the DER-encoded cert.
@@ -228,10 +258,10 @@ func (m *Manager) ensureCA() error {
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
-	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
+	if err := WriteFileAtomic(certPath, certPEM, 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(keyPath, keyPEM, 0o400); err != nil {
+	if err := WriteFileAtomic(keyPath, keyPEM, 0o400); err != nil {
 		return err
 	}
 	m.caCert = cert

@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/rbac"
-	dtypes "github.com/docker/docker/api/types"
 )
 
 // UpdateInfo describes whether a newer image is available for one image
@@ -186,7 +186,7 @@ func (w *Watcher) poll(ctx context.Context) {
 		return
 	}
 	cli := w.docker.Raw()
-	containers, err := cli.ContainerList(ctx, dtypes.ContainerListOptions{All: false})
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: false})
 	if err != nil {
 		slog.Debug("image-update watcher: list containers failed", "err", err)
 		return
@@ -206,7 +206,7 @@ func (w *Watcher) poll(ctx context.Context) {
 		// The digest of the image the container actually runs, for
 		// ref's repository. An image without one was built or loaded
 		// locally and has nothing upstream to compare with.
-		img, _, lerr := cli.ImageInspectWithRaw(ctx, c.ImageID)
+		img, lerr := cli.ImageInspect(ctx, c.ImageID)
 		if lerr != nil {
 			info.Error = trimErr(lerr.Error())
 		} else {

@@ -79,14 +79,21 @@ func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
 		h.auditDetached(r, audit.ActionContainerExecEnd, containerID, end)
 	}()
 
-	// Goroutine 1: container → WebSocket (binary frames).
+	// Goroutine 1: container → WebSocket (binary frames). When the shell
+	// or its host goes away the socket is closed, which also ends the
+	// read loop below; it would otherwise wait for the next keystroke.
 	go func() {
+		defer func() {
+			cancel()
+			_ = conn.WriteControl(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
+			_ = conn.Close()
+		}()
 		buf := make([]byte, 4096)
 		for {
 			n, err := session.Read(buf)
 			if n > 0 {
 				if err := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); err != nil {
-					cancel()
 					return
 				}
 			}
@@ -94,7 +101,6 @@ func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
 				if err != io.EOF {
 					slog.Debug("exec read", "err", err)
 				}
-				cancel()
 				return
 			}
 		}

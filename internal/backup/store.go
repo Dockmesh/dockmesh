@@ -20,12 +20,12 @@ func newStore(db *sql.DB) *store { return &store{db: db} }
 
 func (s *store) listJobs(ctx context.Context) ([]Job, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, COALESCE(host_id, ''), target_type, target_config, sources, schedule,
+		SELECT id, name, COALESCE(host_id, ''), COALESCE(target_id, 0), target_type, target_config, sources, schedule,
 		       retention_count, retention_days, encrypt, pre_hooks, post_hooks,
 		       enabled, COALESCE(needs_review, 0), COALESCE(review_reason, ''),
 		       COALESCE(review_acked, 0),
 		       last_run_at, next_run_at, created_at, updated_at
-		FROM backup_jobs ORDER BY id`)
+		FROM backup_jobs WHERE deleted_at IS NULL ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -42,13 +42,54 @@ func (s *store) listJobs(ctx context.Context) ([]Job, error) {
 }
 
 func (s *store) getJob(ctx context.Context, id int64) (*Job, error) {
+	return s.queryJob(ctx, id, false)
+}
+
+// getJobForRun also returns deleted jobs: their runs stay restorable and
+// need the job's target.
+// jobsUsingTarget returns every job that writes to the target, deleted
+// ones included: their runs still read from it.
+func (s *store) jobsUsingTarget(ctx context.Context, targetID int64) ([]Job, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM backup_jobs WHERE target_id = ? ORDER BY id`, targetID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]Job, 0, len(ids))
+	for _, id := range ids {
+		j, err := s.getJobForRun(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *j)
+	}
+	return out, nil
+}
+
+func (s *store) getJobForRun(ctx context.Context, id int64) (*Job, error) {
+	return s.queryJob(ctx, id, true)
+}
+
+func (s *store) queryJob(ctx context.Context, id int64, includeDeleted bool) (*Job, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, COALESCE(host_id, ''), target_type, target_config, sources, schedule,
+		SELECT id, name, COALESCE(host_id, ''), COALESCE(target_id, 0), target_type, target_config, sources, schedule,
 		       retention_count, retention_days, encrypt, pre_hooks, post_hooks,
 		       enabled, COALESCE(needs_review, 0), COALESCE(review_reason, ''),
 		       COALESCE(review_acked, 0),
 		       last_run_at, next_run_at, created_at, updated_at
-		FROM backup_jobs WHERE id = ?`, id)
+		FROM backup_jobs WHERE id = ? AND (? OR deleted_at IS NULL)`, id, includeDeleted)
 	j, err := scanJob(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrJobNotFound
@@ -63,10 +104,10 @@ func (s *store) createJob(ctx context.Context, in JobInput) (int64, error) {
 	post, _ := json.Marshal(in.PostHooks)
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO backup_jobs
-			(name, host_id, target_type, target_config, sources, schedule,
+			(name, host_id, target_id, target_type, target_config, sources, schedule,
 			 retention_count, retention_days, encrypt, pre_hooks, post_hooks, enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.Name, in.HostID, in.TargetType, string(tcfg), string(srcs), in.Schedule,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.Name, in.HostID, nullID(in.TargetID), in.TargetType, string(tcfg), string(srcs), in.Schedule,
 		in.RetentionCount, in.RetentionDays, boolInt(in.Encrypt),
 		string(pre), string(post), boolInt(in.Enabled))
 	if err != nil {
@@ -83,20 +124,41 @@ func (s *store) updateJob(ctx context.Context, id int64, in JobInput) error {
 	post, _ := json.Marshal(in.PostHooks)
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE backup_jobs SET
-			name = ?, host_id = ?, target_type = ?, target_config = ?, sources = ?,
+			name = ?, host_id = ?, target_id = ?, target_type = ?, target_config = ?, sources = ?,
 			schedule = ?, retention_count = ?, retention_days = ?,
 			encrypt = ?, pre_hooks = ?, post_hooks = ?, enabled = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
-		in.Name, in.HostID, in.TargetType, string(tcfg), string(srcs), in.Schedule,
+		in.Name, in.HostID, nullID(in.TargetID), in.TargetType, string(tcfg), string(srcs), in.Schedule,
 		in.RetentionCount, in.RetentionDays, boolInt(in.Encrypt),
 		string(pre), string(post), boolInt(in.Enabled), id)
 	return err
 }
 
+// deleteJob hides the job and frees its name; a job with no archive left
+// is removed for good.
 func (s *store) deleteJob(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM backup_jobs WHERE id = ?`, id)
-	return err
+	res, err := s.db.ExecContext(ctx, `
+		DELETE FROM backup_jobs WHERE id = ? AND deleted_at IS NULL AND NOT EXISTS (
+			SELECT 1 FROM backup_runs WHERE job_id = ? AND pruned_at IS NULL
+			  AND COALESCE(target_path, '') != '')`, id, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	res, err = s.db.ExecContext(ctx, `
+		UPDATE backup_jobs SET deleted_at = CURRENT_TIMESTAMP, enabled = 0,
+			name = name || ' (deleted #' || id || ')'
+		WHERE id = ? AND deleted_at IS NULL`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrJobNotFound
+	}
+	return nil
 }
 
 func (s *store) updateJobRunTimes(ctx context.Context, id int64, last, next *time.Time) error {
@@ -161,8 +223,8 @@ func (s *store) startRun(ctx context.Context, j *Job) (int64, error) {
 	srcs, _ := json.Marshal(j.Sources)
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO backup_runs (job_id, job_name, status, sources_json, encrypted)
-		VALUES (?, ?, 'running', ?, ?)`,
-		j.ID, j.Name, string(srcs), boolInt(j.Encrypt))
+		VALUES (?, ?, ?, ?, ?)`,
+		j.ID, j.Name, StatusRunning, string(srcs), boolInt(j.Encrypt))
 	if err != nil {
 		return 0, err
 	}
@@ -170,6 +232,26 @@ func (s *store) startRun(ctx context.Context, j *Job) (int64, error) {
 	return id, nil
 }
 
+// failInterruptedRuns fails runs left in state running by a process that
+// stopped mid-run. Their target_path stays without a hash, so the next
+// retention pass of the job removes the partial archive.
+func (s *store) failInterruptedRuns(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE backup_runs SET status = ?, finished_at = ?, sha256 = '',
+			error = 'interrupted: the server stopped during this run'
+		WHERE status = ?`, StatusFailed, time.Now(), StatusRunning)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+func (s *store) setRunPath(ctx context.Context, runID int64, path string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE backup_runs SET target_path = ? WHERE id = ?`, path, runID)
+	return err
+}
+
+// finishRun records the outcome; sha covers the archive as stored on the target.
 func (s *store) finishRun(ctx context.Context, runID int64, status string, size int64, path, sha string, runErr error) error {
 	now := time.Now()
 	var errStr string
@@ -184,6 +266,64 @@ func (s *store) finishRun(ctx context.Context, runID int64, status string, size 
 	return err
 }
 
+// keptRuns returns the job's runs whose archive is still on the target,
+// newest first. Retention only deletes files listed here, so it can't
+// touch another job's archives or files Dockmesh didn't record.
+func (s *store) keptRuns(ctx context.Context, jobID int64) ([]Run, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, target_path, finished_at
+		FROM backup_runs
+		WHERE job_id = ? AND status IN ('success', 'success_with_warnings')
+		  AND pruned_at IS NULL AND COALESCE(target_path, '') != ''
+		ORDER BY id DESC`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Run
+	for rows.Next() {
+		var r Run
+		var finished sql.NullTime
+		if err := rows.Scan(&r.ID, &r.TargetPath, &finished); err != nil {
+			return nil, err
+		}
+		if finished.Valid {
+			r.FinishedAt = &finished.Time
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// partialRuns lists failed runs that still point at a file: partials that
+// could not be deleted when the run failed (no hash means the archive
+// never completed).
+func (s *store) partialRuns(ctx context.Context, jobID int64) ([]Run, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, target_path FROM backup_runs
+		WHERE job_id = ? AND status = 'failed' AND pruned_at IS NULL
+		  AND COALESCE(target_path, '') != '' AND COALESCE(sha256, '') = ''`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Run
+	for rows.Next() {
+		var r Run
+		if err := rows.Scan(&r.ID, &r.TargetPath); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *store) markPruned(ctx context.Context, runID int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE backup_runs SET pruned_at = CURRENT_TIMESTAMP WHERE id = ?`, runID)
+	return err
+}
+
 func (s *store) listRuns(ctx context.Context, limit int) ([]Run, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
@@ -191,7 +331,7 @@ func (s *store) listRuns(ctx context.Context, limit int) ([]Run, error) {
 	return s.queryRuns(ctx, `
 		SELECT id, job_id, job_name, status, started_at, finished_at,
 		       size_bytes, COALESCE(target_path, ''), COALESCE(sha256, ''),
-		       encrypted, COALESCE(error, ''), sources_json
+		       encrypted, COALESCE(error, ''), sources_json, pruned_at
 		FROM backup_runs ORDER BY id DESC LIMIT ?`, limit)
 }
 
@@ -215,16 +355,20 @@ func (s *store) queryRuns(ctx context.Context, query string, args ...any) ([]Run
 	out := []Run{}
 	for rows.Next() {
 		var r Run
-		var finished sql.NullTime
+		var finished, pruned sql.NullTime
 		var encInt int
 		var srcs string
 		if err := rows.Scan(&r.ID, &r.JobID, &r.JobName, &r.Status, &r.StartedAt,
-			&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs); err != nil {
+			&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs, &pruned); err != nil {
 			return nil, err
 		}
 		if finished.Valid {
 			t := finished.Time
 			r.FinishedAt = &t
+		}
+		if pruned.Valid {
+			t := pruned.Time
+			r.PrunedAt = &t
 		}
 		r.Encrypted = encInt == 1
 		_ = json.Unmarshal([]byte(srcs), &r.Sources)
@@ -237,14 +381,14 @@ func (s *store) getRun(ctx context.Context, id int64) (*Run, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, job_id, job_name, status, started_at, finished_at,
 		       size_bytes, COALESCE(target_path, ''), COALESCE(sha256, ''),
-		       encrypted, COALESCE(error, ''), sources_json
+		       encrypted, COALESCE(error, ''), sources_json, pruned_at
 		FROM backup_runs WHERE id = ?`, id)
 	var r Run
-	var finished sql.NullTime
+	var finished, pruned sql.NullTime
 	var encInt int
 	var srcs string
 	if err := row.Scan(&r.ID, &r.JobID, &r.JobName, &r.Status, &r.StartedAt,
-		&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs); err != nil {
+		&finished, &r.SizeBytes, &r.TargetPath, &r.SHA256, &encInt, &r.Error, &srcs, &pruned); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrRunNotFound
 		}
@@ -253,6 +397,10 @@ func (s *store) getRun(ctx context.Context, id int64) (*Run, error) {
 	if finished.Valid {
 		t := finished.Time
 		r.FinishedAt = &t
+	}
+	if pruned.Valid {
+		t := pruned.Time
+		r.PrunedAt = &t
 	}
 	r.Encrypted = encInt == 1
 	_ = json.Unmarshal([]byte(srcs), &r.Sources)
@@ -273,7 +421,7 @@ func scanJob(r rowScanner) (*Job, error) {
 	var enabled, encrypt, needsReview, reviewAcked int
 	var lastRun, nextRun sql.NullTime
 	if err := r.Scan(
-		&j.ID, &j.Name, &j.HostID, &j.TargetType, &tcfg, &srcs, &j.Schedule,
+		&j.ID, &j.Name, &j.HostID, &j.TargetID, &j.TargetType, &tcfg, &srcs, &j.Schedule,
 		&j.RetentionCount, &j.RetentionDays, &encrypt, &pre, &post,
 		&enabled, &needsReview, &j.ReviewReason, &reviewAcked,
 		&lastRun, &nextRun, &j.CreatedAt, &j.UpdatedAt,
@@ -297,6 +445,13 @@ func scanJob(r rowScanner) (*Job, error) {
 		j.NextRunAt = &t
 	}
 	return &j, nil
+}
+
+func nullID(id int64) any {
+	if id <= 0 {
+		return nil
+	}
+	return id
 }
 
 func boolInt(b bool) int {

@@ -16,16 +16,16 @@ import (
 // legitimate UI client can redirect there instead of trying to login
 // against an unconfigured server.
 var alwaysAllowedPaths = []string{
-	"/setup",            // wizard UI shell
-	"/setup/",           // wizard UI sub-routes
-	"/api/v1/setup/",    // wizard API
-	"/api/v1/setup",     // wizard API root
-	"/api/v1/health",    // health probe
-	"/api/v1/openapi",   // openapi.json / .yaml
-	"/api/v1/docs",      // swagger ui
-	"/healthz/live",     // k8s probe
-	"/healthz/ready",    // k8s probe
-	"/_app/",            // sveltekit assets
+	"/setup",          // wizard UI shell
+	"/setup/",         // wizard UI sub-routes
+	"/api/v1/setup/",  // wizard API
+	"/api/v1/setup",   // wizard API root
+	"/api/v1/health",  // health probe
+	"/api/v1/openapi", // openapi.json / .yaml
+	"/api/v1/docs",    // swagger ui
+	"/healthz/live",   // k8s probe
+	"/healthz/ready",  // k8s probe
+	"/_app/",          // sveltekit assets
 	"/favicon.ico",
 	"/robots.txt",
 }
@@ -130,7 +130,9 @@ const SetupHeader = "X-Dockmesh-Setup"
 // RequireSetupHeader rejects requests without SetupHeader.
 func RequireSetupHeader(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get(SetupHeader) == "" {
+		// Sec-Fetch-Site: a browser marks cross-site requests itself, so
+		// a page can't get past this even where CORS would let it.
+		if r.Header.Get(SetupHeader) == "" || r.Header.Get("Sec-Fetch-Site") == "cross-site" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing " + SetupHeader + " header"})

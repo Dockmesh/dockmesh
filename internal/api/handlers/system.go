@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/system"
 )
@@ -63,7 +64,7 @@ func (h *Handlers) SystemMetrics(w http.ResponseWriter, r *http.Request) {
 	// to avoid the host.Host interface overhead; for remote we go
 	// through the agent protocol via pickHost.
 	if hostID == "" || hostID == "local" {
-		writeJSON(w, http.StatusOK, system.Collect())
+		writeJSON(w, http.StatusOK, system.CollectWithMounts(r.Context()))
 		return
 	}
 	target, err := h.pickHost(r)
@@ -141,7 +142,7 @@ func (h *Handlers) BackupStatus(w http.ResponseWriter, r *http.Request) {
 	age := time.Since(ts)
 	resp.AgeSeconds = int64(age.Seconds())
 	switch {
-	case run.Status != "success":
+	case run.Status != backup.StatusSuccess && run.Status != backup.StatusSuccessWithWarnings:
 		resp.State = "failed"
 	case age > 36*time.Hour:
 		resp.State = "stale"
@@ -263,8 +264,13 @@ func (h *Handlers) SystemHealth(w http.ResponseWriter, r *http.Request) {
 		checks = append(checks, c)
 	}
 
-	// ---- disk: warn >80%, fail >95%, data directory is the critical one.
-	if m := system.Collect(); m.DiskTotal > 0 {
+	// ---- disk: warn >80%, fail >95%. Only for callers who may see the
+	// server host, since the detail names its mount.
+	var m system.Metrics
+	if h.inReadScope(r, "local", "") {
+		m = system.CollectWithMounts(r.Context())
+	}
+	if m.DiskTotal > 0 {
 		pct := m.DiskPercent
 		c := HealthCheck{Name: "disk", Label: "Disk", LinkTo: "/"}
 		c.Detail = fmt.Sprintf("%.0f%% used (%s)", pct, m.DiskPath)
@@ -373,7 +379,11 @@ func (h *Handlers) healthBackup(ctx context.Context) HealthCheck {
 	}
 	age := time.Since(ts)
 	switch {
-	case st.Run.Status != "success":
+	case st.Run.Status == backup.StatusSuccessWithWarnings:
+		c.Status = "warn"
+		c.Detail = "last run finished with warnings"
+		c.Message = st.Run.Error
+	case st.Run.Status != backup.StatusSuccess:
 		c.Status = "fail"
 		c.Detail = "last run failed"
 		c.Message = st.Run.Error

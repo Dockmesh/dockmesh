@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	dtypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
@@ -405,11 +405,11 @@ func (h *Handlers) filterStackListByScope(r *http.Request, in []stackListEntry) 
 // + compose project label (extracted via Labels map). Containers
 // without a compose project are scoped by host-only (i.e. visible to
 // any role unscoped-on-stack, hidden from stack-only-scoped roles).
-func (h *Handlers) filterContainersByRoleScope(r *http.Request, hostID string, in []dtypes.Container) []dtypes.Container {
+func (h *Handlers) filterContainersByRoleScope(r *http.Request, hostID string, in []container.Summary) []container.Summary {
 	if h.roleIsUnscoped(r) {
 		return in
 	}
-	out := make([]dtypes.Container, 0, len(in))
+	out := make([]container.Summary, 0, len(in))
 	var hostTags []string
 	if h.HostTags != nil && hostID != "" {
 		hostTags = h.HostTags.Tags(hostID)

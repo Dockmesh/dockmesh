@@ -27,12 +27,12 @@ import (
 	"time"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	dtypes "github.com/docker/docker/api/types"
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
+	imagetypes "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	dnetwork "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -78,7 +78,7 @@ func NewService(dockerCli *docker.Client, db *sql.DB) *Service {
 
 // acquire serialises swaps per stack (or per standalone container), so
 // two updates never rename and recreate the same replicas at once.
-func (s *Service) acquire(info *dtypes.ContainerJSON, st *stackTarget) (func(), error) {
+func (s *Service) acquire(info *container.InspectResponse, st *stackTarget) (func(), error) {
 	key := "container:" + strings.TrimPrefix(info.Name, "/")
 	if st != nil {
 		key = "stack:" + st.stack
@@ -203,7 +203,7 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 	defer release()
 
 	authBlob := s.resolveImageAuth(ctx, ref)
-	rc, err := cli.ImagePull(ctx, ref, dtypes.ImagePullOptions{RegistryAuth: authBlob})
+	rc, err := cli.ImagePull(ctx, ref, imagetypes.PullOptions{RegistryAuth: authBlob})
 	if err != nil {
 		return nil, fmt.Errorf("pull %s: %w", ref, err)
 	}
@@ -213,7 +213,7 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 	}
 	rc.Close()
 
-	newInfo, _, err := cli.ImageInspectWithRaw(ctx, ref)
+	newInfo, err := cli.ImageInspect(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("inspect new image: %w", err)
 	}
@@ -305,8 +305,8 @@ func (s *Service) Rollback(ctx context.Context, containerID string, historyID in
 		return nil, ErrAlreadyRolledBack
 	}
 
-	if _, _, err := cli.ImageInspectWithRaw(ctx, e.RollbackTag); err != nil {
-		if errdefs.IsNotFound(err) {
+	if _, err := cli.ImageInspect(ctx, e.RollbackTag); err != nil {
+		if cerrdefs.IsNotFound(err) {
 			return nil, ErrRollbackImageGone
 		}
 		return nil, fmt.Errorf("inspect rollback image: %w", err)
@@ -393,7 +393,7 @@ type stackTarget struct {
 
 // stackTarget returns nil for containers outside any managed stack
 // (plain `docker run`, compose projects Dockmesh doesn't own).
-func (s *Service) stackTarget(ctx context.Context, info *dtypes.ContainerJSON) (*stackTarget, error) {
+func (s *Service) stackTarget(ctx context.Context, info *container.InspectResponse) (*stackTarget, error) {
 	if s.stacks == nil || info.Config == nil {
 		return nil, nil
 	}
@@ -488,7 +488,7 @@ func (s *Service) recordStack(ctx context.Context, st *stackTarget, userID, note
 
 // standaloneSpec rebuilds a non-stack container from its own inspected
 // config with a new image.
-func standaloneSpec(info *dtypes.ContainerJSON, image string, health *container.HealthConfig) newSpec {
+func standaloneSpec(info *container.InspectResponse, image string, health *container.HealthConfig) newSpec {
 	cfg := *info.Config
 	cfg.Image = image
 	if info.Config.Volumes != nil {
@@ -527,7 +527,7 @@ func standaloneSpec(info *dtypes.ContainerJSON, image string, health *container.
 	return newSpec{cfg: &cfg, hostCfg: &hostCfg, netCfg: netCfg, health: healthFromConfig(health)}
 }
 
-func containerNameOf(c dtypes.Container) string {
+func containerNameOf(c container.Summary) string {
 	if len(c.Names) == 0 {
 		return ""
 	}
