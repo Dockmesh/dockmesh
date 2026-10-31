@@ -204,15 +204,16 @@ func (s *Service) sendWithRetry(ctx context.Context, id int64, n Notification) e
 		case <-t.C:
 		}
 	}
-	s.recordResult(ctx, id, err)
+	s.recordResult(context.WithoutCancel(ctx), id, err)
 	return err
 }
 
-// maxErrorLen bounds the stored error; response bodies can be large.
+// maxErrorLen bounds the stored error; other errors can still be long.
 const maxErrorLen = 300
 
-// recordResult persists the delivery outcome. URL errors are reduced to
-// their cause because the URL itself may carry a webhook token.
+// recordResult persists the delivery outcome. The stored error is shown
+// to every alerts viewer, so URL errors are reduced to their cause and
+// HTTP errors to their status: both can carry a webhook token.
 func (s *Service) recordResult(ctx context.Context, id int64, sendErr error) {
 	now := time.Now().UTC()
 	var dbErr error
@@ -222,9 +223,13 @@ func (s *Service) recordResult(ctx context.Context, id int64, sendErr error) {
 			`UPDATE notification_channels SET last_sent_at = ? WHERE id = ?`, now, id)
 	} else {
 		var uerr *url.Error
-		if errors.As(sendErr, &uerr) {
+		var serr *statusError
+		switch {
+		case errors.As(sendErr, &uerr):
 			msg = uerr.Op + ": " + uerr.Err.Error()
-		} else {
+		case errors.As(sendErr, &serr):
+			msg = serr.Status
+		default:
 			msg = sendErr.Error()
 		}
 		if len(msg) > maxErrorLen {

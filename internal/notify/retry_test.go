@@ -99,6 +99,24 @@ func TestRecordedErrorOmitsURL(t *testing.T) {
 	}
 }
 
+func TestRecordedErrorOmitsResponseBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Cannot POST "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	s := newNotifyService(t)
+	id := addWebhook(t, s, srv.URL+"/hooks/secret-token")
+	err := s.sendWithRetry(context.Background(), id, Notification{Title: "t"})
+	if err == nil || !strings.Contains(err.Error(), "secret-token") {
+		t.Fatalf("returned error = %v, want the body for the Test button", err)
+	}
+	c := s.byID(id)
+	if c.LastError != "404 Not Found" {
+		t.Fatalf("last_error = %q, want only the status", c.LastError)
+	}
+}
+
 func TestSendWithRetrySkipsDisabled(t *testing.T) {
 	s := newNotifyService(t)
 	cfg, _ := json.Marshal(map[string]string{"url": "http://127.0.0.1:1/"})
