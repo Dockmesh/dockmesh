@@ -37,8 +37,7 @@
   flex-wrap: wrap;
   margin-top: -8px;
 }
-.dm-toolbar input[type='search'],
-.dm-toolbar .dm-filter {
+.dm-filter {
   min-height: var(--ctl-h);
   border: 1px solid var(--border);
   border-radius: var(--r);
@@ -47,6 +46,7 @@
   padding: 0 10px;
   font: inherit;
 }
+.dm-filter::placeholder { color: var(--subtle); }
 .dm-h2 {
   font-size: 14px;
   font-weight: 600;

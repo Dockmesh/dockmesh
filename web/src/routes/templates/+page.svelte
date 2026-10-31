@@ -1,22 +1,15 @@
 <script lang="ts">
-  // Stack Templates — catalog of pre-baked compose stacks with parameter
-  // forms. Built-ins ship with Dockmesh; operators can add their own.
-  //
-  // Slice 1: editorial card-grid + Deploy-Drawer + Editorial edit modal.
-  // Categories/Featured/Popular wait for Backend additions (see
-  // backend_slice_punch_list.md).
+  // Stack templates: compose files with placeholders that become a form at
+  // deploy time. Built-ins ship with Dockmesh; operators add their own.
   import {
     api, ApiError,
     type StackTemplate, type StackTemplateInput,
   } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
-  import { Skeleton } from '$lib/components/ui';
-  import { EditorialPage, Eyebrow, Field, EditorialModal } from '$lib/components/editorial';
+  import { Skeleton, Modal, Segmented, Menu, ChipList, TagPill, EmptyState } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
-  import {
-    Package, Plus, Trash2, Edit2, Download, Rocket, Search, AlertCircle,
-  } from 'lucide-svelte';
+  import { Package, Plus, Trash2, KeyRound } from 'lucide-svelte';
   import DeployDrawer from './_DeployDrawer.svelte';
 
   const canDeploy = $derived(allowed('stacks.deploy'));
@@ -45,6 +38,7 @@
     parameters: [],
   });
   let editBusy = $state(false);
+  let slugTouched = $state(false);
   let editErr = $state<string | null>(null);
 
   async function load() {
@@ -130,6 +124,7 @@
     };
     editTab = 'compose';
     editErr = null;
+    slugTouched = false;
     editOpen = true;
   }
 
@@ -148,11 +143,82 @@
     editOpen = true;
   }
 
-  function addEditParam() {
-    editForm.parameters = [...(editForm.parameters ?? []), { name: '', default: '' }];
+  const COLS = '32px minmax(160px, 1fr) minmax(220px, 2fr) minmax(120px, 1fr) 90px 90px 130px';
+  const PCOLS = '150px minmax(0, 1fr) minmax(0, 1fr) 70px 36px';
+
+  // Mirrors internal/templates: {{name}}, {{name|default:x}}, {{name|secret}};
+  // later occurrences add flags.
+  interface Placeholder {
+    name: string;
+    def: string;
+    secret: boolean;
   }
-  function removeEditParam(i: number) {
-    editForm.parameters = (editForm.parameters ?? []).filter((_, idx) => idx !== i);
+  function parsePlaceholders(compose: string): Placeholder[] {
+    const byName = new Map<string, Placeholder>();
+    for (const m of compose.matchAll(/\{\{\s*(.+?)\s*\}\}/g)) {
+      const parts = m[1].split('|');
+      const name = parts[0].trim();
+      if (!name) continue;
+      const ph = byName.get(name) ?? { name, def: '', secret: false };
+      for (const raw of parts.slice(1)) {
+        const flag = raw.trim();
+        if (flag.startsWith('default:')) ph.def = flag.slice(8);
+        else if (flag === 'secret') ph.secret = true;
+      }
+      byName.set(name, ph);
+    }
+    return [...byName.values()];
+  }
+  function paramNames(t: StackTemplate): string[] {
+    return [...new Set([...parsePlaceholders(t.compose).map((p) => p.name), ...(t.parameters ?? []).map((p) => p.name)])];
+  }
+
+  interface ParamRow {
+    name: string;
+    label: string;
+    def: string;
+    composeDefault: string;
+    secret: boolean;
+    inCompose: boolean;
+  }
+  const paramRows = $derived.by<ParamRow[]>(() => {
+    const found = parsePlaceholders(editForm.compose);
+    const explicit = editForm.parameters ?? [];
+    const rows: ParamRow[] = found.map((ph) => {
+      const ex = explicit.find((p) => p.name === ph.name);
+      return {
+        name: ph.name,
+        label: ex?.description ?? '',
+        def: ex?.default ?? '',
+        composeDefault: ph.def,
+        secret: ph.secret || !!ex?.secret,
+        inCompose: true,
+      };
+    });
+    for (const ex of explicit) {
+      if (!ex.name || rows.some((r) => r.name === ex.name)) continue;
+      rows.push({ name: ex.name, label: ex.description ?? '', def: ex.default ?? '', composeDefault: '', secret: !!ex.secret, inCompose: false });
+    }
+    return rows;
+  });
+
+  function setParam(name: string, key: 'description' | 'default', value: string) {
+    const list = [...(editForm.parameters ?? [])];
+    const i = list.findIndex((p) => p.name === name);
+    if (i >= 0) list[i] = { ...list[i], [key]: value };
+    else list.push({ name, [key]: value });
+    editForm.parameters = list.filter((p) => p.description || p.default || p.secret || p.type || p.enum || p.pattern || p.required);
+  }
+  function removeParam(name: string) {
+    editForm.parameters = (editForm.parameters ?? []).filter((p) => p.name !== name);
+  }
+  function humanize(name: string): string {
+    const t = name.replace(/[_-]+/g, ' ').trim();
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  }
+  function autoSlug() {
+    if (editingId != null || slugTouched) return;
+    editForm.slug = editForm.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   }
 
   async function saveTemplate() {
@@ -193,716 +259,181 @@
   }
 </script>
 
-<EditorialPage>
-  <section class="tpl">
-    <!-- ───────────────────────── Header ───────────────────────── -->
-    <header class="tpl-header">
-      <div class="tpl-header-text">
-        <h1 class="ed-title tpl-title">Templates</h1>
-        <p class="ed-subtitle tpl-subtitle">
-          {#if templates.length > 0}
-            {counts.total} template{counts.total === 1 ? '' : 's'} · {counts.builtin} built-in{counts.custom > 0 ? ` · ${counts.custom} custom` : ''}
-          {:else}
-            Pre-baked compose stacks. Pick one, fill in the blanks, choose a host.
-          {/if}
-        </p>
-      </div>
-      {#if canCreate}
-        <button
-          type="button"
-          class="dm-btn dm-btn-ghost dm-btn-sm"
-          onclick={openNewTemplate}
-        >
-          <Plus size={12} strokeWidth={1.5} /> New custom template
-        </button>
-      {/if}
-    </header>
-
-    <!-- ───────────────────── Toolbar ───────────────────── -->
-    <div class="tpl-toolbar">
-      <div class="tpl-search">
-        <Search size={12} strokeWidth={1.5} class="tpl-search-icon" />
-        <input
-          type="search"
-          placeholder="search name · slug · description…"
-          bind:value={search}
-          class="ed-underline-input tpl-search-input"
-        />
-      </div>
-
-      <span class="tpl-spacer"></span>
-
-      <div class="tpl-sort" role="tablist">
-        {#each [
-          { id: 'name'   as const, label: 'name' },
-          { id: 'recent' as const, label: 'recent' },
-        ] as opt}
-          <button
-            type="button"
-            class="tpl-sort-pill"
-            class:tpl-sort-active={sortKey === opt.id}
-            onclick={() => (sortKey = opt.id)}
-          >
-            {opt.label}
-          </button>
-        {/each}
-      </div>
-    </div>
-
-    <!-- ───────────────────── Body ───────────────────── -->
-    {#if loading && templates.length === 0}
-      <div class="tpl-grid">
-        {#each Array(6) as _, i (i)}
-          <Skeleton width="100%" height="11rem" />
-        {/each}
-      </div>
-    {:else if templates.length === 0}
-      <div class="tpl-empty">
-        <Package size={20} strokeWidth={1.4} />
-        <p class="tpl-empty-title">No templates yet</p>
-        <p class="ed-subtitle tpl-empty-blurb">
-          Built-in templates should seed on first boot. If you see this, the seed
-          may have failed — restart Dockmesh or add a custom template.
-        </p>
-        {#if canCreate}
-          <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={openNewTemplate}>
-            <Plus size={12} strokeWidth={1.5} /> New custom template
-          </button>
-        {/if}
-      </div>
-    {:else if filtered.length === 0}
-      <div class="tpl-empty">
-        <Eyebrow>no match</Eyebrow>
-        <p class="tpl-empty-title">No templates match „{search}".</p>
-      </div>
-    {:else}
-      <div class="tpl-grid">
-        {#each filtered as t (t.id)}
-          {@const images = extractImages(t.compose)}
-          <article class="tpl-card">
-            <div class="tpl-card-head">
-              <div class="tpl-card-icon">
-                {#if t.icon_url}
-                  <img src={t.icon_url} alt="" />
-                {:else}
-                  <Package size={18} strokeWidth={1.4} />
-                {/if}
-              </div>
-              <div class="tpl-card-titleblock">
-                <div class="tpl-card-title-line">
-                  <span class="tpl-card-name">{t.name}</span>
-                </div>
-                <span class="tpl-card-slug">{t.slug}</span>
-              </div>
-              <span class="tpl-source-badge" data-source={t.builtin ? 'builtin' : 'custom'}>
-                {t.builtin ? 'built-in' : 'custom'}
-              </span>
-            </div>
-
-            {#if t.description}
-              <p class="tpl-card-blurb">{t.description}</p>
-            {/if}
-
-            {#if images.length > 0}
-              <div class="tpl-card-images">
-                {#each images.slice(0, 3) as img}
-                  <span class="tpl-image-pill">{img}</span>
-                {/each}
-                {#if images.length > 3}
-                  <span class="tpl-image-more">+{images.length - 3}</span>
-                {/if}
-              </div>
-            {/if}
-
-            <div class="tpl-card-foot">
-              <span class="tpl-card-params">
-                {t.parameters?.length ?? 0} param{(t.parameters?.length ?? 0) === 1 ? '' : 's'}
-                {#if t.version} · v{t.version}{/if}
-              </span>
-              <div class="tpl-card-actions">
-                <a
-                  href={api.templates.exportURL(t.id)}
-                  class="tpl-icon-btn"
-                  title="Download YAML"
-                  aria-label="Download YAML"
-                >
-                  <Download size={11} strokeWidth={1.5} />
-                </a>
-                {#if canUpdate && !t.builtin}
-                  <button
-                    type="button"
-                    class="tpl-icon-btn"
-                    onclick={() => openEditTemplate(t)}
-                    title="Edit"
-                    aria-label="Edit"
-                  >
-                    <Edit2 size={11} strokeWidth={1.5} />
-                  </button>
-                {/if}
-                {#if canDelete && !t.builtin}
-                  <button
-                    type="button"
-                    class="tpl-icon-btn tpl-icon-danger"
-                    onclick={() => deleteTemplate(t)}
-                    title="Delete"
-                    aria-label="Delete"
-                  >
-                    <Trash2 size={11} strokeWidth={1.5} />
-                  </button>
-                {/if}
-                {#if canDeploy}
-                  <button
-                    type="button"
-                    class="dm-btn dm-btn-primary dm-btn-xs tpl-deploy-btn"
-                    onclick={() => openDeploy(t)}
-                  >
-                    <Rocket size={11} strokeWidth={1.5} /> Deploy
-                  </button>
-                {/if}
-              </div>
-            </div>
-          </article>
-        {/each}
-      </div>
+<section class="dm-page">
+  <div class="dm-ph">
+    <h1>Templates</h1>
+    <span class="dm-sub">
+      {counts.total} template{counts.total === 1 ? '' : 's'} · {counts.builtin} built-in{counts.custom > 0 ? ` · ${counts.custom} custom` : ''}
+    </span>
+    <span class="dm-sp"></span>
+    <input type="search" class="dm-filter tp-search" placeholder="Filter templates…" aria-label="Filter templates" bind:value={search} />
+    {#if canCreate}
+      <button type="button" class="dm-btn dm-btn-primary" onclick={openNewTemplate}>
+        <Plus size={14} strokeWidth={2} /> New template
+      </button>
     {/if}
-  </section>
-</EditorialPage>
+  </div>
+
+  {#if loading && templates.length === 0}
+    <div class="dm-tbl">
+      {#each Array(6) as _, i (i)}
+        <div class="dm-tr" style="grid-template-columns: 1fr"><Skeleton width="50%" height="0.9rem" /></div>
+      {/each}
+    </div>
+  {:else if templates.length === 0}
+    <EmptyState icon={Package} title="No templates yet" description="Built-in templates are added on first start. Add your own from a compose file.">
+      {#snippet action()}
+        {#if canCreate}
+          <button type="button" class="dm-btn dm-btn-primary" onclick={openNewTemplate}><Plus size={14} strokeWidth={2} /> New template</button>
+        {/if}
+      {/snippet}
+    </EmptyState>
+  {:else}
+    <div class="dm-tbl" role="table" aria-label="Templates">
+      <div class="dm-tr dm-th" role="row" style="grid-template-columns: {COLS}">
+        <span role="columnheader"></span>
+        <span role="columnheader"><button type="button" onclick={() => (sortKey = 'name')}>Name{sortKey === 'name' ? ' ↓' : ''}</button></span>
+        <span role="columnheader">Description</span>
+        <span role="columnheader">Images</span>
+        <span role="columnheader">Parameters</span>
+        <span role="columnheader"><button type="button" onclick={() => (sortKey = 'recent')}>Source{sortKey === 'recent' ? ' ↓' : ''}</button></span>
+        <span role="columnheader"></span>
+      </div>
+      {#each filtered as t (t.id)}
+        {@const images = extractImages(t.compose)}
+        {@const nParams = paramNames(t).length}
+        <div class="dm-tr" role="row" style="grid-template-columns: {COLS}">
+          <span role="cell" class="tp-icon" aria-hidden="true">
+            {#if t.icon_url}<img src={t.icon_url} alt="" />{:else}{t.name.slice(0, 1).toUpperCase()}{/if}
+          </span>
+          <span role="cell" class="dm-nm">
+            <span class="dm-t" title={t.name}>{t.name}</span>
+            <small class="dm-mono">{t.slug}{t.version ? ` · v${t.version}` : ''}</small>
+          </span>
+          <span role="cell" class="dm-dim" title={t.description ?? ''}>{t.description || '—'}</span>
+          <span role="cell"><ChipList items={images} /></span>
+          <span role="cell" class="dm-num dm-dim">{nParams} param{nParams === 1 ? '' : 's'}</span>
+          <span role="cell"><TagPill label={t.builtin ? 'built-in' : 'custom'} /></span>
+          <span role="cell" class="dm-tr-menu tp-actions">
+            {#if canDeploy}
+              <button type="button" class="dm-btn dm-btn-sm" onclick={() => openDeploy(t)}>Deploy</button>
+            {/if}
+            <Menu
+              label="Actions for {t.name}"
+              items={[
+                { label: 'Download YAML', href: api.templates.exportURL(t.id) },
+                ...(canUpdate && !t.builtin ? [{ label: 'Edit…', onclick: () => openEditTemplate(t) }] : []),
+                ...(canDelete && !t.builtin ? [{ separator: true }, { label: 'Delete…', danger: true, onclick: () => deleteTemplate(t) }] : [])
+              ]}
+            />
+          </span>
+        </div>
+      {:else}
+        <div class="dm-empty">No templates match “{search}”.</div>
+      {/each}
+    </div>
+  {/if}
+</section>
 
 <DeployDrawer bind:open={deployOpen} template={deployTarget} />
 
-<!-- ───────────────────────── Custom Template Edit Modal ───────────────────────── -->
-<EditorialModal
-  bind:open={editOpen}
-  eyebrow={editingId == null ? 'New custom template' : 'Edit template'}
-  width={720}
->
-  {#snippet title()}
-    {#if editingId == null}
-      Create a <em class="ed-accent">custom</em> template
-    {:else}
-      Edit <em class="ed-accent">{editForm.name}</em>
-    {/if}
-  {/snippet}
-
-  <form id="tpl-edit-form" class="tpl-edit" onsubmit={(e) => { e.preventDefault(); saveTemplate(); }}>
-    <div class="tpl-edit-grid">
-      <Field label="Slug" hint="Lowercase, dashes, underscores.">
-        <input
-          class="dm-input tpl-edit-input"
-          bind:value={editForm.slug}
-          pattern="^[a-z0-9][a-z0-9_-]*$"
-          placeholder="my-app"
-          required
-        />
-      </Field>
-      <Field label="Display name">
-        <input
-          class="dm-input tpl-edit-input"
-          bind:value={editForm.name}
-          placeholder="My App"
-          required
-        />
-      </Field>
+<Modal bind:open={editOpen} title={editingId == null ? 'New template' : `Edit ${editForm.name}`} maxWidth="max-w-3xl" footer={editFooter}>
+  <form id="tpl-edit-form" class="tp-form" onsubmit={(e) => { e.preventDefault(); saveTemplate(); }}>
+    <div class="tp-grid3">
+      <div class="dm-field">
+        <label for="tp-name">Name</label>
+        <input id="tp-name" class="dm-input" bind:value={editForm.name} oninput={autoSlug} placeholder="My app" required />
+      </div>
+      <div class="dm-field">
+        <label for="tp-slug">Slug</label>
+        <input id="tp-slug" class="dm-input dm-mono" bind:value={editForm.slug} oninput={() => (slugTouched = true)} pattern="^[a-z0-9][a-z0-9_-]*$" placeholder="my-app" required />
+      </div>
+      <div class="dm-field">
+        <label for="tp-desc">Description</label>
+        <input id="tp-desc" class="dm-input" bind:value={editForm.description} placeholder="One sentence shown in the list" />
+      </div>
     </div>
 
-    <Field label="Description" hint="One sentence shown on the card.">
-      <input
-        class="dm-input tpl-edit-input"
-        bind:value={editForm.description}
-        placeholder="What this stack is for"
-      />
-    </Field>
-
-    <div class="tpl-edit-tabs" role="tablist">
-      {#each [
-        { id: 'compose'    as const, label: 'compose.yaml' },
-        { id: 'parameters' as const, label: 'parameters' },
-      ] as t}
-        <button
-          type="button"
-          class="tpl-edit-tab"
-          class:tpl-edit-tab-active={editTab === t.id}
-          onclick={() => (editTab = t.id)}
-        >
-          {t.label}
-        </button>
-      {/each}
-    </div>
+    <Segmented
+      label="Template editor"
+      bind:value={editTab}
+      options={[
+        { key: 'compose', label: 'compose.yaml' },
+        { key: 'parameters', label: 'Parameters', count: paramRows.length }
+      ]}
+    />
 
     {#if editTab === 'compose'}
-      <Field
-        label="compose.yaml"
-        hint={'Placeholders {{param}} / {{param|default:x}} / {{param|secret}} get substituted at deploy time.'}
-      >
-        <textarea
-          class="dm-input tpl-edit-textarea"
-          rows="14"
-          bind:value={editForm.compose}
-          spellcheck="false"
-          required
-        ></textarea>
-      </Field>
+      <textarea class="dm-editor" aria-label="compose.yaml" bind:value={editForm.compose} spellcheck="false" required></textarea>
+      <span class="dm-sub">
+        Placeholders <span class="dm-mono">{'{{name}}'}</span>, <span class="dm-mono">{'{{name|default:value}}'}</span> and
+        <span class="dm-mono">{'{{name|secret}}'}</span> become fields in the deploy dialog. Secrets are generated when left empty.
+      </span>
     {:else}
-      <div class="tpl-edit-params">
-        <div class="tpl-edit-params-head">
-          <span class="tpl-edit-params-hint">
-            Explicit parameter declarations (optional — placeholders are auto-discovered from compose).
-          </span>
-          <button
-            type="button"
-            class="dm-btn dm-btn-ghost dm-btn-xs"
-            onclick={addEditParam}
-          >
-            <Plus size={11} strokeWidth={1.5} /> Add parameter
-          </button>
-        </div>
-        {#if (editForm.parameters ?? []).length === 0}
-          <p class="tpl-edit-params-empty">
-            No explicit parameter definitions. Any
-            <code class="tpl-inline-code">{`{{name}}`}</code> in the compose will still be
-            prompted on deploy.
-          </p>
-        {:else}
-          <div class="tpl-edit-param-rows">
-            {#each (editForm.parameters ?? []) as p, i (i)}
-              <div class="tpl-edit-param-row">
-                <input
-                  class="dm-input tpl-edit-input"
-                  placeholder="name"
-                  bind:value={p.name}
-                />
-                <input
-                  class="dm-input tpl-edit-input"
-                  placeholder="default"
-                  bind:value={p.default}
-                />
-                <input
-                  class="dm-input tpl-edit-input tpl-edit-param-desc"
-                  placeholder="description"
-                  bind:value={p.description}
-                />
-                <button
-                  type="button"
-                  class="tpl-icon-btn tpl-icon-danger"
-                  onclick={() => removeEditParam(i)}
-                  aria-label="Remove parameter"
-                >
-                  <Trash2 size={11} strokeWidth={1.5} />
-                </button>
-              </div>
-            {/each}
+      {#if paramRows.length === 0}
+        <EmptyState title="No placeholders yet" description={'Add {{name}} to the compose file to ask for a value at deploy time.'} />
+      {:else}
+        <div class="dm-tbl">
+          <div class="dm-tr dm-th" style="grid-template-columns: {PCOLS}">
+            <span>Placeholder</span><span>Label in the deploy dialog</span><span>Default</span><span>Secret</span><span></span>
           </div>
-        {/if}
-      </div>
+          {#each paramRows as r (r.name)}
+            <div class="dm-tr" style="grid-template-columns: {PCOLS}">
+              <span class="dm-mono" title={r.inCompose ? '' : 'Not used in compose.yaml'}>{r.name}{#if !r.inCompose}<span class="dm-dim"> · unused</span>{/if}</span>
+              <input class="dm-input tp-cell" aria-label="Label for {r.name}" value={r.label} placeholder={humanize(r.name)} oninput={(e) => setParam(r.name, 'description', e.currentTarget.value)} />
+              <input class="dm-input dm-mono tp-cell" aria-label="Default for {r.name}" value={r.def} placeholder={r.composeDefault || (r.secret ? 'generated' : '')} oninput={(e) => setParam(r.name, 'default', e.currentTarget.value)} />
+              <span>{#if r.secret}<span class="tp-secret"><KeyRound size={12} /> yes</span>{:else}<span class="dm-dim">no</span>{/if}</span>
+              <span class="dm-tr-menu">
+                {#if !r.inCompose}
+                  <button type="button" class="dm-menu-btn" aria-label="Remove {r.name}" title="Remove" onclick={() => removeParam(r.name)}><Trash2 size={13} /></button>
+                {/if}
+              </span>
+            </div>
+          {/each}
+        </div>
+        <span class="dm-sub">Found in the compose file. Labels and defaults set here override the placeholder.</span>
+      {/if}
     {/if}
 
     {#if editErr}
-      <div class="tpl-edit-error" role="alert">
-        <AlertCircle size={12} strokeWidth={1.6} />
-        <span>{editErr}</span>
-      </div>
+      <p class="tp-err" role="alert">{editErr}</p>
     {/if}
   </form>
+</Modal>
 
-  {#snippet footer()}
-    <span></span>
-    <div class="tpl-edit-actions">
-      <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (editOpen = false)}>
-        Cancel
-      </button>
-      <button
-        type="submit"
-        form="tpl-edit-form"
-        class="dm-btn dm-btn-primary dm-btn-sm"
-        disabled={editBusy || !editForm.slug.trim() || !editForm.name.trim() || !editForm.compose.trim()}
-      >
-        {editBusy ? 'Saving…' : editingId == null ? 'Create' : 'Save'}
-      </button>
-    </div>
-  {/snippet}
-</EditorialModal>
+{#snippet editFooter()}
+  <button type="button" class="dm-btn" onclick={() => (editOpen = false)}>Cancel</button>
+  <button
+    type="submit"
+    form="tpl-edit-form"
+    class="dm-btn dm-btn-primary"
+    disabled={editBusy || !editForm.slug.trim() || !editForm.name.trim() || !editForm.compose.trim()}
+  >
+    {editBusy ? 'Saving…' : editingId == null ? 'Create template' : 'Save'}
+  </button>
+{/snippet}
 
 <style>
-  .tpl {
-    display: flex;
-    flex-direction: column;
-    gap: 22px;
-  }
-
-  /* ── Header ─────────────────────────────────────────────────── */
-  .tpl-header {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 24px;
-    flex-wrap: wrap;
-  }
-  .tpl-header-text { min-width: 0; max-width: 70ch; }
-  .tpl-title {
-    font-size: 28px;
-    line-height: 1.1;
-    margin-top: 12px;
-  }
-  .tpl-subtitle {
-    margin-top: 8px;
-    max-width: 70ch;
-  }
-
-  /* ── Toolbar ────────────────────────────────────────────────── */
-  .tpl-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    flex-wrap: wrap;
-  }
-  .tpl-search {
-    position: relative;
-    flex: 0 1 320px;
-    min-width: 220px;
-  }
-  .tpl-search :global(.tpl-search-icon) {
-    position: absolute;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--fg-subtle);
-    pointer-events: none;
-  }
-  .tpl-search-input {
-    padding-left: 18px;
-    font-size: 12.5px;
-    font-family: var(--font-mono);
-  }
-  .tpl-spacer { flex: 1; }
-  .tpl-sort {
-    display: inline-flex;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    overflow: hidden;
-  }
-  .tpl-sort-pill {
-    padding: 4px 10px;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    line-height: 1.2;
-    color: var(--fg-subtle);
-    background: transparent;
-    border: 0;
-    border-right: 1px solid var(--border);
-    cursor: pointer;
-  }
-  .tpl-sort-pill:last-child { border-right: 0; }
-  .tpl-sort-pill:hover { color: var(--fg); }
-  .tpl-sort-active {
-    background: var(--bg-elevated);
-    color: var(--fg);
-  }
-
-  /* ── Grid ───────────────────────────────────────────────────── */
-  .tpl-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 12px;
-  }
-
-  .tpl-card {
-    padding: 14px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    transition: border-color 120ms;
-  }
-  .tpl-card:hover { border-color: var(--border-strong); }
-
-  .tpl-card-head {
-    display: grid;
-    grid-template-columns: 40px 1fr auto;
-    gap: 10px;
-    align-items: center;
-  }
-  .tpl-card-icon {
-    width: 40px;
-    height: 40px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    border-radius: 5px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--fg-subtle);
-    overflow: hidden;
-  }
-  .tpl-card-icon img {
+  .tp-search { width: 220px; }
+  .tp-icon {
     width: 28px;
     height: 28px;
-    object-fit: contain;
-  }
-  .tpl-card-titleblock { min-width: 0; }
-  .tpl-card-title-line {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-  }
-  .tpl-card-name {
-    font-size: 13.5px;
-    color: var(--fg);
-    font-weight: 500;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .tpl-card-slug {
-    display: block;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-    margin-top: 2px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .tpl-source-badge {
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    padding: 2px 6px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 3px;
-    color: var(--fg-subtle);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    flex-shrink: 0;
-  }
-  .tpl-source-badge[data-source="custom"] {
-    color: var(--accent-fg);
-    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
-  }
-
-  .tpl-card-blurb {
-    font-size: 12px;
-    color: var(--fg-muted);
-    line-height: 1.5;
-    margin: 0;
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  .tpl-card-images {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-  .tpl-image-pill {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    padding: 1px 6px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 3px;
-    color: var(--fg-subtle);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 130px;
-  }
-  .tpl-image-more {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--fg-subtle);
-    align-self: center;
-  }
-
-  .tpl-card-foot {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: auto;
-    padding-top: 8px;
-    border-top: 1px solid var(--border-subtle);
-  }
-  .tpl-card-params {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .tpl-card-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .tpl-icon-btn {
-    width: 22px;
-    height: 22px;
-    display: inline-flex;
+    border-radius: 7px;
+    background: var(--field);
+    border: 1px solid var(--border);
+    display: inline-flex !important;
     align-items: center;
     justify-content: center;
-    background: transparent;
-    border: 0;
-    border-radius: 4px;
-    color: var(--fg-muted);
-    cursor: pointer;
-    text-decoration: none;
-  }
-  .tpl-icon-btn:hover {
-    color: var(--fg);
-    background: var(--surface-hover);
-  }
-  .tpl-icon-danger { color: var(--color-danger-400); }
-  .tpl-icon-danger:hover {
-    color: var(--color-danger-400);
-    background: color-mix(in srgb, var(--color-danger-500) 12%, transparent);
-  }
-  .tpl-deploy-btn {
-    margin-left: 2px;
-  }
-
-  /* ── Empty ──────────────────────────────────────────────────── */
-  .tpl-empty {
-    padding: 44px 24px;
-    text-align: center;
-    border: 1px dashed var(--border);
-    border-radius: 6px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    color: var(--fg-subtle);
-  }
-  .tpl-empty-title {
-    margin: 8px 0 0;
-    font-size: 16px;
-    color: var(--fg);
-    font-weight: 500;
-  }
-  .tpl-empty-blurb {
-    margin: 4px 0 12px;
-    max-width: 50ch;
-  }
-
-  /* ── Edit Modal ─────────────────────────────────────────────── */
-  .tpl-edit {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
-  .tpl-edit :global(.dm-input) {
-    font-size: 12.5px;
-    padding: 6px 10px;
-    line-height: 1.4;
-  }
-  .tpl-edit-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
-  .tpl-edit-input {
-    font-family: var(--font-mono);
-  }
-  .tpl-edit-textarea {
-    font-family: var(--font-mono);
     font-size: 12px;
-    line-height: 1.55;
-    resize: vertical;
+    font-weight: 600;
+    overflow: hidden;
   }
-  .tpl-edit-tabs {
-    display: flex;
-    border-bottom: 1px solid var(--border-subtle);
-  }
-  .tpl-edit-tab {
-    padding: 8px 14px;
-    background: transparent;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    color: var(--fg-subtle);
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    letter-spacing: 0.04em;
-    cursor: pointer;
-  }
-  .tpl-edit-tab:hover { color: var(--fg); }
-  .tpl-edit-tab-active {
-    color: var(--fg);
-    border-bottom-color: var(--accent);
-  }
-
-  .tpl-edit-params {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .tpl-edit-params-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-  .tpl-edit-params-hint {
-    font-size: 11.5px;
-    color: var(--fg-subtle);
-  }
-  .tpl-edit-params-empty {
-    padding: 10px 12px;
-    border: 1px dashed var(--border);
-    border-radius: 4px;
-    font-size: 11.5px;
-    color: var(--fg-subtle);
-    margin: 0;
-  }
-  .tpl-edit-param-rows {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .tpl-edit-param-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr 2fr 28px;
-    gap: 6px;
-    align-items: center;
-  }
-
-  .tpl-inline-code {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    background: var(--bg-elevated);
-    padding: 1px 5px;
-    border-radius: 3px;
-    border: 1px solid var(--border-subtle);
-  }
-
-  .tpl-edit-error {
-    padding: 10px 12px;
-    border: 1px solid color-mix(in srgb, var(--color-danger-500) 45%, var(--border));
-    background: color-mix(in srgb, var(--color-danger-500) 6%, var(--surface));
-    border-radius: 4px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--color-danger-400);
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .tpl-edit-actions {
-    display: flex;
-    gap: 8px;
-  }
-
-  @media (max-width: 720px) {
-    .tpl-edit-grid { grid-template-columns: 1fr; }
-    .tpl-edit-param-row {
-      grid-template-columns: 1fr 28px;
-      grid-auto-flow: row;
-    }
-    .tpl-edit-param-desc { grid-column: 1 / -1; }
-  }
+  .tp-icon img { width: 18px; height: 18px; object-fit: contain; }
+  .tp-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+  .tp-form { display: flex; flex-direction: column; gap: 12px; }
+  .tp-grid3 { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 10px; }
+  .tp-cell { min-height: 30px; padding: 3px 8px; }
+  .tp-secret { color: var(--warn); display: inline-flex; align-items: center; gap: 4px; }
+  .tp-err { margin: 0; color: var(--bad); font-size: var(--fs-sm); }
+  .tp-form :global(.dm-editor) { min-height: 240px; }
 </style>
