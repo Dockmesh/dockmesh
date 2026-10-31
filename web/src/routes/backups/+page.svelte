@@ -8,7 +8,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { api, ApiError } from '$lib/api';
+  import { api, ApiError, runRestorable } from '$lib/api';
   import type { BackupJob, BackupJobInput, BackupRun, BackupSource, BackupHook, BackupTarget } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
@@ -64,6 +64,7 @@
     if (last.status === 'failed') return 'failed';
     if (last.status === 'running') return 'running';
     if (last.status === 'success') return 'ok';
+    if (last.status === 'success_with_warnings') return 'warn';
     return 'idle';
   }
   function statusDot(s: string): 'ok-dot' | 'warn-dot' | 'fail-dot' | 'neutral-dot' {
@@ -507,6 +508,7 @@
   function statusVariant(s: string): 'success' | 'warning' | 'danger' | 'info' | 'default' {
     if (s === 'success') return 'success';
     if (s === 'failed') return 'danger';
+    if (s === 'success_with_warnings') return 'warning';
     if (s === 'running') return 'info';
     return 'default';
   }
@@ -1083,6 +1085,8 @@
             <span>
               {#if r.status === 'success'}
                 <span class="dm-pill dm-pill-success bk-mini-pill"><span class="dm-pill-dot"></span> success</span>
+              {:else if r.status === 'success_with_warnings'}
+                <span class="dm-pill dm-pill-warning bk-mini-pill" title={r.error}><span class="dm-pill-dot"></span> warnings</span>
               {:else if r.status === 'failed'}
                 <span class="dm-pill dm-pill-danger bk-mini-pill"><span class="dm-pill-dot"></span> failed</span>
               {:else if r.status === 'running'}
@@ -1095,7 +1099,9 @@
             <span class="font-mono bk-runs-cell right">{fmtDuration(r.started_at, r.finished_at)}</span>
             <span class="font-mono bk-runs-cell right">{fmtBytes(r.size_bytes)}</span>
             <span class="bk-runs-actions">
-              {#if r.status === 'success' && !r.sources?.some((s) => s.type === 'system')}
+              {#if r.pruned_at}
+                <span class="bk-runs-cell" title="Archive removed">pruned</span>
+              {:else if runRestorable(r) && !r.sources?.some((s) => s.type === 'system')}
                 <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" title="Restore" onclick={(e) => { e.stopPropagation(); openRestore(r); }}>
                   <Undo2 size={11} strokeWidth={1.5} />
                 </button>

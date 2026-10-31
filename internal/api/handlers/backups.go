@@ -139,7 +139,10 @@ func (h *Handlers) DeleteBackupJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.Backups.DeleteJob(r.Context(), job.ID); err != nil {
+	if err := h.Backups.DeleteJob(r.Context(), job.ID); errors.Is(err, backup.ErrJobNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -301,8 +304,8 @@ func (h *Handlers) DownloadBackupArchive(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	id := run.ID
-	if run.Status != "success" {
-		writeError(w, http.StatusConflict, "can only download from a successful run")
+	if !run.Restorable() {
+		writeError(w, http.StatusConflict, backup.ErrNotRestorable.Error())
 		return
 	}
 	src, err := h.Backups.ReadRun(r.Context(), id)

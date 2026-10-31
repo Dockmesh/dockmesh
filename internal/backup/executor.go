@@ -6,10 +6,13 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"hash"
 	"io"
+	"io/fs"
 	"log/slog"
-	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -78,121 +81,170 @@ func (e *Executor) Run(ctx context.Context, job *Job) (*Run, error) {
 	e.logf(ctx, runID, "info", "start: job=%s host=%s sources=%d target=%s encrypt=%v",
 		job.Name, defaultStr(job.HostID, "local"), len(job.Sources), job.TargetType, job.Encrypt)
 
-	// Multi-host backup: resolve the target host once so the source
-	// extractors + pre-hooks go against the right Docker daemon.
-	hostTarget, err := e.resolveHost(job.HostID)
-	if err != nil {
-		e.logf(ctx, runID, "error", "resolve host: %s", err)
-		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", err)
-		return e.store.getRun(ctx, runID)
+	out, target := e.execute(ctx, job, runID)
+	// The outcome is recorded even when the caller went away mid-run.
+	ctx = context.WithoutCancel(ctx)
+	if err := e.store.finishRun(ctx, runID, out.status, out.size, out.path, out.sum, out.err); err != nil {
+		slog.Warn("backup finish run", "run", runID, "err", err)
 	}
-
-	if job.Encrypt && !canEncrypt(e.secrets) {
-		e.logf(ctx, runID, "error", "%s", ErrEncryptUnavailable)
-		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", ErrEncryptUnavailable)
-		return e.store.getRun(ctx, runID)
+	if target != nil {
+		rctx, cancel := context.WithTimeout(ctx, cleanupTimeout)
+		e.applyRetention(rctx, runID, job, target)
+		cancel()
 	}
-
-	target, err := jobTarget(ctx, e.store, e.notices, job)
-	if err != nil {
-		e.logf(ctx, runID, "error", "build target: %s", err)
-		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", err)
-		return e.store.getRun(ctx, runID)
-	}
-
-	if err := e.runHooks(ctx, runID, "pre", hostTarget, job.PreHooks); err != nil {
-		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", fmt.Errorf("pre-hooks: %w", err))
-		return e.store.getRun(ctx, runID)
-	}
-
-	relPath := relativePath(job, runID)
-	w, err := target.Open(ctx, relPath)
-	if err != nil {
-		e.logf(ctx, runID, "error", "open target %q: %s", relPath, err)
-		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", err)
-		return e.store.getRun(ctx, runID)
-	}
-
-	hasher := sha256.New()
-	teeW := newTeeWriter(w, hasher)
-
-	encWriter, err := wrapEncrypt(teeW, encryptionFor(job, e.secrets))
-	if err != nil {
-		e.logf(ctx, runID, "error", "wrap encrypt: %s", err)
-		_ = w.Close()
-		_ = e.store.finishRun(ctx, runID, "failed", 0, "", "", err)
-		return e.store.getRun(ctx, runID)
-	}
-	e.logf(ctx, runID, "info", "streaming %d source(s) → %s", len(job.Sources), relPath)
-
-	written, copyErr := e.streamSources(ctx, job.Sources, hostTarget, encWriter)
-	closeErr := encWriter.Close()
-	var readErr error
-	if copyErr == nil && closeErr == nil {
-		e.logf(ctx, runID, "info", "wrote %d bytes", teeW.size)
-		readErr = readBack(ctx, target, relPath, teeW.size, hex.EncodeToString(hasher.Sum(nil)))
-		if readErr == nil {
-			e.logf(ctx, runID, "info", "read back %d bytes, sha256 matches", teeW.size)
-		}
-	}
-	hookErr := e.runHooks(ctx, runID, "post", hostTarget, job.PostHooks)
-
-	var finalStatus string
-	var finalErr error
-	switch {
-	case copyErr != nil:
-		e.logf(ctx, runID, "error", "stream sources: %s", copyErr)
-		_ = e.store.finishRun(ctx, runID, "failed", teeW.size, relPath, "", copyErr)
-		finalStatus, finalErr = "failed", copyErr
-	case closeErr != nil:
-		e.logf(ctx, runID, "error", "close encrypted writer: %s", closeErr)
-		_ = e.store.finishRun(ctx, runID, "failed", teeW.size, relPath, "", closeErr)
-		finalStatus, finalErr = "failed", closeErr
-	case readErr != nil:
-		e.logf(ctx, runID, "error", "%s", readErr)
-		_ = e.store.finishRun(ctx, runID, "failed", teeW.size, relPath, "", readErr)
-		finalStatus, finalErr = "failed", readErr
-	case hookErr != nil:
-		// Backup itself succeeded; surface hook failure but keep the file.
-		sum := hex.EncodeToString(hasher.Sum(nil))
-		e.logf(ctx, runID, "warn", "post-hooks failed but backup file is intact: %s", hookErr)
-		wrapped := fmt.Errorf("post-hooks: %w", hookErr)
-		_ = e.store.finishRun(ctx, runID, "failed", teeW.size, relPath, sum, wrapped)
-		finalStatus, finalErr = "failed", wrapped
-	default:
-		sum := hex.EncodeToString(hasher.Sum(nil))
-		e.logf(ctx, runID, "info", "success: size=%d sha256=%s", teeW.size, sum[:12])
-		_ = e.store.finishRun(ctx, runID, "success", teeW.size, relPath, sum, nil)
-		if err := e.applyRetention(ctx, job, target); err != nil {
-			slog.Warn("backup retention", "job", job.Name, "err", err)
-			e.logf(ctx, runID, "warn", "retention pass: %s", err)
-		}
-		finalStatus = "success"
-	}
-	_ = written
 
 	now := time.Now()
 	_ = e.store.updateJobRunTimes(ctx, job.ID, &now, nil)
-
-	if e.notifs != nil {
-		in := runNotification(job, runID)
-		if finalStatus == "success" {
-			in.Kind = notifications.KindBackupOK
-			in.Severity = notifications.SevSuccess
-			in.Title = "Backup completed: " + job.Name
-			in.Body = fmt.Sprintf("Wrote %d bytes", teeW.size)
-		} else {
-			in.Kind = notifications.KindBackupFail
-			in.Severity = notifications.SevError
-			in.Title = "Backup failed: " + job.Name
-			in.Body = "Run failed"
-			if finalErr != nil {
-				in.Body = finalErr.Error()
-			}
-		}
-		_, _ = e.notifs.Emit(ctx, in)
-	}
+	e.notifyRun(ctx, job, runID, out)
 	return e.store.getRun(ctx, runID)
+}
+
+// runOutcome is what execute hands back for the backup_runs row. err is
+// the failure, or the warning of a success_with_warnings run.
+type runOutcome struct {
+	status string
+	size   int64
+	path   string
+	sum    string
+	err    error
+}
+
+// execute runs the phases of one backup. The target comes back only when
+// the run produced an archive, so retention never runs after a failure.
+func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runOutcome, kept targets.Target) {
+	fail := func(stage string, err error) runOutcome {
+		e.logf(ctx, runID, "error", "%s: %s", stage, err)
+		return runOutcome{status: StatusFailed, err: fmt.Errorf("%s: %w", stage, err)}
+	}
+
+	hostTarget, err := e.resolveHost(job.HostID)
+	if err != nil {
+		return fail("resolve host", err), nil
+	}
+	if job.Encrypt && !canEncrypt(e.secrets) {
+		e.logf(ctx, runID, "error", "%s", ErrEncryptUnavailable)
+		return runOutcome{status: StatusFailed, err: ErrEncryptUnavailable}, nil
+	}
+	target, err := jobTarget(ctx, e.store, e.notices, job)
+	if err != nil {
+		return fail("build target", err), nil
+	}
+
+	// Pre-hooks typically stop or lock a service, so once one of them has
+	// run, the post-hooks run too, whatever happens afterwards.
+	preRan, preErr := e.runHooks(ctx, runID, "pre", hostTarget, job.PreHooks)
+	if preErr == nil || preRan > 0 {
+		defer func() { out = e.runPostHooks(ctx, runID, hostTarget, job, out) }()
+	}
+	if preErr != nil {
+		return fail("pre-hooks", preErr), nil
+	}
+
+	relPath := relativePath(job, runID)
+	// Recorded up front so the partial file of a crashed run stays
+	// traceable.
+	if err := e.store.setRunPath(ctx, runID, relPath); err != nil {
+		slog.Warn("backup record run path", "run", runID, "err", err)
+	}
+	w, err := target.Open(ctx, relPath)
+	if err != nil {
+		return fail(fmt.Sprintf("open target %q", relPath), err), nil
+	}
+	// The hash covers the bytes as stored on the target (ciphertext for
+	// encrypted runs), which read-back, verify and restore check against.
+	hasher := sha256.New()
+	stored := &countingWriter{w: w, h: hasher}
+	encW, err := wrapEncrypt(stored, encryptionFor(job, e.secrets))
+	if err != nil {
+		_ = abortWriter(stored)
+		out = fail("encrypt", err)
+		out.path = e.removePartial(ctx, runID, target, w, relPath, false)
+		return out, nil
+	}
+
+	e.logf(ctx, runID, "info", "streaming %d source(s) → %s", len(job.Sources), relPath)
+	if _, err := e.streamSources(ctx, job.Sources, hostTarget, encW); err != nil {
+		_ = abortWriter(encW)
+		out = fail("stream sources", err)
+		out.path = e.removePartial(ctx, runID, target, w, relPath, false)
+		return out, nil
+	}
+	if err := encW.Close(); err != nil {
+		out = fail("finish upload", err)
+		out.path = e.removePartial(ctx, runID, target, w, relPath, true)
+		return out, nil
+	}
+	sum := hex.EncodeToString(hasher.Sum(nil))
+	e.logf(ctx, runID, "info", "wrote %d bytes, sha256=%s", stored.n, sum[:12])
+	if err := readBack(ctx, target, relPath, stored.n, sum); err != nil {
+		e.logf(ctx, runID, "error", "%s", err)
+		out = runOutcome{status: StatusFailed, size: stored.n, err: err}
+		out.path = e.removePartial(ctx, runID, target, w, relPath, true)
+		return out, nil
+	}
+	e.logf(ctx, runID, "info", "read back %d bytes, sha256 matches", stored.n)
+	return runOutcome{status: StatusSuccess, size: stored.n, path: relPath, sum: sum}, target
+}
+
+// runPostHooks uses a context that survives cancellation of the run: a
+// service stopped by a pre-hook must come back up either way.
+func (e *Executor) runPostHooks(ctx context.Context, runID int64, hostTarget hostBackupTarget, job *Job, out runOutcome) runOutcome {
+	_, err := e.runHooks(context.WithoutCancel(ctx), runID, "post", hostTarget, job.PostHooks)
+	if err == nil || out.status != StatusSuccess {
+		return out
+	}
+	e.logf(ctx, runID, "warn", "post-hooks failed, the archive is complete and restorable: %s", err)
+	out.status = StatusSuccessWithWarnings
+	out.err = fmt.Errorf("post-hooks: %w", err)
+	return out
+}
+
+// cleanupTimeout bounds retention and partial-file deletes, which run
+// after the caller may have gone away; a stalled target must not keep
+// them alive forever.
+const cleanupTimeout = 10 * time.Minute
+
+// removePartial deletes what a failed run wrote. Targets that upload on
+// Close published nothing when the run was aborted before Close (closed
+// false). Returns the path to keep on the run when the file could not be
+// deleted, so the retention pass retries.
+func (e *Executor) removePartial(ctx context.Context, runID int64, target targets.Target, w io.WriteCloser, relPath string, closed bool) string {
+	if _, ok := w.(targets.Aborter); ok && !closed {
+		return ""
+	}
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+	defer cancel()
+	err := target.Delete(dctx, relPath)
+	if err == nil || errors.Is(err, fs.ErrNotExist) {
+		return ""
+	}
+	e.logf(ctx, runID, "warn", "could not delete partial archive %s: %s", relPath, err)
+	return relPath
+}
+
+func (e *Executor) notifyRun(ctx context.Context, job *Job, runID int64, out runOutcome) {
+	if e.notifs == nil {
+		return
+	}
+	in := runNotification(job, runID)
+	switch out.status {
+	case StatusSuccess:
+		in.Kind, in.Severity = notifications.KindBackupOK, notifications.SevSuccess
+		in.Title = "Backup completed: " + job.Name
+		in.Body = fmt.Sprintf("Wrote %d bytes", out.size)
+	case StatusSuccessWithWarnings:
+		in.Kind, in.Severity = notifications.KindBackupOK, notifications.SevWarning
+		in.Title = "Backup completed with warnings: " + job.Name
+		in.Body = out.err.Error()
+	default:
+		in.Kind, in.Severity = notifications.KindBackupFail, notifications.SevError
+		in.Title = "Backup failed: " + job.Name
+		in.Body = "Run failed"
+		if out.err != nil {
+			in.Body = out.err.Error()
+		}
+	}
+	_, _ = e.notifs.Emit(ctx, in)
 }
 
 // runNotification addresses a run notification to the users who may open
@@ -257,10 +309,13 @@ func (e *Executor) streamSources(ctx context.Context, sources []Source, hostTarg
 	}
 }
 
-func (e *Executor) runHooks(ctx context.Context, runID int64, phase string, hostTarget hostBackupTarget, hooks []Hook) error {
+// runHooks runs the hooks in order and stops at the first failure.
+// Returns how many hooks completed successfully.
+func (e *Executor) runHooks(ctx context.Context, runID int64, phase string, hostTarget hostBackupTarget, hooks []Hook) (int, error) {
 	if len(hooks) == 0 || hostTarget == nil {
-		return nil
+		return 0, nil
 	}
+	ran := 0
 	e.logf(ctx, runID, "info", "%s-hooks: %d to run", phase, len(hooks))
 	for _, h := range hooks {
 		if h.Container == "" || len(h.Cmd) == 0 {
@@ -293,14 +348,15 @@ func (e *Executor) runHooks(ctx context.Context, runID int64, phase string, host
 		}
 		if err != nil {
 			e.logf(ctx, runID, "error", "%s-hook exec error: %s", phase, err)
-			return fmt.Errorf("exec %s: %w", h.Container, err)
+			return ran, fmt.Errorf("exec %s: %w", h.Container, err)
 		}
 		if exitCode != 0 {
 			e.logf(ctx, runID, "error", "%s-hook exit code %d", phase, exitCode)
-			return fmt.Errorf("exec %s exit %d", h.Container, exitCode)
+			return ran, fmt.Errorf("exec %s exit %d", h.Container, exitCode)
 		}
+		ran++
 	}
-	return nil
+	return ran, nil
 }
 
 // resolveHost returns a hostBackupTarget for the job's host_id. Empty
@@ -350,68 +406,77 @@ func (l *localBackupTarget) ContainerExec(ctx context.Context, containerID strin
 	return out.Bytes(), insp.ExitCode, nil
 }
 
-// applyRetention deletes runs older than RetentionDays AND keeps only
-// the newest RetentionCount entries. 0 disables the respective rule.
-func (e *Executor) applyRetention(ctx context.Context, job *Job, target targets.Target) error {
-	if job.RetentionCount <= 0 && job.RetentionDays <= 0 {
-		return nil
-	}
-	// The trailing slash keeps prefix-matching targets (S3) from also
-	// listing jobs whose name merely starts with this one's.
-	entries, err := target.List(ctx, jobPrefix(job)+"/")
+// applyRetention deletes archives beyond the newest RetentionCount and
+// older than RetentionDays (0 disables a rule). It works from the job's
+// own run records, never from a listing of the target, and always keeps
+// the newest archive. Leftover partial files of failed runs go too.
+func (e *Executor) applyRetention(ctx context.Context, runID int64, job *Job, target targets.Target) {
+	partial, err := e.store.partialRuns(ctx, job.ID)
 	if err != nil {
+		e.logf(ctx, runID, "warn", "retention: %s", err)
+		return
+	}
+	for _, r := range partial {
+		if err := e.deleteArchive(ctx, target, r); err != nil {
+			e.logf(ctx, runID, "warn", "retention: delete partial archive of run %d: %s", r.ID, err)
+		}
+	}
+	if job.RetentionCount <= 0 && job.RetentionDays <= 0 {
+		return
+	}
+	kept, err := e.store.keptRuns(ctx, job.ID)
+	if err != nil {
+		e.logf(ctx, runID, "warn", "retention: %s", err)
+		return
+	}
+	maxAge := time.Duration(job.RetentionDays) * 24 * time.Hour
+	now := time.Now()
+	for i, r := range kept {
+		if i == 0 {
+			continue
+		}
+		drop := job.RetentionCount > 0 && i >= job.RetentionCount
+		if job.RetentionDays > 0 && r.FinishedAt != nil && now.Sub(*r.FinishedAt) > maxAge {
+			drop = true
+		}
+		if !drop {
+			continue
+		}
+		if err := e.deleteArchive(ctx, target, r); err != nil {
+			e.logf(ctx, runID, "warn", "retention: delete %s: %s", r.TargetPath, err)
+			continue
+		}
+		e.logf(ctx, runID, "info", "retention: removed archive of run %d (%s)", r.ID, r.TargetPath)
+	}
+}
+
+func (e *Executor) deleteArchive(ctx context.Context, target targets.Target, r Run) error {
+	if err := target.Delete(ctx, r.TargetPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].ModTime.After(entries[j].ModTime)
-	})
-	now := time.Now()
-	for i, e2 := range entries {
-		drop := false
-		if job.RetentionCount > 0 && i >= job.RetentionCount {
-			drop = true
-		}
-		if !drop && job.RetentionDays > 0 && now.Sub(e2.ModTime) > time.Duration(job.RetentionDays)*24*time.Hour {
-			drop = true
-		}
-		if drop {
-			if err := target.Delete(ctx, e2.Path); err != nil {
-				slog.Warn("retention delete", "path", e2.Path, "err", err)
-			}
-		}
-	}
-	return nil
+	return e.store.markPruned(ctx, r.ID)
 }
 
 // -----------------------------------------------------------------------------
 // helpers
 // -----------------------------------------------------------------------------
 
-type teeWriter struct {
-	w    io.Writer
-	hash io.Writer
-	size int64
+// countingWriter counts and hashes the bytes stored on the target.
+type countingWriter struct {
+	w io.WriteCloser
+	h hash.Hash
+	n int64
 }
 
-func newTeeWriter(w io.Writer, h io.Writer) *teeWriter {
-	return &teeWriter{w: w, hash: h}
-}
-
-func (t *teeWriter) Write(p []byte) (int, error) {
-	n, err := t.w.Write(p)
-	if n > 0 {
-		t.hash.Write(p[:n])
-		t.size += int64(n)
-	}
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	c.h.Write(p[:n])
 	return n, err
 }
 
-func (t *teeWriter) Close() error {
-	if c, ok := t.w.(io.Closer); ok {
-		return c.Close()
-	}
-	return nil
-}
+func (c *countingWriter) Close() error { return c.w.Close() }
+func (c *countingWriter) Abort() error { return abortWriter(c.w) }
 
 func relativePath(job *Job, runID int64) string {
 	stamp := time.Now().UTC().Format("20060102-150405")
@@ -422,8 +487,14 @@ func relativePath(job *Job, runID int64) string {
 	return fmt.Sprintf("%s/%s-r%d%s", jobPrefix(job), stamp, runID, ext)
 }
 
+// jobPrefix is keyed by the job ID: names can collide once sanitized and
+// can change. The slug is only there for people browsing the target.
 func jobPrefix(job *Job) string {
-	return "jobs/" + sanitize(job.Name)
+	dir := strconv.FormatInt(job.ID, 10)
+	if slug := sanitize(job.Name); slug != "" {
+		dir += "-" + slug
+	}
+	return "jobs/" + dir
 }
 
 func sanitize(s string) string {

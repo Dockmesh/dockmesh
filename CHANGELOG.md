@@ -108,6 +108,22 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   failing `tar` as an error. Closing a remote shell no longer leaks a goroutine.
 - Agents notice a vanished server within 90 seconds, reconnect immediately and then back off
   with jitter, and no longer leak a goroutine on every stack request.
+- Backup retention only deletes archives recorded for the job's own runs instead of listing
+  the target, and never the newest archive of a job. New archives go to a folder named after
+  the job ID; existing archives are still managed where they are.
+- A failed backup run deletes its partial archive and is no longer counted by retention, so
+  a few failed runs can't push the last good backups out.
+- A stack backup fails when the compose file can't be read or one of the stack's volumes
+  can't be archived, instead of reporting success without that volume. Local volume archives
+  fail when `tar` exits with an error.
+- Verifying a stack backup checks that every volume the stack had is in the archive.
+- A failing post-hook marks the run "completed with warnings" instead of failed; the archive
+  can still be restored. Post-hooks also run when a later pre-hook or the upload fails, so a
+  service stopped by a pre-hook is started again.
+- Deleting a backup job keeps its runs restorable; runs whose archive was removed by
+  retention are shown as pruned.
+- A backup run whose request is cancelled midway still records its result instead of
+  staying "running".
 
 ### Security
 - A rollback now only accepts update-history entries of the container it is called for, and

@@ -6,7 +6,7 @@
   // before this UI lands.
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { api, ApiError, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
+  import { api, ApiError, runRestorable, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
   import { Eyebrow } from '$lib/components/editorial';
   import { allowed, isAdmin } from '$lib/rbac.svelte';
   import { Skeleton, EmptyState } from '$lib/components/ui';
@@ -208,7 +208,7 @@
             <span class="bk-detail-fail">failed in {fmtDuration(run.started_at, run.finished_at)}</span>
           {:else if run.status === 'running'}
             running…
-          {:else if run.status === 'success'}
+          {:else if run.status === 'success' || run.status === 'success_with_warnings'}
             {fmtBytes(run.size_bytes)} in {fmtDuration(run.started_at, run.finished_at)}
           {:else}
             {run.status}
@@ -219,7 +219,7 @@
         <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={copyDetails}>
           <Copy size={11} strokeWidth={1.5} /> Copy details
         </button>
-        {#if run.status === 'success' && !systemRun}
+        {#if runRestorable(run) && !systemRun}
           <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => doRestore('alongside')}>
             <Undo2 size={11} strokeWidth={1.5} /> Restore
           </button>
@@ -317,7 +317,7 @@
 
       <!-- Right column — restore flow -->
       <div class="bk-detail-col">
-        {#if run.status === 'success'}
+        {#if runRestorable(run)}
           <section class="bk-detail-section dm-card">
             <Eyebrow>Restore</Eyebrow>
             <p class="bk-detail-block-body">

@@ -3609,6 +3609,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "422":
           description: "Verification failed — see `sanity.checks` for the failed check(s) or `encrypted: true` if the archive is encrypted."
           content:
@@ -7944,14 +7945,18 @@ components:
         id: { type: integer, format: int64 }
         job_id: { type: integer, format: int64 }
         job_name: { type: string }
-        status: { type: string, enum: [running, success, failed] }
+        status:
+          type: string
+          enum: [running, success, success_with_warnings, failed]
+          description: success_with_warnings means the archive is complete and restorable but a post-hook failed; `error` holds the warning.
         started_at: { type: string, format: date-time }
         finished_at: { type: string, format: date-time }
-        size_bytes: { type: integer, format: int64 }
-        target_path: { type: string }
-        sha256: { type: string }
+        size_bytes: { type: integer, format: int64, description: Bytes stored on the target (after encryption). }
+        target_path: { type: string, description: Archive path on the target. Empty for failed runs once the partial file was removed. }
+        sha256: { type: string, description: SHA-256 of the archive as stored on the target (ciphertext for encrypted runs). }
         encrypted: { type: boolean }
         error: { type: string }
+        pruned_at: { type: string, format: date-time, description: Set when the archive was deleted (retention); the run can no longer be restored. }
         sources:
           type: array
           items: { $ref: "#/components/schemas/BackupSource" }

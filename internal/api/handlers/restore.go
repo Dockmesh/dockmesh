@@ -88,8 +88,8 @@ func (h *Handlers) VerifyUploadedBackup(w http.ResponseWriter, r *http.Request) 
 //   - system runs: stream-extract to temp + run sanity;
 //     the temp dir is deleted as soon as sanity is done.
 //   - stack runs:  walk the outer tar, validate every volumes/<v>.tar.gz
-//     decompresses cleanly, confirm stack/compose.yaml is present, hash
-//     the plaintext stream against run.SHA256.
+//     decompresses cleanly, confirm stack/compose.yaml is present, check
+//     the stored bytes against run.SHA256.
 //   - volume runs: gunzip-walk the archive; sha256 match.
 //
 // System runs are admin-only; other runs need the job's host in scope.
@@ -109,6 +109,10 @@ func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.Backups.VerifyRun(r.Context(), id)
+	if errors.Is(err, backup.ErrNotRestorable) {
+		writeError(w, http.StatusConflict, backup.ErrNotRestorable.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -136,7 +140,7 @@ func (h *Handlers) VerifyBackupRun(w http.ResponseWriter, r *http.Request) {
 
 // verifySystemRun streams a system run through ExtractToTemp + Sanity.
 func (h *Handlers) verifySystemRun(w http.ResponseWriter, r *http.Request, id int64) {
-	src, err := h.Backups.ReadRun(r.Context(), id)
+	src, hashCheck, err := h.Backups.OpenRunHashed(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -158,6 +162,11 @@ func (h *Handlers) verifySystemRun(w http.ResponseWriter, r *http.Request, id in
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	sum := hashCheck()
+	result.Checks = append(result.Checks, restore.SanityCheck{Name: sum.Name, Status: sum.Status, Message: sum.Message})
+	if sum.Status == "fail" {
+		result.Passed = false
 	}
 	h.audit(r, "backup.verify_run", strconv.FormatInt(id, 10), map[string]any{
 		"type":   "system",

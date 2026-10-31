@@ -283,9 +283,9 @@ func normalizeInput(in JobInput) JobInput {
 }
 
 // checkJobName rejects names that would share an archive directory with
-// another job: retention deletes whatever is under the job's directory, so
-// a shared one lets one job delete another's backups. The system job's
-// directory is reserved for jobs with a system source. id is 0 on create.
+// another job, which keeps folders on the target unambiguous for people
+// browsing them. The system job's directory is reserved for jobs with a
+// system source. id is 0 on create.
 func (s *Service) checkJobName(ctx context.Context, id int64, in JobInput) error {
 	dir := sanitize(in.Name)
 	if dir == "" {
@@ -352,10 +352,16 @@ func (s *Service) ReadRun(ctx context.Context, runID int64) (io.ReadCloser, erro
 	if err != nil {
 		return nil, err
 	}
-	if run.Status != "success" {
-		return nil, errors.New("can only read from a successful run")
+	return s.openRun(ctx, run, nil)
+}
+
+// openRun opens a run's archive as plaintext. rawTap, when set, also
+// receives the bytes exactly as they are stored on the target.
+func (s *Service) openRun(ctx context.Context, run *Run, rawTap io.Writer) (io.ReadCloser, error) {
+	if !run.Restorable() {
+		return nil, ErrNotRestorable
 	}
-	job, err := s.store.getJob(ctx, run.JobID)
+	job, err := s.store.getJobForRun(ctx, run.JobID)
 	if err != nil {
 		return nil, err
 	}
@@ -367,6 +373,9 @@ func (s *Service) ReadRun(ctx context.Context, runID int64) (io.ReadCloser, erro
 	if err != nil {
 		return nil, err
 	}
+	if rawTap != nil {
+		src = &tappedReader{Reader: io.TeeReader(src, rawTap), Closer: src}
+	}
 	if !run.Encrypted {
 		return src, nil
 	}
@@ -375,23 +384,13 @@ func (s *Service) ReadRun(ctx context.Context, runID int64) (io.ReadCloser, erro
 		_ = src.Close()
 		return nil, err
 	}
-	return &readRunCloser{r: dec, underlying: src}, nil
+	// Closing the decrypting reader closes src.
+	return dec, nil
 }
 
-// readRunCloser closes the decrypt wrapper then the underlying source.
-type readRunCloser struct {
-	r          io.ReadCloser
-	underlying io.ReadCloser
-}
-
-func (c *readRunCloser) Read(p []byte) (int, error) { return c.r.Read(p) }
-func (c *readRunCloser) Close() error {
-	err1 := c.r.Close()
-	err2 := c.underlying.Close()
-	if err1 != nil {
-		return err1
-	}
-	return err2
+type tappedReader struct {
+	io.Reader
+	io.Closer
 }
 
 // Restore fetches the run's archive from its target, decrypts if needed,
@@ -404,10 +403,10 @@ func (s *Service) Restore(ctx context.Context, runID int64, destVolume string) e
 	if HasSystemSource(run.Sources) {
 		return ErrSystemRestore
 	}
-	if run.Status != "success" {
-		return errors.New("can only restore from a successful run")
+	if !run.Restorable() {
+		return ErrNotRestorable
 	}
-	job, err := s.store.getJob(ctx, run.JobID)
+	job, err := s.store.getJobForRun(ctx, run.JobID)
 	if err != nil {
 		return err
 	}
@@ -427,7 +426,6 @@ func (s *Service) Restore(ctx context.Context, runID int64, destVolume string) e
 		if err != nil {
 			return err
 		}
-		defer dec.Close()
 		reader = dec
 	}
 
@@ -484,8 +482,8 @@ func (s *Service) RestoreStack(ctx context.Context, runID int64, targetStack str
 	if HasSystemSource(run.Sources) {
 		return nil, ErrSystemRestore
 	}
-	if run.Status != "success" {
-		return nil, errors.New("can only restore from a successful run")
+	if !run.Restorable() {
+		return nil, ErrNotRestorable
 	}
 	if len(run.Sources) == 0 || run.Sources[0].Type != "stack" {
 		return nil, errors.New("run is not a stack backup")
@@ -493,7 +491,7 @@ func (s *Service) RestoreStack(ctx context.Context, runID int64, targetStack str
 	if targetStack == "" {
 		targetStack = run.Sources[0].Name
 	}
-	job, err := s.store.getJob(ctx, run.JobID)
+	job, err := s.store.getJobForRun(ctx, run.JobID)
 	if err != nil {
 		return nil, err
 	}
@@ -513,7 +511,6 @@ func (s *Service) RestoreStack(ctx context.Context, runID int64, targetStack str
 		if err != nil {
 			return nil, err
 		}
-		defer dec.Close()
 		reader = dec
 	}
 

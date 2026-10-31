@@ -13,10 +13,10 @@ import (
 )
 
 type S3Config struct {
-	Endpoint  string `json:"endpoint"`  // "s3.amazonaws.com" or "minio.example.com:9000"
-	Region    string `json:"region"`    // optional, defaults to "us-east-1"
+	Endpoint  string `json:"endpoint"` // "s3.amazonaws.com" or "minio.example.com:9000"
+	Region    string `json:"region"`   // optional, defaults to "us-east-1"
 	Bucket    string `json:"bucket"`
-	Prefix    string `json:"prefix"`    // optional path prefix inside the bucket
+	Prefix    string `json:"prefix"` // optional path prefix inside the bucket
 	AccessKey string `json:"access_key"`
 	SecretKey string `json:"secret_key"`
 	UseSSL    bool   `json:"use_ssl"`
@@ -86,6 +86,11 @@ func (u *s3Upload) Close() error {
 		minio.PutObjectOptions{ContentType: "application/octet-stream"})
 	u.file.Close()
 	return err
+}
+
+func (u *s3Upload) Abort() error {
+	_ = u.file.Close()
+	return os.Remove(u.file.Name())
 }
 
 func (s *S3) Open(ctx context.Context, path string) (io.WriteCloser, error) {

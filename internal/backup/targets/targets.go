@@ -18,6 +18,12 @@ type Target interface {
 	Delete(ctx context.Context, path string) error
 }
 
+// Aborter is implemented by writers that upload on Close: Abort drops the
+// upload so a failed run never publishes a truncated archive.
+type Aborter interface {
+	Abort() error
+}
+
 // Entry is one backup file at the target, returned by List.
 type Entry struct {
 	Path    string    `json:"path"`

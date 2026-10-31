@@ -3,7 +3,7 @@
   // Shows status / size / duration / phase summary, the run error if
   // any, and the restore-flow with three modes (in-place / alongside /
   // download).
-  import { api, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
+  import { api, runRestorable, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
   import { Eyebrow } from '$lib/components/editorial';
   import { allowed, isAdmin } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
@@ -73,6 +73,7 @@
   function statusPill(s: string): { cls: string; label: string } {
     if (s === 'success') return { cls: 'dm-pill-success', label: 'success' };
     if (s === 'failed') return { cls: 'dm-pill-danger', label: 'failed' };
+    if (s === 'success_with_warnings') return { cls: 'dm-pill-warning', label: 'warnings' };
     if (s === 'running') return { cls: 'dm-pill', label: 'running' };
     return { cls: 'dm-pill-neutral', label: s };
   }
@@ -127,7 +128,7 @@
           <span class="bk-drawer-fail">Failed in {fmtDuration(run.started_at, run.finished_at)} — no data written.</span>
         {:else if run.status === 'running'}
           Running… size + duration update on completion.
-        {:else if run.status === 'success'}
+        {:else if run.status === 'success' || run.status === 'success_with_warnings'}
           Wrote <em class="ed-accent">{fmtBytes(run.size_bytes)}</em>
           {#if target} to <em class="ed-accent">{target.name}</em>{/if}
           in {fmtDuration(run.started_at, run.finished_at)}.
@@ -215,7 +216,7 @@
     </section>
 
     <!-- Restore flow -->
-    {#if run.status === 'success'}
+    {#if runRestorable(run)}
       <section class="bk-drawer-section bk-drawer-restore">
         <div class="bk-drawer-section-head">
           <Eyebrow>Restore</Eyebrow>
@@ -256,7 +257,7 @@
     <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={copyDetails}>
       <Copy size={11} strokeWidth={1.5} /> Copy details
     </button>
-    {#if run.status === 'success'}
+    {#if runRestorable(run)}
       <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => (restoreOpen = true)}>
         <Undo2 size={11} strokeWidth={1.5} /> Restore
       </button>
