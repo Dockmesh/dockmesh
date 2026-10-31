@@ -39,7 +39,7 @@
   const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 </script>
 
-<nav class="side" class:collapsed aria-label="Main navigation">
+<nav class="app-side" class:collapsed aria-label="Main navigation">
   <div class="brand">
     <a href="/" class="logo" aria-label="Dockmesh overview" onclick={onnavigate}>
       <img src="/logo-mark.svg" alt="" width="24" height="24" />
@@ -121,7 +121,7 @@
 </nav>
 
 <style>
-  .side {
+  .app-side {
     flex: 0 0 232px;
     width: 232px;
     background: var(--side);
@@ -135,7 +135,7 @@
     transition: width 0.15s, flex-basis 0.15s;
     z-index: 30;
   }
-  .side.collapsed { flex-basis: 60px; width: 60px; padding: 12px 8px 10px; }
+  .app-side.collapsed { flex-basis: 60px; width: 60px; padding: 12px 8px 10px; }
   .brand { display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; }
   .collapsed .brand { flex-direction: column; padding: 2px 0 10px; }
   .logo { display: flex; align-items: center; gap: 10px; color: var(--fg); text-decoration: none; min-width: 0; }

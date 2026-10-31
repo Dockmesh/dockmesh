@@ -2,10 +2,6 @@
   import { page } from '$app/state';
   import { SETTINGS_NAV, matches } from './nav';
 
-  // Left sub-navigation for every settings page, grouped like the
-  // prototype; `attention` marks sections with a dot.
-  let { attention = {} }: { attention?: Record<string, boolean> } = $props();
-
   const links = $derived(SETTINGS_NAV.filter((l) => l.show()));
   const groups = $derived([...new Set(links.map((l) => l.group))]);
 
@@ -22,7 +18,6 @@
     {#each links.filter((l) => l.group === g) as l (l.href)}
       <a href={l.href} class:on={isOn(l.href)} aria-current={isOn(l.href) ? 'page' : undefined} title={l.hint}>
         <span class="l">{l.label}</span>
-        {#if attention[l.href]}<span class="st" title="Needs attention"></span>{/if}
       </a>
     {/each}
   {/each}
@@ -52,5 +47,4 @@
   a:hover { background: var(--nav-active); color: var(--fg); }
   a.on { background: var(--nav-active); color: var(--fg); font-weight: 600; }
   .l { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .st { width: 7px; height: 7px; border-radius: 4px; background: var(--warn); }
 </style>

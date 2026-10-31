@@ -131,8 +131,8 @@
   --off: #56657a;
   --violet: #7c3aed;
 
-  /* Status and brand shades used as text by older components; the light
-     theme needs the darker siblings to keep AA contrast on white. */
+  /* Brand and status shades read as text; on white they need the darker
+     siblings to keep AA contrast. */
   --color-brand-300: #0e7490;
   --color-brand-400: #0e7490;
   --color-success-400: #15803d;
@@ -145,19 +145,14 @@
   color-scheme: light;
 }
 
-/* Older names, kept so every page picks up the new palette. */
 :root {
   --bg-elevated: var(--band);
   --surface-hover: var(--nav-active);
-  --surface-active: var(--field);
   --border-subtle: color-mix(in srgb, var(--border) 60%, transparent);
   --fg-muted: var(--muted);
   --fg-subtle: var(--subtle);
   --accent-fg: var(--accent);
   --accent-bg: var(--accent-soft);
-  --ring: var(--accent);
-  --mesh-color: transparent;
-  --watermark-color: transparent;
 }
 
 /* -----------------------------------------------------------------------------
@@ -317,35 +312,19 @@ body {
 }
 .dm-fade-in { animation: dm-fade-in 0.2s ease-out; }
 
-/* =============================================================================
-   Editorial layer — primitives ported from the wizard / claude-design mockup.
-
-   This whole block is ADDITIVE: it does not redefine any existing .dm-* class
-   used by production pages. Editorial pages opt in by wrapping content in
-   `.ed-stage` and using the `.ed-*` and editorial `.dm-pill / .dm-bar /
-   .dm-spark / .dm-card-flat / .ed-input / .ed-input-mono` classes.
-
-   Page-by-page conversion happens in later slices; this slice only ships the
-   foundation + a /_design showcase page.
-   ===========================================================================*/
+/* Editorial primitives (.ed-*, .dm-pill, .dm-bar, …) still used by pages
+   outside the redesigned set. */
 @layer components {
   /* Utility font classes — Tailwind v4 doesn't auto-emit `.font-mono`
      from --font-* tokens unless we declare them. */
   .font-mono  { font-family: var(--font-mono); }
 
-  /* Page canvas — dot-mesh background with a soft radial fade so the dots
-     are densest where the eye lands and dissolve toward the edges. */
   .ed-stage {
     position: relative;
     isolation: isolate;
     background: var(--bg);
     min-height: 100vh;
   }
-  /* Dot-mesh background — disabled by default. Was applied to every
-     editorial page; user feedback was that the constant texture was
-     distracting on long sessions. The Login + Wizard pages still get
-     the mesh via their dedicated `.login-shell::before` (kept on the
-     identity surfaces where it adds drama, not the daily-driver pages). */
   .ed-stage > * { position: relative; z-index: 1; }
 
   /* Eyebrow — small mono caption, optionally with blinking cursor when the
