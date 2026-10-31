@@ -313,6 +313,12 @@ func main() {
 		os.Exit(1)
 	} else if applied {
 		slog.Warn("system backup restored; the replaced files are kept next to the data and stacks directories", "dir", restore.PreRestoreDir)
+		// The config read secrets.env (the token signing secret) from the
+		// replaced install; the restored one has to be used from now on.
+		if cfg, err = config.Load(); err != nil {
+			slog.Error("config load after the restore failed", "err", err)
+			os.Exit(1)
+		}
 	}
 
 	database, err := db.Open(cfg.DBPath)
