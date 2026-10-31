@@ -173,9 +173,23 @@ func fileSHA256(p string) (string, error) {
 // /usr/local/bin symlink (for `dockmesh-agent --version`): the data dir
 // becomes traversable without being listable, and bin/ readable. Older
 // installers created them as 0700 and 0750; other modes are left alone.
-// The keys in the data dir keep their own 0600. A data dir shared with a
+// The keys in the data dir keep their own 0600. Nothing changes unless the
+// running binary lives in <dataDir>/bin, and a data dir shared with a
 // server on the same host is never touched.
 func openBinDir(dataDir string) {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	openBinDirFor(dataDir, exe)
+}
+
+func openBinDirFor(dataDir, exe string) {
+	exe, err := filepath.EvalSymlinks(exe)
+	bin, berr := filepath.EvalSymlinks(filepath.Join(dataDir, "bin"))
+	if err != nil || berr != nil || filepath.Dir(exe) != bin {
+		return
+	}
 	for _, f := range []string{"dockmesh.db", "dockmesh.env", filepath.Join("data", "dockmesh.db")} {
 		if _, err := os.Stat(filepath.Join(dataDir, f)); err == nil {
 			return

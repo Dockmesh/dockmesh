@@ -96,11 +96,13 @@ func TestOpenBinDir(t *testing.T) {
 		name              string
 		dataMode, binMode os.FileMode
 		serverFile        string
+		elsewhere         bool
 		wantData, wantBin os.FileMode
 	}{
-		{"old installer modes", 0o700, 0o750, "", 0o711, 0o755},
-		{"custom modes kept", 0o750, 0o700, "", 0o750, 0o700},
-		{"shared with a server", 0o700, 0o750, "dockmesh.env", 0o700, 0o750},
+		{"old installer modes", 0o700, 0o750, "", false, 0o711, 0o755},
+		{"custom modes kept", 0o750, 0o700, "", false, 0o750, 0o700},
+		{"shared with a server", 0o700, 0o750, "dockmesh.env", false, 0o700, 0o750},
+		{"binary not in bin", 0o700, 0o750, "", true, 0o700, 0o750},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -114,13 +116,20 @@ func TestOpenBinDir(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			exe := filepath.Join(bin, "dockmesh-agent")
+			if tt.elsewhere {
+				exe = filepath.Join(t.TempDir(), "dockmesh-agent")
+			}
+			if err := os.WriteFile(exe, nil, 0o755); err != nil {
+				t.Fatal(err)
+			}
 			if err := os.Chmod(bin, tt.binMode); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.Chmod(dir, tt.dataMode); err != nil {
 				t.Fatal(err)
 			}
-			openBinDir(dir)
+			openBinDirFor(dir, exe)
 			for path, want := range map[string]os.FileMode{dir: tt.wantData, bin: tt.wantBin} {
 				fi, err := os.Stat(path)
 				if err != nil {
