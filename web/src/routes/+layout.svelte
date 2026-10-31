@@ -230,6 +230,9 @@
   const SPECIAL: Record<string, { section: string | null; leaf: string; href: string }> = {
     '/account': { section: null, leaf: 'My account', href: '/account' },
     '/tokens': { section: null, leaf: 'API tokens', href: '/tokens' },
+    '/settings/updates': { section: 'Settings', leaf: 'Updates', href: '/settings/updates' },
+    '/settings/encryption': { section: 'Settings', leaf: 'Encryption key', href: '/settings/encryption' },
+    '/settings': { section: 'Settings', leaf: 'General', href: '/settings' },
     '/authentication': { section: 'Settings', leaf: 'Authentication', href: '/authentication' },
     '/registries': { section: 'Settings', leaf: 'Registries', href: '/registries' },
     '/environment': { section: 'Settings', leaf: 'Global environment', href: '/environment' },

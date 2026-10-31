@@ -30,6 +30,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   Infrastructure, Operations and Admin, shows counts, and collapses to an icon rail.
   Authentication, registries and the global environment now sit under Settings with their
   own sub-navigation. Ctrl+K (⌘K) searches pages, stacks, containers, hosts and settings.
+- Stacks, containers, templates, resources, topology and settings follow the new design.
+  The containers list can be grouped by host or by stack, the container page shows CPU,
+  memory, network and disk I/O history in one chart with zoom and deploy markers, and CPU
+  is shown as a share of all host cores. New templates list the placeholders found in the
+  compose file so you can label them and set defaults. Settings are split into General,
+  Updates and Encryption key.
 - Updating the image of a container that belongs to a stack now rebuilds it from the
   stack's compose.yaml, together with the other replicas of its service, and records the
   new image in the stack's deploy history. Because that applies the stack's current
@@ -47,6 +53,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 - Updated the bundled libraries, including the Docker SDK (28.5), SvelteKit 3 and Vite 8.
 
 ### Fixed
+- The resources page no longer fails to load when images have never been scanned.
+- Logs and terminal links in the containers list open those tabs instead of the overview.
 - Updating a container's image no longer loses its anonymous volumes (`-v /data` or a
   `VOLUME` in the image); the new container gets the old volumes.
 - A failed image update no longer leaves the container deleted: the old container is kept

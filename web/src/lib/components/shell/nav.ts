@@ -109,7 +109,9 @@ export interface SettingsLink {
 }
 
 export const SETTINGS_NAV: SettingsLink[] = [
-  { href: '/settings', label: 'General', group: 'Instance', hint: 'Version, base URL, updates, scanner, encryption key', show: () => allowed('system.update') },
+  { href: '/settings', label: 'General', group: 'Instance', hint: 'Base URL, agent URL, trusted proxies, image scanner', show: () => allowed('system.update') },
+  { href: '/settings/updates', label: 'Updates', group: 'Instance', hint: 'Dockmesh version and update checks', show: () => allowed('system.update') },
+  { href: '/settings/encryption', label: 'Encryption key', group: 'Instance', hint: 'Key backup and rotation', show: () => allowed('system.update') },
   { href: '/authentication', label: 'Authentication', group: 'Access', hint: 'Identity providers: OIDC, SAML, LDAP, OAuth2', show: () => allowed('system.update') },
   { href: '/registries', label: 'Registries', group: 'Integrations', hint: 'Private registries and credentials', show: () => allowed('registries.view') },
   { href: '/environment', label: 'Global environment', group: 'Integrations', hint: 'Variables shared by stacks', show: () => allowed('system.update') }
