@@ -560,8 +560,10 @@ func (s *Service) resolveGoneMounts(ctx context.Context, r *Rule, hm HostMounts,
 		}
 	}
 	s.stateMu.Unlock()
+	hostPrefix := targetName(hm.HostID, hm.HostName, "")
 	for _, tgt := range gone {
-		s.resolveRule(ctx, r, tgt, fmt.Sprintf("Disk %s is no longer mounted", tgt), 0, now)
+		s.resolveRule(ctx, r, tgt, fmt.Sprintf("Disk %s on %s is no longer mounted",
+			strings.TrimPrefix(tgt, hostPrefix), hm.HostName), 0, now)
 	}
 }
 
