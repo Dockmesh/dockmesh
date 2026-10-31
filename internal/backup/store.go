@@ -47,6 +47,37 @@ func (s *store) getJob(ctx context.Context, id int64) (*Job, error) {
 
 // getJobForRun also returns deleted jobs: their runs stay restorable and
 // need the job's target.
+// jobsUsingTarget returns every job that writes to the target, deleted
+// ones included: their runs still read from it.
+func (s *store) jobsUsingTarget(ctx context.Context, targetID int64) ([]Job, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM backup_jobs WHERE target_id = ? ORDER BY id`, targetID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]Job, 0, len(ids))
+	for _, id := range ids {
+		j, err := s.getJobForRun(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *j)
+	}
+	return out, nil
+}
+
 func (s *store) getJobForRun(ctx context.Context, id int64) (*Job, error) {
 	return s.queryJob(ctx, id, true)
 }

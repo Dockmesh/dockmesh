@@ -77,8 +77,17 @@ func TestStartRunAsyncAndSkipIfRunning(t *testing.T) {
 	if got := waitRun(t, svc, run.ID); got.Status != StatusSuccess {
 		t.Fatalf("async run: %+v", got)
 	}
-	if _, err := svc.RunNow(context.Background(), job.ID); err != nil {
-		t.Fatalf("job should be free again: %v", err)
+	// The run's status is written before its goroutine frees the job.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, err := svc.RunNow(context.Background(), job.ID)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, ErrJobRunning) || time.Now().After(deadline) {
+			t.Fatalf("job should be free again: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -319,4 +328,29 @@ func jsonEscape(s string) string {
 		out = append(out, s[i])
 	}
 	return string(out)
+}
+
+func TestInlineTargetMigrationKeepsSystemJobApart(t *testing.T) {
+	svc, _, _ := newExecTest(t, false)
+	ctx := context.Background()
+	cfg := `{"host":"nas.lan","username":"u","password":"pw","path":"/bk"}`
+	for _, j := range []struct{ name, sources string }{
+		{"web", `[{"type":"volume","name":"data"}]`},
+		{"sys", `[{"type":"system","name":"dockmesh"}]`},
+	} {
+		if _, err := svc.store.db.Exec(`INSERT INTO backup_jobs (name, encrypt, target_type, target_config, sources) VALUES (?, 0, 'sftp', ?, ?)`, j.name, cfg, j.sources); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := svc.MigrateInlineTargets(ctx); err != nil || n != 2 {
+		t.Fatalf("migrated %d: %v", n, err)
+	}
+	jobs, _ := svc.ListJobs(ctx)
+	ids := map[string]int64{}
+	for _, j := range jobs {
+		ids[j.Name] = j.TargetID
+	}
+	if ids["web"] == 0 || ids["web"] == ids["sys"] {
+		t.Fatalf("system job shares a target with another job: %v", ids)
+	}
 }

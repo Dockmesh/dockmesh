@@ -185,6 +185,9 @@ func (h *Handlers) AcceptBackupHostKey(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if job.TargetID > 0 && !h.requireTargetAccess(w, r, job.TargetID) {
+		return
+	}
 	id := job.ID
 	err := h.Backups.AcceptHostKey(r.Context(), id)
 	switch {

@@ -109,6 +109,7 @@ func (s *Service) scheduleAll(ctx context.Context) error {
 func (s *Service) Stop() {
 	s.mu.Lock()
 	c := s.cron
+	s.stopping = true
 	s.mu.Unlock()
 	s.cancelRun()
 	stopped := c.Stop()
@@ -196,7 +197,7 @@ func (s *Service) nextRun(jobID int64) *time.Time {
 func (s *Service) claim(jobID int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.running[jobID] {
+	if s.stopping || s.running[jobID] {
 		return false
 	}
 	s.running[jobID] = true

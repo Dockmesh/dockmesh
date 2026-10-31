@@ -3,7 +3,7 @@
   // step 2 fills in the type-specific connection fields, step 3 runs
   // a live test (5 phases — connect / auth / write / read / delete).
   // Mockup reference: `Dockmesh Wizard (6)/backup-wizards.jsx::TargetWizard`.
-  import { api, ApiError, type BackupTarget } from '$lib/api';
+  import { api, ApiError, targetUsage, type BackupTarget } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
   import { Eyebrow } from '$lib/components/editorial';
   import { stepValid, type TargetType } from '$lib/backupTargetForm';
@@ -184,10 +184,8 @@
   {open}
   eyebrow={editing ? 'Backups · edit target' : 'Backups · new target'}
   title={editing ? 'Edit target' : 'Where backups should land.'}
-  subtitle={editing
-    ? editing.job_count
-      ? `Used by ${editing.job_count} job${editing.job_count === 1 ? '' : 's'}; changes apply to all of them.`
-      : 'Not used by any job yet.'
+  subtitle={editing && editing.job_count != null
+    ? targetUsage(editing.job_count)
     : 'A target is a destination — local, NAS, SFTP, S3, WebDAV. Multiple jobs can share one target.'}
   steps={STEPS}
   stepIdx={step}

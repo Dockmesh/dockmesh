@@ -8,7 +8,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { api, ApiError, runRestorable } from '$lib/api';
+  import { api, ApiError, runRestorable, targetUsage } from '$lib/api';
   import type { BackupJob, BackupJobInput, BackupRun, BackupSource, BackupHook, BackupTarget } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { Card, Button, Input, Modal, Badge, EmptyState, Skeleton } from '$lib/components/ui';
@@ -1270,12 +1270,8 @@
 <!-- Target modal -->
 <Modal bind:open={showTarget} title={editingTarget ? `Edit: ${editingTarget.name}` : 'New backup target'} maxWidth="max-w-lg">
   <form onsubmit={saveTarget} class="space-y-4" id="target-form">
-    {#if editingTarget}
-      <p class="text-xs text-[var(--fg-muted)]">
-        {editingTarget.job_count
-          ? `Used by ${editingTarget.job_count} job${editingTarget.job_count === 1 ? '' : 's'}; changes apply to all of them.`
-          : 'Not used by any job yet.'}
-      </p>
+    {#if editingTarget && editingTarget.job_count != null}
+      <p class="text-xs text-[var(--fg-muted)]">{targetUsage(editingTarget.job_count)}</p>
     {/if}
     <Input label="Name" bind:value={tName} placeholder="My NAS" />
 

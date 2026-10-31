@@ -37,8 +37,9 @@ type Service struct {
 	tzName   string // backups.timezone; empty = server time zone
 	entryIDs map[int64]cron.EntryID
 	running  map[int64]bool
+	stopping bool
 
-	// runCtx is cancelled on Stop; background runs are tracked in runs.
+	// runCtx is cancelled on Stop.
 	runCtx    context.Context
 	cancelRun context.CancelFunc
 	runs      sync.WaitGroup
@@ -279,6 +280,12 @@ func (s *Service) checkJobName(ctx context.Context, id int64, in JobInput) error
 		}
 	}
 	return nil
+}
+
+// JobsUsingTarget lists the jobs, deleted ones included, that write to a
+// saved target. Changing the target changes where all of them write.
+func (s *Service) JobsUsingTarget(ctx context.Context, targetID int64) ([]Job, error) {
+	return s.store.jobsUsingTarget(ctx, targetID)
 }
 
 func (s *Service) DeleteJob(ctx context.Context, id int64) error {

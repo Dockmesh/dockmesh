@@ -851,6 +851,12 @@ export interface BackupTarget {
   updated_at: string;
 }
 
+// targetUsage tells whoever edits a shared target what the change affects.
+export function targetUsage(jobCount: number): string {
+  if (jobCount === 0) return 'Not used by any job yet.';
+  return `Used by ${jobCount} job${jobCount === 1 ? '' : 's'}; changes apply to all of them.`;
+}
+
 export interface BackupSource {
   type: 'volume' | 'stack' | 'system';
   name: string;

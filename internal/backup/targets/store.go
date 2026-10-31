@@ -20,7 +20,7 @@ type StoredTarget struct {
 	FreeBytes     int64      `json:"free_bytes"`
 	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
 	// JobCount is the number of backup jobs that write to this target.
-	JobCount  int       `json:"job_count"`
+	JobCount  *int      `json:"job_count,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -132,10 +132,12 @@ func scanTarget(r scanner) (*StoredTarget, error) {
 	var t StoredTarget
 	var cfgJSON string
 	var checked sql.NullTime
+	var jobs int
 	if err := r.Scan(&t.ID, &t.Name, &t.Type, &cfgJSON, &t.Status,
-		&t.TotalBytes, &t.UsedBytes, &checked, &t.JobCount, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		&t.TotalBytes, &t.UsedBytes, &checked, &jobs, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		return nil, err
 	}
+	t.JobCount = &jobs
 	_ = json.Unmarshal([]byte(cfgJSON), &t.Config)
 	if checked.Valid {
 		t.LastCheckedAt = &checked.Time

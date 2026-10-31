@@ -90,24 +90,23 @@ func (s *store) insertTarget(ctx context.Context, name, typ string, cfg any) (in
 // in a recorded SFTP host key share one target, which keeps that key.
 // Deleted jobs are included: their runs still need the target. Each job
 // moves in its own transaction, so an interrupted pass resumes with the
-// jobs not moved yet. It runs after the one-time secret repair, so a
-// repaired secret is what lands in the target.
+// jobs not moved yet.
 func (s *Service) MigrateInlineTargets(ctx context.Context) (int, error) {
 	rows, err := s.store.db.QueryContext(ctx, `
-		SELECT id, name, target_type, target_config FROM backup_jobs
+		SELECT id, name, target_type, target_config, sources FROM backup_jobs
 		WHERE target_id IS NULL OR target_id NOT IN (SELECT id FROM backup_targets)`)
 	if err != nil {
 		return 0, err
 	}
 	type pending struct {
-		id        int64
-		name, typ string
-		config    string
+		id              int64
+		name, typ       string
+		config, sources string
 	}
 	var jobs []pending
 	for rows.Next() {
 		var p pending
-		if err := rows.Scan(&p.id, &p.name, &p.typ, &p.config); err != nil {
+		if err := rows.Scan(&p.id, &p.name, &p.typ, &p.config, &p.sources); err != nil {
 			rows.Close()
 			return 0, err
 		}
@@ -125,7 +124,9 @@ func (s *Service) MigrateInlineTargets(ctx context.Context) (int, error) {
 			slog.Warn("backup: job target config unreadable, left inline", "job", j.name, "err", err)
 			continue
 		}
-		if err := s.store.moveJobTarget(ctx, j.id, j.typ, cfg); err != nil {
+		var srcs []Source
+		_ = json.Unmarshal([]byte(j.sources), &srcs)
+		if err := s.store.moveJobTarget(ctx, j.id, j.typ, cfg, HasSystemSource(srcs)); err != nil {
 			return moved, fmt.Errorf("job %q: %w", j.name, err)
 		}
 		moved++
@@ -133,15 +134,20 @@ func (s *Service) MigrateInlineTargets(ctx context.Context) (int, error) {
 	return moved, nil
 }
 
-func (s *store) moveJobTarget(ctx context.Context, jobID int64, typ string, cfg map[string]any) error {
+// moveJobTarget points one job at a saved target. A system job gets a
+// target of its own: whoever may edit a shared target would otherwise
+// decide where the whole install's backup goes.
+func (s *store) moveJobTarget(ctx context.Context, jobID int64, typ string, cfg map[string]any, system bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	id, err := findTarget(ctx, tx, typ, cfg)
-	if err != nil {
-		return err
+	var id int64
+	if !system {
+		if id, err = findTarget(ctx, tx, typ, cfg); err != nil {
+			return err
+		}
 	}
 	if id == 0 {
 		if id, err = insertTarget(ctx, tx, migratedTargetName(typ, cfg), typ, cfg); err != nil {
@@ -249,8 +255,7 @@ func migratedTargetName(typ string, cfg map[string]any) string {
 
 // jobTarget builds the job's target. For SFTP it records the host key on
 // first contact and parks a changed key until an admin accepts it. Jobs
-// the startup migration couldn't move (unreadable config) still run from
-// their inline config.
+// not moved to a saved target yet run from their inline config.
 func jobTarget(ctx context.Context, st *store, n *notices.Service, job *Job) (targets.Target, error) {
 	if job.TargetID > 0 {
 		ts := targets.NewTargetStore(st.db)
