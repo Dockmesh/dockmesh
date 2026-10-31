@@ -32,6 +32,9 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   security headers, request and response headers, and an access log. Basic-auth passwords
   are stored as bcrypt hashes and never returned. `GET /api/v1/proxy/routes/{id}/config`
   shows the Caddy config a site gets. Existing routes keep their current behaviour.
+- `POST /api/v1/proxy/import` reads a Caddyfile and creates its sites as disabled proxy
+  routes with the matching options. Directives without a matching option are listed per
+  site instead of being dropped, and `dry_run` shows the result without creating anything.
 
 ### Changed
 - Updating the image of a container that belongs to a stack now rebuilds it from the

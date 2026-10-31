@@ -1,0 +1,52 @@
+photos.example.org {
+	encode zstd gzip
+	request_body {
+		max_size 10GB
+	}
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		Referrer-Policy strict-origin-when-cross-origin
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	reverse_proxy 192.168.10.40:2283 192.168.10.41:2283 {
+		lb_policy round_robin
+		health_uri /api/server/ping
+		flush_interval -1
+		stream_close_delay 5m
+		header_up X-Forwarded-Proto https
+		transport http {
+			dial_timeout 30s
+			read_timeout 1h
+			write_timeout 1h
+		}
+	}
+	log
+}
+
+www.docs.example.org {
+	redir https://docs.example.org{uri} permanent
+}
+
+docs.example.org {
+	@blocked not client_ip 192.168.10.0/24 10.8.0.0/24
+	respond @blocked 403
+	basic_auth {
+		marcel $2a$04$LJ3FMD0CUmp0L58htuEqR.j9XBgCTxlHttAycaIOV10mIFLQNOS2y
+	}
+	forward_auth authelia:9091 {
+		uri /api/verify?rd=https://auth.example.org
+		copy_headers Remote-User Remote-Groups
+	}
+	reverse_proxy paperless:8000
+}
+
+nas.home.lab {
+	tls internal
+	reverse_proxy 192.168.10.40:5000
+}
+
+http://plain.home.lab {
+	reverse_proxy 192.168.10.50:80
+}
