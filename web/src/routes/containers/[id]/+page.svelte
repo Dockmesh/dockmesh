@@ -71,6 +71,9 @@
     return t && TAB_KEYS.includes(t) ? t : 'overview';
   }
   let tab = $state<TabKey>(tabFromUrl());
+  // A terminal opened from a link waits for Attach instead of starting a
+  // session (and an audit entry) on page load.
+  let autoAttach = tab !== 'exec';
   $effect(() => {
     const want = tab;
     const url = new URL(page.url.href);
@@ -868,7 +871,8 @@
     } else if (tab === 'exec') {
       disconnectLogs();
       disconnectStats();
-      tick().then(connectExec);
+      if (autoAttach) tick().then(connectExec);
+      autoAttach = true;
     } else if (tab === 'updates') {
       disconnectLogs();
       disconnectExec();
@@ -1033,6 +1037,10 @@
     if (ctxStack) items.push({ label: `Open stack ${ctxStack}`, href: `/stacks/${encodeURIComponent(ctxStack)}` });
     if (canControl) items.push({ separator: true }, { label: 'Remove…', danger: true, onclick: remove });
     return items;
+  });
+
+  $effect(() => {
+    if (info && !tabItems.some((t) => t.key === tab)) tab = 'overview';
   });
 
   const tabItems = $derived([
@@ -1452,7 +1460,7 @@
         <span>tail · since boot</span>
       </div>
     </div>
-  {:else if tab === 'exec'}
+  {:else if tab === 'exec' && canExec}
     <div class="ctn-tab-pane">
       <div class="ctn-term-bar">
         <div class="ctn-term-shell-pills">
@@ -1498,7 +1506,7 @@
         {/if}
       </div>
     </div>
-  {:else if tab === 'updates'}
+  {:else if tab === 'updates' && canControl && !isRemote}
     <div class="ctn-tab-pane ctn-updates-grid">
       <div class="ctn-updates-main">
         {#if previewLoading && !updatePreview}
