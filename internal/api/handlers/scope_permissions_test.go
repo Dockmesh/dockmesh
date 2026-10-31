@@ -22,6 +22,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	"github.com/dockmesh/dockmesh/internal/system"
 )
 
 // newScopeEnv extends the authz env with the user, role, invite, stack and
@@ -48,8 +49,44 @@ func newScopeEnv(t *testing.T) *authzEnv {
 		r.With(middleware.RequirePerm(rbac.PermStacksView)).Get("/api/v1/stacks/{name}/status", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		})
+		r.With(middleware.RequirePerm(rbac.PermSystemView)).Get("/system/health", e.h.SystemHealth)
 	})
 	return e
+}
+
+func TestHealthDiskCheckNeedsServerScope(t *testing.T) {
+	e := newScopeEnv(t)
+	e.user("free", "viewer")
+	tagged := e.user("tagged", "viewer")
+	e.scopeUser(tagged.ID, "prod")
+	dir := t.TempDir()
+	system.SetRolePathsFn(func(context.Context) []system.RolePath {
+		return []system.RolePath{{Role: system.RoleData, Path: dir}}
+	})
+	t.Cleanup(func() { system.SetRolePathsFn(nil) })
+
+	hasDisk := func(user string) bool {
+		rr := e.do(http.MethodGet, "/system/health", e.login(user).AccessToken, nil)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", user, rr.Code, rr.Body)
+		}
+		var resp HealthResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range resp.Checks {
+			if c.Name == "disk" {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasDisk("free") {
+		t.Skip("no per-mount disk usage on this platform")
+	}
+	if hasDisk("tagged") {
+		t.Fatal("caller scoped away from the server host got the server's disk check")
+	}
 }
 
 func (e *authzEnv) role(name string, perms []rbac.Perm, scopes ...rbac.Scope) {

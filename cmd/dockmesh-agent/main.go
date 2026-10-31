@@ -1124,15 +1124,15 @@ func agentCheckScale(ctx context.Context, cli *client.Client, req agents.StackCh
 	return compose.NewService(dockerwrap.Wrap(cli), nil).CheckScale(ctx, proj, req.Service)
 }
 
-// agentRolePaths labels the filesystems holding Docker, containerd and
-// the agent's data dir in the disk report.
+// agentRolePaths labels the filesystems holding Docker, containerd, the
+// stacks dir and the agent's data dir in the disk report.
 func agentRolePaths(cli *client.Client) system.RolePathsFn {
 	return func(ctx context.Context) []system.RolePath {
-		dataDir := envOr("DOCKMESH_DATA_DIR", "/var/lib/dockmesh")
+		dir := dataDir()
 		paths := []system.RolePath{
 			{Role: system.RoleContainerdRoot, Path: system.ContainerdRoot()},
-			{Role: system.RoleData, Path: dataDir},
-			{Role: system.RoleStacks, Path: filepath.Join(dataDir, "stacks")},
+			{Role: system.RoleData, Path: dir},
+			{Role: system.RoleStacks, Path: filepath.Join(dir, "stacks")},
 		}
 		if cli == nil {
 			return paths

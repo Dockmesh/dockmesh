@@ -263,8 +263,13 @@ func (h *Handlers) SystemHealth(w http.ResponseWriter, r *http.Request) {
 		checks = append(checks, c)
 	}
 
-	// ---- disk: warn >80%, fail >95%, data directory is the critical one.
-	if m := system.CollectWithMounts(r.Context()); m.DiskTotal > 0 {
+	// ---- disk: warn >80%, fail >95%. Only for callers who may see the
+	// server host, since the detail names its mount.
+	var m system.Metrics
+	if h.inReadScope(r, "local", "") {
+		m = system.CollectWithMounts(r.Context())
+	}
+	if m.DiskTotal > 0 {
 		pct := m.DiskPercent
 		c := HealthCheck{Name: "disk", Label: "Disk", LinkTo: "/"}
 		c.Detail = fmt.Sprintf("%.0f%% used (%s)", pct, m.DiskPath)
