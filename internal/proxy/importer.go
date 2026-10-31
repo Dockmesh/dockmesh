@@ -109,13 +109,23 @@ func (s *Service) ImportCaddyfile(ctx context.Context, caddyfile string, dryRun 
 	return res, nil
 }
 
-var snippetDefRe = regexp.MustCompile(`(?m)^\s*\(([^()\s]+)\)\s*\{?\s*$`)
+// fileReadingTokens are Caddyfile directives and subdirectives that make
+// the adapter read a file of the proxy container. `import` is refused
+// even for snippets: whether Caddy treats its argument as a snippet or a
+// path depends on parse order, which a text scan can't reproduce.
+var fileReadingTokens = map[string]bool{
+	"import":                 true,
+	"client_auth":            true,
+	"trusted_ca_cert_file":   true,
+	"trusted_leaf_cert_file": true,
+	"trust_pool":             true,
+}
 
 // screenCaddyfile refuses what would make Caddy read anything but the
-// submitted text while adapting: imports of files or globs (only
-// snippets defined in the text are allowed) and {$ENV} substitution.
-// Both would let the importing user read files and environment of the
-// proxy container, e.g. certificate keys, through the result or errors.
+// submitted text while adapting: imports, client certificate files and
+// {$ENV} substitution. They would let the importing user read files and
+// environment of the proxy container, e.g. certificate keys, through the
+// result or Caddy's error messages.
 func screenCaddyfile(text string) error {
 	if len(text) > MaxCaddyfileSize {
 		return fmt.Errorf("%w: larger than %d KiB", ErrCaddyfileRejected, MaxCaddyfileSize>>10)
@@ -123,17 +133,9 @@ func screenCaddyfile(text string) error {
 	if strings.Contains(text, "{$") {
 		return fmt.Errorf("%w: environment variables ({$NAME}) are not supported", ErrCaddyfileRejected)
 	}
-	snippets := map[string]bool{}
-	for _, m := range snippetDefRe.FindAllStringSubmatch(text, -1) {
-		snippets[m[1]] = true
-	}
-	fields := strings.Fields(text)
-	for i, f := range fields {
-		if strings.Trim(f, "\"`{}") != "import" {
-			continue
-		}
-		if i+1 >= len(fields) || !snippets[strings.Trim(fields[i+1], "\"`")] {
-			return fmt.Errorf("%w: import is only supported for snippets defined in the same text", ErrCaddyfileRejected)
+	for _, f := range strings.Fields(text) {
+		if tok := strings.Trim(f, "\"`{}"); fileReadingTokens[tok] {
+			return fmt.Errorf("%w: %s is not supported; paste the file's content instead", ErrCaddyfileRejected, tok)
 		}
 	}
 	return nil
@@ -765,8 +767,6 @@ func handlerLabel(name string) string {
 		return "respond / redir"
 	case "subroute":
 		return "handle / route block"
-	case "file_server":
-		return "file_server"
 	case "rewrite":
 		return "rewrite / uri"
 	case "":

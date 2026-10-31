@@ -397,14 +397,12 @@ func (h *Handlers) ImportProxyCaddyfile(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !req.DryRun {
-		var created []string
-		for _, s := range res.Sites {
-			if s.RouteID != 0 {
-				created = append(created, s.Host)
-			}
+	var created []string
+	for _, s := range res.Sites {
+		if s.RouteID != 0 {
+			created = append(created, s.Host)
 		}
-		h.audit(r, "proxy.import", "", map[string]any{"created": created, "sites": len(res.Sites)})
 	}
+	h.audit(r, "proxy.import", "", map[string]any{"dry_run": req.DryRun, "created": created, "sites": len(res.Sites)})
 	writeJSON(w, http.StatusOK, res)
 }

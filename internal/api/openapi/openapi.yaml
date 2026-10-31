@@ -5919,8 +5919,9 @@ paths:
         `partial` site is created **disabled** and carries its `route_id`.
         A site block with several names becomes one site per name; a
         `www.<name>` block that only redirects to `<name>` becomes that site's
-        `www_redirect`. File imports, globs and `{$ENV}` substitution are
-        rejected (400); `import` of snippets defined in the same text works.
+        `www_redirect`. `import`, client certificate files and `{$ENV}`
+        substitution are rejected (400), as they would read files or the
+        environment of the proxy container.
         Needs the proxy to be running (409 otherwise).
       requestBody:
         required: true
