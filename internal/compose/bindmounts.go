@@ -233,7 +233,7 @@ func emptyOrMissing(dir string) bool {
 	return err == nil && len(entries) == 0
 }
 
-const bindCopyHelperImage = "busybox:1.36"
+const bindCopyHelperImage = "busybox:1.38"
 
 // copyBindData streams path out of the old container into a helper
 // container that has dest bind-mounted. The Docker daemon extracts as root

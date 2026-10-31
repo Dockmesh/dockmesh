@@ -65,7 +65,7 @@ sudo docker rm -f dockmesh-proxy
 sudo docker volume rm dockmesh-caddy-data dockmesh-caddy-config
 ```
 
-**Helper images.** Dockmesh pulls `caddy:2` for the proxy, `alpine:3.19` for volume backups and restores, `alpine:latest` for the volume browser, and `busybox:latest` for volume tar streams. Remove them with `docker image rm` if nothing else uses them.
+**Helper images.** Dockmesh pulls `caddy:2` for the proxy, `alpine:3.24` for volume backups and restores, `alpine:latest` for the volume browser, and `busybox:latest` for volume tar streams. Remove them with `docker image rm` if nothing else uses them.
 
 **Scanner.** `install.sh` installs `grype` into `/usr/local/bin`. Remove it with `sudo rm /usr/local/bin/grype` if you don't use it otherwise.
 

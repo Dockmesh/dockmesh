@@ -14,7 +14,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
-const helperImage = "alpine:3.19"
+const helperImage = "alpine:3.24"
 
 // tarVolume runs `tar czf - -C /source .` inside an alpine helper that
 // mounts the named volume read-only and streams the gzipped archive on
