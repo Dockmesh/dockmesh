@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { apiRequest, ApiError } from '$lib/api';
+  import { api, ApiError, type ProxyVersionInfo, type ProxySettings } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
@@ -7,33 +7,18 @@
   // Caddy version and the options that apply to every site.
   let { running, onchanged }: { running: boolean; onchanged?: () => void } = $props();
 
-  interface VersionInfo {
-    current: string;
-    image: string;
-    default: string;
-    previous?: string;
-    available: Array<{ version: string; image: string }>;
-    managed: boolean;
-    read_only_reason?: string;
-  }
-  interface Settings {
-    acme_email: string;
-    acme_ca: string;
-    trusted_proxies: string;
-  }
-
   const canEdit = $derived(allowed('proxy.update'));
-  let info = $state<VersionInfo | null>(null);
-  let settings = $state<Settings | null>(null);
-  let form = $state<Settings>({ acme_email: '', acme_ca: '', trusted_proxies: '' });
+  let info = $state<ProxyVersionInfo | null>(null);
+  let settings = $state<ProxySettings | null>(null);
+  let form = $state<ProxySettings>({ acme_email: '', acme_ca: '', trusted_proxies: '' });
   let pick = $state('');
   let switching = $state(false);
   let saving = $state(false);
 
   async function load() {
     const [v, s] = await Promise.all([
-      apiRequest<VersionInfo>('/proxy/version').catch(() => null),
-      apiRequest<Settings>('/proxy/settings').catch(() => null)
+      api.proxy.version().catch(() => null),
+      api.proxy.settings().catch(() => null)
     ]);
     info = v;
     settings = s;
@@ -55,8 +40,8 @@
     switching = true;
     try {
       info = rollback
-        ? await apiRequest<VersionInfo>('/proxy/version/rollback', { method: 'POST' })
-        : await apiRequest<VersionInfo>('/proxy/version', { method: 'PUT', body: JSON.stringify({ version }) });
+        ? await api.proxy.rollbackVersion()
+        : await api.proxy.setVersion(version);
       toast.success(`Caddy runs ${info.current}`);
       onchanged?.();
     } catch (e) {
@@ -70,7 +55,7 @@
   async function saveSettings() {
     saving = true;
     try {
-      settings = await apiRequest<Settings>('/proxy/settings', { method: 'PUT', body: JSON.stringify(form) });
+      settings = await api.proxy.updateSettings(form);
       form = { ...settings };
       toast.success('Proxy settings saved');
     } catch (e) {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Operation } from '$lib/api';
-  import { operations, currentStep, overallProgress, isActive } from '$lib/stores/operations.svelte';
+  import { operations, currentStep, overallProgress, isActive, hasWarning } from '$lib/stores/operations.svelte';
   import StatusChip from '$lib/components/ui/StatusChip.svelte';
 
   // Inline progress for a list row: the step that runs now and a thin bar.
@@ -22,7 +22,7 @@
     {#if !compact}<span class="txt err" title={op.error}>{step?.label ?? op.error}</span>{/if}
   {:else if op.status === 'cancelled'}
     <StatusChip tone="off" label="cancelled" />
-  {:else if op.steps.some((s) => s.status === 'warning')}
+  {:else if hasWarning(op)}
     <StatusChip tone="warn" label="warning" title={op.steps.find((s) => s.status === 'warning')?.detail} />
   {:else}
     <StatusChip tone="ok" label="done" />

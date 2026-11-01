@@ -21,7 +21,6 @@
 
   let testing = $state<Record<number, 'running' | 'ok' | 'fail'>>({});
 
-
   function rulesUsing(id: number): number {
     return rules.filter((r) => r.channel_ids?.includes(id)).length;
   }

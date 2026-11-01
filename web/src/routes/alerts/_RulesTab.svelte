@@ -1,11 +1,10 @@
 <script lang="ts">
   import { api, ApiError, type AlertRule, type NotificationChannel } from '$lib/api';
-  import { appliesTo, kindLabel, kindOf, ruleSentence, ruleToInput } from './ruleKinds';
+  import { appliesTo, kindLabel, kindOf, ruleSentence, ruleToInput, sevTone } from './ruleKinds';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { EmptyState, Skeleton, StatusChip, Switch } from '$lib/components/ui';
   import Menu from '$lib/components/ui/Menu.svelte';
-  import type { Tone } from '$lib/components/ui/StatusChip.svelte';
   import { BellRing, Plus } from 'lucide-svelte';
 
   interface Props {
@@ -41,9 +40,6 @@
       })
   );
 
-  function sevTone(s: string): Tone {
-    return s === 'critical' ? 'bad' : s === 'warning' ? 'warn' : 'off';
-  }
   function dotTone(r: AlertRule): string {
     if (!r.enabled) return '';
     if (r.firing_since) return 'bad';

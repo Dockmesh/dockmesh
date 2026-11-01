@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Operation, OperationStep } from '$lib/api';
-import { currentStep, isActive, kindLabel, overallProgress } from './operationsProgress';
+import { currentStep, elapsed, failedStep, hasWarning, isActive, kindLabel, opRef, overallProgress } from './operationsProgress';
 
 function op(steps: Partial<OperationStep>[], status: Operation['status'] = 'running'): Operation {
   return {
@@ -44,5 +44,32 @@ describe('labels and state', () => {
     expect(isActive({ status: 'queued' })).toBe(true);
     expect(isActive({ status: 'running' })).toBe(true);
     expect(isActive({ status: 'cancelled' })).toBe(false);
+  });
+});
+
+describe('step predicates', () => {
+  it('finds warnings and the failed step', () => {
+    expect(hasWarning(op([{ status: 'succeeded' }, { status: 'warning' }]))).toBe(true);
+    expect(hasWarning(op([{ status: 'succeeded' }]))).toBe(false);
+    expect(failedStep(op([{ status: 'succeeded' }, { status: 'failed' }], 'failed'))?.key).toBe('s1');
+    expect(failedStep(op([{ status: 'succeeded' }]))).toBeUndefined();
+  });
+});
+
+describe('opRef', () => {
+  it('builds the refs the server uses', () => {
+    expect(opRef.backupRun(42)).toBe('backup-run:42');
+    expect(opRef.container('abc')).toBe('container:abc');
+    expect(opRef.proxySite('a.example.com')).toBe('proxy-site:a.example.com');
+  });
+});
+
+describe('elapsed', () => {
+  it('formats seconds and minutes', () => {
+    expect(elapsed('2026-11-01T00:00:00Z', '2026-11-01T00:00:12Z')).toBe('12 s');
+    expect(elapsed('2026-11-01T00:00:00Z', '2026-11-01T00:03:04Z')).toBe('3 min 4 s');
+  });
+  it('is empty without a start', () => {
+    expect(elapsed(undefined)).toBe('');
   });
 });

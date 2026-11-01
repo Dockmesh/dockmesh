@@ -1,7 +1,9 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { sevTone } from './alerts/ruleKinds';
+  import { fmtAgo, pctTone } from '$lib/format';
   import { goto } from '$app/navigation';
-  import { api, apiRequest, isFanOut, type SystemMetrics, type ContainerSummary, type HostInfo, type BackupRun } from '$lib/api';
+  import { api, isFanOut, type AttentionItem, type SystemMetrics, type ContainerSummary, type HostInfo, type BackupRun } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
   import { autoRefresh } from '$lib/autorefresh';
@@ -14,24 +16,6 @@
   import { AlertTriangle } from 'lucide-svelte';
 
   type PerHostMetrics = SystemMetrics & { host_id: string; host_name: string };
-
-  interface AttentionItem {
-    id: string;
-    kind: string;
-    severity: 'critical' | 'warning' | 'info';
-    title: string;
-    detail?: string;
-    link: string;
-    since?: string;
-  }
-  interface AuditEntry {
-    id: number;
-    ts: string;
-    username?: string;
-    user_id?: string;
-    action: string;
-    target?: string;
-  }
 
   type StackState = 'running' | 'stopped' | 'unhealthy' | 'partial';
   interface StackRow {
@@ -48,7 +32,7 @@
   let perHostMetrics = $state<PerHostMetrics[]>([]);
   let summary = $state<ContainerSummary | null>(null);
   let stackRows = $state<StackRow[]>([]);
-  let changes = $state<AuditEntry[]>([]);
+  let changes = $state<Awaited<ReturnType<typeof api.audit.list>>>([]);
   let attention = $state<AttentionItem[] | null>(null);
   let runs = $state<BackupRun[] | null>(null);
   let hostList = $state<HostInfo[]>([]);
@@ -72,10 +56,10 @@
           .catch((): ContainerSummary => ({ total: 0, running: 0, stopped: 0, unhealthy: 0, by_stack: {} })),
         allowed('stacks.view') ? api.stacks.list().catch(() => []) : Promise.resolve([]),
         allowed('audit.view')
-          ? apiRequest<AuditEntry[]>('/audit?limit=8&category=changes').catch(() => [] as AuditEntry[])
-          : Promise.resolve([] as AuditEntry[]),
+          ? api.audit.list(8, '', '', 'changes').catch(() => [])
+          : Promise.resolve([]),
         api.hosts.list().catch(() => []),
-        apiRequest<AttentionItem[]>('/attention').catch(() => null),
+        api.attention.list().catch(() => null),
         allowed('backups.view') ? api.backups.listRuns(200).catch(() => null) : Promise.resolve(null)
       ]);
       if (!current()) return;
@@ -119,17 +103,6 @@
   });
   $effect(() => autoRefresh(load, 10_000));
 
-  function ago(ts: string): string {
-    const diff = (Date.now() - new Date(ts).getTime()) / 1000;
-    if (diff < 60) return 'now';
-    if (diff < 3600) return `${Math.floor(diff / 60)} min`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)} h`;
-    if (diff < 30 * 86400) return `${Math.floor(diff / 86400)} d`;
-    return new Date(ts).toLocaleDateString();
-  }
-  function pctTone(p: number, warnAt = 70): string {
-    return p >= 90 ? 'bad' : p >= warnAt ? 'warn' : '';
-  }
   const ORDER: Record<StackState, number> = { unhealthy: 0, partial: 1, running: 2, stopped: 3 };
   function stackTone(s: StackState): Tone {
     return s === 'running' ? 'ok' : s === 'unhealthy' ? 'bad' : s === 'partial' ? 'warn' : 'off';
@@ -137,7 +110,7 @@
   function stackLabel(s: StackState): string {
     return s === 'running' ? 'running' : s === 'unhealthy' ? 'unhealthy' : s === 'partial' ? 'degraded' : 'stopped';
   }
-  const hostName = (id: string) => hostList.find((h) => h.id === id)?.name ?? (id === 'local' ? 'local' : id);
+  const hostName = (id: string) => hostList.find((h) => h.id === id)?.name ?? id;
 
   // Hosts in the lens: every host in all-mode, else the selected one. A
   // host without metrics is offline or unreachable.
@@ -243,7 +216,6 @@
       .sort((a, b) => ORDER[a.state] - ORDER[b.state] || a.name.localeCompare(b.name))
   );
 
-  const sevTone: Record<string, Tone> = { critical: 'bad', warning: 'warn', info: 'off' };
   const subtitle = $derived.by(() => {
     const parts = [`${online} of ${lensHosts.length} host${lensHosts.length === 1 ? '' : 's'} online`];
     if (summary) parts.push(`${summary.running} of ${summary.total} containers running`);
@@ -305,9 +277,9 @@
           <div class="box-h"><h3>Needs attention <span class="dm-dim">{attention.length}</span></h3></div>
           {#each attention.slice(0, 8) as a (a.id)}
             <div class="attn">
-              <StatusChip tone={sevTone[a.severity] ?? 'off'} label={a.severity} />
+              <StatusChip tone={sevTone(a.severity)} label={a.severity} />
               <div class="t dm-trunc"><b>{a.title}</b>{#if a.detail}<span> — {a.detail}</span>{/if}</div>
-              {#if a.since}<span class="dm-num dm-dim">{ago(a.since)}</span>{/if}
+              {#if a.since}<span class="dm-num dm-dim">{fmtAgo(a.since)}</span>{/if}
               <a class="dm-btn dm-btn-sm" href={a.link}>Open</a>
             </div>
           {/each}
@@ -396,7 +368,7 @@
             <div class="dm-tbl">
               {#each changes as e (e.id)}
                 <div class="dm-tr" style="grid-template-columns: 52px minmax(0, 1fr)" title={new Date(e.ts).toLocaleString()}>
-                  <span class="dm-num dm-dim">{ago(e.ts)}</span>
+                  <span class="dm-num dm-dim">{fmtAgo(e.ts)}</span>
                   <span class="dm-trunc"><b>{e.username || 'system'}</b> <span class="dm-mono act">{e.action}</span> {e.target ?? ''}</span>
                 </div>
               {:else}

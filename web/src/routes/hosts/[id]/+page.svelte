@@ -1,5 +1,9 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { tagProblem } from '../_host';
+  import { setTabParam } from '$lib/tabs';
+  import { fmtAgo } from '$lib/format';
+  const fmtAgoNever = (iso?: string) => fmtAgo(iso, 'never');
   import { latest } from '$lib/latest';
   import { fmtVersion } from '$lib/version';
   import { page } from '$app/state';
@@ -146,14 +150,6 @@
     return stacks.filter((s) => projects.has(s.name));
   });
 
-  function fmtAgo(iso?: string): string {
-    if (!iso) return 'never';
-    const d = (Date.now() - new Date(iso).getTime()) / 1000;
-    if (d < 60) return `${Math.round(d)} s ago`;
-    if (d < 3600) return `${Math.round(d / 60)} min ago`;
-    if (d < 86400) return `${Math.round(d / 3600)} h ago`;
-    return `${Math.round(d / 86400)} d ago`;
-  }
   function fmtDur(sec: number): string {
     if (sec < 3600) return `${Math.max(1, Math.round(sec / 60))} min`;
     if (sec < 86400) return `${Math.round(sec / 3600)} h`;
@@ -171,9 +167,7 @@
   }
   function selectTab(t: string) {
     tab = t as TabId;
-    const u = new URL(window.location.href);
-    u.searchParams.set('tab', t);
-    window.history.replaceState(history.state, '', u.toString());
+    setTabParam(t, 'overview');
   }
 
   const status = $derived(isLocal ? 'online' : (agent?.status ?? 'offline'));
@@ -234,8 +228,8 @@
   function addTagDraft(t: string) {
     const v = t.trim().toLowerCase();
     if (!v || tagsDraft.includes(v)) { tagInput = ''; return; }
-    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(v)) { toast.error('Invalid tag', 'lowercase letters, digits, hyphens, 1-32 chars'); return; }
-    if (tagsDraft.length >= 20) { toast.error('Max 20 tags'); return; }
+    const problem = tagProblem(v, tagsDraft);
+    if (problem) { toast.error(problem.title, problem.detail); return; }
     tagsDraft = [...tagsDraft, v];
     tagInput = '';
   }
@@ -406,8 +400,8 @@
                   {#if needsUpgrade}<span class="warn"> · server is on {fmtVersion(upgradePolicyVersion)}</span>
                   {:else if agent.update_recommended}<span class="warn"> · agent update recommended</span>{/if}
                 </dd>
-                <dt>Last seen</dt><dd>{fmtAgo(agent.last_seen_at)}</dd>
-                <dt>Online since</dt><dd>{agent.online_since ? `${fmtAgo(agent.online_since)} (${fmtUptime(agent.online_since)})` : '—'}</dd>
+                <dt>Last seen</dt><dd>{fmtAgoNever(agent.last_seen_at)}</dd>
+                <dt>Online since</dt><dd>{agent.online_since ? `${fmtAgoNever(agent.online_since)} (${fmtUptime(agent.online_since)})` : '—'}</dd>
                 <dt>Certificate</dt><dd class="dm-mono" title={agent.cert_fingerprint}>expires {fmtDate(agent.cert_expires_at)}{agent.cert_fingerprint ? ` · ${agent.cert_fingerprint.slice(0, 23)}…` : ''}</dd>
                 <dt>Enrolled</dt><dd>{fmtDate(agent.created_at)}</dd>
               {:else}
@@ -430,7 +424,7 @@
                     <span class="dm-num dm-dim">{out ? '↗ out' : '↙ in'}</span>
                     <a class="dm-trunc" href="/stacks/{encodeURIComponent(m.stack_name)}">{m.stack_name}</a>
                     <StatusChip tone={m.status === 'completed' ? 'ok' : m.status === 'failed' ? 'bad' : 'warn'} label={m.status} />
-                    <span class="dm-num dm-dim" style="text-align: right">{fmtAgo(m.completed_at ?? m.started_at)}</span>
+                    <span class="dm-num dm-dim" style="text-align: right">{fmtAgoNever(m.completed_at ?? m.started_at)}</span>
                   </div>
                 {/each}
               </div>
@@ -499,9 +493,9 @@
               <span role="cell" class="dm-nm"><a href="/stacks/{encodeURIComponent(m.stack_name)}">{m.stack_name}</a></span>
               <span role="cell" class="dm-num dm-dim">{m.source_host_id === id ? `→ ${m.target_host_id}` : `← ${m.source_host_id}`}</span>
               <span role="cell"><StatusChip tone={m.status === 'completed' ? 'ok' : m.status === 'failed' ? 'bad' : 'warn'} label={m.status} /></span>
-              <span role="cell" class="dm-num dm-dim">{fmtAgo(m.started_at)}</span>
+              <span role="cell" class="dm-num dm-dim">{fmtAgoNever(m.started_at)}</span>
               <span role="cell" class="dm-dim">{m.initiated_by}</span>
-              <span role="cell" class="dm-num dm-dim">{m.completed_at ? fmtAgo(m.completed_at) : '—'}</span>
+              <span role="cell" class="dm-num dm-dim">{m.completed_at ? fmtAgoNever(m.completed_at) : '—'}</span>
             </div>
           {/each}
         </div>

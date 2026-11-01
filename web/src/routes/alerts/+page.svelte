@@ -1,5 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { sevTone } from './ruleKinds';
+  import { setTabParam } from '$lib/tabs';
   import { page } from '$app/state';
   import { api, ApiError } from '$lib/api';
   import type { AlertRule, NotificationChannel, AlertHistoryEntry, HostInfo } from '$lib/api';
@@ -7,7 +9,6 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { autoRefresh } from '$lib/autorefresh';
   import { EmptyState, Segmented, Skeleton, StatusChip, Tabs } from '$lib/components/ui';
-  import type { Tone } from '$lib/components/ui/StatusChip.svelte';
   import { Activity, Download, Plus } from 'lucide-svelte';
   import RulesTab from './_RulesTab.svelte';
   import ChannelsTab from './_ChannelsTab.svelte';
@@ -16,13 +17,10 @@
 
   type Tab = 'rules' | 'channels' | 'history';
 
-  // The tab lives in the URL; replaceState keeps back/forward on pages.
   let tab = $state<Tab>((new URLSearchParams(page.url.search).get('tab') as Tab) || 'rules');
   function setTab(t: string) {
     tab = t as Tab;
-    const url = new URL(page.url.href);
-    url.searchParams.set('tab', t);
-    goto(url.pathname + url.search, { replace: true, reset: false } as any);
+    setTabParam(t, 'rules');
   }
 
   let channels = $state<NotificationChannel[]>([]);
@@ -90,9 +88,6 @@
   );
 
   const ruleSeverity = $derived(new Map(rules.map((r) => [r.id, r.severity || 'warning'])));
-  function sevTone(s: string | undefined): Tone {
-    return s === 'critical' ? 'bad' : s === 'warning' ? 'warn' : 'off';
-  }
   function fmtValue(e: AlertHistoryEntry): string {
     if ((e.kind && e.kind !== 'metric' && e.kind !== 'disk_usage') || e.value == null) return '';
     return `${e.value.toFixed(1)} %${e.threshold != null ? ` / ${e.threshold} %` : ''}`;
@@ -215,7 +210,7 @@
   {/if}
 </section>
 
-<RuleModal bind:open={ruleModalOpen} editing={editingRule} {channels} {hosts} onSaved={loadRules} />
+<RuleModal bind:open={ruleModalOpen} editing={editingRule} {channels} {hosts} {hostName} onSaved={loadRules} />
 <ChannelModal bind:open={channelModalOpen} editing={editingChannel} onSaved={loadChannels} />
 
 <style>

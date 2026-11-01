@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { apiRequest, ApiError } from '$lib/api';
+  import { api, ApiError, type ProxyImportResult } from '$lib/api';
   import { Modal, StatusChip } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
 
@@ -7,23 +7,8 @@
   // Imported sites start disabled so they can be checked first.
   let { open = $bindable(false), onimported }: { open: boolean; onimported?: () => void } = $props();
 
-  interface ImportSite {
-    host: string;
-    upstream: string;
-    tls_mode: string;
-    status: 'ready' | 'partial' | 'skipped';
-    unsupported: string[] | null;
-    error?: string;
-    route_id?: number;
-  }
-  interface ImportResult {
-    sites: ImportSite[];
-    global_unsupported: string[] | null;
-    warnings: string[] | null;
-  }
-
   let text = $state('');
-  let result = $state<ImportResult | null>(null);
+  let result = $state<ProxyImportResult | null>(null);
   let busy = $state(false);
   let error = $state('');
 
@@ -40,10 +25,7 @@
     busy = true;
     error = '';
     try {
-      const res = await apiRequest<ImportResult>('/proxy/import', {
-        method: 'POST',
-        body: JSON.stringify({ caddyfile: text, dry_run: dryRun })
-      });
+      const res = await api.proxy.importCaddyfile(text, dryRun);
       if (dryRun) {
         result = res;
         return;

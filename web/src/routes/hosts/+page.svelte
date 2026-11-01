@@ -1,5 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { tagProblem } from './_host';
+  import { fmtAgo, pctTone } from '$lib/format';
+  const fmtAgoNever = (iso?: string) => fmtAgo(iso, 'never');
   import { goto } from '$app/navigation';
   import {
     api, ApiError, isFanOut,
@@ -7,7 +10,7 @@
   } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { fmtVersion } from '$lib/version';
-  import { Skeleton, EmptyState, StatBar, Segmented, StatusChip, ChipList, TagPill, Menu, Modal, LiveIndicator } from '$lib/components/ui';
+  import { Skeleton, EmptyState, StatBar, Segmented, ChipList, TagPill, Menu, Modal, LiveIndicator } from '$lib/components/ui';
   import type { MenuItem } from '$lib/components/ui/Menu.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
@@ -264,8 +267,8 @@
   function addTagDraft(t: string) {
     const v = t.trim().toLowerCase();
     if (!v || tagsDraft.includes(v)) { tagInput = ''; return; }
-    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(v)) { toast.error('Invalid tag', 'lowercase letters, digits, hyphens, 1-32 chars'); return; }
-    if (tagsDraft.length >= 20) { toast.error('Max 20 tags'); return; }
+    const problem = tagProblem(v, tagsDraft);
+    if (problem) { toast.error(problem.title, problem.detail); return; }
     tagsDraft = [...tagsDraft, v];
     tagInput = '';
   }
@@ -281,14 +284,6 @@
     } finally { tagsBusy = false; }
   }
 
-  function fmtAgo(iso?: string): string {
-    if (!iso) return 'never';
-    const d = (Date.now() - new Date(iso).getTime()) / 1000;
-    if (d < 60) return `${Math.round(d)} s ago`;
-    if (d < 3600) return `${Math.round(d / 60)} min ago`;
-    if (d < 86400) return `${Math.round(d / 3600)} h ago`;
-    return `${Math.round(d / 86400)} d ago`;
-  }
   function fmtUptime(iso?: string): string {
     if (!iso) return '';
     const d = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -301,9 +296,6 @@
     if (s === 'offline') return 'bad';
     if (s === 'pending') return 'warn';
     return '';
-  }
-  function pctTone(p: number, warnAt = 70): string {
-    return p >= 90 ? 'bad' : p >= warnAt ? 'warn' : '';
   }
 
   function rowMenu(r: Row): MenuItem[] {
@@ -354,7 +346,7 @@
         <span class="dm-trunc">
           <b>{upgradePolicy.connected_pending} {upgradePolicy.connected_pending === 1 ? 'agent is' : 'agents are'} behind the server ({fmtVersion(upgradePolicy.server_version)}).</b>
           <span class="dm-dim">
-            {upgradePolicy.connected_up_to_date} of {upgradePolicy.connected_total} up to date · policy {upgradePolicy.mode}{upgradePolicy.mode === 'staged' && upgradePolicy.stage_percent ? ` ${upgradePolicy.stage_percent} %` : ''}{upgradePolicy.last_run_at ? ` · last run ${fmtAgo(upgradePolicy.last_run_at)}` : ''}
+            {upgradePolicy.connected_up_to_date} of {upgradePolicy.connected_total} up to date · policy {upgradePolicy.mode}{upgradePolicy.mode === 'staged' && upgradePolicy.stage_percent ? ` ${upgradePolicy.stage_percent} %` : ''}{upgradePolicy.last_run_at ? ` · last run ${fmtAgoNever(upgradePolicy.last_run_at)}` : ''}
           </span>
         </span>
         <span class="dm-sp"></span>
@@ -443,7 +435,7 @@
               <a href="/hosts/{r.id}" onclick={(e) => e.stopPropagation()}>{r.name}</a>
               <small>
                 {#if r.status === 'offline'}
-                  <span class="off">offline · last seen {fmtAgo(r.last_seen_at)}</span>
+                  <span class="off">offline · last seen {fmtAgoNever(r.last_seen_at)}</span>
                 {:else if r.status === 'pending'}
                   waiting for the agent to connect
                 {:else}

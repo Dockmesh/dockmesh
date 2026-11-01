@@ -1,10 +1,10 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { setTabParam } from '$lib/tabs';
   import { page } from '$app/state';
   import { api, ApiError, runRestorable } from '$lib/api';
   import type { BackupJob, BackupJobInput, BackupRun, BackupTarget } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
-  import { hosts } from '$lib/stores/host.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { operations, isActive } from '$lib/stores/operations.svelte';
@@ -18,7 +18,8 @@
   import SystemRestoreDialog from './_SystemRestoreDialog.svelte';
   import {
     fmtBytes, fmtAgo, fmtUntil, fmtDuration, cronHuman, targetTypeLabel,
-    jobSourceName, jobSourceKind, runTone, runLabel, isSystemRun
+    jobSourceName, jobSourceKind, runTone, runLabel, isSystemRun,
+    hostLabel
   } from './_format';
   import { Plus, Lock, Play, AlertTriangle } from 'lucide-svelte';
 
@@ -29,7 +30,7 @@
     return t && TABS.includes(t) ? t : 'jobs';
   });
   function setTab(t: string) {
-    goto(`/backups?tab=${t}`, { replace: true, reset: false });
+    setTabParam(t, 'jobs');
   }
 
   let jobs = $state<BackupJob[]>([]);
@@ -84,10 +85,6 @@
   function targetById(id?: number): BackupTarget | undefined {
     return id ? bTargets.find((t) => t.id === id) : undefined;
   }
-  function hostName(id?: string): string {
-    const hid = id || 'local';
-    return hosts.available.find((h) => h.id === hid)?.name ?? hid;
-  }
   function lastRunOf(j: BackupJob): BackupRun | undefined {
     return runs.find((r) => r.job_id === j.id);
   }
@@ -102,23 +99,18 @@
 
   // The run just started from this page, shown before the list catches up.
   let startedRun = $state<Record<number, number>>({});
-  function opForRun(runId?: number) {
-    return runId ? operations.latest(`backup-run:${runId}`, 'backup.run') : undefined;
-  }
   function liveOpFor(j: BackupJob) {
     const r = lastRunOf(j);
     const started = startedRun[j.id];
     const runId = started && (!r || r.id < started) ? started : r?.id;
-    const op = opForRun(runId);
+    const op = operations.backupRun(runId);
     return op && (isActive(op) || started === runId) ? op : undefined;
   }
 
   async function runJob(j: BackupJob) {
-    const since = Date.now();
     try {
-      const run = await api.backups.runJob(j.id);
+      const { run } = await operations.startBackup(j.id);
       startedRun[j.id] = run.id;
-      void operations.find(`backup-run:${run.id}`, 'backup.run', since);
       void loadRuns();
     } catch (err) {
       toast.error(`Could not start ${j.name}`, err instanceof ApiError ? err.message : undefined);
@@ -199,7 +191,6 @@
     }
   }
 
-  // Wizards
   let wizardJobOpen = $state(false);
   let wizardJobEdit = $state<BackupJob | null>(null);
   let wizardTargetOpen = $state(false);
@@ -242,7 +233,6 @@
     }
   }
 
-  // Restore
   let restoreRun = $state<BackupRun | null>(null);
   let restorePreset = $state<'in-place' | 'alongside'>('alongside');
   let systemRestoreOpen = $state(false);
@@ -257,7 +247,6 @@
     restoreRun = r;
   }
 
-  // Runs filter
   let runJobFilter = $state('');
   let runStatusFilter = $state<'all' | 'success' | 'failed' | 'running'>('all');
   const filteredRuns = $derived(
@@ -291,7 +280,7 @@
     const restorable = runRestorable(r);
     return [
       { label: 'Open', kbd: '↵', href: `/backups/runs/${r.id}` },
-      ...(opForRun(r.id) ? [{ label: 'Steps and log', onclick: () => operations.open(opForRun(r.id)!.id) }] : []),
+      ...(operations.backupRun(r.id) ? [{ label: 'Steps and log', onclick: () => operations.open(operations.backupRun(r.id)!.id) }] : []),
       ...(restorable ? [{ label: isSystemRun(r) ? 'Restore system…' : 'Restore…', onclick: () => openRestore(r) }] : []),
       ...(restorable && allowed('backups.download') ? [{ label: 'Download archive', onclick: () => downloadRunArchive(r) }] : [])
     ];
@@ -418,7 +407,7 @@
               {#if pendingHostKey(j)}<small class="bad">SFTP host key changed</small>{:else if !j.enabled}<small>disabled</small>{/if}
             </span>
             <span class="dm-nm"><span class="dm-t what">{jobSourceName(j)}</span><small>{jobSourceKind(j)}</small></span>
-            <span class="dm-num dm-dim">{hostName(j.host_id)}</span>
+            <span class="dm-num dm-dim">{hostLabel(j.host_id)}</span>
             <span class="dm-trunc muted" title={tgt ? `${tgt.name} (${targetTypeLabel(tgt.type)})` : targetTypeLabel(j.target_type)}>{tgt?.name ?? targetTypeLabel(j.target_type)}</span>
             <span class="dm-trunc muted" title={j.schedule}>{cronHuman(j.schedule)}</span>
             <span class="dm-nm">
@@ -468,7 +457,7 @@
           <span></span><span>When</span><span>Job</span><span>Result</span><span>Size</span><span>Duration</span><span>Archive</span><span></span>
         </div>
         {#each filteredRuns as r (r.id)}
-          {@const op = opForRun(r.id)}
+          {@const op = operations.backupRun(r.id)}
           {@const href = `/backups/runs/${r.id}`}
           <div class="dm-tr dm-click" role="row" tabindex="0" style="grid-template-columns: {RUN_COLS}" onclick={() => goto(href)} onkeydown={(e) => rowKey(e, href)}>
             <span><span class="dm-dot {runTone(r.status) === 'acc' ? 'ok' : runTone(r.status) === 'off' ? '' : runTone(r.status)}"></span></span>

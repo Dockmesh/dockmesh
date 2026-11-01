@@ -1,6 +1,6 @@
 <script lang="ts">
   import Menu, { type MenuItem } from '$lib/components/ui/Menu.svelte';
-  import { operations, kindLabel, currentStep } from '$lib/stores/operations.svelte';
+  import { operations, kindLabel, currentStep, hasWarning } from '$lib/stores/operations.svelte';
   import { LoaderCircle, History } from 'lucide-svelte';
 
   // Top-bar entry to running work: shows how many operations run and
@@ -27,7 +27,7 @@
       for (const op of recent) {
         out.push({
           label: `${kindLabel(op.kind)} · ${op.target}`,
-          kbd: op.status === 'succeeded' && op.steps.some((s) => s.status === 'warning') ? 'warning' : op.status,
+          kbd: op.status === 'succeeded' && hasWarning(op) ? 'warning' : op.status,
           danger: op.status === 'failed',
           onclick: () => operations.open(op.id)
         });

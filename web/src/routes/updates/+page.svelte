@@ -1,13 +1,14 @@
 <script lang="ts">
-  import { api, apiRequest, ApiError, isFanOut, type Operation, type UpdateStatus } from '$lib/api';
+  import { api, ApiError, isFanOut, type Operation, type UpdateStatus } from '$lib/api';
+  import { fmtAgo } from '$lib/format';
   import { StatusChip, StatBar, EmptyState, Skeleton, LiveIndicator } from '$lib/components/ui';
   import type { Stat } from '$lib/components/ui/StatBar.svelte';
   import OpProgress from '$lib/components/operations/OpProgress.svelte';
-  import { operations, isActive } from '$lib/stores/operations.svelte';
+  import { operations, isActive, opRef } from '$lib/stores/operations.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
   import { toast } from '$lib/stores/toast.svelte';
-  import { fmtVersion } from '$lib/version';
+  import { fmtVersion, semverBump } from '$lib/version';
   import { autoRefresh } from '$lib/autorefresh';
 
   interface Container {
@@ -40,11 +41,6 @@
     to: string;
     href: string;
   }
-  interface ProxyVersion {
-    current: string;
-    default: string;
-    managed: boolean;
-  }
 
   const canUpdate = $derived(allowed('containers.update'));
   const canDeploy = $derived(allowed('stacks.deploy'));
@@ -76,26 +72,12 @@
     }
     return false;
   }
-  function bump(from: string, to: string): 'major' | 'minor' | 'patch' {
-    const a = from.replace(/^v/, '').split('.'), b = to.replace(/^v/, '').split('.');
-    if (a[0] !== b[0]) return 'major';
-    if (a[1] !== b[1]) return 'minor';
-    return 'patch';
-  }
-  function ago(iso?: string): string {
-    if (!iso) return '—';
-    const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
-    if (s < 90) return 'just now';
-    if (s < 3600) return `${Math.round(s / 60)} min ago`;
-    if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-    return `${Math.round(s / 86400)} d ago`;
-  }
 
   async function loadSystem(serverVersion: string) {
     const out: SystemRow[] = [];
     const [st, pv, agents] = await Promise.all([
       api.system.updateStatus().catch(() => null as UpdateStatus | null),
-      allowed('proxy.view') ? apiRequest<ProxyVersion>('/proxy/version').catch(() => null) : Promise.resolve(null),
+      allowed('proxy.view') ? api.proxy.version().catch(() => null) : Promise.resolve(null),
       allowed('hosts.view') ? api.agents.list().catch(() => []) : Promise.resolve([])
     ]);
     if (st?.update_available && !st.is_dev_build) {
@@ -151,7 +133,7 @@
   let wasActive = 0;
   $effect(() => {
     const n = Object.keys(started).filter((id) => {
-      const op = operations.latest(`container:${id}`, 'image.update');
+      const op = operations.latest(opRef.container(id), 'image.update');
       return op && isActive(op);
     }).length;
     if (n < wasActive) void load();
@@ -162,7 +144,7 @@
     const ids = new Set(apps.map((a) => a.id));
     return [...apps, ...Object.values(started).filter((r) => !ids.has(r.id))];
   });
-  const opFor = (id: string) => (started[id] ? operations.latest(`container:${id}`, 'image.update') : undefined);
+  const opFor = (id: string) => (started[id] ? operations.latest(opRef.container(id), 'image.update') : undefined);
   const selectable = $derived(rows.filter((r) => !opFor(r.id) || !isActive(opFor(r.id)!)));
   const allSelected = $derived(selectable.length > 0 && selectable.every((r) => selected.has(r.id)));
   function toggleAll() {
@@ -184,7 +166,7 @@
   async function updateOne(r: AppRow) {
     started = { ...started, [r.id]: r };
     const since = Date.now();
-    const found = operations.find(`container:${r.id}`, 'image.update', since);
+    const found = operations.find(opRef.container(r.id), 'image.update', since);
     api.containers.doUpdate(r.id).then(
       (res) => {
         if (!res.updated) toast.info(`${r.name} is already up to date`);
@@ -216,7 +198,7 @@
   const stats = $derived<Stat[]>([
     { label: 'App images', value: apps.length, note: apps.length ? 'newer image available' : 'all up to date', tone: apps.length ? 'warn' : '' },
     { label: 'System', value: system.length, note: system.length ? 'components to update' : 'all current' },
-    { label: 'Last check', value: ago(Object.values(checks).map((c) => c.checked_at).sort().pop()), note: 'registries are checked every 30 min' },
+    { label: 'Last check', value: fmtAgo(Object.values(checks).map((c) => c.checked_at).sort().pop()), note: 'registries are checked every 30 min' },
     { label: 'Updated · this week', value: recentOps.filter((o) => Date.now() - Date.parse(o.finished_at ?? o.created_at) < 7 * 86400_000).length }
   ]);
 
@@ -245,7 +227,7 @@
       <h2 class="dm-h2">System</h2>
       <div class="dm-tbl" role="table" aria-label="System updates">
         {#each system as s (s.name)}
-          {@const kind = bump(s.from, s.to)}
+          {@const kind = semverBump(s.from.replace(/^v/, ''), s.to.replace(/^v/, '')) ?? 'patch'}
           <div class="dm-tr" role="row" style="grid-template-columns: {SYS_COLS}">
             <span role="cell" class="dm-nm"><span class="dm-t">{s.name}</span><small>{s.note}</small></span>
             <span role="cell" class="dm-mono up-ver">{s.from} → <b>{s.to}</b></span>
@@ -300,7 +282,7 @@
             <span role="cell" class="dm-num dm-dim" title={r.check ? `${r.check.local_digest ?? ''} → ${r.check.remote_digest ?? ''}` : ''}>
               {shortDigest(r.check?.local_digest)} → <b class="up-new">{shortDigest(r.check?.remote_digest)}</b>
             </span>
-            <span role="cell" class="dm-num dm-dim">{ago(r.check?.checked_at)}</span>
+            <span role="cell" class="dm-num dm-dim">{fmtAgo(r.check?.checked_at)}</span>
             <span role="cell" class="up-act">
               {#if op}
                 <OpProgress {op} />
@@ -328,7 +310,7 @@
             onkeydown={(e) => { if (e.key === 'Enter') operations.open(o.id); }} tabindex="0">
             <span role="cell" class="dm-nm"><span class="dm-t">{o.target}</span><small>{o.stack ? `stack ${o.stack}` : 'standalone'}{o.actor_name ? ` · by ${o.actor_name}` : ''}</small></span>
             <span role="cell" class="dm-mono dm-dim dm-trunc">new image {pull?.detail ?? ''}</span>
-            <span role="cell" class="dm-num dm-dim">{ago(o.finished_at)}</span>
+            <span role="cell" class="dm-num dm-dim">{fmtAgo(o.finished_at)}</span>
           </div>
         {/each}
       </div>

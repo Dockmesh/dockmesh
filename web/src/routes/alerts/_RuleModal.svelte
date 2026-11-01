@@ -13,10 +13,11 @@
     editing: AlertRule | null;
     channels: NotificationChannel[];
     hosts: HostInfo[];
+    hostName: (id: string) => string;
     onSaved: () => void;
   }
 
-  let { open = $bindable(false), editing, channels, hosts, onSaved }: Props = $props();
+  let { open = $bindable(false), editing, channels, hosts, hostName, onSaved }: Props = $props();
 
   const DEFAULT: AlertRuleInput = {
     name: '',
@@ -56,7 +57,6 @@
 
   const kind = $derived((form.kind || 'metric') as RuleKind);
   const kindMeta = $derived(KINDS.find((k) => k.id === kind) ?? KINDS[0]);
-  const hostName = (id: string) => hosts.find((h) => h.id === id)?.name ?? id;
   const tags = $derived([...new Set(hosts.flatMap((h) => h.tags ?? []))].sort());
 
   let lastOpen = false;

@@ -2,7 +2,7 @@
   import { api, ApiError, isFanOut } from '$lib/api';
   import { Modal, Stepper } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
-  import { operations } from '$lib/stores/operations.svelte';
+  import { operations, opRef } from '$lib/stores/operations.svelte';
   import { hosts } from '$lib/stores/host.svelte';
   import { TLS_LABEL, type Site, type TLSMode } from './_site';
 
@@ -115,7 +115,7 @@
       } else {
         const since = Date.now();
         await api.proxy.createRoute(host, upstream, tls);
-        const op = await operations.find(`proxy-site:${host}`, 'proxy.site', since);
+        const op = await operations.find(opRef.proxySite(host), 'proxy.site', since);
         if (op) await operations.open(op.id);
         else toast.success('Site created', host);
       }

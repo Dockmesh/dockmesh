@@ -8,8 +8,6 @@
 
   interface Props {
     open: boolean;
-    // Kept for callers; the dialog shows only the title.
-    eyebrow?: string;
     title: string;
     subtitle?: string;
     steps: string[];

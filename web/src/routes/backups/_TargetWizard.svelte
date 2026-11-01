@@ -5,7 +5,6 @@
   // Mockup reference: `Dockmesh Wizard (6)/backup-wizards.jsx::TargetWizard`.
   import { api, ApiError, targetUsage, type BackupTarget } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
-  import { Eyebrow } from '$lib/components/editorial';
   import { stepValid, type TargetType } from '$lib/backupTargetForm';
   import WizardShell from './_WizardShell.svelte';
   import { Check, X, RefreshCw, AlertTriangle } from 'lucide-svelte';
@@ -182,14 +181,12 @@
 
 <WizardShell
   {open}
-  eyebrow={editing ? 'Backups · edit target' : 'Backups · new target'}
   title={editing ? 'Edit target' : 'Where backups should land.'}
   subtitle={editing && editing.job_count != null
     ? targetUsage(editing.job_count)
     : 'A target is a destination — local, NAS, SFTP, S3, WebDAV. Multiple jobs can share one target.'}
   steps={STEPS}
   stepIdx={step}
-  width={720}
   {busy}
   finishLabel={editing ? 'Save changes' : (testState === 'ok' ? 'Save target' : 'Save anyway')}
   nextDisabled={!canContinue}

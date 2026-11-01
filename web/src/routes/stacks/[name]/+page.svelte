@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import { fmtAgo, fmtBytes } from '$lib/format';
   import { goto } from '$app/navigation';
   import { untrack } from 'svelte';
   import { api, ApiError, runRestorable, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments, type StackCleanupPlan } from '$lib/api';
@@ -8,7 +9,7 @@
   import Tabs, { type TabItem } from '$lib/components/ui/Tabs.svelte';
   import Menu, { type MenuItem } from '$lib/components/ui/Menu.svelte';
   import OpProgress from '$lib/components/operations/OpProgress.svelte';
-  import { operations, isActive } from '$lib/stores/operations.svelte';
+  import { operations, isActive, opRef } from '$lib/stores/operations.svelte';
   import { ArrowRight, ExternalLink } from 'lucide-svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
@@ -142,11 +143,8 @@
   type TabKey = 'overview' | 'compose' | 'environment' | 'logs' | 'history' | 'settings';
   let activeTab = $state<TabKey>('overview');
 
-  // ── Logs (live) — open one WebSocket per running service container,
-  // merge their stdout/stderr into a single stream tagged with the
-  // service name. The mockup renders one viewer with service-pills as
-  // toggles; we mirror that exactly. Cleanup on tab leave is critical
-  // so we don't leak sockets across navigation.
+  // Live logs: one WebSocket per running service container, merged into one
+  // stream. The sockets are closed when the tab is left so none leak.
   type LogLine = { service: string; line: string; ts: number };
   let logLines = $state<LogLine[]>([]);
   let logSockets = $state<Map<string, WebSocket>>(new Map());
@@ -173,16 +171,7 @@
       ws.onmessage = (ev) => {
         const raw = String(ev.data ?? '').replace(/\r$/, '');
         if (!raw) return;
-        // Docker prefixes every line with an RFC3339-nano timestamp
-        // when ContainerLogs is called with `Timestamps: true` (our
-        // default — useful for ordering but redundant in the UI which
-        // renders its own time column). Strip it from the displayed
-        // line and reuse the parsed ts so the log timeline matches
-        // what the container actually wrote (not when our WS received
-        // it). App-level timestamps inside the message (e.g.
-        // `1:M 27 May 2026 18:20:45.357 *…` from redis) we leave in
-        // place — those are app-specific log conventions the operator
-        // may want to see.
+        // Strip Docker's RFC3339 prefix; the UI renders its own time column.
         const tsMatch = raw.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s/);
         let line = raw;
         let ts = Date.now();
@@ -266,12 +255,8 @@
     return logLines.filter((l) => logServiceFilter.has(l.service));
   });
 
-  // Tab gate — open / close streams as the operator switches tabs.
-  // Only depend on `activeTab`. The stream helpers read `services` and
-  // mutate `logSockets` / `logLines`, but we wrap those calls in untrack
-  // so the effect doesn't re-fire on every 5s services poll (which would
-  // tear down + reopen the WS connections in a tight loop and trip
-  // svelte's effect-update-depth limiter).
+  // Depends on activeTab only: without untrack every services poll would
+  // reopen the sockets.
   $effect(() => {
     const tab = activeTab;
     if (tab === 'logs') untrack(() => { startLogStreaming(); });
@@ -394,9 +379,7 @@
     if (canDeploy) await deploy();
   }
 
-  // Tiny client-side YAML highlighter — same regex set as the wizard's
-  // mockup. Server-side yaml parsing remains the source of truth at
-  // deploy time; this is purely for read-only colour cues.
+  // Colour cues for the read-only compose view; the server parses the YAML.
   function escapeHtml(s: string): string {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
@@ -543,11 +526,11 @@
       mem,
       memLim,
       memPct: memLim > 0 ? (mem / memLim) * 100 : 0,
-      memLabel: count > 0 ? bytes(mem) : '—',
-      memMeta: count > 0 && memLim > 0 ? `of ${bytes(memLim)} limit` : count > 0 ? 'no limit set' : 'no live samples',
+      memLabel: count > 0 ? fmtBytes(mem) : '—',
+      memMeta: count > 0 && memLim > 0 ? `of ${fmtBytes(memLim)} limit` : count > 0 ? 'no limit set' : 'no live samples',
       net: netRate,
-      netLabel: count > 0 ? `${bytes(netRate.rx)}/s ↓` : '—',
-      netMeta: count > 0 ? `${bytes(netRate.tx)}/s ↑` : 'no live samples',
+      netLabel: count > 0 ? `${fmtBytes(netRate.rx)}/s ↓` : '—',
+      netMeta: count > 0 ? `${fmtBytes(netRate.tx)}/s ↑` : 'no live samples',
       count,
     };
   });
@@ -645,14 +628,7 @@
   }
   function envSaveEdit() { envEditingIdx = null; commitEnvRows(); }
 
-  function bytes(n: number): string {
-    if (!n || n < 1) return '0 B';
-    const u = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), u.length - 1);
-    return `${(n / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${u[i]}`;
-  }
-
-  // Deploy history (P.12.6)
+  // Deploy history
   let historyEntries = $state<DeployHistoryEntry[]>([]);
   let historyLoading = $state(false);
   let historyLoadedOnce = $state(false);
@@ -661,11 +637,7 @@
   // selected entry we fetch-with-YAML on demand (list rows omit YAML).
   let yamlEntry = $state<DeployHistoryEntry | null>(null);
   let showYaml = $state(false);
-  // Diff-mode for the deploy-snapshot drawer. Raw shows the compose.yaml
-  // verbatim; "diff" computes a unified line-diff against the immediately
-  // previous deploy (one step lower in version). yamlPrevCompose holds
-  // the lazily-fetched previous compose so the diff isn't recomputed
-  // every render. null = not loaded yet.
+  // "diff" compares against the previous deploy, fetched on demand.
   let yamlMode = $state<'raw' | 'diff'>('raw');
   let yamlPrevEntry = $state<DeployHistoryEntry | null>(null);
   let yamlDiffLoading = $state(false);
@@ -677,9 +649,6 @@
     historyLoading = true;
     try {
       const raw = await api.stacks.listDeployments(name);
-      // Defense-in-depth: backend returns [] for empty, but treat null
-      // (older servers, proxy quirks) as empty too so the UI never
-      // crashes on a .length access.
       historyEntries = raw ?? [];
       historyLoadedOnce = true;
     } catch (err) {
@@ -787,26 +756,7 @@
     }
   }
 
-  function relTime(iso: string): string {
-    const d = new Date(iso).getTime();
-    const diff = Date.now() - d;
-    const m = Math.floor(diff / 60000);
-    if (m < 1) return 'just now';
-    if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h ago`;
-    const days = Math.floor(h / 24);
-    if (days < 30) return `${days}d ago`;
-    return new Date(iso).toLocaleDateString();
-  }
-
-  // deployNoteBadge classifies the free-text note on a history row into
-  // one of a few canonical badge variants. Returns null when there is
-  // genuinely nothing to show (the "current" pill plus the actor name
-  // already say enough for plain manual deploys without an env override).
-  // Below the top 10 history rows, the service list collapses to a
-  // single one-liner that the user can expand on demand. Avoids the
-  // wall-of-text effect when a stack has dozens of deploys captured.
+  // Older history rows show their services collapsed, so a long history stays scannable.
   let expandedRows = $state<Set<number>>(new Set());
   function expandRow(id: number) {
     const next = new Set(expandedRows);
@@ -1623,7 +1573,7 @@
     if (!ok) return;
     const since = Date.now();
     const req = api.containers.doUpdate(s.container_id);
-    const op = await operations.find(`container:${s.container_id}`, 'image.update', since);
+    const op = await operations.find(opRef.container(s.container_id), 'image.update', since);
     if (op) {
       svcOps = { ...svcOps, [s.service]: op.id };
       void operations.open(op.id);
@@ -1648,7 +1598,7 @@
     <h1 class="stk-name">{name}</h1>
     <StatusChip tone={stackState.tone} label={stackState.label} />
     <span class="dm-sub stk-sub">
-      {#if services.length > 0}{services.filter((s) => s.state === 'running').length} / {services.length} running · {/if}{isRemote && hosts.selected ? hosts.selected.name : 'local'}{#if lastDeploy} · deployed {relTime(lastDeploy.deployed_at)}{#if lastDeploy.deployed_by_name} by {lastDeploy.deployed_by_name}{/if}{/if}
+      {#if services.length > 0}{services.filter((s) => s.state === 'running').length} / {services.length} running · {/if}{isRemote && hosts.selected ? hosts.selected.name : 'local'}{#if lastDeploy} · deployed {fmtAgo(lastDeploy.deployed_at)}{#if lastDeploy.deployed_by_name} by {lastDeploy.deployed_by_name}{/if}{/if}
       {#if anyBusy || deployProgress}
         ·
         <span
@@ -1838,7 +1788,7 @@
                     {/if}
                   </span>
                   <span class="dm-num r" class:warn={(st?.cpu_percent ?? 0) >= 80}>{st ? `${st.cpu_percent.toFixed(1)}%` : '—'}</span>
-                  <span class="dm-num r" class:warn={(st?.mem_percent ?? 0) >= 85}>{st ? bytes(st.mem_used) : '—'}</span>
+                  <span class="dm-num r" class:warn={(st?.mem_percent ?? 0) >= 85}>{st ? fmtBytes(st.mem_used) : '—'}</span>
                   <span class="dm-tr-menu" role="presentation" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
                     <Menu label={`Actions for ${s.service}`} items={serviceMenu(s)} width={220} />
                   </span>
@@ -1864,7 +1814,7 @@
                   <div class="dm-tr" style="grid-template-columns: 44px minmax(0, 1fr) 110px 100px">
                     <span class="dm-num dm-dim">#{entry.version}</span>
                     <span class="dm-trunc" title={entry.note || badge.label}>{entry.note || badge.label}<span class="dm-dim">{entry.deployed_by_name ? ` · ${entry.deployed_by_name}` : ''}</span></span>
-                    <span class="dm-num dm-dim" title={new Date(entry.deployed_at).toLocaleString()}>{relTime(entry.deployed_at)}</span>
+                    <span class="dm-num dm-dim" title={new Date(entry.deployed_at).toLocaleString()}>{fmtAgo(entry.deployed_at)}</span>
                     <span>
                       {#if entry.success === false}<StatusChip tone="bad" label="failed" title={entry.error_message} />
                       {:else if i === 0}<StatusChip tone="ok" label="current" />
@@ -2116,7 +2066,7 @@
                 {/if}
               </span>
               <span class="dm-trunc">{entry.deployed_by_name ?? '—'}</span>
-              <span class="dm-num dm-dim" title={new Date(entry.deployed_at).toLocaleString()}>{relTime(entry.deployed_at)}</span>
+              <span class="dm-num dm-dim" title={new Date(entry.deployed_at).toLocaleString()}>{fmtAgo(entry.deployed_at)}</span>
               <span class="dm-num dm-dim r">{entry.duration_ms ? formatDuration(entry.duration_ms) : '—'}</span>
               <span>
                 {#if entry.success === false}<StatusChip tone="bad" label="failed" title={entry.error_message} />

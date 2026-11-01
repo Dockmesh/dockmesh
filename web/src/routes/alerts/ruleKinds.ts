@@ -1,6 +1,7 @@
 // Rule kinds the alert engine evaluates. Event kinds reuse threshold,
 // duration_seconds and container_filter for their own parameters.
 import type { AlertRule, AlertRuleInput } from '$lib/api';
+import type { Tone } from '$lib/components/ui/StatusChip.svelte';
 
 export type RuleKind =
   | 'metric'
@@ -187,4 +188,8 @@ export function appliesTo(r: RuleShape, hostName: (id: string) => string = (id) 
 
 export function kindLabel(k: RuleKind): string {
   return KINDS.find((x) => x.id === k)?.label ?? k;
+}
+
+export function sevTone(s: string | undefined): Tone {
+  return s === 'critical' ? 'bad' : s === 'warning' ? 'warn' : 'off';
 }

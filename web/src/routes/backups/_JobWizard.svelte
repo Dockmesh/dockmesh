@@ -6,11 +6,10 @@
   // a `save` callback, the wizard packages the final BackupJobInput.
   import { api, ApiError, type BackupJob, type BackupJobInput, type BackupSource, type BackupHook, type BackupTarget } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
-  import { Eyebrow } from '$lib/components/editorial';
   import WizardShell from './_WizardShell.svelte';
   import {
-    LayoutDashboard, Layers, HardDrive, Lock, Clock, Database,
-    RefreshCw, Check
+    LayoutDashboard, Layers, HardDrive, Lock, Clock,
+    Check
   } from 'lucide-svelte';
 
   interface Props {
@@ -274,7 +273,6 @@
 
 <WizardShell
   {open}
-  eyebrow={editing ? 'Backups · edit job' : 'Backups · new job'}
   title={editing ? 'Edit backup job' : 'Schedule a new backup.'}
   subtitle="A job picks one source, runs on a schedule, writes to one target."
   steps={STEPS}

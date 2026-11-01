@@ -9,7 +9,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
   import { pageContext } from '$lib/stores/pageContext.svelte';
-  import { operations, isActive } from '$lib/stores/operations.svelte';
+  import { operations, isActive, opRef, failedStep } from '$lib/stores/operations.svelte';
   import { fmtBytes, fmtDuration, runTone, runLabel, isSystemRun, cronHuman, targetTypeLabel } from '../../_format';
   import { Copy, Lock, Undo2, Box, Play, Download } from 'lucide-svelte';
 
@@ -52,7 +52,7 @@
 
   // The operation of this run, when it is newer than the 7-day retention:
   // its steps and log come live from the operations store.
-  const op = $derived(operations.latest(`backup-run:${id}`, 'backup.run'));
+  const op = $derived(operations.backupRun(id));
   const opLog = $derived(op ? operations.logOf(op.id) : []);
   let opLoaded = $state('');
   $effect(() => {
@@ -61,7 +61,7 @@
     logLoaded = false;
     opLoaded = '';
     load().then(async () => {
-      const found = await operations.find(`backup-run:${id}`, 'backup.run', 0, 1500);
+      const found = await operations.find(opRef.backupRun(id), 'backup.run', 0, 1500);
       if (found) {
         await operations.load(found.id);
         opLoaded = found.id;
@@ -112,10 +112,8 @@
   async function runAgain() {
     if (!job) return;
     starting = true;
-    const since = Date.now();
     try {
-      const fresh = await api.backups.runJob(job.id);
-      const next = await operations.find(`backup-run:${fresh.id}`, 'backup.run', since);
+      const next = await (await operations.startBackup(job.id)).op;
       if (next) void operations.open(next.id);
       else toast.success('Backup started', job.name);
     } catch (err) {
@@ -143,7 +141,7 @@
     void copyWithToast(lines, 'Copied');
   }
 
-  const failedStep = $derived(op?.steps.find((s) => s.status === 'failed'));
+  const failedStepOf = $derived(op ? failedStep(op) : undefined);
 </script>
 
 {#if loading && !run}
@@ -198,7 +196,7 @@
       <div class="fail" role="alert"><b>{run.status === 'failed' ? 'Failed' : 'Warning'}</b><p class="dm-mono">{run.error}</p></div>
     {:else if op?.status === 'failed'}
       <div class="fail" role="alert">
-        <b>{failedStep ? `Failed at “${failedStep.label}”` : 'Failed'}</b>
+        <b>{failedStepOf ? `Failed at “${failedStepOf.label}”` : 'Failed'}</b>
         {#if op.error}<p class="dm-mono">{op.error}</p>{/if}
       </div>
     {/if}

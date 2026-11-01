@@ -1,12 +1,11 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { goto } from '$app/navigation';
-  import Drawer from '$lib/components/ui/Drawer.svelte';
-  import Button from '$lib/components/ui/Button.svelte';
-  import StatusChip, { type Tone } from '$lib/components/ui/StatusChip.svelte';
+  import { Drawer, Button, StatusChip } from '$lib/components/ui';
+  import type { Tone } from '$lib/components/ui/StatusChip.svelte';
   import OperationSteps from './OperationSteps.svelte';
   import { api, type Operation } from '$lib/api';
-  import { operations, kindLabel, isActive } from '$lib/stores/operations.svelte';
+  import { operations, kindLabel, isActive, opRef, failedStep, elapsed } from '$lib/stores/operations.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
 
@@ -32,18 +31,12 @@
   }
 
   const statusTone: Record<string, Tone> = { queued: 'off', running: 'acc', succeeded: 'ok', failed: 'bad', cancelled: 'off' };
-  const failedStep = $derived(op?.steps.find((s) => s.status === 'failed'));
+  const failed = $derived(op ? failedStep(op) : undefined);
   // The lines a failure shows next to its step, without opening the log.
   const tail = $derived(op?.status === 'failed' ? log.slice(-6) : []);
 
   function when(iso?: string) {
     return iso ? new Date(iso).toLocaleString() : '—';
-  }
-  function took(o: Operation) {
-    if (!o.started_at) return '';
-    const end = o.finished_at ? Date.parse(o.finished_at) : Date.now();
-    const sec = Math.max(0, Math.round((end - Date.parse(o.started_at)) / 1000));
-    return sec < 60 ? `${sec} s` : `${Math.floor(sec / 60)} min ${sec % 60} s`;
   }
 
   const refId = (o: Operation, prefix: string) => (o.ref?.startsWith(prefix) ? o.ref.slice(prefix.length) : '');
@@ -73,14 +66,13 @@
     try {
       if (op.kind === 'image.update') {
         const id = refId(op, 'container:');
-        const found = operations.find(`container:${id}`, 'image.update', since);
+        const found = operations.find(opRef.container(id), 'image.update', since);
         void api.containers.doUpdate(id).catch((e) => toast.error('Update failed', (e as Error).message));
         const next = await found;
         if (next) await operations.open(next.id);
       } else if (op.kind === 'backup.run') {
         const run = await api.backups.getRun(Number(refId(op, 'backup-run:')));
-        const fresh = await api.backups.runJob(run.job_id);
-        const next = await operations.find(`backup-run:${fresh.id}`, 'backup.run', since);
+        const next = await (await operations.startBackup(run.job_id)).op;
         if (next) await operations.open(next.id);
       }
     } catch (e) {
@@ -112,13 +104,13 @@
       <span class="dm-sub">
         {op.actor_name ? `by ${op.actor_name}` : op.actor ? '' : 'scheduled'}
         {op.started_at ? ` · started ${when(op.started_at)}` : ` · queued ${when(op.created_at)}`}
-        {took(op) ? ` · ${took(op)}` : ''}
+        {elapsed(op.started_at, op.finished_at) ? ` · ${elapsed(op.started_at, op.finished_at)}` : ''}
       </span>
     </div>
 
     {#if op.status === 'failed'}
       <div class="fail" role="alert">
-        <b>{failedStep ? `Failed at “${failedStep.label}”` : 'Failed'}</b>
+        <b>{failed ? `Failed at “${failed.label}”` : 'Failed'}</b>
         {#if op.error}<p>{op.error}</p>{/if}
         {#if tail.length}
           <pre class="tail">{#each tail as l}<span class={l.level}>{l.text}</span>

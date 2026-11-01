@@ -6,7 +6,7 @@
   import { api, ApiError, type BackupRun, type HostInfo, type BackupRestoreReport } from '$lib/api';
   import { Button, Modal } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
-  import { operations } from '$lib/stores/operations.svelte';
+  import { operations, opRef } from '$lib/stores/operations.svelte';
   import { Undo2, ShieldCheck } from 'lucide-svelte';
 
   interface Props {
@@ -16,10 +16,8 @@
     // Host the backup was taken on; '' or undefined = central server.
     originHost?: string;
     onclose: () => void;
-    // Called after a restore finished successfully.
-    ondone?: () => void;
   }
-  let { run, preset = 'alongside', originHost = '', onclose, ondone }: Props = $props();
+  let { run, preset = 'alongside', originHost = '', onclose }: Props = $props();
 
   const isStack = $derived(!!run?.sources.some((s) => s.type === 'stack'));
   const sourceName = $derived(run?.sources[0]?.name ?? '');
@@ -62,7 +60,7 @@
     if (!run || !canSubmit) return;
     busy = true;
     const r = run;
-    const ref = `backup-run:${r.id}`;
+    const ref = opRef.backupRun(r.id);
     const since = Date.now();
     let report: BackupRestoreReport | undefined;
     let error: unknown;
@@ -82,7 +80,6 @@
       await req;
       if (report) {
         for (const w of report.warnings ?? []) toast.warning('Restore warning', w);
-        ondone?.();
       }
       return;
     }
@@ -91,7 +88,6 @@
     if (report) {
       toast.success('Restored', reportLine(report));
       for (const w of report.warnings ?? []) toast.warning('Restore warning', w);
-      ondone?.();
       onclose();
     } else {
       toast.error('Restore failed', error instanceof ApiError ? error.message : undefined);

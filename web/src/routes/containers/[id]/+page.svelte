@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import { semverBump } from '$lib/version';
   import { goto, replaceState } from '$app/navigation';
   import { api, ApiError } from '$lib/api';
   import { tick } from 'svelte';
@@ -402,15 +403,6 @@
     return (s ?? '').replace(/^v/i, '');
   }
   // semver-ish bump classification when both sides parse cleanly.
-  function semverBump(a: string, b: string): 'major' | 'minor' | 'patch' | null {
-    const re = /^(\d+)\.(\d+)\.(\d+)/;
-    const ma = re.exec(a); const mb = re.exec(b);
-    if (!ma || !mb) return null;
-    if (ma[1] !== mb[1]) return 'major';
-    if (ma[2] !== mb[2]) return 'minor';
-    if (ma[3] !== mb[3]) return 'patch';
-    return null;
-  }
   // updatePreview-dependent deriveds are declared further down, right
   // after `let updatePreview = …`, to avoid TDZ.
 
@@ -905,14 +897,12 @@
     return (inf?.Name ?? '').replace(/^\//, '');
   }
 
-
   function formatBytes(n: number): string {
     if (n < 1024) return `${n} B`;
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
     if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
     return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
   }
-
 
   // JSON syntax highlighting for Inspect tab
   function highlightJSON(obj: any): string {
@@ -946,7 +936,6 @@
       .replace(/\b([23]\d{2})\b/g, '<span class="log-ok">$1</span>');
     return result;
   }
-
 
   const statusTone = $derived.by<{ tone: 'ok' | 'warn' | 'bad' | 'off'; label: string }>(() => {
     const st = info?.State;

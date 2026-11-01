@@ -1,22 +1,10 @@
 import type { BackupJob, BackupRun } from '$lib/api';
+import { hosts } from '$lib/stores/host.svelte';
+import { fmtAgo as baseAgo, fmtBytes as baseBytes } from '$lib/format';
 import type { Tone } from '$lib/components/ui/StatusChip.svelte';
 
-export function fmtBytes(n: number): string {
-  if (!n) return '—';
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
-
-export function fmtAgo(ts?: string): string {
-  if (!ts) return '—';
-  const d = (Date.now() - new Date(ts).getTime()) / 1000;
-  if (d < 60) return 'just now';
-  if (d < 3600) return `${Math.floor(d / 60)} min ago`;
-  if (d < 86400) return `${Math.floor(d / 3600)} h ago`;
-  if (d < 7 * 86400) return `${Math.floor(d / 86400)} d ago`;
-  return new Date(ts).toLocaleDateString();
-}
+export const fmtAgo = (ts?: string) => baseAgo(ts);
+export const fmtBytes = (n: number) => baseBytes(n, '—');
 
 export function fmtUntil(ts?: string): string {
   if (!ts) return '—';
@@ -94,4 +82,10 @@ export function runLabel(status: string): string {
 
 export function isSystemRun(r: Pick<BackupRun, 'sources'>): boolean {
   return r.sources?.some((s) => s.type === 'system') ?? false;
+}
+
+// Name of the host a job runs on; jobs without a host run on the server.
+export function hostLabel(id?: string): string {
+  const hid = id || 'local';
+  return hosts.available.find((h) => h.id === hid)?.name ?? hid;
 }

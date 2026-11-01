@@ -1,11 +1,12 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { replaceState } from '$app/navigation';
-  import { api, ApiError, apiRequest, type Operation } from '$lib/api';
+  import { setTabParam } from '$lib/tabs';
+  import { fmtAgo } from '$lib/format';
+  import { api, ApiError, type Operation } from '$lib/api';
   import { Skeleton, StatusChip, Tabs, Switch, Menu, EmptyState, LiveIndicator } from '$lib/components/ui';
   import type { MenuItem } from '$lib/components/ui/Menu.svelte';
   import OpProgress from '$lib/components/operations/OpProgress.svelte';
-  import { operations, isActive } from '$lib/stores/operations.svelte';
+  import { operations, isActive, opRef } from '$lib/stores/operations.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
@@ -15,7 +16,7 @@
   import ImportModal from './_ImportModal.svelte';
   import SiteDrawer from './_SiteDrawer.svelte';
   import CaddyTab from './_CaddyTab.svelte';
-  import { TLS_LABEL, RENEW_WARN_DAYS, optionSummary, ago, type Site, type ProxyStatus, type ACMEEvent } from './_site';
+  import { TLS_LABEL, certExpiresSoon, certNeedsAttention, optionSummary, type Site, type ProxyStatus, type ACMEEvent } from './_site';
 
   type MetricsSnapshot = {
     total_requests: number;
@@ -35,10 +36,7 @@
   let tab = $state<TabKey>((TABS as string[]).includes(fromUrl) ? (fromUrl as TabKey) : 'sites');
   function setTab(k: string) {
     tab = k as TabKey;
-    const url = new URL(page.url.href);
-    if (k === 'sites') url.searchParams.delete('tab');
-    else url.searchParams.set('tab', k);
-    replaceState(url, {});
+    setTabParam(k, 'sites');
   }
 
   let status = $state<ProxyStatus | null>(null);
@@ -68,7 +66,7 @@
         api.proxy.metrics().catch(() => null),
         api.proxy.acmeEvents().catch(() => [] as ACMEEvent[]),
         api.operations.list({ kind: 'proxy.site', limit: 30 }).catch(() => [] as Operation[]),
-        apiRequest<{ current: string; default: string; managed: boolean }>('/proxy/version').catch(() => null)
+        api.proxy.version().catch(() => null)
       ]);
       status = s;
       routes = r;
@@ -108,12 +106,12 @@
   );
   const live = $derived(routes.filter((r) => r.enabled).length);
   const certSites = $derived(routes.filter((r) => r.tls_mode !== 'none'));
-  const certWarn = $derived(certSites.filter((r) => r.enabled && (r.cert_days_left == null || r.cert_days_left < RENEW_WARN_DAYS)).length);
+  const certWarn = $derived(certSites.filter((r) => r.enabled && certNeedsAttention(r)).length);
   const allSelected = $derived(visible.length > 0 && visible.every((r) => selected.has(r.id)));
 
   function siteTone(r: Site): '' | 'ok' | 'warn' {
     if (!r.enabled) return '';
-    if (r.tls_mode !== 'none' && r.cert_days_left != null && r.cert_days_left < RENEW_WARN_DAYS) return 'warn';
+    if (r.tls_mode !== 'none' && certExpiresSoon(r)) return 'warn';
     return 'ok';
   }
   function httpsNote(r: Site): string {
@@ -121,7 +119,7 @@
     if (r.cert_days_left == null) return 'no certificate served yet';
     return `expires in ${r.cert_days_left} d`;
   }
-  const opOf = (host: string) => operations.latest(`proxy-site:${host}`, 'proxy.site');
+  const opOf = (host: string) => operations.latest(opRef.proxySite(host), 'proxy.site');
 
   async function enableProxy() {
     busy = true;
@@ -351,7 +349,7 @@
                 <OpProgress {op} compact />
               {:else}
                 <span class="px-tls">{TLS_LABEL[r.tls_mode]}</span>
-                <small class:warn={r.tls_mode !== 'none' && r.enabled && (r.cert_days_left == null || r.cert_days_left < RENEW_WARN_DAYS)}>{httpsNote(r)}</small>
+                <small class:warn={r.enabled && certNeedsAttention(r)}>{httpsNote(r)}</small>
               {/if}
             </span>
             <span role="cell" class="dm-dim" title={opts.join(', ')}>
@@ -384,7 +382,7 @@
           <span role="columnheader">Name</span><span role="columnheader">Issuer</span><span role="columnheader">Expires in</span><span role="columnheader">Status</span>
         </div>
         {#each certSites as r (r.id)}
-          {@const soon = r.cert_days_left != null && r.cert_days_left < RENEW_WARN_DAYS}
+          {@const soon = certExpiresSoon(r)}
           <div class="dm-tr dm-click" role="row" style="grid-template-columns: {CERT_COLS}" tabindex="0"
             onclick={() => (drawerSite = r)} onkeydown={(e) => { if (e.key === 'Enter') drawerSite = r; }}>
             <span role="cell" class="dm-mono">{r.host}</span>
@@ -408,7 +406,7 @@
         {#each activity as a, i (i)}
           <div class="dm-tr" class:dm-click={!!a.op} role="row" style="grid-template-columns: {ACT_COLS}" tabindex={a.op ? 0 : -1}
             onclick={() => a.op && operations.open(a.op.id)} onkeydown={(e) => { if (e.key === 'Enter' && a.op) operations.open(a.op.id); }}>
-            <span role="cell" class="dm-num dm-dim" title={new Date(a.ts).toLocaleString()}>{ago(a.ts)}</span>
+            <span role="cell" class="dm-num dm-dim" title={new Date(a.ts).toLocaleString()}>{fmtAgo(a.ts)}</span>
             <span role="cell">{a.what}</span>
             <span role="cell" class="dm-dim" title={a.text}>{a.text}</span>
             <span role="cell">

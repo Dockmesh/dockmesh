@@ -1,18 +1,11 @@
 <script lang="ts">
-  import type { Operation, OperationStep } from '$lib/api';
+  import type { Operation } from '$lib/api';
+  import { elapsed } from '$lib/operationsProgress';
   import { Check, X, Minus, TriangleAlert, Circle, LoaderCircle } from 'lucide-svelte';
 
   // Ordered steps of an operation as the backend reports them. A running
   // step without a measurable progress shows as running, never as a guess.
   let { op }: { op: Operation } = $props();
-
-  function duration(s: OperationStep): string {
-    if (!s.started_at) return '';
-    const end = s.finished_at ? Date.parse(s.finished_at) : Date.now();
-    const sec = Math.max(0, Math.round((end - Date.parse(s.started_at)) / 1000));
-    if (sec < 60) return `${sec} s`;
-    return `${Math.floor(sec / 60)} min ${sec % 60} s`;
-  }
 </script>
 
 <ol class="steps">
@@ -30,7 +23,7 @@
         <div class="row">
           <span class="lbl">{s.label}</span>
           <span class="meta dm-num">
-            {#if s.status === 'running' && s.progress != null}{Math.round(s.progress * 100)} %{:else if s.status !== 'pending' && s.status !== 'skipped'}{duration(s)}{/if}
+            {#if s.status === 'running' && s.progress != null}{Math.round(s.progress * 100)} %{:else if s.status !== 'pending' && s.status !== 'skipped'}{elapsed(s.started_at, s.finished_at)}{/if}
           </span>
         </div>
         {#if s.status === 'running'}

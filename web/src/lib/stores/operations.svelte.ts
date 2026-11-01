@@ -6,7 +6,7 @@
 // Updates arrive on /ws/events ("source":"operations"); while the socket
 // is down the store polls the list endpoint instead.
 
-import { api, type Operation, type OperationLogLine } from '$lib/api';
+import { api, type BackupRun, type Operation, type OperationLogLine } from '$lib/api';
 import { EventStream, type ConnStatus } from '$lib/events';
 import { auth } from './auth.svelte';
 import { toast } from './toast.svelte';
@@ -17,8 +17,8 @@ const POLL_OFFLINE_MS = 4_000;
 // Finished operations stay in the indicator's "recent" list this long.
 const RECENT_MS = 30 * 60_000;
 
-export { KIND_LABEL, kindLabel, isActive, currentStep, overallProgress } from '$lib/operationsProgress';
-import { kindLabel, isActive } from '$lib/operationsProgress';
+export { kindLabel, isActive, currentStep, overallProgress, opRef, hasWarning, failedStep, elapsed } from '$lib/operationsProgress';
+import { kindLabel, isActive, opRef, failedStep } from '$lib/operationsProgress';
 
 function createOperationsStore() {
   let byId = $state<Record<string, Operation>>({});
@@ -50,7 +50,7 @@ function createOperationsStore() {
       if (warned) toast.warning(`${what} finished with a warning`, warned.detail);
       else toast.success(`${what} finished`);
     } else if (op.status === 'failed') {
-      const failed = op.steps.find((s) => s.status === 'failed');
+      const failed = failedStep(op);
       toast.error(`${what} failed${failed ? ` at “${failed.label}”` : ''}`, op.error);
     } else if (op.status === 'cancelled') {
       toast.info(`${what} cancelled`);
@@ -126,8 +126,15 @@ function createOperationsStore() {
     latest(ref: string, kind?: string): Operation | undefined {
       return this.all.find((o) => o.ref === ref && (!kind || o.kind === kind));
     },
-    group(id: string): Operation[] {
-      return this.all.filter((o) => o.group_id === id);
+    // The operation of a backup run, once the store knows it.
+    backupRun(runId?: number | null): Operation | undefined {
+      return runId ? this.latest(opRef.backupRun(runId), 'backup.run') : undefined;
+    },
+    // Starts a backup job; `op` resolves once its operation shows up.
+    async startBackup(jobId: number): Promise<{ run: BackupRun; op: Promise<Operation | undefined> }> {
+      const since = Date.now();
+      const run = await api.backups.runJob(jobId);
+      return { run, op: this.find(opRef.backupRun(run.id), 'backup.run', since) };
     },
     start() {
       if (started || !auth.isAuthenticated) return;

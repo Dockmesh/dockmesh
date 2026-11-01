@@ -39,3 +39,26 @@ export function overallProgress(op: Operation): number | null {
   }
   return done / steps.length;
 }
+
+// What an operation belongs to, as the server names it in `ref`.
+export const opRef = {
+  backupRun: (runId: number | string) => `backup-run:${runId}`,
+  container: (id: string) => `container:${id}`,
+  proxySite: (host: string) => `proxy-site:${host}`
+};
+
+export function hasWarning(op: Operation): boolean {
+  return op.steps.some((s) => s.status === 'warning');
+}
+
+export function failedStep(op: Operation) {
+  return op.steps.find((s) => s.status === 'failed');
+}
+
+// "12 s" or "3 min 4 s" from start to end (or now); '' without a start.
+export function elapsed(start?: string, end?: string): string {
+  if (!start) return '';
+  const stop = end ? Date.parse(end) : Date.now();
+  const sec = Math.max(0, Math.round((stop - Date.parse(start)) / 1000));
+  return sec < 60 ? `${sec} s` : `${Math.floor(sec / 60)} min ${sec % 60} s`;
+}

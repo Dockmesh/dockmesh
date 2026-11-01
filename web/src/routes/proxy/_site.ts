@@ -1,3 +1,4 @@
+import { fmtBytes } from '$lib/format';
 export type TLSMode = 'auto' | 'internal' | 'none';
 
 export interface SiteOptions {
@@ -60,6 +61,15 @@ export const TLS_LABEL: Record<TLSMode, string> = {
 // renewal has failed at least once.
 export const RENEW_WARN_DAYS = 14;
 
+export function certExpiresSoon(r: Site): boolean {
+  return r.cert_days_left != null && r.cert_days_left < RENEW_WARN_DAYS;
+}
+
+// An HTTPS site whose certificate is missing or close to expiry.
+export function certNeedsAttention(r: Site): boolean {
+  return r.tls_mode !== 'none' && (r.cert_days_left == null || r.cert_days_left < RENEW_WARN_DAYS);
+}
+
 // The options a site sets beyond Caddy's defaults, as short phrases.
 export function optionSummary(o?: SiteOptions): string[] {
   if (!o) return [];
@@ -92,17 +102,3 @@ export function optionSummary(o?: SiteOptions): string[] {
   return out;
 }
 
-export function fmtBytes(b: number): string {
-  if (b >= 1e9) return `${(b / 1e9).toFixed(1)} GB`;
-  if (b >= 1e6) return `${(b / 1e6).toFixed(1)} MB`;
-  return `${Math.round(b / 1e3)} kB`;
-}
-
-export function ago(iso?: string): string {
-  if (!iso) return '—';
-  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
-  if (s < 90) return 'just now';
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  return `${Math.round(s / 86400)} d ago`;
-}

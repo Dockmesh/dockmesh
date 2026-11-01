@@ -1296,6 +1296,46 @@ export interface UpdateHistoryEntry {
   rolled_back_at?: string;
 }
 
+// GET /attention: what needs attention in the caller's scope.
+export interface AttentionItem {
+  id: string;
+  kind: string;
+  severity: 'critical' | 'warning' | 'info';
+  title: string;
+  detail?: string;
+  link: string;
+  since?: string;
+}
+
+export interface ProxyVersionInfo {
+  current: string;
+  image: string;
+  default: string;
+  previous?: string;
+  available: Array<{ version: string; image: string }>;
+  managed: boolean;
+  read_only_reason?: string;
+}
+export interface ProxySettings {
+  acme_email: string;
+  acme_ca: string;
+  trusted_proxies: string;
+}
+export interface ProxyImportSite {
+  host: string;
+  upstream: string;
+  tls_mode: string;
+  status: 'ready' | 'partial' | 'skipped';
+  unsupported: string[] | null;
+  error?: string;
+  route_id?: number;
+}
+export interface ProxyImportResult {
+  sites: ProxyImportSite[];
+  global_unsupported: string[] | null;
+  warnings: string[] | null;
+}
+
 // Long-running work the server tracks (internal/operations).
 export type OperationStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 export type OperationStepStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'warning';
@@ -1382,9 +1422,6 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
-
-// For pages that need an endpoint without a binding below.
-export const apiRequest = request;
 
 export const api = {
   health: () => request<{ status: string; version: string; docker: boolean }>('/health'),
@@ -2186,11 +2223,12 @@ export const api = {
   },
 
   audit: {
-    list: (limit = 100, action = '', userId = '') => {
+    list: (limit = 100, action = '', userId = '', category = '') => {
       const params = new URLSearchParams();
       params.set('limit', String(limit));
       if (action) params.set('action', action);
       if (userId) params.set('user_id', userId);
+      if (category) params.set('category', category);
       return request<Array<{ id: number; ts: string; user_id?: string; username?: string; action: string; target?: string; details?: string; prev_hash?: string; row_hash?: string }>>(
         `/audit?${params}`
       );
@@ -2363,7 +2401,6 @@ export const api = {
       )
   },
 
-
   agents: {
     list: () => request<Agent[]>('/agents'),
     get: (id: string) => request<Agent>(`/agents/${id}`),
@@ -2450,7 +2487,21 @@ export const api = {
         issuer?: string;
         message: string;
         successful: boolean;
-      }>>('/proxy/acme-events')
+      }>>('/proxy/acme-events'),
+    version: () => request<ProxyVersionInfo>('/proxy/version'),
+    setVersion: (version: string) =>
+      request<ProxyVersionInfo>('/proxy/version', { method: 'PUT', body: JSON.stringify({ version }) }),
+    rollbackVersion: () => request<ProxyVersionInfo>('/proxy/version/rollback', { method: 'POST' }),
+    settings: () => request<ProxySettings>('/proxy/settings'),
+    updateSettings: (input: ProxySettings) =>
+      request<ProxySettings>('/proxy/settings', { method: 'PUT', body: JSON.stringify(input) }),
+    importCaddyfile: (caddyfile: string, dryRun: boolean) =>
+      request<ProxyImportResult>('/proxy/import', { method: 'POST', body: JSON.stringify({ caddyfile, dry_run: dryRun }) }),
+    routeConfig: (id: number) => request<{ blocked: boolean; config: unknown }>(`/proxy/routes/${id}/config`)
+  },
+
+  attention: {
+    list: () => request<AttentionItem[]>('/attention')
   },
 
   operations: {

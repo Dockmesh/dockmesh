@@ -13,7 +13,8 @@
   import { autoRefresh } from '$lib/autorefresh';
   import {
     fmtBytes, fmtAgo, fmtUntil, fmtDuration, cronHuman, targetTypeLabel,
-    jobSourceName, jobSourceKind, runTone, runLabel
+    jobSourceName, jobSourceKind, runTone, runLabel,
+    hostLabel
   } from '../../_format';
   import { Play, Pencil, Trash2, Lock, Box } from 'lucide-svelte';
 
@@ -52,16 +53,13 @@
   const okRuns = $derived(jobRuns.filter((r) => r.status === 'success' || r.status === 'success_with_warnings'));
   const avgSize = $derived(okRuns.length ? okRuns.reduce((s, r) => s + r.size_bytes, 0) / okRuns.length : 0);
   const target = $derived(job?.target_id ? targets.find((t) => t.id === job!.target_id) : undefined);
-  const hostName = $derived(hosts.available.find((h) => h.id === (job?.host_id || 'local'))?.name ?? (job?.host_id || 'local'));
+  const hostName = $derived(hostLabel(job?.host_id));
   const hookCount = $derived((job?.pre_hooks?.length ?? 0) + (job?.post_hooks?.length ?? 0));
 
   let startedRunId = $state<number | null>(null);
-  function opForRun(runId?: number | null) {
-    return runId ? operations.latest(`backup-run:${runId}`, 'backup.run') : undefined;
-  }
   const liveRunId = $derived(startedRunId && (!lastRun || lastRun.id < startedRunId) ? startedRunId : lastRun?.id);
   const liveOp = $derived.by(() => {
-    const op = opForRun(liveRunId);
+    const op = operations.backupRun(liveRunId);
     return op && (isActive(op) || liveRunId === startedRunId) ? op : undefined;
   });
 
@@ -69,11 +67,9 @@
   async function runNow() {
     if (!job) return;
     busy = true;
-    const since = Date.now();
     try {
-      const run = await api.backups.runJob(job.id);
+      const { run } = await operations.startBackup(job.id);
       startedRunId = run.id;
-      void operations.find(`backup-run:${run.id}`, 'backup.run', since);
       void load();
     } catch (err) {
       toast.error('Could not start the job', err instanceof ApiError ? err.message : undefined);
@@ -162,7 +158,7 @@
         {:else}
           <div class="dm-tbl" role="table" aria-label="Runs of {job.name}">
             {#each jobRuns.slice(0, 20) as r (r.id)}
-              {@const op = opForRun(r.id)}
+              {@const op = operations.backupRun(r.id)}
               <a class="dm-tr dm-click row" role="row" style="grid-template-columns: {RUN_COLS}" href="/backups/runs/{r.id}">
                 <span><span class="dm-dot {runTone(r.status) === 'bad' ? 'bad' : runTone(r.status) === 'warn' ? 'warn' : 'ok'}"></span></span>
                 <span class="dm-num dm-dim" title={new Date(r.started_at).toLocaleString()}>{fmtAgo(r.started_at)}</span>

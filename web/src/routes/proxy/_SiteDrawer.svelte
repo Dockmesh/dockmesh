@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { api, apiRequest } from '$lib/api';
+  import { api } from '$lib/api';
   import { Drawer, StatusChip } from '$lib/components/ui';
   import { allowed } from '$lib/rbac.svelte';
-  import { TLS_LABEL, RENEW_WARN_DAYS, optionSummary, type Site } from './_site';
+  import { TLS_LABEL, certNeedsAttention, optionSummary, type Site } from './_site';
 
   // Quick view of one site: where it goes, its certificate, the options
   // it sets, live traffic and the Caddy config it produces.
@@ -43,7 +43,7 @@
     showPreview = !showPreview;
     if (!showPreview || preview || !site) return;
     try {
-      const p = await apiRequest<{ blocked: boolean; config: unknown }>(`/proxy/routes/${site.id}/config`);
+      const p = await api.proxy.routeConfig(site.id);
       preview = JSON.stringify(p.config, null, 2);
       if (p.blocked) previewErr = 'The stored options fail validation, so Caddy does not serve this site.';
     } catch (e) {
@@ -53,7 +53,7 @@
 
   const opts = $derived(optionSummary(site?.options));
   const certTone = $derived(
-    !site || site.tls_mode === 'none' ? 'off' : site.cert_days_left == null ? 'warn' : site.cert_days_left < RENEW_WARN_DAYS ? 'warn' : 'ok'
+    !site || site.tls_mode === 'none' ? 'off' : certNeedsAttention(site) ? 'warn' : 'ok'
   );
 </script>
 
