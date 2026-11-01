@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 
 	cerrdefs "github.com/containerd/errdefs"
@@ -17,7 +18,7 @@ import (
 
 const helperImage = "alpine:3.24"
 
-// tarVolume runs `tar czf - -C /source .` inside an alpine helper that
+// tarVolume runs agents.VolumeExportScript inside an alpine helper that
 // mounts the named volume read-only and streams the gzipped archive on
 // stdout. The returned ReadCloser yields the tar bytes; closing it
 // removes the helper container.
@@ -40,7 +41,7 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 
 	cfg := &container.Config{
 		Image:        helperImage,
-		Cmd:          []string{"sh", "-c", "tar czf - -C /source ."},
+		Cmd:          []string{"sh", "-c", agents.VolumeExportScript},
 		AttachStdout: true,
 		AttachStderr: true,
 		Labels: map[string]string{
@@ -100,9 +101,10 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 }
 
 // untarVolume streams a gzipped tar archive into a named volume by
-// running `tar xzf -` inside a helper that mounts the volume read-write.
-// replace empties the volume first.
-func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src io.Reader, replace bool) error {
+// running agents.VolumeImportScript inside a helper that mounts the volume
+// read-write. replace swaps the volume's contents for the archive's once
+// tar succeeded; needBytes is the free space the swap needs.
+func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src io.Reader, replace bool, needBytes int64) (err error) {
 	if dc == nil {
 		return errors.New("docker unavailable")
 	}
@@ -113,10 +115,16 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 	if err := ensureHelperImage(ctx, dc); err != nil {
 		return err
 	}
+	// Registered first so it runs after the import helper is gone.
+	defer func() {
+		if err != nil && replace {
+			recoverVolume(ctx, dc, volumeName)
+		}
+	}()
 
 	cfg := &container.Config{
 		Image:        helperImage,
-		Cmd:          []string{"sh", "-c", agents.VolumeImportScript(replace)},
+		Cmd:          []string{"sh", "-c", agents.VolumeImportScript(replace, needBytes)},
 		AttachStdin:  true,
 		AttachStderr: true,
 		OpenStdin:    true,
@@ -156,10 +164,18 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 	}
 
 	// Stream the archive into stdin and close the write side so tar exits.
+	// A source that breaks off kills the helper instead, so tar never takes
+	// the cut-off stream for the whole archive.
 	copyDone := make(chan error, 1)
 	go func() {
 		_, err := io.Copy(hijack.Conn, src)
-		_ = hijack.CloseWrite()
+		if err != nil {
+			kctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), docker.HelperTimeout)
+			_ = cli.ContainerKill(kctx, resp.ID, "KILL")
+			cancel()
+		} else {
+			_ = hijack.CloseWrite()
+		}
 		copyDone <- err
 	}()
 
@@ -179,10 +195,42 @@ func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src 
 	if err := <-copyDone; err != nil && !errors.Is(err, net.ErrClosed) {
 		return fmt.Errorf("restore stream: %w", err)
 	}
-	if exitCode != 0 {
-		return fmt.Errorf("restore tar exit %d", exitCode)
+	return agents.VolumeImportExitError(exitCode, replace)
+}
+
+// recoverVolume runs agents.VolumeRecoverScript after a failed replace
+// restore, so the volume keeps its previous contents and no staging
+// directory is left behind.
+func recoverVolume(ctx context.Context, dc *docker.Client, volumeName string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), docker.HelperTimeout)
+	defer cancel()
+	cli := dc.Raw()
+	resp, err := cli.ContainerCreate(ctx, &container.Config{
+		Image:  helperImage,
+		Cmd:    []string{"sh", "-c", agents.VolumeRecoverScript()},
+		Labels: map[string]string{"dockmesh.managed": "true", "dockmesh.component": "backup-helper"},
+	}, &container.HostConfig{
+		Binds:     []string{volumeName + ":/dest"},
+		LogConfig: docker.HelperLogConfig,
+	}, nil, nil, "")
+	if err != nil {
+		slog.Warn("restore: volume cleanup failed", "volume", volumeName, "err", err)
+		return
 	}
-	return nil
+	defer func() { _ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true}) }()
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		slog.Warn("restore: volume cleanup failed", "volume", volumeName, "err", err)
+		return
+	}
+	statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case s := <-statusCh:
+		if s.StatusCode != 0 {
+			slog.Warn("restore: volume cleanup failed", "volume", volumeName, "exit", s.StatusCode)
+		}
+	case err := <-errCh:
+		slog.Warn("restore: volume cleanup failed", "volume", volumeName, "err", err)
+	}
 }
 
 func ensureHelperImage(ctx context.Context, dc *docker.Client) error {

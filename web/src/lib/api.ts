@@ -1479,7 +1479,7 @@ export interface ProxyImportResult {
 
 // Long-running work the server tracks (internal/operations).
 export type OperationStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
-export type OperationStepStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'warning';
+export type OperationStepStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'warning' | 'cancelled';
 export interface OperationStep {
   key: string;
   label: string;
@@ -1506,6 +1506,9 @@ export interface Operation {
   actor?: string;
   actor_name?: string;
   status: OperationStatus;
+  // Set while a cancel request would stop the work now.
+  cancellable?: boolean;
+  cancel_requested?: boolean;
   error?: string;
   steps: OperationStep[];
   created_at: string;

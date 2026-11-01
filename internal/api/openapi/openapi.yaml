@@ -1812,9 +1812,18 @@ paths:
         need an agent of this version).
 
         `target_stack` restores under another name (default: the source
-        stack). `mode: replace` empties each volume first and is refused
-        with 409 while running containers use one of them; `merge` (default)
-        overwrites the archived files and keeps everything else.
+        stack). `mode: replace` swaps each volume's contents for the
+        archive's: it extracts into a staging directory inside the volume and
+        moves the old contents out only once tar succeeded, so a failed
+        restore leaves the volume as it was. It needs free space for old and
+        new contents side by side (refused before writing otherwise), an
+        agent of this version on remote hosts, and is refused with 409 while
+        running containers use the volume. `merge` (default) overwrites the
+        archived files and keeps everything else.
+
+        The restore can be cancelled through its operation while it
+        downloads or verifies the archive (409 here, nothing written); once
+        it writes it runs to the end.
 
         Requires the job's host and the destination host within the
         caller's scope (403). Stack runs write the target stack's files, so
@@ -1842,7 +1851,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: Run is a system backup or not restorable (failed, pruned); a volume to replace is in use; another restore writes the same volume or stack, or too many restores run; replace was asked for a run without a recorded checksum; or the destination agent is too old.
+          description: Run is a system backup or not restorable (failed, pruned); a volume to replace is in use; another restore writes the same volume or stack, or too many restores run; replace was asked for a run without a recorded checksum; the destination agent is too old; or the restore was cancelled before anything was written.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -1888,7 +1897,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: Run is a system backup or not restorable (failed, pruned); the volume to replace is in use; another restore writes the same volume, or too many restores run; replace was asked for a run without a recorded checksum; or the destination agent is too old.
+          description: Run is a system backup or not restorable (failed, pruned); the volume to replace is in use; another restore writes the same volume, or too many restores run; replace was asked for a run without a recorded checksum; the destination agent is too old; or the restore was cancelled before anything was written.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -4691,17 +4700,28 @@ paths:
     post:
       operationId: operations.cancel
       tags: [operations]
-      summary: Cancel a queued operation
+      summary: Cancel queued or running work
       description: |
-        Only queued work can be cancelled (the not yet started containers of
-        a bulk update); running work is never interrupted. Needs the
-        permission of the action that started it (`containers.update`, plus
-        `stacks.deploy` for a stack container).
+        Cancels work while the operation is `cancellable`: queued containers
+        of a bulk update; a backup run in any step (a running hook finishes
+        first, post-backup hooks still run, the unfinished archive is deleted
+        from the target); an image
+        update while it pulls; a restore while it downloads or verifies the
+        archive, before anything is written; the certificate wait of a new
+        proxy site (the site stays). Swapping files or containers is never
+        interrupted.
+
+        Running work stops a moment later and then ends `cancelled`, naming
+        the step it stopped in; the response may still show it running with
+        `cancel_requested` set. Needs the permission of the action that
+        started it on the operation's host (`containers.upgrade`, plus
+        `stacks.deploy` for a stack container; `backups.run`;
+        `backups.restore`; `proxy.create`).
       parameters:
         - $ref: "#/components/parameters/OperationIDPath"
       responses:
         "200":
-          description: The cancelled operation.
+          description: The operation, cancelled or with `cancel_requested` set.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Operation"}
@@ -4709,7 +4729,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: The operation is not queued any more.
+          description: The operation has ended, a cancel was already requested, or its current step must not be interrupted.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -8449,7 +8469,9 @@ components:
         actor: {type: string, description: "User id (the owner for an owned API token), `api-token:<id>` for an unowned token, empty for scheduled work."}
         actor_name: {type: string}
         status: {type: string, enum: [queued, running, succeeded, failed, cancelled]}
-        error: {type: string}
+        cancellable: {type: boolean, description: "Set while `POST /operations/{id}/cancel` would stop the work now: queued, or in a step that only reads or waits."}
+        cancel_requested: {type: boolean, description: "A cancel was accepted and the running step is stopping."}
+        error: {type: string, description: "The failure, or for a cancelled operation the step it stopped in."}
         steps:
           type: array
           items: {$ref: "#/components/schemas/OperationStep"}
@@ -8466,7 +8488,7 @@ components:
       properties:
         key: {type: string}
         label: {type: string}
-        status: {type: string, enum: [pending, running, succeeded, failed, skipped, warning]}
+        status: {type: string, enum: [pending, running, succeeded, failed, skipped, warning, cancelled]}
         detail: {type: string}
         progress: {type: number, minimum: 0, maximum: 1, description: "Absent when the step cannot measure its progress."}
         started_at: {type: string, format: date-time}

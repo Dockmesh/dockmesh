@@ -24,6 +24,22 @@ type Aborter interface {
 	Abort() error
 }
 
+// Breaker is implemented by writers and readers on a network connection
+// whose Close waits for the server: Break drops the connection at once,
+// which ends a read or write blocked on a server that stopped answering.
+// What was written so far stays on the target.
+type Breaker interface {
+	Break() error
+}
+
+// Break drops c's connection when it is a Breaker, else closes it.
+func Break(c io.Closer) error {
+	if b, ok := c.(Breaker); ok {
+		return b.Break()
+	}
+	return c.Close()
+}
+
 // Entry is one backup file at the target, returned by List.
 type Entry struct {
 	Path    string    `json:"path"`

@@ -198,6 +198,12 @@ func TestCancelOnlyQueued(t *testing.T) {
 	if err := s.Cancel(r.ID()); !errors.Is(err, ErrNotCancellable) {
 		t.Fatalf("running op cancel: %v", err)
 	}
+	if got, _ := s.Get(ctx, q.ID()); !got.Cancellable {
+		t.Fatal("queued operation with a cancel func not marked cancellable")
+	}
+	if got, _ := s.Get(ctx, r.ID()); got.Cancellable {
+		t.Fatal("running operation marked cancellable by a queue cancel func")
+	}
 	if err := s.Cancel(q.ID()); err != nil {
 		t.Fatal(err)
 	}
@@ -213,6 +219,107 @@ func TestCancelOnlyQueued(t *testing.T) {
 	got, _ = s.Get(ctx, q.ID())
 	if got.Status != StatusCancelled || len(got.Log) != 0 {
 		t.Fatalf("ended operation changed: %+v", got)
+	}
+}
+
+func TestCancelRunningInsideWindow(t *testing.T) {
+	s, _ := newTestService(t)
+	ctx := context.Background()
+	steps := []StepSpec{{"pull", "Pull image"}, {"swap", "Replace container"}}
+	tests := []struct {
+		name       string
+		finishErr  error
+		wantStatus Status
+	}{
+		{"work stops with an error", ErrCancelled, StatusCancelled},
+		{"work completed anyway", nil, StatusSucceeded},
+		{"cancel came too late, a later step failed", errors.New("swap failed"), StatusFailed},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o := s.Start(ctx, Spec{Kind: "image.update", Target: "web", Steps: steps})
+			o.StepStart("pull", "")
+			if err := s.Cancel(o.ID()); !errors.Is(err, ErrNotCancellable) {
+				t.Fatalf("cancel before the window opened: %v", err)
+			}
+			wctx, stop := context.WithCancelCause(ctx)
+			o.AllowCancel(stop)
+			if got, _ := s.Get(ctx, o.ID()); !got.Cancellable || got.CancelRequested {
+				t.Fatalf("window open: %+v", got)
+			}
+			if err := s.Cancel(o.ID()); err != nil {
+				t.Fatal(err)
+			}
+			if !errors.Is(context.Cause(wctx), ErrCancelled) {
+				t.Fatalf("work context cause %v", context.Cause(wctx))
+			}
+			got, _ := s.Get(ctx, o.ID())
+			if got.Status != StatusRunning || !got.CancelRequested || got.Cancellable {
+				t.Fatalf("after cancel request: %+v", got)
+			}
+			if err := s.Cancel(o.ID()); !errors.Is(err, ErrNotCancellable) {
+				t.Fatalf("second cancel: %v", err)
+			}
+			o.DisallowCancel(wctx)
+			if tc.finishErr != nil {
+				o.StepFail("pull", tc.finishErr)
+			}
+			o.Finish(tc.finishErr)
+			got, _ = s.Get(ctx, o.ID())
+			if got.Status != tc.wantStatus || got.Cancellable {
+				t.Fatalf("status %s, want %s", got.Status, tc.wantStatus)
+			}
+			if tc.wantStatus == StatusFailed && got.Steps[0].Status != StepFailed {
+				t.Fatalf("a real failure shown as %s", got.Steps[0].Status)
+			}
+			if tc.wantStatus == StatusCancelled {
+				if got.Error != "cancelled during “Pull image”" {
+					t.Fatalf("error %q", got.Error)
+				}
+				if got.Steps[0].Status != StepCancelled || got.Steps[1].Status != StepSkipped {
+					t.Fatalf("steps %+v", got.Steps)
+				}
+			}
+		})
+	}
+}
+
+// A cancel accepted just before the window closed, whose stop never
+// reached the work, is dropped so the work is not shown as stopping.
+func TestLateCancelIsDropped(t *testing.T) {
+	s, _ := newTestService(t)
+	ctx := context.Background()
+	o := s.Start(ctx, Spec{Kind: "backup.restore", Target: "data"})
+	wctx, stop := context.WithCancelCause(ctx)
+	o.AllowCancel(func(error) {})
+	if err := s.Cancel(o.ID()); err != nil {
+		t.Fatal(err)
+	}
+	o.DisallowCancel(wctx)
+	stop(ErrCancelled)
+	got, _ := s.Get(ctx, o.ID())
+	if got.CancelRequested || got.Cancellable {
+		t.Fatalf("late cancel kept: %+v", got)
+	}
+	o.Finish(errors.New("write failed"))
+	if got, _ = s.Get(ctx, o.ID()); got.Status != StatusFailed {
+		t.Fatalf("status %s", got.Status)
+	}
+}
+
+func TestCancelOutsideWindow(t *testing.T) {
+	s, _ := newTestService(t)
+	ctx := context.Background()
+	o := s.Start(ctx, Spec{Kind: "backup.restore", Target: "data"})
+	wctx, stop := context.WithCancelCause(ctx)
+	o.AllowCancel(stop)
+	o.DisallowCancel(wctx)
+	if err := s.Cancel(o.ID()); !errors.Is(err, ErrNotCancellable) {
+		t.Fatalf("cancel after the window closed: %v", err)
+	}
+	o.Finish(nil)
+	if err := s.Cancel(o.ID()); !errors.Is(err, ErrNotCancellable) {
+		t.Fatalf("cancel of an ended operation: %v", err)
 	}
 }
 

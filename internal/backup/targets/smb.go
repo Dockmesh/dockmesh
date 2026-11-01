@@ -9,6 +9,7 @@ import (
 	pathpkg "path"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/cloudsoda/go-smb2"
 )
@@ -224,6 +225,7 @@ func ListSMBShares(host string, port int, username, password string) ([]string, 
 }
 
 type smbWriter struct {
+	mu      sync.Mutex
 	closed  bool
 	f       *smb2.File
 	share   *smb2.Share
@@ -233,9 +235,20 @@ type smbWriter struct {
 
 func (w *smbWriter) Write(p []byte) (int, error) { return w.f.Write(p) }
 
+// Break drops the connection; a later Close returns at once, since the
+// logoff would wait on the dead connection.
+func (w *smbWriter) Break() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.closed = true
+	return w.conn.Close()
+}
+
 // Close reports the file's close (the last write reaching the share).
 // Logoff closes the connection, so net.ErrClosed from conn.Close is ignored.
 func (w *smbWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	// go-smb2 blocks on a second logoff of the same session.
 	if w.closed {
 		return nil
@@ -251,6 +264,7 @@ func (w *smbWriter) Close() error {
 }
 
 type smbReader struct {
+	mu      sync.Mutex
 	closed  bool
 	r       sizedReader
 	f       *smb2.File
@@ -260,7 +274,17 @@ type smbReader struct {
 }
 
 func (r *smbReader) Read(p []byte) (int, error) { return r.r.Read(p) }
+
+func (r *smbReader) Break() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closed = true
+	return r.conn.Close()
+}
+
 func (r *smbReader) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	// go-smb2 blocks on a second logoff of the same session.
 	if r.closed {
 		return nil

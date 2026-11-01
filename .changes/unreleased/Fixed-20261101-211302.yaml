@@ -1,0 +1,3 @@
+kind: Fixed
+body: Restoring a volume with mode replace extracts into a staging directory inside the volume and swaps the old contents out only after the archive extracted completely; a broken agent stream, a failing tar or too little free space leaves the volume as it was. The free space for old and new contents side by side is checked before anything is written.
+time: 2026-11-01T21:13:02.8345726+01:00

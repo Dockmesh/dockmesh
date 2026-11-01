@@ -416,23 +416,27 @@ func (h *RemoteHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser,
 var ErrAgentTooOld = errors.New("the agent on this host is too old to restore volumes; upgrade it from the Hosts page")
 
 // VolumeImport streams a tar.gz archive into the named volume on the
-// agent's host. replace empties the volume first. Returns tar's result.
+// agent's host. replace swaps the volume's contents for the archive's
+// once it extracted completely, needing needBytes of free space; only
+// agents that extract into a staging directory take it. Returns tar's
+// result.
 //
 //nolint:contextcheck // stream writes have no ctx; the AfterFunc below closes the stream when ctx ends
-func (h *RemoteHost) VolumeImport(ctx context.Context, name string, src io.Reader, replace bool) error {
+func (h *RemoteHost) VolumeImport(ctx context.Context, name string, src io.Reader, replace bool, needBytes int64) error {
 	ag, err := h.live()
 	if err != nil {
 		return err
 	}
 	// Without flow control the agent drops input that arrives faster than
-	// tar reads it, and an agent without the replace mode would merge.
-	if !ag.Hello.Has(agents.CapStreamCredit) || (replace && !ag.Hello.Has(agents.CapVolumeReplace)) {
+	// tar reads it; an older agent's replace empties the volume before
+	// any data arrives.
+	if !ag.Hello.Has(agents.CapStreamCredit) || (replace && !ag.Hello.Has(agents.CapVolumeStaged)) {
 		return ErrAgentTooOld
 	}
 	if err := docker.CheckVolumeName(name); err != nil {
 		return err
 	}
-	s, err := ag.OpenStream(ctx, "volume_import", "", map[string]any{"volume": name, "replace": replace})
+	s, err := ag.OpenStream(ctx, "volume_import", "", map[string]any{"volume": name, "replace": replace, "need_bytes": needBytes})
 	if err != nil {
 		return fmt.Errorf("open volume_import stream: %w", err)
 	}

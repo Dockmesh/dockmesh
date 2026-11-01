@@ -1,0 +1,3 @@
+kind: Upgrade notes
+body: "[restore-replace-agent, admins] Restores with mode replace onto a host behind an agent need the agent of this version; an older agent is refused with a message to upgrade it from the Hosts page. Merge restores keep working with older agents."
+time: 2026-11-01T21:13:04.1432339+01:00

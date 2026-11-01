@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -99,5 +100,75 @@ func TestOperationsFollowScope(t *testing.T) {
 	}
 	if rr := e.do(http.MethodPost, "/operations/"+queued.ID()+"/cancel", e.login("boss").AccessToken, nil); rr.Code != http.StatusConflict {
 		t.Errorf("second cancel: %d, want 409", rr.Code)
+	}
+}
+
+// Running work is cancelled with the permission and scope of the action
+// that started it, and only inside the window the work opened.
+func TestCancelRunningOperation(t *testing.T) {
+	e := newAuthzEnv(t)
+	ctx := context.Background()
+	tags := hosttags.New(e.db)
+	if err := tags.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tags.Set(ctx, "agent-prod", []string{"prod"}); err != nil {
+		t.Fatal(err)
+	}
+	e.h.HostTags = tags
+	e.h.Operations = operations.New(e.db)
+	e.router.Group(func(r chi.Router) {
+		r.Use(middleware.NewAuth(e.h.Auth))
+		r.Post("/operations/{id}/cancel", e.h.CancelOperation)
+	})
+	running := func(spec operations.Spec) (*operations.Op, context.Context) {
+		op := e.h.Operations.Start(ctx, spec)
+		wctx, stop := context.WithCancelCause(ctx)
+		op.AllowCancel(stop)
+		return op, wctx
+	}
+	prodRun, prodCtx := running(operations.Spec{Kind: opBackupRun, Target: "prod-nightly", HostID: "agent-prod"})
+	localRun, _ := running(operations.Spec{Kind: opBackupRun, Target: "local-nightly", HostID: "local"})
+	site, siteCtx := running(operations.Spec{Kind: opProxySite, Target: "app.example.com"})
+	swapping := e.h.Operations.Start(ctx, operations.Spec{Kind: opImageUpdate, Target: "web", HostID: "local"})
+
+	e.role("bk-view", []rbac.Perm{rbac.PermBackupsView})
+	e.role("bk-run-prod", []rbac.Perm{rbac.PermBackupsView, rbac.PermBackupsRun}, rbac.Scope{Type: rbac.ScopeHostTag, Value: "prod"})
+	e.role("proxy-view", []rbac.Perm{rbac.PermProxyView})
+	e.user("boss", "admin")
+	e.user("viewer", "bk-view")
+	e.user("runner", "bk-run-prod")
+	e.user("px", "proxy-view")
+
+	cancel := func(user string, op *operations.Op) int {
+		return e.do(http.MethodPost, "/operations/"+op.ID()+"/cancel", e.login(user).AccessToken, nil).Code
+	}
+	tests := []struct {
+		name string
+		user string
+		op   *operations.Op
+		want int
+	}{
+		{"view only", "viewer", prodRun, http.StatusForbidden},
+		{"run permission, other host", "runner", localRun, http.StatusNotFound},
+		{"proxy view only", "px", site, http.StatusForbidden},
+		{"step that must not be interrupted", "boss", swapping, http.StatusConflict},
+		{"run permission on the host", "runner", prodRun, http.StatusOK},
+		{"already requested", "runner", prodRun, http.StatusConflict},
+		{"admin stops the certificate wait", "boss", site, http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cancel(tt.user, tt.op); got != tt.want {
+				t.Fatalf("cancel: %d, want %d", got, tt.want)
+			}
+		})
+	}
+	if !errors.Is(context.Cause(prodCtx), operations.ErrCancelled) || !errors.Is(context.Cause(siteCtx), operations.ErrCancelled) {
+		t.Fatal("cancelled work was not stopped")
+	}
+	got, err := e.h.Operations.Get(ctx, prodRun.ID())
+	if err != nil || !got.CancelRequested {
+		t.Fatalf("cancel_requested not set: %+v %v", got, err)
 	}
 }

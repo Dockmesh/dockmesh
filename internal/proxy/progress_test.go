@@ -72,3 +72,44 @@ func TestNewSiteOperationMasksOptionSecrets(t *testing.T) {
 		}
 	}
 }
+
+func TestCancelCertificateWait(t *testing.T) {
+	s := newServiceDB(t)
+	s.enabled.Store(true)
+	ops := operations.New(s.db)
+	op := ops.Start(context.Background(), operations.Spec{Kind: "proxy.site", Target: "app.invalid", Steps: NewSiteSteps})
+	op.StepDone(StepSave, "")
+	op.StepDone(StepApply, "")
+	done := make(chan struct{})
+	go func() {
+		s.WatchCertificate(context.Background(), op, "app.invalid", "internal", time.Now())
+		close(done)
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		got, _ := ops.Get(context.Background(), op.ID())
+		if got != nil && got.Cancellable {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("certificate wait never became cancellable")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := ops.Cancel(op.ID()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("wait did not stop")
+	}
+	got, err := ops.Get(context.Background(), op.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != operations.StatusCancelled || got.Steps[2].Status != operations.StepCancelled ||
+		got.Steps[0].Status != operations.StepSucceeded {
+		t.Fatalf("operation %s %q steps %+v", got.Status, got.Error, got.Steps)
+	}
+}

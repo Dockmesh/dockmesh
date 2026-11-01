@@ -148,33 +148,23 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 		return nil, fmt.Errorf("restore host: %w", err)
 	}
 	op := operations.FromContext(ctx)
-	op.StepStart(StepRestoreDownload, "")
-	target, err := jobTarget(ctx, s.store, s.notices, job)
-	if err != nil {
-		return nil, err
+	// Download and verify only read; a user may stop the restore until
+	// the first byte is written.
+	readCtx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+	op.AllowCancel(stop)
+	stored, check, err := s.fetchVerified(readCtx, run, job, kind)
+	op.DisallowCancel(readCtx)
+	if cause := stopCause(readCtx); cause != nil {
+		if stored != nil {
+			_ = stored.Close()
+		}
+		return nil, fmt.Errorf("restore stopped before anything was written: %w", cause)
 	}
-	stored, err := fetchArchive(ctx, target, run)
 	if err != nil {
 		return nil, err
 	}
 	defer stored.Close()
-	op.StepDone(StepRestoreDownload, "")
-
-	op.StepStart(StepRestoreVerify, "")
-	check := &VerifyResult{RunID: runID, Type: kind, Passed: true}
-	plain, err := s.plaintext(stored, run)
-	if err != nil {
-		return nil, err
-	}
-	if kind == "stack" {
-		verifyStackArchive(check, plain)
-	} else {
-		verifyVolumeArchive(check, plain)
-	}
-	if !check.Passed {
-		return nil, fmt.Errorf("%w: %s", ErrArchiveInvalid, failedChecks(check))
-	}
-	op.StepDone(StepRestoreVerify, "")
 
 	report := &RestoreReport{Kind: kind, HostID: opts.HostID, Mode: "merge", FilesRestored: []string{}, VolumesRestored: []string{}}
 	if opts.Replace {
@@ -218,21 +208,72 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 	}
 	op.StepStart(StepRestoreWrite, "")
 
-	if _, err := stored.(io.Seeker).Seek(0, io.SeekStart); err != nil {
-		return nil, err
-	}
-	if plain, err = s.plaintext(stored, run); err != nil {
+	plain, err := s.plaintext(stored, run)
+	if err != nil {
 		return nil, err
 	}
 	if kind == "volume" {
-		if err := host.VolumeImport(ctx, opts.Target, plain, opts.Replace); err != nil {
+		if err := host.VolumeImport(ctx, opts.Target, plain, opts.Replace, check.diskNeed[""]); err != nil {
 			return report, fmt.Errorf("restore volume %s: %w", opts.Target, err)
 		}
 		report.VolumesRestored = append(report.VolumesRestored, opts.Target)
 		return report, nil
 	}
 	report.StackName = opts.Target
-	return report, s.restoreStackInto(ctx, opts.Target, plain, host, plan, opts.Replace, report)
+	return report, s.restoreStackInto(ctx, opts.Target, plain, host, plan, check.diskNeed, opts.Replace, report)
+}
+
+// fetchVerified downloads a run's archive into a temp copy and verifies
+// it completely. The copy comes back, seeked to its start, whenever it
+// was downloaded, so the caller always closes it.
+func (s *Service) fetchVerified(ctx context.Context, run *Run, job *Job, kind string) (io.ReadSeekCloser, *VerifyResult, error) {
+	op := operations.FromContext(ctx)
+	op.StepStart(StepRestoreDownload, "")
+	target, err := jobTarget(ctx, s.store, s.notices, job)
+	if err != nil {
+		return nil, nil, err
+	}
+	stored, err := fetchArchive(ctx, target, run)
+	if err != nil {
+		return nil, nil, err
+	}
+	op.StepDone(StepRestoreDownload, "")
+
+	op.StepStart(StepRestoreVerify, "")
+	check := &VerifyResult{RunID: run.ID, Type: kind, Passed: true}
+	plain, err := s.plaintext(ctxReader{ctx: ctx, r: stored}, run)
+	if err != nil {
+		return stored, nil, err
+	}
+	if kind == "stack" {
+		verifyStackArchive(check, plain)
+	} else {
+		verifyVolumeArchive(check, plain)
+	}
+	if err := ctx.Err(); err != nil {
+		return stored, nil, err
+	}
+	if !check.Passed {
+		return stored, nil, fmt.Errorf("%w: %s", ErrArchiveInvalid, failedChecks(check))
+	}
+	op.StepDone(StepRestoreVerify, "")
+	if _, err := stored.Seek(0, io.SeekStart); err != nil {
+		return stored, nil, err
+	}
+	return stored, check, nil
+}
+
+// ctxReader fails reads once ctx has ended.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }
 
 // plaintext reads a fetched archive, decrypting encrypted runs. The
@@ -312,7 +353,7 @@ func failedChecks(r *VerifyResult) string {
 // stack/<rel> goes to the stack directory on the server, each
 // volumes/<vol>.tar.gz named in plan is streamed into plan[vol] on host.
 // Links in the archive are skipped; writes go through an os.Root.
-func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io.Reader, host hostBackupTarget, plan map[string]string, replace bool, report *RestoreReport) error {
+func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io.Reader, host hostBackupTarget, plan map[string]string, need map[string]int64, replace bool, report *RestoreReport) error {
 	if s.stacks == nil {
 		return errors.New("stacks manager not configured")
 	}
@@ -386,7 +427,7 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 				}
 			}
 			operations.FromContext(ctx).Logf("info", "restoring volume %s", dest)
-			if err := host.VolumeImport(ctx, dest, io.LimitReader(tr, hdr.Size), replace); err != nil {
+			if err := host.VolumeImport(ctx, dest, io.LimitReader(tr, hdr.Size), replace, need[volName]); err != nil {
 				return fmt.Errorf("restore volume %s: %w", dest, err)
 			}
 			report.VolumesRestored = append(report.VolumesRestored, dest)

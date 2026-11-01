@@ -15,7 +15,7 @@
         {#if s.status === 'succeeded'}<Check size={13} strokeWidth={2.4} />
         {:else if s.status === 'failed'}<X size={13} strokeWidth={2.4} />
         {:else if s.status === 'warning'}<TriangleAlert size={13} strokeWidth={2.2} />
-        {:else if s.status === 'skipped'}<Minus size={13} strokeWidth={2.2} />
+        {:else if s.status === 'skipped' || s.status === 'cancelled'}<Minus size={13} strokeWidth={2.2} />
         {:else if s.status === 'running'}<LoaderCircle size={13} strokeWidth={2.2} class="spin" />
         {:else}<Circle size={9} strokeWidth={2} />{/if}
       </span>
@@ -50,6 +50,7 @@
   .row { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
   .lbl { flex: 1; min-width: 0; font-weight: 500; }
   .pending .lbl, .skipped .lbl { color: var(--subtle); font-weight: 400; }
+  .cancelled .ic, .cancelled .lbl { color: var(--muted); }
   .failed .lbl { color: var(--bad); }
   .meta { color: var(--subtle); }
   .detail { color: var(--subtle); font-size: var(--fs-xs); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

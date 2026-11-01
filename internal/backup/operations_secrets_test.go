@@ -23,7 +23,7 @@ func (h *echoHost) ContainerExec(context.Context, string, []string) ([]byte, int
 	return []byte(h.out), 0, nil
 }
 
-func (h *echoHost) VolumeImport(_ context.Context, name string, src io.Reader, _ bool) error {
+func (h *echoHost) VolumeImport(_ context.Context, name string, src io.Reader, _ bool, _ int64) error {
 	_, _ = io.Copy(io.Discard, src)
 	return errors.New("import " + name + " refused: " + h.out)
 }

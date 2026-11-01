@@ -61,12 +61,14 @@ const certWait = 3 * time.Minute
 // certificate for host (or a failure to get one), or once the served
 // certificate for host can be read; issuers backdate NotBefore by up to an
 // hour, so a certificate from before the site existed is not taken for a
-// new one. It only observes; it never asks Caddy to do anything.
+// new one. It only observes; it never asks Caddy to do anything, so a
+// user may stop the wait: the site stays and Caddy keeps trying.
 func (s *Service) WatchCertificate(ctx context.Context, op *operations.Op, host, tlsMode string, since time.Time) {
 	if op == nil {
 		return
 	}
-	defer op.Finish(nil)
+	var stopped error
+	defer func() { op.Finish(stopped) }()
 	if tlsMode == "none" {
 		op.StepSkip(StepCertificate, "HTTPS is off for this site")
 		return
@@ -81,6 +83,9 @@ func (s *Service) WatchCertificate(ctx context.Context, op *operations.Op, host,
 	}
 	op.StepStart(StepCertificate, "")
 	op.Logf("info", "waiting for a certificate for %s from %s", host, issuer)
+	ctx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+	op.AllowCancel(stop)
 	ctx, cancel := context.WithTimeout(ctx, certWait)
 	defer cancel()
 	tick := time.NewTicker(5 * time.Second)
@@ -108,6 +113,11 @@ func (s *Service) WatchCertificate(ctx context.Context, op *operations.Op, host,
 		}
 		select {
 		case <-ctx.Done():
+			if c := context.Cause(ctx); errors.Is(c, operations.ErrCancelled) {
+				op.Logf("info", "stopped waiting; the site stays and Caddy keeps trying to get a certificate")
+				stopped = c
+				return
+			}
 			op.StepWarn(StepCertificate, "no certificate seen within 3 minutes; Caddy keeps trying, see the Certificates tab")
 			return
 		case <-tick.C:

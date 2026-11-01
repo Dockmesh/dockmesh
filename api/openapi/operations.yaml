@@ -68,17 +68,28 @@ paths:
     post:
       operationId: operations.cancel
       tags: [operations]
-      summary: Cancel a queued operation
+      summary: Cancel queued or running work
       description: |
-        Only queued work can be cancelled (the not yet started containers of
-        a bulk update); running work is never interrupted. Needs the
-        permission of the action that started it (`containers.update`, plus
-        `stacks.deploy` for a stack container).
+        Cancels work while the operation is `cancellable`: queued containers
+        of a bulk update; a backup run in any step (a running hook finishes
+        first, post-backup hooks still run, the unfinished archive is deleted
+        from the target); an image
+        update while it pulls; a restore while it downloads or verifies the
+        archive, before anything is written; the certificate wait of a new
+        proxy site (the site stays). Swapping files or containers is never
+        interrupted.
+
+        Running work stops a moment later and then ends `cancelled`, naming
+        the step it stopped in; the response may still show it running with
+        `cancel_requested` set. Needs the permission of the action that
+        started it on the operation's host (`containers.upgrade`, plus
+        `stacks.deploy` for a stack container; `backups.run`;
+        `backups.restore`; `proxy.create`).
       parameters:
         - $ref: "#/components/parameters/OperationIDPath"
       responses:
         "200":
-          description: The cancelled operation.
+          description: The operation, cancelled or with `cancel_requested` set.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Operation"}
@@ -86,7 +97,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: The operation is not queued any more.
+          description: The operation has ended, a cancel was already requested, or its current step must not be interrupted.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}

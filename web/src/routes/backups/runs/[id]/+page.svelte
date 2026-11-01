@@ -7,6 +7,7 @@
   import SystemRestoreDialog from '../../_SystemRestoreDialog.svelte';
   import { Skeleton, EmptyState, StatBar, StatusChip } from '$lib/components/ui';
   import OperationSteps from '$lib/components/operations/OperationSteps.svelte';
+  import CancelOpButton from '$lib/components/operations/CancelOpButton.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
   import { pageContext } from '$lib/stores/pageContext.svelte';
@@ -166,6 +167,7 @@
       <StatusChip tone={runTone(op && isActive(op) ? 'running' : run.status)} label={op && isActive(op) ? 'running' : runLabel(run.status)} />
       {#if run.encrypted}<span class="dm-sub enc"><Lock size={12} /> encrypted</span>{/if}
       <span class="dm-sp"></span>
+      {#if op}<CancelOpButton {op} size="md" />{/if}
       <button type="button" class="dm-btn" onclick={copyDetails}><Copy size={13} /> Copy details</button>
       {#if run.status === 'failed' && job && allowed('backups.run')}
         <button type="button" class="dm-btn dm-btn-primary" disabled={starting} onclick={runAgain}><Play size={13} /> Run again</button>

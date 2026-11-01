@@ -32,12 +32,12 @@ func (h *importHost) Pick(id string) (hostBackupTarget, error) {
 	return h, nil
 }
 
-func (h *importHost) VolumeImport(_ context.Context, name string, src io.Reader, replace bool) error {
+func (h *importHost) VolumeImport(_ context.Context, name string, src io.Reader, replace bool, needBytes int64) error {
 	b, err := io.ReadAll(src)
 	if err != nil {
 		return err
 	}
-	if _, err := walkInnerTar(bytes.NewReader(b)); err != nil {
+	if _, _, err := walkInnerTar(bytes.NewReader(b)); err != nil {
 		return err
 	}
 	h.imported[name], h.replaced[name] = b, replace

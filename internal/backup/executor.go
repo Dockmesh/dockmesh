@@ -78,8 +78,9 @@ type hostBackupTarget interface {
 	VolumeTar(ctx context.Context, name string) (io.ReadCloser, error)
 	ContainerExec(ctx context.Context, containerID string, cmd []string) ([]byte, int, error)
 	// VolumeImport extracts a tar.gz archive into the volume; replace
-	// empties it first.
-	VolumeImport(ctx context.Context, name string, src io.Reader, replace bool) error
+	// swaps the volume's contents for the archive's once it extracted
+	// completely, needing needBytes of free space.
+	VolumeImport(ctx context.Context, name string, src io.Reader, replace bool, needBytes int64) error
 	// VolumeInUse names the running containers that mount the volume.
 	VolumeInUse(ctx context.Context, name string) ([]string, error)
 }
@@ -96,7 +97,9 @@ func (e *Executor) logf(ctx context.Context, runID int64, stream, format string,
 	if len(args) > 0 {
 		line = fmt.Sprintf(format, args...)
 	}
-	if err := e.store.appendRunLog(ctx, runID, stream, line); err != nil {
+	// Lines about a cancelled or stalled run are written after its
+	// context ended.
+	if err := e.store.appendRunLog(context.WithoutCancel(ctx), runID, stream, line); err != nil {
 		slog.Debug("backup runlog append failed", "run", runID, "err", err)
 	}
 	level := stream
@@ -140,7 +143,11 @@ func (e *Executor) complete(ctx context.Context, job *Job, runID int64) (*Run, e
 		op = v.(*operations.Op)
 	}
 	ctx = operations.WithOp(ctx, op)
-	out, target := e.execute(ctx, job, runID)
+	runCtx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+	op.AllowCancel(stop)
+	out, target := e.execute(runCtx, job, runID, stop)
+	op.DisallowCancel(runCtx)
 	// The outcome is recorded even when the caller went away mid-run.
 	ctx = context.WithoutCancel(ctx)
 	if err := e.store.finishRun(ctx, runID, out.status, out.size, out.path, out.sum, out.err); err != nil {
@@ -177,10 +184,17 @@ type runOutcome struct {
 
 // execute runs the phases of one backup. The target comes back only when
 // the run produced an archive, so retention never runs after a failure.
-func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runOutcome, kept targets.Target) {
+// ctx ends when a user cancels the run or the transfer stalls; the
+// post-hooks run either way.
+func (e *Executor) execute(ctx context.Context, job *Job, runID int64, stop context.CancelCauseFunc) (out runOutcome, kept targets.Target) {
 	op := operations.FromContext(ctx)
 	step := StepPrepare
 	fail := func(stage string, err error) runOutcome {
+		if cause := stopCause(ctx); cause != nil {
+			err = cause
+		} else if isTimeout(err) {
+			err = fmt.Errorf("%w: %w", ErrTargetStalled, err)
+		}
 		e.logf(ctx, runID, "error", "%s: %s", stage, err)
 		err = fmt.Errorf("%s: %w", stage, err)
 		op.StepFail(step, err)
@@ -188,10 +202,11 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	}
 
 	op.StepStart(StepPrepare, "")
-	hostTarget, err := e.resolveHost(job.HostID)
+	resolved, err := e.resolveHost(job.HostID)
 	if err != nil {
 		return fail("resolve host", err), nil
 	}
+	hostTarget := hostBackupTarget(stoppableHost{resolved})
 	if job.Encrypt && !canEncrypt(e.secrets) {
 		e.logf(ctx, runID, "error", "%s", ErrEncryptUnavailable)
 		op.StepFail(step, ErrEncryptUnavailable)
@@ -224,6 +239,8 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	step = StepArchive
 	op.StepStart(StepArchive, "")
 
+	act := newActivity()
+	defer watchIdle(act, stop)()
 	relPath := relativePath(job, runID)
 	// Recorded up front so the partial file of a crashed run stays
 	// traceable.
@@ -237,9 +254,17 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	// The hash covers the bytes as stored on the target (ciphertext for
 	// encrypted runs), which read-back, verify and restore check against.
 	hasher := sha256.New()
-	stored := &countingWriter{w: w, h: hasher}
+	stored := &countingWriter{w: w, h: hasher, act: act}
+	// Unblocks a write to a target that stopped answering.
+	stopAbort := closeOnDone(ctx, func() error {
+		if _, ok := w.(targets.Breaker); ok {
+			return targets.Break(w)
+		}
+		return stored.Abort()
+	})
 	encW, err := wrapEncrypt(stored, encryptionFor(job, e.secrets))
 	if err != nil {
+		stopAbort()
 		_ = abortWriter(stored)
 		out = fail("encrypt", err)
 		out.path = e.removePartial(ctx, runID, target, w, relPath, false)
@@ -247,14 +272,23 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	}
 
 	e.logf(ctx, runID, "info", "streaming %d source(s) → %s", len(job.Sources), relPath)
-	if _, err := e.streamSources(ctx, job.Sources, hostTarget, &progressWriter{w: encW, op: op, step: StepArchive}); err != nil {
+	if _, err := e.streamSources(ctx, job.Sources, hostTarget, &progressWriter{w: encW, op: op, step: StepArchive, act: act}); err != nil {
+		stopAbort()
 		_ = abortWriter(encW)
 		out = fail("stream sources", err)
 		out.path = e.removePartial(ctx, runID, target, w, relPath, false)
 		return out, nil
 	}
 	if err := encW.Close(); err != nil {
+		stopAbort()
 		out = fail("finish upload", err)
+		out.path = e.removePartial(ctx, runID, target, w, relPath, true)
+		return out, nil
+	}
+	if !stopAbort() {
+		// Cancelled or stalled while the upload was closing: the abort may
+		// have cut it short, so the archive is not trusted.
+		out = fail("finish upload", context.Cause(ctx))
 		out.path = e.removePartial(ctx, runID, target, w, relPath, true)
 		return out, nil
 	}
@@ -262,7 +296,10 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	e.logf(ctx, runID, "info", "wrote %d bytes, sha256=%s", stored.n, sum[:12])
 	op.StepDone(StepArchive, operations.HumanBytes(stored.n)+" written")
 	op.StepStart(StepVerify, "")
-	if err := readBack(ctx, target, relPath, stored.n, sum); err != nil {
+	if err := readBack(ctx, target, relPath, stored.n, sum, act); err != nil {
+		if cause := stopCause(ctx); cause != nil {
+			err = fmt.Errorf("read back: %w", cause)
+		}
 		e.logf(ctx, runID, "error", "%s", err)
 		op.StepFail(StepVerify, err)
 		out = runOutcome{status: StatusFailed, size: stored.n, err: err}
@@ -311,12 +348,14 @@ const cleanupTimeout = 10 * time.Minute
 // deleted, so the retention pass retries.
 func (e *Executor) removePartial(ctx context.Context, runID int64, target targets.Target, w io.WriteCloser, relPath string, closed bool) string {
 	if _, ok := w.(targets.Aborter); ok && !closed {
+		e.logf(ctx, runID, "info", "the target dropped the unfinished upload of %s", relPath)
 		return ""
 	}
 	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 	defer cancel()
 	err := target.Delete(dctx, relPath)
 	if err == nil || errors.Is(err, fs.ErrNotExist) {
+		e.logf(ctx, runID, "info", "deleted the partial archive %s", relPath)
 		return ""
 	}
 	e.logf(ctx, runID, "warn", "could not delete partial archive %s: %s", relPath, err)
@@ -343,6 +382,10 @@ func (e *Executor) notifyRun(ctx context.Context, job *Job, runID int64, out run
 		in.Body = "Run failed"
 		if out.err != nil {
 			in.Body = out.err.Error()
+		}
+		if errors.Is(out.err, operations.ErrCancelled) {
+			in.Severity = notifications.SevWarning
+			in.Title = "Backup cancelled: " + job.Name
 		}
 	}
 	_, _ = e.notifs.Emit(ctx, in)
@@ -422,9 +465,15 @@ func (e *Executor) runHooks(ctx context.Context, runID int64, phase string, host
 		if h.Container == "" || len(h.Cmd) == 0 {
 			continue
 		}
+		// A cancel or stall stops the run between hooks, never inside one:
+		// docker cannot stop an exec, so the hook would finish unseen and
+		// the post-hooks would not know it ran.
+		if cause := stopCause(ctx); cause != nil {
+			return ran, cause
+		}
 		e.logf(ctx, runID, "info", "%s-hook: container=%s cmd=%s",
 			phase, h.Container, strings.Join(h.Cmd, " "))
-		hookCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		hookCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
 		out, exitCode, err := hostTarget.ContainerExec(hookCtx, h.Container, h.Cmd)
 		cancel()
 		// Capture up to ~16KB of output across stream types so noisy
@@ -485,8 +534,8 @@ func (l *localBackupTarget) VolumeTar(ctx context.Context, name string) (io.Read
 	return tarVolume(ctx, l.dc, name)
 }
 
-func (l *localBackupTarget) VolumeImport(ctx context.Context, name string, src io.Reader, replace bool) error {
-	return untarVolume(ctx, l.dc, name, src, replace)
+func (l *localBackupTarget) VolumeImport(ctx context.Context, name string, src io.Reader, replace bool, needBytes int64) error {
+	return untarVolume(ctx, l.dc, name, src, replace, needBytes)
 }
 
 func (l *localBackupTarget) VolumeInUse(ctx context.Context, name string) ([]string, error) {
@@ -581,15 +630,19 @@ func (e *Executor) deleteArchive(ctx context.Context, target targets.Target, r R
 
 // countingWriter counts and hashes the bytes stored on the target.
 type countingWriter struct {
-	w io.WriteCloser
-	h hash.Hash
-	n int64
+	w   io.WriteCloser
+	h   hash.Hash
+	n   int64
+	act *activity
 }
 
 func (c *countingWriter) Write(p []byte) (int, error) {
 	n, err := c.w.Write(p)
 	c.n += int64(n)
 	c.h.Write(p[:n])
+	if n > 0 {
+		c.act.touch()
+	}
 	return n, err
 }
 
@@ -684,6 +737,7 @@ type progressWriter struct {
 	w    io.Writer
 	op   *operations.Op
 	step string
+	act  *activity
 	n    int64
 	last time.Time
 }
@@ -691,6 +745,9 @@ type progressWriter struct {
 func (p *progressWriter) Write(b []byte) (int, error) {
 	n, err := p.w.Write(b)
 	p.n += int64(n)
+	if n > 0 {
+		p.act.touch()
+	}
 	if p.op != nil && time.Since(p.last) >= time.Second {
 		p.last = time.Now()
 		p.op.StepDetail(p.step, operations.HumanBytes(p.n)+" archived")

@@ -31,13 +31,14 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Detached from the request: closing the tab mid-update must not cancel
-	// the pull or interrupt the container swap.
+	// the pull or interrupt the container swap. A user can cancel the pull
+	// through the operation.
 	ctx := context.WithoutCancel(r.Context())
 	dr := r.WithContext(ctx)
 	op := h.startImageUpdateOp(dr, id, "", false)
 	res, err := h.Updater.Update(operations.WithOp(ctx, op), id, middleware.UserID(ctx))
 	op.Finish(err)
-	if errors.Is(err, updater.ErrBusy) {
+	if errors.Is(err, updater.ErrBusy) || errors.Is(err, operations.ErrCancelled) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}

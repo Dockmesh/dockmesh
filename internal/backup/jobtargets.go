@@ -257,6 +257,10 @@ func migratedTargetName(typ string, cfg map[string]any) string {
 // jobTarget builds the job's target. For SFTP it records the host key on
 // first contact and parks a changed key until an admin accepts it. Jobs
 // not moved to a saved target yet run from their inline config.
+// wrapRunTarget wraps the target a run or restore reads and writes; tests
+// use it to simulate a target that stalls.
+var wrapRunTarget = func(t targets.Target) targets.Target { return t }
+
 func jobTarget(ctx context.Context, st *store, n *notices.Service, job *Job) (targets.Target, error) {
 	if job.TargetID > 0 {
 		ts := targets.NewTargetStore(st.db)
@@ -268,7 +272,11 @@ func jobTarget(ctx context.Context, st *store, n *notices.Service, job *Job) (ta
 			return nil, err
 		}
 		operations.FromContext(ctx).AddSecrets(targetSecretValues(t.Type, t.Config)...)
-		return ts.BuildChecked(ctx, t, n)
+		built, err := ts.BuildChecked(ctx, t, n)
+		if err != nil {
+			return nil, err
+		}
+		return wrapRunTarget(built), nil
 	}
 	operations.FromContext(ctx).AddSecrets(targetSecretValues(job.TargetType, job.TargetConfig)...)
 	t, err := buildTarget(job.TargetType, job.TargetConfig)
@@ -276,7 +284,7 @@ func jobTarget(ctx context.Context, st *store, n *notices.Service, job *Job) (ta
 		return nil, err
 	}
 	jobTOFU(st, n, job).Attach(ctx, t)
-	return t, nil
+	return wrapRunTarget(t), nil
 }
 
 // targetSecretValues returns the credentials in a target config, which

@@ -2,6 +2,7 @@
 // operations store and its components.
 
 import type { Operation } from '$lib/api';
+import type { Perm } from '$lib/rbac.svelte';
 
 export const KIND_LABEL: Record<string, string> = {
   'image.update': 'Image update',
@@ -18,13 +19,48 @@ export function isActive(op: Pick<Operation, 'status'>): boolean {
   return op.status === 'queued' || op.status === 'running';
 }
 
-// The step currently running, or the one that failed.
+// The step currently running, or the one that failed or was cancelled.
 export function currentStep(op: Operation) {
   return (
     op.steps.find((s) => s.status === 'running') ??
     op.steps.find((s) => s.status === 'failed') ??
+    op.steps.find((s) => s.status === 'cancelled') ??
     null
   );
+}
+
+// Cancelling needs the permission of the action that started the work.
+const CANCEL_PERM: Record<string, Perm> = {
+  'image.update': 'containers.upgrade',
+  'backup.run': 'backups.run',
+  'backup.restore': 'backups.restore',
+  'proxy.site': 'proxy.create'
+};
+
+export function cancelPerm(kind: string): Perm | undefined {
+  return CANCEL_PERM[kind];
+}
+
+// The server marks when the work may be stopped now: queued, or in a step
+// that only reads or waits (never while files or containers are swapped).
+export function canCancel(op: Operation): boolean {
+  return isActive(op) && !!op.cancellable && !op.cancel_requested;
+}
+
+// What cancelling does, for the confirmation.
+export function cancelConsequence(op: Operation): string {
+  if (op.status === 'queued') return 'It is taken out of the queue and does not start.';
+  switch (op.kind) {
+    case 'backup.run':
+      return 'The run stops and is recorded as failed. A hook that is running finishes first, post-backup hooks still run, and the unfinished archive is deleted from the target.';
+    case 'backup.restore':
+      return 'The restore stops before anything is written. The volumes and stack files keep their current contents.';
+    case 'image.update':
+      return 'The image pull stops. The container keeps running on its current image.';
+    case 'proxy.site':
+      return 'Dockmesh stops waiting for the certificate. The site stays, and Caddy keeps trying to get one.';
+  }
+  return 'The work stops.';
 }
 
 // Share of finished steps plus the running step's own progress; skipped

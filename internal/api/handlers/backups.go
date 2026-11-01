@@ -481,8 +481,8 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 	if kind == "stack" {
 		op.AddSecrets(h.stackEnvValues(opts.Target)...)
 	}
-	// A restore stopped halfway leaves a half-written volume, so it runs to
-	// the end even if the client disconnects.
+	// Detached from the request: a client that disconnects must not stop
+	// the restore. A user can cancel it while it only reads.
 	report, err := h.Backups.Restore(operations.WithOp(context.WithoutCancel(r.Context()), op), id, opts)
 	op.Finish(err)
 	var inUse *backup.VolumeInUseError
@@ -491,7 +491,8 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 		writeError(w, http.StatusBadRequest, "dest_volume must be a Docker volume name, not a path")
 		return
 	case errors.Is(err, backup.ErrNotRestorable), errors.Is(err, backup.ErrSystemRestore), errors.Is(err, backup.ErrRestoreBusy),
-		errors.Is(err, backup.ErrUnverifiedReplace), errors.Is(err, host.ErrAgentTooOld), errors.As(err, &inUse):
+		errors.Is(err, backup.ErrUnverifiedReplace), errors.Is(err, host.ErrAgentTooOld), errors.As(err, &inUse),
+		errors.Is(err, operations.ErrCancelled):
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	case errors.Is(err, backup.ErrArchiveInvalid), errors.Is(err, backup.ErrArchiveMismatch):

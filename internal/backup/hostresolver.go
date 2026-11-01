@@ -43,15 +43,15 @@ func (a *hostBackupAdapter) VolumeTar(ctx context.Context, name string) (io.Read
 // volumeImporter is implemented by hosts behind an agent; the central
 // host is handled by the executor's own helper container.
 type volumeImporter interface {
-	VolumeImport(ctx context.Context, name string, src io.Reader, replace bool) error
+	VolumeImport(ctx context.Context, name string, src io.Reader, replace bool, needBytes int64) error
 }
 
-func (a *hostBackupAdapter) VolumeImport(ctx context.Context, name string, src io.Reader, replace bool) error {
+func (a *hostBackupAdapter) VolumeImport(ctx context.Context, name string, src io.Reader, replace bool, needBytes int64) error {
 	vi, ok := a.h.(volumeImporter)
 	if !ok {
 		return fmt.Errorf("host %s can't restore volumes", a.h.ID())
 	}
-	return vi.VolumeImport(ctx, name, src, replace)
+	return vi.VolumeImport(ctx, name, src, replace, needBytes)
 }
 
 func (a *hostBackupAdapter) VolumeInUse(ctx context.Context, name string) ([]string, error) {
