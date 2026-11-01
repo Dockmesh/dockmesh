@@ -1,4 +1,4 @@
-.PHONY: dev build test test-e2e lint docker clean tidy openapi frontend-install frontend-build backend-build agent agent-linux agent-bundle dmctl dmctl-bundle
+.PHONY: dev build test test-e2e lint docker clean tidy openapi migration frontend-install frontend-build backend-build agent agent-linux agent-bundle dmctl dmctl-bundle
 
 VERSION ?= dev
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -88,3 +88,8 @@ clean:
 # Bundle api/openapi/*.yaml into the spec the server embeds.
 openapi:
 	go run ./scripts/openapi
+
+# New migration named with the current UTC time: make migration name=<slug>
+migration:
+	@test -n "$(name)" || { echo "usage: make migration name=<lower_case_slug>"; exit 1; }
+	@f=internal/db/migrations/$$(date -u +%Y%m%d%H%M%S)_$(name).sql; touch $$f; echo $$f
