@@ -1,9 +1,14 @@
 name: ci
 
+# ci-ok is the only required check. On pull requests the jobs of areas the
+# PR doesn't touch are skipped; pushes to main and merge-queue runs test
+# everything. Label changes re-run the workflow so no-changelog takes effect.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main]
+  merge_group:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -13,19 +18,139 @@ permissions:
   contents: read
 
 jobs:
-  go:
-    name: go
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      go: ${{ github.event_name != 'pull_request' || steps.filter.outputs.go == 'true' }}
+      web: ${{ github.event_name != 'pull_request' || steps.filter.outputs.web == 'true' }}
+      docs: ${{ github.event_name != 'pull_request' || steps.filter.outputs.docs == 'true' }}
+      scripts: ${{ github.event_name != 'pull_request' || steps.filter.outputs.scripts == 'true' }}
+      deps: ${{ github.event_name != 'pull_request' || steps.filter.outputs.deps == 'true' }}
+    steps:
+      - if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            ci: &ci
+              - .github/workflows/ci.yml
+            go:
+              - *ci
+              - '**/*.go'
+              - go.mod
+              - go.sum
+              - .golangci.yml
+              - api/openapi/**
+              - internal/**
+              - cmd/**
+              - pkg/**
+              - CHANGELOG.md
+            web:
+              - *ci
+              - web/**
+            docs:
+              - *ci
+              - docs/**
+            scripts:
+              - *ci
+              - scripts/**
+            deps:
+              - *ci
+              - go.mod
+              - go.sum
+              - web/package.json
+              - web/package-lock.json
+
+  changelog:
+    name: changelog
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - run: go vet ./...
-      - run: go test -race ./...
+      - name: fragments
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          OPTIONAL: ${{ contains(github.event.pull_request.labels.*.name, 'no-changelog') }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          # An empty base file means the base branch has no changelog yet.
+          git show "$BASE_SHA:CHANGELOG.md" > "$RUNNER_TEMP/base-CHANGELOG.md" 2>/dev/null || true
+          git diff --name-only --diff-filter=AM "$BASE_SHA" HEAD -- .changes/unreleased/ > "$RUNNER_TEMP/changed.txt"
+          go run ./scripts/relmanifest check -base "$RUNNER_TEMP/base-CHANGELOG.md" \
+            -changed "$RUNNER_TEMP/changed.txt" -optional="$OPTIONAL"
+      - name: CHANGELOG.md matches .changes
+        run: |
+          go run github.com/miniscruff/changie@v1.26.0 merge --dry-run > "$RUNNER_TEMP/CHANGELOG.md"
+          diff -u CHANGELOG.md "$RUNNER_TEMP/CHANGELOG.md" || {
+            echo "::error::CHANGELOG.md is generated; edit .changes/ and run changie merge"
+            exit 1
+          }
+
+  go-test:
+    name: go test (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The handlers package takes most of the test time and is split by
+          # test name; the other packages run as two groups.
+          - {name: handlers 1/3, shard: 1}
+          - {name: handlers 2/3, shard: 2}
+          - {name: handlers 3/3, shard: 3}
+          - {name: heavy, group: heavy}
+          - {name: rest, group: rest}
+    env:
+      HANDLERS: github.com/dockmesh/dockmesh/internal/api/handlers
+      HEAVY: >-
+        github.com/dockmesh/dockmesh/internal/alerts
+        github.com/dockmesh/dockmesh/internal/backup
+        github.com/dockmesh/dockmesh/internal/db
+        github.com/dockmesh/dockmesh/internal/proxy
+        github.com/dockmesh/dockmesh/internal/agents
+        github.com/dockmesh/dockmesh/internal/saml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: handlers shard
+        if: matrix.shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          go test -race -c -o "$RUNNER_TEMP/handlers.test" ./internal/api/handlers/
+          cd internal/api/handlers
+          "$RUNNER_TEMP/handlers.test" -test.list '.*' | grep -E '^(Test|Example|Fuzz)' > "$RUNNER_TEMP/all.txt"
+          awk -v s="$SHARD" 'NR % 3 == s % 3' "$RUNNER_TEMP/all.txt" > "$RUNNER_TEMP/mine.txt"
+          echo "$(wc -l < "$RUNNER_TEMP/mine.txt") of $(wc -l < "$RUNNER_TEMP/all.txt") tests"
+          "$RUNNER_TEMP/handlers.test" -test.timeout 15m -test.run "^($(paste -sd'|' "$RUNNER_TEMP/mine.txt"))\$"
+      - name: package group
+        if: matrix.group
+        env:
+          GROUP: ${{ matrix.group }}
+        run: |
+          go list ./... > "$RUNNER_TEMP/pkgs.txt"
+          if [ "$GROUP" = heavy ]; then
+            pkgs=$HEAVY
+          else
+            pkgs=$(grep -vxF -e "$HANDLERS" $(printf -- '-e %s ' $HEAVY) "$RUNNER_TEMP/pkgs.txt")
+          fi
+          go test -race $pkgs
 
   integration:
     name: integration
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -42,8 +167,11 @@ jobs:
       - name: jobs from saved targets
         run: go test -tags integration -count=1 -v -run AgainstRealServers ./internal/api/handlers/
 
+  # golangci-lint's govet covers go vet.
   lint:
     name: lint
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -59,10 +187,12 @@ jobs:
         with:
           version: v2.15.0
           install-mode: goinstall
-          args: --new-from-merge-base=${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+          args: --new-from-merge-base=${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
 
   govulncheck:
     name: govulncheck
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -89,6 +219,8 @@ jobs:
 
   web:
     name: web
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -106,8 +238,24 @@ jobs:
       - run: npm run test:unit
       - run: npm run build
 
+  # docs/site is checked by a Go test, the install scripts by Go tests next
+  # to them; both are quick enough to run whole when only they change.
+  docs-scripts:
+    name: docs and scripts
+    needs: changes
+    if: needs.changes.outputs.go != 'true' && (needs.changes.outputs.docs == 'true' || needs.changes.outputs.scripts == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go test -race ./scripts/...
+
   build:
     name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.web == 'true'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -165,6 +313,8 @@ jobs:
 
   licenses:
     name: licenses
+    needs: changes
+    if: needs.changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     env:
       # AGPL-3.0 compatible SPDX identifiers. OFL-1.1 covers the bundled
@@ -194,3 +344,16 @@ jobs:
           npm ci
           npx --yes license-checker-rseidelsohn@4.4.2 --production \
             --excludePrivatePackages --onlyAllow "$ALLOWED" --summary
+
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [changes, changelog, go-test, integration, lint, govulncheck, web, docs-scripts, build, licenses]
+    runs-on: ubuntu-latest
+    steps:
+      - name: every job passed or was skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$RESULTS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' > /dev/null

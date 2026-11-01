@@ -30,31 +30,47 @@ changed and why, and how you tested it.
 
 ### Required checks
 
-| Check | What it runs |
+`ci-ok` is the one required CI check. It waits for every other job of the
+`ci` workflow and passes when each one passed or was skipped; on pull
+requests, jobs for areas your change doesn't touch are skipped. Merges go
+through a merge queue, which runs everything once more on top of the
+current `main`.
+
+| Job | What it runs |
 |---|---|
-| `go` | `go vet ./...` and `go test -race ./...` (includes the OpenAPI drift test) |
-| `lint` | golangci-lint, reporting only issues your change introduces |
+| `changelog` | validates the changelog fragments and that `CHANGELOG.md` matches them |
+| `go test` | `go test -race ./...` in five shards (includes the OpenAPI drift and bundle tests) |
+| `integration` | backup targets against real SMB, SFTP, WebDAV and S3 servers |
+| `lint` | golangci-lint (including govet), reporting only issues your change introduces |
+| `govulncheck` | known vulnerabilities in code Dockmesh calls; fails when a fixed version exists |
 | `web` | `svelte-check`, unit tests (Vitest) and the frontend build |
+| `docs and scripts` | the docs and install-script tests, when only those changed |
 | `build` | server, agent and `dmctl` for linux and macOS on amd64 and arm64 |
 | `licenses` | Go and npm production dependencies must use AGPL-compatible licenses |
 
-CodeQL also scans each PR. The `govulncheck` job reports known
-vulnerabilities in code Dockmesh calls; it fails when a fixed version
-exists.
+CodeQL also scans each PR and its results are required too.
 
 ### Changelog
 
-If users will notice your change, add a line under `## [Unreleased]` in
-`CHANGELOG.md`; the format is described at the top of that file. The
-`changelog` check fails otherwise. Changes users won't notice (CI,
-refactoring, tests) get the `no-changelog` label instead.
+If users will notice your change, add a changelog fragment with
+[changie](https://changie.dev):
+
+```bash
+go run github.com/miniscruff/changie@v1.26.0 new --kind Fixed --body "What changed, from the user's point of view."
+```
+
+Kinds are `Added`, `Changed`, `Fixed`, `Security` and `Upgrade notes`; the
+body is one line. The fragment lands in `.changes/unreleased/`; commit it
+with your change. Don't edit `CHANGELOG.md`, it is generated at release
+time (see `RELEASING.md`). The `changelog` check fails without a fragment.
+Changes users won't notice (CI, refactoring, tests) get the `no-changelog`
+label instead.
 
 ### Running the checks locally
 
 ```bash
-# Go: the embed target must exist once, then vet + tests
+# Go: the embed target must exist once, then the tests
 mkdir -p cmd/dockmesh/web_dist
-go vet ./...
 go test -race ./...        # -race needs cgo (gcc); drop the flag if you have none
 
 # Frontend
@@ -95,8 +111,9 @@ don't open a PR.
   open a separate issue or PR — don't bundle.
 - Tests for new behaviour, a reproducer test for bug fixes.
 - If you touch a handler in `internal/api/handlers/`, update the
-  OpenAPI spec in `internal/api/openapi/openapi.yaml` in the same
-  commit. CI enforces this via `TestOpenAPIDriftAgainstRoutes`.
+  OpenAPI source of its tag in `api/openapi/` in the same commit and run
+  `make openapi` to rebuild the bundled spec. CI enforces both via
+  `TestOpenAPIDriftAgainstRoutes` and `TestCommittedBundleIsCurrent`.
 - UI changes: run a manual smoke pass before requesting review. Type
   checks and unit tests verify code correctness, not feature correctness.
 
