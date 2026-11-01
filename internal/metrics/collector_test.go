@@ -123,6 +123,15 @@ func TestStoreAgentBatch(t *testing.T) {
 	c := newTestCollector(t)
 	ctx := context.Background()
 	now := time.Now().Unix()
+	if _, err := c.db.Exec(`INSERT INTO agents (id, name, status) VALUES ('agent-1', 'a1', 'online')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.StoreAgentBatch(ctx, "gone", agents.MetricsBatch{Host: []agents.MetricsHostSample{{TS: now}}}); err != nil {
+		t.Fatal(err)
+	}
+	if has, _ := c.HasHistory(ctx, "gone"); has {
+		t.Error("stored samples of an agent that does not exist")
+	}
 	err := c.StoreAgentBatch(ctx, "agent-1", agents.MetricsBatch{
 		Host:       []agents.MetricsHostSample{{TS: now, CPUPercent: 40, CPUCores: 2, MemTotal: 8}},
 		Containers: []agents.MetricsContainerSample{{TS: now, Name: "web", CPUPercentCore: 100, OnlineCPUs: 2}},

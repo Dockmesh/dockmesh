@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"regexp"
+	"sync"
 	"time"
 )
 
@@ -16,9 +17,11 @@ const (
 	maxMetricsBytes      = 4 << 20
 	MaxMetricsHostRows   = 120
 	MaxMetricsContainers = 5000
-	// maxMetricsNames bounds the distinct container names of one batch, so
-	// the rows an agent can create are bounded by names × sample slots.
-	maxMetricsNames = 1000
+	// MaxMetricsNames bounds the distinct container names an agent may
+	// report within metricsNameWindow, so the rows it can create are
+	// bounded by names × sample slots.
+	MaxMetricsNames   = 1000
+	metricsNameWindow = 24 * time.Hour
 	// Accepted sample times after the clock correction: agents buffer at
 	// most 30 minutes.
 	metricsMaxAge  = 2 * time.Hour
@@ -27,9 +30,74 @@ const (
 	metricsSlot = 30
 	// MetricsMinGap is the least time between two accepted batches of one
 	// agent; an agent catching up waits longer than this between batches.
-	MetricsMinGap   = 10 * time.Second
-	metricsStoreMax = 30 * time.Second
+	MetricsMinGap    = 10 * time.Second
+	metricsStoreMax  = 30 * time.Second
+	metricsDeleteMax = 5 * time.Minute
 )
+
+// metricsIntake is the per-agent ingest state. It lives on the Service,
+// keyed by agent id, so reconnecting doesn't reset it.
+type metricsIntake struct {
+	mu    sync.Mutex
+	busy  bool
+	last  time.Time
+	names map[string]time.Time // last time each container name was accepted
+}
+
+func (s *Service) intake(agentID string) *metricsIntake {
+	s.intakeMu.Lock()
+	defer s.intakeMu.Unlock()
+	if s.intakes == nil {
+		s.intakes = map[string]*metricsIntake{}
+	}
+	in := s.intakes[agentID]
+	if in == nil {
+		in = &metricsIntake{names: map[string]time.Time{}}
+		s.intakes[agentID] = in
+	}
+	return in
+}
+
+// begin reports whether a batch may be stored now: one at a time, at
+// least MetricsMinGap after the previous one. done must follow a true.
+func (in *metricsIntake) begin(now time.Time) bool {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if in.busy || (!in.last.IsZero() && now.Sub(in.last) < MetricsMinGap) {
+		return false
+	}
+	in.busy, in.last = true, now
+	return true
+}
+
+func (in *metricsIntake) done() {
+	in.mu.Lock()
+	in.busy = false
+	in.mu.Unlock()
+}
+
+// admit keeps the container samples whose name is known or still fits
+// under MaxMetricsNames, and reports how many it dropped.
+func (in *metricsIntake) admit(now time.Time, ctrs []MetricsContainerSample) ([]MetricsContainerSample, int) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	for n, seen := range in.names {
+		if now.Sub(seen) > metricsNameWindow {
+			delete(in.names, n)
+		}
+	}
+	out := ctrs[:0]
+	dropped := 0
+	for _, c := range ctrs {
+		if _, ok := in.names[c.Name]; !ok && len(in.names) >= MaxMetricsNames {
+			dropped++
+			continue
+		}
+		in.names[c.Name] = now
+		out = append(out, c)
+	}
+	return out, dropped
+}
 
 // containerName is Docker's container name charset.
 var containerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}$`)
@@ -79,10 +147,14 @@ func (s *Service) SetMetricsSink(fn MetricsSink) { s.metricsSink = fn }
 // Sanitize moves sample times onto the server's clock and the 30 s grid,
 // then drops samples outside [now-2h, now+5min], container samples with
 // a name Docker wouldn't allow, and anything beyond the per-batch limits.
+// Only a skew beyond one slot is corrected, in whole slots, so transfer
+// delay never moves two samples into the same slot.
 func (b *MetricsBatch) Sanitize(now time.Time) {
 	var shift int64
 	if b.SentAt > 0 {
-		shift = now.Unix() - b.SentAt
+		if d := now.Unix() - b.SentAt; d > metricsSlot || d < -metricsSlot {
+			shift = d / metricsSlot * metricsSlot
+		}
 	}
 	fix := func(ts int64) int64 {
 		ts += shift
@@ -97,45 +169,35 @@ func (b *MetricsBatch) Sanitize(now time.Time) {
 		}
 	}
 	b.Host = host
-	names := map[string]struct{}{}
 	ctrs := b.Containers[:0]
 	for _, c := range b.Containers {
 		c.TS = fix(c.TS)
 		if c.TS < lo || c.TS > hi || !containerName.MatchString(c.Name) || len(ctrs) >= MaxMetricsContainers {
 			continue
 		}
-		if _, seen := names[c.Name]; !seen {
-			if len(names) >= maxMetricsNames {
-				continue
-			}
-			names[c.Name] = struct{}{}
-		}
 		ctrs = append(ctrs, c)
 	}
 	b.Containers = ctrs
 }
 
-// acceptMetrics reports whether a batch of a may be stored now: one at a
-// time, at least MetricsMinGap after the previous one.
-func (a *ConnectedAgent) acceptMetrics(now time.Time) bool {
-	last := a.lastMetrics.Load()
-	if last != 0 && now.UnixNano()-last < int64(MetricsMinGap) {
-		return false
-	}
-	if !a.ingesting.CompareAndSwap(false, true) {
-		return false
-	}
-	a.lastMetrics.Store(now.UnixNano())
-	return true
-}
-
 // refuseMetrics answers a batch that arrived too early, while another one
-// was being stored, or too large; the agent keeps it and retries.
-func (a *ConnectedAgent) refuseMetrics(ctx context.Context, f Frame) {
-	a.answerMetrics(ctx, f, errors.New("metrics batch refused, retry later"))
+// was being stored, or too large; the agent keeps it and retries. The
+// answer is dropped rather than waited for when the send queue is full.
+func (a *ConnectedAgent) refuseMetrics(f Frame) {
+	if f.ID == "" {
+		return
+	}
+	payload, _ := json.Marshal(ResponseEnvelope{OK: false, Error: "metrics batch refused, retry later"})
+	select {
+	case a.send <- Frame{Type: FrameRes, ID: f.ID, Payload: payload}:
+	default:
+	}
 }
 
 func (a *ConnectedAgent) answerMetrics(ctx context.Context, f Frame, err error) {
+	if f.ID == "" {
+		return
+	}
 	env := ResponseEnvelope{OK: true, Data: json.RawMessage(`{}`)}
 	if err != nil {
 		env = ResponseEnvelope{OK: false, Error: err.Error()}
@@ -146,12 +208,15 @@ func (a *ConnectedAgent) answerMetrics(ctx context.Context, f Frame, err error) 
 
 // handleMetrics stores one batch and acknowledges it, so the agent keeps
 // what was not stored. The host id is the agent's own, from its client
-// certificate; nothing in the payload names a host.
+// certificate; nothing in the payload names a host. The caller has
+// called begin on the agent's intake.
 func (s *Service) handleMetrics(ctx context.Context, ag *ConnectedAgent, f Frame) {
-	ag.answerMetrics(ctx, f, s.storeMetrics(ctx, ag, f.Payload))
+	in := s.intake(ag.ID)
+	defer in.done()
+	ag.answerMetrics(ctx, f, s.storeMetrics(ctx, ag, in, f.Payload))
 }
 
-func (s *Service) storeMetrics(ctx context.Context, ag *ConnectedAgent, payload json.RawMessage) error {
+func (s *Service) storeMetrics(ctx context.Context, ag *ConnectedAgent, in *metricsIntake, payload json.RawMessage) error {
 	if s.metricsSink == nil {
 		return errors.New("history not accepted")
 	}
@@ -159,7 +224,14 @@ func (s *Service) storeMetrics(ctx context.Context, ag *ConnectedAgent, payload 
 	if err := json.Unmarshal(payload, &b); err != nil {
 		return err
 	}
-	b.Sanitize(time.Now())
+	now := time.Now()
+	b.Sanitize(now)
+	var dropped int
+	b.Containers, dropped = in.admit(now, b.Containers)
+	if dropped > 0 {
+		slog.Warn("agent metrics: too many container names, samples dropped",
+			"agent", ag.Name, "dropped", dropped, "limit", MaxMetricsNames)
+	}
 	if len(b.Host) == 0 && len(b.Containers) == 0 {
 		return nil
 	}
@@ -182,11 +254,31 @@ var metricsTables = []string{
 	"host_metrics_raw", "host_metrics_1m", "host_metrics_1h",
 }
 
-// deleteHistory removes the stored history of a deleted agent.
-func (s *Service) deleteHistory(ctx context.Context, id string) {
-	for _, t := range metricsTables {
-		if _, err := s.db.ExecContext(ctx, `DELETE FROM `+t+` WHERE host_id = ?`, id); err != nil {
-			slog.Warn("agent delete: metrics history", "table", t, "err", err)
+// deleteHistory removes the stored history of a deleted agent, in the
+// background so a large history doesn't hold up the request. A batch
+// still being stored is dropped by the sink, which checks that the agent
+// exists.
+func (s *Service) deleteHistory(id string) {
+	s.intakeMu.Lock()
+	delete(s.intakes, id)
+	s.intakeMu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), metricsDeleteMax)
+		defer cancel()
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			slog.Warn("agent delete: metrics history", "err", err)
+			return
 		}
-	}
+		defer func() { _ = tx.Rollback() }()
+		for _, t := range metricsTables {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM `+t+` WHERE host_id = ?`, id); err != nil {
+				slog.Warn("agent delete: metrics history", "table", t, "err", err)
+				return
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			slog.Warn("agent delete: metrics history", "err", err)
+		}
+	}()
 }

@@ -77,6 +77,14 @@ func (b *historyBuffer) take() agents.MetricsBatch {
 	defer b.mu.Unlock()
 	nh := min(len(b.host), agents.MaxMetricsHostRows)
 	nc := min(len(b.ctrs), agents.MaxMetricsContainers)
+	names := map[string]struct{}{}
+	for i, c := range b.ctrs[:nc] {
+		if _, ok := names[c.Name]; !ok && len(names) == agents.MaxMetricsNames {
+			nc = i
+			break
+		}
+		names[c.Name] = struct{}{}
+	}
 	batch := agents.MetricsBatch{
 		Host:       append([]agents.MetricsHostSample(nil), b.host[:nh]...),
 		Containers: append([]agents.MetricsContainerSample(nil), b.ctrs[:nc]...),

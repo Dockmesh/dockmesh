@@ -156,14 +156,11 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				h.svc.handleCertRenew(ctx, ag, f)
 			}(f)
 		case FrameAgentMetrics:
-			if len(f.Payload) > maxMetricsBytes || !ag.acceptMetrics(time.Now()) {
-				ag.refuseMetrics(ctx, f)
+			if len(f.Payload) > maxMetricsBytes || !h.svc.intake(ag.ID).begin(time.Now()) {
+				ag.refuseMetrics(f)
 				continue
 			}
-			go func(f Frame) {
-				defer ag.ingesting.Store(false)
-				h.svc.handleMetrics(ctx, ag, f)
-			}(f)
+			go h.svc.handleMetrics(ctx, ag, f)
 		}
 	}
 }

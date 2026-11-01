@@ -175,6 +175,14 @@ func (c *Collector) StoreAgentBatch(ctx context.Context, agentID string, b agent
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	// The agent may have been deleted while the batch was on its way.
+	var known bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM agents WHERE id = ?)`, agentID).Scan(&known); err != nil {
+		return err
+	}
+	if !known {
+		return nil
+	}
 	for _, h := range b.Host {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT OR REPLACE INTO host_metrics_raw

@@ -34,6 +34,10 @@ func TestMetricsBatchSanitize(t *testing.T) {
 			Host:       []MetricsHostSample{{TS: ts - 3*3600}, {TS: ts + 3600}},
 			Containers: []MetricsContainerSample{{TS: ts - 3*3600, Name: "web"}, {TS: ts + 3600, Name: "web"}},
 		}, 0, 0, 0},
+		{"skew under one slot is left alone", MetricsBatch{
+			SentAt: ts - 3,
+			Host:   []MetricsHostSample{{TS: ts + 29}},
+		}, 1, 0, ts},
 		{"agent clock 10 min ahead is shifted", MetricsBatch{
 			SentAt:     ts + 600,
 			Host:       []MetricsHostSample{{TS: ts + 600}},
@@ -47,9 +51,6 @@ func TestMetricsBatchSanitize(t *testing.T) {
 			Host:       make([]MetricsHostSample, MaxMetricsHostRows+5),
 			Containers: many(MaxMetricsContainers+5, func(int) string { return "c" }),
 		}, MaxMetricsHostRows, MaxMetricsContainers, 0},
-		{"distinct names capped", MetricsBatch{
-			Containers: many(maxMetricsNames+5, func(i int) string { return "c" + strconv.Itoa(i) }),
-		}, 0, maxMetricsNames, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -119,25 +120,55 @@ func TestHandleMetricsUsesAgentID(t *testing.T) {
 	}
 }
 
-// A batch sooner than MetricsMinGap after the last one, or while one is
-// stored, is refused so the agent keeps it.
-func TestAcceptMetricsGap(t *testing.T) {
-	ag := newConnectedAgent("agent-1", "a1", func() {})
+// The limits are per agent, not per session: a reconnect doesn't reset
+// the gap or the name budget.
+func TestMetricsIntakeLimits(t *testing.T) {
+	s := &Service{}
 	now := time.Now()
-	if !ag.acceptMetrics(now) {
+	in := s.intake("agent-1")
+	if !in.begin(now) {
 		t.Fatal("first batch refused")
 	}
-	ag.ingesting.Store(false)
-	if ag.acceptMetrics(now.Add(MetricsMinGap / 2)) {
-		t.Error("batch inside the gap accepted")
+	if s.intake("agent-1").begin(now.Add(2 * MetricsMinGap)) {
+		t.Error("second batch accepted while one is stored")
 	}
-	if !ag.acceptMetrics(now.Add(MetricsMinGap)) {
+	in.done()
+	if s.intake("agent-1").begin(now.Add(MetricsMinGap / 2)) {
+		t.Error("batch inside the gap accepted after a reconnect")
+	}
+	if !s.intake("agent-1").begin(now.Add(MetricsMinGap)) {
 		t.Error("batch after the gap refused")
 	}
-	if ag.acceptMetrics(now.Add(3 * MetricsMinGap)) {
-		t.Error("second batch accepted while one is in flight")
+	if !s.intake("agent-2").begin(now) {
+		t.Error("other agent refused")
 	}
-	ag.refuseMetrics(context.Background(), Frame{ID: "f2"})
+
+	batch := func(from, n int) []MetricsContainerSample {
+		out := make([]MetricsContainerSample, n)
+		for i := range out {
+			out[i] = MetricsContainerSample{Name: "c" + strconv.Itoa(from+i)}
+		}
+		return out
+	}
+	kept, dropped := in.admit(now, batch(0, MaxMetricsNames-10))
+	if len(kept) != MaxMetricsNames-10 || dropped != 0 {
+		t.Fatalf("first names: kept %d dropped %d", len(kept), dropped)
+	}
+	kept, dropped = in.admit(now, append(batch(0, 5), batch(MaxMetricsNames, 20)...))
+	if len(kept) != 15 || dropped != 10 {
+		t.Errorf("over the budget: kept %d dropped %d, want 15 and 10", len(kept), dropped)
+	}
+	kept, _ = in.admit(now.Add(metricsNameWindow+time.Minute), batch(5000, 20))
+	if len(kept) != 20 {
+		t.Errorf("after the window: kept %d new names, want 20", len(kept))
+	}
+}
+
+func TestRefuseMetricsDoesNotBlock(t *testing.T) {
+	ag := newConnectedAgent("agent-1", "a1", func() {})
+	for range cap(ag.send) + 5 {
+		ag.refuseMetrics(Frame{ID: "f"})
+	}
 	if env := readAck(t, ag); env.OK {
 		t.Errorf("refusal = %+v, want not ok", env)
 	}
