@@ -70,72 +70,34 @@ func NewFromDB(ctx context.Context, db *sql.DB) (*State, error) {
 	return &State{active: !ok, startedAt: time.Now()}, nil
 }
 
-// adminPerms are the permissions that make an account able to run the
-// install: change system settings and manage users.
-var adminPerms = []rbac.Perm{
-	rbac.PermSystemUpdate,
-	rbac.PermUsersView, rbac.PermUsersCreate, rbac.PermUsersUpdate, rbac.PermUsersDelete,
-}
-
-// AdminExists reports whether any user's role grants every adminPerms
-// permission. A permission counts when the role has it in role_permissions
-// or as a built-in default, so a custom admin-equivalent role keeps setup
-// closed just like the built-in admin role.
+// AdminExists reports whether some account holds an admin role
+// (rbac.IsAdminPermSet). Any scope counts: an upgraded install whose
+// admins ended up on narrower scopes must not reopen the unauthenticated
+// wizard; `dockmesh admin create` recovers it.
 func AdminExists(ctx context.Context, db *sql.DB) (bool, error) {
-	rows, err := db.QueryContext(ctx, `SELECT DISTINCT role FROM users`)
+	roles, err := rbac.LoadRoles(ctx, db)
 	if err != nil {
 		return false, err
 	}
-	var roles []string
-	for rows.Next() {
-		var role string
-		if err := rows.Scan(&role); err != nil {
-			rows.Close()
-			return false, err
-		}
-		roles = append(roles, role)
+	admin := map[string]bool{}
+	for _, r := range roles {
+		admin[r.Name] = rbac.IsAdminPermSet(rbac.PermsFor(r.Levels, r.Extras))
 	}
-	if err := rows.Close(); err != nil {
-		return false, err
-	}
-	if err := rows.Err(); err != nil {
-		return false, err
-	}
-	for _, role := range roles {
-		ok, err := roleIsAdmin(ctx, db, role)
-		if err != nil {
-			return false, err
-		}
-		if ok {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func roleIsAdmin(ctx context.Context, db *sql.DB, role string) (bool, error) {
-	rows, err := db.QueryContext(ctx, `SELECT permission FROM role_permissions WHERE role_name = ?`, role)
+	rows, err := db.QueryContext(ctx, `SELECT DISTINCT role_name FROM role_assignments`)
 	if err != nil {
 		return false, err
 	}
 	defer rows.Close()
-	granted := make(map[rbac.Perm]bool)
 	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
+		var role string
+		if err := rows.Scan(&role); err != nil {
 			return false, err
 		}
-		granted[rbac.Perm(p)] = true
-	}
-	if err := rows.Err(); err != nil {
-		return false, err
-	}
-	for _, p := range adminPerms {
-		if !granted[p] && !rbac.Allowed(role, p) {
-			return false, nil
+		if admin[role] {
+			return true, nil
 		}
 	}
-	return true, nil
+	return false, rows.Err()
 }
 
 // Active reports whether requests should be gated to /setup paths.

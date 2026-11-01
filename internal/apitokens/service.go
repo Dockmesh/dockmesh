@@ -26,6 +26,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/rbac"
+
 	"github.com/dockmesh/dockmesh/internal/auth"
 )
 
@@ -72,11 +74,14 @@ func hashToken(plaintext string) string {
 // Token is one row in api_tokens. The plaintext value is never stored
 // after creation — only token_hash survives.
 type Token struct {
-	ID        int64   `json:"id"`
-	Prefix    string  `json:"prefix"` // 'dmt_XXXXXXXX', shown in UI
-	Name      string  `json:"name"`
-	Role      string  `json:"role"`
-	CreatedBy *string `json:"created_by,omitempty"`
+	ID     int64  `json:"id"`
+	Prefix string `json:"prefix"` // 'dmt_XXXXXXXX', shown in UI
+	Name   string `json:"name"`
+	// Role and Scope restrict the token to that role on that scope, on
+	// top of the owner's current access. An empty Role is no restriction.
+	Role      string     `json:"role"`
+	Scope     rbac.Scope `json:"scope"`
+	CreatedBy *string    `json:"created_by,omitempty"`
 	// Legacy tokens predate owner tracking: no owner, pinned role.
 	Legacy bool `json:"legacy"`
 	// OwnerMissing: the owner was deleted, so the token no longer works.
@@ -97,7 +102,7 @@ func scanRow(row interface {
 	var hash string
 	var lastIP sql.NullString
 	err := row.Scan(
-		&t.ID, &hash, &t.Name, &t.Role, &t.CreatedBy, &t.Legacy,
+		&t.ID, &hash, &t.Name, &t.Role, &t.Scope.Type, &t.Scope.Host, &t.Scope.Value, &t.CreatedBy, &t.Legacy,
 		&t.CreatedAt, &t.ExpiresAt, &t.LastUsedAt, &lastIP,
 		&t.RevokedAt,
 	)
@@ -119,7 +124,7 @@ func scanRowListing(row interface {
 	t := &Token{}
 	var lastIP sql.NullString
 	err := row.Scan(
-		&t.ID, &t.Prefix, &t.Name, &t.Role, &t.CreatedBy, &t.Legacy,
+		&t.ID, &t.Prefix, &t.Name, &t.Role, &t.Scope.Type, &t.Scope.Host, &t.Scope.Value, &t.CreatedBy, &t.Legacy,
 		&t.CreatedAt, &t.ExpiresAt, &t.LastUsedAt, &lastIP,
 		&t.RevokedAt,
 	)
@@ -137,6 +142,7 @@ func scanRowListing(row interface {
 type CreateInput struct {
 	Name            string
 	Role            string
+	Scope           rbac.Scope
 	ExpiresInDays   int        // 0 = no expiry
 	NotAfter        *time.Time // caps the expiry (tokens minted by tokens)
 	CreatedByUserID string     // owner; required
@@ -195,8 +201,8 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (plaintext string,
 	if in.Name == "" {
 		return "", nil, errors.New("name required")
 	}
-	if in.Role == "" {
-		return "", nil, errors.New("role required")
+	if in.Scope.Type == "" {
+		in.Scope = rbac.Global
 	}
 	if in.CreatedByUserID == "" {
 		return "", nil, errors.New("owner required")
@@ -221,10 +227,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (plaintext string,
 	}
 
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO api_tokens (token_prefix, token_hash, name, role,
+		INSERT INTO api_tokens (token_prefix, token_hash, name, role, scope_type, scope_host, scope_value,
 		                        created_by_user_id, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		prefix, hash, in.Name, in.Role, in.CreatedByUserID, expiresAt,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		prefix, hash, in.Name, in.Role, in.Scope.Type, in.Scope.Host, in.Scope.Value, in.CreatedByUserID, expiresAt,
 	)
 	if err != nil {
 		return "", nil, fmt.Errorf("insert: %w", err)
@@ -237,6 +243,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (plaintext string,
 		Prefix:    prefix,
 		Name:      in.Name,
 		Role:      in.Role,
+		Scope:     in.Scope,
 		CreatedBy: &owner,
 		CreatedAt: time.Now(),
 		ExpiresAt: expiresAt,
@@ -255,7 +262,7 @@ func (s *Service) Validate(ctx context.Context, plaintext string) (*Token, error
 	prefix := plaintext[:prefixLen]
 
 	t, hash, err := scanRow(s.db.QueryRowContext(ctx, `
-		SELECT id, token_hash, name, role, created_by_user_id, legacy,
+		SELECT id, token_hash, name, role, scope_type, scope_host, scope_value, created_by_user_id, legacy,
 		       created_at, expires_at, last_used_at, last_used_ip,
 		       revoked_at
 		FROM api_tokens
@@ -368,7 +375,7 @@ func (s *Service) flushTouches(ctx context.Context) {
 // (there are none in the struct — token plaintext is never stored).
 func (s *Service) List(ctx context.Context) ([]Token, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, token_prefix, name, role, created_by_user_id, legacy,
+		SELECT id, token_prefix, name, role, scope_type, scope_host, scope_value, created_by_user_id, legacy,
 		       created_at, expires_at, last_used_at, last_used_ip,
 		       revoked_at
 		FROM api_tokens
@@ -395,7 +402,7 @@ func (s *Service) List(ctx context.Context) ([]Token, error) {
 // Get returns a single token by id (without plaintext).
 func (s *Service) Get(ctx context.Context, id int64) (*Token, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, token_prefix, name, role, created_by_user_id, legacy,
+		SELECT id, token_prefix, name, role, scope_type, scope_host, scope_value, created_by_user_id, legacy,
 		       created_at, expires_at, last_used_at, last_used_ip,
 		       revoked_at
 		FROM api_tokens WHERE id = ?`,

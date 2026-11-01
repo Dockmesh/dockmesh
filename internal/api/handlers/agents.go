@@ -87,9 +87,9 @@ func (h *Handlers) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	scopeReq := h.hostScopeReq(r.Context(), id)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermHostsDelete, scopeReq, "host "+id)
+	scopeReq := h.hostScopeReq(id)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermHostsDelete, scopeReq, "host "+id)
 		return
 	}
 	if !h.requireHostAccess(w, r, id) {
@@ -129,9 +129,9 @@ func (h *Handlers) RotateAgentEnrollToken(w http.ResponseWriter, r *http.Request
 	id := chi.URLParam(r, "id")
 	// A rotated token re-enrolls the host under the same ID, so it is
 	// as sensitive as replacing the host and needs the same scope.
-	scopeReq := h.hostScopeReq(r.Context(), id)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermHostsCreate, scopeReq, "host "+id)
+	scopeReq := h.hostScopeReq(id)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermHostsCreate, scopeReq, "host "+id)
 		return
 	}
 	if !h.requireHostAccess(w, r, id) {
@@ -161,9 +161,9 @@ func (h *Handlers) UpgradeAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	scopeReq := h.hostScopeReq(r.Context(), id)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+id)
+	scopeReq := h.hostScopeReq(id)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+id)
 		return
 	}
 	if !h.requireHostAccess(w, r, id) {

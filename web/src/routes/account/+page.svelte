@@ -19,7 +19,9 @@
   //     enrollment (existing flow). A recovery code disables 2FA;
   //     otherwise admin → /users → reset 2FA.
   //   - No .txt download for codes; clipboard copy is enough.
-  import { api, ApiError, type Session, type PasswordPolicy } from '$lib/api';
+  import { api, ApiError, type Session, type PasswordPolicy, type Assignment, type CustomRole } from '$lib/api';
+  import { assignmentLabel } from '$lib/access';
+  import { allowed } from '$lib/rbac.svelte';
   import { Skeleton } from '$lib/components/ui';
   import {
     EditorialPage, Eyebrow, Field, EditorialModal,
@@ -39,10 +41,12 @@
     id: string;
     username: string;
     email?: string;
-    role: string;
     mfa_enabled?: boolean;
     created_at?: string;
+    assignments?: Assignment[];
   }
+
+  let roleList = $state<CustomRole[]>([]);
 
   let me = $state<MeShape | null>(null);
   let policy = $state<PasswordPolicy | null>(null);
@@ -94,6 +98,7 @@
   async function loadMe() {
     try {
       me = (await api.users.me()) as MeShape;
+      if (roleList.length === 0 && allowed('roles.view')) roleList = await api.roles.list().catch(() => []);
       draftEmail = me.email ?? '';
     } catch (err) {
       toast.error('Failed to load profile', err instanceof ApiError ? err.message : undefined);
@@ -101,7 +106,9 @@
   }
 
   async function loadPolicy() {
-    try { policy = await api.auth.getPolicy(); } catch { /* policy is informational */ }
+    if (allowed('system.update')) {
+      try { policy = await api.auth.getPolicy(); } catch { /* policy is informational */ }
+    }
   }
 
   async function loadSessions() {
@@ -127,7 +134,7 @@
     if (!me) return;
     identitySaving = true;
     try {
-      await api.users.update(me.id, draftEmail, me.role);
+      await api.users.update(me.id, { email: draftEmail });
       toast.success('Profile saved');
       await loadMe();
     } catch (err) {
@@ -309,10 +316,6 @@
     return { device: `${browser} · ${os}`, isCli: false };
   }
 
-  function rolePillClass(role: string): string {
-    if (role === 'admin' || role === 'host-admin') return 'dm-pill dm-pill-warning';
-    return 'dm-pill dm-pill-neutral';
-  }
 
   function copyText(s: string) {
     copyWithToast(s, 'Copied');
@@ -344,11 +347,15 @@
           </p>
         </div>
         <div class="acc-header-aside">
-          <span class="ed-eyebrow acc-aside-eyebrow">Role</span>
+          <span class="ed-eyebrow acc-aside-eyebrow">Access</span>
           <div class="acc-aside-pills">
-            <span class={rolePillClass(me.role)}>
-              <span class="dm-pill-dot"></span>{me.role}
-            </span>
+            {#each me.assignments ?? [] as a (a.id)}
+              <span class="dm-pill dm-pill-neutral" title={a.via ? `via ${a.via}` : undefined}>
+                <span class="dm-pill-dot"></span>{assignmentLabel(a, roleList)}
+              </span>
+            {:else}
+              <span class="dm-pill dm-pill-neutral"><span class="dm-pill-dot"></span>No assignments</span>
+            {/each}
             {#if me.mfa_enabled}
               <span class="dm-pill dm-pill-success">
                 <span class="dm-pill-dot"></span>2FA

@@ -659,10 +659,16 @@ func main() {
 
 	globalEnvStore := globalenv.NewStore(database)
 
-	// RBAC v2: DB-backed custom roles with in-memory cache.
+	// Roles and assignments, cached in memory; built-in role definitions
+	// follow the binary.
 	rolesStore := rbac.NewStore(database)
+	if err := rolesStore.SeedBuiltins(ctx); err != nil {
+		slog.Error("seed built-in roles", "err", err)
+		os.Exit(1)
+	}
 	if err := rolesStore.Load(ctx); err != nil {
-		slog.Warn("rbac store load", "err", err)
+		slog.Error("load roles and assignments", "err", err)
+		os.Exit(1)
 	}
 	middleware.RBACStore = rolesStore
 
@@ -907,7 +913,7 @@ func main() {
 	// Host tags (P.11.2). In-memory cache loaded once at startup; kept
 	// fresh after every mutation via Load() inside the service.
 	hostTagsSvc := hosttags.New(database)
-	notifSvc.SetAccessChecker(&notifications.RBACAccess{Users: authSvc, Roles: rolesStore, Tags: hostTagsSvc})
+	notifSvc.SetAccessChecker(&notifications.RBACAccess{Access: rolesStore, Tags: hostTagsSvc})
 	if err := hostTagsSvc.Load(ctx); err != nil {
 		slog.Warn("host tags load", "err", err)
 	}
@@ -1133,8 +1139,12 @@ func main() {
 			}
 			return nil
 		},
-		RBACv2Enforce: cfg.RBACv2Enforce,
 	})
+	authSvc.SetAccessHooks(func(ctx context.Context) {
+		if err := rolesStore.Load(ctx); err != nil {
+			slog.Warn("reload roles and assignments", "err", err)
+		}
+	}, h.SyncIdPAssignments)
 	router := api.NewRouter(h, authSvc, webFS, cfg.MetricsAuth, setupState)
 
 	// Backfill stack deployments (P.7): scan local containers to detect

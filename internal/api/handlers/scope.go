@@ -14,47 +14,84 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// canAccessHost combines the caller's scope (from JWT context) with the
-// target host's tags (from the hosttags service) and returns true if
-// the caller is allowed to act on the host.
-//
-// Rules:
-//   - Empty scope → all hosts accessible (backward-compatible default
-//     for users who haven't been explicitly scoped).
-//   - Non-empty scope → host must have at least one tag that matches.
-//
-// Admin users are NOT special-cased here — if an admin has been given
-// a scope, it applies. Admins without scope retain global access
-// (which is the norm). This makes it possible to sandbox even admins
-// when needed (e.g. a per-team-admin pattern).
-func (h *Handlers) canAccessHost(r *http.Request, hostID string) bool {
-	scope := middleware.ScopeTags(r.Context())
-	if len(scope) == 0 {
-		return true
+// Scope checks test the permissions the route requires (recorded by
+// middleware.RequirePerm), plus any the handler adds, on the resource the
+// request acts on. A caller may hold a permission on one host and not on
+// another, so a route-level permission check alone is never enough for
+// a handler that touches a concrete host or stack.
+
+// scopePerms are the permissions a scope check in this request tests.
+// Base rights hold everywhere, so they say nothing about a resource and
+// are left out: a route gated only by one needs an assignment that
+// reaches the resource.
+func scopePerms(r *http.Request, extra ...rbac.Perm) []rbac.Perm {
+	var out []rbac.Perm
+	for _, p := range append(append([]rbac.Perm(nil), middleware.RoutePerms(r.Context())...), extra...) {
+		if p != "" && !rbac.IsBase(p) && !containsPerm(out, p) {
+			out = append(out, p)
+		}
 	}
-	if h.HostTags == nil {
-		// If tags aren't available, refuse — safer than leaking access.
-		// This only hits if the server boots without the hosttags
-		// service, which shouldn't happen in prod.
-		return false
-	}
-	return rbac.ScopeMatchesHost(scope, h.HostTags.Tags(hostID))
+	return out
 }
 
-// requireHostAccess is a one-liner used at the top of handlers that act
-// on a specific host. Writes 403 and returns false if the caller is
-// out-of-scope; returns true otherwise and the caller proceeds.
-//
-// Usage:
-//
-//	if !h.requireHostAccess(w, r, hostID) {
-//	    return
-//	}
+func containsPerm(ps []rbac.Perm, p rbac.Perm) bool {
+	for _, q := range ps {
+		if q == p {
+			return true
+		}
+	}
+	return false
+}
+
+// allowedOn reports whether the caller holds every scope permission of
+// the request on res. Routes without a permission (self-service, live
+// feeds) need some assignment that reaches res.
+func (h *Handlers) allowedOn(r *http.Request, res rbac.Resource, extra ...rbac.Perm) bool {
+	acc := middleware.AccessOf(r.Context())
+	perms := scopePerms(r, extra...)
+	if len(perms) == 0 {
+		return acc.Covers(res)
+	}
+	for _, p := range perms {
+		if !acc.AllowsOn(p, res) {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *Handlers) hostTags(hostID string) []string {
+	if h.HostTags == nil || hostID == "" {
+		return nil
+	}
+	return h.HostTags.Tags(hostID)
+}
+
+// canAccessHost reports whether the caller holds the request's
+// permissions on hostID itself or on a stack that may run there. It only
+// pre-filters: handlers that act on a container or stack still check that
+// exact resource, and host-level resources use inReadScope / hostVisible.
+func (h *Handlers) canAccessHost(r *http.Request, hostID string) bool {
+	acc := middleware.AccessOf(r.Context())
+	tags := h.hostTags(hostID)
+	perms := scopePerms(r)
+	if len(perms) == 0 {
+		return acc.CoversNear(hostID, tags)
+	}
+	for _, p := range perms {
+		if !acc.AllowsNear(p, hostID, tags) {
+			return false
+		}
+	}
+	return true
+}
+
+// requireHostAccess writes 403 and returns false unless canAccessHost.
 func (h *Handlers) requireHostAccess(w http.ResponseWriter, r *http.Request, hostID string) bool {
 	if h.canAccessHost(r, hostID) {
 		return true
 	}
-	writeError(w, http.StatusForbidden, "out of scope: your role does not include this host")
+	writeError(w, http.StatusForbidden, "out of scope: none of your assignments covers this host")
 	return false
 }
 
@@ -69,76 +106,23 @@ func hostIDFromRequest(r *http.Request) string {
 	return id
 }
 
-// filterHostsByScope returns the subset of hosts the caller is allowed
-// to see under their current scope. Empty scope = full list unchanged.
-// Used by fan-out list handlers to drop out-of-scope hosts from
-// aggregate views (ListContainers in all-mode, Images, Volumes, etc.).
-//
-// Reads are silently filtered; mutations use requireHostAccess instead
-// and surface a 403.
+// filterHostsByScope keeps the hosts canAccessHost lets through, for
+// fan-out list handlers that filter each item afterwards.
 func (h *Handlers) filterHostsByScope(r *http.Request, hosts []host.Host) []host.Host {
-	scope := middleware.ScopeTags(r.Context())
-	if len(scope) == 0 {
+	if h.callerUnscoped(r) {
 		return hosts
-	}
-	if h.HostTags == nil {
-		return []host.Host{}
 	}
 	out := make([]host.Host, 0, len(hosts))
 	for _, hh := range hosts {
-		if rbac.ScopeMatchesHost(scope, h.HostTags.Tags(hh.ID())) {
+		if h.canAccessHost(r, hh.ID()) {
 			out = append(out, hh)
 		}
 	}
 	return out
 }
 
-// ============================================================================
-// RBAC v2 — role-level scope helpers
-// ============================================================================
-//
-// The existing canAccessHost / filterHostsByScope above implement the
-// USER-level scope (scope_tags on the user record). The helpers below
-// implement the new ROLE-level scope (role_scopes table) — orthogonal,
-// composable, AND'd with the user-level scope at request time.
-//
-// Until DOCKMESH_RBAC_V2_ENFORCE flips to true, the role-scope check is
-// a no-op (default-allow). User-level scope continues to enforce as
-// before. After cutover, both apply: a request must pass user-level
-// AND role-level scope.
-
-// checkRoleScope is the role-level (RBAC v2) counterpart to
-// canAccessHost. Returns true if the request is allowed by the role-scope
-// rows of every role the caller acts under. Default-true when the feature
-// flag is off or the store is nil.
-//
-// Handlers call this AFTER any existing perm + user-scope check.
-func (h *Handlers) checkRoleScope(r *http.Request, req rbac.ScopeRequest) bool {
-	if !h.RBACv2Enforce {
-		return true
-	}
-	if h.Roles == nil {
-		return true
-	}
-	return h.inRoleScope(r, req)
-}
-
-// inRoleScope requires req to be in scope for every role in
-// middleware.Roles; an empty role (unauthenticated) is allowed.
-func (h *Handlers) inRoleScope(r *http.Request, req rbac.ScopeRequest) bool {
-	for _, role := range middleware.Roles(r.Context()) {
-		if role != "" && !h.Roles.InScope(role, req) {
-			return false
-		}
-	}
-	return true
-}
-
-// writeRoleScopeDenied writes a 403 + emits an auth.scope_denied audit
-// entry. Callers pass the perm being checked + the ScopeRequest +
-// optional human-readable resourceLabel (defaults derived from req).
-func (h *Handlers) writeRoleScopeDenied(w http.ResponseWriter, r *http.Request, perm rbac.Perm, req rbac.ScopeRequest, resourceLabel string) {
-	role := middleware.Role(r.Context())
+// writeScopeDenied audits an auth.scope_denied entry and writes 403.
+func (h *Handlers) writeScopeDenied(w http.ResponseWriter, r *http.Request, perm rbac.Perm, req rbac.Resource, resourceLabel string) {
 	target := resourceLabel
 	if target == "" {
 		switch {
@@ -153,27 +137,22 @@ func (h *Handlers) writeRoleScopeDenied(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	h.audit(r, audit.ActionScopeDenied, target, map[string]any{
-		"role":       role,
 		"permission": string(perm),
 		"host_id":    req.HostID,
 		"stack_name": req.StackName,
 	})
-	writeError(w, http.StatusForbidden, "out of scope: your role isn't scoped to this resource")
+	writeError(w, http.StatusForbidden, "out of scope: none of your assignments allows this here")
 }
 
-// containerScopeReq builds a ScopeRequest for a container-keyed handler.
-// The compose stack label is read by inspecting the container on hostID,
-// the host it actually runs on; if that fails the request stays host-only,
-// which a stack-scoped role does not match.
-func (h *Handlers) containerScopeReq(ctx context.Context, hostID, containerID string) rbac.ScopeRequest {
-	req := rbac.ScopeRequest{HostID: hostID}
+// containerScopeReq builds the resource of a container: its host and, from
+// the compose project label, its stack. If the container can't be
+// inspected the request stays host-only, which a stack scope does not match.
+func (h *Handlers) containerScopeReq(ctx context.Context, hostID, containerID string) rbac.Resource {
+	req := rbac.Resource{HostID: hostID, HostTags: h.hostTags(hostID)}
 	if target, err := h.hostByID(hostID); err == nil {
 		if info, err := target.InspectContainer(ctx, containerID); err == nil && info.Config != nil {
 			req.StackName = info.Config.Labels["com.docker.compose.project"]
 		}
-	}
-	if h.HostTags != nil && hostID != "" {
-		req.HostTags = h.HostTags.Tags(hostID)
 	}
 	return req
 }
@@ -189,15 +168,12 @@ func (h *Handlers) hostByID(hostID string) (host.Host, error) {
 	return h.Hosts.Pick(hostID)
 }
 
-// requireContainerScope applies the caller's host scope and the role scope
-// of the container on hostID. Writes 403 and returns false when out of scope.
+// requireContainerScope checks perm and the request's permissions on the
+// container. Writes 403 and returns false when out of scope.
 func (h *Handlers) requireContainerScope(w http.ResponseWriter, r *http.Request, perm rbac.Perm, hostID, containerID string) bool {
-	if !h.requireHostAccess(w, r, hostID) {
-		return false
-	}
 	scopeReq := h.containerScopeReq(r.Context(), hostID, containerID)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, perm, scopeReq, "container "+containerID)
+	if !h.allowedOn(r, scopeReq, perm) {
+		h.writeScopeDenied(w, r, perm, scopeReq, "container "+containerID)
 		return false
 	}
 	return true
@@ -205,29 +181,19 @@ func (h *Handlers) requireContainerScope(w http.ResponseWriter, r *http.Request,
 
 // requireStackScope is requireContainerScope for a stack on hostID.
 func (h *Handlers) requireStackScope(w http.ResponseWriter, r *http.Request, perm rbac.Perm, hostID, stackName string) bool {
-	if !h.requireHostAccess(w, r, hostID) {
-		return false
-	}
-	scopeReq := h.stackScopeReq(r.Context(), hostID, stackName)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, perm, scopeReq, "")
+	scopeReq := h.stackScopeReq(hostID, stackName)
+	if !h.allowedOn(r, scopeReq, perm) {
+		h.writeScopeDenied(w, r, perm, scopeReq, "")
 		return false
 	}
 	return true
 }
 
 // inReadScope reports whether a resource on hostID, optionally owned by
-// stack, is visible to the caller under both host scope and role scope.
-// Host-level resources pass stack == "", so a role scoped only to stacks
-// sees none of them.
+// stack, is visible under the request's permissions. Host-level resources
+// pass stack == "", so a stack scope sees none of them.
 func (h *Handlers) inReadScope(r *http.Request, hostID, stack string) bool {
-	if !h.canAccessHost(r, hostID) {
-		return false
-	}
-	if !h.RBACv2Enforce || h.Roles == nil {
-		return true
-	}
-	return h.inRoleScope(r, h.stackScopeReq(r.Context(), hostID, stack))
+	return h.allowedOn(r, h.stackScopeReq(hostID, stack))
 }
 
 // hostsInReadScope keeps the hosts whose host-level data the caller sees.
@@ -241,56 +207,36 @@ func (h *Handlers) hostsInReadScope(r *http.Request, hosts []host.Host) []host.H
 	return out
 }
 
-// callerUnscoped reports whether the caller has neither a host scope nor
-// a role scope, i.e. sees every host and stack.
+// callerUnscoped reports whether every permission the caller holds is
+// held on everything, so lists need no per-item filtering.
 func (h *Handlers) callerUnscoped(r *http.Request) bool {
-	return len(middleware.ScopeTags(r.Context())) == 0 && h.roleIsUnscoped(r)
+	return middleware.AccessOf(r.Context()).Unscoped()
 }
 
-// stackScopeReq builds a ScopeRequest for a stack-name-keyed handler.
-func (h *Handlers) stackScopeReq(ctx context.Context, hostID, stackName string) rbac.ScopeRequest {
-	req := rbac.ScopeRequest{HostID: hostID, StackName: stackName}
-	if h.HostTags != nil && hostID != "" {
-		req.HostTags = h.HostTags.Tags(hostID)
-	}
-	return req
+// stackScopeReq builds the resource of a stack on hostID ("" when it is not
+// deployed).
+func (h *Handlers) stackScopeReq(hostID, stackName string) rbac.Resource {
+	return rbac.Resource{HostID: hostID, StackName: stackName, HostTags: h.hostTags(hostID)}
 }
 
-// hostScopeReq builds a ScopeRequest for a host-keyed handler.
-func (h *Handlers) hostScopeReq(ctx context.Context, hostID string) rbac.ScopeRequest {
-	req := rbac.ScopeRequest{HostID: hostID}
-	if h.HostTags != nil && hostID != "" {
-		req.HostTags = h.HostTags.Tags(hostID)
-	}
-	return req
+// hostScopeReq builds the resource of a host.
+func (h *Handlers) hostScopeReq(hostID string) rbac.Resource {
+	return rbac.Resource{HostID: hostID, HostTags: h.hostTags(hostID)}
 }
 
-// roleIsUnscoped reports whether none of the roles the caller acts under
-// has role_scope rows — admins + freshly-created roles. List handlers can short-circuit
-// the filter for these.
-func (h *Handlers) roleIsUnscoped(r *http.Request) bool {
-	if !h.RBACv2Enforce || h.Roles == nil {
-		return true
-	}
-	for _, role := range middleware.Roles(r.Context()) {
-		if role == "" {
-			continue
-		}
-		if rd, ok := h.Roles.Get(role); ok && len(rd.Scopes) > 0 {
-			return false
-		}
-	}
-	return true
-}
-
-// StackScope checks /stacks/{name}/... requests against the caller's scope
-// on the stack's deployment host, or by stack name before it is deployed.
+// StackScope resolves the stack of /stacks/{name}/... requests: deployed
+// stacks are checked on their deployment host. A stack that is not
+// deployed has no host, which only assignments on everything or on that
+// stack without a host reach, for reads and writes alike: a host scope
+// must not let anyone rewrite or deploy a stack staged for another host.
+// The two status probes expose no files and only need the route's
+// permission somewhere. RequirePerm then tests the route's permission on
+// the resolved resource.
 func (h *Handlers) StackScope(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
 		rctx := chi.RouteContext(r.Context())
-		if name == "" || rctx == nil || !strings.HasPrefix(rctx.RoutePattern(), "/api/v1/stacks/{name}") ||
-			h.Deployments == nil || h.callerUnscoped(r) {
+		if name == "" || rctx == nil || !strings.HasPrefix(rctx.RoutePattern(), "/api/v1/stacks/{name}") || h.Deployments == nil {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -299,21 +245,21 @@ func (h *Handlers) StackScope(next http.Handler) http.Handler {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if d != nil && d.HostID != "" {
-			if !h.requireStackScope(w, r, rbac.PermStacksView, d.HostID, name) {
-				return
-			}
-		} else if !h.stackRolesAllow(r, name) ||
-			(isReadMethod(r) && !undeployedProbe(rctx.RoutePattern()) && !h.undeployedReadAllowed(r, name)) {
-			h.writeRoleScopeDenied(w, r, rbac.PermStacksView, rbac.ScopeRequest{StackName: name}, "")
+		hostID := ""
+		if d != nil {
+			hostID = d.HostID
+		}
+		if hostID == "" && undeployedProbe(rctx.RoutePattern()) {
+			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(w, r)
+		res := h.stackScopeReq(hostID, name)
+		if !middleware.AccessOf(r.Context()).Covers(res) {
+			h.writeScopeDenied(w, r, rbac.PermStacksView, res, "")
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(middleware.WithResource(r.Context(), res)))
 	})
-}
-
-func isReadMethod(r *http.Request) bool {
-	return r.Method == http.MethodGet || r.Method == http.MethodHead
 }
 
 // undeployedProbe matches the two read routes that expose no stack files,
@@ -322,121 +268,54 @@ func undeployedProbe(pattern string) bool {
 	return strings.HasSuffix(pattern, "/status") || strings.HasSuffix(pattern, "/deploy/progress")
 }
 
-// undeployedReadAllowed reports whether a caller restricted by host or
-// host tag may read the files of a stack that has no deployment host yet.
-// Unrestricted callers pass; so do roles whose stack scope lists name.
-func (h *Handlers) undeployedReadAllowed(r *http.Request, name string) bool {
-	if len(middleware.ScopeTags(r.Context())) > 0 {
-		return false
-	}
-	if !h.RBACv2Enforce || h.Roles == nil {
-		return true
-	}
-	for _, role := range middleware.Roles(r.Context()) {
-		rd, ok := h.Roles.Get(role)
-		if !ok || len(rd.Scopes) == 0 {
-			continue
-		}
-		listed := false
-		for _, sc := range rd.Scopes {
-			listed = listed || (sc.ScopeType == "stack" && sc.ScopeValue == name)
-		}
-		if !listed {
-			return false
-		}
-	}
-	return true
-}
-
-// stackRolesAllow reports whether every role of the caller that is scoped
-// to stacks lists name. Roles scoped only to hosts are left to the
-// handlers, which check the host a request acts on.
-func (h *Handlers) stackRolesAllow(r *http.Request, name string) bool {
-	if !h.RBACv2Enforce || h.Roles == nil {
-		return true
-	}
-	for _, role := range middleware.Roles(r.Context()) {
-		rd, ok := h.Roles.Get(role)
-		if !ok {
-			continue
-		}
-		stackScoped, listed := false, false
-		for _, sc := range rd.Scopes {
-			if sc.ScopeType == "stack" {
-				stackScoped = true
-				listed = listed || sc.ScopeValue == name
-			}
-		}
-		if stackScoped && !listed {
-			return false
-		}
-	}
-	return true
-}
-
-// filterStackListByScope returns the subset of stacks the caller's host
-// scope and role scope allow. Each stack is checked with its name and,
-// when deployed, its deployment host.
+// filterStackListByScope keeps the stacks the caller may view: deployed
+// stacks on their host, others only through an assignment on everything
+// or on that stack.
 func (h *Handlers) filterStackListByScope(r *http.Request, in []stackListEntry) []stackListEntry {
 	if h.callerUnscoped(r) {
 		return in
 	}
 	out := make([]stackListEntry, 0, len(in))
 	for _, e := range in {
-		if e.Deployment != nil && e.Deployment.HostID != "" && !h.canAccessHost(r, e.Deployment.HostID) {
-			continue
-		}
-		req := rbac.ScopeRequest{StackName: e.Stack.Name}
+		hostID := ""
 		if e.Deployment != nil {
-			req.HostID = e.Deployment.HostID
-			if h.HostTags != nil && req.HostID != "" {
-				req.HostTags = h.HostTags.Tags(req.HostID)
-			}
+			hostID = e.Deployment.HostID
 		}
-		if h.checkRoleScope(r, req) {
+		if h.allowedOn(r, h.stackScopeReq(hostID, e.Name)) {
 			out = append(out, e)
 		}
 	}
 	return out
 }
 
-// filterContainersByRoleScope filters a flat container list. Each
-// container is matched against the caller's role-scope using its host
-// + compose project label (extracted via Labels map). Containers
-// without a compose project are scoped by host-only (i.e. visible to
-// any role unscoped-on-stack, hidden from stack-only-scoped roles).
+// filterContainersByRoleScope filters the containers of one host by their
+// compose project. Containers outside a stack are host-level.
 func (h *Handlers) filterContainersByRoleScope(r *http.Request, hostID string, in []container.Summary) []container.Summary {
-	if h.roleIsUnscoped(r) {
+	if h.callerUnscoped(r) {
 		return in
 	}
 	out := make([]container.Summary, 0, len(in))
-	var hostTags []string
-	if h.HostTags != nil && hostID != "" {
-		hostTags = h.HostTags.Tags(hostID)
-	}
+	tags := h.hostTags(hostID)
 	for _, c := range in {
-		req := rbac.ScopeRequest{HostID: hostID, HostTags: hostTags}
+		req := rbac.Resource{HostID: hostID, HostTags: tags}
 		if c.Labels != nil {
 			req.StackName = c.Labels["com.docker.compose.project"]
 		}
-		if h.inRoleScope(r, req) {
+		if h.allowedOn(r, req) {
 			out = append(out, c)
 		}
 	}
 	return out
 }
 
-// filterHostsByRoleScope returns the subset of hosts the caller's
-// role-scope allows. Unscoped roles get the full list back. Hosts that
-// match by ID or by any of their tags are included.
+// filterHostsByRoleScope keeps the hosts the caller sees as hosts.
 func (h *Handlers) filterHostsByRoleScope(r *http.Request, in []host.Info) []host.Info {
-	if h.roleIsUnscoped(r) {
+	if h.callerUnscoped(r) {
 		return in
 	}
 	out := make([]host.Info, 0, len(in))
 	for _, hh := range in {
-		req := rbac.ScopeRequest{HostID: hh.ID, HostTags: hh.Tags}
-		if h.inRoleScope(r, req) {
+		if h.allowedOn(r, rbac.Resource{HostID: hh.ID, HostTags: hh.Tags}) {
 			out = append(out, hh)
 		}
 	}
@@ -446,30 +325,45 @@ func (h *Handlers) filterHostsByRoleScope(r *http.Request, in []host.Info) []hos
 // filterContainerRowsByRoleScope is the fan-out variant — each row
 // already carries its own HostID so we look up tags per row.
 func (h *Handlers) filterContainerRowsByRoleScope(r *http.Request, in []containerRow) []containerRow {
-	if h.roleIsUnscoped(r) {
+	if h.callerUnscoped(r) {
 		return in
 	}
 	out := make([]containerRow, 0, len(in))
 	tagCache := map[string][]string{}
 	for _, row := range in {
 		tags, ok := tagCache[row.HostID]
-		if !ok && h.HostTags != nil && row.HostID != "" {
-			tags = h.HostTags.Tags(row.HostID)
+		if !ok {
+			tags = h.hostTags(row.HostID)
 			tagCache[row.HostID] = tags
 		}
-		req := rbac.ScopeRequest{HostID: row.HostID, HostTags: tags}
+		req := rbac.Resource{HostID: row.HostID, HostTags: tags}
 		if row.Labels != nil {
 			req.StackName = row.Labels["com.docker.compose.project"]
 		}
-		if h.inRoleScope(r, req) {
+		if h.allowedOn(r, req) {
 			out = append(out, row)
 		}
 	}
 	return out
 }
 
-// hostVisible applies both the user's scope tags and the role scope to a
-// host, the same rules /hosts filters by.
+// hostVisible reports whether the request's permissions hold on the host
+// itself, the rule /hosts filters by.
 func (h *Handlers) hostVisible(r *http.Request, id string) bool {
-	return h.canAccessHost(r, id) && h.checkRoleScope(r, h.hostScopeReq(r.Context(), id))
+	return h.allowedOn(r, h.hostScopeReq(id))
+}
+
+// stackRes is the resource of stack name: the one StackScope resolved for
+// this request, or the stack on its deployment host.
+func (h *Handlers) stackRes(r *http.Request, name string) rbac.Resource {
+	if res, ok := middleware.ResourceOf(r.Context()); ok && res.StackName == name {
+		return res
+	}
+	hostID := ""
+	if h.Deployments != nil {
+		if d, err := h.Deployments.Get(r.Context(), name); err == nil && d != nil {
+			hostID = d.HostID
+		}
+	}
+	return h.stackScopeReq(hostID, name)
 }

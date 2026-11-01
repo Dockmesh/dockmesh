@@ -9,6 +9,7 @@
   import Logo from '$lib/components/shell/Logo.svelte';
   import { page } from '$app/state';
   import { auth } from '$lib/stores/auth.svelte';
+  import { isAdmin } from '$lib/rbac.svelte';
   import { NAV, activeItem } from './nav';
   import Menu from '../ui/Menu.svelte';
   import HealthDot from '../ui/HealthDot.svelte';
@@ -99,7 +100,7 @@
       width={220}
       triggerClass="user-btn"
       items={[
-        { heading: `${auth.user?.username ?? ''} · ${auth.user?.role ?? ''}` },
+        { heading: auth.user?.username ?? '' },
         { label: 'My account', href: '/account', icon: CircleUser },
         { label: 'API tokens', href: '/tokens', icon: KeyRound },
         { label: theme === 'dark' ? 'Light mode' : 'Dark mode', icon: theme === 'dark' ? Sun : Moon, onclick: ontheme },
@@ -112,7 +113,7 @@
         {#if !collapsed}
           <span class="who">
             <span class="n">{auth.user?.username ?? '—'}</span>
-            <span class="r">{auth.user?.role ?? ''}</span>
+            <span class="r">{isAdmin() ? 'Admin' : ''}</span>
           </span>
         {/if}
       {/snippet}

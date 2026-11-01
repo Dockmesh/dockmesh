@@ -7,9 +7,7 @@
   // backend CRUD endpoints and ship with shared field naming. Each
   // provider list is fetched in parallel; the UI shows them in one
   // unified list with a kind chip so admins see everything at a glance.
-  //
-  // Permission gating uses v1 RBAC `user.manage` for now; v2.1 migration
-  // happens in the consolidated backend slice.
+
   import {
     api, ApiError,
     type CustomRole, type OIDCProvider, type OIDCProviderInput,
@@ -148,8 +146,6 @@
             client_secret: '',
             scopes: p.scopes,
             group_claim: p.group_claim,
-            admin_group: p.admin_group,
-            operator_group: p.operator_group,
             default_role: p.default_role,
             allow_email_link: !!p.allow_email_link,
             enabled: !p.enabled,

@@ -5,7 +5,7 @@ import "sort"
 // Audit categories group actions for the audit page and its filter.
 const (
 	CategoryChanges = "changes" // created, changed, deployed or removed something
-	CategoryAccess  = "access"  // read data: file browsing and reads, exec, downloads
+	CategoryAccess  = "access"  // read data (file browsing, exec, downloads) and changes to who may access what
 	CategoryAuth    = "auth"    // sign-in, sessions, tokens, MFA, SSO, scope denials
 	CategorySystem  = "system"  // the server itself and the audit trail
 )
@@ -30,8 +30,8 @@ var categories = map[string]string{
 	"auth.session_revoke_all":   CategoryAuth,
 	"auth.policy_update":        CategoryAuth,
 	"auth.signin_config_update": CategoryAuth,
-	"api_token.create":          CategoryAuth,
-	"api_token.revoke":          CategoryAuth,
+	ActionAPITokenCreate:        CategoryAccess,
+	ActionAPITokenRevoke:        CategoryAuth,
 	ActionUserPassword:          CategoryAuth,
 	"user.unlock":               CategoryAuth,
 	"user.mfa_enroll":           CategoryAuth,
@@ -70,9 +70,11 @@ var categories = map[string]string{
 	"user.avatar_delete":            CategoryChanges,
 	"user.invite_created":           CategoryChanges,
 	"user.invite_revoked":           CategoryChanges,
-	ActionRoleCreate:                CategoryChanges,
-	ActionRoleUpdate:                CategoryChanges,
-	ActionRoleDelete:                CategoryChanges,
+	ActionRoleCreate:                CategoryAccess,
+	ActionRoleUpdate:                CategoryAccess,
+	ActionRoleDelete:                CategoryAccess,
+	ActionAssignmentAdd:             CategoryAccess,
+	ActionAssignmentRemove:          CategoryAccess,
 	ActionStackCreate:               CategoryChanges,
 	ActionStackUpdate:               CategoryChanges,
 	ActionStackDelete:               CategoryChanges,

@@ -2,8 +2,10 @@
   // Reusable group→role mapping list, used by all 4 provider kinds.
   // Renders the list of (group string, role select) rows plus the
   // default-role select that catches users with no matching group.
-  import type { CustomRole } from '$lib/api';
+  import type { CustomRole, Scope } from '$lib/api';
   import type { GroupMapping } from './_types';
+  import { scopeLabel } from '$lib/access';
+  import ScopePicker from '$lib/components/access/ScopePicker.svelte';
   import { Plus, X } from 'lucide-svelte';
 
   interface Props {
@@ -23,7 +25,7 @@
     roles,
     groupClaim,
     title = 'Group → role mappings',
-    hint = 'Map IdP group claim values to Dockmesh roles. If a user is in several mapped groups, the one the IdP lists last decides.',
+    hint = 'Each mapping gives members of the group a role on a scope; a user in several groups gets all of them. Sign-in replaces the account’s identity provider assignments with these.',
   }: Props = $props();
 
   const builtIns = ['viewer', 'operator', 'deployer', 'host-admin', 'admin'] as const;
@@ -33,8 +35,16 @@
     return [...builtIns];
   });
 
+  let editingScope = $state<number | null>(null);
+
   function addRow() {
-    mappings = [...mappings, { group: '', role: 'operator' }];
+    mappings = [...mappings, { group: '', role: 'viewer', scope: { type: 'global' } }];
+  }
+  function setScope(i: number, v: Scope) {
+    mappings = mappings.map((m, idx) => (idx === i ? { ...m, scope: v } : m));
+  }
+  function roleLabel(name: string) {
+    return roles.find((r) => r.name === name)?.display ?? name;
   }
   function remove(i: number) {
     mappings = mappings.filter((_, idx) => idx !== i);
@@ -71,9 +81,11 @@
             onchange={(e) => setRole(i, (e.target as HTMLSelectElement).value)}
           >
             {#each allRoleNames as r}
-              <option value={r}>{r}</option>
+              <option value={r}>{roleLabel(r)}</option>
             {/each}
           </select>
+          <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs gml-scope" title="Where the role applies"
+            onclick={() => (editingScope = editingScope === i ? null : i)}>on {scopeLabel(m.scope)}</button>
           <button
             type="button"
             class="dm-btn dm-btn-ghost dm-btn-xs gml-remove"
@@ -84,6 +96,14 @@
             <X size={11} strokeWidth={1.5} />
           </button>
         </div>
+        {#if editingScope === i}
+          <div class="gml-scopeedit">
+            <ScopePicker value={m.scope ?? { type: 'global' }} label="Role applies on" onchange={(v) => setScope(i, v)} />
+            <div class="gml-scopeactions">
+              <button type="button" class="dm-btn dm-btn-xs" onclick={() => (editingScope = null)}>Done</button>
+            </div>
+          </div>
+        {/if}
       {/each}
     </div>
   {/if}
@@ -104,14 +124,17 @@
       onchange={(e) => (defaultRole = (e.target as HTMLSelectElement).value)}
     >
       {#each allRoleNames as r}
-        <option value={r}>{r}</option>
+        <option value={r}>{roleLabel(r)}</option>
       {/each}
     </select>
-    <span class="gml-default-hint">Used when no mapping matches.</span>
+    <span class="gml-default-hint">Assigned on everything when no mapping matches.</span>
   </div>
 </div>
 
 <style>
+  .gml-scope { white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+  .gml-scopeedit { display: flex; flex-direction: column; gap: 6px; padding: 8px 0 8px 12px; border-left: 2px solid var(--border); }
+  .gml-scopeactions { display: flex; justify-content: flex-end; }
   .gml {
     display: flex;
     flex-direction: column;
@@ -142,7 +165,7 @@
   }
   .gml-row {
     display: grid;
-    grid-template-columns: minmax(0, 1.6fr) 130px 30px;
+    grid-template-columns: minmax(0, 1.4fr) 130px minmax(0, 1fr) 30px;
     gap: 6px;
     align-items: center;
   }
@@ -181,7 +204,7 @@
   }
   @media (max-width: 720px) {
     .gml-row {
-      grid-template-columns: 1fr 110px 28px;
+      grid-template-columns: 1fr 110px minmax(0, 1fr) 28px;
     }
     .gml-default {
       grid-template-columns: 1fr;

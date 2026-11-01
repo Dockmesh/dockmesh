@@ -25,19 +25,21 @@ paths:
 
         The new token is owned by the signed-in user, or by the owner of
         the API token making the request. Legacy tokens (no owner) can't
-        create tokens (403). The role may not grant more than the caller
-        effectively holds. A token created with an API token never expires
-        later than that token.
+        create tokens (403). A token acts with its owner's current access,
+        narrowed to `role` on `scope` when a role is given. A token created
+        with a restricted API token stays inside that restriction (403) and
+        never expires later than that token.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [name, role]
+              required: [name]
               properties:
                 name: {type: string, example: github-deploy}
-                role: {type: string, example: operator}
+                role: {type: string, example: deployer, description: Optional restriction; empty = the owner's full access.}
+                scope: {$ref: "#/components/schemas/Scope"}
                 expires_in_days:
                   type: integer
                   minimum: 0
@@ -83,16 +85,17 @@ components:
       description: |
         Long-lived bearer token. Plaintext is NEVER returned except the
         one-time create response. A token belongs to the user who created
-        it (`created_by`): requests need the token's role AND the owner's
-        current role to allow them, and run with the owner's host scope.
-        Tokens created before owners were recorded are `legacy`: they keep
-        their role and have no owner.
+        it (`created_by`) and acts with the owner's current access, narrowed
+        to `role` on `scope` when `role` is set. Tokens created before owners
+        were recorded are `legacy`: they act as their role on their scope
+        and have no owner.
       required: [id, prefix, name, role, legacy, created_at]
       properties:
         id: {type: integer, format: int64}
         prefix: {type: string, example: "dmt_A7f3X9c4"}
         name: {type: string}
-        role: {type: string}
+        role: {type: string, description: Restriction role; empty = none.}
+        scope: {$ref: "#/components/schemas/Scope"}
         created_by: {type: string, description: Owning user id.}
         legacy: {type: boolean, description: No owner on record; works with its pinned role.}
         owner_missing:

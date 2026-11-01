@@ -24,7 +24,7 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if !h.requireContainerScope(w, r, rbac.PermContainersUpdate, "local", id) {
+	if !h.requireContainerScope(w, r, rbac.PermContainersUpgrade, "local", id) {
 		return
 	}
 	if !h.allowStackRebuild(w, r, id) {
@@ -63,7 +63,7 @@ func (h *Handlers) RollbackContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if !h.requireContainerScope(w, r, rbac.PermContainersUpdate, "local", id) {
+	if !h.requireContainerScope(w, r, rbac.PermContainersUpgrade, "local", id) {
 		return
 	}
 	var req rollbackRequest
@@ -120,8 +120,8 @@ func (h *Handlers) UpdateHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	id := chi.URLParam(r, "id")
 	scopeReq := h.containerScopeReq(r.Context(), "local", id)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermContainersUpdate, scopeReq, "container "+id)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermContainersUpdate, scopeReq, "container "+id)
 		return
 	}
 	info, err := h.Docker.InspectContainer(r.Context(), id)
@@ -152,7 +152,7 @@ func trim(s string) string {
 // applies compose changes saved since the last deploy.
 func (h *Handlers) allowStackRebuild(w http.ResponseWriter, r *http.Request, containerID string) bool {
 	stack := h.Updater.ManagedStack(r.Context(), containerID)
-	if stack == "" || middleware.Allowed(r.Context(), rbac.PermStacksDeploy) {
+	if stack == "" || middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, h.stackScopeReq("local", stack)) {
 		return true
 	}
 	writeError(w, http.StatusForbidden, "updating a container of stack "+stack+" needs the stacks.deploy permission")

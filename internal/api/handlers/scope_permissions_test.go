@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -43,6 +44,9 @@ func newScopeEnv(t *testing.T) *authzEnv {
 		r.With(middleware.RequirePerm(rbac.PermUsersDelete)).Delete("/users/{id}", e.h.DeleteUser)
 		r.With(middleware.RequirePerm(rbac.PermRolesCreate)).Post("/roles", e.h.CreateRole)
 		r.With(middleware.RequirePerm(rbac.PermRolesUpdate)).Put("/roles/{name}", e.h.UpdateRole)
+		r.With(middleware.RequirePerm(rbac.PermUsersUpdate)).Post("/assignments", e.h.CreateAssignment)
+		r.With(middleware.RequirePerm(rbac.PermUsersUpdate)).Delete("/assignments/{id}", e.h.DeleteAssignment)
+		r.With(middleware.RequirePerm(rbac.PermUsersView)).Post("/access/check", e.h.CheckAccess)
 		r.With(middleware.RequirePerm(rbac.PermContainersView)).Get("/containers/{id}", e.h.InspectContainer)
 		r.With(middleware.RequirePerm(rbac.PermStacksView)).Get("/api/v1/stacks/{name}", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
@@ -90,50 +94,108 @@ func TestHealthDiskCheckNeedsServerScope(t *testing.T) {
 	}
 }
 
+// role creates a custom role with the lowest levels and extras that grant
+// every perm; users created with e.user get it on scopes (default:
+// everything).
 func (e *authzEnv) role(name string, perms []rbac.Perm, scopes ...rbac.Scope) {
 	e.t.Helper()
-	if err := e.h.Roles.Create(context.Background(), rbac.RoleInput{Name: name, Display: name, Permissions: perms, Scopes: scopes}); err != nil {
+	levels, extras := levelsGranting(perms)
+	if err := e.h.Roles.CreateRole(context.Background(), rbac.RoleInput{Name: name, Display: name, Levels: levels, Extras: extras}); err != nil {
 		e.t.Fatal(err)
 	}
+	e.roleScopes[name] = scopes
 }
 
+func levelsGranting(perms []rbac.Perm) (rbac.Levels, []string) {
+	levels := rbac.Levels{}
+	var extras []string
+	for _, p := range perms {
+		found := false
+		for _, a := range rbac.Areas {
+			for _, l := range a.Levels {
+				for _, q := range l.Perms {
+					if q == p && !rbac.LevelAtLeast(a.Key, levels[a.Key], l.Key) {
+						levels[a.Key] = l.Key
+					}
+					found = found || q == p
+				}
+			}
+		}
+		for _, x := range rbac.Extras {
+			for _, q := range x.Perms {
+				if q == p && !slices.Contains(extras, x.Key) {
+					extras = append(extras, x.Key)
+					found = true
+				}
+			}
+		}
+		if !found && !rbac.IsBase(p) {
+			panic("no level or extra grants " + string(p))
+		}
+	}
+	return levels, extras
+}
+
+// scopeUser narrows every assignment of the user on everything to the
+// host tags; no tags puts them back on everything.
 func (e *authzEnv) scopeUser(id string, tags ...string) {
 	e.t.Helper()
-	if _, err := e.h.Auth.UpdateUserScope(context.Background(), id, tags); err != nil {
-		e.t.Fatal(err)
+	ctx := context.Background()
+	roles := map[string]bool{}
+	for _, a := range e.h.Roles.UserAssignments(id) {
+		if a.Scope.IsGlobal() || a.Scope.Type == rbac.ScopeHostTag {
+			roles[a.Role] = true
+			if err := e.h.Roles.RemoveAssignment(ctx, a.ID); err != nil {
+				e.t.Fatal(err)
+			}
+		}
+	}
+	for role := range roles {
+		scopes := []rbac.Scope{rbac.Global}
+		if len(tags) > 0 {
+			scopes = nil
+			for _, t := range tags {
+				scopes = append(scopes, rbac.Scope{Type: rbac.ScopeHostTag, Value: t})
+			}
+		}
+		for _, s := range scopes {
+			if _, err := e.h.Roles.AddAssignment(ctx, rbac.Assignment{UserID: id, Role: role, Scope: s}); err != nil {
+				e.t.Fatal(err)
+			}
+		}
 	}
 }
 
 func TestGrantsCannotExceedCaller(t *testing.T) {
 	e := newScopeEnv(t)
-	e.role("useradmin", []rbac.Perm{rbac.PermUsersView, rbac.PermUsersCreate, rbac.PermUsersUpdate, rbac.PermRolesCreate, rbac.PermRolesUpdate, rbac.PermContainersView})
+	e.role("useradmin", []rbac.Perm{rbac.PermUsersCreate, rbac.PermContainersView})
 	low := e.user("low", "useradmin")
 	victim := e.user("victim", "viewer")
-	e.user("boss", "admin")
+	boss := e.user("boss", "admin")
 	tagged := e.user("tagged", "useradmin")
 	e.scopeUser(tagged.ID, "prod")
 	lowTok := e.login("low").AccessToken
 	taggedTok := e.login("tagged").AccessToken
+	bossAdmin := e.h.Roles.UserAssignments(boss.ID)[0].ID
 
 	tests := []struct {
 		name, method, path, bearer string
 		body                       any
 		want                       int
 	}{
-		{"self-promote to admin", http.MethodPut, "/users/" + low.ID, lowTok, map[string]any{"role": "admin"}, http.StatusForbidden},
-		{"promote other to operator", http.MethodPut, "/users/" + victim.ID, lowTok, map[string]any{"role": "operator"}, http.StatusForbidden},
+		{"assign self admin", http.MethodPost, "/assignments", lowTok, map[string]any{"user_id": low.ID, "role": "admin"}, http.StatusForbidden},
+		{"assign other operator", http.MethodPost, "/assignments", lowTok, map[string]any{"user_id": victim.ID, "role": "operator"}, http.StatusForbidden},
+		{"assign own role to other", http.MethodPost, "/assignments", lowTok, map[string]any{"user_id": victim.ID, "role": "useradmin"}, http.StatusCreated},
 		{"create admin user", http.MethodPost, "/users", lowTok, map[string]any{"username": "x1", "password": testPassword, "role": "admin"}, http.StatusForbidden},
-		{"create viewer-ish user", http.MethodPost, "/users", lowTok, map[string]any{"username": "x2", "password": testPassword, "role": "useradmin"}, http.StatusCreated},
+		{"create user with own role", http.MethodPost, "/users", lowTok, map[string]any{"username": "x2", "password": testPassword, "role": "useradmin"}, http.StatusCreated},
 		{"invite as admin", http.MethodPost, "/invites", lowTok, map[string]any{"role": "admin"}, http.StatusForbidden},
 		{"invite unknown role", http.MethodPost, "/invites", lowTok, map[string]any{"role": "nope"}, http.StatusBadRequest},
-		{"role with perms caller lacks", http.MethodPost, "/roles", lowTok, map[string]any{"name": "big", "display": "Big", "permissions": []string{"system.update"}}, http.StatusForbidden},
-		{"edit own role upward", http.MethodPut, "/roles/useradmin", lowTok, map[string]any{"display": "u", "permissions": []string{"users.view", "users.update", "users.delete"}}, http.StatusForbidden},
-		{"manage a stronger user", http.MethodPut, "/users/" + mustUserID(e, "boss"), lowTok, map[string]any{"role": "viewer"}, http.StatusForbidden},
-		{"scoped caller unscopes self", http.MethodPut, "/users/" + tagged.ID, taggedTok, map[string]any{"scope_tags": []string{}}, http.StatusForbidden},
-		{"scoped caller widens tags", http.MethodPut, "/users/" + tagged.ID, taggedTok, map[string]any{"scope_tags": []string{"prod", "dev"}}, http.StatusForbidden},
-		{"scoped caller invites unscoped", http.MethodPost, "/invites", taggedTok, map[string]any{"role": "useradmin"}, http.StatusForbidden},
-		{"scoped caller invites within scope", http.MethodPost, "/invites", taggedTok, map[string]any{"role": "useradmin", "scope_tags": []string{"prod"}}, http.StatusCreated},
-		{"omitted scope keeps tags", http.MethodPut, "/users/" + tagged.ID, taggedTok, map[string]any{"display_name": "T"}, http.StatusOK},
+		{"role with levels caller lacks", http.MethodPost, "/roles", lowTok, map[string]any{"name": "big", "display": "Big", "levels": map[string]string{"settings": "manage"}}, http.StatusForbidden},
+		{"edit own role upward", http.MethodPut, "/roles/useradmin", lowTok, map[string]any{"display": "u", "levels": map[string]string{"users": "manage", "settings": "manage"}}, http.StatusForbidden},
+		{"remove a stronger assignment", http.MethodDelete, "/assignments/" + strconv.FormatInt(bossAdmin, 10), lowTok, nil, http.StatusForbidden},
+		{"scoped assignment grants no user management", http.MethodPost, "/invites", taggedTok, map[string]any{"role": "useradmin", "scopes": []map[string]string{{"type": "host_tag", "value": "prod"}}}, http.StatusForbidden},
+		{"scoped caller assigns itself everything", http.MethodPost, "/assignments", taggedTok, map[string]any{"user_id": tagged.ID, "role": "useradmin"}, http.StatusForbidden},
+		{"profile update keeps assignments", http.MethodPut, "/users/" + tagged.ID, e.login("boss").AccessToken, map[string]any{"display_name": "T"}, http.StatusOK},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -143,12 +205,10 @@ func TestGrantsCannotExceedCaller(t *testing.T) {
 			}
 		})
 	}
-	u, err := e.h.Auth.GetUser(context.Background(), tagged.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(u.ScopeTags) != 1 || u.ScopeTags[0] != "prod" {
-		t.Errorf("scope tags after update without scope_tags = %v, want [prod]", u.ScopeTags)
+	for _, a := range e.h.Roles.UserAssignments(tagged.ID) {
+		if a.Scope != (rbac.Scope{Type: rbac.ScopeHostTag, Value: "prod"}) {
+			t.Errorf("assignment after a profile update = %v, want host tag prod", a.Scope)
+		}
 	}
 }
 
@@ -171,42 +231,54 @@ func TestLastAdminIsProtected(t *testing.T) {
 	e := newScopeEnv(t)
 	first := e.user("first", "admin")
 	tok := e.login("first").AccessToken
+	firstAdmin := "/assignments/" + strconv.FormatInt(e.h.Roles.UserAssignments(first.ID)[0].ID, 10)
 
-	if rr := e.do(http.MethodPut, "/users/"+first.ID, tok, map[string]any{"role": "viewer"}); rr.Code != http.StatusConflict {
-		t.Fatalf("demote last admin: %d %s", rr.Code, rr.Body)
+	if rr := e.do(http.MethodDelete, firstAdmin, tok, nil); rr.Code != http.StatusConflict {
+		t.Fatalf("remove the last admin assignment: %d %s", rr.Code, rr.Body)
 	}
-	e.role("superuser", []rbac.Perm{rbac.PermSystemUpdate, rbac.PermUsersView, rbac.PermUsersCreate, rbac.PermUsersUpdate, rbac.PermUsersDelete, rbac.PermRolesUpdate})
+	admin, _ := rbac.BuiltinRole(rbac.RoleAdmin)
+	full := map[string]any{"display": "s", "levels": admin.Levels, "extras": admin.Extras}
+	if rr := e.do(http.MethodPost, "/roles", tok, map[string]any{"name": "superuser", "display": "s", "levels": admin.Levels, "extras": admin.Extras}); rr.Code != http.StatusCreated {
+		t.Fatalf("create admin-equivalent role: %d %s", rr.Code, rr.Body)
+	}
 	second := e.user("second", "superuser")
-	if rr := e.do(http.MethodPut, "/roles/superuser", tok, map[string]any{"display": "s", "permissions": []string{"users.view"}}); rr.Code != http.StatusOK {
+	if rr := e.do(http.MethodPut, "/roles/superuser", tok, map[string]any{"display": "s", "levels": map[string]string{"users": "view"}}); rr.Code != http.StatusOK {
 		t.Fatalf("narrow a custom admin role while another admin exists: %d %s", rr.Code, rr.Body)
 	}
-	if rr := e.do(http.MethodPut, "/users/"+second.ID, tok, map[string]any{"role": "admin"}); rr.Code != http.StatusOK {
-		t.Fatalf("promote second: %d %s", rr.Code, rr.Body)
+	if rr := e.do(http.MethodDelete, firstAdmin, tok, nil); rr.Code != http.StatusConflict {
+		t.Fatalf("remove the last admin assignment once the other role was narrowed: %d %s", rr.Code, rr.Body)
 	}
-	if rr := e.do(http.MethodPut, "/users/"+first.ID, tok, map[string]any{"role": "viewer"}); rr.Code != http.StatusOK {
-		t.Fatalf("demote with another admin left: %d %s", rr.Code, rr.Body)
+	if rr := e.do(http.MethodPut, "/roles/superuser", tok, full); rr.Code != http.StatusOK {
+		t.Fatalf("widen the role again: %d %s", rr.Code, rr.Body)
+	}
+	if rr := e.do(http.MethodDelete, firstAdmin, tok, nil); rr.Code != http.StatusNoContent {
+		t.Fatalf("remove an admin assignment with another admin left: %d %s", rr.Code, rr.Body)
 	}
 	secondTok := e.login("second").AccessToken
 	if rr := e.do(http.MethodDelete, "/users/"+first.ID, secondTok, nil); rr.Code != http.StatusNoContent {
 		t.Fatalf("delete non-admin: %d %s", rr.Code, rr.Body)
 	}
-	if rr := e.do(http.MethodPut, "/users/"+second.ID, secondTok, map[string]any{"role": "viewer"}); rr.Code != http.StatusConflict {
-		t.Fatalf("demote the remaining admin: %d %s", rr.Code, rr.Body)
+	if rr := e.do(http.MethodPut, "/roles/superuser", secondTok, map[string]any{"display": "s", "levels": map[string]string{"users": "view"}}); rr.Code != http.StatusConflict {
+		t.Fatalf("narrow the last admin role: %d %s", rr.Code, rr.Body)
+	}
+	secondAdmin := "/assignments/" + strconv.FormatInt(e.h.Roles.UserAssignments(second.ID)[0].ID, 10)
+	if rr := e.do(http.MethodDelete, secondAdmin, secondTok, nil); rr.Code != http.StatusConflict {
+		t.Fatalf("remove the remaining admin assignment: %d %s", rr.Code, rr.Body)
 	}
 }
 
 func TestReadEndpointsEnforceScope(t *testing.T) {
 	e := newScopeEnv(t)
 	ctx := context.Background()
-	e.role("stack-only", []rbac.Perm{rbac.PermContainersView, rbac.PermStacksView}, rbac.Scope{ScopeType: "stack", ScopeValue: "web"})
+	e.role("stack-only", []rbac.Perm{rbac.PermContainersView, rbac.PermStacksView}, rbac.Scope{Type: "stack", Value: "web"})
 	e.user("free", "viewer")
 	tagged := e.user("tagged", "viewer")
 	e.scopeUser(tagged.ID, "prod")
 	e.user("stacky", "stack-only")
-	e.role("host-only", []rbac.Perm{rbac.PermContainersView, rbac.PermStacksView}, rbac.Scope{ScopeType: "host", ScopeValue: "agent-1"})
+	e.role("host-only", []rbac.Perm{rbac.PermContainersView, rbac.PermStacksView}, rbac.Scope{Type: "host", Host: "agent-1"})
 	e.user("hosty", "host-only")
 	e.role("tag-and-stack", []rbac.Perm{rbac.PermStacksView},
-		rbac.Scope{ScopeType: "host_tag", ScopeValue: "prod"}, rbac.Scope{ScopeType: "stack", ScopeValue: "mine"})
+		rbac.Scope{Type: "host_tag", Value: "prod"}, rbac.Scope{Type: "stack", Value: "mine"})
 	e.user("mixed", "tag-and-stack")
 	if err := e.h.Deployments.Set(ctx, "db", "agent-1", "running"); err != nil {
 		t.Fatal(err)
@@ -252,10 +324,15 @@ func TestFilterHostsByScopeFailsClosed(t *testing.T) {
 	h := &Handlers{}
 	hosts := []host.Host{host.NewLocal(nil)}
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	if got := h.filterHostsByScope(req, hosts); len(got) != 1 {
+	admin := &rbac.Access{Authenticated: true, Grants: []rbac.Grant{{Perms: rbac.PermsFor(rbac.Levels{"containers": "view"}, nil)}}}
+	if got := h.filterHostsByScope(req.WithContext(middleware.WithIdentity(req.Context(), middleware.Identity{UserID: "a", Access: admin})), hosts); len(got) != 1 {
 		t.Errorf("unscoped caller: %d hosts, want 1", len(got))
 	}
-	scoped := req.WithContext(middleware.WithIdentity(req.Context(), middleware.Identity{UserID: "u", Role: "viewer", ScopeTags: []string{"prod"}}))
+	viewer := &rbac.Access{Authenticated: true, Grants: []rbac.Grant{{
+		Perms:  rbac.PermsFor(rbac.Levels{"hosts": "view", "containers": "view"}, nil),
+		Scopes: []rbac.Scope{{Type: rbac.ScopeHostTag, Value: "prod"}},
+	}}}
+	scoped := req.WithContext(middleware.WithRoutePerm(middleware.WithIdentity(req.Context(), middleware.Identity{UserID: "u", Access: viewer}), rbac.PermContainersView))
 	if got := h.filterHostsByScope(scoped, hosts); len(got) != 0 {
 		t.Errorf("scoped caller without host tags service: %d hosts, want 0", len(got))
 	}
@@ -304,7 +381,7 @@ func TestArchiveAccess(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			req = req.WithContext(middleware.WithIdentity(req.Context(), middleware.Identity{UserID: claims.UserID, Role: claims.Role, ScopeTags: claims.ScopeTags}))
+			req = req.WithContext(middleware.WithIdentity(req.Context(), middleware.Identity{UserID: claims.UserID, Access: e.h.Roles.AccessFor(claims.UserID)}))
 			rr := httptest.NewRecorder()
 			if got := e.h.requireRunAccess(rr, req, tt.run, rbac.PermBackupsDownload); got != tt.want {
 				var body map[string]any
@@ -380,16 +457,15 @@ func TestReviewFollowUps(t *testing.T) {
 	if _, err := e.db.Exec(`INSERT INTO backup_jobs (id, name, target_type, host_id, sources) VALUES (7, 'sys', 'local', 'local', '[{"type":"system","name":"system"}]')`); err != nil {
 		t.Fatal(err)
 	}
-	boss := e.user("boss", "admin")
+	e.user("boss", "admin")
 	e.user("hadmin", "host-admin")
-	e.role("stack-only", []rbac.Perm{rbac.PermStacksView}, rbac.Scope{ScopeType: "stack", ScopeValue: "web"})
+	e.role("stack-only", []rbac.Perm{rbac.PermStacksView}, rbac.Scope{Type: "stack", Value: "web"})
 	e.user("stacky", "stack-only")
 	e.role("tagged-roles", []rbac.Perm{rbac.PermRolesUpdate, rbac.PermRolesDelete, rbac.PermStacksView})
 	tagged := e.user("rolemgr", "tagged-roles")
 	e.scopeUser(tagged.ID, "prod")
 	e.role("victim-role", []rbac.Perm{rbac.PermStacksView})
 	hadmin := e.login("hadmin").AccessToken
-	bossTok := e.login("boss").AccessToken
 
 	tests := []struct {
 		name, method, path, bearer string
@@ -402,7 +478,6 @@ func TestReviewFollowUps(t *testing.T) {
 		{"scoped caller deletes a role", http.MethodDelete, "/roles/victim-role", e.login("rolemgr").AccessToken, nil, http.StatusForbidden},
 		{"stack role reads an undeployed other stack", http.MethodGet, "/api/v1/stacks/bar", e.login("stacky").AccessToken, nil, http.StatusForbidden},
 		{"stack role reads its undeployed stack", http.MethodGet, "/api/v1/stacks/web", e.login("stacky").AccessToken, nil, http.StatusNoContent},
-		{"only admin scopes itself", http.MethodPut, "/users/" + boss.ID, bossTok, map[string]any{"scope_tags": []string{"x"}}, http.StatusConflict},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -415,13 +490,11 @@ func TestReviewFollowUps(t *testing.T) {
 
 	// An invite stops working once its creator may no longer grant it.
 	inviter := e.user("inviter", "admin")
-	inv, err := e.h.Invites.Create(ctx, invites.CreateInput{Role: "admin", TTL: time.Hour, CreatedBy: inviter.ID})
+	inv, err := e.h.Invites.Create(ctx, invites.CreateInput{Role: "admin", Scopes: []rbac.Scope{rbac.Global}, TTL: time.Hour, CreatedBy: inviter.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.h.Auth.UpdateUser(ctx, inviter.ID, "", "viewer", ""); err != nil {
-		t.Fatal(err)
-	}
+	e.setRole(inviter.ID, "viewer")
 	rr := e.do(http.MethodPost, "/invite/"+inv.Token+"/accept", "", map[string]any{"username": "mole", "password": testPassword})
 	if rr.Code != http.StatusGone {
 		t.Errorf("accept after creator demotion: %d %s", rr.Code, rr.Body)
@@ -815,7 +888,7 @@ func TestStackRestoreTargetNeedsStackRights(t *testing.T) {
 	}
 	e.role("restorer", []rbac.Perm{rbac.PermBackupsView, rbac.PermBackupsRestore})
 	e.role("local-restorer", []rbac.Perm{rbac.PermBackupsView, rbac.PermBackupsRestore, rbac.PermStacksCreate, rbac.PermStacksUpdate},
-		rbac.Scope{ScopeType: "host", ScopeValue: "local"})
+		rbac.Scope{Type: "host", Host: "local"})
 	e.role("stack-restorer", []rbac.Perm{rbac.PermBackupsView, rbac.PermBackupsRestore, rbac.PermStacksCreate, rbac.PermStacksUpdate})
 	e.user("rest", "restorer")
 	e.user("lrest", "local-restorer")

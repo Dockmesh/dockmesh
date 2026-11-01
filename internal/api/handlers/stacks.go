@@ -181,9 +181,9 @@ func (h *Handlers) RecoverStack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	scopeReq := h.stackScopeReq(r.Context(), "", name)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
+	scopeReq := h.stackRes(r, name)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
 		return
 	}
 
@@ -284,9 +284,9 @@ func (h *Handlers) RecoverStack(w http.ResponseWriter, r *http.Request) {
 // containers that came from it. Inverse of RecoverStack.
 func (h *Handlers) DiscardStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), "", name)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermStacksDelete, scopeReq, "stack "+name)
+	scopeReq := h.stackRes(r, name)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermStacksDelete, scopeReq, "stack "+name)
 		return
 	}
 	// Drop the deployment row + dependency edges. Compose file and
@@ -313,6 +313,12 @@ func (h *Handlers) GetStack(w http.ResponseWriter, r *http.Request) {
 		d.MountsStackDir = compose.MountsProjectDir(d.Compose)
 		if d.ModifiedOutside, err = h.Stacks.ModifiedOutside(name); err != nil {
 			slog.Warn("stack file checksums", "stack", name, "err", err)
+		}
+		// .env usually holds secrets: callers who may deploy the stack
+		// edit it, others need the env extra.
+		if res := h.stackRes(r, name); !middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, res) && !middleware.AllowedOn(r.Context(), rbac.PermContainersEnv, res) {
+			d.Env = ""
+			d.EnvHidden = true
 		}
 		writeJSON(w, http.StatusOK, d)
 		return
@@ -447,9 +453,9 @@ func (h *Handlers) CreateStackFromGit(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) UpdateStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), "", name)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermStacksUpdate, scopeReq, "stack "+name)
+	scopeReq := h.stackRes(r, name)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermStacksUpdate, scopeReq, "stack "+name)
 		return
 	}
 	var req stackRequest
@@ -472,9 +478,9 @@ func (h *Handlers) UpdateStack(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), "", name)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermStacksDelete, scopeReq, "stack "+name)
+	scopeReq := h.stackRes(r, name)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermStacksDelete, scopeReq, "stack "+name)
 		return
 	}
 	// Dependents check: if another stack declared this one as a dep,
@@ -693,9 +699,9 @@ func (h *Handlers) AdoptStack(w http.ResponseWriter, r *http.Request) {
 	if !h.requireHostAccess(w, r, req.HostID) {
 		return
 	}
-	scopeReq := h.stackScopeReq(r.Context(), req.HostID, req.Name)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermStacksAdopt, scopeReq, "stack "+req.Name)
+	scopeReq := h.stackScopeReq(req.HostID, req.Name)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermStacksAdopt, scopeReq, "stack "+req.Name)
 		return
 	}
 	adoptReq := adopt.AdoptRequest{
@@ -768,9 +774,9 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), target.ID(), name)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
+	scopeReq := h.stackScopeReq(target.ID(), name)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
 		return
 	}
 	if !h.checkStackFiles(w, r, name) {
@@ -810,9 +816,17 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 			if satisfied {
 				continue
 			}
-			depScope := h.stackScopeReq(r.Context(), target.ID(), depName)
-			if !h.checkRoleScope(r, depScope) {
-				h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, depScope, "dependency stack "+depName)
+			// A dependency deployed on another host would move here with
+			// its .env; only deploy it where it already runs or where it
+			// isn't deployed yet, and only with deploy rights on it there.
+			cur := h.stackRes(r, depName)
+			if cur.HostID != "" && cur.HostID != target.ID() {
+				writeError(w, http.StatusConflict, "dependency "+depName+" runs on another host; deploy it there first")
+				return
+			}
+			depScope := h.stackScopeReq(target.ID(), depName)
+			if !h.allowedOn(r, depScope) || !h.allowedOn(r, cur) {
+				h.writeScopeDenied(w, r, rbac.PermStacksDeploy, depScope, "dependency stack "+depName)
 				return
 			}
 			if !h.checkStackFiles(w, r, depName) {
@@ -1041,9 +1055,9 @@ func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), target.ID(), name)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
+	scopeReq := h.stackScopeReq(target.ID(), name)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
 		return
 	}
 	// Dependents check (same policy as DeleteStack). Stopping a base

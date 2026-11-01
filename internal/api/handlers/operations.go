@@ -44,9 +44,9 @@ func opViewPerm(kind string) rbac.Perm {
 func opActionPerm(kind string) rbac.Perm {
 	switch kind {
 	case opImageUpdate:
-		return rbac.PermContainersUpdate
+		return rbac.PermContainersUpgrade
 	case opBackupRun:
-		return rbac.PermBackupsUpdate
+		return rbac.PermBackupsRun
 	case opBackupRestore:
 		return rbac.PermBackupsRestore
 	case opProxySite:
@@ -63,6 +63,7 @@ func (h *Handlers) operationVisible(r *http.Request, op *operations.Operation) b
 	if perm == "" || !middleware.Allowed(r.Context(), perm) {
 		return false
 	}
+	r = r.WithContext(middleware.WithRoutePerm(r.Context(), perm))
 	if op.AdminOnly {
 		return h.callerIsAdmin(r)
 	}
@@ -198,11 +199,16 @@ func (h *Handlers) CancelOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	perm := opActionPerm(op.Kind)
-	if perm == "" || !middleware.Allowed(r.Context(), perm) {
+	hostID := op.HostID
+	if hostID == "" {
+		hostID = "local"
+	}
+	res := h.stackScopeReq(hostID, op.Stack)
+	if perm == "" || !middleware.AllowedOn(r.Context(), perm, res) {
 		writeError(w, http.StatusForbidden, "cancelling this needs the "+string(perm)+" permission")
 		return
 	}
-	if op.Kind == opImageUpdate && op.Stack != "" && !middleware.Allowed(r.Context(), rbac.PermStacksDeploy) {
+	if op.Kind == opImageUpdate && op.Stack != "" && !middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, res) {
 		writeError(w, http.StatusForbidden, "cancelling an update of stack "+op.Stack+" needs the stacks.deploy permission")
 		return
 	}
@@ -322,7 +328,7 @@ func (h *Handlers) BulkUpdateContainers(w http.ResponseWriter, r *http.Request) 
 			}
 			id, ids[i] = info.ID, info.ID
 		}
-		if !h.requireContainerScope(w, r, rbac.PermContainersUpdate, "local", id) {
+		if !h.requireContainerScope(w, r, rbac.PermContainersUpgrade, "local", id) {
 			return
 		}
 		if !h.allowStackRebuild(w, r, id) {

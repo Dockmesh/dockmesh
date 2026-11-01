@@ -77,12 +77,9 @@ func dummyHash() string {
 	return dummy
 }
 
-// Claims is the payload of an access token. Role and ScopeTags are not
-// signed in; Validate fills them from the user row.
+// Claims is the payload of an access token.
 type Claims struct {
-	UserID    string   `json:"uid"`
-	Role      string   `json:"-"`
-	ScopeTags []string `json:"-"` // host-tag scope; empty = all hosts
+	UserID string `json:"uid"`
 	// SessionID is the session family the token was minted for, so a
 	// revoked or deleted session stops the access token too.
 	SessionID string `json:"sid"`

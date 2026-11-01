@@ -465,15 +465,19 @@ components:
         client_id: {type: string}
         scopes: {type: string, example: "openid profile email"}
         group_claim: {type: string}
-        admin_group: {type: string}
-        operator_group: {type: string}
+        group_mappings:
+          type: array
+          description: Each group in the claim that matches gives its role on its scope; with no match the default role applies on everything.
+          items:
+            type: object
+            properties:
+              group_value: {type: string}
+              role_name: {type: string}
+              scope: {$ref: "#/components/schemas/Scope"}
         default_role: {type: string}
         allow_email_link:
           type: boolean
           description: Attach a login to an existing account with the same email when the IdP marks the email verified. Off by default.
-        default_scope_tags:
-          type: array
-          items: {type: string}
         enabled: {type: boolean}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
@@ -508,11 +512,13 @@ components:
         default_role: {type: string}
         group_mappings:
           type: array
+          description: Each matching group gives its role on its scope; with no match the default role applies on everything.
           items:
             type: object
             properties:
               group: {type: string}
               role: {type: string}
+              scope: {$ref: "#/components/schemas/Scope"}
         allow_email_link: {type: boolean}
         enabled: {type: boolean}
         is_default: {type: boolean}
@@ -530,8 +536,15 @@ components:
           description: Omit / empty on update to keep the existing secret.
         scopes: {type: string}
         group_claim: {type: string}
-        admin_group: {type: string}
-        operator_group: {type: string}
+        group_mappings:
+          type: array
+          description: Each group in the claim that matches gives its role on its scope; with no match the default role applies on everything.
+          items:
+            type: object
+            properties:
+              group_value: {type: string}
+              role_name: {type: string}
+              scope: {$ref: "#/components/schemas/Scope"}
         default_role: {type: string}
         allow_email_link:
           type: boolean

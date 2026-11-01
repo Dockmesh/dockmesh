@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
+
 	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/host"
@@ -171,6 +173,12 @@ func (h *Handlers) InspectContainer(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
+	}
+	// Environment values often carry secrets; they need the env extra.
+	if info.Config != nil && !middleware.AllowedOn(r.Context(), rbac.PermContainersEnv, h.containerScopeReq(r.Context(), target.ID(), id)) {
+		cfg := *info.Config
+		cfg.Env = nil
+		info.Config = &cfg
 	}
 	writeJSON(w, http.StatusOK, info)
 }

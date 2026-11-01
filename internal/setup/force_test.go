@@ -28,7 +28,7 @@ func TestNewForBootForceFlag(t *testing.T) {
 			ctx := context.Background()
 			database := newStateDB(t)
 			if tt.admin {
-				if _, err := database.Exec(`INSERT INTO users (id, username, password, role) VALUES ('u1', 'u1', 'x', 'admin')`); err != nil {
+				if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES ('u1', 'u1', 'x'); INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES ('u1', 'admin', 'global')`); err != nil {
 					t.Fatalf("user: %v", err)
 				}
 			}

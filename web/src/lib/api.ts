@@ -399,36 +399,119 @@ export interface Drain {
   created_at: string;
 }
 
-// Custom Roles (RBAC v2)
+// Roles are levels per area plus extras; access comes from assignments of
+// a role on a scope.
 export interface CustomRole {
   name: string;
   display: string;
   description?: string;
   builtin: boolean;
+  levels: Record<string, string>;
+  extras: string[];
   permissions: string[];
-  scopes?: RoleScope[];
+  assignments?: number;
 }
 
-export interface RoleScope {
-  scope_type: 'host' | 'stack' | 'host_tag';
-  scope_value: string;
+export type ScopeType = 'global' | 'host' | 'host_tag' | 'stack';
+
+export interface Scope {
+  type: ScopeType;
+  host?: string;
+  value?: string;
 }
 
-export interface PermissionInfo {
-  name: string;
-  display_name: string;
-  description: string;
-  category: string;
-  verb: string;
-  danger_level: 'low' | 'medium' | 'high';
-  sensitive?: boolean;
+export interface Assignment {
+  id: number;
+  user_id: string;
+  role: string;
+  scope: Scope;
+  source: 'manual' | 'idp';
+  via?: string;
+  created_at?: string;
+  created_by?: string;
+  username?: string;
+}
+
+export interface RoleLevel {
+  key: string;
+  label: string;
+  items: string[];
+}
+
+export interface RoleArea {
+  key: string;
+  label: string;
+  scoped: boolean;
+  levels: RoleLevel[];
+}
+
+export interface RoleExtra {
+  key: string;
+  label: string;
+  warning: string;
+}
+
+export interface RoleCatalog {
+  areas: RoleArea[];
+  extras: RoleExtra[];
+}
+
+export interface RoleInput {
+  name?: string;
+  display: string;
+  description?: string;
+  levels: Record<string, string>;
+  extras: string[];
+}
+
+export interface AccessCheckInput {
+  user_id: string;
+  area?: string;
+  level?: string;
+  extra?: string;
+  host?: string;
+  stack?: string;
+}
+
+export interface AccessCheckResult {
+  allowed: boolean;
+  granted_by?: Assignment;
+  closest: Assignment[];
+  needed: string;
+}
+
+export interface UserRow {
+  id: string;
+  username: string;
+  display_name?: string;
+  email?: string;
+  source: 'manual' | 'sso';
+  mfa_enabled: boolean;
+  last_login_at?: string;
+  password_changed_at?: string;
+  locked_until?: string;
+  has_avatar?: boolean;
+  assignments: Assignment[];
+}
+
+export interface InviteRow {
+  id: number;
+  role: string;
+  scopes: Scope[];
+  email_hint?: string;
+  expires_at: string;
+  used_at?: string;
+  created_by: string;
+  created_at: string;
 }
 
 export interface ApiToken {
   id: number;
   prefix: string;            // e.g. "dmt_A7f3X9c4"
   name: string;
+  // Optional restriction on top of the owner's access; "" = none.
   role: string;
+  scope?: Scope;
   created_by?: string;       // owning user id
   // Created before tokens were tied to a user: no owner, pinned role.
   legacy: boolean;
@@ -1078,8 +1161,7 @@ export interface OIDCProvider {
   client_id: string;
   scopes: string;
   group_claim?: string;
-  admin_group?: string;
-  operator_group?: string;
+  group_mappings?: Array<{ group_value: string; role_name: string; scope?: Scope }>;
   default_role: string;
   allow_email_link?: boolean;
   enabled: boolean;
@@ -1095,8 +1177,7 @@ export interface OIDCProviderInput {
   client_secret: string;
   scopes: string;
   group_claim?: string;
-  admin_group?: string;
-  operator_group?: string;
+  group_mappings?: Array<{ group_value: string; role_name: string; scope?: Scope }>;
   default_role: string;
   allow_email_link?: boolean;
   enabled: boolean;
@@ -1149,6 +1230,7 @@ export interface Notice {
 export interface GroupMapping {
   group: string;
   role: string;
+  scope?: Scope;
 }
 
 export interface SAMLProvider {
@@ -1444,7 +1526,7 @@ export const api = {
       request<{
         access_token?: string;
         refresh_token?: string;
-        user?: { id: string; username: string; role: string; mfa_enabled?: boolean };
+        user?: { id: string; username: string; mfa_enabled?: boolean; permissions?: string[] };
         mfa_required?: boolean;
         mfa_token?: string;
       }>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
@@ -1452,13 +1534,13 @@ export const api = {
       request<{
         access_token: string;
         refresh_token: string;
-        user: { id: string; username: string; role: string; mfa_enabled?: boolean };
+        user: { id: string; username: string; mfa_enabled?: boolean; permissions?: string[] };
       }>('/auth/mfa', { method: 'POST', body: JSON.stringify({ mfa_token: mfaToken, code }) }),
     ssoExchange: (code: string) =>
       request<{
         access_token: string;
         refresh_token: string;
-        user: { id: string; username: string; role: string; mfa_enabled?: boolean };
+        user: { id: string; username: string; mfa_enabled?: boolean; permissions?: string[] };
       }>('/auth/sso/exchange', { method: 'POST', body: JSON.stringify({ code }) }),
     logout: () => {
       const body = auth.refreshToken ? JSON.stringify({ refresh_token: auth.refreshToken }) : '{}';
@@ -1502,7 +1584,7 @@ export const api = {
 
   stacks: {
     list: () => request<StackListEntry[]>('/stacks'),
-    get: (name: string) => request<{ name: string; compose: string; env: string; status?: 'ok' | 'needs_recovery'; modified_outside?: string[]; mounts_stack_dir?: boolean }>(`/stacks/${encodeURIComponent(name)}`),
+    get: (name: string) => request<{ name: string; compose: string; env: string; env_hidden?: boolean; status?: 'ok' | 'needs_recovery'; modified_outside?: string[]; mounts_stack_dir?: boolean }>(`/stacks/${encodeURIComponent(name)}`),
     create: (name: string, compose: string, env?: string) =>
       request<{ name: string }>('/stacks', { method: 'POST', body: JSON.stringify({ name, compose, env }) }),
     createFromGit: (name: string, git: StackGitSourceInput) =>
@@ -1694,25 +1776,37 @@ export const api = {
 
   roles: {
     list: () => request<CustomRole[]>('/roles'),
-    get: (name: string) => request<CustomRole>(`/roles/${encodeURIComponent(name)}`),
-    permissions: () => request<PermissionInfo[]>('/roles/permissions'),
-    create: (role: { name: string; display: string; description?: string; permissions: string[]; scopes?: RoleScope[] }) =>
-      request<CustomRole>('/roles', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(role)
-      }),
-    update: (name: string, role: { display: string; description?: string; permissions: string[]; scopes?: RoleScope[] }) =>
-      request<CustomRole>(`/roles/${encodeURIComponent(name)}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(role)
-      }),
+    get: (name: string) => request<{ role: CustomRole; assignments: Assignment[] }>(`/roles/${encodeURIComponent(name)}`),
+    catalog: () => request<RoleCatalog>('/roles/catalog'),
+    create: (role: RoleInput & { name: string }) =>
+      request<CustomRole>('/roles', { method: 'POST', body: JSON.stringify(role) }),
+    update: (name: string, role: RoleInput) =>
+      request<CustomRole>(`/roles/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(role) }),
     delete: (name: string) =>
       request<void>(`/roles/${encodeURIComponent(name)}`, { method: 'DELETE' })
   },
 
+  assignments: {
+    list: (filter: { user?: string; role?: string } = {}) => {
+      const q = new URLSearchParams();
+      if (filter.user) q.set('user', filter.user);
+      if (filter.role) q.set('role', filter.role);
+      const qs = q.toString();
+      return request<Assignment[]>('/assignments' + (qs ? '?' + qs : ''));
+    },
+    create: (input: { user_id: string; role: string; scope: Scope }) =>
+      request<Assignment>('/assignments', { method: 'POST', body: JSON.stringify(input) }),
+    delete: (id: number) => request<void>(`/assignments/${id}`, { method: 'DELETE' })
+  },
+
+  access: {
+    check: (input: AccessCheckInput) =>
+      request<AccessCheckResult>('/access/check', { method: 'POST', body: JSON.stringify(input) })
+  },
+
   apiTokens: {
     list: () => request<ApiToken[]>('/settings/api-tokens'),
-    create: (input: { name: string; role: string; expires_in_days: number }) =>
+    create: (input: { name: string; role?: string; scope?: Scope; expires_in_days: number }) =>
       request<ApiToken & { token: string }>('/settings/api-tokens', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2121,19 +2215,17 @@ export const api = {
   },
 
   users: {
-    me: () => request<{ id: string; username: string; email?: string; role: string; scope_tags?: string[] }>('/me'),
-    list: () => request<Array<{ id: string; username: string; email?: string; role: string; scope_tags?: string[]; locked_until?: string }>>('/users'),
-    create: (username: string, password: string, role: string, email?: string) =>
-      request<{ id: string; username: string; role: string }>('/users', {
-        method: 'POST',
-        body: JSON.stringify({ username, password, role, email })
-      }),
+    me: () => request<UserRow & { permissions: string[]; unscoped: boolean }>('/me'),
+    list: () => request<UserRow[]>('/users'),
+    get: (id: string) => request<UserRow>(`/users/${encodeURIComponent(id)}`),
+    create: (input: { username: string; password: string; email?: string; role?: string; scope?: Scope }) =>
+      request<UserRow>('/users', { method: 'POST', body: JSON.stringify(input) }),
     // Public preview of an invite (no auth required — used by the
     // accept page to render "Invitation as <role> for <email>").
     previewInvite: (token: string) =>
       request<{
         role: string;
-        scope_tags: string[];
+        scopes: Scope[];
         email_hint?: string;
         expires_at: string;
       }>(`/invite/${encodeURIComponent(token)}`),
@@ -2141,7 +2233,7 @@ export const api = {
     // pair so the recipient lands signed in.
     acceptInvite: (token: string, input: { username: string; email?: string; password: string }) =>
       request<{
-        user: { id: string; username: string; role: string };
+        user: { id: string; username: string; permissions?: string[] };
         access_token: string;
         refresh_token: string;
       }>(`/invite/${encodeURIComponent(token)}/accept`, {
@@ -2151,33 +2243,13 @@ export const api = {
     // Invite-link flow (Coolify-style): admin mints a one-time URL,
     // shares manually, recipient redeems on /invite/<token>.
     listInvites: (limit = 100) =>
-      request<Array<{
-        id: number;
-        role: string;
-        scope_tags: string[];
-        email_hint?: string;
-        expires_at: string;
-        used_at?: string;
-        created_by: string;
-        created_at: string;
-      }>>(`/invites?limit=${limit}`),
-    createInvite: (input: { role: string; scope_tags?: string[]; email_hint?: string; ttl_hours?: number }) =>
-      request<{
-        id: number;
-        token: string;
-        accept_url: string;
-        role: string;
-        scope_tags: string[];
-        email_hint?: string;
-        expires_at: string;
-      }>('/invites', { method: 'POST', body: JSON.stringify(input) }),
+      request<InviteRow[]>(`/invites?limit=${limit}`),
+    createInvite: (input: { role: string; scopes?: Scope[]; email_hint?: string; ttl_hours?: number }) =>
+      request<InviteRow & { token: string; accept_url: string }>('/invites', { method: 'POST', body: JSON.stringify(input) }),
     revokeInvite: (id: number) =>
       request<void>(`/invites/${id}`, { method: 'DELETE' }),
-    update: (id: string, email: string, role: string, scope_tags?: string[]) =>
-      request<{ id: string; username: string; role: string; scope_tags?: string[] }>(`/users/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify({ email, role, scope_tags: scope_tags ?? [] })
-      }),
+    update: (id: string, input: { email?: string; display_name?: string; source?: 'manual' | 'sso' }) =>
+      request<UserRow>(`/users/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
     delete: (id: string) => request<void>(`/users/${id}`, { method: 'DELETE' }),
     changePassword: (id: string, password: string, currentPassword?: string) =>
       request<void>(`/users/${id}/password`, {

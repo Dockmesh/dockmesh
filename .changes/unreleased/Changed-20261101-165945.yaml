@@ -1,0 +1,3 @@
+kind: Changed
+body: Viewing logs is part of View; environment values in inspect and .env need Deploy on the stack or the env extra
+time: 2026-11-01T16:59:45.7487005+01:00

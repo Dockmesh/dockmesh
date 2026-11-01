@@ -111,8 +111,8 @@ paths:
       tags: [agents]
       summary: List all registered remote agents
       description: |
-        Only agents whose host is in the caller's scope (scope tags and role
-        scope), the same hosts `GET /hosts` returns.
+        Only agents of hosts an assignment with Hosts: View covers, the
+        same hosts `GET /hosts` returns.
       responses:
         "200":
           description: Agents.
@@ -242,7 +242,7 @@ paths:
         re-enrolls the host under the same ID: stacks, tags and backup jobs
         stay attached; when the new enrollment completes the old client
         cert stops working and its live session is closed. Requires
-        `hosts.create` and host scope for the host, for pending and enrolled
+        `hosts.create` (an assignment on everything), for pending and enrolled
         hosts alike. Revoked hosts return 404.
       parameters:
         - name: id
@@ -548,19 +548,21 @@ paths:
 
         The new token is owned by the signed-in user, or by the owner of
         the API token making the request. Legacy tokens (no owner) can't
-        create tokens (403). The role may not grant more than the caller
-        effectively holds. A token created with an API token never expires
-        later than that token.
+        create tokens (403). A token acts with its owner's current access,
+        narrowed to `role` on `scope` when a role is given. A token created
+        with a restricted API token stays inside that restriction (403) and
+        never expires later than that token.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [name, role]
+              required: [name]
               properties:
                 name: {type: string, example: github-deploy}
-                role: {type: string, example: operator}
+                role: {type: string, example: deployer, description: Optional restriction; empty = the owner's full access.}
+                scope: {$ref: "#/components/schemas/Scope"}
                 expires_in_days:
                   type: integer
                   minimum: 0
@@ -605,9 +607,8 @@ paths:
       tags: [audit]
       summary: Audit log entries, newest first
       description: |
-        Entries record no host, so a caller limited by scope tags or a
-        scoped role sees only its own entries; `user_id` is ignored for
-        such callers.
+        Needs Settings & audit: View on an assignment on everything; such
+        callers see every entry.
       parameters:
         - name: limit
           in: query
@@ -1264,7 +1265,7 @@ paths:
                 type: object
                 properties:
                   role: {type: string}
-                  scope_tags: {type: array, items: {type: string}}
+                  scopes: {type: array, items: {$ref: "#/components/schemas/Scope"}}
                   email_hint: {type: string}
                   expires_at: {type: string, format: date-time}
         "404": {description: invite not found}
@@ -1360,10 +1361,10 @@ paths:
         permission the ticket should grant (one of `containers.view`,
         `containers.logs`, `containers.exec`, `system.view`). The server
         verifies the caller holds that permission and issues a 30s ticket
-        bound to it and to the caller's identity (user, role, host scope,
+        bound to it and to the caller's identity (user or
         API token). Each WS endpoint accepts a ticket once, asserts the
         bound permission matches its own, re-checks it, and applies the
-        caller's host and role scope. Mint a new ticket for every connect
+        caller's assignments. Mint a new ticket for every connect
         and reconnect.
       parameters:
         - name: for
@@ -1617,7 +1618,7 @@ paths:
       tags: [backups]
       summary: Create a new backup job
       description: >-
-        Jobs with a `system` source are admin-only (`system.update` with no host or role scope); other jobs need their host, before and after the change, in the caller's scope (403).
+        Jobs with a `system` source are admin-only (Settings & audit: Manage on everything); other jobs need their host, before and after the change, in the caller's scope (403).
       requestBody:
         required: true
         content:
@@ -1674,7 +1675,7 @@ paths:
       tags: [backups]
       summary: Delete a backup job (does not delete existing runs)
       description: >-
-        Jobs with a `system` source are admin-only (`system.update` with no host or role scope); other jobs need their host in the caller's scope (403).
+        Jobs with a `system` source are admin-only (Settings & audit: Manage on everything); other jobs need their host in the caller's scope (403).
       responses:
         "204": {description: Deleted.}
         "401": {$ref: "#/components/responses/Unauthorized"}
@@ -1717,8 +1718,7 @@ paths:
         and fail when it later changes; the new key is kept as
         `target_config.host_key_pending`. This moves it to `host_key`.
 
-        Jobs with a `system` source are admin-only (`system.update` with no
-        host or role scope); other jobs need their host in the caller's
+        Jobs with a `system` source are admin-only (Settings & audit: Manage on everything); other jobs need their host in the caller's
         scope (403).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
@@ -1738,7 +1738,7 @@ paths:
       tags: [backups]
       summary: Trigger a job to run immediately
       description: >-
-        Jobs with a `system` source are admin-only (`system.update` with no host or role scope); other jobs need their host in the caller's scope (403).
+        Jobs with a `system` source are admin-only (Settings & audit: Manage on everything); other jobs need their host in the caller's scope (403).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       responses:
@@ -1819,9 +1819,9 @@ paths:
         Requires the job's host and the destination host within the
         caller's scope (403). Stack runs write the target stack's files, so
         they also need `stacks.update` (`stacks.create` for a new name), the
-        stack in the caller's role scope, and the host the stack is deployed
+        stack in the caller's assignments, and the host the stack is deployed
         on in scope (403). Runs whose job was deleted are admin-only
-        (`system.update` with no host or role scope). System runs are never
+        (Settings & audit: Manage on everything). System runs are never
         restored here (409); they are restored with `POST /restore/system`,
         the setup wizard or `dockmesh restore`.
       parameters:
@@ -1865,9 +1865,9 @@ paths:
         Requires the job's host and the destination host within the
         caller's scope (403). Stack runs write the target stack's files, so
         they also need `stacks.update` (`stacks.create` for a new name), the
-        stack in the caller's role scope, and the host the stack is deployed
+        stack in the caller's assignments, and the host the stack is deployed
         on in scope (403). Runs whose job was deleted are admin-only
-        (`system.update` with no host or role scope). System runs are never
+        (Settings & audit: Manage on everything). System runs are never
         restored here (409); they are restored with `POST /restore/system`,
         the setup wizard or `dockmesh restore`.
       parameters:
@@ -1910,7 +1910,7 @@ paths:
 
         Requires the job's host within the caller's scope (403). System
         runs, and runs whose job was deleted, are admin-only
-        (`system.update` with no host or role scope).
+        (Settings & audit: Manage on everything).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       responses:
@@ -2062,7 +2062,7 @@ paths:
         self-verify. Uploads are limited to 1 GiB. Symlink and hardlink
         entries are never extracted (Dockmesh backups contain none).
 
-        Admin-only (`system.update` with no host or role scope; 403).
+        Admin-only (Settings & audit: Manage on everything; 403).
       requestBody:
         required: true
         content:
@@ -2304,7 +2304,7 @@ paths:
       tags: [backups]
       summary: Enable / disable the default daily system backup
       description: >-
-        Admin-only (`system.update` with no host or role scope; 403).
+        Admin-only (Settings & audit: Manage on everything; 403).
       requestBody:
         required: true
         content:
@@ -2354,7 +2354,7 @@ paths:
 
         Requires the job's host within the caller's scope (403). System
         runs, and runs whose job was deleted, are admin-only
-        (`system.update` with no host or role scope).
+        (Settings & audit: Manage on everything).
       parameters:
         - in: path
           name: id
@@ -2388,7 +2388,7 @@ paths:
       description: |
         Requires `backups.download` and the job's host within the caller's
         scope. System archives, and runs whose job was deleted, are
-        admin-only (`system.update` with no host or role scope). Every
+        admin-only (Settings & audit: Manage on everything). Every
         download is audited as `backup.download`.
       parameters:
         - in: path
@@ -2484,7 +2484,7 @@ paths:
       operationId: containers.inspect
       tags: [containers]
       summary: Inspect one container
-      description: The container must be within the caller's host scope and role scope (403 otherwise).
+      description: The container must be within one of the caller's assignments that allows the action (403 otherwise).
       responses:
         "200":
           description: Full container inspect response from the Docker daemon.
@@ -2822,7 +2822,7 @@ paths:
         "401":
           description: Missing, invalid or already used ticket.
         "403":
-          description: Ticket not minted for exec, permission lost, or container outside the caller's host or role scope.
+          description: Ticket not minted for exec, permission lost, or container outside the caller's assignments.
         "404": {$ref: "#/components/responses/NotFound"}
   /ws/events:
     get:
@@ -3295,8 +3295,8 @@ paths:
       summary: List all hosts visible to the caller
       description: |
         Returns the local docker daemon plus every registered agent (online
-        or offline), decorated with host tags. Scoped users (P.11.3) see
-        only hosts whose tags match their scope.
+        or offline), decorated with host tags. Callers see
+        only hosts their assignments with Hosts: View cover.
       responses:
         "200":
           description: Host list.
@@ -3728,8 +3728,7 @@ paths:
         Returns the age private key used to encrypt system backups, so the
         admin can store it offline for disaster recovery. Without this
         key, an encrypted system backup cannot be restored on a fresh
-        host. Requires `backups.restore` plus admin (`system.update` with
-        no host or role scope); every export is audited.
+        host. Requires the key export extra on an assignment on everything; every export is audited.
       responses:
         "200":
           description: age key file (text/plain).
@@ -5156,21 +5155,24 @@ paths:
     get:
       operationId: roles.list
       tags: [roles]
-      summary: List roles (built-in + custom)
+      summary: List roles (built-in + custom) with their assignment counts
       responses:
         "200":
-          description: Roles.
+          description: Roles, built-ins first.
           content:
             application/json:
               schema:
                 type: array
-                items: {$ref: "#/components/schemas/CustomRole"}
+                items: {$ref: "#/components/schemas/Role"}
         "401": {$ref: "#/components/responses/Unauthorized"}
     post:
       operationId: roles.create
       tags: [roles]
       summary: Create a custom role
-      description: Permissions and scopes may not exceed the caller's own (403).
+      description: |
+        A role is a level per area plus extras (see `/roles/catalog`). A
+        role can be assigned anywhere, so the caller must hold everything it
+        grants on everything (403).
       requestBody:
         required: true
         content:
@@ -5181,7 +5183,7 @@ paths:
           description: Created.
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/CustomRole"}
+              schema: {$ref: "#/components/schemas/Role"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
@@ -5190,52 +5192,53 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
-  /roles/permissions:
+  /roles/catalog:
     get:
-      operationId: roles.permissions
+      operationId: roles.catalog
       tags: [roles]
-      summary: Catalogue of permissions that can be granted to a role
-      description: |
-        Returns all `Perm` values the server knows about with a
-        human-readable description. Used by the role-create dialog to
-        render the permission-picker.
+      summary: Areas with their levels and the extras roles are built from
       responses:
         "200":
-          description: Permission catalogue.
+          description: Catalog.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  type: object
-                  required: [name, display_name, description, category, verb, danger_level]
-                  properties:
-                    name:
-                      type: string
-                      description: Backend identifier in `category.verb` dot-notation.
-                      example: containers.exec
-                    display_name:
-                      type: string
-                      description: Short human-readable label shown on the matrix cell tooltip and in Edit Role rows.
-                      example: Shell into container
-                    description:
-                      type: string
-                      description: One-line plain-language explanation. Renders as the `?` info-button tooltip.
-                    category:
-                      type: string
-                      description: Resource group the permissions matrix renders this row under.
-                      example: Containers
-                    verb:
-                      type: string
-                      description: Matrix column header within the category — e.g., view / deploy / update / delete or per-resource sensitive verb.
-                      example: exec
-                    danger_level:
-                      type: string
-                      enum: [low, medium, high]
-                      description: Drives UI tinting on dangerous grants.
-                    sensitive:
-                      type: boolean
-                      description: When true the permission belongs in the matrix's "Sensitive operations" sub-section rather than the standard verb columns.
+                type: object
+                required: [areas, extras]
+                properties:
+                  areas:
+                    type: array
+                    items:
+                      type: object
+                      required: [key, label, scoped, levels]
+                      properties:
+                        key: {type: string, example: stacks}
+                        label: {type: string, example: Stacks}
+                        scoped:
+                          type: boolean
+                          description: False for instance-wide areas, which only an assignment on everything grants.
+                        levels:
+                          type: array
+                          description: Cumulative, lowest first; the first is always `none`.
+                          items:
+                            type: object
+                            required: [key, label, items]
+                            properties:
+                              key: {type: string, example: deploy}
+                              label: {type: string, example: Deploy}
+                              items:
+                                type: array
+                                description: What the level adds, in plain words.
+                                items: {type: string}
+                  extras:
+                    type: array
+                    items:
+                      type: object
+                      required: [key, label, warning]
+                      properties:
+                        key: {type: string, example: terminal}
+                        label: {type: string}
+                        warning: {type: string}
         "401": {$ref: "#/components/responses/Unauthorized"}
   /roles/{name}:
     parameters:
@@ -5246,23 +5249,31 @@ paths:
     get:
       operationId: roles.get
       tags: [roles]
-      summary: Inspect one role
+      summary: Inspect one role and its assignments
       responses:
         "200":
           description: Role.
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/CustomRole"}
+              schema:
+                type: object
+                required: [role, assignments]
+                properties:
+                  role: {$ref: "#/components/schemas/Role"}
+                  assignments:
+                    type: array
+                    items: {$ref: "#/components/schemas/AssignmentView"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "404": {$ref: "#/components/responses/NotFound"}
     put:
       operationId: roles.update
       tags: [roles]
-      summary: Update a custom role's display name + permissions
+      summary: Change a custom role's levels and extras
       description: |
-        The caller must be unscoped (no host scope tags, no role scope) and
-        hold every permission of the role before and after the change (403). Taking admin rights from a role whose holders
-        are the last admins returns 409.
+        The caller must hold everything the role grants before and after
+        the change, on everything (403). Built-in roles can't be changed
+        (409; duplicate them instead), nor can the last admin role on
+        everything lose admin rights (409).
       requestBody:
         required: true
         content:
@@ -5273,34 +5284,131 @@ paths:
           description: Updated.
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/CustomRole"}
+              schema: {$ref: "#/components/schemas/Role"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
-        "409":
-          description: Role is built-in (cannot be renamed).
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/Error"}
+        "409": {$ref: "#/components/responses/Conflict"}
     delete:
       operationId: roles.delete
       tags: [roles]
       summary: Delete a custom role
       description: |
-        Built-in roles cannot be deleted — returns 409, as does deleting
-        the role of the last admins. The caller must be unscoped and hold
-        every permission of the role (403).
+        Built-in roles and roles that still have assignments or identity
+        provider group mappings can't be deleted (409). The caller must
+        hold everything the role grants (403).
       responses:
         "204": {description: Deleted.}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
-        "409":
-          description: Role is built-in or still referenced by users.
+        "409": {$ref: "#/components/responses/Conflict"}
+  /assignments:
+    get:
+      operationId: assignments.list
+      tags: [roles]
+      summary: List assignments, optionally of one user or one role
+      parameters:
+        - {name: user, in: query, schema: {type: string}}
+        - {name: role, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: Assignments.
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/Error"}
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/AssignmentView"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      operationId: assignments.create
+      tags: [roles]
+      summary: Give a user a role on a scope
+      description: |
+        Assignments add up. The caller must hold every permission of the
+        role everywhere the scope reaches (403). Adding an assignment that
+        already exists returns it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, role]
+              properties:
+                user_id: {type: string}
+                role: {type: string}
+                scope: {$ref: "#/components/schemas/Scope"}
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AssignmentView"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /assignments/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+    delete:
+      operationId: assignments.delete
+      tags: [roles]
+      summary: Remove an assignment
+      description: |
+        The caller must be able to grant the assignment (403). The last
+        assignment of an admin role on everything can't be removed (409).
+      responses:
+        "204": {description: Removed.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /access/check:
+    post:
+      operationId: access.check
+      tags: [roles]
+      summary: Can a user do something on a host or stack?
+      description: |
+        Names the action as an area level (`area` + `level`) or an extra.
+        Answers with the assignment that allows it, or the user's
+        assignments that reach the resource but don't allow it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: {type: string}
+                area: {type: string, example: stacks}
+                level: {type: string, example: deploy}
+                extra: {type: string, example: terminal}
+                host: {type: string, description: Host id. A deployed stack is checked on its deployment host.}
+                stack: {type: string}
+      responses:
+        "200":
+          description: Answer.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [allowed, closest, needed]
+                properties:
+                  allowed: {type: boolean}
+                  granted_by: {$ref: "#/components/schemas/Assignment"}
+                  closest:
+                    type: array
+                    items: {$ref: "#/components/schemas/Assignment"}
+                  needed: {type: string, example: "Stacks: Deploy or higher"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
   /settings:
     get:
       operationId: settings.list
@@ -7090,8 +7198,7 @@ paths:
         `docker compose up -d` against the chosen host. The response
         echoes the rendered compose + the resolved values with secrets
         redacted as `<generated>`.
-        The caller needs access to the target host and a role scope that covers
-        the new stack; the deployment is recorded in the stack's deploy history.
+        The caller needs Stacks: Deploy on the new stack on the target host; the deployment is recorded in the stack's deploy history.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       requestBody:
@@ -7172,10 +7279,10 @@ paths:
       tags: [users]
       summary: The authenticated user's own profile
       description: |
-        Includes role, scope_tags, and MFA state — used by the UI to gate
-        buttons. For an API token, `permissions` lists only what both the
-        token's role and its owner's current role allow, and `scope_tags`
-        are the owner's.
+        Includes the caller's assignments and the permissions it holds on
+        at least one scope — used by the UI to gate buttons. For an API
+        token, `permissions` lists what the owner's current access narrowed
+        by the token's restriction allows.
       responses:
         "200":
           description: Profile.
@@ -7205,9 +7312,8 @@ paths:
       tags: [users]
       summary: Mint a one-time invite link
       description: |
-        The role must exist (400) and may not exceed the caller's rights;
-        a caller with host scope tags must give the invite tags within
-        its own (403).
+        The role must exist (400) and the caller must hold everything it
+        grants on every scope of the invite (403).
         Returns the raw token + accept URL exactly once. The admin
         copies the URL out and shares it manually. No SMTP dependency.
       requestBody:
@@ -7219,9 +7325,10 @@ paths:
               required: [role]
               properties:
                 role: {type: string}
-                scope_tags:
+                scopes:
                   type: array
-                  items: {type: string}
+                  description: The new account gets the role on each scope. Default is everything.
+                  items: {$ref: "#/components/schemas/Scope"}
                 email_hint: {type: string}
                 ttl_hours: {type: integer, minimum: 1, maximum: 168}
       responses:
@@ -7261,14 +7368,14 @@ paths:
       operationId: users.create
       tags: [users]
       summary: Create a new local user
-      description: The role may not exceed the caller's rights, and callers with host scope tags create users through scoped invites instead (403).
+      description: The caller must hold everything the role grants on the scope (403). Without a role the account starts without access.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [username, password, role]
+              required: [username, password]
               properties:
                 username: {type: string, minLength: 1}
                 email: {type: string, format: email}
@@ -7276,6 +7383,7 @@ paths:
                 role:
                   type: string
                   description: Role name — `admin`, `operator`, `viewer`, or a custom role.
+                scope: {$ref: "#/components/schemas/Scope"}
       responses:
         "201":
           description: Created.
@@ -7293,15 +7401,26 @@ paths:
   /users/{id}:
     parameters:
       - $ref: "#/components/parameters/UserIDPath"
+    get:
+      operationId: users.get
+      tags: [users]
+      summary: One user with its assignments
+      responses:
+        "200":
+          description: User.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/User"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
     put:
       operationId: users.update
       tags: [users]
-      summary: Update user email, role, and scope tags
+      summary: Update a user's profile and whether sign-in follows IdP groups
       description: |
-        The caller must hold every permission of both the user's current
-        role and the new one, and a scoped caller can only assign scope
-        tags within its own (403). Demoting the last account that holds
-        `system.update` and all `users.*` permissions returns 409.
+        Access changes go through `/assignments`. The caller must be able
+        to grant every assignment the user has (403).
       requestBody:
         required: true
         content:
@@ -7310,12 +7429,11 @@ paths:
               type: object
               properties:
                 email: {type: string, format: email}
-                role: {type: string, description: Omitted or empty keeps the current role.}
                 display_name: {type: string}
-                scope_tags:
-                  type: array
-                  items: {type: string}
-                  description: Host tag scope. Omitted keeps the current tags; empty = access to all hosts.
+                source:
+                  type: string
+                  enum: [manual, sso]
+                  description: Omitted keeps the current value.
       responses:
         "200":
           description: Updated.
@@ -7331,7 +7449,7 @@ paths:
       operationId: users.delete
       tags: [users]
       summary: Delete a local user
-      description: Same rules as update; deleting the last admin-capable account returns 409.
+      description: Same rules as update; deleting the account that holds the last admin assignment on everything returns 409.
       responses:
         "204": {description: Deleted.}
         "401": {$ref: "#/components/responses/Unauthorized"}
@@ -7836,16 +7954,17 @@ components:
       description: |
         Long-lived bearer token. Plaintext is NEVER returned except the
         one-time create response. A token belongs to the user who created
-        it (`created_by`): requests need the token's role AND the owner's
-        current role to allow them, and run with the owner's host scope.
-        Tokens created before owners were recorded are `legacy`: they keep
-        their role and have no owner.
+        it (`created_by`) and acts with the owner's current access, narrowed
+        to `role` on `scope` when `role` is set. Tokens created before owners
+        were recorded are `legacy`: they act as their role on their scope
+        and have no owner.
       required: [id, prefix, name, role, legacy, created_at]
       properties:
         id: {type: integer, format: int64}
         prefix: {type: string, example: "dmt_A7f3X9c4"}
         name: {type: string}
-        role: {type: string}
+        role: {type: string, description: Restriction role; empty = none.}
+        scope: {$ref: "#/components/schemas/Scope"}
         created_by: {type: string, description: Owning user id.}
         legacy: {type: boolean, description: No owner on record; works with its pinned role.}
         owner_missing:
@@ -8188,7 +8307,7 @@ components:
         total_bytes: {type: integer, format: int64}
         used_bytes: {type: integer, format: int64}
         last_checked_at: {type: string, format: date-time}
-        job_count: {type: integer, description: "Backup jobs (not deleted ones) that write to this target. Only for callers without a host or role scope."}
+        job_count: {type: integer, description: "Backup jobs (not deleted ones) that write to this target. Only for callers whose access is all on everything."}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     BackupTargetInput:
@@ -8260,18 +8379,62 @@ components:
     Empty:
       type: object
       description: Empty body — use for 204 No Content endpoints.
+    Scope:
+      type: object
+      required: [type]
+      description: |
+        Where an assignment applies. `host` and `stack` carry the host id in
+        `host`; `host_tag` and `stack` carry the tag or stack name in
+        `value`. Stack names are unique across the instance; a stack scope
+        matches the stack while it is deployed on `host`; without `host` it
+        matches the stack anywhere and while it is not deployed.
+      properties:
+        type: {type: string, enum: [global, host, host_tag, stack]}
+        host: {type: string, example: local}
+        value: {type: string, example: web}
+    Assignment:
+      type: object
+      required: [id, user_id, role, scope, source]
+      properties:
+        id: {type: integer, format: int64}
+        user_id: {type: string}
+        role: {type: string}
+        scope: {$ref: "#/components/schemas/Scope"}
+        source:
+          type: string
+          enum: [manual, idp]
+          description: "`idp`: written by an identity provider's group mapping at sign-in and replaced on every sign-in."
+        via: {type: string, description: The group or default role an `idp` assignment came from.}
+        created_at: {type: string}
+        created_by: {type: string}
+    AssignmentView:
+      allOf:
+        - $ref: "#/components/schemas/Assignment"
+        - type: object
+          properties:
+            username: {type: string}
     User:
       type: object
-      required: [id, username, role, mfa_enabled]
+      required: [id, username, source, mfa_enabled]
       properties:
         id: {type: string, format: uuid}
         username: {type: string}
+        display_name: {type: string}
         email: {type: string, format: email}
-        role: {type: string, example: operator}
-        scope_tags:
+        source:
+          type: string
+          enum: [manual, sso]
+          description: "`sso`: sign-in replaces the account's identity provider assignments from its groups."
+        assignments:
           type: array
+          items: {$ref: "#/components/schemas/Assignment"}
+        permissions:
+          type: array
+          description: In /me and the login response only. Every permission the caller holds on at least one scope, for UI gating.
           items: {type: string}
-          description: Host tags this user is scoped to. Empty / omitted = access to all hosts.
+        unscoped:
+          type: boolean
+          description: In /me only. True when every permission is held on everything.
         mfa_enabled: {type: boolean}
         locked_until:
           type: string
@@ -8510,15 +8673,19 @@ components:
         client_id: {type: string}
         scopes: {type: string, example: "openid profile email"}
         group_claim: {type: string}
-        admin_group: {type: string}
-        operator_group: {type: string}
+        group_mappings:
+          type: array
+          description: Each group in the claim that matches gives its role on its scope; with no match the default role applies on everything.
+          items:
+            type: object
+            properties:
+              group_value: {type: string}
+              role_name: {type: string}
+              scope: {$ref: "#/components/schemas/Scope"}
         default_role: {type: string}
         allow_email_link:
           type: boolean
           description: Attach a login to an existing account with the same email when the IdP marks the email verified. Off by default.
-        default_scope_tags:
-          type: array
-          items: {type: string}
         enabled: {type: boolean}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
@@ -8553,11 +8720,13 @@ components:
         default_role: {type: string}
         group_mappings:
           type: array
+          description: Each matching group gives its role on its scope; with no match the default role applies on everything.
           items:
             type: object
             properties:
               group: {type: string}
               role: {type: string}
+              scope: {$ref: "#/components/schemas/Scope"}
         allow_email_link: {type: boolean}
         enabled: {type: boolean}
         is_default: {type: boolean}
@@ -8575,8 +8744,15 @@ components:
           description: Omit / empty on update to keep the existing secret.
         scopes: {type: string}
         group_claim: {type: string}
-        admin_group: {type: string}
-        operator_group: {type: string}
+        group_mappings:
+          type: array
+          description: Each group in the claim that matches gives its role on its scope; with no match the default role applies on everything.
+          items:
+            type: object
+            properties:
+              group_value: {type: string}
+              role_name: {type: string}
+              scope: {$ref: "#/components/schemas/Scope"}
         default_role: {type: string}
         allow_email_link:
           type: boolean
@@ -8900,51 +9076,43 @@ components:
         scope_tags:
           type: array
           items: {type: string}
-    CustomRole:
+    Role:
       type: object
-      required: [name, display, permissions]
+      required: [name, display, builtin, levels, extras, permissions]
       properties:
-        name: {type: string, example: operator}
-        display: {type: string, example: "Operator"}
-        description:
-          type: string
-          description: One-line human blurb shown under the role name in the Roles UI.
-          example: "Deploy and operate stacks. No editing of compose files, no user management."
+        name: {type: string, example: deployer}
+        display: {type: string, example: Deployer}
+        description: {type: string}
         builtin:
           type: boolean
-          description: "Built-in roles cannot be renamed or deleted (the five v2 roles: viewer, operator, deployer, host-admin, admin)."
+          description: Built-in roles (admin, host-admin, deployer, operator, viewer) can't be changed or deleted.
+        levels:
+          type: object
+          additionalProperties: {type: string}
+          description: Area key → level key; every area is present.
+          example: {stacks: deploy, containers: operate, proxy: none}
+        extras:
+          type: array
+          items: {type: string, enum: [terminal, files, env, backup_download, key_export]}
         permissions:
           type: array
+          description: The permissions the levels and extras grant, for clients that gate on them.
           items: {type: string}
-        scopes:
-          type: array
-          description: Per-role scope rows. Empty = unscoped (acts on everything its permissions allow). Each row narrows scope to a specific host, stack, or all hosts carrying a tag. Effective scope is the UNION of all rows for the role.
-          items: {$ref: "#/components/schemas/RoleScope"}
-    RoleScope:
-      type: object
-      required: [scope_type, scope_value]
-      properties:
-        scope_type:
-          type: string
-          enum: [host, stack, host_tag]
-        scope_value:
-          type: string
-          description: Host id, stack name, or host-tag string depending on scope_type.
+        assignments: {type: integer, description: How many assignments use the role.}
     RoleInput:
       type: object
-      required: [name, display, permissions]
+      required: [name, display]
       properties:
-        name: {type: string, example: deploy-bot}
+        name: {type: string, pattern: "^[a-z0-9_-]{1,64}$", example: backup-operator}
         display: {type: string}
-        description:
-          type: string
-          description: Optional one-line human blurb. Shown under the role name in the Roles UI.
-        permissions:
+        description: {type: string}
+        levels:
+          type: object
+          additionalProperties: {type: string}
+          description: Area key → level key; missing areas are `none`.
+        extras:
           type: array
           items: {type: string}
-        scopes:
-          type: array
-          items: {$ref: "#/components/schemas/RoleScope"}
     Notice:
       type: object
       required: [id, key, severity, title, created_at, dismissible, dismissed]
@@ -8977,6 +9145,9 @@ components:
         name: {type: string}
         compose: {type: string}
         env: {type: string}
+        env_hidden:
+          type: boolean
+          description: The caller may not read .env (needs Deploy on the stack or the env extra); `env` is empty.
         modified_outside:
           type: array
           items: {type: string}

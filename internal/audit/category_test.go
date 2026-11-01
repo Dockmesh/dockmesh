@@ -25,6 +25,7 @@ var dynamicActions = map[string][]string{
 var forwarders = map[string]int{
 	"audit":              1,
 	"auditDetached":      1,
+	"auditAssignment":    1,
 	"containerAction":    3,
 	"writeVersionSwitch": 2,
 }

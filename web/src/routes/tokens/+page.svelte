@@ -11,12 +11,9 @@
   //     charts — needs an aggregate table or per-request logging that
   //     isn't worth the engineering for this slice.
   //   - No TabStrip across settings cluster — those are separate routes.
-  //
-  // Permission-gating uses v1 RBAC string `user.manage` for now;
-  // migration to v2.1 (`tokens.view` / `tokens.create` / `tokens.delete`)
-  // happens in the consolidated backend slice at the end of the
-  // frontend-rebuild phase.
-  import { api, ApiError, type ApiToken, type CustomRole } from '$lib/api';
+  import { api, ApiError, type ApiToken, type CustomRole, type RoleCatalog, type Scope } from '$lib/api';
+  import { scopeLabel, roleOneLine } from '$lib/access';
+  import ScopePicker from '$lib/components/access/ScopePicker.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { Skeleton } from '$lib/components/ui';
   import { EditorialPage, Eyebrow, Field, EditorialModal } from '$lib/components/editorial';
@@ -37,7 +34,9 @@
   // Create form state
   let showCreate = $state(false);
   let newName = $state('');
-  let newRole = $state('viewer');
+  let newRole = $state('');
+  let newScope = $state<Scope>({ type: 'global' });
+  let catalog = $state<RoleCatalog | null>(null);
   let newExpiresKey = $state<'30d' | '90d' | '180d' | '365d' | 'never'>('90d');
   let creating = $state(false);
 
@@ -81,7 +80,15 @@
   }
 
   async function loadRoles() {
-    try { roles = await api.roles.list(); } catch { /* fall back to built-ins */ }
+    // Without Users & roles: View, offer the roles the caller holds itself.
+    if (allowed('roles.view')) {
+      try { roles = await api.roles.list(); } catch { /* the picker then offers no restriction only */ }
+    } else {
+      const me = await api.users.me().catch(() => null);
+      const own = [...new Set((me?.assignments ?? []).map((a) => a.role))];
+      roles = own.map((name) => ({ name, display: name, description: '', builtin: false, levels: {}, extras: [], permissions: [] }) as CustomRole);
+    }
+    catalog = await api.roles.catalog().catch(() => null);
   }
 
   // ── Filter + stats ───────────────────────────────────────────────────
@@ -135,20 +142,22 @@
   // ── Actions ──────────────────────────────────────────────────────────
   async function createApiToken(e: Event) {
     e.preventDefault();
-    if (!newName.trim() || !newRole) return;
+    if (!newName.trim()) return;
     creating = true;
     const expiresMap = { '30d': 30, '90d': 90, '180d': 180, '365d': 365, 'never': 0 } as const;
     try {
       const res = await api.apiTokens.create({
         name: newName.trim(),
-        role: newRole,
+        role: newRole || undefined,
+        scope: newRole ? newScope : undefined,
         expires_in_days: expiresMap[newExpiresKey],
       });
       freshToken = { name: res.name, value: res.token };
       freshCopied = false;
       showCreate = false;
       newName = '';
-      newRole = 'viewer';
+      newRole = '';
+      newScope = { type: 'global' };
       newExpiresKey = '90d';
       await loadApiTokens();
     } catch (err) {
@@ -221,9 +230,14 @@
   }
 
   function scopePillClass(role: string): string {
-    if (role === 'admin' || role === 'host-admin') return 'dm-pill dm-pill-warning';
-    if (role === 'operator' || role === 'deployer') return 'dm-pill dm-pill-success';
+    if (!role || role === 'admin' || role === 'host-admin') return 'dm-pill dm-pill-warning';
     return 'dm-pill dm-pill-neutral';
+  }
+
+  function restrictionLabel(t: ApiToken): string {
+    if (!t.role) return 'owner’s access';
+    const r = roles.find((x) => x.name === t.role);
+    return `${r?.display ?? t.role} on ${scopeLabel(t.scope)}`;
   }
 
   function statusPill(t: ApiToken): { cls: string; label: string } | null {
@@ -234,28 +248,10 @@
     return null;
   }
 
-  // Available roles for the picker — Backend accepts any role name from
-  // the catalogue, plus the built-ins as a safety net if the roles store
-  // is empty (pre-migration).
-  const pickableRoles = $derived.by(() => {
-    if (roles.length > 0) return roles;
-    return [
-      { name: 'viewer',    display: 'viewer',    permissions: [], builtin: true },
-      { name: 'operator',  display: 'operator',  permissions: [], builtin: true },
-      { name: 'admin',     display: 'admin',     permissions: [], builtin: true },
-    ] as CustomRole[];
-  });
-
-  function roleBlurb(name: string): string {
-    switch (name) {
-      case 'viewer':     return 'GET on everything you can see.';
-      case 'operator':   return 'Start, stop, restart. No deploys.';
-      case 'deployer':   return 'Deploy + restart. No user mgmt.';
-      case 'host-admin': return 'Hosts + agents + tags. No user mgmt.';
-      case 'admin':      return 'Full control. Use sparingly in CI.';
-      default:           return 'custom role';
-    }
-  }
+  const pickableRoles = $derived<Array<Pick<CustomRole, 'name' | 'display'> & { blurb: string }>>([
+    { name: '', display: 'No restriction', blurb: 'Acts with your current access, including later changes.' },
+    ...roles.map((r) => ({ name: r.name, display: r.display, blurb: roleOneLine(catalog, r) || r.description || '' }))
+  ]);
 
   $effect(() => {
     if (allowed('tokens.manage_others')) {
@@ -423,8 +419,8 @@
               </div>
 
               <div class="tok-cell-scope">
-                <span class={scopePillClass(t.role) + ' tok-scope-pill'}>
-                  <span class="dm-pill-dot"></span>{t.role}
+                <span class={scopePillClass(t.role) + ' tok-scope-pill'} title={t.role ? 'Restricted: never more than your own access' : 'Acts with your current access'}>
+                  <span class="dm-pill-dot"></span>{restrictionLabel(t)}
                 </span>
               </div>
 
@@ -462,9 +458,9 @@
         <div class="tok-hint-title">Using a token</div>
         <p class="tok-hint-blurb">
           Send it as <code class="tok-hint-code">Authorization: Bearer dmt_…</code>
-          on any API request. A token belongs to you: it never gets more than its role and your
-          current permissions and host scope allow, and it stops working if your account is
-          deleted. Pick a narrow role to limit the damage if it leaks.
+          on any API request. A token belongs to you: it never gets more than your current access,
+          narrowed further by its restriction if it has one, and it stops working if your account is
+          deleted. Restrict it to a narrow role and scope to limit the damage if it leaks.
         </p>
       </div>
     {/if}
@@ -490,7 +486,7 @@
       />
     </Field>
 
-    <Field label="Scope" hint="Pick the narrowest role that works.">
+    <Field label="Restriction" hint="On top of your own access; a token never gets more than you have.">
       <div class="tok-scope-grid">
         {#each pickableRoles as r (r.name)}
           <button
@@ -500,11 +496,14 @@
             onclick={() => (newRole = r.name)}
           >
             <span class="tok-scope-card-label">{r.display || r.name}</span>
-            <span class="tok-scope-card-blurb">{roleBlurb(r.name)}</span>
+            <span class="tok-scope-card-blurb">{r.blurb}</span>
           </button>
         {/each}
       </div>
     </Field>
+    {#if newRole}
+      <ScopePicker bind:value={newScope} label="Restricted to" />
+    {/if}
 
     <Field label="Expires" hint="Shorter is safer; CI tokens often use 90 days.">
       <div class="tok-expires-row">

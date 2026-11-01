@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dockmesh/dockmesh/internal/rbac"
+
 	"github.com/google/uuid"
 )
 
@@ -38,7 +40,7 @@ var ssoKinds = map[string]ssoQueries{
 	"oidc": {
 		bySubject:     `SELECT id FROM users WHERE oidc_provider = ? AND oidc_subject = ? LIMIT 1`,
 		link:          `UPDATE users SET oidc_provider = ?, oidc_subject = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		insert:        `INSERT INTO users (id, username, email, password, role, role_source, oidc_provider, oidc_subject) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		insert:        `INSERT INTO users (id, username, email, password, role_source, oidc_provider, oidc_subject) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		linkingBySlug: `SELECT allow_email_link FROM oidc_providers WHERE slug = ?`,
 		linkingAll:    `SELECT id, allow_email_link FROM oidc_providers`,
 		setLinking:    `UPDATE oidc_providers SET allow_email_link = ? WHERE id = ?`,
@@ -46,7 +48,7 @@ var ssoKinds = map[string]ssoQueries{
 	"saml": {
 		bySubject:     `SELECT id FROM users WHERE saml_provider = ? AND saml_subject = ? LIMIT 1`,
 		link:          `UPDATE users SET saml_provider = ?, saml_subject = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		insert:        `INSERT INTO users (id, username, email, password, role, role_source, saml_provider, saml_subject) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		insert:        `INSERT INTO users (id, username, email, password, role_source, saml_provider, saml_subject) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		linkingBySlug: `SELECT allow_email_link FROM saml_providers WHERE slug = ?`,
 		linkingAll:    `SELECT id, allow_email_link FROM saml_providers`,
 		setLinking:    `UPDATE saml_providers SET allow_email_link = ? WHERE id = ?`,
@@ -54,7 +56,7 @@ var ssoKinds = map[string]ssoQueries{
 	"oauth2": {
 		bySubject:     `SELECT id FROM users WHERE oauth2_provider = ? AND oauth2_subject = ? LIMIT 1`,
 		link:          `UPDATE users SET oauth2_provider = ?, oauth2_subject = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		insert:        `INSERT INTO users (id, username, email, password, role, role_source, oauth2_provider, oauth2_subject) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		insert:        `INSERT INTO users (id, username, email, password, role_source, oauth2_provider, oauth2_subject) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		linkingBySlug: `SELECT allow_email_link FROM oauth2_providers WHERE slug = ?`,
 		linkingAll:    `SELECT id, allow_email_link FROM oauth2_providers`,
 		setLinking:    `UPDATE oauth2_providers SET allow_email_link = ? WHERE id = ?`,
@@ -62,7 +64,7 @@ var ssoKinds = map[string]ssoQueries{
 	"ldap": {
 		bySubject:     `SELECT id FROM users WHERE ldap_provider = ? AND ldap_subject = ? LIMIT 1`,
 		link:          `UPDATE users SET ldap_provider = ?, ldap_subject = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		insert:        `INSERT INTO users (id, username, email, password, role, role_source, ldap_provider, ldap_subject) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		insert:        `INSERT INTO users (id, username, email, password, role_source, ldap_provider, ldap_subject) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		linkingBySlug: `SELECT allow_email_link FROM ldap_providers WHERE slug = ?`,
 		linkingAll:    `SELECT id, allow_email_link FROM ldap_providers`,
 		setLinking:    `UPDATE ldap_providers SET allow_email_link = ? WHERE id = ?`,
@@ -86,7 +88,8 @@ type SSOIdentity struct {
 	// EmailVerified is true only when the IdP explicitly says so.
 	EmailVerified bool
 	Username      string
-	Role          string // role derived from the IdP's groups/defaults
+	// Assignments the IdP's group mappings (or its default role) give.
+	Assignments []rbac.Assignment
 }
 
 // ClaimTrue reads a boolean IdP claim; some IdPs send "true" as a string.
@@ -142,8 +145,8 @@ func (s *Service) EmailLinkingByID(ctx context.Context, kind string) (map[int64]
 // ProvisionSSOUser finds or creates the account for an SSO login. Known
 // identities sign in; an existing account with the same email is linked
 // only when the email is verified and the provider allows linking; new
-// accounts are created only when sign-in policy allows it. The role is
-// updated from the IdP only for accounts whose role came from SSO.
+// accounts are created only when sign-in policy allows it. Access is
+// updated from the IdP only for accounts whose source is "sso".
 func (s *Service) ProvisionSSOUser(ctx context.Context, id SSOIdentity) (*User, error) {
 	q, err := ssoKind(id.Kind)
 	if err != nil {
@@ -158,15 +161,17 @@ func (s *Service) ProvisionSSOUser(ctx context.Context, id SSOIdentity) (*User, 
 	}
 	if userID == "" && id.Email != "" {
 		// Only plain local accounts can be linked: one already bound to an
-		// IdP would be taken from it, and an account with 2FA or the admin
-		// role would be entered without its own factors.
+		// IdP would be taken from it, and an account with 2FA or a role
+		// that manages users or settings would be entered without its own
+		// factors.
 		emailUser, err := s.lookupUserID(ctx, `SELECT id FROM users WHERE email = ? COLLATE NOCASE LIMIT 1`, id.Email)
 		if err != nil {
 			return nil, err
 		}
 		if emailUser != "" {
 			linkable, err := s.lookupUserID(ctx, `
-				SELECT id FROM users WHERE id = ? AND totp_verified = 0 AND role <> 'admin'
+				SELECT id FROM users WHERE id = ? AND totp_verified = 0
+				   AND NOT EXISTS (SELECT 1 FROM role_assignments a JOIN role_levels l ON l.role_name = a.role_name WHERE a.user_id = users.id AND l.area IN ('users', 'settings') AND l.level = 'manage')
 				   AND oidc_provider IS NULL AND saml_provider IS NULL
 				   AND oauth2_provider IS NULL AND ldap_provider IS NULL`, emailUser)
 			if err != nil {
@@ -196,12 +201,16 @@ func (s *Service) ProvisionSSOUser(ctx context.Context, id SSOIdentity) (*User, 
 		}
 		return s.createSSOUser(ctx, id, q.insert)
 	}
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND role_source = ? AND role <> ?`,
-		id.Role, userID, RoleSourceSSO, id.Role); err != nil {
+	u, err := s.GetUser(ctx, userID)
+	if err != nil {
 		return nil, err
 	}
-	return s.GetUser(ctx, userID)
+	if u.Source == RoleSourceSSO {
+		if err := s.syncIdPAssignments(ctx, userID, id.Assignments); err != nil {
+			return nil, err
+		}
+	}
+	return u, nil
 }
 
 func (s *Service) lookupUserID(ctx context.Context, query string, args ...any) (string, error) {
@@ -238,8 +247,11 @@ func (s *Service) createSSOUser(ctx context.Context, id SSOIdentity, insert stri
 			name = fmt.Sprintf("%s%d", base, i)
 		}
 		uid := uuid.NewString()
-		_, err = s.db.ExecContext(ctx, insert, uid, name, email, hash, id.Role, RoleSourceSSO, id.Provider, id.Subject)
+		_, err = s.db.ExecContext(ctx, insert, uid, name, email, hash, RoleSourceSSO, id.Provider, id.Subject)
 		if err == nil {
+			if err := s.syncIdPAssignments(ctx, uid, id.Assignments); err != nil {
+				return nil, err
+			}
 			return s.GetUser(ctx, uid)
 		}
 		if !strings.Contains(err.Error(), "users.username") {
@@ -247,4 +259,11 @@ func (s *Service) createSSOUser(ctx context.Context, id SSOIdentity, insert stri
 		}
 	}
 	return nil, fmt.Errorf("create sso user: %w", err)
+}
+
+func (s *Service) syncIdPAssignments(ctx context.Context, userID string, want []rbac.Assignment) error {
+	if s.syncIdP == nil {
+		return errors.New("identity provider assignments are not wired")
+	}
+	return s.syncIdP(ctx, userID, want)
 }

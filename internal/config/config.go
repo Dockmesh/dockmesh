@@ -53,13 +53,6 @@ type Config struct {
 	// default so existing installs and `dockmesh init --yes` keep
 	// working unchanged.
 	SetupForce bool
-	// RBACv2Enforce gates the new role-scope (per-host + per-stack)
-	// enforcement on typed-resource handlers. Default false during the
-	// R-2 → R-4 cutover so the catalog ships before enforcement does.
-	// Flipped to true in slice R-5 for the v0.3.0 release. Operators
-	// can flip it on early via DOCKMESH_RBAC_V2_ENFORCE=true to test
-	// scope behaviour ahead of the cutover.
-	RBACv2Enforce bool
 	// UpdateRollbackKeep is how many rollback tags per image the
 	// container updater keeps (DOCKMESH_UPDATE_ROLLBACK_KEEP).
 	UpdateRollbackKeep int
@@ -95,7 +88,6 @@ func Load() (*Config, error) {
 		OTelEndpoint:   envOr("DOCKMESH_OTEL_ENDPOINT", ""),
 		OTelInsecure:   envOr("DOCKMESH_OTEL_INSECURE", "false") == "true",
 		SetupForce:     envOr("DOCKMESH_SETUP_FORCE", "false") == "true",
-		RBACv2Enforce:  envOr("DOCKMESH_RBAC_V2_ENFORCE", "true") != "false",
 	}
 	// Mirrors updater.DefaultRollbackKeep; config can't import updater.
 	cfg.UpdateRollbackKeep = 3

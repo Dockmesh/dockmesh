@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
+
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/clientip"
@@ -88,9 +90,10 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	if h.Audit != nil && res.User != nil {
 		h.Audit.Write(ctx, res.User.ID, audit.ActionLogin, req.Username, map[string]string{"ip": ip})
 	}
-	// Enrich the response with v2.1 permissions + scopes so the frontend
-	// doesn't have to round-trip /me after login to gate UI.
-	enrichUserWithRBAC(h.Roles, res.User)
+	// Permissions let the frontend gate the UI without a /me round trip.
+	if res.User != nil {
+		withPermissions(res.User, middleware.UserAccess(res.User.ID))
+	}
 	writeJSON(w, http.StatusOK, res)
 }
 

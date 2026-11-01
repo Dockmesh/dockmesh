@@ -71,6 +71,8 @@ type Detail struct {
 	Name    string `json:"name"`
 	Compose string `json:"compose"`
 	Env     string `json:"env,omitempty"`
+	// EnvHidden is set when the caller may not read .env.
+	EnvHidden bool `json:"env_hidden,omitempty"`
 	// ModifiedOutside lists the stack files changed outside Dockmesh
 	// since it last wrote them; the next deploy needs a confirmation.
 	ModifiedOutside []string `json:"modified_outside,omitempty"`

@@ -35,7 +35,7 @@ func (h *Handlers) UpdatePasswordPolicy(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.audit(r, "auth.policy_update", "", map[string]any{
-		"min_length":      p.MinLength,
+		"min_length":       p.MinLength,
 		"lockout_attempts": p.LockoutMaxAttempts,
 	})
 	writeJSON(w, http.StatusOK, auth.LoadPolicy(h.Settings))
@@ -77,7 +77,7 @@ func (h *Handlers) UpdateSignInConfig(w http.ResponseWriter, r *http.Request) {
 // locked out (not the attacker).
 func (h *Handlers) UnlockUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if _, _, ok := h.requireManageUser(w, r, id); !ok {
+	if !h.requireManageUser(w, r, id) {
 		return
 	}
 	if err := h.Auth.Unlock(r.Context(), id); err != nil {

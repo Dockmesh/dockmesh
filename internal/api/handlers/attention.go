@@ -57,7 +57,7 @@ var exitCodeRe = regexp.MustCompile(`^Exited \((-?\d+)\)`)
 
 // Attention aggregates what needs someone to act across the caller's
 // scope. Each source is only consulted when the caller holds its view
-// permission, and every item is filtered by host and role scope, so the
+// permission, and every item is filtered by scope, so the
 // route itself needs no permission beyond authentication.
 //
 //	GET /api/v1/attention
@@ -67,28 +67,35 @@ func (h *Handlers) Attention(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(ctx)
 
 	allowed := func(perm rbac.Perm) bool { return middleware.Allowed(ctx, perm) }
+	// Each source filters its items by scope under its own permission.
+	as := func(perm rbac.Perm) *http.Request { return r.WithContext(middleware.WithRoutePerm(ctx, perm)) }
 	var rows []containerRow
-	if allowed(rbac.PermContainersView) || allowed(rbac.PermAlertsView) || allowed(rbac.PermImagesView) {
-		rows = h.attentionContainers(r)
+	switch {
+	case allowed(rbac.PermContainersView):
+		rows = h.attentionContainers(as(rbac.PermContainersView))
+	case allowed(rbac.PermImagesView):
+		rows = h.attentionContainers(as(rbac.PermImagesView))
+	case allowed(rbac.PermAlertsHistory):
+		rows = h.attentionContainers(as(rbac.PermAlertsHistory))
 	}
 	items := []AttentionItem{}
 	if allowed(rbac.PermHostsView) {
-		items = append(items, h.attentionHosts(r)...)
+		items = append(items, h.attentionHosts(as(rbac.PermHostsView))...)
 	}
 	if allowed(rbac.PermContainersView) {
 		items = append(items, attentionContainerItems(rows)...)
 	}
 	if allowed(rbac.PermBackupsView) {
-		items = append(items, h.attentionBackups(r)...)
+		items = append(items, h.attentionBackups(as(rbac.PermBackupsView))...)
 	}
 	if allowed(rbac.PermImagesView) {
 		items = append(items, h.attentionImageUpdates(rows, allowed(rbac.PermContainersView))...)
 	}
 	if allowed(rbac.PermProxyView) {
-		items = append(items, h.attentionCerts(r)...)
+		items = append(items, h.attentionCerts(as(rbac.PermProxyView))...)
 	}
-	if allowed(rbac.PermAlertsView) {
-		items = append(items, h.attentionAlerts(r, rows, attentionCovered(items))...)
+	if allowed(rbac.PermAlertsHistory) {
+		items = append(items, h.attentionAlerts(as(rbac.PermAlertsHistory), rows, attentionCovered(items))...)
 	}
 	items = append(items, h.attentionNotices(r)...)
 	sortAttention(items)

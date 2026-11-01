@@ -85,7 +85,7 @@ func unlockAs(t *testing.T, e *authzEnv, userID string) {
 	t.Helper()
 	admin := e.user("unlock-admin", "admin")
 	req := httptest.NewRequest(http.MethodPost, "/users/"+userID+"/unlock", nil)
-	req = req.WithContext(middleware.WithIdentity(req.Context(), middleware.Identity{UserID: admin.ID, Role: admin.Role}))
+	req = req.WithContext(middleware.WithIdentity(req.Context(), middleware.Identity{UserID: admin.ID, Access: e.h.Roles.AccessFor(admin.ID)}))
 	rr := httptest.NewRecorder()
 	chiRouterFor(http.MethodPost, "/users/{id}/unlock", e.h.UnlockUser).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNoContent {

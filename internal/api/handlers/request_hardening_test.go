@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/rbac"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/pquerna/otp/totp"
 
@@ -138,7 +140,7 @@ func TestInviteAcceptRateLimited(t *testing.T) {
 		}
 	}
 	inviter := e.user("inviter", "admin")
-	inv, err := e.h.Invites.Create(context.Background(), invites.CreateInput{Role: "viewer", CreatedBy: inviter.ID})
+	inv, err := e.h.Invites.Create(context.Background(), invites.CreateInput{Role: "viewer", Scopes: []rbac.Scope{rbac.Global}, CreatedBy: inviter.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

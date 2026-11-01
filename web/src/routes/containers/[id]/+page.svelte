@@ -75,8 +75,11 @@
   // from their own page; changing them here would be undone or break it.
   const isSystem = $derived(!!info?.Config?.Labels?.['dockmesh.component']);
   const systemComponent = $derived(info?.Config?.Labels?.['dockmesh.component'] as string | undefined);
-  const canControl = $derived(!isSystem && allowed('containers.update', { stack: ctxStack, host: ctxHost }));
-  const canExec = $derived(!isSystem && allowed('containers.exec', { stack: ctxStack, host: ctxHost }));
+  const canControl = $derived(!isSystem && allowed('containers.update'));
+  const canExec = $derived(!isSystem && allowed('containers.exec'));
+  const canFiles = $derived(!isSystem && (allowed('containers.files') || canExec));
+  const canRemove = $derived(!isSystem && allowed('containers.delete'));
+  const canUpgrade = $derived(!isSystem && allowed('containers.upgrade'));
   let loading = $state(true);
   type TabKey = 'overview' | 'logs' | 'exec' | 'updates' | 'inspect' | 'network' | 'files';
   const TAB_KEYS: TabKey[] = ['overview', 'logs', 'exec', 'updates', 'inspect', 'network', 'files'];
@@ -978,7 +981,7 @@
     if (canControl && (info.State?.Running || info.State?.Paused)) items.push({ label: 'Kill', onclick: killContainer });
     items.push({ label: 'Copy ID', onclick: () => void copyWithToast(info.Id ?? id, 'Copied container ID') });
     if (ctxStack) items.push({ label: `Open stack ${ctxStack}`, href: `/stacks/${encodeURIComponent(ctxStack)}` });
-    if (canControl) items.push({ separator: true }, { label: 'Remove…', danger: true, onclick: remove });
+    if (canRemove) items.push({ separator: true }, { label: 'Remove…', danger: true, onclick: remove });
     return items;
   });
 
@@ -996,8 +999,8 @@
       label: 'Network',
       count: info && Object.keys(info.NetworkSettings?.Networks ?? {}).length > 0 ? Object.keys(info.NetworkSettings?.Networks ?? {}).length : null
     },
-    ...(canExec ? [{ key: 'files', label: 'Files' }] : []),
-    ...(canControl && !isRemote ? [{ key: 'updates', label: 'Updates', count: updateHistory.length || null }] : [])
+    ...(canFiles ? [{ key: 'files', label: 'Files' }] : []),
+    ...(canUpgrade && !isRemote ? [{ key: 'updates', label: 'Updates', count: updateHistory.length || null }] : [])
   ]);
 </script>
 
@@ -1454,7 +1457,7 @@
         {/if}
       </div>
     </div>
-  {:else if tab === 'updates' && canControl && !isRemote}
+  {:else if tab === 'updates' && canUpgrade && !isRemote}
     <div class="ctn-tab-pane ctn-updates-grid">
       <div class="ctn-updates-main">
         {#if previewLoading && !updatePreview}
@@ -1838,9 +1841,9 @@
         </div>
       {/if}
     </div>
-  {:else if tab === 'files' && info && canExec && isRemote}
+  {:else if tab === 'files' && info && canFiles && isRemote}
     <EmptyState title="Files" description="Browsing files is available for containers on the server host; agent hosts follow in a later release." />
-  {:else if tab === 'files' && info && canExec}
+  {:else if tab === 'files' && info && canFiles}
     <div class="ctn-files-pane">
       <div class="ctn-files-bar">
         <nav class="ctn-files-crumbs" aria-label="Path">

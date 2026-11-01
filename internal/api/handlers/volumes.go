@@ -107,9 +107,9 @@ func (h *Handlers) CreateVolume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), "local")
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermVolumesCreate, scopeReq, "host local")
+	scopeReq := h.hostScopeReq("local")
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermVolumesCreate, scopeReq, "host local")
 		return
 	}
 	var req volumeRequest
@@ -133,9 +133,9 @@ func (h *Handlers) RemoveVolume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), "local")
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermVolumesDelete, scopeReq, "host local")
+	scopeReq := h.hostScopeReq("local")
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermVolumesDelete, scopeReq, "host local")
 		return
 	}
 	name := chi.URLParam(r, "name")
@@ -161,9 +161,9 @@ func (h *Handlers) BrowseVolume(w http.ResponseWriter, r *http.Request) {
 	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), target.ID())
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermVolumesBrowse, scopeReq, "host "+target.ID())
+	scopeReq := h.hostScopeReq(target.ID())
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermVolumesBrowse, scopeReq, "host "+target.ID())
 		return
 	}
 	name := chi.URLParam(r, "name")
@@ -189,9 +189,9 @@ func (h *Handlers) ReadVolumeFile(w http.ResponseWriter, r *http.Request) {
 	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), target.ID())
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermVolumesReadFile, scopeReq, "host "+target.ID())
+	scopeReq := h.hostScopeReq(target.ID())
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermVolumesBrowse, scopeReq, "host "+target.ID())
 		return
 	}
 	name := chi.URLParam(r, "name")
@@ -239,9 +239,9 @@ func (h *Handlers) PruneVolumes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), "local")
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermVolumesDelete, scopeReq, "host local")
+	scopeReq := h.hostScopeReq("local")
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermVolumesDelete, scopeReq, "host local")
 		return
 	}
 	report, err := h.Docker.PruneVolumes(r.Context())

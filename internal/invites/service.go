@@ -25,6 +25,8 @@ import (
 	"errors"
 	"log/slog"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 const (
@@ -43,16 +45,16 @@ var (
 // Invite is the public row shape. Token (raw) is only ever populated
 // in the Create response — never on reads.
 type Invite struct {
-	ID         int64     `json:"id"`
-	Token      string    `json:"token,omitempty"`
-	Role       string    `json:"role"`
-	ScopeTags  []string  `json:"scope_tags"`
-	EmailHint  string    `json:"email_hint,omitempty"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	UsedAt     *time.Time `json:"used_at,omitempty"`
-	CreatedBy  string    `json:"created_by"`
-	CreatedAt  time.Time `json:"created_at"`
-	AcceptURL  string    `json:"accept_url,omitempty"`
+	ID        int64        `json:"id"`
+	Token     string       `json:"token,omitempty"`
+	Role      string       `json:"role"`
+	Scopes    []rbac.Scope `json:"scopes"`
+	EmailHint string       `json:"email_hint,omitempty"`
+	ExpiresAt time.Time    `json:"expires_at"`
+	UsedAt    *time.Time   `json:"used_at,omitempty"`
+	CreatedBy string       `json:"created_by"`
+	CreatedAt time.Time    `json:"created_at"`
+	AcceptURL string       `json:"accept_url,omitempty"`
 }
 
 // Service persists invites and is also responsible for the cleanup
@@ -102,7 +104,7 @@ func (s *Service) Stop() {
 // recipient cannot escalate by tweaking the accept payload.
 type CreateInput struct {
 	Role      string
-	ScopeTags []string
+	Scopes    []rbac.Scope
 	EmailHint string
 	TTL       time.Duration // 0 = defaultTTL
 	CreatedBy string
@@ -125,7 +127,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Invite, error) {
 	}
 	expiresAt := time.Now().Add(ttl)
 
-	tagsJSON, err := json.Marshal(in.ScopeTags)
+	tagsJSON, err := json.Marshal(in.Scopes)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +136,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Invite, error) {
 	}
 
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO invite_tokens (token_hash, role, scope_tags_json, email_hint, expires_at, created_by)
+		INSERT INTO invite_tokens (token_hash, role, scopes_json, email_hint, expires_at, created_by)
 		VALUES (?, ?, ?, ?, ?, ?)`,
 		hash, in.Role, string(tagsJSON), in.EmailHint, expiresAt, in.CreatedBy)
 	if err != nil {
@@ -146,7 +148,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Invite, error) {
 		ID:        id,
 		Token:     token,
 		Role:      in.Role,
-		ScopeTags: in.ScopeTags,
+		Scopes:    in.Scopes,
 		EmailHint: in.EmailHint,
 		ExpiresAt: expiresAt,
 		CreatedBy: in.CreatedBy,
@@ -162,7 +164,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Invite, error) {
 func (s *Service) Get(ctx context.Context, rawToken string) (*Invite, error) {
 	hash := sha256Hex(rawToken)
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, role, scope_tags_json, email_hint, expires_at, used_at, created_by, created_at
+		SELECT id, role, scopes_json, email_hint, expires_at, used_at, created_by, created_at
 		FROM invite_tokens WHERE token_hash = ?`, hash)
 	inv := &Invite{}
 	var tagsJSON string
@@ -173,7 +175,7 @@ func (s *Service) Get(ctx context.Context, rawToken string) (*Invite, error) {
 		}
 		return nil, err
 	}
-	_ = json.Unmarshal([]byte(tagsJSON), &inv.ScopeTags)
+	_ = json.Unmarshal([]byte(tagsJSON), &inv.Scopes)
 	if usedAt.Valid {
 		t := usedAt.Time
 		inv.UsedAt = &t
@@ -218,13 +220,13 @@ func (s *Service) List(ctx context.Context, limit int) ([]Invite, error) {
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, role, scope_tags_json, email_hint, expires_at, used_at, created_by, created_at
+		SELECT id, role, scopes_json, email_hint, expires_at, used_at, created_by, created_at
 		FROM invite_tokens ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Invite
+	out := []Invite{}
 	for rows.Next() {
 		var inv Invite
 		var tagsJSON string
@@ -232,7 +234,7 @@ func (s *Service) List(ctx context.Context, limit int) ([]Invite, error) {
 		if err := rows.Scan(&inv.ID, &inv.Role, &tagsJSON, &inv.EmailHint, &inv.ExpiresAt, &usedAt, &inv.CreatedBy, &inv.CreatedAt); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal([]byte(tagsJSON), &inv.ScopeTags)
+		_ = json.Unmarshal([]byte(tagsJSON), &inv.Scopes)
 		if usedAt.Valid {
 			t := usedAt.Time
 			inv.UsedAt = &t

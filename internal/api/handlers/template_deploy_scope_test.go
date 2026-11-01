@@ -37,7 +37,7 @@ func TestTemplateDeployEnforcesScope(t *testing.T) {
 	})
 
 	deployPerms := []rbac.Perm{rbac.PermStacksDeploy, rbac.PermStacksView}
-	e.role("elsewhere", deployPerms, rbac.Scope{ScopeType: "host", ScopeValue: "other-host"})
+	e.role("elsewhere", deployPerms, rbac.Scope{Type: "host", Host: "other-host"})
 	e.user("hostscoped", "elsewhere")
 	tagged := e.user("tagged", "operator")
 	e.scopeUser(tagged.ID, "prod")

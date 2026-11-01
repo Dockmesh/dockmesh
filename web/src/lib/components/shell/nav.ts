@@ -63,7 +63,7 @@ export const NAV: NavGroup[] = [
         show: () => allowed('images.view') || allowed('volumes.view') || allowed('networks.view'),
         also: ['/images', '/volumes', '/networks']
       },
-      { key: 'topology', href: '/topology', label: 'Topology', icon: Waypoints, show: () => allowed('containers.view') }
+      { key: 'topology', href: '/topology', label: 'Topology', icon: Waypoints, show: () => allowed('networks.view') }
     ]
   },
   {
@@ -72,7 +72,7 @@ export const NAV: NavGroup[] = [
       { key: 'updates', href: '/updates', label: 'Updates', icon: RefreshCw, show: () => allowed('containers.view') },
       { key: 'backups', href: '/backups', label: 'Backups', icon: Archive, show: () => allowed('backups.view'), also: ['/migrations'] },
       { key: 'proxy', href: '/proxy', label: 'Reverse proxy', icon: Globe, show: () => allowed('proxy.view') },
-      { key: 'alerts', href: '/alerts', label: 'Alerts', icon: Bell, show: () => allowed('alerts.view') }
+      { key: 'alerts', href: '/alerts', label: 'Alerts', icon: Bell, show: () => allowed('alerts.view') || allowed('alerts.history') }
     ]
   },
   {

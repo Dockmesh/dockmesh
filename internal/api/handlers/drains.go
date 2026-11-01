@@ -13,6 +13,9 @@ import (
 //
 //	POST /api/v1/hosts/{id}/drain/plan
 func (h *Handlers) PlanDrain(w http.ResponseWriter, r *http.Request) {
+	if !h.requireDrainAccess(w, r) {
+		return
+	}
 	if h.Drains == nil {
 		writeError(w, http.StatusServiceUnavailable, "drain service unavailable")
 		return
@@ -30,14 +33,17 @@ func (h *Handlers) PlanDrain(w http.ResponseWriter, r *http.Request) {
 //
 //	POST /api/v1/hosts/{id}/drain/execute
 func (h *Handlers) ExecuteDrain(w http.ResponseWriter, r *http.Request) {
+	if !h.requireDrainAccess(w, r) {
+		return
+	}
 	if h.Drains == nil {
 		writeError(w, http.StatusServiceUnavailable, "drain service unavailable")
 		return
 	}
 	hostID := chi.URLParam(r, "id")
-	scopeReq := h.hostScopeReq(r.Context(), hostID)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+hostID)
+	scopeReq := h.hostScopeReq(hostID)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+hostID)
 		return
 	}
 	userID := middleware.UserID(r.Context())
@@ -58,6 +64,9 @@ func (h *Handlers) ExecuteDrain(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /api/v1/hosts/{id}/drain/{drain_id}
 func (h *Handlers) GetDrain(w http.ResponseWriter, r *http.Request) {
+	if !h.requireDrainAccess(w, r) {
+		return
+	}
 	if h.Drains == nil {
 		writeError(w, http.StatusServiceUnavailable, "drain service unavailable")
 		return
@@ -75,6 +84,9 @@ func (h *Handlers) GetDrain(w http.ResponseWriter, r *http.Request) {
 //
 //	POST /api/v1/hosts/{id}/drain/{drain_id}/pause
 func (h *Handlers) PauseDrain(w http.ResponseWriter, r *http.Request) {
+	if !h.requireDrainAccess(w, r) {
+		return
+	}
 	if h.Drains == nil {
 		writeError(w, http.StatusServiceUnavailable, "drain service unavailable")
 		return
@@ -91,6 +103,9 @@ func (h *Handlers) PauseDrain(w http.ResponseWriter, r *http.Request) {
 //
 //	POST /api/v1/hosts/{id}/drain/{drain_id}/resume
 func (h *Handlers) ResumeDrain(w http.ResponseWriter, r *http.Request) {
+	if !h.requireDrainAccess(w, r) {
+		return
+	}
 	if h.Drains == nil {
 		writeError(w, http.StatusServiceUnavailable, "drain service unavailable")
 		return
@@ -107,6 +122,9 @@ func (h *Handlers) ResumeDrain(w http.ResponseWriter, r *http.Request) {
 //
 //	POST /api/v1/hosts/{id}/drain/{drain_id}/abort
 func (h *Handlers) AbortDrain(w http.ResponseWriter, r *http.Request) {
+	if !h.requireDrainAccess(w, r) {
+		return
+	}
 	if h.Drains == nil {
 		writeError(w, http.StatusServiceUnavailable, "drain service unavailable")
 		return
@@ -121,4 +139,14 @@ func (h *Handlers) AbortDrain(w http.ResponseWriter, r *http.Request) {
 		"drain_id": drainID,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "aborted"})
+}
+
+// requireDrainAccess allows drains only with Hosts: Manage on everything:
+// a drain moves stacks from one host onto any other.
+func (h *Handlers) requireDrainAccess(w http.ResponseWriter, r *http.Request) bool {
+	if middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermHostsUpdate) {
+		return true
+	}
+	writeError(w, http.StatusForbidden, "draining a host moves its stacks to other hosts and needs Hosts: Manage on everything")
+	return false
 }

@@ -57,7 +57,7 @@
     try {
       const [h, sysRaw, sum, stacksList, audit, hostListRaw, att, runList] = await Promise.all([
         api.health(),
-        allowed('system.view') && lensKnown() ? api.system.metrics(hosts.id).catch(() => null) : Promise.resolve(null),
+        allowed('hosts.view') && lensKnown() ? api.system.metrics(hosts.id).catch(() => null) : Promise.resolve(null),
         allowed('containers.view') && lensKnown() ? api.containers.summary(hosts.id).catch(() => null) : Promise.resolve(null),
         allowed('stacks.view') ? api.stacks.list().catch(() => []) : Promise.resolve([]),
         allowed('audit.view')

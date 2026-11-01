@@ -146,6 +146,9 @@ func (h *Handlers) CreateOAuth2Provider(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !h.requireIdPGrants(w, r, in.DefaultRole, oauth2auth.GroupRules(in.GroupMappings)) {
+		return
+	}
 	p, err := h.OAuth2.CreateProvider(r.Context(), in)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -169,6 +172,9 @@ func (h *Handlers) UpdateOAuth2Provider(w http.ResponseWriter, r *http.Request) 
 	var in oauth2auth.ProviderInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if !h.requireIdPGrants(w, r, in.DefaultRole, oauth2auth.GroupRules(in.GroupMappings)) {
 		return
 	}
 	p, err := h.OAuth2.UpdateProvider(r.Context(), id, in)

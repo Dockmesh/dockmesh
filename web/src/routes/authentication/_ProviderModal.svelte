@@ -104,12 +104,7 @@
   });
 
   function oidcConfigFromProvider(p: OIDCProvider): OIDCConfig {
-    // Hydrate the editable config from the existing 2-slot backend shape.
-    // Extra group_mappings users add only persist for admin/operator
-    // roles in Slice 1; the rest is live in-UI but discarded on save.
-    const mappings: { group: string; role: string }[] = [];
-    if (p.admin_group)    mappings.push({ group: p.admin_group, role: 'admin' });
-    if (p.operator_group) mappings.push({ group: p.operator_group, role: 'operator' });
+    const mappings = (p.group_mappings ?? []).map((m) => ({ group: m.group_value, role: m.role_name, scope: m.scope }));
     return {
       kind: 'oidc',
       slug: p.slug,
@@ -325,12 +320,6 @@
   }
 
   async function saveOIDC() {
-    // OIDC backend is still on the 2-slot admin_group/operator_group
-    // shape — translate the v2.1 mapping list back. Other mappings
-    // beyond those two roles don't persist until the OIDC backend
-    // adopts the same group_mappings table as SAML/LDAP/OAuth2.
-    const adminGroup    = oidc.group_mappings.find((m) => m.role === 'admin')?.group ?? '';
-    const operatorGroup = oidc.group_mappings.find((m) => m.role === 'operator')?.group ?? '';
     const payload: OIDCProviderInput = {
       slug: oidc.slug.trim(),
       display_name: oidc.display_name.trim(),
@@ -339,8 +328,9 @@
       client_secret: oidc.client_secret,
       scopes: oidc.scopes.trim() || 'openid profile email',
       group_claim: oidc.group_claim.trim() || undefined,
-      admin_group: adminGroup || undefined,
-      operator_group: operatorGroup || undefined,
+      group_mappings: oidc.group_mappings
+        .filter((m) => m.group && m.role)
+        .map((m) => ({ group_value: m.group, role_name: m.role, scope: m.scope ?? { type: 'global' } })),
       default_role: oidc.default_role,
       allow_email_link: oidc.allow_email_link,
       enabled: oidc.enabled,

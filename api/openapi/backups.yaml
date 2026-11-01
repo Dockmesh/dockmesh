@@ -20,7 +20,7 @@ paths:
       tags: [backups]
       summary: Create a new backup job
       description: >-
-        Jobs with a `system` source are admin-only (`system.update` with no host or role scope); other jobs need their host, before and after the change, in the caller's scope (403).
+        Jobs with a `system` source are admin-only (Settings & audit: Manage on everything); other jobs need their host, before and after the change, in the caller's scope (403).
       requestBody:
         required: true
         content:
@@ -77,7 +77,7 @@ paths:
       tags: [backups]
       summary: Delete a backup job (does not delete existing runs)
       description: >-
-        Jobs with a `system` source are admin-only (`system.update` with no host or role scope); other jobs need their host in the caller's scope (403).
+        Jobs with a `system` source are admin-only (Settings & audit: Manage on everything); other jobs need their host in the caller's scope (403).
       responses:
         "204": {description: Deleted.}
         "401": {$ref: "#/components/responses/Unauthorized"}
@@ -120,8 +120,7 @@ paths:
         and fail when it later changes; the new key is kept as
         `target_config.host_key_pending`. This moves it to `host_key`.
 
-        Jobs with a `system` source are admin-only (`system.update` with no
-        host or role scope); other jobs need their host in the caller's
+        Jobs with a `system` source are admin-only (Settings & audit: Manage on everything); other jobs need their host in the caller's
         scope (403).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
@@ -141,7 +140,7 @@ paths:
       tags: [backups]
       summary: Trigger a job to run immediately
       description: >-
-        Jobs with a `system` source are admin-only (`system.update` with no host or role scope); other jobs need their host in the caller's scope (403).
+        Jobs with a `system` source are admin-only (Settings & audit: Manage on everything); other jobs need their host in the caller's scope (403).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       responses:
@@ -222,9 +221,9 @@ paths:
         Requires the job's host and the destination host within the
         caller's scope (403). Stack runs write the target stack's files, so
         they also need `stacks.update` (`stacks.create` for a new name), the
-        stack in the caller's role scope, and the host the stack is deployed
+        stack in the caller's assignments, and the host the stack is deployed
         on in scope (403). Runs whose job was deleted are admin-only
-        (`system.update` with no host or role scope). System runs are never
+        (Settings & audit: Manage on everything). System runs are never
         restored here (409); they are restored with `POST /restore/system`,
         the setup wizard or `dockmesh restore`.
       parameters:
@@ -268,9 +267,9 @@ paths:
         Requires the job's host and the destination host within the
         caller's scope (403). Stack runs write the target stack's files, so
         they also need `stacks.update` (`stacks.create` for a new name), the
-        stack in the caller's role scope, and the host the stack is deployed
+        stack in the caller's assignments, and the host the stack is deployed
         on in scope (403). Runs whose job was deleted are admin-only
-        (`system.update` with no host or role scope). System runs are never
+        (Settings & audit: Manage on everything). System runs are never
         restored here (409); they are restored with `POST /restore/system`,
         the setup wizard or `dockmesh restore`.
       parameters:
@@ -313,7 +312,7 @@ paths:
 
         Requires the job's host within the caller's scope (403). System
         runs, and runs whose job was deleted, are admin-only
-        (`system.update` with no host or role scope).
+        (Settings & audit: Manage on everything).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       responses:
@@ -465,7 +464,7 @@ paths:
         self-verify. Uploads are limited to 1 GiB. Symlink and hardlink
         entries are never extracted (Dockmesh backups contain none).
 
-        Admin-only (`system.update` with no host or role scope; 403).
+        Admin-only (Settings & audit: Manage on everything; 403).
       requestBody:
         required: true
         content:
@@ -707,7 +706,7 @@ paths:
       tags: [backups]
       summary: Enable / disable the default daily system backup
       description: >-
-        Admin-only (`system.update` with no host or role scope; 403).
+        Admin-only (Settings & audit: Manage on everything; 403).
       requestBody:
         required: true
         content:
@@ -757,7 +756,7 @@ paths:
 
         Requires the job's host within the caller's scope (403). System
         runs, and runs whose job was deleted, are admin-only
-        (`system.update` with no host or role scope).
+        (Settings & audit: Manage on everything).
       parameters:
         - in: path
           name: id
@@ -791,7 +790,7 @@ paths:
       description: |
         Requires `backups.download` and the job's host within the caller's
         scope. System archives, and runs whose job was deleted, are
-        admin-only (`system.update` with no host or role scope). Every
+        admin-only (Settings & audit: Manage on everything). Every
         download is audited as `backup.download`.
       parameters:
         - in: path
@@ -985,7 +984,7 @@ components:
         total_bytes: {type: integer, format: int64}
         used_bytes: {type: integer, format: int64}
         last_checked_at: {type: string, format: date-time}
-        job_count: {type: integer, description: "Backup jobs (not deleted ones) that write to this target. Only for callers without a host or role scope."}
+        job_count: {type: integer, description: "Backup jobs (not deleted ones) that write to this target. Only for callers whose access is all on everything."}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     BackupTargetInput:

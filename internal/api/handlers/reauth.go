@@ -32,25 +32,26 @@ func (h *Handlers) refreshIdentity(ctx context.Context) (context.Context, error)
 		return middleware.WithIdentity(ctx, id), nil
 	}
 	uid, sid := middleware.UserID(ctx), middleware.SessionID(ctx)
-	role, scope, err := h.Auth.SessionIdentity(ctx, uid, sid)
-	if err != nil {
+	if err := h.Auth.SessionLive(ctx, uid, sid); err != nil {
 		return ctx, errCallerGone
 	}
-	return middleware.WithIdentity(ctx, middleware.Identity{UserID: uid, Role: role, ScopeTags: scope, SessionID: sid}), nil
+	return middleware.WithIdentity(ctx, middleware.Identity{UserID: uid, SessionID: sid, Access: middleware.UserAccess(uid)}), nil
 }
 
 // imageUpdateDenied is the permission check of an image update without a
 // response: why the caller of r may not update the server container id,
 // or "" if it may.
 func (h *Handlers) imageUpdateDenied(r *http.Request, id string) string {
-	if !middleware.Allowed(r.Context(), rbac.PermContainersUpdate) {
-		return "needs the containers.update permission"
+	if !middleware.Allowed(r.Context(), rbac.PermContainersUpgrade) {
+		return "needs the containers.upgrade permission"
 	}
-	if !h.canAccessHost(r, "local") || !h.checkRoleScope(r, h.containerScopeReq(r.Context(), "local", id)) {
+	res := h.containerScopeReq(r.Context(), "local", id)
+	if !middleware.AllowedOn(r.Context(), rbac.PermContainersUpgrade, res) {
 		return "the container is outside your scope"
 	}
 	if h.Updater != nil {
-		if stack := h.Updater.ManagedStack(r.Context(), id); stack != "" && !middleware.Allowed(r.Context(), rbac.PermStacksDeploy) {
+		if stack := h.Updater.ManagedStack(r.Context(), id); stack != "" &&
+			!middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, h.stackScopeReq("local", stack)) {
 			return "updating a container of stack " + stack + " needs the stacks.deploy permission"
 		}
 	}

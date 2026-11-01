@@ -5,9 +5,8 @@ paths:
       tags: [audit]
       summary: Audit log entries, newest first
       description: |
-        Entries record no host, so a caller limited by scope tags or a
-        scoped role sees only its own entries; `user_id` is ignored for
-        such callers.
+        Needs Settings & audit: View on an assignment on everything; such
+        callers see every entry.
       parameters:
         - name: limit
           in: query

@@ -3,332 +3,520 @@ package rbac
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
 	"sync"
+	"time"
 )
 
-// CustomRole is one row in the roles table + its permissions + its scope
-// rows. Description is a one-line human blurb shown under the role name
-// in the Roles UI.
-type CustomRole struct {
-	Name        string  `json:"name"`
-	Display     string  `json:"display"`
-	Description string  `json:"description,omitempty"`
-	Builtin     bool    `json:"builtin"`
-	Permissions []Perm  `json:"permissions"`
-	// Scopes — empty list means "unscoped" (all hosts, all stacks).
-	Scopes []Scope `json:"scopes,omitempty"`
+// Role is a stored role: levels per area plus extras. Permissions is
+// derived from them and only informs clients.
+type Role struct {
+	Name        string   `json:"name"`
+	Display     string   `json:"display"`
+	Description string   `json:"description"`
+	Builtin     bool     `json:"builtin"`
+	Levels      Levels   `json:"levels"`
+	Extras      []string `json:"extras"`
+	Permissions []Perm   `json:"permissions"`
 }
 
-// Scope is one entry in the role's scope list. ScopeType is one of
-// "host" / "stack" / "host_tag". ScopeValue is the host_id, stack name,
-// or host tag respectively. Effective scope is the UNION of all rows for
-// a given role — a role can be scoped to "host=A or stack=monitoring".
-type Scope struct {
-	ScopeType  string `json:"scope_type"`
-	ScopeValue string `json:"scope_value"`
-}
-
-// RoleInput is the create/update payload.
+// RoleInput is the create/update payload of a custom role.
 type RoleInput struct {
-	Name        string  `json:"name"`
-	Display     string  `json:"display"`
-	Description string  `json:"description,omitempty"`
-	Permissions []Perm  `json:"permissions"`
-	Scopes      []Scope `json:"scopes,omitempty"`
+	Name        string   `json:"name"`
+	Display     string   `json:"display"`
+	Description string   `json:"description"`
+	Levels      Levels   `json:"levels"`
+	Extras      []string `json:"extras"`
 }
 
-// Store provides DB-backed role CRUD with an in-memory cache so
-// Allowed() stays fast (called on every request via middleware).
+var (
+	ErrRoleNotFound = errors.New("role not found")
+	ErrRoleBuiltin  = errors.New("built-in roles can't be changed; duplicate it instead")
+	ErrRoleInUse    = errors.New("role is still assigned")
+	ErrNotFound     = errors.New("assignment not found")
+)
+
+// Store keeps roles and assignments in memory, backed by the database.
+// Every write reloads the cache, so checks never hit the database.
 type Store struct {
-	db    *sql.DB
-	mu    sync.RWMutex
-	cache map[string]*CustomRole // role name → role
+	db *sql.DB
+
+	mu          sync.RWMutex
+	roles       map[string]*Role
+	rolePerms   map[string]map[Perm]bool
+	assignments map[string][]Assignment // user id → assignments
 }
 
 func NewStore(db *sql.DB) *Store {
-	return &Store{db: db, cache: make(map[string]*CustomRole)}
+	return &Store{db: db, roles: map[string]*Role{}, rolePerms: map[string]map[Perm]bool{}, assignments: map[string][]Assignment{}}
 }
 
-// Load populates the in-memory cache from the DB. Called on startup
-// and after any CRUD operation.
-func (s *Store) Load(ctx context.Context) error {
-	roles, err := s.listFromDB(ctx)
+// SeedBuiltins writes the built-in role definitions, so a release that
+// changes them takes effect on start.
+func (s *Store) SeedBuiltins(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	s.cache = make(map[string]*CustomRole, len(roles))
-	for _, r := range roles {
-		r := r
-		s.cache[r.Name] = &r
+	defer func() { _ = tx.Rollback() }()
+	if err := SeedBuiltinsTx(ctx, tx); err != nil {
+		return err
 	}
+	return tx.Commit()
+}
+
+// SeedBuiltinsTx is SeedBuiltins inside tx.
+func SeedBuiltinsTx(ctx context.Context, tx *sql.Tx) error {
+	for _, r := range BuiltinRoles {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO roles (name, display, description, builtin) VALUES (?, ?, ?, 1)
+			ON CONFLICT(name) DO UPDATE SET display = excluded.display, description = excluded.description, builtin = 1`,
+			r.Name, r.Display, r.Description); err != nil {
+			return err
+		}
+		if err := writeLevels(ctx, tx, r.Name, r.Levels, r.Extras); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeLevels(ctx context.Context, tx *sql.Tx, name string, levels Levels, extras []string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM role_levels WHERE role_name = ?`, name); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM role_extras WHERE role_name = ?`, name); err != nil {
+		return err
+	}
+	for area, level := range levels {
+		if level == "" || level == LevelNone {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO role_levels (role_name, area, level) VALUES (?, ?, ?)`, name, area, level); err != nil {
+			return err
+		}
+	}
+	for _, e := range extras {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO role_extras (role_name, extra) VALUES (?, ?)`, name, e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Load refreshes the cache from the database.
+func (s *Store) Load(ctx context.Context) error {
+	roles, err := LoadRoles(ctx, s.db)
+	if err != nil {
+		return err
+	}
+	as, err := loadAssignments(ctx, s.db)
+	if err != nil {
+		return err
+	}
+	perms := make(map[string]map[Perm]bool, len(roles))
+	byName := make(map[string]*Role, len(roles))
+	for i := range roles {
+		r := roles[i]
+		set := PermsFor(r.Levels, r.Extras)
+		r.Permissions = SortedPerms(set)
+		perms[r.Name] = set
+		byName[r.Name] = &r
+	}
+	byUser := map[string][]Assignment{}
+	for _, a := range as {
+		byUser[a.UserID] = append(byUser[a.UserID], a)
+	}
+	s.mu.Lock()
+	s.roles, s.rolePerms, s.assignments = byName, perms, byUser
 	s.mu.Unlock()
 	return nil
 }
 
-// AllowedDB checks the cached custom roles first. If the role exists
-// in the DB cache, use its permissions. Otherwise fall back to the
-// hardcoded rolePerms map (backwards compat for pre-migration setups).
-func (s *Store) AllowedDB(role string, perm Perm) bool {
-	s.mu.RLock()
-	r, ok := s.cache[role]
-	s.mu.RUnlock()
-	if ok {
-		for _, p := range r.Permissions {
-			if p == perm {
-				return true
-			}
-		}
-		return false
-	}
-	// Fall back to hardcoded.
-	return Allowed(role, perm)
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
-// ScopeRequest describes the resource a request is operating on, for
-// scope-check purposes. The fields are populated as much as the handler
-// can determine — typically (host_id, stack_name) for a container or
-// stack handler, (host_id) for a host-level handler, etc.
-//
-// Unset fields are treated as "not constrained on that dimension" — a
-// host-only request matches a role scoped to "host=A" but NOT a role
-// scoped to "stack=monitoring" (because no stack info was provided).
-type ScopeRequest struct {
-	HostID    string
-	StackName string
-	// HostTags is the list of tags carried by the host being acted on.
-	// Caller fills it in by looking up the host from the host store.
-	// Empty if the request isn't tied to a specific host (rare).
-	HostTags []string
-}
-
-// InScope reports whether the given role's scope rows allow operating
-// on the resource described by req. A role with NO scope rows is
-// "unscoped" and matches everything (returns true). Otherwise the role
-// matches if ANY of its scope rows match the request:
-//
-//   - scope_type=host with scope_value matching req.HostID
-//   - scope_type=stack with scope_value matching req.StackName
-//   - scope_type=host_tag with scope_value present in req.HostTags
-//
-// Built-in roles always have an empty scope list — they're always
-// unscoped — so InScope() returns true for them in O(1).
-func (s *Store) InScope(role string, req ScopeRequest) bool {
-	s.mu.RLock()
-	r, ok := s.cache[role]
-	s.mu.RUnlock()
-	if !ok {
-		// Unknown role — no scope check possible, fall open. Allowed()
-		// will already have rejected unknown roles upstream.
-		return true
-	}
-	if len(r.Scopes) == 0 {
-		return true
-	}
-	for _, sc := range r.Scopes {
-		switch sc.ScopeType {
-		case "host":
-			if req.HostID != "" && sc.ScopeValue == req.HostID {
-				return true
-			}
-		case "stack":
-			if req.StackName != "" && sc.ScopeValue == req.StackName {
-				return true
-			}
-		case "host_tag":
-			for _, t := range req.HostTags {
-				if t == sc.ScopeValue {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-// List returns all roles (cached).
-func (s *Store) List() []CustomRole {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]CustomRole, 0, len(s.cache))
-	for _, r := range s.cache {
-		out = append(out, *r)
-	}
-	return out
-}
-
-// Get returns a single role by name.
-func (s *Store) Get(name string) (*CustomRole, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	r, ok := s.cache[name]
-	if !ok {
-		return nil, false
-	}
-	return r, true
-}
-
-// Create adds a new custom role.
-func (s *Store) Create(ctx context.Context, in RoleInput) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO roles (name, display, description, builtin) VALUES (?, ?, ?, 0)`,
-		in.Name, in.Display, in.Description); err != nil {
-		return err
-	}
-	for _, p := range in.Permissions {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO role_permissions (role_name, permission) VALUES (?, ?)`,
-			in.Name, string(p)); err != nil {
-			return err
-		}
-	}
-	for _, sc := range in.Scopes {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO role_scopes (role_name, scope_type, scope_value) VALUES (?, ?, ?)`,
-			in.Name, sc.ScopeType, sc.ScopeValue); err != nil {
-			return err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	return s.Load(ctx)
-}
-
-// Update modifies an existing custom role (not builtins).
-func (s *Store) Update(ctx context.Context, name string, in RoleInput) error {
-	s.mu.RLock()
-	existing, ok := s.cache[name]
-	s.mu.RUnlock()
-	if !ok {
-		return sql.ErrNoRows
-	}
-	if existing.Builtin {
-		return sql.ErrNoRows // can't edit built-in roles
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE roles SET display = ?, description = ? WHERE name = ?`,
-		in.Display, in.Description, name); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM role_permissions WHERE role_name = ?`, name); err != nil {
-		return err
-	}
-	for _, p := range in.Permissions {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO role_permissions (role_name, permission) VALUES (?, ?)`,
-			name, string(p)); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM role_scopes WHERE role_name = ?`, name); err != nil {
-		return err
-	}
-	for _, sc := range in.Scopes {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO role_scopes (role_name, scope_type, scope_value) VALUES (?, ?, ?)`,
-			name, sc.ScopeType, sc.ScopeValue); err != nil {
-			return err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	return s.Load(ctx)
-}
-
-// Delete removes a custom role (not builtins).
-func (s *Store) Delete(ctx context.Context, name string) error {
-	s.mu.RLock()
-	existing, ok := s.cache[name]
-	s.mu.RUnlock()
-	if !ok {
-		return sql.ErrNoRows
-	}
-	if existing.Builtin {
-		return sql.ErrNoRows
-	}
-	if _, err := s.db.ExecContext(ctx,
-		`DELETE FROM roles WHERE name = ? AND builtin = 0`, name); err != nil {
-		return err
-	}
-	return s.Load(ctx)
-}
-
-func (s *Store) listFromDB(ctx context.Context) ([]CustomRole, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT r.name, r.display, COALESCE(r.description, ''), r.builtin
-		FROM roles r ORDER BY r.builtin DESC, r.name`)
+// LoadRoles reads every role definition straight from the database.
+func LoadRoles(ctx context.Context, q querier) ([]Role, error) {
+	rows, err := q.QueryContext(ctx, `SELECT name, display, COALESCE(description, ''), builtin FROM roles`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	roleMap := make(map[string]*CustomRole)
+	byName := map[string]*Role{}
 	var order []string
 	for rows.Next() {
-		var r CustomRole
+		var r Role
 		var builtin int
 		if err := rows.Scan(&r.Name, &r.Display, &r.Description, &builtin); err != nil {
 			return nil, err
 		}
 		r.Builtin = builtin == 1
-		// A role with zero permission rows must serialise as [], not null —
-		// the Roles UI reads permissions.length unguarded.
-		r.Permissions = []Perm{}
-		roleMap[r.Name] = &r
+		r.Levels = Levels{}
+		r.Extras = []string{}
+		byName[r.Name] = &r
 		order = append(order, r.Name)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// Load permissions.
-	permRows, err := s.db.QueryContext(ctx,
-		`SELECT role_name, permission FROM role_permissions ORDER BY role_name, permission`)
+	lrows, err := q.QueryContext(ctx, `SELECT role_name, area, level FROM role_levels`)
 	if err != nil {
 		return nil, err
 	}
-	defer permRows.Close()
-	for permRows.Next() {
-		var roleName, perm string
-		if err := permRows.Scan(&roleName, &perm); err != nil {
+	defer lrows.Close()
+	for lrows.Next() {
+		var name, area, level string
+		if err := lrows.Scan(&name, &area, &level); err != nil {
 			return nil, err
 		}
-		if r, ok := roleMap[roleName]; ok {
-			r.Permissions = append(r.Permissions, Perm(perm))
+		if r, ok := byName[name]; ok {
+			r.Levels[area] = level
 		}
 	}
-	// Load scopes — graceful skip if migration hasn't run yet (the
-	// table won't exist on a freshly-cloned dev DB pre-038).
-	scopeRows, err := s.db.QueryContext(ctx,
-		`SELECT role_name, scope_type, scope_value FROM role_scopes ORDER BY role_name, scope_type, scope_value`)
-	if err == nil {
-		defer scopeRows.Close()
-		for scopeRows.Next() {
-			var roleName string
-			var sc Scope
-			if err := scopeRows.Scan(&roleName, &sc.ScopeType, &sc.ScopeValue); err != nil {
-				return nil, err
-			}
-			if r, ok := roleMap[roleName]; ok {
-				r.Scopes = append(r.Scopes, sc)
-			}
+	if err := lrows.Err(); err != nil {
+		return nil, err
+	}
+	erows, err := q.QueryContext(ctx, `SELECT role_name, extra FROM role_extras ORDER BY extra`)
+	if err != nil {
+		return nil, err
+	}
+	defer erows.Close()
+	for erows.Next() {
+		var name, extra string
+		if err := erows.Scan(&name, &extra); err != nil {
+			return nil, err
+		}
+		if r, ok := byName[name]; ok {
+			r.Extras = append(r.Extras, extra)
 		}
 	}
-	out := make([]CustomRole, 0, len(order))
-	for _, name := range order {
-		out = append(out, *roleMap[name])
+	if err := erows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]Role, 0, len(order))
+	for _, n := range order {
+		r := byName[n]
+		for _, a := range Areas {
+			if _, ok := r.Levels[a.Key]; !ok {
+				r.Levels[a.Key] = LevelNone
+			}
+		}
+		out = append(out, *r)
 	}
 	return out, nil
+}
+
+func loadAssignments(ctx context.Context, q querier) ([]Assignment, error) {
+	rows, err := q.QueryContext(ctx, `
+		SELECT id, user_id, role_name, scope_type, scope_host, scope_value, source, via,
+		       COALESCE(created_at, ''), COALESCE(created_by, '')
+		  FROM role_assignments ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Assignment
+	for rows.Next() {
+		var a Assignment
+		if err := rows.Scan(&a.ID, &a.UserID, &a.Role, &a.Scope.Type, &a.Scope.Host, &a.Scope.Value, &a.Source, &a.Via, &a.CreatedAt, &a.CreatedBy); err != nil {
+			return nil, err
+		}
+		// SQLite's CURRENT_TIMESTAMP is UTC without a zone.
+		if t, err := time.Parse(time.DateTime, a.CreatedAt); err == nil {
+			a.CreatedAt = t.UTC().Format(time.RFC3339)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// Roles returns every role, built-ins first.
+func (s *Store) Roles() []Role {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]Role, 0, len(s.roles))
+	for _, r := range s.roles {
+		out = append(out, *r)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Builtin != out[j].Builtin {
+			return out[i].Builtin
+		}
+		return builtinOrder(out[i].Name) < builtinOrder(out[j].Name) || (builtinOrder(out[i].Name) == builtinOrder(out[j].Name) && out[i].Name < out[j].Name)
+	})
+	return out
+}
+
+func builtinOrder(name string) int {
+	for i, r := range BuiltinRoles {
+		if r.Name == name {
+			return i
+		}
+	}
+	return len(BuiltinRoles)
+}
+
+// Role returns one role.
+func (s *Store) Role(name string) (Role, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	r, ok := s.roles[name]
+	if !ok {
+		return Role{}, false
+	}
+	return *r, true
+}
+
+// RolePerms returns the permission set of a role.
+func (s *Store) RolePerms(name string) (map[Perm]bool, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	p, ok := s.rolePerms[name]
+	return p, ok
+}
+
+// CreateRole adds a custom role.
+func (s *Store) CreateRole(ctx context.Context, in RoleInput) error {
+	if err := ValidateLevels(in.Levels, in.Extras); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO roles (name, display, description, builtin) VALUES (?, ?, ?, 0)`,
+		in.Name, in.Display, in.Description); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			return fmt.Errorf("a role named %q already exists", in.Name)
+		}
+		return err
+	}
+	if err := writeLevels(ctx, tx, in.Name, in.Levels, in.Extras); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.Load(ctx)
+}
+
+// UpdateRole replaces the definition of a custom role.
+func (s *Store) UpdateRole(ctx context.Context, name string, in RoleInput) error {
+	cur, ok := s.Role(name)
+	if !ok {
+		return ErrRoleNotFound
+	}
+	if cur.Builtin {
+		return ErrRoleBuiltin
+	}
+	if err := ValidateLevels(in.Levels, in.Extras); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `UPDATE roles SET display = ?, description = ? WHERE name = ? AND builtin = 0`,
+		in.Display, in.Description, name); err != nil {
+		return err
+	}
+	if err := writeLevels(ctx, tx, name, in.Levels, in.Extras); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.Load(ctx)
+}
+
+// DeleteRole removes a custom role that nobody holds any more.
+func (s *Store) DeleteRole(ctx context.Context, name string) error {
+	cur, ok := s.Role(name)
+	if !ok {
+		return ErrRoleNotFound
+	}
+	if cur.Builtin {
+		return ErrRoleBuiltin
+	}
+	if n := len(s.RoleAssignments(name)); n > 0 {
+		return fmt.Errorf("%w: remove its %d assignment(s) first", ErrRoleInUse, n)
+	}
+	var mapped int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT (SELECT COUNT(*) FROM oidc_provider_group_mappings WHERE role_name = ?1)
+		     + (SELECT COUNT(*) FROM saml_provider_group_mappings WHERE role_name = ?1)
+		     + (SELECT COUNT(*) FROM ldap_provider_group_mappings WHERE role_name = ?1)
+		     + (SELECT COUNT(*) FROM oauth2_provider_group_mappings WHERE role_name = ?1)`, name).Scan(&mapped); err != nil {
+		return err
+	}
+	if mapped > 0 {
+		return fmt.Errorf("%w: %d identity provider group mapping(s) use it", ErrRoleInUse, mapped)
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM roles WHERE name = ? AND builtin = 0`, name); err != nil {
+		return err
+	}
+	return s.Load(ctx)
+}
+
+// UserAssignments returns the assignments of one user.
+func (s *Store) UserAssignments(userID string) []Assignment {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]Assignment(nil), s.assignments[userID]...)
+}
+
+// AllAssignments returns every assignment.
+func (s *Store) AllAssignments() []Assignment {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []Assignment
+	for _, as := range s.assignments {
+		out = append(out, as...)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// RoleAssignments returns the assignments of one role.
+func (s *Store) RoleAssignments(role string) []Assignment {
+	var out []Assignment
+	for _, a := range s.AllAssignments() {
+		if a.Role == role {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// Assignment returns one assignment by id.
+func (s *Store) Assignment(id int64) (Assignment, bool) {
+	for _, a := range s.AllAssignments() {
+		if a.ID == id {
+			return a, true
+		}
+	}
+	return Assignment{}, false
+}
+
+// AddAssignment stores a manual assignment and returns it with its id.
+// Adding an assignment that already exists returns the existing one.
+func (s *Store) AddAssignment(ctx context.Context, a Assignment) (Assignment, error) {
+	if err := a.Scope.Validate(); err != nil {
+		return Assignment{}, err
+	}
+	if _, ok := s.Role(a.Role); !ok {
+		return Assignment{}, ErrRoleNotFound
+	}
+	if a.Source == "" {
+		a.Source = SourceManual
+	}
+	for _, cur := range s.UserAssignments(a.UserID) {
+		if cur.Role == a.Role && cur.Scope == a.Scope && cur.Source == a.Source && cur.Via == a.Via {
+			return cur, nil
+		}
+	}
+	var createdBy any
+	if a.CreatedBy != "" {
+		createdBy = a.CreatedBy
+	}
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO role_assignments (user_id, role_name, scope_type, scope_host, scope_value, source, via, created_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.UserID, a.Role, a.Scope.Type, a.Scope.Host, a.Scope.Value, a.Source, a.Via, createdBy)
+	if err != nil {
+		return Assignment{}, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return Assignment{}, err
+	}
+	if err := s.Load(ctx); err != nil {
+		return Assignment{}, err
+	}
+	out, _ := s.Assignment(id)
+	return out, nil
+}
+
+// RemoveAssignment deletes one assignment.
+func (s *Store) RemoveAssignment(ctx context.Context, id int64) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM role_assignments WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return s.Load(ctx)
+}
+
+// ReplaceIdPAssignments swaps the identity-provider assignments of a user
+// for want, leaving manual assignments alone.
+func (s *Store) ReplaceIdPAssignments(ctx context.Context, userID string, want []Assignment) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM role_assignments WHERE user_id = ? AND source = ?`, userID, SourceIdP); err != nil {
+		return err
+	}
+	for _, a := range want {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT OR IGNORE INTO role_assignments (user_id, role_name, scope_type, scope_host, scope_value, source, via)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			userID, a.Role, a.Scope.Type, a.Scope.Host, a.Scope.Value, SourceIdP, a.Via); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.Load(ctx)
+}
+
+// AccessFor evaluates the assignments of a user.
+func (s *Store) AccessFor(userID string) *Access {
+	return s.AccessForAssignments(s.UserAssignments(userID))
+}
+
+// AccessForAssignments evaluates a list of assignments.
+func (s *Store) AccessForAssignments(as []Assignment) *Access {
+	acc := &Access{Authenticated: true}
+	for _, a := range as {
+		perms, ok := s.RolePerms(a.Role)
+		if !ok {
+			continue
+		}
+		g := Grant{Perms: perms, Assignment: a}
+		if !a.Scope.IsGlobal() {
+			g.Scopes = []Scope{a.Scope}
+		}
+		acc.Grants = append(acc.Grants, g)
+	}
+	return acc
+}
+
+// RoleAccess is the access of one role on everything, for legacy API
+// tokens that have no owner.
+func (s *Store) RoleAccess(role string) *Access {
+	return s.AccessForAssignments([]Assignment{{Role: role, Scope: Global}})
+}
+
+// IsAdminRole reports whether a role can administer the instance (see
+// IsAdminPermSet).
+func (s *Store) IsAdminRole(name string) bool {
+	perms, ok := s.RolePerms(name)
+	return ok && IsAdminPermSet(perms)
+}
+
+// IsGlobalAdmin reports whether a is an admin role on everything.
+func (s *Store) IsGlobalAdmin(a Assignment) bool {
+	return a.Scope.IsGlobal() && s.IsAdminRole(a.Role)
 }

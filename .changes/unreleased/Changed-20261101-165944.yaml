@@ -1,0 +1,3 @@
+kind: Changed
+body: Proxy, alert rules, users and roles, settings and the audit log need an assignment on everything; a narrower assignment never grants them
+time: 2026-11-01T16:59:44.9000000+01:00

@@ -2,7 +2,6 @@ package notifications
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"testing"
 
@@ -10,10 +9,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
-type fakeUsers map[string]struct {
-	role string
-	tags []string
-}
+type fakeUsers map[string]*rbac.Access
 
 func (f fakeUsers) ListActiveUserIDs(context.Context) ([]string, error) {
 	ids := make([]string, 0, len(f))
@@ -23,42 +19,16 @@ func (f fakeUsers) ListActiveUserIDs(context.Context) ([]string, error) {
 	return ids, nil
 }
 
-func (f fakeUsers) UserAccess(_ context.Context, id string) (string, []string, error) {
-	u, ok := f[id]
-	if !ok {
-		return "", nil, errors.New("no user")
+func (f fakeUsers) AccessFor(id string) *rbac.Access {
+	if a, ok := f[id]; ok {
+		return a
 	}
-	return u.role, u.tags, nil
+	return &rbac.Access{}
 }
 
-type fakeRoles struct {
-	perms  map[string][]rbac.Perm
-	scopes map[string][]rbac.Scope
-}
-
-func (f fakeRoles) AllowedDB(role string, perm rbac.Perm) bool {
-	for _, p := range f.perms[role] {
-		if p == perm {
-			return true
-		}
-	}
-	return false
-}
-
-func (f fakeRoles) InScope(role string, req rbac.ScopeRequest) bool {
-	sc := f.scopes[role]
-	if len(sc) == 0 {
-		return true
-	}
-	for _, s := range sc {
-		switch {
-		case s.ScopeType == "host" && s.ScopeValue == req.HostID:
-			return true
-		case s.ScopeType == "stack" && s.ScopeValue == req.StackName:
-			return true
-		}
-	}
-	return false
+// viewStacks holds stacks.view on scopes (none: everything).
+func viewStacks(scopes ...rbac.Scope) *rbac.Access {
+	return &rbac.Access{Authenticated: true, Grants: []rbac.Grant{{Perms: map[rbac.Perm]bool{rbac.PermStacksView: true}, Scopes: scopes}}}
 }
 
 type fakeTags map[string][]string
@@ -75,30 +45,21 @@ func TestEmitFanOutHonoursPermissionAndScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"admin", "viewer", "noperm", "hostA", "stackY", "tagged"} {
-		if _, err := database.Exec(`INSERT INTO users (id, username, password, role) VALUES (?, ?, 'x', 'viewer')`, id, id); err != nil {
+		if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES (?, ?, 'x')`, id, id); err != nil {
 			t.Fatal(err)
 		}
 	}
 	users := fakeUsers{
-		"admin":  {role: "admin"},
-		"viewer": {role: "viewer"},
-		"noperm": {role: "none"},
-		"hostA":  {role: "host-a"},
-		"stackY": {role: "stack-y"},
-		"tagged": {role: "viewer", tags: []string{"dev"}},
-	}
-	roles := fakeRoles{
-		perms: map[string][]rbac.Perm{
-			"admin": {rbac.PermStacksView}, "viewer": {rbac.PermStacksView}, "host-a": {rbac.PermStacksView}, "stack-y": {rbac.PermStacksView},
-		},
-		scopes: map[string][]rbac.Scope{
-			"host-a":  {{ScopeType: "host", ScopeValue: "a"}},
-			"stack-y": {{ScopeType: "stack", ScopeValue: "y"}},
-		},
+		"admin":  viewStacks(),
+		"viewer": viewStacks(),
+		"noperm": {Authenticated: true},
+		"hostA":  viewStacks(rbac.Scope{Type: rbac.ScopeHost, Host: "a"}),
+		"stackY": viewStacks(rbac.Scope{Type: rbac.ScopeStack, Value: "y"}),
+		"tagged": viewStacks(rbac.Scope{Type: rbac.ScopeHostTag, Value: "dev"}),
 	}
 	svc := NewService(database)
 	svc.SetUserDirectory(users)
-	svc.SetAccessChecker(&RBACAccess{Users: users, Roles: roles, Tags: fakeTags{"b": {"prod"}}})
+	svc.SetAccessChecker(&RBACAccess{Access: users, Tags: fakeTags{"b": {"prod"}}})
 
 	tests := []struct {
 		name string

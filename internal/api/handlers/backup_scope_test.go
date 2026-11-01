@@ -59,7 +59,7 @@ func TestBackupReadsFollowScope(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e.role("prod-backups", []rbac.Perm{rbac.PermBackupsView, rbac.PermSystemView}, rbac.Scope{ScopeType: "host_tag", ScopeValue: "prod"})
+	e.role("prod-backups", []rbac.Perm{rbac.PermBackupsView, rbac.PermSystemView}, rbac.Scope{Type: "host_tag", Value: "prod"})
 	e.user("boss", "admin")
 	e.user("look", "viewer")
 	tagged := e.user("thadmin", "host-admin")

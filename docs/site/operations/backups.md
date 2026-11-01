@@ -92,7 +92,7 @@ A working hook has three properties:
 - `cmd` runs through `sh -c` when it needs redirection or environment variables.
 - The dump is written into a named volume of the same stack, so a `stack` job includes it. A dedicated volume such as `dumps:/dumps` in the service keeps it apart from the live data directory.
 
-The wizard cannot enter custom hooks, and saving a job in the wizard replaces its pre-hooks with the selected presets and clears all post-hooks. Set hooks through the API and do not re-save the job in the wizard afterwards. With an [API token](../features/api-tokens.md) that has `backups.view` and `backups.update`:
+The wizard cannot enter custom hooks, and saving a job in the wizard replaces its pre-hooks with the selected presets and clears all post-hooks. Set hooks through the API and do not re-save the job in the wizard afterwards. With an [API token](../features/api-tokens.md) whose owner may manage backup jobs:
 
 ```bash
 DM=https://dockmesh.example.com/api/v1
@@ -151,13 +151,12 @@ Verification of encrypted stack and volume runs always fails, because the stored
 
 ## Permissions
 
-<!-- update after: rbac: scope read endpoints, limit grants, gate sensitive downloads -->
-| Permission | Allows |
+| Backups level or extra | Allows |
 |---|---|
-| `backups.view` | List jobs, targets and runs, read run logs, **download any archive decrypted**, and read target configurations including their passwords and keys |
-| `backups.create` | Create jobs and targets, test target settings |
-| `backups.update` | Edit jobs and targets, **Run now**, the system backup switch |
-| `backups.delete` | Delete jobs and targets |
-| `backups.restore` | Restore, verify, and export the age key |
+| View | List jobs, targets and runs and read run logs, for the hosts and stacks the assignment covers |
+| Operate | Run jobs now, restore and verify runs |
+| Manage | Create, edit and delete jobs and targets |
+| Extra **Download backups** | Download decrypted archives of covered hosts and stacks; stack archives contain the stack's secrets |
+| Extra **Export the backup key** | Export the key that decrypts every backup; needs an assignment on everything |
 
-`backups.view` is effectively full read access to your data: a system archive contains the database, the JWT secret and the age key. Every built-in role, viewer included, has `backups.view`, and backup permissions are not limited by host or role scope. Give users you don't fully trust a custom role without it (see [Permissions](../concepts/permissions.md)). Hooks run arbitrary commands in any container, so treat `backups.create` and `backups.update` like exec access.
+System backups, which contain the database, the JWT secret and the backup key, are admin-only (Settings & audit: Manage on everything). Hooks run commands inside containers, so jobs with hooks also need the Terminal extra on those containers. See [Permissions](../concepts/permissions.md).

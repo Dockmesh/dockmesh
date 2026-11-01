@@ -32,7 +32,7 @@ func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	h.wsWatch(r, conn, rbac.PermSystemView, "")
+	h.wsWatch(r, conn, rbac.PermSystemView, nil)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -98,7 +98,7 @@ func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
 				dockerMsgs = nil
 				continue
 			}
-			if !unscoped && !h.inReadScope(r, "local", ev.stack) {
+			if !unscoped && !h.allowedOn(r, h.stackScopeReq("local", ev.stack), rbac.PermContainersView) {
 				continue
 			}
 			if b, err := json.Marshal(ev); err == nil {
@@ -168,7 +168,7 @@ func (h *Handlers) stackVisible(r *http.Request, name string) bool {
 		}
 	}
 	if hostID != "" {
-		return h.inReadScope(r, hostID, name)
+		return h.allowedOn(r, h.stackScopeReq(hostID, name), rbac.PermStacksView)
 	}
-	return h.checkRoleScope(r, rbac.ScopeRequest{StackName: name})
+	return h.allowedOn(r, rbac.Resource{StackName: name}, rbac.PermStacksView)
 }

@@ -1,6 +1,6 @@
 ---
 title: API tokens
-description: Create API tokens for scripts, CI and dmctl, and how their permissions are limited by the owner's role.
+description: Create API tokens for scripts, CI and dmctl, and how their access follows the owner and an optional restriction.
 ---
 
 API tokens let scripts, CI jobs, Prometheus and `dmctl` call the Dockmesh API without a password. A token looks like `dmt_` followed by random characters. Dockmesh stores only a hash, so the full token is shown once, when you create it.
@@ -9,26 +9,21 @@ API tokens let scripts, CI jobs, Prometheus and `dmctl` call the Dockmesh API wi
 
 1. Open **API tokens** from the user menu (top right) and click **New token**.
 2. Enter a **Label**, so you know later what the token is for. It shows in the token list.
-3. Pick a role under **Scope**. Choose the narrowest role that does the job.
+3. Optionally restrict the token to a role on a scope. Without a restriction the token acts with your full current access; choose the narrowest restriction that does the job.
 4. Pick when it **Expires**: 30, 90, 180 or 365 days, or never.
 5. Click **Generate token** and copy the token. It isn't shown again.
 
-You need `tokens.create`. You can only pick a role whose permissions you have yourself. A token created with another token can't outlive that token. Listing and revoking your own tokens needs `tokens.view` and `tokens.delete`. `tokens.manage_others` covers other users' tokens.
+Every signed-in user can create tokens. A token created with another token can't outlive that token. Listing and revoking your own tokens needs `tokens.view` and `tokens.delete`. `tokens.manage_others` covers other users' tokens.
 
-The list shows each token's prefix, role, expiry, and when and from which IP it was last used. Revoke a token with its delete action. It stops working immediately.
+The list shows each token's prefix, restriction, expiry, and when and from which IP it was last used. Revoke a token with its delete action. It stops working immediately.
 
 ## Effective permissions
 
-A token belongs to the user who created it. On every request, Dockmesh grants only what both of these allow:
-
-- the token's role,
-- the owner's current role.
-
-The owner's host-tag scope applies too. If the owner later loses a permission, their tokens lose it at the same time. If the owner account is deleted, the token is rejected.
+A token belongs to the user who created it. On every request it gets the owner's **current** access, narrowed to the token's restriction (role and scope) when it has one. It never gets more than the owner has. If the owner later loses an assignment, their tokens lose it at the same time. If the owner account is deleted, the token is rejected. A token created with a restricted token stays inside that restriction.
 
 ## Legacy tokens
 
-Tokens created before tokens had an owner are marked **legacy** in the list. They keep working with the role they were created with, and no user's permissions limit them. While any active legacy token exists, admins see the `api-tokens.legacy` notice. Replace each one: sign in as the user who should own it, create a new token, switch your script over, then revoke the legacy token. The notice disappears when the last one is gone.
+Tokens created before tokens had an owner are marked **legacy** in the list. They act as the role they were created with, on its scope, and no user's access limits them. While any active legacy token exists, admins see the `api-tokens.legacy` notice. Replace each one: sign in as the user who should own it, create a new token, switch your script over, then revoke the legacy token. The notice disappears when the last one is gone.
 
 ## Use a token with curl
 
@@ -61,6 +56,6 @@ dmctl stacks deploy my-stack
 ## Good practice
 
 - Create one token per use, so you can revoke one without breaking the others.
-- Give tokens an expiry, and give CI tokens a role that only has what the pipeline needs, for example a custom role with `stacks.view` and `stacks.deploy`.
+- Give tokens an expiry, and restrict CI tokens to what the pipeline needs, for example the Deployer role on the one stack it deploys.
 - Store tokens in your CI's secret store, not in repositories.
-- For Prometheus, create a token whose role has only `metrics.view`. See [Monitoring](./monitoring.md).
+- For Prometheus, restrict the token to a custom role with only Settings & audit: View, on everything. See [Monitoring](./monitoring.md).

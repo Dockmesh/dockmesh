@@ -23,10 +23,10 @@ paths:
       tags: [users]
       summary: The authenticated user's own profile
       description: |
-        Includes role, scope_tags, and MFA state — used by the UI to gate
-        buttons. For an API token, `permissions` lists only what both the
-        token's role and its owner's current role allow, and `scope_tags`
-        are the owner's.
+        Includes the caller's assignments and the permissions it holds on
+        at least one scope — used by the UI to gate buttons. For an API
+        token, `permissions` lists what the owner's current access narrowed
+        by the token's restriction allows.
       responses:
         "200":
           description: Profile.
@@ -56,9 +56,8 @@ paths:
       tags: [users]
       summary: Mint a one-time invite link
       description: |
-        The role must exist (400) and may not exceed the caller's rights;
-        a caller with host scope tags must give the invite tags within
-        its own (403).
+        The role must exist (400) and the caller must hold everything it
+        grants on every scope of the invite (403).
         Returns the raw token + accept URL exactly once. The admin
         copies the URL out and shares it manually. No SMTP dependency.
       requestBody:
@@ -70,9 +69,10 @@ paths:
               required: [role]
               properties:
                 role: {type: string}
-                scope_tags:
+                scopes:
                   type: array
-                  items: {type: string}
+                  description: The new account gets the role on each scope. Default is everything.
+                  items: {$ref: "#/components/schemas/Scope"}
                 email_hint: {type: string}
                 ttl_hours: {type: integer, minimum: 1, maximum: 168}
       responses:
@@ -112,14 +112,14 @@ paths:
       operationId: users.create
       tags: [users]
       summary: Create a new local user
-      description: The role may not exceed the caller's rights, and callers with host scope tags create users through scoped invites instead (403).
+      description: The caller must hold everything the role grants on the scope (403). Without a role the account starts without access.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [username, password, role]
+              required: [username, password]
               properties:
                 username: {type: string, minLength: 1}
                 email: {type: string, format: email}
@@ -127,6 +127,7 @@ paths:
                 role:
                   type: string
                   description: Role name — `admin`, `operator`, `viewer`, or a custom role.
+                scope: {$ref: "#/components/schemas/Scope"}
       responses:
         "201":
           description: Created.
@@ -144,15 +145,26 @@ paths:
   /users/{id}:
     parameters:
       - $ref: "#/components/parameters/UserIDPath"
+    get:
+      operationId: users.get
+      tags: [users]
+      summary: One user with its assignments
+      responses:
+        "200":
+          description: User.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/User"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
     put:
       operationId: users.update
       tags: [users]
-      summary: Update user email, role, and scope tags
+      summary: Update a user's profile and whether sign-in follows IdP groups
       description: |
-        The caller must hold every permission of both the user's current
-        role and the new one, and a scoped caller can only assign scope
-        tags within its own (403). Demoting the last account that holds
-        `system.update` and all `users.*` permissions returns 409.
+        Access changes go through `/assignments`. The caller must be able
+        to grant every assignment the user has (403).
       requestBody:
         required: true
         content:
@@ -161,12 +173,11 @@ paths:
               type: object
               properties:
                 email: {type: string, format: email}
-                role: {type: string, description: Omitted or empty keeps the current role.}
                 display_name: {type: string}
-                scope_tags:
-                  type: array
-                  items: {type: string}
-                  description: Host tag scope. Omitted keeps the current tags; empty = access to all hosts.
+                source:
+                  type: string
+                  enum: [manual, sso]
+                  description: Omitted keeps the current value.
       responses:
         "200":
           description: Updated.
@@ -182,7 +193,7 @@ paths:
       operationId: users.delete
       tags: [users]
       summary: Delete a local user
-      description: Same rules as update; deleting the last admin-capable account returns 409.
+      description: Same rules as update; deleting the account that holds the last admin assignment on everything returns 409.
       responses:
         "204": {description: Deleted.}
         "401": {$ref: "#/components/responses/Unauthorized"}

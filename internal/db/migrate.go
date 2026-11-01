@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"embed"
@@ -11,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 //go:embed migrations/*.sql
@@ -165,6 +168,12 @@ func checkRenamed(all []migration, applied map[string]bool) error {
 	return nil
 }
 
+// dataSteps run right after the SQL of the named migration, in its
+// transaction, for data moves SQL can't express.
+var dataSteps = map[string]func(context.Context, *sql.Tx) error{
+	"20261101151453_rbac_assignments.sql": rbac.MigrateLegacy,
+}
+
 // applyMigration runs one migration and records it in the same
 // transaction, so a failure leaves it unrecorded and the next start
 // retries it.
@@ -180,6 +189,12 @@ func applyMigration(db *sql.DB, fsys fs.FS, name string) error {
 	if _, err := tx.Exec(string(b)); err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("migration %s: %w", name, err)
+	}
+	if step, ok := dataSteps[name]; ok {
+		if err := step(context.Background(), tx); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("migration %s: %w", name, err)
+		}
 	}
 	if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, name); err != nil {
 		_ = tx.Rollback()

@@ -148,6 +148,9 @@ func (h *Handlers) CreateOIDCProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !h.requireIdPGrants(w, r, in.DefaultRole, oidc.GroupRules(in.GroupMappings)) {
+		return
+	}
 	p, err := h.OIDC.CreateProvider(r.Context(), in)
 	if err != nil {
 		status, msg := http.StatusBadRequest, err.Error()
@@ -175,6 +178,9 @@ func (h *Handlers) UpdateOIDCProvider(w http.ResponseWriter, r *http.Request) {
 	var in oidc.ProviderInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if !h.requireIdPGrants(w, r, in.DefaultRole, oidc.GroupRules(in.GroupMappings)) {
 		return
 	}
 	p, err := h.OIDC.UpdateProvider(r.Context(), id, in)

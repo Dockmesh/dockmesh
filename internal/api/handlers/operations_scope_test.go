@@ -47,7 +47,7 @@ func TestOperationsFollowScope(t *testing.T) {
 	queued := start(operations.Spec{Kind: opImageUpdate, Target: "local-web", HostID: "local", Stack: "web", Queued: true})
 	queued.SetCancel(func() bool { return true })
 
-	e.role("web-team", []rbac.Perm{rbac.PermContainersView, rbac.PermContainersUpdate, rbac.PermBackupsView}, rbac.Scope{ScopeType: "stack", ScopeValue: "web"})
+	e.role("web-team", []rbac.Perm{rbac.PermContainersView, rbac.PermContainersUpdate, rbac.PermBackupsView}, rbac.Scope{Type: "stack", Value: "web"})
 	e.role("proxy-only", []rbac.Perm{rbac.PermProxyView})
 	e.user("boss", "admin")
 	scoped := e.user("prodadmin", "admin")
@@ -76,7 +76,7 @@ func TestOperationsFollowScope(t *testing.T) {
 		want string
 	}{
 		{"boss", "app.example.com,local-db,local-web,prod-nightly,prod-web,system"},
-		{"prodadmin", "app.example.com,prod-nightly,prod-web"},
+		{"prodadmin", "prod-nightly,prod-web"},
 		{"web", "local-web,prod-web"},
 		{"px", "app.example.com"},
 	}

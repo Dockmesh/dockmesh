@@ -9,7 +9,7 @@ Dockmesh exposes Prometheus metrics and health endpoints for external monitoring
 
 The server serves Prometheus metrics at `/metrics` on its HTTP port (not under `/api/v1`).
 
-By default the endpoint needs a bearer token with the `metrics.view` permission. Create an [API token](./api-tokens.md) whose role has only that permission and give it to Prometheus:
+By default the endpoint needs a bearer token with the `metrics.view` permission. Create an [API token](./api-tokens.md) restricted to a role with only Settings & audit: View on everything, and give it to Prometheus:
 
 ```yaml
 scrape_configs:

@@ -21,9 +21,9 @@ func (h *Handlers) InitiateMigration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), "", name)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
+	scopeReq := h.stackRes(r, name)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
 		return
 	}
 	var req migration.MigrateRequest
@@ -33,6 +33,12 @@ func (h *Handlers) InitiateMigration(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TargetHostID == "" {
 		writeError(w, http.StatusBadRequest, "target_host_id required")
+		return
+	}
+	// The stack will run on the target, so moving it there needs deploy
+	// rights on it there.
+	if target := h.stackScopeReq(req.TargetHostID, name); !h.allowedOn(r, target, rbac.PermStacksDeploy) {
+		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, target, "stack "+name+" on the target host")
 		return
 	}
 	userID := middleware.UserID(r.Context())
@@ -46,10 +52,10 @@ func (h *Handlers) InitiateMigration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, audit.ActionStackDeploy, name, map[string]any{
-		"action":      "migrate",
+		"action":       "migrate",
 		"migration_id": m.ID,
-		"source":      m.SourceHostID,
-		"target":      m.TargetHostID,
+		"source":       m.SourceHostID,
+		"target":       m.TargetHostID,
 	})
 	writeJSON(w, http.StatusAccepted, m)
 }
@@ -62,17 +68,42 @@ func (h *Handlers) GetMigration(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "migration service unavailable")
 		return
 	}
-	id := chi.URLParam(r, "id")
-	m, err := h.Migrations.Store().Get(r.Context(), id)
+	m, ok := h.stackMigration(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
+}
+
+// stackMigration loads migration {id} and requires it to belong to
+// stack {name}, whose scope the route already checked.
+func (h *Handlers) stackMigration(w http.ResponseWriter, r *http.Request) (*migration.Migration, bool) {
+	m, err := h.Migrations.Store().Get(r.Context(), chi.URLParam(r, "id"))
+	if err == nil && m.StackName != chi.URLParam(r, "name") {
+		err = migration.ErrNotFound
+	}
 	if err != nil {
 		if err == migration.ErrNotFound {
 			writeError(w, http.StatusNotFound, "migration not found")
 		} else {
 			writeError(w, http.StatusInternalServerError, err.Error())
 		}
-		return
+		return nil, false
 	}
-	writeJSON(w, http.StatusOK, m)
+	return m, true
+}
+
+// visibleMigrations keeps the migrations of stacks the caller may view on
+// the source or the target host.
+func (h *Handlers) visibleMigrations(r *http.Request, list []*migration.Migration) []*migration.Migration {
+	out := []*migration.Migration{}
+	for _, m := range list {
+		if middleware.AllowedOn(r.Context(), rbac.PermStacksView, h.stackScopeReq(m.SourceHostID, m.StackName)) ||
+			middleware.AllowedOn(r.Context(), rbac.PermStacksView, h.stackScopeReq(m.TargetHostID, m.StackName)) {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // RollbackMigration triggers a manual rollback.
@@ -84,9 +115,12 @@ func (h *Handlers) RollbackMigration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), "", name)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
+	scopeReq := h.stackRes(r, name)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
+		return
+	}
+	if _, ok := h.stackMigration(w, r); !ok {
 		return
 	}
 	id := chi.URLParam(r, "id")
@@ -120,9 +154,7 @@ func (h *Handlers) ListMigrations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if list == nil {
-		list = []*migration.Migration{}
-	}
+	list = h.visibleMigrations(r, list)
 	writeJSON(w, http.StatusOK, list)
 }
 
@@ -135,9 +167,9 @@ func (h *Handlers) PreflightMigration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), "", name)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
+	scopeReq := h.stackRes(r, name)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
 		return
 	}
 	var req migration.MigrateRequest
@@ -162,9 +194,12 @@ func (h *Handlers) PurgeSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), "", name)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
+	scopeReq := h.stackRes(r, name)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
+		return
+	}
+	if _, ok := h.stackMigration(w, r); !ok {
 		return
 	}
 	id := chi.URLParam(r, "id")
@@ -196,8 +231,6 @@ func (h *Handlers) ListActiveMigrations(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if list == nil {
-		list = []*migration.Migration{}
-	}
+	list = h.visibleMigrations(r, list)
 	writeJSON(w, http.StatusOK, list)
 }

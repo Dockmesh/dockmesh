@@ -100,7 +100,7 @@ The command prints one install command per host. Run each on its host. The insta
 
 Tags are lowercase labels (letters, digits and hyphens, up to 32 characters, at most 20 per host). Set them in the **Add host** dialog, with **Edit tags** in the host's row menu on **Hosts**, or on the **Tags** tab of the host detail page. Changing tags needs `hosts.tag`.
 
-Tags are used for access scoping: a user's scope tags and a role's `host_tag` scope limit which hosts they can see and act on. See [Permissions](../concepts/permissions.md).
+Tags are used for access scoping: an assignment on a host tag covers every host with that tag. See [Permissions](../concepts/permissions.md).
 
 ## Agent upgrades
 
