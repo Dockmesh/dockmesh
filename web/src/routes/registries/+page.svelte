@@ -389,10 +389,10 @@
       {:else if filtered.length === 0}
         <div class="reg-empty">
           {#if search}
-            <Eyebrow>no match</Eyebrow>
+            <Eyebrow>No match</Eyebrow>
             <p class="reg-empty-title">No registries match „{search}".</p>
           {:else}
-            <Eyebrow>empty</Eyebrow>
+            <Eyebrow>Empty</Eyebrow>
             <p class="reg-empty-title">No registries configured.</p>
             <p class="ed-subtitle reg-empty-blurb">
               Pick a provider above or use „Add registry" for anything OCI-compatible.

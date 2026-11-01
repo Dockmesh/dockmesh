@@ -299,7 +299,7 @@
         <div class="tok-fresh">
           <div class="tok-fresh-head">
             <div class="tok-fresh-text">
-              <Eyebrow>↳ token created</Eyebrow>
+              <Eyebrow>Token created</Eyebrow>
               <h3 class="ed-title tok-fresh-title">
                 Copy <em class="ed-accent">{freshToken.name}</em> now — it won't be shown again.
               </h3>
@@ -364,10 +364,10 @@
       {:else if filtered.length === 0}
         <div class="tok-empty">
           {#if search}
-            <Eyebrow>no match</Eyebrow>
+            <Eyebrow>No match</Eyebrow>
             <p class="tok-empty-title">No tokens match „{search}".</p>
           {:else}
-            <Eyebrow>empty</Eyebrow>
+            <Eyebrow>Empty</Eyebrow>
             <p class="tok-empty-title">No API tokens yet.</p>
             <p class="ed-subtitle tok-empty-blurb">
               Create a token to authenticate CI pipelines, scripts, or dmctl against the API.

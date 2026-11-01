@@ -4,7 +4,7 @@
   import { notices } from '$lib/stores/notices.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { ApiError, type Notice } from '$lib/api';
-  import { bannerNotice, noticeAction, noticeSummary, sortNotices } from '$lib/notices';
+  import { bannerNotices, noticeAction, noticeSummary } from '$lib/notices';
   import NoticeLabel from './NoticeLabel.svelte';
   import NoticeBody from './NoticeBody.svelte';
   import { ArrowRight, ChevronDown, X } from 'lucide-svelte';
@@ -20,9 +20,9 @@
   });
 
   let panelOpen = $state(false);
-  const top = $derived(bannerNotice(notices.items));
-  const all = $derived(sortNotices(notices.items));
-  const more = $derived(top ? notices.items.length - 1 : 0);
+  const all = $derived(bannerNotices(notices.items));
+  const top = $derived(all[0]);
+  const more = $derived(all.length ? all.length - 1 : 0);
 
   $effect(() => {
     if (!top) panelOpen = false;
@@ -90,8 +90,8 @@
               type="button"
               onclick={() => dismiss(top)}
               class="p-1.5 rounded-md text-[var(--fg-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)] transition-colors"
-              aria-label="Hide this notice from the banner"
-              title="Hide from banner (stays in the notices until resolved)"
+              aria-label="Dismiss this notice"
+              title="Dismiss: it moves to Needs attention until it is resolved"
             >
               <X class="w-4 h-4" />
             </button>
@@ -103,7 +103,7 @@
     {#if panelOpen}
       <section id="notice-panel" aria-label="Notices" class="mt-2 rounded-md border border-[var(--border)] bg-[var(--surface)]">
         <div class="flex items-center justify-between px-4 py-2 border-b border-[var(--border)]">
-          <span class="font-mono text-[10.5px] uppercase tracking-[0.06em] text-[var(--fg-muted)]">Notices · {all.length}</span>
+          <span class="text-xs font-medium text-[var(--fg-muted)]">Action required · {all.length}</span>
           <button type="button" class={quietBtn} onclick={() => (panelOpen = false)} aria-label="Close notices">
             <X class="w-3.5 h-3.5" /> Close
           </button>
@@ -115,8 +115,8 @@
                 <NoticeLabel severity={n.severity} />
                 <span class="font-medium text-[var(--fg)] flex-1 min-w-[12rem]">{n.title}</span>
                 <div class="flex items-center gap-1.5 ml-auto">
-                  {#if n.dismissible && !n.dismissed && n.severity !== 'info'}
-                    <button type="button" class={quietBtn} onclick={() => dismiss(n)} title="Stays here until resolved">Hide from banner</button>
+                  {#if n.dismissible}
+                    <button type="button" class={quietBtn} onclick={() => dismiss(n)} title="It moves to Needs attention until it is resolved">Dismiss</button>
                   {/if}
                   {#if n.link}
                     <button type="button" class={actionBtn} onclick={() => open(n)}>

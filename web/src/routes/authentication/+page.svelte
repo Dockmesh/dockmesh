@@ -343,7 +343,7 @@
     {:else}
       <!-- ───────────────── 01 · Identity providers ─────────────── -->
       <section class="auth-section">
-        <Eyebrow>01 · Identity providers</Eyebrow>
+        <Eyebrow>Identity providers</Eyebrow>
 
         <div class="auth-providers-toolbar">
           <span class="auth-providers-meta">
@@ -362,7 +362,7 @@
           <Skeleton width="100%" height="6rem" />
         {:else if providers.length === 0}
           <div class="auth-empty">
-            <Eyebrow>empty</Eyebrow>
+            <Eyebrow>Empty</Eyebrow>
             <p class="auth-empty-title">No providers configured.</p>
             <p class="ed-subtitle auth-empty-blurb">
               Click „Add provider" to pick a kind (OIDC / OAuth2 / SAML / LDAP) and a template.
@@ -455,7 +455,7 @@
 
       <!-- ──────────── 02 · Local password policy ───────────────── -->
       <section class="auth-section">
-        <Eyebrow>02 · Local password policy</Eyebrow>
+        <Eyebrow>Local password policy</Eyebrow>
 
         {#if policy}
           <div class="dm-card auth-policy-card">
@@ -558,7 +558,7 @@
 
       <!-- ─────── 03 · Sessions & sign-in flow ─────── -->
       <section class="auth-section">
-        <Eyebrow>03 · Sessions &amp; sign-in flow</Eyebrow>
+        <Eyebrow>Sessions &amp; sign-in flow</Eyebrow>
 
         {#if signin}
           <div class="dm-card auth-policy-card">

@@ -15,7 +15,7 @@
   import { Plus, Power, PowerOff } from 'lucide-svelte';
   import SiteModal from './_SiteModal.svelte';
   import ImportModal from './_ImportModal.svelte';
-  import SiteDrawer from './_SiteDrawer.svelte';
+  import { goto } from '$app/navigation';
   import CaddyTab from './_CaddyTab.svelte';
   import { TLS_LABEL, certExpiresSoon, certNeedsAttention, optionSummary, type Site, type ProxyStatus, type ACMEEvent } from './_site';
 
@@ -53,7 +53,6 @@
   let showSite = $state(false);
   let editing = $state<Site | null>(null);
   let showImport = $state(false);
-  let drawerSite = $state<Site | null>(null);
 
   async function load() {
     refreshing = true;
@@ -73,7 +72,6 @@
       siteOps = ops;
       operations.track(ops);
       latestCaddy = v?.managed && v.default && v.current && v.default !== v.current ? v.default : '';
-      if (drawerSite) drawerSite = r.find((x) => x.id === drawerSite!.id) ?? null;
       const ids = new Set(r.map((x) => x.id));
       selected = new Set([...selected].filter((id) => ids.has(id)));
       lastLoaded = Date.now();
@@ -120,6 +118,7 @@
     if (r.cert_days_left == null) return 'no certificate served yet';
     return `expires in ${r.cert_days_left} d`;
   }
+  const siteHref = (r: Site) => `/proxy/${encodeURIComponent(r.host)}`;
   const opOf = (host: string) => operations.latest(opRef.proxySite(host), 'proxy.site');
 
   async function enableProxy() {
@@ -174,7 +173,6 @@
     try {
       await api.proxy.deleteRoute(r.id);
       toast.success('Site deleted', r.host);
-      if (drawerSite?.id === r.id) drawerSite = null;
       await load();
     } catch (err) {
       toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
@@ -207,13 +205,12 @@
     showSite = true;
   }
   function openEdit(r: Site) {
-    drawerSite = null;
     editing = r;
     showSite = true;
   }
   function menuFor(r: Site): MenuItem[] {
     const items: MenuItem[] = [
-      { label: 'Details', onclick: () => (drawerSite = r) },
+      { label: 'Open', kbd: '↵', href: siteHref(r) },
       { label: 'Open in browser', href: `${r.tls_mode === 'none' ? 'http' : 'https'}://${r.host}` }
     ];
     if (canUpdate) items.push({ label: 'Edit', onclick: () => openEdit(r) });
@@ -335,13 +332,13 @@
           {@const opts = optionSummary(r.options)}
           {@const m = perHost.get(r.host)}
           <div class="dm-tr dm-click" role="row" class:dm-sel={selected.has(r.id)} style="grid-template-columns: {SITE_COLS}"
-            tabindex="0" onclick={() => (drawerSite = r)} onkeydown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) drawerSite = r; }}>
+            tabindex="0" onclick={() => goto(siteHref(r))} onkeydown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) goto(siteHref(r)); }}>
             <span role="cell">
               {#if canDelete}<input type="checkbox" aria-label="Select {r.host}" checked={selected.has(r.id)} onclick={(e) => e.stopPropagation()} onchange={() => toggleOne(r.id)} />{/if}
             </span>
             <span role="cell"><span class="dm-dot {siteTone(r)}"></span></span>
             <span role="cell" class="dm-nm">
-              <span class="dm-t">{r.host}</span>
+              <a href={siteHref(r)} onclick={(e) => e.stopPropagation()}>{r.host}</a>
               <small>{r.enabled ? (r.options?.routing?.www_redirect ? `www.${r.host} redirects here` : ' ') : 'disabled'}</small>
             </span>
             <span role="cell" class="dm-mono px-up" title={r.upstream}>{r.upstream}</span>
@@ -385,7 +382,7 @@
         {#each certSites as r (r.id)}
           {@const soon = certExpiresSoon(r)}
           <div class="dm-tr dm-click" role="row" style="grid-template-columns: {CERT_COLS}" tabindex="0"
-            onclick={() => (drawerSite = r)} onkeydown={(e) => { if (e.key === 'Enter') drawerSite = r; }}>
+            onclick={() => goto(siteHref(r))} onkeydown={(e) => { if (e.key === 'Enter') goto(siteHref(r)); }}>
             <span role="cell" class="dm-mono">{r.host}</span>
             <span role="cell" class="dm-dim">{r.cert_issuer || TLS_LABEL[r.tls_mode]}</span>
             <span role="cell" class="dm-num" class:warn={soon}>{r.cert_days_left != null ? `${r.cert_days_left} days` : '—'}</span>
@@ -426,7 +423,6 @@
 
 <SiteModal bind:open={showSite} {editing} onsaved={load} />
 <ImportModal bind:open={showImport} onimported={load} />
-<SiteDrawer bind:site={drawerSite} onedit={openEdit} ontoggle={toggleEnabled} ondelete={deleteSite} />
 
 <style>
   .ok { color: var(--ok); }

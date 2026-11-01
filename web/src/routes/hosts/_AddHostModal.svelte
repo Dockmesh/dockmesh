@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dialogs } from '$lib/stores/dialogs.svelte';
   // Add-Host Modal — 3-step inline flow per `Dockmesh Wizard (6)/
   // add-host-modal.jsx`. Section 01 collects identity (hostname + tags),
   // Section 02 unlocks once the token is generated and shows the install
@@ -7,7 +8,6 @@
   // intentionally absent — see project_hosts_open_punch_list.md memory.
   import { onMount, onDestroy } from 'svelte';
   import { api, ApiError, type AgentCreateResult } from '$lib/api';
-  import { Eyebrow } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyToClipboard } from '$lib/clipboard';
   import { Plus, X, Check, Copy, ArrowRight } from 'lucide-svelte';
@@ -109,6 +109,7 @@
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape' && !connected) onclose();
   }
+  onMount(() => dialogs.track());
   onMount(() => {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -119,11 +120,8 @@
   <div class="ed-modal ed-add-host-modal" role="dialog" aria-modal="true">
     <header class="ed-modal-head">
       <div class="ed-add-host-head-text">
-        <Eyebrow>Hosts · enroll new</Eyebrow>
-        <h2 class="ed-add-host-title">Bring a new host online.</h2>
-        <p class="ed-add-host-blurb">
-          Three steps. The new host runs <span class="ed-accent-mono">one</span> curl command, then it shows up here ready to take stacks.
-        </p>
+        <h2 class="ed-add-host-title">Add a host</h2>
+        <p class="ed-add-host-blurb">Run one command on the new host. It appears here as soon as it connects.</p>
       </div>
       <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={onclose} aria-label="Close" disabled={connected}>
         <X size={13} strokeWidth={1.5} />
@@ -151,7 +149,7 @@
             <div class="ed-field">
               <label class="ed-field-label">
                 Tags
-                <span class="ed-field-hint">Press Enter or comma to add. Lowercase, max 20.</span>
+                <span class="ed-field-hint">Enter or comma adds a tag.</span>
               </label>
               <div class="ed-host-tags-edit">
                 {#each tags as t (t)}
@@ -176,7 +174,7 @@
               </div>
               {#if !createResult && suggestionPool.filter((s) => !tags.includes(s)).length > 0}
                 <div class="ed-host-tags-suggest">
-                  <span class="font-mono ed-host-tags-suggest-label">Suggestions</span>
+                  <span class="ed-host-tags-suggest-label">Suggestions</span>
                   {#each suggestionPool.filter((s) => !tags.includes(s)).slice(0, 8) as s (s)}
                     <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => addTag(s)}>+ {s}</button>
                   {/each}
@@ -190,9 +188,9 @@
               <ArrowRight size={11} strokeWidth={1.5} />
             </button>
           {:else}
-            <p class="ed-add-host-confirm font-mono">
+            <p class="ed-add-host-confirm">
               <Check size={11} strokeWidth={1.5} class="ed-add-host-check" />
-              token issued for <span class="ed-accent-mono">{createResult.agent.name}</span> · ready in section 02
+              Install command ready for <b>{createResult.agent.name}</b>
             </p>
           {/if}
         </div>
@@ -204,12 +202,10 @@
         <div class="ed-add-host-section-body">
           <h3 class="ed-add-host-section-title">Run the install on the new host</h3>
           {#if !createResult}
-            <p class="ed-add-host-blurb">Fill out section <span class="ed-accent-mono">01</span> first.</p>
+            <p class="ed-add-host-blurb">Name the host first.</p>
           {:else}
             <p class="ed-add-host-blurb">
-              Open a shell on <span class="ed-accent-mono">{createResult.agent.name}</span> and paste the command below.
-              <span class="ed-accent-mono">Save the token now</span> — it won't be shown again.
-              It expires {new Date(createResult.token_expires_at).toLocaleString()}.
+              Paste this in a shell on <b>{createResult.agent.name}</b>. The token is shown only once and expires {new Date(createResult.token_expires_at).toLocaleString()}.
             </p>
             <div class="ed-add-host-cmd-wrap">
               <pre class="ed-add-host-cmd">{createResult.install_hint}</pre>
@@ -218,7 +214,7 @@
               </button>
             </div>
             <div class="ed-add-host-tokenbox">
-              <span class="font-mono ed-add-host-tokenbox-label">Enrollment token</span>
+              <span class="ed-add-host-tokenbox-label">Enrollment token</span>
               <code class="font-mono ed-add-host-tokenbox-value">{createResult.token}</code>
             </div>
           {/if}
@@ -229,34 +225,30 @@
       <section class="ed-add-host-section" class:active={!!createResult} class:muted={!createResult}>
         <span class="ed-add-host-step" class:active={!!createResult}>03</span>
         <div class="ed-add-host-section-body">
-          <h3 class="ed-add-host-section-title">Wait for the agent to dial home</h3>
+          <h3 class="ed-add-host-section-title">Wait for the host to connect</h3>
           {#if !createResult}
-            <p class="ed-add-host-blurb">Once you've run the install, this section flips to live.</p>
+            <p class="ed-add-host-blurb">Starts after you run the install command.</p>
           {:else if !connected}
             <div class="ed-add-host-waiting">
               <span class="ed-add-host-pulse" aria-hidden="true"></span>
               <div>
                 <div class="ed-add-host-waiting-text">
-                  Waiting for <span class="ed-accent-mono">{createResult.agent.name}</span> to call back…
+                  Waiting for <b>{createResult.agent.name}</b> to connect…
                 </div>
-                <div class="font-mono ed-add-host-waiting-meta">
-                  polling every 2s · usually 10–30 seconds after install
-                </div>
+                <div class="ed-add-host-waiting-meta">Usually 10–30 seconds after the install</div>
               </div>
             </div>
-            <p class="font-mono ed-add-host-troubleshoot">
-              if it doesn't connect within 2 minutes — verify {createResult.agent.name} can reach <code>{createResult.agent_url}</code> outbound.
+            <p class="ed-add-host-troubleshoot">
+              Not connected after 2 minutes? Check that {createResult.agent.name} can reach <code class="dm-mono">{createResult.agent_url}</code>.
             </p>
           {:else}
             <div class="ed-add-host-success">
               <span class="ed-add-host-success-mark"><Check size={13} strokeWidth={1.5} /></span>
               <div>
                 <div class="ed-add-host-success-text">
-                  <span class="ed-accent-mono">{createResult.agent.name}</span> is online.
+                  <b>{createResult.agent.name}</b> is online.
                 </div>
-                <div class="font-mono ed-add-host-success-meta">
-                  enrolled · {tags.length} tag{tags.length === 1 ? '' : 's'} · closing automatically…
-                </div>
+                <div class="ed-add-host-success-meta">Closing…</div>
               </div>
             </div>
           {/if}
@@ -265,7 +257,7 @@
     </div>
 
     <footer class="ed-modal-foot">
-      <span class="font-mono ed-modal-foot-status">ESC to cancel</span>
+      <span class="dm-sp"></span>
       <div class="ed-actions">
         <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={onclose}>
           {connected ? 'Done' : 'Cancel'}
@@ -308,8 +300,6 @@
     border-top: 1px solid var(--border);
     background: var(--bg-elevated);
   }
-  .ed-modal-foot-status { font-size: 11px; color: var(--fg-subtle); }
-  .ed-accent-mono { color: var(--accent-fg); font-family: var(--font-mono); font-style: normal; font-weight: 500; }
 
   /* ─── Step sections ─── */
   .ed-add-host-section {

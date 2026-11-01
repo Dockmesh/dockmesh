@@ -362,7 +362,7 @@
 
       <!-- ───────────────────── 01 · Identity ─────────────────────── -->
       <section class="acc-section">
-        <Eyebrow>01 · Identity</Eyebrow>
+        <Eyebrow>Identity</Eyebrow>
 
         <div class="dm-card acc-identity-card">
           <div class="acc-identity-grid">
@@ -426,7 +426,7 @@
 
       <!-- ───────────────────── 02 · Security ─────────────────────── -->
       <section class="acc-section">
-        <Eyebrow>02 · Security</Eyebrow>
+        <Eyebrow>Security</Eyebrow>
 
         <div class="acc-grid-2">
           <!-- Password card -->
@@ -570,7 +570,7 @@
 
       <!-- ───────────────────── 03 · Sessions ─────────────────────── -->
       <section class="acc-section">
-        <Eyebrow>03 · Sessions</Eyebrow>
+        <Eyebrow>Sessions</Eyebrow>
 
         <div class="dm-card acc-sessions">
           {#if visibleSessions.length === 0}
@@ -662,7 +662,7 @@
 
       <!-- ───────────────────── 04 · Account (Danger) ───────────────── -->
       <section class="acc-section">
-        <Eyebrow>04 · Account</Eyebrow>
+        <Eyebrow>Account</Eyebrow>
 
         <div class="acc-danger-card">
           <div class="acc-danger-text">

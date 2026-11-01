@@ -1,6 +1,6 @@
 // Live view of the server's long-running operations (image updates,
 // backup runs, restores, new proxy sites). One store for the whole app:
-// the top-bar indicator, the progress drawer and inline row progress all
+// the top-bar indicator, the progress dialog and inline row progress all
 // read from it, so leaving a page never loses track of running work.
 //
 // Updates arrive on /ws/events ("source":"operations"); while the socket
@@ -24,7 +24,7 @@ function createOperationsStore() {
   let byId = $state<Record<string, Operation>>({});
   let logs = $state<Record<string, OperationLogLine[]>>({});
   let conn = $state<ConnStatus>('closed');
-  let drawerId = $state<string | null>(null);
+  let dialogId = $state<string | null>(null);
   let stream: EventStream | null = null;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let started = false;
@@ -72,7 +72,7 @@ function createOperationsStore() {
       const list = await api.operations.list({ limit: 50 });
       for (const op of list) upsert(op);
       // Drawer log follows the poll while the socket is down.
-      if (drawerId && conn !== 'live' && byId[drawerId] && isActive(byId[drawerId])) await load(drawerId);
+      if (dialogId && conn !== 'live' && byId[dialogId] && isActive(byId[dialogId])) await load(dialogId);
     } catch {
       /* next poll retries */
     }
@@ -113,8 +113,8 @@ function createOperationsStore() {
     get live() {
       return conn === 'live';
     },
-    get drawerId() {
-      return drawerId;
+    get dialogId() {
+      return dialogId;
     },
     get(id: string | null | undefined): Operation | undefined {
       return id ? byId[id] : undefined;
@@ -164,7 +164,7 @@ function createOperationsStore() {
       pollTimer = null;
       byId = {};
       logs = {};
-      drawerId = null;
+      dialogId = null;
     },
     // Adds operations a request just returned, before the socket reports them.
     track(ops: Operation | Operation[]) {
@@ -195,11 +195,11 @@ function createOperationsStore() {
       return undefined;
     },
     async open(id: string) {
-      drawerId = id;
+      dialogId = id;
       await load(id);
     },
     close() {
-      drawerId = null;
+      dialogId = null;
     },
     load
   };

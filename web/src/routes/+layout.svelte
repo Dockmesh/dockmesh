@@ -16,9 +16,9 @@
   import NoticeBanner from '$lib/components/ui/NoticeBanner.svelte';
   import BackupHealthPill from '$lib/components/BackupHealthPill.svelte';
   import MigrationActivePill from '$lib/components/MigrationActivePill.svelte';
-  import MigrationDrawer from '$lib/components/MigrationDrawer.svelte';
+  import MigrationsDialog from '$lib/components/MigrationsDialog.svelte';
   import OperationsIndicator from '$lib/components/operations/OperationsIndicator.svelte';
-  import OperationDrawer from '$lib/components/operations/OperationDrawer.svelte';
+  import OperationDialog from '$lib/components/operations/OperationDialog.svelte';
   import { operations } from '$lib/stores/operations.svelte';
   import Sidebar, { type Badge } from '$lib/components/shell/Sidebar.svelte';
   import CommandPalette from '$lib/components/shell/CommandPalette.svelte';
@@ -59,7 +59,7 @@
 
   let mobileOpen = $state(false);
   let paletteOpen = $state(false);
-  let migDrawerOpen = $state(false);
+  let migDialogOpen = $state(false);
 
   let sidebarCollapsed = $state<boolean>(
     typeof localStorage !== 'undefined' && localStorage.getItem('dm_sidebar_collapsed') === '1'
@@ -292,8 +292,8 @@
 
 <Toaster />
 <ConfirmDialog />
-<MigrationDrawer bind:open={migDrawerOpen} />
-{#if auth.isAuthenticated}<OperationDrawer />{/if}
+<MigrationsDialog bind:open={migDialogOpen} />
+{#if auth.isAuthenticated}<OperationDialog />{/if}
 
 {#if page.url.pathname === '/setup' || page.url.pathname.startsWith('/setup/')}
   {@render children()}
@@ -335,7 +335,7 @@
 
         <div class="pills" aria-live="polite">
           <OperationsIndicator />
-          <MigrationActivePill onOpen={() => (migDrawerOpen = true)} />
+          <MigrationActivePill onOpen={() => (migDialogOpen = true)} />
           <BackupHealthPill />
         </div>
 

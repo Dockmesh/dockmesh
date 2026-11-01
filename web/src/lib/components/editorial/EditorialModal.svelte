@@ -2,6 +2,7 @@
   import type { Snippet } from 'svelte';
   import { X } from 'lucide-svelte';
   import Eyebrow from './Eyebrow.svelte';
+  import { dialogs } from '$lib/stores/dialogs.svelte';
 
   interface Props {
     open: boolean;
@@ -26,6 +27,10 @@
     children,
     footer,
   }: Props = $props();
+
+  $effect(() => {
+    if (open) return dialogs.track();
+  });
 
   function close() {
     open = false;

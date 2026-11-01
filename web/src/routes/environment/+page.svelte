@@ -441,7 +441,7 @@
       </div>
     {:else if visible.length === 0}
       <div class="env-empty">
-        <Eyebrow>no match</Eyebrow>
+        <Eyebrow>No match</Eyebrow>
         <p class="env-empty-title">No variables match „{search}".</p>
       </div>
     {:else}
@@ -649,7 +649,7 @@
     {#if parsedImport.length > 0}
       <div class="env-import-preview">
         <div class="env-import-preview-head">
-          <Eyebrow>preview · {parsedImport.length} entr{parsedImport.length === 1 ? 'y' : 'ies'}</Eyebrow>
+          <Eyebrow>Preview · {parsedImport.length} entr{parsedImport.length === 1 ? 'y' : 'ies'}</Eyebrow>
         </div>
         <div class="env-import-preview-body">
           {#each parsedImport as p (p.key)}

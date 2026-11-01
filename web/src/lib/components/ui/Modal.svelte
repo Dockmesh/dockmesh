@@ -2,6 +2,7 @@
   import type { Snippet } from 'svelte';
   import { X } from 'lucide-svelte';
   import { trapFocus, portal } from '$lib/a11y';
+  import { dialogs } from '$lib/stores/dialogs.svelte';
 
   interface Props {
     open: boolean;
@@ -18,6 +19,10 @@
   let { open = $bindable(false), title, onclose, maxWidth = 'max-w-2xl', children, footer, header }: Props = $props();
 
   const titleId = `dlg-${Math.random().toString(36).slice(2, 9)}`;
+
+  $effect(() => {
+    if (open) return dialogs.track();
+  });
 
   function close() {
     open = false;

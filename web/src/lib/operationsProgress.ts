@@ -65,7 +65,7 @@ export function elapsed(start?: string, end?: string): string {
 
 // Toasts carry a short form of a step's message: the sentence before the
 // first colon when that is where a raw upstream error starts, else the
-// first 140 characters. The drawer shows the full text.
+// first 140 characters. The progress dialog shows the full text.
 export function shortMessage(msg: string | null | undefined, max = 140): string {
   if (!msg) return '';
   const m = msg.trim();

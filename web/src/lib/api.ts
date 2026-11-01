@@ -1304,6 +1304,7 @@ export interface AttentionItem {
   title: string;
   detail?: string;
   link: string;
+  object: { type: string; id: string; name?: string; host_id?: string };
   since?: string;
 }
 

@@ -10,7 +10,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { Package, Plus, Trash2, KeyRound } from 'lucide-svelte';
-  import DeployDrawer from './_DeployDrawer.svelte';
+  import DeployDialog from './_DeployDialog.svelte';
 
   const canDeploy = $derived(allowed('stacks.deploy'));
   const canCreate = $derived(allowed('templates.create'));
@@ -324,7 +324,7 @@
   {/if}
 </section>
 
-<DeployDrawer bind:open={deployOpen} template={deployTarget} />
+<DeployDialog bind:open={deployOpen} template={deployTarget} />
 
 <Modal bind:open={editOpen} title={editingId == null ? 'New template' : `Edit ${editForm.name}`} maxWidth="max-w-3xl" footer={editFooter}>
   <form id="tpl-edit-form" class="tp-form" onsubmit={(e) => { e.preventDefault(); saveTemplate(); }}>
