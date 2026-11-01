@@ -25,7 +25,9 @@ components:
         actor: {type: string, description: "User id (the owner for an owned API token), `api-token:<id>` for an unowned token, empty for scheduled work."}
         actor_name: {type: string}
         status: {type: string, enum: [queued, running, succeeded, failed, cancelled]}
-        error: {type: string}
+        cancellable: {type: boolean, description: "Set while `POST /operations/{id}/cancel` would stop the work now: queued, or in a step that only reads or waits."}
+        cancel_requested: {type: boolean, description: "A cancel was accepted and the running step is stopping."}
+        error: {type: string, description: "The failure, or for a cancelled operation the step it stopped in."}
         steps:
           type: array
           items: {$ref: "#/components/schemas/OperationStep"}
@@ -42,7 +44,7 @@ components:
       properties:
         key: {type: string}
         label: {type: string}
-        status: {type: string, enum: [pending, running, succeeded, failed, skipped, warning]}
+        status: {type: string, enum: [pending, running, succeeded, failed, skipped, warning, cancelled]}
         detail: {type: string}
         progress: {type: number, minimum: 0, maximum: 1, description: "Absent when the step cannot measure its progress."}
         started_at: {type: string, format: date-time}

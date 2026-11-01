@@ -1,0 +1,3 @@
+kind: Fixed
+body: A backup run whose target or source stops moving data now fails after 10 minutes with "target stalled" and frees the job, instead of holding its run slot until the server restarts.
+time: 2026-11-01T21:13:01.4833027+01:00

@@ -7,6 +7,7 @@
   import { hosts } from '$lib/stores/host.svelte';
   import { Skeleton, EmptyState, StatBar, StatusChip } from '$lib/components/ui';
   import OpProgress from '$lib/components/operations/OpProgress.svelte';
+  import CancelOpButton from '$lib/components/operations/CancelOpButton.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
@@ -144,6 +145,7 @@
         <a class="dm-sub" href="/backups/runs/{liveRunId}">Run #{liveRunId}</a>
         <div class="live-op"><OpProgress op={liveOp} /></div>
         <button type="button" class="dm-btn dm-btn-sm dm-btn-ghost" onclick={() => operations.open(liveOp.id)}>Steps and log</button>
+        <CancelOpButton op={liveOp} />
       </div>
     {:else if lastRun?.status === 'failed'}
       <div class="fail" role="alert">

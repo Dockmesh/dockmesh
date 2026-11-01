@@ -198,6 +198,12 @@ func TestCancelOnlyQueued(t *testing.T) {
 	if err := s.Cancel(r.ID()); !errors.Is(err, ErrNotCancellable) {
 		t.Fatalf("running op cancel: %v", err)
 	}
+	if got, _ := s.Get(ctx, q.ID()); !got.Cancellable {
+		t.Fatal("queued operation with a cancel func not marked cancellable")
+	}
+	if got, _ := s.Get(ctx, r.ID()); got.Cancellable {
+		t.Fatal("running operation marked cancellable by a queue cancel func")
+	}
 	if err := s.Cancel(q.ID()); err != nil {
 		t.Fatal(err)
 	}

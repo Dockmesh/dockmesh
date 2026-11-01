@@ -119,7 +119,7 @@
         <legend>Existing data</legend>
         <label class="opt" class:on={mode === 'replace'}>
           <input type="radio" bind:group={mode} value="replace" />
-          <span><b>Replace</b> <span class="dm-dim">empties the volume{isStack ? 's' : ''} first, so the result matches the backup. Containers using {isStack ? 'them' : 'it'} must be stopped.</span></span>
+          <span><b>Replace</b> <span class="dm-dim">swaps the contents for the backup's once it extracted completely, so the result matches the backup; needs free space for both while it runs. Containers using {isStack ? 'them' : 'it'} must be stopped.</span></span>
         </label>
         <label class="opt" class:on={mode === 'merge'}>
           <input type="radio" bind:group={mode} value="merge" />
@@ -128,7 +128,7 @@
       </fieldset>
       {#if inPlace}
         <p class="warn" role="note">
-          This restores over the original {isStack ? 'stack' : 'volume'}. If the archive is damaged, nothing is changed.
+          This restores over the original {isStack ? 'stack' : 'volume'}. If the archive is damaged or the restore fails, nothing is changed.
         </p>
       {/if}
       <div class="dm-field">

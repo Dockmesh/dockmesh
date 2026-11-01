@@ -5,6 +5,7 @@
   import { StatusChip, StatBar, EmptyState, Skeleton, LiveIndicator, InfoTip } from '$lib/components/ui';
   import type { Stat } from '$lib/components/ui/StatBar.svelte';
   import OpProgress from '$lib/components/operations/OpProgress.svelte';
+  import CancelOpButton from '$lib/components/operations/CancelOpButton.svelte';
   import { operations, isActive, opRef } from '$lib/stores/operations.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
@@ -299,6 +300,7 @@
             <span role="cell" class="up-act">
               {#if op}
                 <OpProgress {op} />
+                <CancelOpButton {op} />
               {:else if canUpdate}
                 <a class="dm-btn dm-btn-ghost dm-btn-sm" href="/containers/{encodeURIComponent(r.id)}?tab=updates">Notes</a>
                 <button type="button" class="dm-btn dm-btn-sm" disabled={!!why} title={why ?? `Pull the newer image and replace ${r.name}`} onclick={() => updateOne(r)}>Update</button>

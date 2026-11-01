@@ -523,6 +523,7 @@ func (o *Op) SetCancel(cancel func() bool) {
 	}
 	o.mu.Lock()
 	o.cancel = cancel
+	o.op.Cancellable = cancel != nil && o.op.Status == StatusQueued
 	o.mu.Unlock()
 }
 
@@ -570,6 +571,7 @@ func (o *Op) Begin() {
 		if op.Status == StatusQueued {
 			op.Status = StatusRunning
 			op.StartedAt = &now
+			op.Cancellable = o.runCancel != nil
 		}
 	})
 }

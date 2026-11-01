@@ -13,6 +13,7 @@
   import { Tabs, Segmented, StatusChip, StatBar, Switch, Skeleton, EmptyState } from '$lib/components/ui';
   import Menu, { type MenuItem } from '$lib/components/ui/Menu.svelte';
   import OpProgress from '$lib/components/operations/OpProgress.svelte';
+  import CancelOpButton from '$lib/components/operations/CancelOpButton.svelte';
   import JobWizard from './_JobWizard.svelte';
   import TargetWizard from './_TargetWizard.svelte';
   import RestoreDialog from './_RestoreDialog.svelte';
@@ -415,7 +416,7 @@
             <span class="dm-trunc muted" title={j.schedule}>{cronHuman(j.schedule)}</span>
             <span class="dm-nm">
               {#if op}
-                <OpProgress {op} />
+                <span class="op-cell"><OpProgress {op} /><CancelOpButton {op} /></span>
               {:else if last}
                 <span class="dm-t lr" class:bad={last.status === 'failed'} title={last.error}>
                   {last.status === 'failed' ? 'Failed' : last.status === 'running' ? 'Running' : fmtBytes(last.size_bytes)}{last.status === 'success_with_warnings' ? ' · warnings' : ''}
@@ -467,7 +468,7 @@
             <span class="dm-nm"><a {href} onclick={(e) => e.stopPropagation()}>{r.job_name}</a>{#if r.encrypted}<span class="lock" title="Encrypted"><Lock size={11} /></span>{/if}</span>
             <span>
               {#if op && (isActive(op) || r.status === 'running')}
-                <OpProgress {op} />
+                <span class="op-cell"><OpProgress {op} /><CancelOpButton {op} /></span>
               {:else if r.status === 'failed'}
                 <span class="fail-cell"><StatusChip tone="bad" label="Failed" /><span class="dm-trunc dm-dim" title={r.error}>{r.error ?? ''}</span></span>
               {:else}
@@ -554,6 +555,7 @@
 
 <style>
   .bad { color: var(--bad); }
+  .op-cell { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
   .warn { color: var(--warn); }
   .muted { color: var(--muted); }
   .small { font-size: 12px; }

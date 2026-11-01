@@ -1,0 +1,3 @@
+kind: Added
+body: 'Running work can be cancelled from its progress dialog and the backup and update lists: a backup run in any step (post-backup hooks still run and the unfinished archive is deleted from the target), an image update while it pulls, a restore while it downloads or verifies the archive, and the certificate wait of a new proxy site (the site stays). The operation ends cancelled and names the step it stopped in; cancelling needs the permission that started the work.'
+time: 2026-11-01T21:13:00.2293946+01:00

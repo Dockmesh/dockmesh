@@ -182,7 +182,7 @@ Scans return `scanner not configured` (HTTP 503) when the `grype` binary was not
 ## Backups
 
 <!-- update after: backups: run in the background, set the time zone, use saved targets -->
-**Run now is cancelled when you close the browser.** A manual run executes inside the HTTP request, so closing the tab or losing the connection cancels it, and the run can stay in `running` state. Keep the page open until it finishes. For long jobs, rely on the schedule: scheduled runs execute in the server and don't depend on a browser. Schedules use the server's local time zone.
+**A backup run seems stuck.** Runs execute in the server, so closing the browser does not stop them. Open the run's progress dialog to see the step it is in and its log. A run whose transfer moves no data for 10 minutes fails on its own with "target stalled"; you can also stop it earlier with **Cancel**. Schedules use the server's local time zone.
 
 <!-- update after: backups: run in the background, set the time zone, use saved targets -->
 **SMB targets fail when the server runs on Linux.** The SMB target builds remote paths incorrectly on Linux, so the job folder is never created and listing breaks. Use SFTP or S3, or mount the share on the server (`mount -t cifs`) and point a **Local** target at the mount path. If your unit was written by `dockmesh init` (it sets `ProtectSystem=strict`), add the mount path to `ReadWritePaths` in `/etc/systemd/system/dockmesh.service`.

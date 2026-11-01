@@ -4,6 +4,7 @@
   import { Modal, Button, StatusChip } from '$lib/components/ui';
   import type { Tone } from '$lib/components/ui/StatusChip.svelte';
   import OperationSteps from './OperationSteps.svelte';
+  import CancelOpButton from './CancelOpButton.svelte';
   import { api, type Operation } from '$lib/api';
   import { operations, kindLabel, isActive, opRef, failedStep, elapsed } from '$lib/stores/operations.svelte';
   import { shortMessage } from '$lib/operationsProgress';
@@ -34,6 +35,7 @@
 
   const statusTone: Record<string, Tone> = { queued: 'off', running: 'acc', succeeded: 'ok', failed: 'bad', cancelled: 'off' };
   const failed = $derived(op ? failedStep(op) : undefined);
+  const stoppedAt = $derived(op?.status === 'cancelled' ? op.steps.find((s) => s.status === 'cancelled') : undefined);
   const reason = $derived(op?.status === 'failed' ? shortMessage(op.error ?? failed?.detail, 160) : '');
 
   function when(iso?: string) {
@@ -82,17 +84,6 @@
       busy = false;
     }
   }
-  async function cancel() {
-    if (!op) return;
-    busy = true;
-    try {
-      operations.track(await api.operations.cancel(op.id));
-    } catch (e) {
-      toast.error('Could not cancel', (e as Error).message);
-    } finally {
-      busy = false;
-    }
-  }
   function close() {
     operations.close();
   }
@@ -114,6 +105,12 @@
         <b>{failed ? `Failed at “${failed.label}”` : 'Failed'}</b>
         {#if reason}<p title={op.error ?? ''}>{reason}</p>{/if}
       </div>
+    {:else if op.status === 'cancelled'}
+      <div class="stopped">
+        <b>{stoppedAt ? `Cancelled during “${stoppedAt.label}”` : 'Cancelled before it started'}</b>
+      </div>
+    {:else if op.cancel_requested}
+      <div class="stopped" role="status"><b>Cancelling…</b> the current step is stopping.</div>
     {/if}
 
     <section>
@@ -139,7 +136,7 @@
     {#if op}
       {#if objectHref}<Button variant="ghost" onclick={() => { const h = objectHref; close(); goto(h); }}>Open {op.kind === 'proxy.site' ? 'reverse proxy' : op.kind === 'image.update' ? 'container' : 'run'}</Button>{/if}
       <span class="dm-sp"></span>
-      {#if op.status === 'queued' && allowed(op.kind === 'backup.run' ? 'backups.run' : 'containers.upgrade')}<Button variant="secondary" loading={busy} onclick={cancel}>Cancel</Button>{/if}
+      <CancelOpButton {op} size="md" />
       {#if canRetry}<Button variant="primary" loading={busy} onclick={retry}>Retry</Button>{/if}
       <Button variant="secondary" onclick={close}>Close</Button>
     {/if}
@@ -152,6 +149,7 @@
   .fail { border: 1px solid color-mix(in srgb, var(--bad) 45%, transparent); background: color-mix(in srgb, var(--bad) 8%, transparent); border-radius: var(--r); padding: 10px 12px; }
   .fail b { color: var(--bad); }
   .fail p { margin: 4px 0 0; font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stopped { border: 1px solid var(--border); background: var(--field); border-radius: var(--r); padding: 10px 12px; font-size: var(--fs-sm); }
   .logsec { display: flex; flex-direction: column; }
   .log { height: 220px; overflow: auto; background: var(--code, var(--field)); border-radius: var(--r-sm); padding: 8px 10px; font-size: 11.5px; line-height: 1.55; }
   .ln { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; }

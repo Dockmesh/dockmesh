@@ -14,14 +14,14 @@
 <button type="button" class="opp" class:compact title="Show steps and log" onclick={(e) => { e.stopPropagation(); operations.open(op.id); }}>
   {#if isActive(op)}
     <span class="txt">
-      {op.status === 'queued' ? 'Queued' : (step?.label ?? 'Running')}{#if step?.progress != null}<span class="dm-num"> · {Math.round(step.progress * 100)} %</span>{/if}
+      {op.status === 'queued' ? 'Queued' : op.cancel_requested ? 'Cancelling…' : (step?.label ?? 'Running')}{#if step?.progress != null}<span class="dm-num"> · {Math.round(step.progress * 100)} %</span>{/if}
     </span>
     <span class="bar" class:indet={pct == null}><i style={pct != null ? `width:${Math.max(4, Math.round(pct * 100))}%` : ''}></i></span>
   {:else if op.status === 'failed'}
     <StatusChip tone="bad" label="failed" title={op.error} />
     {#if !compact}<span class="txt err" title={op.error}>{step?.label ?? op.error}</span>{/if}
   {:else if op.status === 'cancelled'}
-    <StatusChip tone="off" label="cancelled" />
+    <StatusChip tone="off" label="cancelled" title={op.error} />
   {:else if hasWarning(op)}
     <StatusChip tone="warn" label="warning" title={op.steps.find((s) => s.status === 'warning')?.detail} />
   {:else}

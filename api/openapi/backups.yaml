@@ -217,9 +217,18 @@ paths:
         need an agent of this version).
 
         `target_stack` restores under another name (default: the source
-        stack). `mode: replace` empties each volume first and is refused
-        with 409 while running containers use one of them; `merge` (default)
-        overwrites the archived files and keeps everything else.
+        stack). `mode: replace` swaps each volume's contents for the
+        archive's: it extracts into a staging directory inside the volume and
+        moves the old contents out only once tar succeeded, so a failed
+        restore leaves the volume as it was. It needs free space for old and
+        new contents side by side (refused before writing otherwise), an
+        agent of this version on remote hosts, and is refused with 409 while
+        running containers use the volume. `merge` (default) overwrites the
+        archived files and keeps everything else.
+
+        The restore can be cancelled through its operation while it
+        downloads or verifies the archive (409 here, nothing written); once
+        it writes it runs to the end.
 
         Requires the job's host and the destination host within the
         caller's scope (403). Stack runs write the target stack's files, so
@@ -247,7 +256,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: Run is a system backup or not restorable (failed, pruned); a volume to replace is in use; another restore writes the same volume or stack, or too many restores run; replace was asked for a run without a recorded checksum; or the destination agent is too old.
+          description: Run is a system backup or not restorable (failed, pruned); a volume to replace is in use; another restore writes the same volume or stack, or too many restores run; replace was asked for a run without a recorded checksum; the destination agent is too old; or the restore was cancelled before anything was written.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -293,7 +302,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
-          description: Run is a system backup or not restorable (failed, pruned); the volume to replace is in use; another restore writes the same volume, or too many restores run; replace was asked for a run without a recorded checksum; or the destination agent is too old.
+          description: Run is a system backup or not restorable (failed, pruned); the volume to replace is in use; another restore writes the same volume, or too many restores run; replace was asked for a run without a recorded checksum; the destination agent is too old; or the restore was cancelled before anything was written.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}

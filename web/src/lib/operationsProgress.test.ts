@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Operation, OperationStep } from '$lib/api';
-import { currentStep, elapsed, failedStep, hasWarning, isActive, kindLabel, opRef, overallProgress, shortMessage } from './operationsProgress';
+import { canCancel, cancelConsequence, cancelPerm, currentStep, elapsed, failedStep, hasWarning, isActive, kindLabel, opRef, overallProgress, shortMessage } from './operationsProgress';
 
 function op(steps: Partial<OperationStep>[], status: Operation['status'] = 'running'): Operation {
   return {
@@ -83,5 +83,33 @@ describe('shortMessage', () => {
     ['empty', '', '']
   ])('%s', (_n, input, want) => {
     expect(shortMessage(input)).toBe(want);
+  });
+});
+
+describe('cancel', () => {
+  it('offers cancel only while the server marks the work cancellable', () => {
+    const o = op([{ status: 'running' }]);
+    expect(canCancel(o)).toBe(false);
+    expect(canCancel({ ...o, cancellable: true })).toBe(true);
+    expect(canCancel({ ...o, cancellable: true, cancel_requested: true })).toBe(false);
+    expect(canCancel({ ...op([{ status: 'cancelled' }], 'cancelled'), cancellable: true })).toBe(false);
+  });
+  it('needs the permission of the starting action', () => {
+    expect(cancelPerm('backup.run')).toBe('backups.run');
+    expect(cancelPerm('backup.restore')).toBe('backups.restore');
+    expect(cancelPerm('image.update')).toBe('containers.upgrade');
+    expect(cancelPerm('proxy.site')).toBe('proxy.create');
+    expect(cancelPerm('other')).toBeUndefined();
+  });
+  it('names the consequence per kind', () => {
+    const o = op([{ status: 'running' }]);
+    expect(cancelConsequence(o)).toContain('Post-backup hooks still run');
+    expect(cancelConsequence({ ...o, kind: 'backup.restore' })).toContain('before anything is written');
+    expect(cancelConsequence({ ...o, kind: 'image.update' })).toContain('current image');
+    expect(cancelConsequence({ ...o, kind: 'proxy.site' })).toContain('The site stays');
+    expect(cancelConsequence({ ...o, status: 'queued' })).toContain('does not start');
+  });
+  it('reports the step a cancelled operation stopped in', () => {
+    expect(currentStep(op([{ status: 'succeeded' }, { status: 'cancelled', label: 'Archive' }], 'cancelled'))?.label).toBe('Archive');
   });
 });
