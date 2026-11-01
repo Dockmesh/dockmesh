@@ -257,12 +257,12 @@ var metricsTables = []string{
 // background so a large history doesn't hold up the request. A batch
 // still being stored is dropped by the sink, which checks that the agent
 // exists.
-func (s *Service) deleteHistory(id string) {
+func (s *Service) deleteHistory(ctx context.Context, id string) {
 	s.intakeMu.Lock()
 	delete(s.intakes, id)
 	s.intakeMu.Unlock()
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), metricsDeleteMax)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), metricsDeleteMax)
 		defer cancel()
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
@@ -271,7 +271,7 @@ func (s *Service) deleteHistory(id string) {
 		}
 		defer func() { _ = tx.Rollback() }()
 		for _, t := range metricsTables {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM `+t+` WHERE host_id = ?`, id); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM `+t+` WHERE host_id = ?`, id); err != nil { //nolint:gosec // t is from metricsTables
 				slog.Warn("agent delete: metrics history", "table", t, "err", err)
 				return
 			}

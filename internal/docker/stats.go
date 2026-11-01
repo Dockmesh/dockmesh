@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 
 	"github.com/docker/docker/api/types/container"
 )
@@ -72,7 +73,7 @@ func SampleStats(ctx context.Context, cli StatsReader, id string) (NormalizedSta
 func Normalize(s *container.StatsResponse) NormalizedStats {
 	cpus := s.CPUStats.OnlineCPUs
 	if cpus == 0 {
-		cpus = uint32(len(s.CPUStats.CPUUsage.PercpuUsage))
+		cpus = uint32(min(len(s.CPUStats.CPUUsage.PercpuUsage), math.MaxUint32)) //nolint:gosec // clamped
 	}
 	var hostPct float64
 	// Counters restart with the container; a frame across the restart

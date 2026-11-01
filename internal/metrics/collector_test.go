@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -122,7 +123,7 @@ func TestHostSeriesAndDownsample(t *testing.T) {
 	if got, err := c.Query(ctx, Query{Name: "odd", Resolution: "1m", From: time.Unix(old-60, 0), To: time.Now()}); err != nil || len(got) != 1 {
 		t.Errorf("odd average: %+v, %v", got, err)
 	}
-	if _, err := c.QueryHost(ctx, Query{Resolution: "5m"}); err != ErrResolution {
+	if _, err := c.QueryHost(ctx, Query{Resolution: "5m"}); !errors.Is(err, ErrResolution) {
 		t.Errorf("bad resolution: err = %v, want ErrResolution", err)
 	}
 

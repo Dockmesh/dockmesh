@@ -536,7 +536,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	s.disconnect(id)
-	s.deleteHistory(id)
+	s.deleteHistory(ctx, id)
 	return nil
 }
 

@@ -118,7 +118,7 @@ func runHistorySampler(ctx context.Context) {
 			return
 		case <-t.C:
 			ts := time.Now().Unix()
-			m := system.Collect()
+			m := system.Collect() //nolint:contextcheck // reads the sampler's cached snapshot
 			host := agents.MetricsHostSample{
 				TS: ts, CPUPercent: m.CPUPercent, CPUCores: m.CPUCores,
 				MemUsed: m.MemUsed, MemTotal: m.MemTotal, DiskUsed: m.DiskUsed, DiskTotal: m.DiskTotal,

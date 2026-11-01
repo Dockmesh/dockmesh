@@ -264,7 +264,7 @@ func (c *Collector) downsample(ctx context.Context) {
 		c.rollup(ctx, t, "_1m", "_1h", 3600, now-7*86400)
 		for _, k := range keep {
 			if _, err := c.db.ExecContext(ctx,
-				`DELETE FROM `+t.prefix+k.suffix+` WHERE ts < ?`, now-int64(k.age.Seconds())); err != nil {
+				`DELETE FROM `+t.prefix+k.suffix+` WHERE ts < ?`, now-int64(k.age.Seconds())); err != nil { //nolint:gosec // table names come from seriesTables
 				slog.Warn("metrics prune", "table", t.prefix+k.suffix, "err", err)
 			}
 		}
@@ -272,6 +272,7 @@ func (c *Collector) downsample(ctx context.Context) {
 }
 
 func (c *Collector) rollup(ctx context.Context, t series, from, to string, bucket, before int64) {
+	//nolint:gosec // table and column names come from seriesTables
 	q := fmt.Sprintf(`
 		INSERT OR REPLACE INTO %[2]s (%[3]s, ts, %[4]s)
 		SELECT %[3]s, (ts / %[6]d) * %[6]d AS bucket, %[5]s
@@ -481,6 +482,7 @@ func (c *Collector) QueryHost(ctx context.Context, q Query) ([]HostSample, error
 		return nil, err
 	}
 	q.window(suffix)
+	//nolint:gosec // suffix comes from resolutionSuffix
 	rows, err := c.db.QueryContext(ctx, `
 		SELECT ts, cpu_percent, cpu_cores, CAST(mem_used AS INTEGER), mem_total, CAST(disk_used AS INTEGER), disk_total
 		FROM host_metrics`+suffix+`
