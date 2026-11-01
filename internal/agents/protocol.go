@@ -143,7 +143,7 @@ const (
 	CapCertRenew     = "cert.renew"            // server: accepts FrameAgentCertRenew
 	CapDiskMounts    = "disk_mounts"           // agent: answers FrameReqSystemDisks
 	CapDockerEvents  = "docker_events"         // agent: serves the "events" stream kind
-	CapVolumeReplace = "volume_import.replace" // agent: empties the volume first on params.replace
+	CapVolumeReplace = "volume_import.replace" // agent: takes params.replace; still sent for older servers, which check it instead of CapVolumeStaged
 	// CapMetricsHistory, agent: sends FrameAgentMetrics; server: stores them.
 	CapMetricsHistory = "metrics.history"
 	// CapVolumeStaged, agent: a replace restore extracts into a staging

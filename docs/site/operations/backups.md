@@ -139,12 +139,11 @@ The **Runs** tab lists every run with status, size and duration; open one to see
 
 Click **Restore** on a successful run (in the **Runs** tab or on the run's page) and type the target name to confirm.
 
-<!-- update after: backups: restore onto the origin host, verify first, replace or merge -->
-Restores always write to the local host, whichever host the backup came from. They merge into what is there: files in the archive overwrite existing files, and everything else stays. Dockmesh does not stop containers before a restore, regardless of what the UI says. Stop the stack first and redeploy it afterwards.
+Restores go to the host the backup was taken on unless you pick another one. **Merge** writes the archive's files over what is there and keeps everything else. **Replace** makes the volume match the backup: it extracts the archive into a staging directory inside the volume and swaps the old contents out only after it extracted completely, so a broken connection to the agent, a failing extraction or too little free space leaves the volume as it was. Replace needs free space for the old and the new contents side by side, an agent of this version on agent hosts, and no running container using the volume. Dockmesh does not stop containers for you: stop the stack first and redeploy it afterwards.
 
-- **Volume run**: restored into the volume you name, on the host the backup was taken on unless you pick another one. The volume is created if it does not exist.
-- **Replace** (instead of merge) extracts the archive into a staging directory inside the volume and swaps the old contents out only after it extracted completely. A broken connection to the agent, a failing extraction or too little free space leaves the volume as it was. It needs free space for the old and the new contents side by side, and on agent hosts an agent of this version.
-- A restore can be cancelled while it downloads or verifies the archive; nothing has been written then. Once it writes, it runs to the end.
+A restore can be cancelled while it downloads or verifies the archive; nothing has been written then. Once it writes, it runs to the end.
+
+- **Volume run**: restored into the volume you name. The volume is created if it does not exist.
 - **Stack run**: the stack files are written to `stacks/<name>/` and the volumes go to the backup's host. Restoring under another stack name gives the copy its own volumes (`<new-stack>_<volume>`); volumes with a fixed name are left alone and listed in the result. It needs permission to edit (or create) that stack. The stack is not redeployed.
 - **System run**: **Restore the whole system** (admins only) unpacks the backup next to the live files and checks it, then restarts Dockmesh, which swaps the restored files in before it opens the database. The replaced files are kept in `<data>/.pre-restore/<time>` and `<stacks>.pre-restore-<time>`. **Restore system from file** on the **Runs** tab does the same with an uploaded archive. See [Disaster recovery](./disaster-recovery.md).
 

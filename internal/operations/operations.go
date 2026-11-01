@@ -552,16 +552,6 @@ func (o *Op) DisallowCancel() {
 	})
 }
 
-// CancelRequested reports whether a user asked to cancel the work.
-func (o *Op) CancelRequested() bool {
-	if o == nil {
-		return false
-	}
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return o.op.CancelRequested
-}
-
 // Begin moves a queued operation to running.
 func (o *Op) Begin() {
 	if o == nil {
@@ -717,13 +707,14 @@ func (o *Op) Finish(err error) {
 	if o == nil {
 		return
 	}
-	if err != nil && o.CancelRequested() {
-		o.mu.Lock()
+	o.mu.Lock()
+	cancelled, step := o.op.CancelRequested, o.cancelStep
+	o.mu.Unlock()
+	if err != nil && cancelled {
 		msg := "cancelled"
-		if o.cancelStep != "" {
-			msg = "cancelled during “" + o.cancelStep + "”"
+		if step != "" {
+			msg = "cancelled during “" + step + "”"
 		}
-		o.mu.Unlock()
 		o.end(StatusCancelled, msg)
 		return
 	}

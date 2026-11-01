@@ -887,16 +887,16 @@ func recoverVolume(cli *client.Client, volumeName string) {
 		LogConfig: container.LogConfig{Type: "none"},
 	}, nil, nil, "")
 	if err != nil {
-		slog.Warn("restore: clean up volume after a failed restore", "volume", volumeName, "err", err)
+		slog.Warn("restore: volume cleanup failed", "volume", volumeName, "err", err)
 		return
 	}
 	defer removeHelper(cli, resp.ID)
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		slog.Warn("restore: clean up volume after a failed restore", "volume", volumeName, "err", err)
+		slog.Warn("restore: volume cleanup failed", "volume", volumeName, "err", err)
 		return
 	}
-	if err := helperExit(cli, resp.ID); err != nil {
-		slog.Warn("restore: clean up volume after a failed restore", "volume", volumeName, "err", err)
+	if code, err := helperExitCode(cli, resp.ID); err != nil || code != 0 {
+		slog.Warn("restore: volume cleanup failed", "volume", volumeName, "exit", code, "err", err)
 	}
 }
 

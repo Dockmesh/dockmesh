@@ -181,7 +181,6 @@ Scans return `scanner not configured` (HTTP 503) when the `grype` binary was not
 
 ## Backups
 
-<!-- update after: backups: run in the background, set the time zone, use saved targets -->
 **A backup run seems stuck.** Runs execute in the server, so closing the browser does not stop them. Open the run's progress dialog to see the step it is in and its log. A run whose transfer moves no data for 10 minutes fails on its own with "target stalled"; you can also stop it earlier with **Cancel**. Schedules use the server's local time zone.
 
 <!-- update after: backups: run in the background, set the time zone, use saved targets -->

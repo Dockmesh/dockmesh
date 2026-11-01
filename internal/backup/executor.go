@@ -204,7 +204,7 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64, stop cont
 	if err != nil {
 		return fail("resolve host", err), nil
 	}
-	hostTarget := hostBackupTarget(stoppableHost{hostBackupTarget: resolved, ctx: ctx})
+	hostTarget := hostBackupTarget(stoppableHost{resolved})
 	if job.Encrypt && !canEncrypt(e.secrets) {
 		e.logf(ctx, runID, "error", "%s", ErrEncryptUnavailable)
 		op.StepFail(step, ErrEncryptUnavailable)
@@ -238,9 +238,7 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64, stop cont
 	op.StepStart(StepArchive, "")
 
 	act := newActivity()
-	if stop != nil {
-		defer watchIdle(act, stop)()
-	}
+	defer watchIdle(act, stop)()
 	relPath := relativePath(job, runID)
 	// Recorded up front so the partial file of a crashed run stays
 	// traceable.
@@ -371,7 +369,7 @@ func (e *Executor) notifyRun(ctx context.Context, job *Job, runID int64, out run
 		in.Kind, in.Severity = notifications.KindBackupOK, notifications.SevWarning
 		in.Title = "Backup completed with warnings: " + job.Name
 		in.Body = out.err.Error()
-	case StatusFailed:
+	default:
 		in.Kind, in.Severity = notifications.KindBackupFail, notifications.SevError
 		in.Title = "Backup failed: " + job.Name
 		in.Body = "Run failed"
@@ -381,13 +379,6 @@ func (e *Executor) notifyRun(ctx context.Context, job *Job, runID int64, out run
 		if errors.Is(out.err, operations.ErrCancelled) {
 			in.Severity = notifications.SevWarning
 			in.Title = "Backup cancelled: " + job.Name
-		}
-	default:
-		in.Kind, in.Severity = notifications.KindBackupFail, notifications.SevError
-		in.Title = "Backup failed: " + job.Name
-		in.Body = "Run failed"
-		if out.err != nil {
-			in.Body = out.err.Error()
 		}
 	}
 	_, _ = e.notifs.Emit(ctx, in)

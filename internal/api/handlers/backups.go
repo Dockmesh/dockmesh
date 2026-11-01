@@ -491,10 +491,8 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 		writeError(w, http.StatusBadRequest, "dest_volume must be a Docker volume name, not a path")
 		return
 	case errors.Is(err, backup.ErrNotRestorable), errors.Is(err, backup.ErrSystemRestore), errors.Is(err, backup.ErrRestoreBusy),
-		errors.Is(err, backup.ErrUnverifiedReplace), errors.Is(err, host.ErrAgentTooOld), errors.As(err, &inUse):
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	case errors.Is(err, operations.ErrCancelled):
+		errors.Is(err, backup.ErrUnverifiedReplace), errors.Is(err, host.ErrAgentTooOld), errors.As(err, &inUse),
+		errors.Is(err, operations.ErrCancelled):
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	case errors.Is(err, backup.ErrArchiveInvalid), errors.Is(err, backup.ErrArchiveMismatch):

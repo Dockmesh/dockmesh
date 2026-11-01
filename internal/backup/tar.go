@@ -103,7 +103,7 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 // untarVolume streams a gzipped tar archive into a named volume by
 // running agents.VolumeImportScript inside a helper that mounts the volume
 // read-write. replace swaps the volume's contents for the archive's once
-// tar succeeded; needBytes is the free space that needs.
+// tar succeeded; needBytes is the free space the swap needs.
 func untarVolume(ctx context.Context, dc *docker.Client, volumeName string, src io.Reader, replace bool, needBytes int64) (err error) {
 	if dc == nil {
 		return errors.New("docker unavailable")
@@ -214,22 +214,22 @@ func recoverVolume(ctx context.Context, dc *docker.Client, volumeName string) {
 		LogConfig: docker.HelperLogConfig,
 	}, nil, nil, "")
 	if err != nil {
-		slog.Warn("restore: clean up volume after a failed restore", "volume", volumeName, "err", err)
+		slog.Warn("restore: volume cleanup failed", "volume", volumeName, "err", err)
 		return
 	}
 	defer func() { _ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true}) }()
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		slog.Warn("restore: clean up volume after a failed restore", "volume", volumeName, "err", err)
+		slog.Warn("restore: volume cleanup failed", "volume", volumeName, "err", err)
 		return
 	}
 	statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
 	select {
 	case s := <-statusCh:
 		if s.StatusCode != 0 {
-			slog.Warn("restore: clean up volume after a failed restore", "volume", volumeName, "exit", s.StatusCode)
+			slog.Warn("restore: volume cleanup failed", "volume", volumeName, "exit", s.StatusCode)
 		}
 	case err := <-errCh:
-		slog.Warn("restore: clean up volume after a failed restore", "volume", volumeName, "err", err)
+		slog.Warn("restore: volume cleanup failed", "volume", volumeName, "err", err)
 	}
 }
 

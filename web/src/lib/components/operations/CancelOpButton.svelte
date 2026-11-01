@@ -41,7 +41,7 @@
     type="button"
     class="dm-btn {size === 'sm' ? 'dm-btn-sm' : ''} dm-btn-ghost"
     disabled={busy || !!op.cancel_requested}
-    title={op.cancel_requested ? 'Stopping…' : cancelConsequence(op)}
+    title={op.cancel_requested ? undefined : cancelConsequence(op)}
     onclick={cancel}
   >{op.cancel_requested ? 'Cancelling…' : 'Cancel'}</button>
 {/if}

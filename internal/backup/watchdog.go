@@ -110,11 +110,10 @@ func closeOnDone(ctx context.Context, c func() error) func() bool {
 	return context.AfterFunc(ctx, func() { _ = c() })
 }
 
-// stoppableHost closes the volume streams it hands out when the run's
-// context ends, so a stalled or cancelled source gives up its read.
+// stoppableHost closes the volume streams it hands out when their context
+// ends, so a stalled or cancelled source gives up its read.
 type stoppableHost struct {
 	hostBackupTarget
-	ctx context.Context
 }
 
 func (h stoppableHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser, error) {
@@ -122,7 +121,7 @@ func (h stoppableHost) VolumeTar(ctx context.Context, name string) (io.ReadClose
 	if err != nil {
 		return nil, err
 	}
-	stop := closeOnDone(h.ctx, rc.Close)
+	stop := closeOnDone(ctx, rc.Close)
 	return &stoppableReader{ReadCloser: rc, stop: stop}, nil
 }
 

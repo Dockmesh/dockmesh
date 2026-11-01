@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -102,13 +103,13 @@ func VolumeImportExitError(code int64, replace bool) error {
 	}
 	switch code {
 	case importExitNoSpace:
-		return fmt.Errorf("not enough free space in the volume for a replace restore (old and new contents are kept side by side until the swap); nothing was changed")
+		return errors.New("not enough free space in the volume for a replace restore (old and new contents are kept side by side until the swap); nothing was changed")
 	case importExitRecover:
-		return fmt.Errorf("an earlier restore into this volume was interrupted and could not be undone; nothing was changed")
+		return errors.New("an earlier restore into this volume was interrupted and could not be undone; nothing was changed")
 	case importExitSwap:
-		return fmt.Errorf("swapping the restored files in failed; the previous contents were put back")
+		return errors.New("swapping the restored files in failed; the previous contents were put back")
 	case importExitStageDir:
-		return fmt.Errorf("could not create the staging directory in the volume; nothing was changed")
+		return errors.New("could not create the staging directory in the volume; nothing was changed")
 	}
 	return fmt.Errorf("restore tar exit %d; the volume keeps its previous contents", code)
 }

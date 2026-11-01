@@ -2,33 +2,17 @@ package updater
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/docker/docker/client"
 
-	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/operations"
 )
-
-func newOpsDB(t *testing.T) *sql.DB {
-	t.Helper()
-	conn, err := db.Open(filepath.Join(t.TempDir(), "ops.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { conn.Close() })
-	if err := db.Migrate(conn); err != nil {
-		t.Fatal(err)
-	}
-	return conn
-}
 
 // A pull that hangs on the registry stops when the user cancels it; the
 // operation is only cancellable while the pull runs.
@@ -50,12 +34,11 @@ func TestCancelPull(t *testing.T) {
 	}
 	defer cli.Close()
 
-	ops := operations.New(newOpsDB(t))
+	ops := newOps(t)
 	op := ops.Start(context.Background(), operations.Spec{Kind: operations.KindImageUpdate, Target: "web", Steps: UpdateSteps})
 	op.StepStart(StepPull, "")
-	s := &Service{}
 	done := make(chan error, 1)
-	go func() { done <- s.pull(operations.WithOp(context.Background(), op), cli, "web:latest", "", nil) }()
+	go func() { done <- pull(operations.WithOp(context.Background(), op), cli, "web:latest", "", nil) }()
 
 	deadline := time.Now().Add(10 * time.Second)
 	for {

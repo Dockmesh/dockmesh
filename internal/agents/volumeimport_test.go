@@ -216,7 +216,7 @@ func TestVolumeRecoverInterruptedImport(t *testing.T) {
 func TestVolumeImportRecoversBeforeExtracting(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"data.db": "old"})
-	writeTree(t, filepath.Join(dir, ".dockmesh-restore-old"), map[string]string{"sub/a.txt": "old-a"})
+	writeTree(t, filepath.Join(dir, strings.TrimPrefix(importOld, importDest+"/")), map[string]string{"sub/a.txt": "old-a"})
 	newFiles := map[string]string{"data.db": "new"}
 	if code := runScript(t, dir, VolumeImportScript(true, 0), archive(t, newFiles)); code != 0 {
 		t.Fatalf("exit %d", code)

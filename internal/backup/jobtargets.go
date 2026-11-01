@@ -257,6 +257,10 @@ func migratedTargetName(typ string, cfg map[string]any) string {
 // jobTarget builds the job's target. For SFTP it records the host key on
 // first contact and parks a changed key until an admin accepts it. Jobs
 // not moved to a saved target yet run from their inline config.
+// wrapRunTarget wraps the target a run or restore reads and writes; tests
+// use it to simulate a target that stalls.
+var wrapRunTarget = func(t targets.Target) targets.Target { return t }
+
 func jobTarget(ctx context.Context, st *store, n *notices.Service, job *Job) (targets.Target, error) {
 	if job.TargetID > 0 {
 		ts := targets.NewTargetStore(st.db)
