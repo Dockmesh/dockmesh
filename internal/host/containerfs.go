@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
@@ -458,4 +460,30 @@ func DeleteContainerFile(ctx context.Context, cli client.ContainerAPIClient, id,
 		return fmt.Errorf("rm exited with %d: %s", code, msg)
 	}
 	return nil
+}
+
+// ServeContainerFileRequest answers one req.container.files.* frame on
+// the agent, so agent hosts run exactly the rules above.
+func ServeContainerFileRequest(ctx context.Context, cli client.ContainerAPIClient, f agents.Frame) (any, error) {
+	var req agents.ContainerFileReq
+	if err := json.Unmarshal(f.Payload, &req); err != nil {
+		return nil, err
+	}
+	switch f.Type {
+	case agents.FrameReqContainerFilesList:
+		entries, err := BrowseContainerDir(ctx, cli, req.Container, req.Path)
+		if entries == nil {
+			entries = []VolumeEntry{}
+		}
+		return entries, err
+	case agents.FrameReqContainerFilesRead:
+		return ReadContainerFile(ctx, cli, req.Container, req.Path, req.MaxBytes)
+	case agents.FrameReqContainerFilesStat:
+		return StatContainerFile(ctx, cli, req.Container, req.Path)
+	case agents.FrameReqContainerFilesWrite:
+		return struct{}{}, WriteContainerFile(ctx, cli, req.Container, req.Path, req.Data, req.Mode)
+	case agents.FrameReqContainerFilesDelete:
+		return struct{}{}, DeleteContainerFile(ctx, cli, req.Container, req.Path)
+	}
+	return nil, fmt.Errorf("unknown request type: %s", f.Type)
 }

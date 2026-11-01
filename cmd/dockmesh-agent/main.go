@@ -1074,7 +1074,7 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 
 	case agents.FrameReqContainerFilesList, agents.FrameReqContainerFilesRead, agents.FrameReqContainerFilesStat,
 		agents.FrameReqContainerFilesWrite, agents.FrameReqContainerFilesDelete:
-		res, err := serveContainerFile(ctx, cli, f)
+		res, err := host.ServeContainerFileRequest(ctx, cli, f)
 		respond(conn, f.ID, res, err)
 
 	case agents.FrameReqDaemonInfo:
