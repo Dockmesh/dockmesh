@@ -1,0 +1,3 @@
+kind: Fixed
+body: The disabled OIDC option in the invite dialog explains that SSO users get their account at their first sign-in, instead of showing an internal note.
+time: 2026-11-01T12:00:48Z

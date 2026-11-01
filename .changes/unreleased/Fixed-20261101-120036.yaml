@@ -1,0 +1,3 @@
+kind: Fixed
+body: The setup wizard proposes `/var/lib/dockmesh` as data directory instead of `/data`, which a native install cannot write; it shows the install log and the sign-in even when the install finishes before the page connects to it, reports a synchronised clock as synced on current systemd, and its last step says whether the install finished or failed.
+time: 2026-11-01T12:00:36Z

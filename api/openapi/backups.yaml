@@ -1,0 +1,1006 @@
+paths:
+  /backups/jobs:
+    get:
+      operationId: backups.list_jobs
+      tags: [backups]
+      summary: List backup jobs
+      description: >-
+        Jobs whose host and stack sources are in the caller's scope; jobs with a system source only for admins without a scope.
+      responses:
+        "200":
+          description: Jobs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/BackupJob"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+    post:
+      operationId: backups.create_job
+      tags: [backups]
+      summary: Create a new backup job
+      description: >-
+        Jobs with a `system` source are admin-only (`system.update` with no host or role scope); other jobs need their host, before and after the change, in the caller's scope (403).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BackupJobInput"}
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupJob"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /backups/jobs/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    get:
+      operationId: backups.get_job
+      tags: [backups]
+      summary: Inspect one backup job
+      description: 404 for a job the caller cannot see (see the job list).
+      responses:
+        "200":
+          description: Job.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupJob"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    put:
+      operationId: backups.update_job
+      tags: [backups]
+      summary: Update a backup job
+      description: >-
+        Same access rules as create. Target secrets sent empty keep the stored value; changing the server, URL or user while keeping a stored secret returns 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BackupJobInput"}
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupJob"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      operationId: backups.delete_job
+      tags: [backups]
+      summary: Delete a backup job (does not delete existing runs)
+      description: >-
+        Jobs with a `system` source are admin-only (`system.update` with no host or role scope); other jobs need their host in the caller's scope (403).
+      responses:
+        "204": {description: Deleted.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /backups/jobs/{id}/review/{mode}:
+    post:
+      operationId: backups.acknowledge_review
+      tags: [backups]
+      summary: Acknowledge a needs_review backup job
+      description: |
+        Clears the `needs_review` flag on a backup job that was
+        auto-created by an older dockmesh version. Mode `keep`
+        preserves the job's current enabled state; mode `disable`
+        also flips `enabled = false` so the scheduler stops firing
+        it. Idempotent: clearing an already-cleared flag is a no-op.
+        Jobs with a `system` source are admin-only; other jobs need
+        their host in the caller's scope (403).
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+        - in: path
+          name: mode
+          required: true
+          schema:
+            type: string
+            enum: [keep, disable]
+      responses:
+        "204": {description: Acknowledged.}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /backups/jobs/{id}/accept-host-key:
+    post:
+      operationId: backups.accept_host_key
+      tags: [backups]
+      summary: Trust the changed SFTP host key a job last saw
+      description: |
+        SFTP jobs record the server's host key on their first connection
+        and fail when it later changes; the new key is kept as
+        `target_config.host_key_pending`. This moves it to `host_key`.
+
+        Jobs with a `system` source are admin-only (`system.update` with no
+        host or role scope); other jobs need their host in the caller's
+        scope (403).
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "204": {description: Accepted; the next run uses the new key.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: No changed host key is waiting for approval.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /backups/jobs/{id}/run:
+    post:
+      operationId: backups.run_job
+      tags: [backups]
+      summary: Trigger a job to run immediately
+      description: >-
+        Jobs with a `system` source are admin-only (`system.update` with no host or role scope); other jobs need their host in the caller's scope (403).
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "202":
+          description: Run started in the background (status `running`); poll `/backups/runs/{id}` for the outcome. The run is not tied to this request.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupRun"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Job is already running.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /backups/schedule:
+    get:
+      operationId: backups.schedule_info
+      tags: [backups]
+      summary: Time zone backup schedules are evaluated in
+      description: Set with the `backups.timezone` setting (IANA name); empty means the server's time zone.
+      responses:
+        "200":
+          description: Scheduler time zone.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [timezone, source, server_timezone]
+                properties:
+                  timezone: {type: string, example: Europe/Berlin}
+                  source: {type: string, enum: [setting, server]}
+                  server_timezone: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /backups/runs:
+    get:
+      operationId: backups.list_runs
+      tags: [backups]
+      summary: Recent backup runs, newest first
+      description: >-
+        Runs of jobs the caller can see (see the job list). System runs and runs of a deleted job only for admins without a scope.
+      parameters:
+        - name: job_id
+          in: query
+          schema: {type: integer, format: int64}
+          description: Optional filter to one job's runs.
+        - name: limit
+          in: query
+          schema: {type: integer, default: 100, maximum: 500}
+      responses:
+        "200":
+          description: Runs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/BackupRun"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /backups/runs/{id}/restore-stack:
+    post:
+      operationId: backups.restore_stack
+      tags: [backups]
+      summary: Restore a stack-typed backup run
+      description: |
+        Verifies the whole archive first (hash, structure, every volume the
+        backup recorded); a failing check returns 422 and changes nothing.
+        Then writes `stack/*` into the stacks directory (`/stacks/<target>/`)
+        and streams every `volumes/<vol>.tar.gz` entry into that volume on
+        `host_id` (default: the host the backup was taken on; remote hosts
+        need an agent of this version).
+
+        `target_stack` restores under another name (default: the source
+        stack). `mode: replace` empties each volume first and is refused
+        with 409 while running containers use one of them; `merge` (default)
+        overwrites the archived files and keeps everything else.
+
+        Requires the job's host and the destination host within the
+        caller's scope (403). Stack runs write the target stack's files, so
+        they also need `stacks.update` (`stacks.create` for a new name), the
+        stack in the caller's role scope, and the host the stack is deployed
+        on in scope (403). Runs whose job was deleted are admin-only
+        (`system.update` with no host or role scope). System runs are never
+        restored here (409); they are restored with `POST /restore/system`,
+        the setup wizard or `dockmesh restore`.
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BackupRestoreRequest"}
+      responses:
+        "200":
+          description: Restore complete.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupRestoreReport"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Run is a system backup or not restorable (failed, pruned); a volume to replace is in use; another restore writes the same volume or stack, or too many restores run; replace was asked for a run without a recorded checksum; or the destination agent is too old.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "422":
+          description: The archive failed verification or no longer matches the recorded checksum; nothing was restored.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /backups/runs/{id}/restore:
+    post:
+      operationId: backups.restore_run
+      tags: [backups]
+      summary: Restore a volume or stack backup run
+      description: |
+        Same flow as `restore-stack`. For volume backups the archive goes
+        into `dest_volume` (default: the backed-up volume) on `host_id`.
+        For stack backups `target_stack` (or, for older clients,
+        `dest_volume`) names the stack.
+
+        Requires the job's host and the destination host within the
+        caller's scope (403). Stack runs write the target stack's files, so
+        they also need `stacks.update` (`stacks.create` for a new name), the
+        stack in the caller's role scope, and the host the stack is deployed
+        on in scope (403). Runs whose job was deleted are admin-only
+        (`system.update` with no host or role scope). System runs are never
+        restored here (409); they are restored with `POST /restore/system`,
+        the setup wizard or `dockmesh restore`.
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BackupRestoreRequest"}
+      responses:
+        "200":
+          description: Restore complete.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupRestoreReport"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Run is a system backup or not restorable (failed, pruned); the volume to replace is in use; another restore writes the same volume, or too many restores run; replace was asked for a run without a recorded checksum; or the destination agent is too old.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "422":
+          description: The archive failed verification or no longer matches the recorded checksum; nothing was restored.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /backups/runs/{id}/verify:
+    post:
+      operationId: backups.verify_run
+      tags: [backups]
+      summary: Verify that a saved backup run is restorable
+      description: |
+        System runs are streamed into a temp directory and checked with
+        the same post-restore sanity checks as `dockmesh restore`; stack
+        and volume runs get a structural check of the archive. Never
+        touches the live install.
+
+        Requires the job's host within the caller's scope (403). System
+        runs, and runs whose job was deleted, are admin-only
+        (`system.update` with no host or role scope).
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "200":
+          description: Verification passed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupVerifyResult"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422":
+          description: "Verification failed — see `sanity.checks` for the failed check(s) or `encrypted: true` if the archive is encrypted."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupVerifyResult"}
+  /restore/system:
+    get:
+      operationId: restore.system_staged
+      tags: [backups]
+      summary: The system restore waiting for the next start, if any
+      description: Needs `system.upgrade`.
+      responses:
+        "200":
+          description: Staged restore or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  staged:
+                    oneOf:
+                      - {$ref: "#/components/schemas/StagedRestore"}
+                      - {type: "null"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      operationId: restore.system_stage
+      tags: [backups]
+      summary: Stage a system restore
+      description: |
+        Needs `system.upgrade`. Source is a saved system-backup run
+        (JSON `{"run_id": N}`, decrypted with this server's keys and checked
+        against the run's hash) or an uploaded archive (multipart `file`,
+        plus `key` for an archive encrypted by another install). The archive
+        is extracted next to the live files and checked; the live install
+        is not touched until `POST /restore/system/apply`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [run_id]
+              properties:
+                run_id: {type: integer, format: int64}
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+                key: {type: string, format: binary}
+      responses:
+        "200":
+          description: Staged.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  staged: {$ref: "#/components/schemas/StagedRestore"}
+                  counts: {type: object}
+                  sanity: {type: object}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Run not restorable, or another restore is being staged.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "413": {description: "Upload larger than 1 GiB, or the archive unpacks to more than 8 GiB / 200,000 entries."}
+        "422":
+          description: Encrypted without a matching key, hash mismatch, or the backup failed the restore checks.
+          content:
+            application/json:
+              schema: {type: object}
+    delete:
+      operationId: restore.system_discard
+      tags: [backups]
+      summary: Drop a staged system restore
+      description: Needs `system.upgrade`.
+      responses:
+        "204": {description: Discarded.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: The swap has already started.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /restore/system/apply:
+    post:
+      operationId: restore.system_apply
+      tags: [backups]
+      summary: Restart and swap the staged system restore in
+      description: |
+        Needs `system.upgrade`. Answers 202, then shuts down and exits with
+        code 75 so the service manager restarts the server; at start the
+        staged files replace the live database, data and stacks before the
+        database is opened. Replaced files stay under `<data>/.pre-restore/`
+        and `<stacks>.pre-restore-<time>`.
+      responses:
+        "202":
+          description: Restarting.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restarting: {type: boolean}
+                  staged: {$ref: "#/components/schemas/StagedRestore"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: Nothing staged.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /restore/verify:
+    post:
+      operationId: restore.verify_upload
+      tags: [backups]
+      summary: Upload a system backup tarball and verify it's restorable
+      description: |
+        Multipart upload with a single `file` part containing a gzipped
+        tar produced by the `dockmesh-system` backup job. Server
+        extracts to a temp dir, runs the post-restore sanity checks,
+        tears down. Never touches the live install. Use this to
+        answer "is our backup actually restorable?" without spinning
+        up a separate Dockmesh host.
+
+        Rejects age-encrypted tarballs — the server's own age key is
+        inside the tarball, so self-encrypted system backups can't
+        self-verify. Uploads are limited to 1 GiB. Symlink and hardlink
+        entries are never extracted (Dockmesh backups contain none).
+
+        Admin-only (`system.update` with no host or role scope; 403).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Gzipped tar system backup (~MB scale).
+      responses:
+        "200":
+          description: Backup is restorable.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupVerifyResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "413":
+          description: Upload larger than 1 GiB, or the archive unpacks to more than 8 GiB or 200,000 entries.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "422":
+          description: Verification failed, sanity check broke, or tarball is encrypted.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupVerifyResult"}
+  /backups/local-path:
+    get:
+      operationId: backups.local_path
+      tags: [backups]
+      summary: Suggested directory for a new local backup target
+      description: |
+        The data directory's `backups` folder when it lies inside an allowed
+        local root, otherwise the first allowed root. Empty when none is
+        configured.
+      responses:
+        "200":
+          description: Suggested path.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [path]
+                properties:
+                  path: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /backups/targets:
+    get:
+      operationId: backups.list_targets
+      tags: [backups]
+      summary: List saved backup targets (SFTP, SMB, WebDAV, S3, local)
+      description: >-
+        Leaves out targets used by a job the caller cannot see; targets no job uses are listed for everyone.
+      responses:
+        "200":
+          description: Targets.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/BackupTarget"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+    post:
+      operationId: backups.create_target
+      tags: [backups]
+      summary: Create a new backup target
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BackupTargetInput"}
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupTarget"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /backups/targets/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    put:
+      operationId: backups.update_target
+      tags: [backups]
+      summary: Update a backup target
+      description: >-
+        Secrets sent empty keep the stored value; changing the server, URL or user while keeping a stored secret returns 400 (re-enter it).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BackupTargetInput"}
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupTarget"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      operationId: backups.delete_target
+      tags: [backups]
+      summary: Delete a backup target
+      description: >-
+        Needs access to every job that uses or used the target, like an update; admin only if a system job uses it.
+      responses:
+        "204": {description: Deleted.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Target is referenced by one or more jobs (including deleted jobs whose archives are still on it).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /backups/targets/{id}/test:
+    post:
+      operationId: backups.test_target
+      tags: [backups]
+      summary: Verify connectivity to a saved target
+      description: >-
+        Stores the result as the target's status, so it needs the same access as an update (403 otherwise).
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "200":
+          description: Connection OK.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupTargetTestResult"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "502":
+          description: Connection failed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupTargetTestResult"}
+  /backups/targets/{id}/accept-host-key:
+    post:
+      operationId: backups.accept_target_host_key
+      tags: [backups]
+      summary: Trust the changed SFTP host key a saved target last saw
+      description: |
+        Saved SFTP targets record the server's host key on their first
+        connection and refuse a different key later; the new key is kept
+        as `config.host_key_pending`. This moves it to `host_key`.
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "204": {description: Accepted; the next connection uses the new key.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: No changed host key is waiting for approval.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /backups/targets/test-config:
+    post:
+      operationId: backups.test_target_config
+      tags: [backups]
+      summary: Verify an unsaved target config (pre-create smoke test)
+      description: |
+        `host_key` fields in the config are ignored. With `target_id`
+        set to the saved target being edited, an SFTP server must present
+        that target's recorded host key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/BackupTargetInput"
+                - type: object
+                  properties:
+                    target_id: {type: integer, format: int64}
+      responses:
+        "200":
+          description: Connection OK.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupTargetTestResult"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "502":
+          description: Connection failed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupTargetTestResult"}
+  /backups/targets/discover-shares:
+    post:
+      operationId: backups.discover_shares
+      tags: [backups]
+      summary: List SMB shares on a host (pre-create helper)
+      description: Used by the target-create dialog to autocomplete share names.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host, username, password]
+              properties:
+                host: {type: string}
+                username: {type: string}
+                password: {type: string, format: password}
+                domain: {type: string}
+      responses:
+        "200":
+          description: Shares.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "502":
+          description: Connection failed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /backups/system/enabled:
+    put:
+      operationId: backups.toggle_system
+      tags: [backups]
+      summary: Enable / disable the default daily system backup
+      description: >-
+        Admin-only (`system.update` with no host or role scope; 403).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: {type: boolean}
+      responses:
+        "200":
+          description: New backup status.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupStatus"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /backups/runs/{id}:
+    get:
+      operationId: backups.run_get
+      tags: [backups]
+      summary: Get a single run
+      description: 404 for a run the caller cannot see (see the run list).
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: Run row.
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /backups/runs/{id}/log:
+    get:
+      operationId: backups.run_log
+      tags: [backups]
+      summary: Captured log lines for a backup run (phase narration + hook output)
+      description: |
+        Returns lines emitted by the executor for one run in
+        chronological order. Each entry has `stream` set to one of
+        `info` / `warn` / `error` / `hook_stdout` / `hook_stderr`. Hook
+        output is verbatim and capped at 16 KB per hook to keep the
+        table from growing without bound on noisy hooks.
+
+        Requires the job's host within the caller's scope (403). System
+        runs, and runs whose job was deleted, are admin-only
+        (`system.update` with no host or role scope).
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: Log entries (empty array if the run hasn't logged anything yet).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id, ts, stream, line]
+                  properties:
+                    id: {type: integer, format: int64}
+                    ts: {type: string, format: date-time}
+                    stream:
+                      type: string
+                      enum: [info, warn, error, hook_stdout, hook_stderr]
+                    line: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /backups/runs/{id}/archive:
+    get:
+      operationId: backups.run_archive
+      tags: [backups]
+      summary: Download the archive for a successful run (tar.gz stream, transparent decryption)
+      description: |
+        Requires `backups.download` and the job's host within the caller's
+        scope. System archives, and runs whose job was deleted, are
+        admin-only (`system.update` with no host or role scope). Every
+        download is audited as `backup.download`.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: Archive bytes.
+          content:
+            application/gzip:
+              schema: {type: string, format: binary}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: Run not in success state.
+        "404": {$ref: "#/components/responses/NotFound"}
+components:
+  schemas:
+    BackupSource:
+      type: object
+      required: [type, name]
+      properties:
+        type:
+          type: string
+          enum: [volume, stack, system]
+          description: "`system` snapshots the Dockmesh server's own DB + stacks tree."
+        name: {type: string, description: "Ignored for system source."}
+    BackupHook:
+      type: object
+      description: docker-exec invocation used to quiesce a container before the snapshot (e.g. pg_dump).
+      required: [container, cmd]
+      properties:
+        container: {type: string}
+        cmd:
+          type: array
+          items: {type: string}
+    BackupJob:
+      type: object
+      required: [id, name, target_type, sources, schedule, enabled]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        target_id: {type: integer, format: int64, description: Saved target (backup_targets) the job writes to.}
+        target_type: {type: string, enum: [local, sftp, smb, webdav, s3], description: Type of the referenced target.}
+        target_config:
+          type: object
+          description: >-
+            Empty for jobs that reference a saved target; the configuration lives on the target. For a job not yet moved to a saved target, secret fields (`password`, `secret_key`, `private_key`) are returned as `""` with a sibling `<field>_set: true` when a value is stored.
+        sources:
+          type: array
+          items: {$ref: "#/components/schemas/BackupSource"}
+        schedule: {type: string, description: Cron expression.}
+        retention_count: {type: integer, minimum: 0}
+        retention_days: {type: integer, minimum: 0}
+        encrypt: {type: boolean, description: Encrypt the tarball with the age key.}
+        pre_hooks:
+          type: array
+          items: {$ref: "#/components/schemas/BackupHook"}
+        post_hooks:
+          type: array
+          items: {$ref: "#/components/schemas/BackupHook"}
+        enabled: {type: boolean}
+        last_run_at: {type: string, format: date-time}
+        next_run_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    BackupJobInput:
+      type: object
+      required: [name, sources, schedule]
+      properties:
+        name: {type: string}
+        target_id: {type: integer, format: int64, description: "Saved target to write to. When set, target_type and target_config are ignored."}
+        target_type: {type: string, enum: [local, sftp, smb, webdav, s3], description: "Without target_id, the inline target is saved as a new target named after the job."}
+        target_config: {type: object}
+        sources:
+          type: array
+          minItems: 1
+          maxItems: 1
+          description: |
+            Exactly one source per job. The server rejects multi-source
+            payloads at create/update time. Operators back up several
+            things by creating one job per source — keeps run records,
+            schedules, retention, and restore semantics 1:1 with what
+            the operator sees in the UI. P.13.5.
+          items: {$ref: "#/components/schemas/BackupSource"}
+        schedule: {type: string}
+        retention_count: {type: integer, minimum: 0}
+        retention_days: {type: integer, minimum: 0}
+        encrypt: {type: boolean}
+        pre_hooks:
+          type: array
+          items: {$ref: "#/components/schemas/BackupHook"}
+        post_hooks:
+          type: array
+          items: {$ref: "#/components/schemas/BackupHook"}
+        enabled: {type: boolean}
+    BackupRun:
+      type: object
+      required: [id, job_id, job_name, status, started_at]
+      properties:
+        id: {type: integer, format: int64}
+        job_id: {type: integer, format: int64}
+        job_name: {type: string}
+        status:
+          type: string
+          enum: [running, success, success_with_warnings, failed]
+          description: success_with_warnings means the archive is complete and restorable but a post-hook failed; `error` holds the warning.
+        started_at: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time}
+        size_bytes: {type: integer, format: int64, description: Bytes stored on the target (after encryption).}
+        target_path: {type: string, description: Archive path on the target. Empty for failed runs once the partial file was removed.}
+        sha256: {type: string, description: SHA-256 of the archive as stored on the target (ciphertext for encrypted runs).}
+        encrypted: {type: boolean}
+        error: {type: string}
+        pruned_at: {type: string, format: date-time, description: Set when the archive was deleted (retention); the run can no longer be restored.}
+        sources:
+          type: array
+          items: {$ref: "#/components/schemas/BackupSource"}
+    StagedRestore:
+      type: object
+      properties:
+        staged_at: {type: string, format: date-time}
+        source: {type: string, description: "run:<id>, upload:<file> or setup:<file>"}
+        files: {type: integer}
+        bytes: {type: integer, format: int64}
+        prev_dir: {type: string, description: Set once the swap started.}
+        prev_stacks: {type: string}
+    BackupRestoreRequest:
+      type: object
+      properties:
+        dest_volume:
+          type: string
+          description: Volume runs. Docker volume name (`[a-zA-Z0-9][a-zA-Z0-9_.-]+`); paths are rejected with 400.
+        target_stack: {type: string, description: Stack runs. Destination stack name.}
+        host_id: {type: string, description: Docker host to restore onto; default is the host the backup was taken on.}
+        mode: {type: string, enum: [merge, replace], default: merge}
+    BackupRestoreReport:
+      type: object
+      properties:
+        kind: {type: string, enum: [volume, stack]}
+        stack_name: {type: string}
+        host_id: {type: string}
+        mode: {type: string, enum: [merge, replace]}
+        files_restored: {type: array, items: {type: string}}
+        volumes_restored: {type: array, items: {type: string}}
+        warnings: {type: array, items: {type: string}}
+    BackupVerifyResult:
+      type: object
+      description: |
+        Result of extracting a system backup into a temp directory and
+        running the post-restore sanity checks against the extracted
+        files (P.12.4). The live install is never touched.
+      properties:
+        filename: {type: string, description: "Uploaded filename (only set for /restore/verify)."}
+        counts:
+          type: object
+          properties:
+            files: {type: integer}
+            bytes: {type: integer, format: int64}
+            skipped_links: {type: integer, description: Symlink/hardlink entries that were not extracted.}
+        sanity:
+          type: object
+          required: [passed, checks]
+          properties:
+            passed: {type: boolean}
+            summary: {type: string}
+            checks:
+              type: array
+              items:
+                type: object
+                required: [name, status]
+                properties:
+                  name: {type: string, example: users.admin}
+                  status:
+                    type: string
+                    enum: [ok, warn, fail]
+                  message: {type: string}
+    BackupTarget:
+      type: object
+      required: [id, name, type, status]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        type: {type: string, enum: [local, sftp, smb, webdav, s3]}
+        config:
+          type: object
+          description: >-
+            Target-specific settings. Secret fields (`password`, `secret_key`, `private_key`) are returned as `""` with a sibling `<field>_set: true` when a value is stored. On update an empty or omitted secret keeps the stored value.
+        status: {type: string, enum: [unknown, ok, degraded, unreachable]}
+        total_bytes: {type: integer, format: int64}
+        used_bytes: {type: integer, format: int64}
+        last_checked_at: {type: string, format: date-time}
+        job_count: {type: integer, description: "Backup jobs (not deleted ones) that write to this target. Only for callers without a host or role scope."}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    BackupTargetInput:
+      type: object
+      required: [name, type, config]
+      properties:
+        name: {type: string}
+        type: {type: string, enum: [local, sftp, smb, webdav, s3]}
+        config: {type: object}
+    BackupTargetTestResult:
+      type: object
+      required: [ok]
+      properties:
+        ok: {type: boolean}
+        latency_ms: {type: integer}
+        total_bytes: {type: integer, format: int64}
+        free_bytes: {type: integer, format: int64}
+        error: {type: string}

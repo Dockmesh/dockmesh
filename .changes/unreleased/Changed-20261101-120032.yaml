@@ -1,0 +1,3 @@
+kind: Changed
+body: S3 backups stream to the bucket instead of being written to a temporary file first.
+time: 2026-11-01T12:00:32Z

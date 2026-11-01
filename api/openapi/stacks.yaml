@@ -1,0 +1,1504 @@
+paths:
+  /stacks:
+    get:
+      operationId: stacks.list
+      tags: [stacks]
+      summary: List all stacks known to the filesystem
+      description: Enriched with deployment info (host + status) when deployed.
+      responses:
+        "200":
+          description: Stacks.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/StackListEntry"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+    post:
+      operationId: stacks.create
+      tags: [stacks]
+      summary: Create a new stack (compose.yaml + optional .env)
+      description: |
+        Writes the stack to the filesystem under `<stacks_root>/<name>/`.
+        Name must match `[a-z0-9][a-z0-9-]*[a-z0-9]` (2..63 chars, not a
+        reserved word). `.env` is encrypted at rest via the age key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/StackInput"}
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/StackDetail"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: A stack with this name already exists.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /stacks/discovered:
+    get:
+      operationId: stacks.discovered
+      tags: [stacks]
+      summary: List compose projects running without a managed stack
+      description: |
+        Scans all running containers on the target host for the
+        `com.docker.compose.project` label and returns projects that are
+        not already tracked by dockmesh. These are candidates for
+        `POST /stacks/adopt`.
+      parameters:
+        - name: host
+          in: query
+          description: Target host ID. Defaults to the local host.
+          required: false
+          schema: {type: string}
+      responses:
+        "200":
+          description: Discovered unmanaged compose projects.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/DiscoveredStack"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /stacks/adopt:
+    post:
+      operationId: stacks.adopt
+      tags: [stacks]
+      summary: Adopt a running compose project into dockmesh's management
+      description: |
+        Takes an existing running compose project (typically started via
+        plain `docker compose up`) and hands its management over to
+        dockmesh — writes compose.yaml + optional supporting files to
+        `<stacks_root>/<name>/`, binds the running containers via their
+        `com.docker.compose.project` label, and records the adoption in
+        the audit log. **Does not stop, recreate, or otherwise modify
+        the running containers.** The next explicit deploy is the only
+        operation that might trigger container recreation, and that is
+        gated by the client and shown in the `drift_services` field.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/StackAdoptInput"}
+      responses:
+        "201":
+          description: Adopted.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/StackAdoptResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: A stack with this name is already managed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "422":
+          description: |
+            Adoption rejected by server-side validator. Typically:
+            no running containers with this project label on the target
+            host, service names in the compose don't match the running
+            state, or the bundle tarball is malformed / too large.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+    get:
+      operationId: stacks.get
+      tags: [stacks]
+      summary: Fetch compose.yaml + .env for one stack
+      responses:
+        "200":
+          description: Detail.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/StackDetail"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    put:
+      operationId: stacks.update
+      tags: [stacks]
+      summary: Update compose.yaml and/or .env for an existing stack
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/StackInput"}
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/StackDetail"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      operationId: stacks.delete
+      tags: [stacks]
+      summary: Remove a stack's files, optionally cleaning up docker resources
+      description: |
+        Removes `compose.yaml` from disk. Without any cleanup flags,
+        containers / networks / volumes / images keep running (they can
+        be re-adopted later). With the cleanup flags the caller chooses
+        per-category what else to remove — volumes and images are opt-in
+        because they cause data loss or re-pull cost respectively.
+
+        Safety: external volumes are never removed; images still used by
+        containers outside this project are skipped.
+      parameters:
+        - in: query
+          name: force
+          required: false
+          schema: {type: boolean, default: false}
+          description: Delete anyway when other stacks depend on this one (purges their edges).
+        - in: query
+          name: stop
+          required: false
+          schema: {type: boolean, default: false}
+          description: Stop and remove the stack's containers before deleting the files.
+        - in: query
+          name: networks
+          required: false
+          schema: {type: boolean, default: false}
+          description: Remove project-scoped networks (`com.docker.compose.project=<name>`).
+        - in: query
+          name: volumes
+          required: false
+          schema: {type: boolean, default: false}
+          description: Remove project-scoped volumes. External volumes are skipped. Data loss is unrecoverable.
+        - in: query
+          name: images
+          required: false
+          schema: {type: boolean, default: false}
+          description: Remove images used by this project. Skips images still referenced by other projects.
+      responses:
+        "200":
+          description: Deleted with cleanup result (only when cleanup flags are set).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cleanup: {$ref: "#/components/schemas/StackCleanupResult"}
+                  cleanup_error: {type: string}
+        "204": {description: "Deleted (files only, no cleanup requested)."}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Stack has dependents; re-send with `?force=true` to override.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}/recover:
+    post:
+      operationId: stacks.recover
+      tags: [stacks]
+      summary: Reconstruct compose.yaml from running containers
+      description: |
+        When a stack's compose.yaml is missing or empty on disk but
+        containers carrying the project label are still running (e.g.
+        after a Docker reset wiped the stacks dir but kept the data
+        volume), this endpoint inspects the live containers and writes
+        a best-effort compose.yaml back to disk.
+
+        Non-destructive: containers are not touched. The reconstructed
+        YAML is returned in the response with a list of warnings the
+        operator should review before redeploying. Anything Docker's
+        inspect data can't represent (comments, x-* extensions, build:,
+        secrets:, configs:) shows up as a warning rather than a silent
+        loss.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+      responses:
+        "200":
+          description: Compose reconstructed and written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stack: {$ref: "#/components/schemas/StackDetail"}
+                  warnings:
+                    type: array
+                    items: {type: string}
+                  recovered_from:
+                    type: object
+                    properties:
+                      host_id: {type: string}
+                      container_count: {type: integer}
+                      reconstructed_at: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404":
+          description: No running containers carry the project label.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "422":
+          description: Could not reconstruct compose from inspect data.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}/discard:
+    post:
+      operationId: stacks.discard
+      tags: [stacks]
+      summary: Drop a ghost stack record without touching containers
+      description: |
+        Removes the deployment row + dependency edges for a stack whose
+        compose file is gone from disk. Running containers are not
+        touched — use this when the operator decides the stack should
+        be forgotten by dockmesh but the workload should keep running
+        (or will be cleaned up via `docker` directly).
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+      responses:
+        "204": {description: Discarded.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /stacks/{name}/cleanup-preview:
+    get:
+      operationId: stacks.cleanup_preview
+      tags: [stacks]
+      summary: List project-scoped docker resources that Delete would touch
+      description: |
+        Read-only enumeration of the networks / volumes / images that
+        `DELETE /stacks/{name}` would remove if called with the matching
+        cleanup flags. External volumes and shared images are already
+        filtered out of the plan. Used by the UI to render an informed
+        confirmation dialog before the user commits.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+      responses:
+        "200":
+          description: Plan.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/StackCleanupPlan"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "501":
+          description: Cleanup is not supported for this stack's host yet (e.g. remote agents).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}/deploy:
+    post:
+      operationId: stacks.deploy
+      tags: [stacks]
+      summary: Deploy a stack onto a target host
+      description: |
+        Ships the compose + env to the target host and runs `docker compose
+        up -d` via the embedded compose executor. On a fresh deploy the
+        deployment record is created; on an existing one, containers are
+        updated in place.
+
+        When `?environment=<name>` is supplied (P.12.8), Dockmesh merges
+        `compose.yaml` with `compose.<name>.yaml` via the compose-spec
+        multi-file overlay rules and deploys the merged result. Without
+        the query param, falls back to `active_environment` in
+        `.dockmesh.meta.json`; without that, deploys the base compose.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+        - $ref: "#/components/parameters/HostQuery"
+        - in: query
+          name: environment
+          required: false
+          schema: {type: string}
+          description: Optional overlay name — overrides the stack's default `active_environment`.
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
+      responses:
+        "200":
+          description: Deploy result with created/updated/unchanged services.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DeployResult"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/StackModifiedOutside"}
+        "422":
+          description: Compose validation failed — see message.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}/deployments:
+    get:
+      operationId: stacks.deployments_list
+      tags: [stacks]
+      summary: Past deploys of this stack (P.12.6)
+      description: |
+        Newest first. Each successful deploy creates one row. Compose YAML
+        is NOT included in list responses — fetch a specific entry via
+        `GET /deployments/{id}` to see the full snapshot.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+      responses:
+        "200":
+          description: History entries (newest first).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/DeployHistoryEntry"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /stacks/{name}/deployments/{id}:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+      - in: path
+        name: id
+        required: true
+        schema: {type: integer, format: int64}
+    get:
+      operationId: stacks.deployment_get
+      tags: [stacks]
+      summary: Full snapshot of a single past deploy, including compose YAML
+      responses:
+        "200":
+          description: History entry with compose_yaml populated.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DeployHistoryEntry"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /stacks/{name}/deployments/{id}/rollback:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+      - $ref: "#/components/parameters/HostQuery"
+      - in: path
+        name: id
+        required: true
+        schema: {type: integer, format: int64}
+    post:
+      operationId: stacks.deployment_rollback
+      tags: [stacks]
+      summary: Roll back the stack to a specific past deploy (P.12.6)
+      description: |
+        Overwrites `compose.yaml` with the snapshot from the given history
+        row and re-runs Deploy. Env is deliberately kept as-is so current
+        secrets aren't clobbered. The rollback itself becomes a new
+        history row tagged "rollback to #ID".
+      parameters:
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
+      responses:
+        "200":
+          description: Rollback completed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rolled_back_to, result]
+                properties:
+                  rolled_back_to: {type: integer, format: int64}
+                  deployed_at_orig: {type: string, format: date-time}
+                  result: {$ref: "#/components/schemas/DeployResult"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/StackModifiedOutside"}
+        "500":
+          description: Redeploy failed — the compose.yaml has already been swapped, inspect and retry or roll forward.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}/dependencies:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+    get:
+      operationId: stacks.dependencies_get
+      tags: [stacks]
+      summary: Direct deps + reverse deps for this stack (P.12.7)
+      description: |
+        `depends_on` is what this stack needs up before it can deploy.
+        `dependents` is what will break if this stack goes down.
+      responses:
+        "200":
+          description: Dependency state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stack_name, depends_on, dependents]
+                properties:
+                  stack_name: {type: string}
+                  depends_on:
+                    type: array
+                    items: {type: string}
+                  dependents:
+                    type: array
+                    items: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+    put:
+      operationId: stacks.dependencies_set
+      tags: [stacks]
+      summary: Replace the dependency list for this stack (P.12.7)
+      description: |
+        Replaces the full `depends_on` set. Cycle detection runs against
+        the post-write graph — a request that would close a loop returns
+        422. Unknown stack names are allowed (you can declare edges before
+        the depending stacks exist); they fail at deploy time, not at
+        declaration time.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [depends_on]
+              properties:
+                depends_on:
+                  type: array
+                  items: {type: string}
+      responses:
+        "200":
+          description: Updated dependency list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stack_name: {type: string}
+                  depends_on:
+                    type: array
+                    items: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "422":
+          description: Request would create a dependency cycle.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}/environments:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+    get:
+      operationId: stacks.environments_list
+      tags: [stacks]
+      summary: Available compose overlay files + active default (P.12.8)
+      description: |
+        Discovers every `compose.<name>.yaml` overlay next to the base
+        `compose.yaml` in the stack directory, plus the
+        `active_environment` from `.dockmesh.meta.json` if set.
+      responses:
+        "200":
+          description: Environment state for this stack.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stack_name, available]
+                properties:
+                  stack_name: {type: string}
+                  active:
+                    type: string
+                    description: Currently-active overlay name (empty means the base compose is used as-is).
+                  available:
+                    type: array
+                    items: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /stacks/{name}/environments/active:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+    put:
+      operationId: stacks.environment_set_active
+      tags: [stacks]
+      summary: Set the default environment overlay for this stack (P.12.8)
+      description: |
+        Writes `active_environment` into `.dockmesh.meta.json`. Empty
+        string clears the default. Subsequent deploys without an
+        explicit `?environment=` query param use this value.
+
+        The name is validated against the filesystem-safe pattern
+        (lowercase letters, digits, `-`, `_`) but NOT checked against
+        existing overlay files — git-synced stacks often have the meta
+        file update arrive before the overlay file lands in the same
+        sync cycle.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [active]
+              properties:
+                active: {type: string}
+      responses:
+        "200":
+          description: Updated active environment.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stack_name: {type: string}
+                  active: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /stacks/{name}/stop:
+    post:
+      operationId: stacks.stop
+      tags: [stacks]
+      summary: Stop a deployed stack (docker compose down without -v)
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "204": {description: Stopped.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /stacks/{name}/status:
+    get:
+      operationId: stacks.status
+      tags: [stacks]
+      summary: Current per-service status on the deployed host
+      description: |
+        A stack that was never deployed returns an empty list to callers
+        whose scope does not include the requested host.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: One row per service.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    service: {type: string}
+                    container_id: {type: string}
+                    state: {type: string, enum: [running, exited, paused, restarting, dead, created]}
+                    status: {type: string}
+                    image: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /stacks/{name}/scale:
+    get:
+      operationId: stacks.scale_overview
+      tags: [stacks]
+      summary: Replica count per service
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Scale snapshot per service.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    service: {type: string}
+                    replicas: {type: integer}
+                    desired: {type: integer}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /stacks/{name}/services/{service}/scale:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+      - $ref: "#/components/parameters/ServicePath"
+      - $ref: "#/components/parameters/HostQuery"
+    get:
+      operationId: stacks.scale_check
+      tags: [stacks]
+      summary: Pre-flight check before scaling a service
+      description: Returns a list of blockers (container_name, hard ports, singleton volumes) that would prevent the scale, or an empty list if safe.
+      responses:
+        "200":
+          description: Check result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  safe: {type: boolean}
+                  blockers:
+                    type: array
+                    items: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    post:
+      operationId: stacks.scale_set
+      tags: [stacks]
+      summary: Scale a single service to N replicas
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [replicas]
+              properties:
+                replicas: {type: integer, minimum: 0}
+      responses:
+        "200":
+          description: Scale result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  service: {type: string}
+                  replicas: {type: integer}
+                  created: {type: array, items: {type: string}}
+                  removed: {type: array, items: {type: string}}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "422":
+          description: Scale blocked by a safety check (singleton port/volume).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}/services/{service}/rolling-update:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+      - $ref: "#/components/parameters/ServicePath"
+      - $ref: "#/components/parameters/HostQuery"
+    post:
+      operationId: stacks.rolling_update
+      tags: [stacks]
+      summary: Roll every replica of a service onto the current compose image (P.12.5b)
+      description: |
+        Replaces replicas in parallelism-sized batches. Each new replica is
+        gated behind a healthcheck wait (P.12.5a). Body fields override the
+        service's compose `deploy.update_config`; omitted fields fall back to
+        compose and then to engine defaults (parallelism=1, order=stop-first,
+        failure_action=pause).
+
+        Rolling on a remote host is **not yet supported** — remote hosts
+        return 500 with a clear message until the agent protocol carries the
+        matching frame type. Run the stack on the dockmesh server host to
+        use this endpoint.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RollingUpdateRequest"}
+      responses:
+        "200":
+          description: Rolling update result.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RollingUpdateResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "500":
+          description: Rollout paused or failed. When the engine produced a partial result it is returned inside `result`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: {type: string}
+                  result: {$ref: "#/components/schemas/RollingUpdateResult"}
+  /stacks/{name}/scaling-rules:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+    get:
+      operationId: stacks.scaling_rules_get
+      tags: [stacks]
+      summary: Auto-scaling rules configured for this stack (P.8)
+      responses:
+        "200":
+          description: Rules.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/ScalingRule"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    put:
+      operationId: stacks.scaling_rules_set
+      tags: [stacks]
+      summary: Replace the auto-scaling rule set for this stack
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rules]
+              properties:
+                rules:
+                  type: array
+                  items: {$ref: "#/components/schemas/ScalingRule"}
+      responses:
+        "200":
+          description: Stored rules.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/ScalingRule"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      operationId: stacks.scaling_rules_clear
+      tags: [stacks]
+      summary: Remove all auto-scaling rules for this stack
+      responses:
+        "204": {description: Cleared.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /stacks/{name}/migrate:
+    post:
+      operationId: stacks.migrate
+      tags: [stacks, migrations]
+      summary: Start a cross-host migration (P.9)
+      description: |
+        Snapshots volumes on the source host, ships them over the agent
+        mTLS tunnel to the target host, deploys the stack there, and
+        finally stops the source containers. The source files are kept
+        for rollback until `/migrate/{id}/source` is called.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_host_id]
+              properties:
+                target_host_id: {type: string, format: uuid}
+                include_volumes: {type: boolean, default: true}
+      responses:
+        "202":
+          description: Migration accepted — poll `/migrate/{id}` for progress.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  migration_id: {type: integer, format: int64}
+                  status: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: |
+            The stack uses named volumes. Volume data can't be transferred
+            yet, so the migration is refused instead of starting the stack
+            with empty volumes on the target. Preflight reports the same
+            as the failing `named_volumes` check.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}/migrate/preflight:
+    post:
+      operationId: stacks.migrate_preflight
+      tags: [stacks, migrations]
+      summary: Dry-run migration check — returns blockers without starting
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_host_id]
+              properties:
+                target_host_id: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Preflight result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  safe: {type: boolean}
+                  blockers:
+                    type: array
+                    items: {type: string}
+                  volumes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: {type: string}
+                        size_bytes: {type: integer, format: int64}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /stacks/{name}/migrate/{id}:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+      - name: id
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+        description: Migration id returned by `/stacks/{name}/migrate`.
+    get:
+      operationId: stacks.migrate_status
+      tags: [stacks, migrations]
+      summary: Poll a running migration
+      responses:
+        "200":
+          description: Current state.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MigrationStatus"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /stacks/{name}/migrate/{id}/rollback:
+    post:
+      operationId: stacks.migrate_rollback
+      tags: [stacks, migrations]
+      summary: Roll back a migration (restart source, drop target)
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: Rolled back.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MigrationStatus"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Migration in a state that cannot be rolled back.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /stacks/from-git:
+    post:
+      operationId: stacks.create_from_git
+      tags: [stacks]
+      summary: Create a new stack from a git repository in one shot
+      description: |
+        Configures the git source and runs the initial sync, which
+        creates the stack directory on disk from the repo contents.
+        Returns the saved git source plus the sync result + drift report.
+        On a failed initial sync the row is still saved (HTTP 422) so the
+        caller can fix credentials and retry without re-entering everything.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, git]
+              properties:
+                name: {type: string, description: "Stack name (kebab-case)."}
+                git: {$ref: "#/components/schemas/StackGitSourceInput"}
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        "422":
+          description: Row saved but initial sync failed (e.g. bad credentials).
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /stacks/{name}/git:
+    parameters:
+      - $ref: "#/components/parameters/StackNamePath"
+    get:
+      operationId: stacks.git_get
+      tags: [stacks]
+      summary: Inspect the git source configured for a stack (P.11.11)
+      responses:
+        "200":
+          description: Git source.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/StackGitSource"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404":
+          description: No git source configured for this stack.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+    post:
+      operationId: stacks.git_configure
+      tags: [stacks]
+      summary: Configure / update the git source and do an initial sync
+      description: |
+        Upsert semantics: creates the source on first call, updates on
+        subsequent. Always kicks off an initial sync so the stack FS is
+        populated — the response includes a `sync` or `sync_error` field.
+        Passwords / SSH keys are age-encrypted at rest; leave those fields
+        empty on update to keep the existing values.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/StackGitSourceInput"}
+      responses:
+        "200":
+          description: Configured. The sync result is embedded inline.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source: {$ref: "#/components/schemas/StackGitSource"}
+                  sync: {$ref: "#/components/schemas/StackGitSyncResult"}
+                  sync_error: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    delete:
+      operationId: stacks.git_disconnect
+      tags: [stacks]
+      summary: Disconnect the stack from its git source
+      description: Does NOT delete the stack's compose.yaml — only the sync config + the clone cache.
+      responses:
+        "204": {description: Disconnected.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404":
+          description: No git source configured.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}/git/sync:
+    post:
+      operationId: stacks.git_sync
+      tags: [stacks]
+      summary: Manually pull the latest compose.yaml from the git source
+      description: |
+        Pulls the configured branch, copies compose.yaml (+ optional .env)
+        into the stack FS, and if the source has `auto_deploy: true` AND
+        the SHA changed, kicks off a deploy of the stack as well.
+
+        If the stack's compose.yaml or .env changed outside Dockmesh, the
+        new commit is not copied (409) until a deploy with
+        `confirm_external=1` accepts the changes.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+      responses:
+        "200":
+          description: Sync result.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/StackGitSyncResult"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404":
+          description: No git source configured.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "409": {$ref: "#/components/responses/StackModifiedOutside"}
+        "502":
+          description: "Sync failed — see message (auth rejected, branch not found, compose missing in repo, …)."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}/git/webhook:
+    post:
+      operationId: stacks.git_webhook
+      tags: [stacks]
+      summary: "Public: provider-triggered sync (GitHub / GitLab / Gitea)"
+      description: |
+        Public endpoint — no Bearer auth, since GitHub / GitLab / Gitea
+        can't send Authorization headers. The source must have a
+        `webhook_secret`, and the request must carry a matching signature:
+
+        * **GitHub** / **Gitea** — `X-Hub-Signature-256` / `X-Gitea-Signature` (`sha256=<hex>`)
+        * **GitLab** — plain shared secret on `X-Gitlab-Token`
+
+        Without a secret the webhook is disabled; polling and manual sync
+        keep working. Returns 202 on success; the sync runs in the
+        background, detached from the request, so providers don't time out
+        on slow clones. Syncs of one stack run one at a time, and deliveries
+        arriving during a sync are merged into a single follow-up sync.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Provider-specific push payload (ignored — only used for signature verification).
+      responses:
+        "202":
+          description: Sync queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: "sync queued"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401":
+          description: Webhook rejected — unknown stack or no git source, no webhook secret set, or signature mismatch. The reasons share one response.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /stacks/{name}/migrate/{id}/source:
+    delete:
+      operationId: stacks.migrate_finalize
+      tags: [stacks, migrations]
+      summary: Finalise a successful migration (remove source files + volumes)
+      description: |
+        Called by the operator once they've verified the target is healthy.
+        Removes the source host's stack files and (optionally) volumes,
+        giving up the rollback option.
+      parameters:
+        - $ref: "#/components/parameters/StackNamePath"
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "204": {description: Source cleaned up.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /convert/run-to-compose:
+    post:
+      operationId: convert.run_to_compose
+      tags: [stacks]
+      summary: Translate a `docker run ...` CLI command into a compose service
+      description: Used by the "paste docker run" helper in the new-stack dialog.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [command]
+              properties:
+                command:
+                  type: string
+                  description: Full `docker run ...` command line.
+                  example: "docker run -d --name nginx -p 8080:80 nginx:alpine"
+      responses:
+        "200":
+          description: Parsed result — a service name + a compose snippet.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [service, compose]
+                properties:
+                  service: {type: string}
+                  compose:
+                    type: string
+                    description: YAML for one service, ready to paste into compose.yaml.
+                  warnings:
+                    type: array
+                    items: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /stacks/{name}/deploy/progress:
+    get:
+      operationId: stacks.deploy_progress
+      tags: [stacks]
+      summary: Live phase + service + elapsed for an in-flight deploy
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Progress snapshot, or null when no deploy is tracked.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - {type: "null"}
+                  - {type: object, additionalProperties: true}
+components:
+  schemas:
+    StackInput:
+      type: object
+      required: [name, compose]
+      description: Payload for create / update.
+      properties:
+        name: {type: string, example: my-app}
+        compose:
+          type: string
+          description: Full compose.yaml content.
+        env:
+          type: string
+          description: Optional plaintext .env content. Stored age-encrypted when secrets encryption is enabled.
+    StackDetail:
+      type: object
+      required: [name, compose]
+      properties:
+        name: {type: string}
+        compose: {type: string}
+        env: {type: string}
+        modified_outside:
+          type: array
+          items: {type: string}
+          description: Stack files changed outside Dockmesh since it last wrote them; the next deploy needs `confirm_external=1`.
+        mounts_stack_dir:
+          type: boolean
+          description: A service bind-mounts the stack directory writable and can change compose.yaml and .env.
+    StackDeployment:
+      type: object
+      description: Where and when a stack was last deployed.
+      properties:
+        host_id: {type: string}
+        host_name: {type: string}
+        deployed_at: {type: string, format: date-time}
+        status: {type: string, enum: [deployed, failed, stopped, unknown]}
+    StackListEntry:
+      type: object
+      properties:
+        name: {type: string}
+        compose_path: {type: string}
+        deployment: {$ref: "#/components/schemas/StackDeployment"}
+    DiscoveredStack:
+      type: object
+      description: |
+        A running compose project (grouped by `com.docker.compose.project`
+        label) that has no matching stack directory under the server's
+        stacks root. Returned by `GET /stacks/discovered`.
+      required: [project_name, host_id, service_count]
+      properties:
+        project_name:
+          type: string
+          description: Value of the `com.docker.compose.project` label.
+          example: audiobookshelf
+        host_id: {type: string}
+        host_name: {type: string}
+        service_count:
+          type: integer
+          description: Number of distinct services (unique `com.docker.compose.service` values) in this project.
+        services:
+          type: array
+          items: {$ref: "#/components/schemas/DiscoveredStackService"}
+        first_seen:
+          type: string
+          format: date-time
+          description: Earliest container creation time in this project (best-effort).
+    DiscoveredStackService:
+      type: object
+      required: [name, container_id, state]
+      properties:
+        name:
+          type: string
+          description: Value of the `com.docker.compose.service` label.
+        container_id: {type: string}
+        container_name: {type: string}
+        state:
+          type: string
+          enum: [running, exited, created, paused, restarting, dead, removing]
+        image: {type: string}
+    StackAdoptInput:
+      type: object
+      required: [name, host_id, compose]
+      description: Payload for `POST /stacks/adopt`.
+      properties:
+        name:
+          type: string
+          description: |
+            Stack name under which to track this project. Must match the
+            `com.docker.compose.project` label on the running containers
+            — otherwise binding fails and no containers end up managed.
+          example: audiobookshelf
+        host_id:
+          type: string
+          description: Host on which the running project lives.
+        compose:
+          type: string
+          description: Full compose.yaml content.
+        env:
+          type: string
+          description: Optional plaintext .env content. Stored age-encrypted at rest.
+        bundle:
+          type: string
+          description: |
+            Optional base64-encoded tar.gz archive of supporting files
+            relative to the compose.yaml (e.g. build contexts, config
+            files referenced via `./relative/path` bind mounts). Extracted
+            into `<stacks_root>/<name>/` alongside compose.yaml. If omitted,
+            adoption proceeds in metadata-only mode and any relative
+            path references will break on the first restart.
+        accepted_warnings:
+          type: array
+          items: {type: string}
+          description: |
+            Warning codes the client has surfaced to the user and they
+            explicitly acknowledged (e.g. "build-context", "relative-paths",
+            "config-drift"). Recorded in the audit log so the adoption
+            decision is reviewable after the fact.
+    StackAdoptResult:
+      type: object
+      required: [name, host_id, bound_containers]
+      properties:
+        name: {type: string}
+        host_id: {type: string}
+        bound_containers:
+          type: integer
+          description: Number of running containers linked to this stack via `com.docker.compose.project` label.
+        warnings:
+          type: array
+          items: {type: string}
+          description: Warning codes the server surfaced during adoption (superset of what client sent).
+        drift_services:
+          type: array
+          items: {type: string}
+          description: |
+            Services where the compose-computed config-hash differs from
+            what's running on the host. A future explicit deploy will
+            recreate these containers; an empty list means the next
+            deploy is a no-op.
+    DeployResult:
+      type: object
+      properties:
+        stack: {type: string}
+        created:
+          type: array
+          items: {type: string}
+          description: Services whose containers were created fresh.
+        updated:
+          type: array
+          items: {type: string}
+        unchanged:
+          type: array
+          items: {type: string}
+        skipped:
+          type: array
+          items: {type: string}
+        warnings:
+          type: array
+          items: {type: string}
+    StackCleanupPlan:
+      type: object
+      description: |
+        Enumerates resources that would be removed by the matching
+        DELETE cleanup flags. External volumes and shared images are
+        already filtered out.
+      properties:
+        networks:
+          type: array
+          items: {type: string}
+        volumes:
+          type: array
+          items: {type: string}
+        images:
+          type: array
+          items: {type: string}
+        skipped_external:
+          type: array
+          items: {type: string}
+          description: Human-readable entries for resources intentionally skipped (e.g. external volumes).
+        skipped_in_use:
+          type: array
+          items: {type: string}
+          description: Resources skipped because they are still referenced outside this project (e.g. shared images).
+    StackCleanupResult:
+      type: object
+      description: Actually-removed resources from a cleanup pass.
+      properties:
+        networks:
+          type: array
+          items: {type: string}
+        volumes:
+          type: array
+          items: {type: string}
+        images:
+          type: array
+          items: {type: string}
+        errors:
+          type: array
+          items: {type: string}
+    ScalingRule:
+      type: object
+      required: [service, metric, operator, threshold]
+      properties:
+        service: {type: string}
+        metric: {type: string, enum: [cpu_percent, mem_percent]}
+        operator: {type: string, enum: [gt, lt]}
+        threshold: {type: number}
+        min_replicas: {type: integer}
+        max_replicas: {type: integer}
+        cooldown_seconds: {type: integer}
+        duration_seconds: {type: integer}
+    DeployHistoryEntry:
+      type: object
+      required: [id, stack_name, host_id, deployed_at]
+      description: |
+        One past deploy snapshot (P.12.6). `compose_yaml` is only populated
+        on the single-entry GET; list responses omit it to stay small.
+      properties:
+        id: {type: integer, format: int64}
+        stack_name: {type: string}
+        host_id: {type: string}
+        compose_yaml: {type: string}
+        services:
+          type: array
+          items:
+            type: object
+            required: [service, image]
+            properties:
+              service: {type: string}
+              image: {type: string}
+        note: {type: string}
+        deployed_by: {type: string, description: users.id (UUID-style).}
+        deployed_by_name: {type: string, description: Email captured at query time for display.}
+        deployed_at: {type: string, format: date-time}
+    RollingUpdateRequest:
+      type: object
+      description: |
+        Override the service's compose `deploy.update_config`. All fields are
+        optional — omitted fields fall back to compose, then to engine
+        defaults (parallelism=1, order=stop-first, failure_action=pause).
+      properties:
+        parallelism:
+          type: integer
+          minimum: 1
+          description: Replicas replaced per batch.
+        delay_seconds:
+          type: integer
+          minimum: 0
+          description: Wait between batches.
+        order:
+          type: string
+          enum: [stop-first, start-first]
+          description: |
+            `stop-first` tears down an old replica before the new one starts.
+            `start-first` brings up a sibling, waits healthy, then tears down
+            the old replica — only safe when the service has no
+            `container_name` and no hard host-port bindings.
+        failure_action:
+          type: string
+          enum: [pause, continue, rollback]
+    RollingUpdateResult:
+      type: object
+      required: [service, total_replicas, updated, failed, skipped, rolled_back, new_image]
+      properties:
+        service: {type: string}
+        total_replicas: {type: integer}
+        updated: {type: integer, description: Replicas successfully replaced.}
+        failed: {type: integer, description: Replicas whose replace attempt errored.}
+        skipped: {type: integer, description: Replicas not attempted because the rollout paused or rolled back.}
+        rolled_back: {type: boolean, description: True when failure_action=rollback kicked in and already-replaced replicas were reverted.}
+        previous_image: {type: string, description: Image running on the replicas before the rollout started (rollback target).}
+        new_image: {type: string, description: Image the rollout was targeting.}
+        errors:
+          type: array
+          items: {type: string}
+    StackGitSource:
+      type: object
+      description: Git repository a stack pulls its compose.yaml from (P.11.11). Secrets redacted.
+      required: [stack_name, repo_url, branch, path_in_repo, auth_kind, poll_interval_sec, auto_deploy, has_password, has_ssh_key, has_webhook_secret, created_at, updated_at]
+      properties:
+        stack_name: {type: string}
+        repo_url: {type: string, example: "https://github.com/acme/stack.git"}
+        branch: {type: string, default: main}
+        path_in_repo:
+          type: string
+          description: Directory containing compose.yaml (+ optional .env), or a direct file path.
+          default: "."
+        auth_kind:
+          type: string
+          enum: [none, http, ssh]
+        username: {type: string, description: HTTP basic-auth username or SSH user (defaults to `git`).}
+        has_password: {type: boolean}
+        has_ssh_key: {type: boolean}
+        auto_deploy:
+          type: boolean
+          description: When true, a successful sync with a new SHA triggers a deploy.
+        poll_interval_sec:
+          type: integer
+          minimum: 60
+          description: 0 = do not poll (webhook / manual sync only).
+        has_webhook_secret:
+          type: boolean
+          description: Whether a webhook secret is set. Without one, `POST /stacks/{name}/git/webhook` is rejected.
+        last_sync_sha: {type: string}
+        last_sync_at: {type: string, format: date-time}
+        last_sync_error: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    StackGitSourceInput:
+      type: object
+      required: [repo_url]
+      properties:
+        repo_url: {type: string}
+        branch: {type: string}
+        path_in_repo:
+          type: string
+          description: |
+            Relative path inside the repository (directory or compose file).
+            Absolute paths and ".." are rejected with 400; symlinks that
+            lead outside the repository are not followed.
+        auth_kind:
+          type: string
+          enum: [none, http, ssh]
+        username: {type: string}
+        password:
+          type: string
+          format: password
+          description: HTTP basic auth password / PAT. Empty on update = keep existing.
+        clear_password: {type: boolean}
+        ssh_key:
+          type: string
+          description: OpenSSH private key (PEM). Empty on update = keep existing.
+        clear_ssh_key: {type: boolean}
+        auto_deploy: {type: boolean}
+        poll_interval_sec:
+          type: integer
+          minimum: 60
+        webhook_secret:
+          type: string
+          description: Shared secret for HMAC verification of incoming webhook pushes. At least 16 characters when set or changed (shorter secrets stored earlier keep working). Empty keeps the stored secret. Webhooks are rejected while no secret is set.
+        clear_webhook_secret: {type: boolean, description: "Removes the secret, which disables the webhook."}
+    StackGitSyncResult:
+      type: object
+      required: [new_sha, changed, duration_ms]
+      properties:
+        old_sha: {type: string}
+        new_sha: {type: string}
+        changed: {type: boolean}
+        deployed:
+          type: boolean
+          description: True when auto_deploy fired and completed on this sync.
+        deploy_result:
+          type: object
+          description: Deploy result when `deployed` is true; mirrors /stacks/{name}/deploy.
+        duration_ms: {type: integer, format: int64}

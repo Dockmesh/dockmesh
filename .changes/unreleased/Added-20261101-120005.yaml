@@ -1,0 +1,3 @@
+kind: Added
+body: Agents renew their client certificate over their existing connection when it has less than 30 days left; the host keeps its ID. Admins get a notice for any agent whose certificate is within 14 days of expiry, and a critical one for an offline agent whose certificate has expired, with the steps to re-enroll it under the same ID.
+time: 2026-11-01T12:00:05Z

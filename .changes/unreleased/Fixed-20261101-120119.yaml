@@ -1,0 +1,3 @@
+kind: Fixed
+body: Volume backups no longer keep a copy of the archive in Docker's container log of their helper, which took several times the archive's size on the server's disk while the backup ran. A backup that fails midway stops and removes its helper container instead of leaving it running until the next restart.
+time: 2026-11-01T12:01:19Z

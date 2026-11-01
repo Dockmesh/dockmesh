@@ -1,0 +1,3 @@
+kind: Fixed
+body: Deleting a host while one of its shells, log views or requests was open no longer crashes the server, and the deleted host's connection is closed right away.
+time: 2026-11-01T12:01:06Z

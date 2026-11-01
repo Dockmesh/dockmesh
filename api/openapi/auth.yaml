@@ -1,0 +1,874 @@
+paths:
+  /auth/login:
+    post:
+      operationId: auth.login
+      tags: [auth]
+      summary: Log in with username + password
+      description: |
+        Exchanges a username + password for a session. If the user has MFA
+        enabled, the response contains `mfa_required: true` and an
+        `mfa_token` — clients must then call `POST /auth/mfa` with the
+        token plus the 6-digit code to finish the login.
+
+        Failed attempts are limited per account: 10 failures within 15
+        minutes block the username for 15 minutes, whether or not it exists
+        and independent of the lockout policy. Wrong codes at
+        `POST /auth/mfa` count toward the same limit. Per client IP (IPv6 by
+        /64) the limit is 100 failures within 15 minutes, blocking for 15
+        minutes. A successful login clears the account counter, never the IP
+        one. Each block that starts is written to the audit log as
+        `auth.lockout`. A 429 response includes `Retry-After`.
+
+        The lockout policy (`/auth/policy`) additionally locks an existing
+        account after its configured number of failures; that answers 423.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: {type: string, maxLength: 256, example: admin}
+                password: {type: string, format: password}
+      responses:
+        "200":
+          description: Login succeeded. For MFA users, `mfa_required=true` and the client must complete `/auth/mfa`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResult"
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401":
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "423":
+          description: Account locked by the lockout policy.
+          headers:
+            Retry-After:
+              schema: {type: integer}
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          description: |
+            Too many failed attempts for this account (10 per 15 minutes) or
+            from this IP (100 per 15 minutes).
+          headers:
+            Retry-After:
+              schema: {type: integer}
+              description: Seconds until the block expires.
+  /auth/logout:
+    post:
+      operationId: auth.logout
+      tags: [auth]
+      summary: Invalidate a refresh token
+      description: Revokes the refresh token's entire session family. Idempotent.
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token: {type: string}
+      responses:
+        "204": {description: Logged out.}
+  /auth/refresh:
+    post:
+      operationId: auth.refresh
+      tags: [auth]
+      summary: Rotate an access token
+      description: |
+        Exchanges a refresh token for a fresh access+refresh pair. Refresh
+        tokens are rotated on every use. Reusing a previously-rotated token
+        revokes the whole session family. Invalid tokens are rate-limited
+        per client IP.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: {type: string}
+      responses:
+        "200":
+          description: New token pair.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/LoginResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401":
+          description: |
+            Invalid, expired, or reused refresh token. A refresh token issued
+            before the per-purpose token keys returns `code: session_outdated`
+            so clients can tell the user they were signed out by an update.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: {type: string}
+                  code: {type: string, enum: [session_outdated]}
+        "429":
+          description: Too many invalid refresh tokens from this IP (300 per 5 minutes).
+          headers:
+            Retry-After:
+              schema: {type: integer}
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /auth/sso/exchange:
+    post:
+      operationId: auth.ssoExchange
+      tags: [auth]
+      summary: Exchange an SSO one-time code for a session
+      description: |
+        Final step of OIDC, OAuth2 and SAML sign-in. The callback redirects
+        to `/login?sso_code=...` and sets an httpOnly cookie with the same
+        code; this call needs both. A code works once and expires after
+        60 seconds, so a code from a link someone else sends signs nobody in.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: {type: string}
+      responses:
+        "200":
+          description: Session tokens and user.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/LoginResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401":
+          description: Unknown, expired, already used code, or the cookie is missing or does not match.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /auth/mfa:
+    post:
+      operationId: auth.login_mfa
+      tags: [auth]
+      summary: Complete a two-factor login
+      description: |
+        Second step of the login flow when the user has MFA enabled.
+        Accepts a 6-digit TOTP code or a recovery code. Each TOTP code is
+        accepted once. Wrong codes count as failed logins of the account:
+        they raise the lockout-policy counter and the per-account limit of
+        `POST /auth/login` (10 per 15 minutes), and the counters are only
+        reset once this step succeeds. Per client IP, 20 wrong codes within
+        15 minutes block for 15 minutes.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mfa_token, code]
+              properties:
+                mfa_token:
+                  type: string
+                  description: Short-lived token issued by `/auth/login` when MFA is required.
+                code:
+                  type: string
+                  description: 6-digit TOTP or a recovery code.
+                  example: "123456"
+      responses:
+        "200":
+          description: MFA succeeded — session issued.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/LoginResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401":
+          description: Invalid or expired MFA token / code.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "423":
+          description: Account locked by the lockout policy.
+          headers:
+            Retry-After:
+              schema: {type: integer}
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          description: Too many failed attempts for this account or wrong codes from this IP.
+          headers:
+            Retry-After:
+              schema: {type: integer}
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /auth/oidc/providers:
+    get:
+      operationId: auth.oidc_providers
+      tags: [auth]
+      summary: List SSO providers available on the login screen
+      description: Public — used by the login page to render SSO buttons.
+      security: []
+      responses:
+        "200":
+          description: Enabled OIDC providers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [slug, display_name]
+                  properties:
+                    slug: {type: string, example: google}
+                    display_name: {type: string, example: Sign in with Google}
+  /auth/oidc/{slug}/login:
+    get:
+      operationId: auth.oidc_login
+      tags: [auth]
+      summary: Start an OIDC authorization flow
+      description: Redirects to the provider's authorization URL with a signed state cookie.
+      security: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "302":
+          description: Redirect to provider.
+          headers:
+            Location:
+              schema: {type: string, format: uri}
+        "503":
+          description: OIDC is not configured.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /auth/oidc/{slug}/callback:
+    get:
+      operationId: auth.oidc_callback
+      tags: [auth]
+      summary: Consume the OIDC callback and mint a Dockmesh session
+      security: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: {type: string}
+        - name: code
+          in: query
+          required: true
+          schema: {type: string}
+        - name: state
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        "302":
+          description: Redirect to `/login?sso_code=...`; the SPA exchanges the one-time code at `/auth/sso/exchange`.
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401":
+          description: State mismatch or code exchange failed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /mfa/enroll/start:
+    post:
+      operationId: auth.mfa_enroll_start
+      tags: [auth]
+      summary: Begin TOTP enrollment for the current user
+      description: |
+        Generates a fresh TOTP secret and returns the QR URL. The secret is
+        NOT active until `/mfa/enroll/verify` succeeds.
+      responses:
+        "200":
+          description: Enrollment in progress.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [secret, otpauth_url]
+                properties:
+                  secret: {type: string, description: Base32-encoded TOTP secret.}
+                  otpauth_url: {type: string, format: uri}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "409":
+          description: MFA already enrolled.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /mfa/enroll/verify:
+    post:
+      operationId: auth.mfa_enroll_verify
+      tags: [auth]
+      summary: Finalise TOTP enrollment and reveal recovery codes
+      description: |
+        Validates the first 6-digit code. On success, activates MFA and
+        returns single-use recovery codes — shown ONCE.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: {type: string, example: "123456"}
+      responses:
+        "200":
+          description: MFA active. Recovery codes shown once only.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recovery_codes]
+                properties:
+                  recovery_codes:
+                    type: array
+                    items: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401":
+          description: Invalid code.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "409":
+          description: Already verified.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /mfa:
+    delete:
+      operationId: auth.mfa_disable
+      tags: [auth]
+      summary: Disable MFA for the current user
+      description: |
+        Requires a current TOTP code or an unused recovery code. An
+        enrollment that was started but never verified is cleared without a
+        code. Successful and failed attempts are audited.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: {type: string, description: TOTP code or recovery code.}
+      responses:
+        "204": {description: MFA disabled.}
+        "400":
+          description: Missing or invalid code.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "429":
+          description: Too many wrong codes (5 per 15 minutes per user); see Retry-After.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /sessions:
+    get:
+      operationId: auth.sessions_list
+      tags: [auth]
+      summary: List the caller's own login sessions
+      description: |
+        Returns every session family-id the current user owns with
+        user_agent + IP + created_at + expires_at + revoked_at. No
+        cross-user view — admins see only their own, not everyone's.
+      responses:
+        "200":
+          description: Sessions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Session"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /sessions/{family_id}:
+    delete:
+      operationId: auth.sessions_revoke
+      tags: [auth]
+      summary: Revoke one of the caller's sessions
+      description: |
+        Idempotent — calling on an already-revoked session returns 404 so
+        callers can distinguish "not mine" from "already done" without
+        leaking which case it was. Revoking the current session logs
+        the caller out on the next refresh.
+      parameters:
+        - name: family_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "204": {description: Revoked.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404":
+          description: Session not found or not owned by the caller.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /auth/policy:
+    get:
+      operationId: auth.policy_get
+      tags: [auth]
+      summary: Current password + lockout + rotation policy
+      description: Admin-only. The numbers themselves hint at the deployment's hardening level.
+      responses:
+        "200":
+          description: Policy.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PasswordPolicy"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    put:
+      operationId: auth.policy_set
+      tags: [auth]
+      summary: Update password / lockout / rotation settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PasswordPolicy"}
+      responses:
+        "200":
+          description: Updated policy.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PasswordPolicy"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /invite/{token}:
+    parameters:
+      - in: path
+        name: token
+        required: true
+        schema: {type: string}
+    get:
+      operationId: invites.preview
+      tags: [auth]
+      summary: Preview an invite (public — used by the accept page)
+      security: []
+      responses:
+        "200":
+          description: Invite preview.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  role: {type: string}
+                  scope_tags: {type: array, items: {type: string}}
+                  email_hint: {type: string}
+                  expires_at: {type: string, format: date-time}
+        "404": {description: invite not found}
+        "410": {description: expired or already used}
+  /invite/{token}/accept:
+    parameters:
+      - in: path
+        name: token
+        required: true
+        schema: {type: string}
+    post:
+      operationId: invites.accept
+      tags: [auth]
+      summary: Redeem an invite — create the user + return a session
+      description: >-
+        Returns 410 when the invite is used or expired, its role no longer exists, or its creator can no longer grant its role and scope.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: {type: string}
+                email: {type: string}
+                password: {type: string}
+      responses:
+        "201":
+          description: User created + signed in.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: {type: object}
+                  access_token: {type: string}
+                  refresh_token: {type: string}
+        "404": {description: invite not found}
+        "409": {description: username or email already taken}
+        "410": {description: expired or already used}
+        "429":
+          description: Too many failed attempts from this IP (10 per 15 minutes) or for this invite (5).
+          headers:
+            Retry-After:
+              schema: {type: integer}
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /auth/providers:
+    get:
+      operationId: auth.providers
+      tags: [auth]
+      summary: All configured identity providers (OIDC + OAuth2 + SAML + LDAP)
+      description: |
+        Returns one mixed list with a `kind` discriminator so the
+        Authentication page can render every provider without four
+        round-trips. The `raw` field carries the underlying record
+        verbatim — callers that need kind-specific fields read it,
+        others ignore it.
+      responses:
+        "200":
+          description: Provider list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [kind, id, slug, display_name, enabled]
+                  properties:
+                    kind:
+                      type: string
+                      enum: [oidc, oauth2, saml, ldap]
+                    id: {type: integer, format: int64}
+                    slug: {type: string}
+                    display_name: {type: string}
+                    enabled: {type: boolean}
+                    raw: {type: object, additionalProperties: true}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /ws/ticket:
+    post:
+      operationId: ws.ticket
+      tags: [auth]
+      summary: Mint a single-use, 30-second ticket for WebSocket upgrade URLs
+      description: |
+        WebSocket upgrade requests cannot carry custom Authorization
+        headers from browsers. Clients POST here with a normal Bearer
+        token plus a `?for=<perm>` query parameter that names the
+        permission the ticket should grant (one of `containers.view`,
+        `containers.logs`, `containers.exec`, `system.view`). The server
+        verifies the caller holds that permission and issues a 30s ticket
+        bound to it and to the caller's identity (user, role, host scope,
+        API token). Each WS endpoint accepts a ticket once, asserts the
+        bound permission matches its own, re-checks it, and applies the
+        caller's host and role scope. Mint a new ticket for every connect
+        and reconnect.
+      parameters:
+        - name: for
+          in: query
+          required: true
+          description: Permission the ticket should grant.
+          schema:
+            type: string
+            enum: [containers.view, containers.logs, containers.exec, system.view]
+      responses:
+        "200":
+          description: Ticket.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ticket]
+                properties:
+                  ticket: {type: string}
+        "400": {description: missing or invalid for=<perm>}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {description: caller's role lacks the requested permission}
+  /auth/signin:
+    get:
+      operationId: auth.signin_config_get
+      tags: [auth]
+      summary: Read the sign-in policy (session TTLs and limits)
+      description: |
+        `session_idle_ttl_min`, `session_absolute_ttl_hr` and
+        `session_max_per_user` are enforced. `allow_local_password`,
+        `require_tfa_for_admin`, `allow_self_register`,
+        `session_remember_me_days` and `password_forbid_reuse_count` are
+        stored and returned, not enforced.
+      responses:
+        "200":
+          description: Current sign-in policy.
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+    put:
+      operationId: auth.signin_config_update
+      tags: [auth]
+      summary: Update the sign-in policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        "200":
+          description: Updated policy.
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+  /sessions/revoke-all:
+    post:
+      operationId: sessions.revoke_all
+      tags: [auth]
+      summary: Revoke every active session of the caller
+      responses:
+        "204": {description: Revoked.}
+  /auth/saml/providers:
+    get:
+      operationId: saml.providers_public
+      tags: [auth]
+      summary: Public list of enabled SAML providers (for login-page buttons)
+      security: []
+      responses:
+        "200":
+          description: Providers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    slug: {type: string}
+                    display_name: {type: string}
+  /auth/saml/{slug}/login:
+    get:
+      operationId: saml.login_start
+      tags: [auth]
+      summary: Begin SAML AuthnRequest — redirects to IdP
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: {type: string}
+      responses:
+        "302": {description: Redirect to IdP.}
+  /auth/saml/{slug}/acs:
+    post:
+      operationId: saml.acs
+      tags: [auth]
+      summary: Assertion-consumer endpoint — receives the signed SAMLResponse
+      description: |
+        Needs the state cookie set by `/auth/saml/{slug}/login` and a response to a sign-in
+        request this server issued; each request can be answered once.
+        Over HTTPS the state cookie is `SameSite=None; Secure` so the
+        identity provider's cross-site POST carries it. Over plain HTTP it
+        stays `Lax` and only an identity provider on the same site works.
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: {type: string}
+      responses:
+        "302":
+          description: |
+            Redirect to `/login?sso_code=...` (one-time code for `/auth/sso/exchange`), or to
+            `/login?sso_error=...` when the sign-in failed (for example no
+            state cookie, a reused response, or no stable subject).
+  /auth/saml/{slug}/metadata:
+    get:
+      operationId: saml.sp_metadata
+      tags: [auth]
+      summary: SP metadata XML (admin pastes URL into the IdP)
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: SP metadata.
+          content:
+            application/samlmetadata+xml:
+              schema: {type: string}
+  /auth/ldap/providers:
+    get:
+      operationId: ldap.providers_public
+      tags: [auth]
+      summary: Public list of enabled LDAP providers
+      security: []
+      responses:
+        "200":
+          description: Providers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    slug: {type: string}
+                    display_name: {type: string}
+  /auth/ldap/{slug}/login:
+    post:
+      operationId: ldap.login
+      tags: [auth]
+      summary: Authenticate against an LDAP provider (bind-and-search)
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: {type: string}
+                password: {type: string, format: password}
+      responses:
+        "200":
+          description: Session pair.
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        "401":
+          description: Bad credentials.
+        "429":
+          description: Too many failed logins from this IP or for this username (10 per 15 minutes each).
+          headers:
+            Retry-After:
+              schema: {type: integer}
+              description: Seconds until the lock expires.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /auth/oauth2/providers:
+    get:
+      operationId: oauth2.providers_public
+      tags: [auth]
+      summary: Public list of enabled OAuth2 providers
+      security: []
+      responses:
+        "200":
+          description: Providers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    slug: {type: string}
+                    display_name: {type: string}
+  /auth/oauth2/{slug}/login:
+    get:
+      operationId: oauth2.login_start
+      tags: [auth]
+      summary: Redirect to provider's authorize endpoint
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: {type: string}
+      responses:
+        "302": {description: Redirect to provider.}
+  /auth/oauth2/{slug}/callback:
+    get:
+      operationId: oauth2.callback
+      tags: [auth]
+      summary: Exchange code for token + fetch userinfo + mint session
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: {type: string}
+      responses:
+        "302": {description: Redirect to SPA.}
+components:
+  schemas:
+    Session:
+      type: object
+      required: [family_id, created_at, expires_at, is_current]
+      description: One active login session — owned by the caller.
+      properties:
+        family_id: {type: string}
+        user_agent: {type: string}
+        ip: {type: string}
+        created_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        revoked_at: {type: string, format: date-time}
+        is_current:
+          type: boolean
+          description: True when this is the session the request came from.
+    PasswordPolicy:
+      type: object
+      description: |
+        Password-complexity + account-lockout + rotation config
+        (P.12.1). All fields are optional — omitted values keep their
+        current stored value on PUT. Defaults on a fresh install:
+        min_length=8, no class requirements, lockout_max_attempts=5
+        after 15-minute window.
+      properties:
+        min_length: {type: integer, minimum: 1, maximum: 256}
+        require_upper: {type: boolean}
+        require_lower: {type: boolean}
+        require_digit: {type: boolean}
+        require_symbol: {type: boolean}
+        rotation_days:
+          type: integer
+          minimum: 0
+          description: Stored and returned, not enforced.
+        lockout_max_attempts:
+          type: integer
+          minimum: 0
+          description: 0 = disabled. Consecutive failed logins before the account is locked.
+        lockout_duration_minutes:
+          type: integer
+          minimum: 0
+          description: 0 = disabled. How long the account stays locked once the threshold is hit.
+    LoginResult:
+      type: object
+      description: |
+        Either a fresh session (access+refresh+user) or an MFA challenge
+        (`mfa_required: true` + `mfa_token`) that clients must complete via
+        `POST /auth/mfa` before getting a session.
+      properties:
+        access_token:
+          type: string
+          description: "15-minute-TTL JWT. Send as `Authorization: Bearer <token>`."
+        refresh_token:
+          type: string
+          description: "Opaque token for `/auth/refresh`. Rotates on every use."
+        user:
+          $ref: "#/components/schemas/User"
+        mfa_required:
+          type: boolean
+          description: "True when the user has MFA enabled — use `mfa_token` with `/auth/mfa`."
+        mfa_token:
+          type: string
+          description: "Short-lived challenge token for the `/auth/mfa` completion."

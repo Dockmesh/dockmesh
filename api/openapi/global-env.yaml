@@ -1,0 +1,130 @@
+paths:
+  /global-env:
+    get:
+      operationId: global_env.list
+      tags: [global-env]
+      summary: List shared env variables across all groups
+      responses:
+        "200":
+          description: Variables.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/GlobalEnvItem"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+    post:
+      operationId: global_env.create
+      tags: [global-env]
+      summary: Add a shared env variable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/GlobalEnvInput"}
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/GlobalEnvItem"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: Key already exists within the group.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /global-env/groups:
+    get:
+      operationId: global_env.list_groups
+      tags: [global-env]
+      summary: Distinct group names defined on the global-env items
+      responses:
+        "200":
+          description: Groups.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /global-env/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    put:
+      operationId: global_env.update
+      tags: [global-env]
+      summary: Update a shared env variable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/GlobalEnvInput"}
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/GlobalEnvItem"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      operationId: global_env.delete
+      tags: [global-env]
+      summary: Remove a shared env variable
+      responses:
+        "204": {description: Deleted.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /global-env/{id}/refs:
+    get:
+      operationId: global_env.refs
+      tags: [global-env]
+      summary: List stacks referencing the given global-env key (compose ${VAR} scan)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: Stack names that reference this global env entry.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: string}
+components:
+  schemas:
+    GlobalEnvItem:
+      type: object
+      required: [id, key, value, group_name, encrypted]
+      properties:
+        id: {type: integer, format: int64}
+        key: {type: string}
+        value:
+          type: string
+          description: Empty for secret (`encrypted`) variables; their value is never returned.
+        group_name: {type: string}
+        encrypted:
+          type: boolean
+          description: True when the variable is marked secret; its value is write-only.
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    GlobalEnvInput:
+      type: object
+      required: [key, value, group_name]
+      properties:
+        key: {type: string}
+        value:
+          type: string
+          description: On update of a secret variable, empty keeps the stored value.
+        group_name: {type: string, example: production}
+        encrypted:
+          type: boolean
+          description: Marks the value as secret so it is never returned by the API.

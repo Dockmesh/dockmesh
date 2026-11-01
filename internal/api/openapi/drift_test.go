@@ -141,7 +141,7 @@ func TestOpenAPIDriftAgainstRoutes(t *testing.T) {
 	// exactly which file and which direction needs a change.
 	var b strings.Builder
 	b.WriteString("OpenAPI spec drift detected. See CLAUDE.md \"OpenAPI Contract\".\n")
-	b.WriteString("Source of truth: internal/api/openapi/openapi.yaml\n\n")
+	b.WriteString("Edit api/openapi/<tag>.yaml, then run go run ./scripts/openapi\n\n")
 	if len(missingFromSpec) > 0 {
 		b.WriteString("Handlers exist but spec has no matching operation:\n")
 		for _, s := range missingFromSpec {

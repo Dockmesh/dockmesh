@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'A failed image update no longer leaves the container deleted: the old container is kept until the new one runs, and is started again if the new one fails. The previous image stays tagged for a rollback.'
+time: 2026-11-01T12:00:53Z

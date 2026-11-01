@@ -1,0 +1,55 @@
+name: Bug report
+description: Something in Dockmesh doesn't work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problems don't belong here: report them privately (see the links on the previous page).
+        Please search the [existing issues](https://github.com/Dockmesh/dockmesh/issues?q=is%3Aissue) first.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Stacks → …
+        2. Click …
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Dockmesh version
+      description: Output of `dockmesh version` on the server.
+      placeholder: v0.4.2
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install type
+      options:
+        - Native (install script)
+        - Docker container
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Host OS and Docker version
+      placeholder: Debian 13, Docker 28.5
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Server or agent log lines around the problem (`journalctl -u dockmesh`). Remove secrets first.
+      render: text

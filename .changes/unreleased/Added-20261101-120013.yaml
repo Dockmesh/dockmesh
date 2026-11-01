@@ -1,0 +1,3 @@
+kind: Added
+body: Proxy settings for the ACME account email, the certificate authority (Let's Encrypt, its staging environment, or ZeroSSL) and trusting Cloudflare as a proxy in front of Caddy (`/api/v1/proxy/settings`). Both need `proxy.update` to change; users without it see the ACME email with its local part hidden.
+time: 2026-11-01T12:00:13Z

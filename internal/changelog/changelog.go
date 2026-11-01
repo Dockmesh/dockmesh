@@ -24,8 +24,6 @@ type Section struct {
 	Security       []string
 	Advisories     []Advisory
 	Actions        []Action
-
-	raw []string
 }
 
 type Advisory struct {
@@ -126,7 +124,6 @@ func Parse(src string) ([]*Section, error) {
 		if cur == nil {
 			continue
 		}
-		cur.raw = append(cur.raw, line)
 		if linkRefLine.MatchString(line) {
 			continue
 		}
@@ -232,22 +229,6 @@ func Find(sections []*Section, version string) *Section {
 	return nil
 }
 
-// UnreleasedBody is the Unreleased section's lines with blank lines dropped,
-// so whitespace-only edits don't count as a changelog entry.
-func UnreleasedBody(sections []*Section) string {
-	s := Find(sections, Unreleased)
-	if s == nil {
-		return ""
-	}
-	var keep []string
-	for _, l := range s.raw {
-		if l != "" {
-			keep = append(keep, l)
-		}
-	}
-	return strings.Join(keep, "\n")
-}
-
 // Manifest is release-manifest.json, the machine-readable form of a
 // release section published with every release.
 type Manifest struct {
@@ -299,3 +280,6 @@ func BuildManifest(s *Section) Manifest {
 		MinUpgradeFrom: s.MinUpgradeFrom,
 	}
 }
+
+// IsSubsection reports whether name is a valid "### " subsection title.
+func IsSubsection(name string) bool { return subsections[name] }

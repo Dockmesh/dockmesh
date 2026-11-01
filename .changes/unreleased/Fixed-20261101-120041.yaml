@@ -1,0 +1,3 @@
+kind: Fixed
+body: Users limited to some hosts no longer see every enrolled agent, other users' audit entries or the server's image update checks, and can no longer rotate the token of, upgrade or revoke an agent outside their scope tags. Their overview no longer shows 0 of 0 hosts and their stacks as stopped when their scope leaves out the server host.
+time: 2026-11-01T12:00:41Z

@@ -1,0 +1,3 @@
+kind: Changed
+body: Restoring a volume or stack backup puts the volumes back on the host the backup was taken on (or one you pick), instead of always on the central server. The archive is checked completely before anything is overwritten, and you choose between replacing the volume's contents (refused while containers use it) and merging. A volume that fails to restore now fails the stack restore instead of being reported as a warning. Restoring a stack under another name gives the copy its own volumes instead of writing into the original stack's. Restoring onto a remote host needs the agent from this release.
+time: 2026-11-01T12:00:33Z

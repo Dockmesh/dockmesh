@@ -1,0 +1,3 @@
+kind: Fixed
+body: Upgrading an agent that already runs the server's build answers 409 with an explanation instead of 500.
+time: 2026-11-01T12:00:38Z

@@ -1,0 +1,3 @@
+kind: Changed
+body: Updating the image of a container that belongs to a stack now rebuilds it from the stack's compose.yaml, together with the other replicas of its service, and records the new image in the stack's deploy history. Because that applies the stack's current compose.yaml, it also needs the `stacks.deploy` permission.
+time: 2026-11-01T12:00:23Z

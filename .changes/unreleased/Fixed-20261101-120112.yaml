@@ -1,0 +1,3 @@
+kind: Fixed
+body: A failed backup run deletes its partial archive and is no longer counted by retention, so a few failed runs can't push the last good backups out.
+time: 2026-11-01T12:01:12Z

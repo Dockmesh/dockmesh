@@ -1,0 +1,291 @@
+paths:
+  /alerts/rules:
+    get:
+      operationId: alerts.list_rules
+      tags: [alerts]
+      summary: List alert rules (built-in + user-defined)
+      responses:
+        "200":
+          description: Rules.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/AlertRule"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+    post:
+      operationId: alerts.create_rule
+      tags: [alerts]
+      summary: Create a user-defined alert rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AlertRuleInput"}
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AlertRule"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /alerts/rules/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    put:
+      operationId: alerts.update_rule
+      tags: [alerts]
+      summary: Update an alert rule (including enabled flag on built-ins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AlertRuleInput"}
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AlertRule"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      operationId: alerts.delete_rule
+      tags: [alerts]
+      summary: Delete a user-defined alert rule
+      description: Built-in rules cannot be deleted — disable them instead (P.11.5). Returns 409 for built-ins.
+      responses:
+        "204": {description: Deleted.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Rule is built-in and cannot be deleted — disable instead.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /alerts/history:
+    get:
+      operationId: alerts.history
+      tags: [alerts]
+      summary: Recent alert events (fire + resolve), newest first
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, default: 100}
+      responses:
+        "200":
+          description: History.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/AlertHistoryEntry"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /notifications/channels:
+    get:
+      operationId: notifications.list_channels
+      tags: [alerts]
+      summary: List configured notification channels
+      responses:
+        "200":
+          description: Channels.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/NotificationChannel"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+    post:
+      operationId: notifications.create_channel
+      tags: [alerts]
+      summary: Create a notification channel (webhook, email, slack, …)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/NotificationChannelInput"}
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/NotificationChannel"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /notifications/channels/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    put:
+      operationId: notifications.update_channel
+      tags: [alerts]
+      summary: Update a notification channel
+      description: >-
+        Secrets sent empty keep the stored value; changing the server, URL or user while keeping a stored secret returns 400 (re-enter it).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/NotificationChannelInput"}
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/NotificationChannel"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      operationId: notifications.delete_channel
+      tags: [alerts]
+      summary: Delete a notification channel
+      responses:
+        "204": {description: Deleted.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /notifications/channels/{id}/test:
+    post:
+      operationId: notifications.test_channel
+      tags: [alerts]
+      summary: Send a test notification through the channel
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "204": {description: Test sent.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "502":
+          description: Delivery failed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /alerts/rules/{id}/stats:
+    get:
+      operationId: alerts.rule_stats
+      tags: [alerts]
+      summary: Per-rule firing stats (last 24h, last fire, etc.)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: Stats snapshot.
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+components:
+  schemas:
+    AlertRule:
+      type: object
+      required: [id, name, kind, metric, operator, threshold, enabled]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        kind:
+          type: string
+          enum: [metric, restart_loop, container_stopped, unhealthy, oom, host_offline, disk_usage, backup_failed, backup_missed, cert_expiry]
+          description: Evaluator. Event kinds use container_filter as their target filter (container, agent, mount point, backup job or domain; "*" for all, which for disk_usage means mounts holding Docker data), threshold as restarts, percent or days, and duration_seconds as the restart window or offline time.
+        container_filter: {type: string, description: '"*" or the exact name of the target the rule watches.'}
+        scope_host: {type: string, description: Host id the rule is limited to; empty means every host.}
+        scope_tag: {type: string, description: Host tag the rule is limited to; empty means any.}
+        scope_stack: {type: string, description: Compose stack the rule is limited to (container kinds); empty means any.}
+        mute_schedule: {type: string, description: JSON weekly quiet-hours schedule; empty means never muted.}
+        metric: {type: string, enum: [cpu_percent, mem_percent, ""], description: Metric kind only.}
+        operator: {type: string, enum: [gt, lt, ""], description: Metric kind only.}
+        threshold: {type: number}
+        duration_seconds: {type: integer, minimum: 0}
+        cooldown_seconds: {type: integer, minimum: 0}
+        channel_ids:
+          type: array
+          items: {type: integer, format: int64}
+        severity: {type: string, enum: [info, warning, critical]}
+        enabled: {type: boolean}
+        builtin:
+          type: boolean
+          description: "Built-in rules (P.11.5) cannot be deleted; disable instead."
+        muted_until: {type: string, format: date-time}
+        firing_since: {type: string, format: date-time}
+        last_triggered_at: {type: string, format: date-time}
+        last_resolved_at: {type: string, format: date-time}
+    AlertRuleInput:
+      type: object
+      required: [name]
+      description: metric, operator and a non-zero threshold are required for the metric kind (the default).
+      properties:
+        name: {type: string}
+        kind:
+          type: string
+          enum: [metric, restart_loop, container_stopped, unhealthy, oom, host_offline, disk_usage, backup_failed, backup_missed, cert_expiry]
+          description: Evaluator. Event kinds use container_filter as their target filter (container, agent, mount point, backup job or domain; "*" for all, which for disk_usage means mounts holding Docker data), threshold as restarts, percent or days, and duration_seconds as the restart window or offline time.
+        container_filter: {type: string}
+        scope_host: {type: string, description: Host id the rule is limited to; empty means every host.}
+        scope_tag: {type: string, description: Host tag the rule is limited to; empty means any.}
+        scope_stack: {type: string, description: Compose stack the rule is limited to (container kinds); empty means any.}
+        mute_schedule: {type: string, description: JSON weekly quiet-hours schedule; empty means never muted.}
+        metric: {type: string, enum: [cpu_percent, mem_percent, ""], description: Metric kind only.}
+        operator: {type: string, enum: [gt, lt, ""], description: Metric kind only.}
+        threshold: {type: number}
+        duration_seconds: {type: integer, minimum: 0}
+        cooldown_seconds: {type: integer, minimum: 0}
+        channel_ids:
+          type: array
+          items: {type: integer, format: int64}
+        severity: {type: string, enum: [info, warning, critical]}
+        enabled: {type: boolean}
+        muted_until: {type: string, format: date-time}
+    AlertHistoryEntry:
+      type: object
+      required: [id, rule_id, rule_name, status, occurred_at]
+      properties:
+        id: {type: integer, format: int64}
+        rule_id: {type: integer, format: int64}
+        rule_name: {type: string}
+        container_name: {type: string}
+        status: {type: string, enum: [fired, resolved]}
+        message: {type: string}
+        value: {type: number}
+        threshold: {type: number}
+        kind: {type: string, description: Kind of the rule that produced the entry; empty if the rule was deleted.}
+        host_id: {type: string, description: 'Host the entry came from ("local" for the server); empty for backup and certificate rules. Host-scoped callers only see entries of their hosts.'}
+        notified:
+          type: boolean
+          description: False when the transition was recorded but channels were not notified (rule muted or inside its cooldown).
+        occurred_at: {type: string, format: date-time}
+    NotificationChannel:
+      type: object
+      required: [id, name, type]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        type:
+          type: string
+          enum: [webhook, email, slack, discord, ntfy, gotify, teams, pagerduty, pushover]
+        config:
+          type: object
+          description: >-
+            Channel-type-specific. Secret fields (`password`, `token`, `integration_key`, `app_token`, `user_key`, and `url` for slack, discord, teams, webhook, ntfy and gotify) are returned as `""` with a sibling `<field>_set: true` when stored; an empty or omitted secret on update keeps the stored value.
+        enabled: {type: boolean}
+        mute_schedule: {type: string, description: JSON weekly quiet-hours schedule; empty means never muted.}
+        last_sent_at: {type: string, format: date-time, description: Last successful delivery.}
+        last_error: {type: string, description: Error of the last failed delivery after all retries.}
+        last_error_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    NotificationChannelInput:
+      type: object
+      required: [name, type, config]
+      properties:
+        name: {type: string}
+        type: {type: string}
+        config: {type: object}

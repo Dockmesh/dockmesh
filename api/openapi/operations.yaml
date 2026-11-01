@@ -1,0 +1,92 @@
+paths:
+  /operations:
+    get:
+      operationId: operations.list
+      tags: [operations]
+      summary: Long-running operations the caller may see
+      description: |
+        Image updates, backup runs, restores and new proxy sites, newest
+        first, without their logs. Live changes arrive on `/ws/events` as
+        `{"source":"operations","type":"update"|"log","op":{...},"line":{...}}`;
+        this endpoint is the polling fallback. An operation is listed only
+        when the caller has the view permission of what it works on
+        (`containers.view`, `backups.view`, `proxy.view`) and its host or
+        stack is in the caller's scope; system backups are listed for
+        unscoped admins only. Operations are kept for 7 days. Any
+        authenticated caller may call this.
+      parameters:
+        - in: query
+          name: kind
+          schema: {type: string}
+          description: Exact kind (`image.update`, `backup.run`, `backup.restore`, `proxy.site`), or a prefix ending in `.` (`backup.`).
+        - in: query
+          name: ref
+          schema: {type: string}
+          description: What the operation belongs to, e.g. `backup-run:42`, `container:<id>`, `proxy-site:<host>`.
+        - in: query
+          name: group
+          schema: {type: string}
+          description: Group id returned by a bulk update.
+        - in: query
+          name: active
+          schema: {type: string, enum: ["1", "true"]}
+          description: Only queued and running operations.
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 500, default: 100}
+      responses:
+        "200":
+          description: Operations, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Operation"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /operations/{id}:
+    get:
+      operationId: operations.get
+      tags: [operations]
+      summary: One operation with its steps and log
+      description: |
+        The log holds the last 500 lines, each at most 1 KiB. Credentials
+        (target passwords and keys, registry auth, stack .env values, proxy
+        header values, tokens) are masked as `********` before anything is
+        stored or sent. Operations the caller may not see are reported as
+        missing.
+      parameters:
+        - $ref: "#/components/parameters/OperationIDPath"
+      responses:
+        "200":
+          description: The operation.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Operation"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /operations/{id}/cancel:
+    post:
+      operationId: operations.cancel
+      tags: [operations]
+      summary: Cancel a queued operation
+      description: |
+        Only queued work can be cancelled (the not yet started containers of
+        a bulk update); running work is never interrupted. Needs the
+        permission of the action that started it (`containers.update`, plus
+        `stacks.deploy` for a stack container).
+      parameters:
+        - $ref: "#/components/parameters/OperationIDPath"
+      responses:
+        "200":
+          description: The cancelled operation.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Operation"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: The operation is not queued any more.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}

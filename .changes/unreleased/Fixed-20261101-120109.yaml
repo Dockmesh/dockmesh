@@ -1,0 +1,3 @@
+kind: Fixed
+body: Remote volume exports (used by multi-host backups) slow the agent down instead of silently dropping data when the server reads slower than the agent sends, and report a failing `tar` as an error. Closing a remote shell no longer leaks a goroutine.
+time: 2026-11-01T12:01:09Z

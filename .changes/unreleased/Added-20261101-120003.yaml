@@ -1,0 +1,3 @@
+kind: Added
+body: '`GET /api/v1/attention` lists what needs attention in your scope: offline hosts, restarting, unhealthy or failed containers, failed backup jobs, firing alerts, proxy certificates expiring within 30 days and open action-required notices. Agents on a different build than the server and available image updates are listed as information. Items are sorted most severe first.'
+time: 2026-11-01T12:00:03Z

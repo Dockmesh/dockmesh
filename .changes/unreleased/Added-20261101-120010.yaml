@@ -1,0 +1,3 @@
+kind: Added
+body: 'Proxy routes take per-site options through the API: response streaming, upload streaming, upstream timeouts, a request size limit, keeping WebSockets open across config reloads, compression, several upstreams with load balancing and health checks, a www redirect, serving HTTP alongside HTTPS, HSTS, basic auth, IP allow and deny lists, forward auth, security headers, request and response headers, and an access log. Basic-auth passwords are stored as bcrypt hashes and never returned. `GET /api/v1/proxy/routes/{id}/config` shows the Caddy config a site gets. Users without `proxy.update` see header values masked and the forward-auth URL without its query. Existing routes keep their current behaviour.'
+time: 2026-11-01T12:00:10Z

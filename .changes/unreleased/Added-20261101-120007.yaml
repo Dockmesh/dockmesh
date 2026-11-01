@@ -1,0 +1,3 @@
+kind: Added
+body: Backup schedules run in the time zone set in `backups.timezone` (an IANA name such as `Europe/Berlin`); without it they use the server's time zone, which the job wizard now shows next to the schedule.
+time: 2026-11-01T12:00:07Z

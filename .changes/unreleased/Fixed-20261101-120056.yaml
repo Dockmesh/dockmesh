@@ -1,0 +1,3 @@
+kind: Fixed
+body: Proxy routes with TLS set to "none" are now served over plain HTTP instead of getting a certificate and an HTTPS redirect anyway.
+time: 2026-11-01T12:00:56Z

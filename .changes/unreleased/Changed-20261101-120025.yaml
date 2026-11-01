@@ -1,0 +1,3 @@
+kind: Changed
+body: Update checks for private images use the credentials saved under Registries, and an update that was already announced isn't announced again after a restart.
+time: 2026-11-01T12:00:25Z

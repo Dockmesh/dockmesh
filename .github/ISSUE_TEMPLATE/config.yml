@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or help with setup
+    url: https://github.com/Dockmesh/dockmesh/discussions
+    about: Ask in Discussions; issues are for bugs and feature requests.
+  - name: Security vulnerability
+    url: https://github.com/Dockmesh/dockmesh/security/advisories/new
+    about: Report it privately, never in a public issue. See SECURITY.md.

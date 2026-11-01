@@ -1,0 +1,239 @@
+openapi: 3.1.0
+info:
+  title: Dockmesh API
+  summary: Container management platform — HTTP API
+  description: |
+    REST API for Dockmesh. All endpoints are versioned under `/api/v1`.
+
+    ## Authentication
+
+    Two bearer-token flavours are accepted on the `Authorization` header:
+
+    - **User JWTs** — obtained via `POST /auth/login`, short-lived (15 min),
+      refreshable via `POST /auth/refresh`. Use for interactive UI / CLI sessions.
+    - **API tokens** — prefix `dmt_`, long-lived, created under
+      Settings → API Tokens. Use for CI, scripts, external integrations.
+
+    Both share the same permission model — a token's role dictates what it can do.
+
+    ## Versioning
+
+    Version `v1` is stable in the sense that we don't remove fields or change
+    response shapes without warning. New fields may be added at any time, so
+    clients should ignore unknown fields gracefully.
+
+    ## Errors
+
+    Non-2xx responses use a uniform shape: `{"error": "<human-readable message>"}`.
+    HTTP status carries the category (400/401/403/404/409/500).
+
+    ## Maintenance
+
+    This spec is hand-maintained. `TestOpenAPIDriftAgainstRoutes` compares the
+    registered chi routes against the operations declared here and fails CI on
+    mismatch — so every PR that touches a route must also update its tag's file under
+    `api/openapi/` and rebuild the bundle (`make openapi`).
+  version: "1.0.0"
+  license:
+    name: AGPL-3.0-or-later
+    url: https://www.gnu.org/licenses/agpl-3.0.html
+  contact:
+    name: Dockmesh
+    url: https://dockmesh.dev
+servers:
+  - url: /api/v1
+    description: Relative path — served by the same process that renders the UI.
+security:
+  - bearerAuth: []
+tags:
+  - name: auth
+    description: Login, logout, refresh, MFA, OIDC redirects.
+  - name: health
+    description: Liveness + readiness.
+  - name: users
+    description: Local-user CRUD, scope-tag assignment, password reset.
+  - name: roles
+    description: Custom role definitions and permission grants.
+  - name: oidc
+    description: OpenID Connect provider configuration.
+  - name: api-tokens
+    description: Long-lived bearer tokens for CI / scripts.
+  - name: hosts
+    description: Local daemon + remote agents (read-only host inventory).
+  - name: host-tags
+    description: Free-form host tagging used for RBAC + scope filtering.
+  - name: agents
+    description: Remote-agent enrollment and revocation.
+  - name: containers
+    description: Docker container lifecycle — list, inspect, start/stop/restart/pause/kill, logs, stats, exec.
+  - name: stacks
+    description: Compose-stack CRUD and deploy/stop/status.
+  - name: images
+    description: Image list, pull (with registry-auth), remove, prune.
+  - name: volumes
+    description: Volume CRUD, prune, content browse (P.11.8).
+  - name: networks
+    description: Network list and inspect.
+  - name: registries
+    description: Stored registry credentials (P.11.7), test-login.
+  - name: backups
+    description: Backup jobs, runs, targets, scheduling.
+  - name: alerts
+    description: Alert rules, channels, history.
+  - name: audit
+    description: Tamper-evident audit log readout.
+  - name: metrics
+    description: Historical per-container metrics + the Prometheus /metrics endpoint.
+  - name: settings
+    description: Server-wide runtime settings (DB-backed).
+  - name: global-env
+    description: Shared environment variables available to all stacks.
+  - name: migrations
+    description: Cross-host stack migration + drain (P.9 / P.10).
+  - name: proxy
+    description: Embedded Caddy reverse-proxy configuration.
+  - name: templates
+    description: Stack templates with parameter substitution (P.11.12) — built-in library + user-created.
+  - name: secrets
+    description: age-encrypted secrets service state.
+  - name: overview
+    description: Aggregated views for the overview page.
+  - name: operations
+    description: Progress, steps and log of long-running work (image updates, backup runs, restores, new proxy sites).
+# Paths and schemas come from the other files in this directory, one per
+# tag (common.yaml holds schemas several tags use).
+paths: {}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: "JWT or dmt_<40-char-base64url>"
+      description: |
+        Accepts either a user session JWT (from `POST /auth/login`) or an API
+        token (prefix `dmt_`, from Settings → API Tokens). The route layer
+        checks role permissions after authentication.
+  schemas: {}
+  parameters:
+    OperationIDPath:
+      name: id
+      in: path
+      required: true
+      schema: {type: string}
+    SetupHeader:
+      name: X-Dockmesh-Setup
+      in: header
+      required: true
+      description: Any non-empty value. Sent by the install wizard so other websites cannot trigger setup calls from a visitor's browser.
+      schema: {type: string}
+    HostQuery:
+      name: host
+      in: query
+      description: "Target host id. Empty or `local` = central server's daemon; otherwise an agent UUID. `all` fans out to every online host."
+      required: false
+      schema:
+        type: string
+        default: local
+    HostIDPath:
+      name: id
+      in: path
+      description: Host id — "local" for the central daemon, otherwise an agent UUID.
+      required: true
+      schema:
+        type: string
+    ContainerIDPath:
+      name: id
+      in: path
+      description: Container id (long or short form) or name.
+      required: true
+      schema:
+        type: string
+    StackNamePath:
+      name: name
+      in: path
+      description: Stack name — matches `[a-z0-9][a-z0-9-]*[a-z0-9]`, 2..63 chars.
+      required: true
+      schema:
+        type: string
+    ServicePath:
+      name: service
+      in: path
+      description: Service name as declared in the compose file.
+      required: true
+      schema:
+        type: string
+    IntIDPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: Integer primary key.
+    UserIDPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: User id (UUID).
+    ConfirmExternalQuery:
+      name: confirm_external
+      in: query
+      required: false
+      schema: {type: string, enum: ["1"]}
+      description: Deploy stack files changed outside Dockmesh as they are and record them as reviewed.
+    DrainIDPath:
+      name: drain_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: Drain run id.
+  responses:
+    StackModifiedOutside:
+      description: compose.yaml or .env changed outside Dockmesh; repeat with `confirm_external=1` after reviewing them.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error, code, files]
+            properties:
+              error: {type: string}
+              code: {type: string, enum: [modified_outside]}
+              stack: {type: string}
+              files:
+                type: array
+                items: {type: string}
+    Unauthorized:
+      description: Missing or invalid bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Authenticated but the token's role lacks the required permission.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: The requested resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    BadRequest:
+      description: Malformed request body or invalid parameters.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: The operation conflicts with existing state (e.g. duplicate name, built-in rule deletion).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

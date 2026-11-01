@@ -1,0 +1,3 @@
+kind: Security
+body: A rollback now only accepts update-history entries of the container it is called for, and the update history is limited to containers in the caller's scope. Before, a user scoped to one stack could roll back containers of other stacks.
+time: 2026-11-01T12:01:20Z

@@ -1,0 +1,3 @@
+kind: Changed
+body: The overview, hosts, alerts, backups, stack detail, reverse proxy and setup pages follow the new design. The overview lists what needs attention and the recent changes from the audit log; alert rules are edited in a dialog that adapts to the rule type and says in a sentence when the rule fires; the reverse proxy page can import a Caddyfile and switch the Caddy version and proxy-wide settings; revoking a host asks you to type its name.
+time: 2026-11-01T12:00:20Z

@@ -51,3 +51,6 @@
 
 # Makefiles require LF
 Makefile text eol=lf
+
+# Generated files: collapsed in pull request diffs
+internal/api/openapi/openapi.yaml linguist-generated=true

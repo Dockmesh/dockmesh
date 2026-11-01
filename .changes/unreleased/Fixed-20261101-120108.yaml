@@ -1,0 +1,3 @@
+kind: Fixed
+body: Requests to a host that just reconnected go to the new connection instead of hanging on the old one.
+time: 2026-11-01T12:01:08Z

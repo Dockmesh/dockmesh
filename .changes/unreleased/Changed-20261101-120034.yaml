@@ -1,0 +1,3 @@
+kind: Changed
+body: A restore downloads the archive once, checks it against the recorded checksum, verifies it and restores from that same copy. Only one restore at a time may write a given volume or stack, at most two restores run at once, and replacing a volume's contents needs a backup with a recorded checksum (older backups can still be merged). Restoring a stack as a copy under another name leaves volumes with a fixed name alone and lists them in the result.
+time: 2026-11-01T12:00:34Z

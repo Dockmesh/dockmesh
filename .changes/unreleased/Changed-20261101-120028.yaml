@@ -1,0 +1,3 @@
+kind: Changed
+body: Updated the bundled libraries, including the Docker SDK (28.5), SvelteKit 3 and Vite 8.
+time: 2026-11-01T12:00:28Z

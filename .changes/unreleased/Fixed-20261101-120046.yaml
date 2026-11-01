@@ -1,0 +1,3 @@
+kind: Fixed
+body: '`dockmesh-agent --version` works for users other than root. The installer now puts a root-owned copy of the agent in `/usr/local/bin` instead of a symlink into the agent''s data directory, and the agent''s service refreshes that copy at every start. Agents installed earlier still have the symlink: after upgrading to this release they make the data directory traversable (not listable) and remove group and other access from everything else in it. Re-running the agent install command is optional and replaces the symlink with the copy and closes the data directory again.'
+time: 2026-11-01T12:00:46Z

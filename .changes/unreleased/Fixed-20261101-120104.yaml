@@ -1,0 +1,3 @@
+kind: Fixed
+body: Container CPU and memory alerts now fire once a breach has lasted for the rule's duration (allowing for one missed sample) and resolve only after the value has been back to normal for a full sampling interval, so they no longer stay silent or flap. Cooldown and "muted until" are honoured, muted rules no longer send "resolved" messages, and the rule statistics count fires correctly.
+time: 2026-11-01T12:01:04Z
