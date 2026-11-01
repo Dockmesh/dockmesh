@@ -383,7 +383,7 @@
     display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; align-items: center;
   }
   .ed-host-tags-suggest-label {
-    font-size: 11.5px; color: var(--fg-subtle); letter-spacing: 0.1em;
+    font-size: 11.5px; color: var(--fg-subtle); margin-right: 4px;
   }
 
   .ed-add-host-confirm {
@@ -421,7 +421,7 @@
     gap: 4px;
   }
   .ed-add-host-tokenbox-label {
-    font-size: 11.5px; color: var(--color-warning-400); letter-spacing: 0.06em; text-transform: uppercase;
+    font-size: 11.5px; color: var(--color-warning-400);
   }
   .ed-add-host-tokenbox-value {
     font-size: 11.5px; color: var(--fg); word-break: break-all;

@@ -252,7 +252,7 @@
     min-width: 0;
   }
   .ldap-mode-label { font-size: 12.5px; font-weight: 500; }
-  .ldap-mode-blurb {}
+  .ldap-mode-blurb { font-size: 11.5px; color: var(--fg-subtle); }
   .ldap-grid-host {
     display: grid;
     grid-template-columns: 1fr 110px;
