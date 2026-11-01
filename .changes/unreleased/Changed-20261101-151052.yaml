@@ -1,0 +1,3 @@
+kind: Changed
+body: A notice shown in the banner no longer also appears in Needs attention; a dismissed notice moves there until it is resolved
+time: 2026-11-01T15:10:52.8850381+01:00
