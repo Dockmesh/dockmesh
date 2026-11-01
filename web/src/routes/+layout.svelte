@@ -17,6 +17,9 @@
   import BackupHealthPill from '$lib/components/BackupHealthPill.svelte';
   import MigrationActivePill from '$lib/components/MigrationActivePill.svelte';
   import MigrationDrawer from '$lib/components/MigrationDrawer.svelte';
+  import OperationsIndicator from '$lib/components/operations/OperationsIndicator.svelte';
+  import OperationDrawer from '$lib/components/operations/OperationDrawer.svelte';
+  import { operations } from '$lib/stores/operations.svelte';
   import Sidebar, { type Badge } from '$lib/components/shell/Sidebar.svelte';
   import CommandPalette from '$lib/components/shell/CommandPalette.svelte';
   import SettingsNav from '$lib/components/shell/SettingsNav.svelte';
@@ -48,6 +51,11 @@
     theme = theme === 'dark' ? 'light' : 'dark';
     localStorage.setItem('dockmesh.theme', theme);
   }
+
+  $effect(() => {
+    if (auth.isAuthenticated) operations.start();
+    else operations.stop();
+  });
 
   let mobileOpen = $state(false);
   let paletteOpen = $state(false);
@@ -284,6 +292,7 @@
 <Toaster />
 <ConfirmDialog />
 <MigrationDrawer bind:open={migDrawerOpen} />
+{#if auth.isAuthenticated}<OperationDrawer />{/if}
 
 {#if page.url.pathname === '/setup' || page.url.pathname.startsWith('/setup/')}
   {@render children()}
@@ -324,6 +333,7 @@
         </nav>
 
         <div class="pills" aria-live="polite">
+          <OperationsIndicator />
           <MigrationActivePill onOpen={() => (migDrawerOpen = true)} />
           <BackupHealthPill />
         </div>

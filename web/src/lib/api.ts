@@ -1296,6 +1296,43 @@ export interface UpdateHistoryEntry {
   rolled_back_at?: string;
 }
 
+// Long-running work the server tracks (internal/operations).
+export type OperationStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type OperationStepStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'warning';
+export interface OperationStep {
+  key: string;
+  label: string;
+  status: OperationStepStatus;
+  detail?: string;
+  // 0..1; absent when the step cannot measure its progress.
+  progress?: number;
+  started_at?: string;
+  finished_at?: string;
+}
+export interface OperationLogLine {
+  ts: string;
+  level: 'info' | 'warn' | 'error';
+  text: string;
+}
+export interface Operation {
+  id: string;
+  kind: 'image.update' | 'backup.run' | 'backup.restore' | 'proxy.site' | string;
+  target: string;
+  ref?: string;
+  group_id?: string;
+  host_id?: string;
+  stack?: string;
+  actor?: string;
+  actor_name?: string;
+  status: OperationStatus;
+  error?: string;
+  steps: OperationStep[];
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+  log?: OperationLogLine[];
+}
+
 export class ApiError extends Error {
   status: number;
   body?: any;
@@ -1787,6 +1824,12 @@ export const api = {
       request<UpdatePreview>(`/containers/${id}/update-info`),
     doUpdate: (id: string) =>
       request<UpdateResult>(`/containers/${id}/update`, { method: 'POST' }),
+    // Queues image updates that run one after another on the server.
+    updateBulk: (ids: string[]) =>
+      request<{ group_id: string; operations: Operation[] }>('/containers/updates', {
+        method: 'POST',
+        body: JSON.stringify({ container_ids: ids })
+      }),
     rollback: (id: string, historyId: number) =>
       request<UpdateResult>(`/containers/${id}/rollback`, {
         method: 'POST',
@@ -2405,6 +2448,21 @@ export const api = {
         message: string;
         successful: boolean;
       }>>('/proxy/acme-events')
+  },
+
+  operations: {
+    list: (f: { kind?: string; ref?: string; group?: string; active?: boolean; limit?: number } = {}) => {
+      const p = new URLSearchParams();
+      if (f.kind) p.set('kind', f.kind);
+      if (f.ref) p.set('ref', f.ref);
+      if (f.group) p.set('group', f.group);
+      if (f.active) p.set('active', '1');
+      if (f.limit) p.set('limit', String(f.limit));
+      const qs = p.toString();
+      return request<Operation[]>(`/operations${qs ? '?' + qs : ''}`);
+    },
+    get: (id: string) => request<Operation>(`/operations/${encodeURIComponent(id)}`),
+    cancel: (id: string) => request<Operation>(`/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' })
   },
 
   ws: {
