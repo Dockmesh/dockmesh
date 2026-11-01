@@ -2566,12 +2566,14 @@ export const api = {
     // casting. The backend validates the mode on write anyway.
     listRoutes: () =>
       request<Array<{ id: number; host: string; upstream: string; tls_mode: 'auto' | 'internal' | 'none'; enabled: boolean; created_at: string; updated_at: string }>>('/proxy/routes'),
-    createRoute: (host: string, upstream: string, tls_mode: string) =>
-      request<any>('/proxy/routes', { method: 'POST', body: JSON.stringify({ host, upstream, tls_mode }) }),
-    updateRoute: (id: number, upstream: string, tls_mode: string, enabled?: boolean) =>
-      request<void>(`/proxy/routes/${id}`, {
+    // options left out keep the stored ones on update and mean Caddy's
+    // defaults on create.
+    createRoute: (host: string, upstream: string, tls_mode: string, options?: object) =>
+      request<any>('/proxy/routes', { method: 'POST', body: JSON.stringify({ host, upstream, tls_mode, ...(options ? { options } : {}) }) }),
+    updateRoute: (id: number, upstream: string, tls_mode: string, enabled?: boolean, options?: object) =>
+      request<any>(`/proxy/routes/${id}`, {
         method: 'PUT',
-        body: JSON.stringify({ upstream, tls_mode, ...(enabled !== undefined ? { enabled } : {}) })
+        body: JSON.stringify({ upstream, tls_mode, ...(enabled !== undefined ? { enabled } : {}), ...(options ? { options } : {}) })
       }),
     // Row-level toggle — flip just the enabled flag without round-tripping
     // upstream + tls_mode unchanged. Disabling stops traffic but keeps

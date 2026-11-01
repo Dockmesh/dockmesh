@@ -4,7 +4,7 @@
   import { goto } from '$app/navigation';
   import { api, ApiError, type Operation } from '$lib/api';
   import { fmtAgo } from '$lib/format';
-  import { Skeleton, StatBar, StatusChip, Switch, Menu, EmptyState } from '$lib/components/ui';
+  import { Skeleton, StatBar, StatusChip, Switch, Menu, EmptyState, Tabs } from '$lib/components/ui';
   import type { Stat } from '$lib/components/ui/StatBar.svelte';
   import type { MenuItem } from '$lib/components/ui/Menu.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
@@ -15,7 +15,9 @@
   import { autoRefresh } from '$lib/autorefresh';
   import { ExternalLink } from 'lucide-svelte';
   import SiteModal from '../_SiteModal.svelte';
+  import OptionsEditor from '../_OptionsEditor.svelte';
   import { TLS_LABEL, certNeedsAttention, optionSummary, type Site, type ACMEEvent } from '../_site';
+  import { toForm, toPayload, changedGroups, parseFieldError, type OptionsForm } from '../_options';
 
   const host = $derived(page.params.site ?? '');
 
@@ -28,6 +30,20 @@
   let preview = $state<string | null>(null);
   let previewErr = $state('');
   let showEdit = $state(false);
+
+  type TabKey = 'overview' | 'options' | 'config';
+  const TAB_KEYS: TabKey[] = ['overview', 'options', 'config'];
+  const initialTab = page.url.searchParams.get('tab') as TabKey | null;
+  let tab = $state<TabKey>(initialTab && TAB_KEYS.includes(initialTab) ? initialTab : 'overview');
+
+  // base is the form of the stored options; form holds the edits. A
+  // refresh only replaces the form while nothing is edited.
+  let base = $state<OptionsForm>(toForm(null));
+  let form = $state<OptionsForm>(toForm(null));
+  let fieldErrors = $state<Record<string, string>>({});
+  let saveErr = $state('');
+  let saving = $state(false);
+  const changed = $derived(changedGroups(form, base));
 
   const canUpdate = $derived(allowed('proxy.update'));
   const canDelete = $derived(allowed('proxy.delete'));
@@ -45,7 +61,12 @@
         api.operations.list({ kind: 'proxy.site', limit: 30 }).catch(() => [] as Operation[])
       ]);
       const s = routes.find((r) => r.host === host) ?? null;
+      const clean = changedGroups(form, base).length === 0;
       site = s;
+      if (s) {
+        base = toForm(s.options);
+        if (clean) form = toForm(s.options);
+      }
       acme = events.filter((e) => e.host === host);
       ops = list.filter((o) => o.ref === opRef.proxySite(host));
       operations.track(ops);
@@ -60,7 +81,12 @@
     void host;
     preview = null;
     previewErr = '';
+    form = toForm(null);
+    base = toForm(null);
     untrack(load);
+  });
+  $effect(() => {
+    if (tab === 'config' && site && preview === null && !previewErr) untrack(loadPreview);
   });
   $effect(() => autoRefresh(load, 15_000));
 
@@ -74,6 +100,36 @@
     } catch (e) {
       previewErr = (e as Error).message;
     }
+  }
+
+  async function saveOptions() {
+    if (!site) return;
+    saving = true;
+    fieldErrors = {};
+    saveErr = '';
+    try {
+      const updated = (await api.proxy.updateRoute(site.id, site.upstream, site.tls_mode, undefined, toPayload(form))) as Site;
+      site = { ...site, ...updated };
+      base = toForm(updated.options);
+      form = toForm(updated.options);
+      preview = null;
+      previewErr = '';
+      toast.success('Options saved', site.host);
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : 'Saving failed';
+      const fe = parseFieldError(msg);
+      if (fe) fieldErrors = { [fe.field]: fe.message };
+      else saveErr = msg;
+      toast.error('Options not saved', fe ? fe.message : msg);
+    } finally {
+      saving = false;
+    }
+  }
+
+  function resetOptions() {
+    form = toForm(site?.options);
+    fieldErrors = {};
+    saveErr = '';
   }
 
   async function toggle() {
@@ -184,6 +240,18 @@
 
     <StatBar items={stats} />
 
+    <Tabs
+      label="Site sections"
+      tabs={[
+        { key: 'overview', label: 'Overview' },
+        { key: 'options', label: 'Options', count: opts.length || null, dot: changed.length > 0 },
+        { key: 'config', label: 'Config' }
+      ]}
+      active={tab}
+      onchange={(k) => (tab = k as TabKey)}
+    />
+
+    {#if tab === 'overview'}
     <div class="cols">
       <section>
         <h2 class="dm-h2">Details</h2>
@@ -201,7 +269,8 @@
               {/if}
             </dd>
           {/if}
-          <dt>Options</dt><dd>{opts.length ? opts.join(' · ') : 'Caddy defaults'}</dd>
+          <dt>Options</dt>
+          <dd>{opts.length ? opts.join(' · ') : 'Caddy defaults'} <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (tab = 'options')}>{canUpdate ? 'Edit' : 'Show'}</button></dd>
           <dt>Created</dt><dd title={site.created_at ? new Date(site.created_at).toLocaleString() : ''}>{site.created_at ? fmtAgo(site.created_at) : '—'}</dd>
           {#if site.updated_at && site.updated_at !== site.created_at}
             <dt>Changed</dt><dd title={new Date(site.updated_at).toLocaleString()}>{fmtAgo(site.updated_at)}</dd>
@@ -236,20 +305,39 @@
       </section>
     </div>
 
-    <section>
-      <div class="sec-h">
-        <h2 class="dm-h2">Config preview</h2>
-        <span class="dm-sub">What Dockmesh sends to Caddy for this site (read-only).</span>
-        <span class="dm-sp"></span>
-        {#if preview === null}<button type="button" class="dm-btn dm-btn-sm" onclick={loadPreview}>Show</button>{/if}
-      </div>
-      {#if previewErr}<p class="err">{previewErr}</p>{/if}
-      {#if preview !== null}<pre class="pv dm-mono">{preview}</pre>{/if}
-    </section>
+    {:else if tab === 'options'}
+      <section>
+        <div class="sec-h">
+          <span class="dm-sub">
+            {canUpdate
+              ? "Every option starts at Caddy's default. Dockmesh checks each value before Caddy sees it."
+              : 'Read-only: changing options needs proxy edit rights. Header values are hidden.'}
+          </span>
+          <span class="dm-sp"></span>
+          {#if canUpdate}
+            {#if changed.length}<span class="dm-sub">{changed.length} group{changed.length === 1 ? '' : 's'} changed</span>{/if}
+            <button type="button" class="dm-btn dm-btn-sm" disabled={!changed.length || saving} onclick={resetOptions}>Reset</button>
+            <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" disabled={!changed.length || saving} onclick={saveOptions}>Save options</button>
+          {/if}
+        </div>
+        {#if saveErr}<p class="err" role="alert">{saveErr}</p>{/if}
+        <OptionsEditor bind:form tls={site.tls_mode} host={site.host} errors={fieldErrors} readonly={!canUpdate} />
+      </section>
+    {:else}
+      <section>
+        <div class="sec-h">
+          <span class="dm-sub">What Dockmesh sends to Caddy for this site, as saved (read-only). Secrets and password hashes are hidden.</span>
+          <span class="dm-sp"></span>
+          <button type="button" class="dm-btn dm-btn-sm" onclick={() => { preview = null; previewErr = ''; loadPreview(); }}>Reload</button>
+        </div>
+        {#if previewErr}<p class="err">{previewErr}</p>{/if}
+        {#if preview !== null}<pre class="pv dm-mono">{preview}</pre>{:else if !previewErr}<Skeleton width="100%" height="8rem" />{/if}
+      </section>
+    {/if}
   {/if}
 </section>
 
-<SiteModal bind:open={showEdit} editing={site} onsaved={load} />
+<SiteModal bind:open={showEdit} editing={site} onsaved={() => { preview = null; previewErr = ''; load(); }} />
 
 <style>
   .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; align-items: start; }
@@ -259,8 +347,7 @@
   .act:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .ev { display: inline-flex; align-items: center; gap: 8px; }
   .sec-h { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
-  .sec-h .dm-h2 { margin: 0; }
-  .pv { max-height: 420px; overflow: auto; background: var(--field); padding: 10px 12px; border-radius: var(--r); font-size: 12px; margin: 0; }
+  .pv { max-height: 640px; overflow: auto; background: var(--field); padding: 10px 12px; border-radius: var(--r); font-size: 12px; margin: 0; }
   .err { color: var(--bad); font-size: var(--fs-sm); margin: 0 0 8px; }
   dd.bad { color: var(--bad); }
 </style>
