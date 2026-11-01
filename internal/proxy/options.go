@@ -209,8 +209,7 @@ func orEmpty[T any](in []T) []T {
 	return in
 }
 
-// maskedValue stands in for header values shown to callers who cannot
-// edit the route.
+// maskedValue stands in for values a caller may not see.
 const maskedValue = "********"
 
 // Masked returns a copy with header values and the forward-auth URL's
@@ -562,10 +561,10 @@ func (o *SiteOptions) applySecrets(prev *SiteOptions) error {
 	if f == nil {
 		return nil
 	}
-	clear := f.ClearQuery
+	drop := f.ClearQuery
 	f.QuerySet, f.ClearQuery = false, false
 	pf := prevOpts.Access.ForwardAuth
-	if clear || pf == nil {
+	if drop || pf == nil {
 		return nil
 	}
 	u, err := url.Parse(f.URL)

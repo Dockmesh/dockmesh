@@ -1,7 +1,6 @@
 import { fmtBytes } from '$lib/format';
 export type TLSMode = 'auto' | 'internal' | 'none';
 
-// A secret header comes back with an empty value and value_set.
 export interface SiteHeader { name: string; value?: string; secret?: boolean; value_set?: boolean }
 
 export interface SiteOptions {

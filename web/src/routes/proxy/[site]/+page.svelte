@@ -102,6 +102,11 @@
     }
   }
 
+  function resetPreview() {
+    preview = null;
+    previewErr = '';
+  }
+
   async function saveOptions() {
     if (!site) return;
     saving = true;
@@ -112,8 +117,7 @@
       site = { ...site, ...updated };
       base = toForm(updated.options);
       form = toForm(updated.options);
-      preview = null;
-      previewErr = '';
+      resetPreview();
       toast.success('Options saved', site.host);
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : 'Saving failed';
@@ -328,7 +332,7 @@
         <div class="sec-h">
           <span class="dm-sub">What Dockmesh sends to Caddy for this site, as saved (read-only). Secrets and password hashes are hidden.</span>
           <span class="dm-sp"></span>
-          <button type="button" class="dm-btn dm-btn-sm" onclick={() => { preview = null; previewErr = ''; loadPreview(); }}>Reload</button>
+          <button type="button" class="dm-btn dm-btn-sm" onclick={() => { resetPreview(); loadPreview(); }}>Reload</button>
         </div>
         {#if previewErr}<p class="err">{previewErr}</p>{/if}
         {#if preview !== null}<pre class="pv dm-mono">{preview}</pre>{:else if !previewErr}<Skeleton width="100%" height="8rem" />{/if}
@@ -337,7 +341,7 @@
   {/if}
 </section>
 
-<SiteModal bind:open={showEdit} editing={site} onsaved={() => { preview = null; previewErr = ''; load(); }} />
+<SiteModal bind:open={showEdit} editing={site} onsaved={() => { resetPreview(); load(); }} />
 
 <style>
   .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; align-items: start; }

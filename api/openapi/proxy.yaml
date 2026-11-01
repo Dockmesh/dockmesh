@@ -207,8 +207,8 @@ paths:
         The Caddy JSON config Dockmesh generates for this site alone, as it
         would be served when enabled. Basic-auth password hashes are replaced
         by `REDACTED`, secret header values and the forward-auth query by
-        `********` for every caller; the admin section is left out. `blocked` is true when
-        the stored route fails validation and is not served. For callers
+        `********` for every caller; the admin section is left out. `blocked`
+        is true when the stored route fails validation and is not served. For callers
         without `proxy.update` the config is built with header values masked
         and the forward-auth URL's query removed, as in the route list.
       responses:

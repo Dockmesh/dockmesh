@@ -266,7 +266,7 @@
     {:else}
       <div class="dm-form-sec" id="opt-{g.key}">
         <div>
-          <h4>{g.label}{#if errGroups.has(g.key)} <span class="ferr">·  check this group</span>{/if}</h4>
+          <h4>{g.label}{#if errGroups.has(g.key)} <span class="ferr">· check this group</span>{/if}</h4>
           <p>{g.hint}</p>
           {#if def}<p class="dm-dim">Caddy defaults</p>{/if}
         </div>
@@ -279,7 +279,7 @@
 <style>
   .oe { display: flex; flex-direction: column; }
   .fields { display: flex; flex-direction: column; gap: 10px; align-items: stretch !important; max-width: 720px; width: 100%; }
-  .dm-field.wide, .dm-field { max-width: 720px; }
+  .dm-field { max-width: 720px; }
   .lbl { font-size: 12px; color: var(--muted); font-weight: 500; }
   .hint { font-size: var(--fs-xs); color: var(--subtle); }
   .ck { display: flex; align-items: flex-start; gap: 8px; }

@@ -1,4 +1,4 @@
-import type { SiteOptions, TLSMode } from './_site';
+import type { SiteHeader, SiteOptions, TLSMode } from './_site';
 
 // Editable form of a site's options. Lists that are plain names or
 // addresses are edited one per line; rows with a value of their own stay
@@ -52,7 +52,7 @@ const UNIT: Record<SizeUnit, number> = { B: 1, MB, GB };
 const lines = (l?: string[] | null) => (l ?? []).join('\n');
 const fromLines = (s: string) => [...new Set(s.split(/[\n,]/).map((x) => x.trim()).filter(Boolean))];
 
-function headerRows(l?: Array<{ name: string; value?: string; secret?: boolean; value_set?: boolean }>): HeaderRow[] {
+function headerRows(l?: SiteHeader[]): HeaderRow[] {
   return (l ?? []).map((h) => ({ name: h.name, value: h.value ?? '', secret: !!h.secret, valueSet: !!h.value_set }));
 }
 

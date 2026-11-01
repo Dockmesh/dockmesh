@@ -72,7 +72,6 @@ func TestSecretHeaderWriteOnly(t *testing.T) {
 			if strings.Contains(string(raw), "value_set") {
 				t.Errorf("value_set stored: %s", raw)
 			}
-			// Put the original back for the next case.
 			reset := opts
 			if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", nil, &reset); err != nil {
 				t.Fatal(err)
