@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api, ApiError, type BackupJob, type BackupRun, type BackupTarget } from '$lib/api';
@@ -45,7 +46,7 @@
       loading = false;
     }
   }
-  $effect(() => { void id; load(); });
+  $effect(() => { void id; untrack(load); });
   $effect(() => autoRefresh(load, 10_000));
 
   const jobRuns = $derived(job ? runs.filter((r) => r.job_id === job!.id) : []);

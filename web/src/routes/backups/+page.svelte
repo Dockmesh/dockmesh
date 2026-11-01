@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { urlTab } from '$lib/urlTab.svelte';
   import { page } from '$app/state';
@@ -50,7 +51,7 @@
 
   $effect(() => {
     if (!allowed('backups.update')) { goto('/'); return; }
-    loadAll();
+    untrack(loadAll);
   });
   $effect(() => autoRefresh(loadAll, 5_000));
 

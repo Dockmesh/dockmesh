@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { sevTone } from './ruleKinds';
   import { urlTab } from '$lib/urlTab.svelte';
@@ -59,8 +60,12 @@
   $effect(() => {
     if (!allowed('alerts.view')) { goto('/'); return; }
     // All three up front, so every tab counter is real from the start.
-    Promise.all([loadRules(), loadChannels(), loadHistory()]);
-    api.hosts.list().then((h) => (hosts = h)).catch(() => (hosts = []));
+    // Untracked: request() reads the access token, and a token refresh
+    // must not reload the page.
+    untrack(() => {
+      Promise.all([loadRules(), loadChannels(), loadHistory()]);
+      api.hosts.list().then((h) => (hosts = h)).catch(() => (hosts = []));
+    });
   });
 
   $effect(() => autoRefresh(() => { loadRules(); loadChannels(); loadHistory(); }, 10_000));

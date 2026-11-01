@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api, ApiError, type BackupTarget, type BackupJob } from '$lib/api';
@@ -36,7 +37,7 @@
       loading = false;
     }
   }
-  $effect(() => { void id; load(); });
+  $effect(() => { void id; untrack(load); });
   $effect(() => autoRefresh(load, 15_000));
 
   let testing = $state(false);

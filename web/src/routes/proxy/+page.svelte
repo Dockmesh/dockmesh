@@ -92,7 +92,7 @@
   let wasActive = 0;
   $effect(() => {
     const n = operations.active.filter((o) => o.kind === 'proxy.site').length;
-    if (n < wasActive) void load();
+    if (n < wasActive) untrack(load);
     wasActive = n;
   });
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { page } from '$app/state';
   import { api, ApiError, runRestorable, type BackupRun, type BackupJob } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
@@ -60,7 +61,7 @@
     loading = true;
     logLoaded = false;
     opLoaded = '';
-    load().then(async () => {
+    untrack(load).then(async () => {
       const found = await operations.find(opRef.backupRun(id), 'backup.run', 0, 1500);
       if (found) {
         await operations.load(found.id);
@@ -76,7 +77,7 @@
   let lastStatus = '';
   $effect(() => {
     const s = op?.status ?? '';
-    if (lastStatus && lastStatus !== s && op && !isActive(op)) void load();
+    if (lastStatus && lastStatus !== s && op && !isActive(op)) void untrack(load);
     lastStatus = s;
   });
   // Without an operation a running run is followed by polling its log.
