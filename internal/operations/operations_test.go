@@ -216,6 +216,80 @@ func TestCancelOnlyQueued(t *testing.T) {
 	}
 }
 
+func TestCancelRunningInsideWindow(t *testing.T) {
+	s, _ := newTestService(t)
+	ctx := context.Background()
+	steps := []StepSpec{{"pull", "Pull image"}, {"swap", "Replace container"}}
+	tests := []struct {
+		name       string
+		finishErr  error
+		wantStatus Status
+	}{
+		{"work stops with an error", ErrCancelled, StatusCancelled},
+		{"work completed anyway", nil, StatusSucceeded},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o := s.Start(ctx, Spec{Kind: "image.update", Target: "web", Steps: steps})
+			o.StepStart("pull", "")
+			if err := s.Cancel(o.ID()); !errors.Is(err, ErrNotCancellable) {
+				t.Fatalf("cancel before the window opened: %v", err)
+			}
+			wctx, stop := context.WithCancelCause(ctx)
+			o.AllowCancel(stop)
+			if got, _ := s.Get(ctx, o.ID()); !got.Cancellable || got.CancelRequested {
+				t.Fatalf("window open: %+v", got)
+			}
+			if err := s.Cancel(o.ID()); err != nil {
+				t.Fatal(err)
+			}
+			if !errors.Is(context.Cause(wctx), ErrCancelled) {
+				t.Fatalf("work context cause %v", context.Cause(wctx))
+			}
+			got, _ := s.Get(ctx, o.ID())
+			if got.Status != StatusRunning || !got.CancelRequested || got.Cancellable {
+				t.Fatalf("after cancel request: %+v", got)
+			}
+			if err := s.Cancel(o.ID()); !errors.Is(err, ErrNotCancellable) {
+				t.Fatalf("second cancel: %v", err)
+			}
+			o.DisallowCancel()
+			if tc.finishErr != nil {
+				o.StepFail("pull", tc.finishErr)
+			}
+			o.Finish(tc.finishErr)
+			got, _ = s.Get(ctx, o.ID())
+			if got.Status != tc.wantStatus || got.Cancellable {
+				t.Fatalf("status %s, want %s", got.Status, tc.wantStatus)
+			}
+			if tc.wantStatus == StatusCancelled {
+				if got.Error != "cancelled during “Pull image”" {
+					t.Fatalf("error %q", got.Error)
+				}
+				if got.Steps[0].Status != StepCancelled || got.Steps[1].Status != StepSkipped {
+					t.Fatalf("steps %+v", got.Steps)
+				}
+			}
+		})
+	}
+}
+
+func TestCancelOutsideWindow(t *testing.T) {
+	s, _ := newTestService(t)
+	ctx := context.Background()
+	o := s.Start(ctx, Spec{Kind: "backup.restore", Target: "data"})
+	_, stop := context.WithCancelCause(ctx)
+	o.AllowCancel(stop)
+	o.DisallowCancel()
+	if err := s.Cancel(o.ID()); !errors.Is(err, ErrNotCancellable) {
+		t.Fatalf("cancel after the window closed: %v", err)
+	}
+	o.Finish(nil)
+	if err := s.Cancel(o.ID()); !errors.Is(err, ErrNotCancellable) {
+		t.Fatalf("cancel of an ended operation: %v", err)
+	}
+}
+
 func TestSubscribeReceivesEvents(t *testing.T) {
 	s, _ := newTestService(t)
 	ch, unsub := s.Subscribe()

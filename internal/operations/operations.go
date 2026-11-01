@@ -116,19 +116,19 @@ type Operation struct {
 	Stack   string `json:"stack,omitempty"`
 	// AdminOnly marks work on the whole install (system backups); only
 	// unscoped admins see it.
-	AdminOnly  bool       `json:"-"`
-	Actor      string     `json:"actor,omitempty"`
-	Status Status `json:"status"`
+	AdminOnly bool   `json:"-"`
+	Actor     string `json:"actor,omitempty"`
+	Status    Status `json:"status"`
 	// Cancellable is set while a cancel request would stop the work;
 	// CancelRequested once one was made and the work is winding down.
-	Cancellable     bool   `json:"cancellable,omitempty"`
-	CancelRequested bool   `json:"cancel_requested,omitempty"`
-	Error           string `json:"error,omitempty"`
-	Steps           []Step `json:"steps"`
-	CreatedAt  time.Time  `json:"created_at"`
-	StartedAt  *time.Time `json:"started_at,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	Log        []LogLine  `json:"log,omitempty"`
+	Cancellable     bool       `json:"cancellable,omitempty"`
+	CancelRequested bool       `json:"cancel_requested,omitempty"`
+	Error           string     `json:"error,omitempty"`
+	Steps           []Step     `json:"steps"`
+	CreatedAt       time.Time  `json:"created_at"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	FinishedAt      *time.Time `json:"finished_at,omitempty"`
+	Log             []LogLine  `json:"log,omitempty"`
 }
 
 // Spec describes an operation to start. Steps are the phases the caller

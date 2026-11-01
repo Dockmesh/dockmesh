@@ -268,7 +268,11 @@ func jobTarget(ctx context.Context, st *store, n *notices.Service, job *Job) (ta
 			return nil, err
 		}
 		operations.FromContext(ctx).AddSecrets(targetSecretValues(t.Type, t.Config)...)
-		return ts.BuildChecked(ctx, t, n)
+		built, err := ts.BuildChecked(ctx, t, n)
+		if err != nil {
+			return nil, err
+		}
+		return wrapRunTarget(built), nil
 	}
 	operations.FromContext(ctx).AddSecrets(targetSecretValues(job.TargetType, job.TargetConfig)...)
 	t, err := buildTarget(job.TargetType, job.TargetConfig)
@@ -276,7 +280,7 @@ func jobTarget(ctx context.Context, st *store, n *notices.Service, job *Job) (ta
 		return nil, err
 	}
 	jobTOFU(st, n, job).Attach(ctx, t)
-	return t, nil
+	return wrapRunTarget(t), nil
 }
 
 // targetSecretValues returns the credentials in a target config, which

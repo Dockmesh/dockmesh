@@ -461,3 +461,7 @@ func validateJob(in JobInput) error {
 	}
 	return nil
 }
+
+// wrapRunTarget wraps the target a run or restore reads and writes; tests
+// use it to simulate a target that stalls.
+var wrapRunTarget = func(t targets.Target) targets.Target { return t }
