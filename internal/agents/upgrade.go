@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -80,6 +81,9 @@ var (
 	// ErrAgentNotConnected is returned when an upgrade targets an agent
 	// without a live connection.
 	ErrAgentNotConnected = errors.New("agent not connected")
+	// ErrAgentCurrent is returned when the agent already runs the build
+	// the server would send.
+	ErrAgentCurrent = errors.New("the agent already runs the build this server offers")
 	// errUpgradeBackoff marks an automatic attempt skipped by the back-off.
 	errUpgradeBackoff = errors.New("automatic upgrade backed off")
 )
@@ -332,11 +336,23 @@ func (c *UpgradeController) upgradeOne(ctx context.Context, ag *ConnectedAgent, 
 		return req, err
 	}
 	if !resp.OK {
-		slog.Warn("agent upgrade rejected", "agent", ag.ID, "err", resp.Error)
-		return req, errors.New(resp.Error)
+		err := upgradeRefusal(resp.Error)
+		if !errors.Is(err, ErrAgentCurrent) {
+			slog.Warn("agent upgrade rejected", "agent", ag.ID, "err", resp.Error)
+		}
+		return req, err
 	}
 	slog.Info("agent upgrade dispatched", "agent", ag.ID, "version", version.Version)
 	return req, nil
+}
+
+// upgradeRefusal maps an agent's refusal to an error; an identical binary
+// (errSameBinary in cmd/dockmesh-agent) becomes ErrAgentCurrent.
+func upgradeRefusal(msg string) error {
+	if strings.Contains(msg, "already running this agent build") {
+		return ErrAgentCurrent
+	}
+	return errors.New(msg)
 }
 
 func (c *UpgradeController) pendingAgents() []*ConnectedAgent {
