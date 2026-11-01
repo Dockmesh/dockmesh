@@ -131,6 +131,7 @@ var categories = map[string]string{
 	"proxy.route_disabled":          CategoryChanges,
 	"proxy.route_delete":            CategoryChanges,
 	"proxy.import":                  CategoryChanges,
+	"operation.cancel":              CategoryChanges,
 	"proxy.version_update":          CategoryChanges,
 	"proxy.version_rollback":        CategoryChanges,
 	"proxy.settings_update":         CategoryChanges,
