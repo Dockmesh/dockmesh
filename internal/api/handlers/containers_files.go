@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/base64"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -25,7 +26,7 @@ func (h *Handlers) BrowseContainerFiles(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if !h.requireContainerScope(w, r, rbac.PermContainersExec, target.ID(), id) {
+	if !h.requireContainerScope(w, r, rbac.PermContainersFiles, target.ID(), id) {
 		return
 	}
 	p := r.URL.Query().Get("path")
@@ -57,7 +58,7 @@ func (h *Handlers) ReadContainerFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if !h.requireContainerScope(w, r, rbac.PermContainersExec, target.ID(), id) {
+	if !h.requireContainerScope(w, r, rbac.PermContainersFiles, target.ID(), id) {
 		return
 	}
 	p := r.URL.Query().Get("path")
@@ -86,7 +87,7 @@ func (h *Handlers) DownloadContainerFile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if !h.requireContainerScope(w, r, rbac.PermContainersExec, target.ID(), id) {
+	if !h.requireContainerScope(w, r, rbac.PermContainersFiles, target.ID(), id) {
 		return
 	}
 	p := r.URL.Query().Get("path")
@@ -119,9 +120,9 @@ type containerFileWriteRequest struct {
 }
 
 // WriteContainerFile uploads a single file into the container at the
-// caller-supplied absolute path. Strict permission: containers.exec,
-// because writing a file into a running container is effectively code
-// injection (e.g. /usr/local/bin/init, /etc/cron.d/*, /var/spool/cron).
+// caller-supplied absolute path. It needs the files extra and
+// containers.exec on the container: writing into a running container is
+// effectively code injection (/usr/local/bin/init, /etc/cron.d/*).
 //
 //	POST /api/v1/containers/{id}/files
 //	{ "path": "/etc/foo.conf", "content": "<base64>", "mode": 420 }
@@ -132,16 +133,26 @@ func (h *Handlers) WriteContainerFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if !h.requireContainerScope(w, r, rbac.PermContainersExec, target.ID(), id) {
+	if !h.requireContainerFileWrite(w, r, target.ID(), id) {
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxContainerFileBody)
 	var req containerFileWriteRequest
 	if err := decodeJSON(r, &req); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, host.ErrContainerFileTooLarge.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 	if req.Path == "" {
 		writeError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+	if req.Mode < 0 || req.Mode > 0o7777 {
+		writeError(w, http.StatusBadRequest, "mode must be between 0 and 07777")
 		return
 	}
 	data, decErr := base64.StdEncoding.DecodeString(req.Content)
@@ -159,6 +170,42 @@ func (h *Handlers) WriteContainerFile(w http.ResponseWriter, r *http.Request) {
 		"bytes": strconv.Itoa(len(data)),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"path": req.Path, "bytes": len(data)})
+}
+
+// DeleteContainerFile removes a file or symbolic link inside the
+// container. Same permission as a write.
+//
+//	DELETE /api/v1/containers/{id}/files?path=/etc/foo.conf
+func (h *Handlers) DeleteContainerFile(w http.ResponseWriter, r *http.Request) {
+	target, err := h.pickHost(r)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if !h.requireContainerFileWrite(w, r, target.ID(), id) {
+		return
+	}
+	p := r.URL.Query().Get("path")
+	if p == "" {
+		writeError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+	if err := target.ContainerDeleteFile(r.Context(), id, p); err != nil {
+		writeError(w, mapBrowseStatus(err), err.Error())
+		return
+	}
+	h.audit(r, audit.ActionContainerRmFile, id, map[string]string{"path": p, "host": target.ID()})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// maxContainerFileBody fits the base64 of the largest upload plus the
+// JSON around it.
+const maxContainerFileBody = (host.MaxContainerUploadBytes+2)/3*4 + 64<<10
+
+func (h *Handlers) requireContainerFileWrite(w http.ResponseWriter, r *http.Request, hostID, id string) bool {
+	return h.requireContainerScope(w, r, rbac.PermContainersFiles, hostID, id) &&
+		h.requireContainerScope(w, r, rbac.PermContainersExec, hostID, id)
 }
 
 // sanitizeFilename strips path separators + control chars so a hostile

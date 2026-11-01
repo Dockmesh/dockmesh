@@ -2923,9 +2923,13 @@ paths:
       summary: List one directory level inside a container's filesystem
       description: |
         Tar-streams the requested path out of the container and walks
-        the archive at depth 1. Path must be absolute. Requires
-        `containers.exec`, like every container file endpoint, and is
-        audited on every call.
+        the archive at depth 1. Path must be absolute. Works on the server
+        host and on agent hosts whose agent supports container files.
+        Paths that resolve into /proc, /sys or /dev, and device files, are
+        refused; symbolic links are resolved inside the container. Requires
+        `containers.files` on the container, like every container file
+        endpoint, and is audited on every call. A directory with more than
+        10000 entries is refused.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
         - $ref: "#/components/parameters/HostQuery"
@@ -2942,22 +2946,30 @@ paths:
                 type: array
                 items: {$ref: "#/components/schemas/VolumeEntry"}
         "400":
-          description: Path is empty, not absolute, or points to a non-directory.
+          description: Path is empty, not absolute, refused, or points to a non-directory.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: The agent on this host is too old for container files.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
     post:
       operationId: containers.files.write
       tags: [containers]
       summary: Upload a single file into the container at an absolute path
       description: |
-        Requires `containers.exec` because writing a file into a running
-        container is effectively code injection. Parent directory must
-        already exist. Content is base64-encoded so binary uploads work
-        over plain JSON.
+        Creates or replaces a regular file. Requires `containers.files` and
+        `containers.exec` on the container because writing a file into a
+        running container is effectively code injection. Parent directory
+        must already exist; a symbolic link is not written through. Content
+        is base64-encoded so binary uploads work over plain JSON and may be
+        at most 8 MiB. A replaced file keeps its permissions unless `mode`
+        is set. Audited.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
         - $ref: "#/components/parameters/HostQuery"
@@ -2977,7 +2989,9 @@ paths:
                   description: Base64-encoded file content.
                 mode:
                   type: integer
-                  description: Unix permission bits; defaults to 0644 (420).
+                  minimum: 0
+                  maximum: 4095
+                  description: Unix permission bits; defaults to the existing file's, or 0644 (420) for a new file.
       responses:
         "200":
           description: File written.
@@ -2992,13 +3006,52 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: The agent on this host is too old for container files.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "413":
+          description: The file is larger than 8 MiB.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+    delete:
+      operationId: containers.files.delete
+      tags: [containers]
+      summary: Delete a file or symbolic link inside the container
+      description: |
+        Runs `rm` in the container with the path as a plain argument, so
+        the container must be running and its image must have `rm`.
+        Directories are not deleted. Requires `containers.files` and
+        `containers.exec` on the container; audited.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+        - name: path
+          in: query
+          required: true
+          schema: {type: string}
+          description: Absolute path inside the container.
+      responses:
+        "204":
+          description: Deleted.
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: The container is stopped or has no rm, or the agent is too old.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /containers/{id}/files/content:
     get:
       operationId: containers.files.read
       tags: [containers]
       summary: Read a file inside the container as a text/binary preview
       description: |
-        Requires `containers.exec`; audited.
+        Requires `containers.files`; audited.
         Returns up to 1 MiB of content. `truncated: true` signals the
         file is larger — the UI then offers a download link. `binary:
         true` is set when a NUL byte appears in the first 8 KiB (same
@@ -3028,8 +3081,9 @@ paths:
       description: |
         Streams `application/octet-stream` with `Content-Disposition:
         attachment` so the browser triggers a file save. Used for binary
-        files and files larger than the preview cap. Requires
-        `containers.exec`; audited.
+        files and files larger than the preview cap. On agent hosts the
+        content is streamed from the agent. Requires `containers.files`;
+        audited.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
         - $ref: "#/components/parameters/HostQuery"

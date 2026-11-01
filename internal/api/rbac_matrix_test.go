@@ -106,7 +106,8 @@ var routeGates = []struct {
 	{"GET", "/api/v1/containers/{id}/files", rbac.PermContainersFiles},
 	{"GET", "/api/v1/containers/{id}/files/content", rbac.PermContainersFiles},
 	{"GET", "/api/v1/containers/{id}/files/download", rbac.PermContainersFiles},
-	{"POST", "/api/v1/containers/{id}/files", rbac.PermContainersExec},
+	{"POST", "/api/v1/containers/{id}/files", rbac.PermContainersFiles},
+	{"DELETE", "/api/v1/containers/{id}/files", rbac.PermContainersFiles},
 	{"GET", "/api/v1/images", rbac.PermImagesView},
 	{"GET", "/api/v1/images/updates", rbac.PermImagesView},
 	{"GET", "/api/v1/images/{id}", rbac.PermImagesView},
@@ -475,6 +476,13 @@ func signIn(t *testing.T, authSvc *auth.Service, roles *rbac.Store, name, role s
 	return res.AccessToken
 }
 
+// alsoNeeds are routes gated on a second permission besides their entry
+// in routeGates.
+var alsoNeeds = map[string]rbac.Perm{
+	"POST /api/v1/containers/{id}/files":   rbac.PermContainersExec,
+	"DELETE /api/v1/containers/{id}/files": rbac.PermContainersExec,
+}
+
 // Every built-in role, assigned on everything and on the local host, runs
 // against every permission-gated route: the route gate lets it through
 // exactly when the role holds the permission and, for instance-wide
@@ -530,6 +538,9 @@ func TestRouteGateMatrix(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := rbac.IsBase(g.gate) || (c.perms[g.gate] && (c.scope.IsGlobal() || !rbac.IsGlobalOnly(g.gate)))
+			if also, ok := alsoNeeds[g.method+" "+g.path]; ok {
+				want = want && c.perms[also]
+			}
 			code, body := call(g.method, path, c.token)
 			denied := code == http.StatusForbidden && (body == "forbidden" || strings.Contains(body, "out of scope"))
 			if denied == want {

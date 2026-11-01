@@ -58,6 +58,7 @@ const (
 	ActionContainerBrowse    = "container.browse"
 	ActionContainerReadFile  = "container.read_file"
 	ActionContainerWriteFile = "container.write_file"
+	ActionContainerRmFile    = "container.delete_file"
 	ActionContainerExecStart = "container.exec_start"
 	ActionContainerExecEnd   = "container.exec_end"
 	ActionImagePull          = "image.pull"

@@ -222,10 +222,19 @@ func mapBrowseStatus(err error) int {
 		errors.Is(err, host.ErrVolumeNotFile),
 		errors.Is(err, host.ErrContainerPathInvalid),
 		errors.Is(err, host.ErrContainerNotDir),
-		errors.Is(err, host.ErrContainerNotFile):
+		errors.Is(err, host.ErrContainerNotFile),
+		errors.Is(err, host.ErrContainerPathDenied),
+		errors.Is(err, host.ErrContainerSymlink),
+		errors.Is(err, host.ErrContainerDirTooLarge):
 		return http.StatusBadRequest
-	case errors.Is(err, host.ErrVolumeMountpointMissing):
+	case errors.Is(err, host.ErrContainerFileTooLarge):
+		return http.StatusRequestEntityTooLarge
+	case errors.Is(err, host.ErrVolumeMountpointMissing),
+		errors.Is(err, host.ErrContainerNoRm),
+		errors.Is(err, host.ErrAgentNoContainerFiles):
 		return http.StatusConflict
+	case errors.Is(err, host.ErrAgentOffline):
+		return http.StatusServiceUnavailable
 	default:
 		if errors.Is(err, fs.ErrNotExist) {
 			return http.StatusNotFound

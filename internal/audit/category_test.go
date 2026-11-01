@@ -202,6 +202,7 @@ func TestCategory(t *testing.T) {
 	tests := []struct{ action, want string }{
 		{ActionContainerExecStart, CategoryAccess},
 		{ActionContainerWriteFile, CategoryChanges},
+		{ActionContainerRmFile, CategoryChanges},
 		{ActionScopeDenied, CategoryAuth},
 		{ActionGenesis, CategorySystem},
 		{"something.from_a_newer_version", CategorySystem},

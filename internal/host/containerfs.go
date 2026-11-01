@@ -384,7 +384,7 @@ func WriteContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, 
 		return ErrContainerFileTooLarge
 	}
 	if mode < 0 || mode > 0o7777 {
-		return fmt.Errorf("%w: mode must be between 0 and 07777", ErrContainerPathInvalid)
+		return errors.New("mode must be between 0 and 07777")
 	}
 	clean, err := sanitizeContainerPath(p)
 	if err != nil {
