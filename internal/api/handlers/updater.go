@@ -32,9 +32,10 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	}
 	// Detached from the request: closing the tab mid-update must not cancel
 	// the pull or interrupt the container swap.
-	r = r.WithContext(context.WithoutCancel(r.Context()))
-	op := h.startImageUpdateOp(r, id, "", false)
-	res, err := h.Updater.Update(operations.WithOp(r.Context(), op), id, middleware.UserID(r.Context()))
+	ctx := context.WithoutCancel(r.Context())
+	dr := r.WithContext(ctx)
+	op := h.startImageUpdateOp(dr, id, "", false)
+	res, err := h.Updater.Update(operations.WithOp(ctx, op), id, middleware.UserID(ctx))
 	op.Finish(err)
 	if errors.Is(err, updater.ErrBusy) {
 		writeError(w, http.StatusConflict, err.Error())
@@ -45,8 +46,8 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if res.Updated {
-		h.UpdateWatcher.MarkUpdated(r.Context(), res.Image)
-		h.audit(r, audit.ActionContainerUpdate, res.ContainerName, map[string]string{
+		h.UpdateWatcher.MarkUpdated(ctx, res.Image)
+		h.audit(dr, audit.ActionContainerUpdate, res.ContainerName, map[string]string{
 			"image":    res.Image,
 			"from":     trim(res.OldDigest),
 			"to":       trim(res.NewDigest),
