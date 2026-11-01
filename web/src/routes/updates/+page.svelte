@@ -137,22 +137,27 @@
   });
   $effect(() => autoRefresh(load, 60_000));
 
-  // Reload once tracked updates end, so finished rows leave the list.
+  const rows = $derived.by<AppRow[]>(() => {
+    const ids = new Set(apps.map((a) => a.id));
+    return [...apps, ...Object.values(started).filter((r) => !ids.has(r.id))];
+  });
+  // Running and queued updates show on their row wherever they were
+  // started; finished ones only on rows this page started.
+  const opFor = (id: string) => {
+    const op = operations.latest(opRef.container(id), 'image.update');
+    return op && (started[id] || isActive(op)) ? op : undefined;
+  };
+
+  // Reload once updates end, so finished rows leave the list.
   let wasActive = 0;
   $effect(() => {
-    const n = Object.keys(started).filter((id) => {
-      const op = operations.latest(opRef.container(id), 'image.update');
+    const n = rows.filter((r) => {
+      const op = opFor(r.id);
       return op && isActive(op);
     }).length;
     if (n < wasActive) void load();
     wasActive = n;
   });
-
-  const rows = $derived.by<AppRow[]>(() => {
-    const ids = new Set(apps.map((a) => a.id));
-    return [...apps, ...Object.values(started).filter((r) => !ids.has(r.id))];
-  });
-  const opFor = (id: string) => (started[id] ? operations.latest(opRef.container(id), 'image.update') : undefined);
   const selectable = $derived(rows.filter((r) => !opFor(r.id) || !isActive(opFor(r.id)!)));
   const allSelected = $derived(selectable.length > 0 && selectable.every((r) => selected.has(r.id)));
   function toggleAll() {
