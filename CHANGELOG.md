@@ -97,6 +97,11 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   the ACME email with its local part hidden.
 
 ### Changed
+- The overview, hosts, alerts, backups, stack detail, reverse proxy and setup pages follow the
+  new design. The overview lists what needs attention and the recent changes from the audit log;
+  alert rules are edited in a dialog that adapts to the rule type and says in a sentence when the
+  rule fires; the reverse proxy page can import a Caddyfile and switch the Caddy version and
+  proxy-wide settings; revoking a host asks you to type its name.
 - New look for the web UI: a calmer, flat design with equal light and dark themes that
   follow the system setting until you pick one. The sidebar is grouped into Workloads,
   Infrastructure, Operations and Admin, shows counts, and collapses to an icon rail.
@@ -155,6 +160,8 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   It takes `--key` for encrypted archives; `--skip-sanity` is gone, the checks always run.
 
 ### Fixed
+- The last setup step showed a made-up password when the page was reloaded there; it now refers to
+  the password you entered.
 - `dockmesh-agent --version` works for users other than root. The installer now puts a
   root-owned copy of the agent in `/usr/local/bin` instead of a symlink into the agent's data
   directory, and the agent's service refreshes that copy at every start. Agents installed
