@@ -1,212 +1,131 @@
 <script lang="ts">
-  // Reverse Proxy — embedded Caddy managed by Dockmesh. Public hostname
-  // mappings with automatic TLS via Let's Encrypt or internal CA.
-  //
-  // Slice 1 scope: status hero + sortable route table + create/edit
-  // modal + bulk delete. Per-route metrics, cert-expiry, policy chips,
-  // ACME stream all wait on backend additions (punch-list).
-  import { goto } from '$app/navigation';
-  import { api, ApiError, isFanOut } from '$lib/api';
+  import { page } from '$app/state';
+  import { replaceState } from '$app/navigation';
+  import { api, ApiError, apiRequest, type Operation } from '$lib/api';
+  import { Skeleton, StatusChip, Tabs, Switch, Menu, EmptyState, LiveIndicator } from '$lib/components/ui';
+  import type { MenuItem } from '$lib/components/ui/Menu.svelte';
+  import OpProgress from '$lib/components/operations/OpProgress.svelte';
+  import { operations, isActive } from '$lib/stores/operations.svelte';
   import { allowed } from '$lib/rbac.svelte';
-  import { hosts } from '$lib/stores/host.svelte';
-  import { Skeleton } from '$lib/components/ui';
-  import { EditorialPage, Eyebrow, Field, EditorialModal } from '$lib/components/editorial';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { autoRefresh } from '$lib/autorefresh';
-  import {
-    Globe, Plus, Trash2, Power, PowerOff, RefreshCw, Lock,
-    Search, ExternalLink, Edit2, ChevronUp, ChevronDown,
-  } from 'lucide-svelte';
-
-  interface ProxyRoute {
-    id: number;
-    host: string;
-    upstream: string;
-    tls_mode: 'auto' | 'internal' | 'none';
-    enabled: boolean;
-    created_at?: string;
-    updated_at?: string;
-  }
-
-  type Status = {
-    enabled: boolean;
-    running: boolean;
-    admin_ok: boolean;
-    version?: string;
-    container?: string;
-  };
+  import { Plus, Power, PowerOff } from 'lucide-svelte';
+  import SiteModal from './_SiteModal.svelte';
+  import ImportModal from './_ImportModal.svelte';
+  import SiteDrawer from './_SiteDrawer.svelte';
+  import CaddyTab from './_CaddyTab.svelte';
+  import { TLS_LABEL, RENEW_WARN_DAYS, optionSummary, ago, type Site, type ProxyStatus, type ACMEEvent } from './_site';
 
   type MetricsSnapshot = {
-    scraped_at: string;
     total_requests: number;
     requests_per_second: number;
     status_buckets: Record<string, number>;
     p95_latency_ms: number;
-    per_host: Array<{
-      host: string;
-      requests: number;
-      requests_per_second: number;
-      status_buckets: Record<string, number>;
-      p95_latency_ms: number;
-    }>;
+    per_host: Array<{ host: string; requests: number; requests_per_second: number; status_buckets: Record<string, number>; p95_latency_ms: number }>;
   };
 
-  type ACMEEvent = {
-    ts: string;
-    kind: 'obtain' | 'renew' | 'failure';
-    host?: string;
-    issuer?: string;
-    message: string;
-    successful: boolean;
-  };
+  const canCreate = $derived(allowed('proxy.create'));
+  const canUpdate = $derived(allowed('proxy.update'));
+  const canDelete = $derived(allowed('proxy.delete'));
 
-  let status = $state<Status | null>(null);
-  let routes = $state<ProxyRoute[]>([]);
-  let metrics = $state<MetricsSnapshot | null>(null);
-  let acmeEvents = $state<ACMEEvent[]>([]);
-  let loading = $state(true);
-  let busy = $state(false);
-  let search = $state('');
-
-  // Sort
-  type SortKey = 'host' | 'upstream' | 'tls' | 'created';
-  let sortKey = $state<SortKey>('host');
-  let sortAsc = $state(true);
-
-  // Bulk
-  let selected = $state<Set<number>>(new Set());
-  let bulkBusy = $state(false);
-
-  // Modal
-  let showModal = $state(false);
-  let editing = $state<ProxyRoute | null>(null);
-  let formHost = $state('');
-  let formUpstream = $state('');
-  let formTls = $state<'auto' | 'internal' | 'none'>('auto');
-  let saving = $state(false);
-
-  // Container-suggestions for the upstream datalist. Caddy connects to
-  // containers via the Docker network, so we suggest <container-name>:
-  // <internal-port> for every reachable container with exposed ports.
-  // The input stays free-form: operators can still type external
-  // upstreams like 192.168.x.x:8080.
-  let upstreamSuggestions = $state<Array<{ value: string; label: string }>>([]);
-
-  async function loadUpstreamSuggestions() {
-    try {
-      const res = await api.containers.list(false, hosts.id);
-      const items: any[] = isFanOut(res) ? (res.items as any[]) : (res as any[]);
-      const out: Array<{ value: string; label: string }> = [];
-      const seen = new Set<string>();
-      for (const c of items) {
-        const name = (c.Names?.[0] ?? '').replace(/^\//, '');
-        if (!name) continue;
-        const internalPorts = [
-          ...new Set(
-            (c.Ports ?? [])
-              .map((p: any) => Number(p?.PrivatePort))
-              .filter((n: number) => Number.isFinite(n) && n > 0),
-          ),
-        ];
-        const hostHint = c.host_name ? ` · ${c.host_name}` : '';
-        if (internalPorts.length === 0) {
-          const v = `${name}:80`;
-          if (!seen.has(v)) { out.push({ value: v, label: `${name} — ${c.Image}${hostHint}` }); seen.add(v); }
-        } else {
-          for (const p of internalPorts) {
-            const v = `${name}:${p}`;
-            if (!seen.has(v)) { out.push({ value: v, label: `${name}:${p} — ${c.Image}${hostHint}` }); seen.add(v); }
-          }
-        }
-      }
-      // Stable sort by container name then port.
-      out.sort((a, b) => a.value.localeCompare(b.value));
-      upstreamSuggestions = out;
-    } catch {
-      upstreamSuggestions = [];
-    }
+  type TabKey = 'sites' | 'certificates' | 'activity' | 'caddy';
+  const TABS: TabKey[] = ['sites', 'certificates', 'activity', 'caddy'];
+  const fromUrl = page.url.searchParams.get('tab') ?? '';
+  let tab = $state<TabKey>((TABS as string[]).includes(fromUrl) ? (fromUrl as TabKey) : 'sites');
+  function setTab(k: string) {
+    tab = k as TabKey;
+    const url = new URL(page.url.href);
+    if (k === 'sites') url.searchParams.delete('tab');
+    else url.searchParams.set('tab', k);
+    replaceState(url, {});
   }
 
-  // Refresh suggestions whenever the modal opens.
-  let lastModalOpen = false;
-  $effect(() => {
-    if (showModal && !lastModalOpen) loadUpstreamSuggestions();
-    lastModalOpen = showModal;
-  });
+  let status = $state<ProxyStatus | null>(null);
+  let routes = $state<Site[]>([]);
+  let metrics = $state<MetricsSnapshot | null>(null);
+  let acme = $state<ACMEEvent[]>([]);
+  let siteOps = $state<Operation[]>([]);
+  let latestCaddy = $state<string>('');
+  let loading = $state(true);
+  let refreshing = $state(false);
+  let lastLoaded = $state<number | null>(null);
+  let busy = $state(false);
+  let search = $state('');
+  let selected = $state<Set<number>>(new Set());
+
+  let showSite = $state(false);
+  let editing = $state<Site | null>(null);
+  let showImport = $state(false);
+  let drawerSite = $state<Site | null>(null);
 
   async function load() {
-    loading = true;
+    refreshing = true;
     try {
-      const [s, r, m, e] = await Promise.all([
+      const [s, r, m, e, ops, v] = await Promise.all([
         api.proxy.status().catch(() => null),
-        api.proxy.listRoutes().catch(() => []),
+        api.proxy.listRoutes().catch(() => []) as Promise<Site[]>,
         api.proxy.metrics().catch(() => null),
         api.proxy.acmeEvents().catch(() => [] as ACMEEvent[]),
+        api.operations.list({ kind: 'proxy.site', limit: 30 }).catch(() => [] as Operation[]),
+        apiRequest<{ current: string; default: string; managed: boolean }>('/proxy/version').catch(() => null)
       ]);
       status = s;
       routes = r;
       metrics = m;
-      acmeEvents = e;
+      acme = e;
+      siteOps = ops;
+      operations.track(ops);
+      latestCaddy = v?.managed && v.default && v.current && v.default !== v.current ? v.default : '';
+      if (drawerSite) drawerSite = r.find((x) => x.id === drawerSite!.id) ?? null;
+      const ids = new Set(r.map((x) => x.id));
+      selected = new Set([...selected].filter((id) => ids.has(id)));
+      lastLoaded = Date.now();
     } finally {
       loading = false;
+      refreshing = false;
     }
   }
+  $effect(() => autoRefresh(load, 15_000));
 
+  // A new site's operation ends with its certificate; reload then so the
+  // list shows it.
+  let wasActive = 0;
   $effect(() => {
-    if (!allowed('proxy.update')) { goto('/'); return; }
-    load();
+    const n = operations.active.filter((o) => o.kind === 'proxy.site').length;
+    if (n < wasActive) void load();
+    wasActive = n;
   });
-  // Caddy container state + cert lifecycle drift over time — 10s poll.
-  $effect(() => autoRefresh(load, 10_000));
 
-  // ── Derived ──────────────────────────────────────────────────────────
+  const perHost = $derived(new Map((metrics?.per_host ?? []).map((h) => [h.host, h])));
   const visible = $derived(
     routes
       .filter((r) => {
-        if (!search.trim()) return true;
-        const q = search.toLowerCase();
-        return r.host.toLowerCase().includes(q) || r.upstream.toLowerCase().includes(q);
+        const q = search.trim().toLowerCase();
+        return !q || r.host.toLowerCase().includes(q) || r.upstream.toLowerCase().includes(q);
       })
-      .sort((a, b) => {
-        let cmp = 0;
-        switch (sortKey) {
-          case 'host':     cmp = a.host.localeCompare(b.host); break;
-          case 'upstream': cmp = a.upstream.localeCompare(b.upstream); break;
-          case 'tls':      cmp = a.tls_mode.localeCompare(b.tls_mode); break;
-          case 'created':  cmp = (a.created_at ?? '').localeCompare(b.created_at ?? ''); break;
-        }
-        return sortAsc ? cmp : -cmp;
-      }),
+      .sort((a, b) => a.host.localeCompare(b.host))
   );
-
-  const counts = $derived({
-    total: routes.length,
-    auto: routes.filter((r) => r.tls_mode === 'auto').length,
-    internal: routes.filter((r) => r.tls_mode === 'internal').length,
-    none: routes.filter((r) => r.tls_mode === 'none').length,
-  });
-
+  const live = $derived(routes.filter((r) => r.enabled).length);
+  const certSites = $derived(routes.filter((r) => r.tls_mode !== 'none'));
+  const certWarn = $derived(certSites.filter((r) => r.enabled && (r.cert_days_left == null || r.cert_days_left < RENEW_WARN_DAYS)).length);
   const allSelected = $derived(visible.length > 0 && visible.every((r) => selected.has(r.id)));
 
-  function toggleAll() {
-    if (allSelected) selected = new Set();
-    else selected = new Set(visible.map((r) => r.id));
+  function siteTone(r: Site): '' | 'ok' | 'warn' {
+    if (!r.enabled) return '';
+    if (r.tls_mode !== 'none' && r.cert_days_left != null && r.cert_days_left < RENEW_WARN_DAYS) return 'warn';
+    return 'ok';
   }
-  function toggleOne(id: number) {
-    const next = new Set(selected);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    selected = next;
+  function httpsNote(r: Site): string {
+    if (r.tls_mode === 'none') return 'not encrypted';
+    if (r.cert_days_left == null) return 'no certificate served yet';
+    return `expires in ${r.cert_days_left} d`;
   }
-  function toggleSort(key: SortKey) {
-    if (sortKey === key) sortAsc = !sortAsc;
-    else { sortKey = key; sortAsc = true; }
-  }
+  const opOf = (host: string) => operations.latest(`proxy-site:${host}`, 'proxy.site');
 
-  // ── Status actions ──────────────────────────────────────────────────
   async function enableProxy() {
     busy = true;
-    toast.info('Starting Caddy', 'pulling image if needed…');
+    toast.info('Starting Caddy', 'Pulling the image if needed…');
     try {
       await api.proxy.enable();
       toast.success('Proxy enabled');
@@ -217,1081 +136,313 @@
       busy = false;
     }
   }
-
   async function disableProxy() {
     if (!(await confirm.ask({
-      title: 'Stop Caddy proxy',
+      title: 'Stop the reverse proxy',
       message: 'Stop and remove the Caddy container?',
-      body: 'Route configurations stay in the database. Start the proxy again to reapply them.',
-      confirmLabel: 'Stop', danger: true,
+      body: 'Every site stops answering. Sites stay saved; starting the proxy again applies them.',
+      confirmLabel: 'Stop', danger: true
     }))) return;
     busy = true;
     try {
       await api.proxy.disable();
-      toast.info('Proxy disabled');
+      toast.info('Proxy stopped');
       await load();
     } catch (err) {
-      toast.error('Disable failed', err instanceof ApiError ? err.message : undefined);
+      toast.error('Stop failed', err instanceof ApiError ? err.message : undefined);
     } finally {
       busy = false;
     }
   }
 
-  // ── Modal ────────────────────────────────────────────────────────────
-  function openCreate() {
-    editing = null;
-    formHost = '';
-    formUpstream = '';
-    formTls = 'auto';
-    showModal = true;
-  }
-
-  function openEdit(r: ProxyRoute) {
-    editing = r;
-    formHost = r.host;
-    formUpstream = r.upstream;
-    formTls = r.tls_mode;
-    showModal = true;
-  }
-
-  async function saveRoute(e: Event) {
-    e.preventDefault();
-    if (!formHost.trim() || !formUpstream.trim()) return;
-    saving = true;
-    try {
-      if (editing) {
-        await api.proxy.updateRoute(editing.id, formUpstream.trim(), formTls);
-        toast.success('Route updated', formHost);
-      } else {
-        await api.proxy.createRoute(formHost.trim(), formUpstream.trim(), formTls);
-        toast.success('Route created', formHost);
-      }
-      showModal = false;
-      await load();
-    } catch (err) {
-      toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      saving = false;
-    }
-  }
-
-  async function toggleEnabled(r: ProxyRoute) {
+  async function toggleEnabled(r: Site) {
     const next = !r.enabled;
     try {
       await api.proxy.setRouteEnabled(r.id, next);
-      toast.success(next ? 'Enabled' : 'Disabled', r.host);
+      toast.success(next ? 'Site enabled' : 'Site disabled', r.host);
       await load();
     } catch (err) {
-      toast.error('Toggle failed', err instanceof ApiError ? err.message : undefined);
+      toast.error('Change failed', err instanceof ApiError ? err.message : undefined);
     }
   }
-
-  async function deleteRoute(id: number, host: string) {
+  async function deleteSite(r: Site) {
     if (!(await confirm.ask({
-      title: 'Remove proxy route',
-      message: `Remove route "${host}"?`,
-      body: 'Incoming requests to this hostname will start returning 404 on the next Caddy reload.',
-      confirmLabel: 'Remove', danger: true,
+      title: 'Delete site',
+      message: `Delete ${r.host}?`,
+      body: 'Requests to this name get no answer from Caddy after the next reload. The container it points to is not touched.',
+      confirmLabel: 'Delete', danger: true
     }))) return;
     try {
-      await api.proxy.deleteRoute(id);
-      toast.success('Removed', host);
+      await api.proxy.deleteRoute(r.id);
+      toast.success('Site deleted', r.host);
+      if (drawerSite?.id === r.id) drawerSite = null;
       await load();
     } catch (err) {
       toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
     }
   }
-
   async function bulkDelete() {
+    const list = routes.filter((r) => selected.has(r.id));
     if (!(await confirm.ask({
-      title: 'Delete proxy routes',
-      message: `Delete ${selected.size} route${selected.size === 1 ? '' : 's'}?`,
-      body: 'Cannot be undone. Incoming requests to these hostnames will 404 on next reload.',
-      confirmLabel: 'Delete', danger: true,
+      title: 'Delete sites',
+      message: `Delete ${list.length} site${list.length === 1 ? '' : 's'}?`,
+      body: list.map((r) => r.host).join(', '),
+      confirmLabel: 'Delete', danger: true
     }))) return;
-    bulkBusy = true;
     let ok = 0, fail = 0;
-    for (const r of routes.filter((r) => selected.has(r.id))) {
-      try { await api.proxy.deleteRoute(r.id); ok++; }
-      catch { fail++; }
+    for (const r of list) {
+      try { await api.proxy.deleteRoute(r.id); ok++; } catch { fail++; }
     }
-    toast[fail === 0 ? 'success' : 'info'](`Deleted ${ok}${fail ? `, ${fail} failed` : ''}`);
+    toast[fail ? 'warning' : 'success'](`Deleted ${ok}${fail ? `, ${fail} failed` : ''}`);
     selected = new Set();
-    bulkBusy = false;
     await load();
   }
+  function toggleOne(id: number) {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    selected = next;
+  }
 
-  // ── Helpers ─────────────────────────────────────────────────────────
-  function tlsLabel(m: 'auto' | 'internal' | 'none'): string {
-    if (m === 'auto')     return "Let's Encrypt";
-    if (m === 'internal') return 'Internal CA';
-    return 'HTTP only';
+  function openNew() {
+    editing = null;
+    showSite = true;
   }
-  function tlsPillClass(m: 'auto' | 'internal' | 'none'): string {
-    if (m === 'auto')     return 'pxy-tls-pill pxy-tls-auto';
-    if (m === 'internal') return 'pxy-tls-pill pxy-tls-internal';
-    return 'pxy-tls-pill pxy-tls-none';
+  function openEdit(r: Site) {
+    drawerSite = null;
+    editing = r;
+    showSite = true;
   }
-  function fmtDate(ts?: string): string {
-    if (!ts) return '—';
-    return new Date(ts).toLocaleDateString(undefined, {
-      year: 'numeric', month: 'short', day: '2-digit',
-    });
+  function menuFor(r: Site): MenuItem[] {
+    const items: MenuItem[] = [
+      { label: 'Details', onclick: () => (drawerSite = r) },
+      { label: 'Open in browser', href: `${r.tls_mode === 'none' ? 'http' : 'https'}://${r.host}` }
+    ];
+    if (canUpdate) items.push({ label: 'Edit', onclick: () => openEdit(r) });
+    const op = opOf(r.host);
+    if (op) items.push({ label: 'Show last creation steps', onclick: () => operations.open(op.id) });
+    if (canDelete) items.push({ separator: true }, { label: 'Delete…', danger: true, onclick: () => deleteSite(r) });
+    return items;
   }
+
+  // Activity merges Caddy's certificate events with the new-site
+  // operations Dockmesh ran.
+  type Activity = { ts: string; what: string; text: string; tone: 'ok' | 'warn' | 'bad' | 'off'; op?: Operation };
+  const activity = $derived.by<Activity[]>(() => {
+    const out: Activity[] = acme.map((e) => ({
+      ts: e.ts,
+      what: e.kind === 'renew' ? 'Certificate renewed' : e.kind === 'obtain' ? 'Certificate' : 'Certificate failed',
+      text: `${e.host ?? '—'}: ${e.message}${e.issuer ? ` (${e.issuer})` : ''}`,
+      tone: e.successful ? 'ok' : 'bad'
+    }));
+    for (const o of siteOps) {
+      const warn = o.steps.find((s) => s.status === 'warning');
+      out.push({
+        ts: o.finished_at ?? o.created_at,
+        what: 'New site',
+        text: `${o.target}${o.actor_name ? ` by ${o.actor_name}` : ''}${o.error ? `: ${o.error}` : warn ? `: ${warn.detail}` : ''}`,
+        tone: isActive(o) ? 'off' : o.status === 'failed' ? 'bad' : warn ? 'warn' : 'ok',
+        op: o
+      });
+    }
+    return out.sort((a, b) => b.ts.localeCompare(a.ts));
+  });
+
+  const SITE_COLS = '22px 14px minmax(200px, 1.4fr) minmax(170px, 1.2fr) 160px minmax(150px, 1fr) 80px 56px 36px';
+  const CERT_COLS = 'minmax(200px, 1.4fr) minmax(160px, 1fr) 120px 120px';
+  const ACT_COLS = '110px 150px minmax(0, 1fr) 110px';
 </script>
 
-<EditorialPage>
-  <section class="pxy">
-    <!-- ───────────────────────── Header ───────────────────────── -->
-    <header class="pxy-header">
-      <div class="pxy-header-text">
-        <h1 class="ed-title pxy-title">Proxy routes</h1>
-        <p class="ed-subtitle pxy-subtitle">
-          {#if routes.length === 0}
-            No routes configured
-          {:else}
-            {counts.total} route{counts.total === 1 ? '' : 's'} · {counts.auto} auto-TLS{counts.internal > 0 ? ` · ${counts.internal} internal CA` : ''}{counts.none > 0 ? ` · ${counts.none} HTTP-only` : ''}
-          {/if}
-        </p>
+<section class="dm-page">
+  <div class="dm-ph">
+    <h1>Reverse proxy</h1>
+    <span class="dm-sub">
+      {#if status === null}Caddy status unknown
+      {:else if !status.enabled}Caddy is off
+      {:else}Caddy{status.version ? ` ${status.version}` : ''} · <span class={status.running ? 'ok' : 'bad'}>{status.running ? 'running' : 'stopped'}</span>{/if}
+      · {live} site{live === 1 ? '' : 's'} live
+      {#if latestCaddy}· <a href="/proxy?tab=caddy" onclick={(e) => { e.preventDefault(); setTab('caddy'); }}>{latestCaddy} recommended</a>{/if}
+    </span>
+    <span class="dm-sp"></span>
+    <LiveIndicator updatedAt={lastLoaded} onrefresh={load} busy={refreshing} />
+    {#if canCreate && status?.enabled}
+      <button type="button" class="dm-btn" onclick={() => (showImport = true)} disabled={!status.running} title={status.running ? '' : 'Caddy must run to read a Caddyfile'}>Import Caddyfile</button>
+      <button type="button" class="dm-btn dm-btn-primary" onclick={openNew}><Plus size={14} strokeWidth={2} /> New site</button>
+    {/if}
+    {#if status?.running && canCreate}
+      <Menu label="Proxy actions" items={[{ label: 'Stop the proxy…', danger: true, icon: PowerOff, onclick: disableProxy }]} />
+    {/if}
+  </div>
+
+  {#if status && (!status.enabled || !status.running)}
+    <div class="px-notice" role="status">
+      <div>
+        <b>{!status.enabled ? 'The reverse proxy is off' : 'Caddy is enabled but not running'}</b>
+        <p>{!status.enabled ? 'Enabling pulls the Caddy image if needed, starts a managed container on ports 80 and 443 and applies every saved site.' : 'Start it to serve the saved sites again.'}</p>
       </div>
-    </header>
-
-    <!-- ───────────────────── Status Hero Card ───────────────────── -->
-    <div
-      class="pxy-status"
-      data-state={status === null ? 'unknown' : !status.enabled ? 'off' : status.running ? 'running' : 'stopped'}
-    >
-      <span class="pxy-status-icon">
-        {#if status?.running}
-          <Globe size={18} strokeWidth={1.5} />
-        {:else}
-          <PowerOff size={18} strokeWidth={1.5} />
-        {/if}
-      </span>
-
-      <div class="pxy-status-text">
-        {#if loading && status === null}
-          <Skeleton width="40%" height="1.2rem" />
-        {:else if !status?.enabled}
-          <div class="pxy-status-title">Proxy disabled</div>
-          <p class="ed-subtitle pxy-status-blurb">
-            Enabling pulls the Caddy image (if missing), starts a managed container, and applies
-            every route below.
-          </p>
-        {:else if status.running}
-          <div class="pxy-status-title">
-            Caddy <em class="ed-accent">running</em>
-          </div>
-          <div class="pxy-status-meta">
-            {#if status.version}<span class="pxy-meta-item">{status.version}</span>{/if}
-            <span class="pxy-meta-item">:80 / :443</span>
-            {#if status.admin_ok}<span class="pxy-meta-item pxy-meta-ok">admin API</span>{/if}
-            {#if status.container}<span class="pxy-meta-item">{status.container.slice(0, 12)}</span>{/if}
-          </div>
-        {:else}
-          <div class="pxy-status-title">
-            Caddy <em class="pxy-status-stopped-em">stopped</em>
-          </div>
-          <p class="ed-subtitle pxy-status-blurb">
-            Enabled but container is not running. Start it to apply routes.
-          </p>
-        {/if}
-      </div>
-
-      <div class="pxy-status-actions">
-        {#if status?.running}
-          <button
-            type="button"
-            class="dm-btn dm-btn-secondary dm-btn-sm"
-            onclick={disableProxy}
-            disabled={busy}
-          >
-            <PowerOff size={12} strokeWidth={1.5} /> Stop
-          </button>
-        {:else if status?.enabled}
-          <button
-            type="button"
-            class="dm-btn dm-btn-primary dm-btn-sm"
-            onclick={enableProxy}
-            disabled={busy}
-          >
-            <Power size={12} strokeWidth={1.5} /> Start
-          </button>
-        {:else}
-          <button
-            type="button"
-            class="dm-btn dm-btn-primary dm-btn-sm"
-            onclick={enableProxy}
-            disabled={busy}
-          >
-            <Power size={12} strokeWidth={1.5} /> Enable proxy
-          </button>
-        {/if}
-      </div>
-    </div>
-
-    <!-- ───────────────────── Toolbar ───────────────────── -->
-    <div class="pxy-toolbar">
-      <div class="pxy-search">
-        <Search size={12} strokeWidth={1.5} class="pxy-search-icon" />
-        <input
-          type="search"
-          placeholder="search hostname · upstream…"
-          bind:value={search}
-          class="ed-underline-input pxy-search-input"
-        />
-      </div>
-
-      <span class="pxy-spacer"></span>
-
-      <button
-        type="button"
-        class="dm-btn dm-btn-ghost dm-btn-sm"
-        onclick={load}
-        disabled={loading}
-        title="Refresh"
-      >
-        <RefreshCw size={12} strokeWidth={1.5} class={loading ? 'pxy-spin' : ''} />
-      </button>
-
-      {#if status?.enabled}
-        <button
-          type="button"
-          class="dm-btn dm-btn-primary dm-btn-sm"
-          onclick={openCreate}
-        >
-          <Plus size={12} strokeWidth={1.5} /> Add route
-        </button>
+      {#if canCreate}
+        <button type="button" class="dm-btn dm-btn-primary" disabled={busy} onclick={enableProxy}><Power size={14} /> {status.enabled ? 'Start' : 'Enable proxy'}</button>
       {/if}
     </div>
+  {/if}
 
-    <!-- ───────────────────── Bulk action bar ───────────────────── -->
-    {#if selected.size > 0}
-      <div class="pxy-bulkbar">
-        <span class="pxy-bulkbar-count">{selected.size} selected</span>
-        <div class="pxy-bulkbar-actions">
-          <button
-            type="button"
-            class="dm-btn dm-btn-ghost dm-btn-xs pxy-danger-btn"
-            onclick={bulkDelete}
-            disabled={bulkBusy}
-          >
-            <Trash2 size={11} strokeWidth={1.5} /> Delete
-          </button>
-          <button
-            type="button"
-            class="dm-btn dm-btn-ghost dm-btn-xs"
-            onclick={() => (selected = new Set())}
-          >
-            Clear
-          </button>
-        </div>
+  <Tabs
+    tabs={[
+      { key: 'sites', label: 'Sites', count: routes.length },
+      { key: 'certificates', label: 'Certificates', count: certSites.length || null, dot: certWarn > 0 },
+      { key: 'activity', label: 'Activity' },
+      { key: 'caddy', label: 'Caddy' }
+    ]}
+    active={tab}
+    onchange={setTab}
+  />
+
+  {#if tab === 'sites'}
+    {#if loading}
+      <div class="dm-tbl">
+        {#each Array(4) as _, i (i)}<div class="dm-tr" style="grid-template-columns: 1fr"><Skeleton width="55%" height="0.9rem" /></div>{/each}
       </div>
-    {/if}
-
-    <!-- ───────────────────── Table ───────────────────── -->
-    {#if loading && routes.length === 0}
-      <div class="pxy-loading"><Skeleton width="100%" height="6rem" /></div>
     {:else if routes.length === 0}
-      <div class="pxy-empty">
-        <Globe size={20} strokeWidth={1.4} />
-        <p class="pxy-empty-title">No routes yet</p>
-        <p class="ed-subtitle pxy-empty-blurb">
-          {status?.enabled
-            ? 'Add a host → upstream mapping and Caddy gets configured automatically.'
-            : 'Enable the proxy first to start configuring routes.'}
-        </p>
-        {#if status?.enabled}
-          <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={openCreate}>
-            <Plus size={12} strokeWidth={1.5} /> Add first route
-          </button>
+      <EmptyState title="No sites yet" description={status?.enabled ? 'A site maps a public name to a container or address; Caddy gets its certificate.' : 'Enable the proxy first, then add sites.'}>
+        {#snippet action()}
+          {#if canCreate && status?.enabled}
+            <button type="button" class="dm-btn dm-btn-primary" onclick={openNew}><Plus size={14} /> New site</button>
+          {/if}
+        {/snippet}
+      </EmptyState>
+    {:else}
+      <div class="dm-toolbar">
+        <input class="dm-filter" type="search" placeholder="Filter sites…" bind:value={search} aria-label="Filter sites" />
+        <span class="dm-sp"></span>
+        {#if selected.size && canDelete}
+          <span class="dm-sub">{selected.size} selected</span>
+          <button type="button" class="dm-btn dm-btn-sm dm-btn-danger" onclick={bulkDelete}>Delete…</button>
+          <button type="button" class="dm-btn dm-btn-sm dm-btn-ghost" onclick={() => (selected = new Set())}>Clear</button>
         {/if}
       </div>
-    {:else if visible.length === 0}
-      <div class="pxy-empty">
-        <Eyebrow>no match</Eyebrow>
-        <p class="pxy-empty-title">No routes match „{search}".</p>
-      </div>
-    {:else}
-      <div class="pxy-table">
-        <div class="pxy-row pxy-row-head">
-          <span class="pxy-col-check">
-            <input type="checkbox" checked={allSelected} onchange={toggleAll} />
-          </span>
-          <button type="button" class="pxy-h" onclick={() => toggleSort('host')}>
-            hostname
-            {#if sortKey === 'host'}{#if sortAsc}<ChevronUp size={10} />{:else}<ChevronDown size={10} />{/if}{/if}
-          </button>
-          <button type="button" class="pxy-h" onclick={() => toggleSort('upstream')}>
-            upstream
-            {#if sortKey === 'upstream'}{#if sortAsc}<ChevronUp size={10} />{:else}<ChevronDown size={10} />{/if}{/if}
-          </button>
-          <button type="button" class="pxy-h" onclick={() => toggleSort('tls')}>
-            TLS
-            {#if sortKey === 'tls'}{#if sortAsc}<ChevronUp size={10} />{:else}<ChevronDown size={10} />{/if}{/if}
-          </button>
-          <button type="button" class="pxy-h" onclick={() => toggleSort('created')}>
-            created
-            {#if sortKey === 'created'}{#if sortAsc}<ChevronUp size={10} />{:else}<ChevronDown size={10} />{/if}{/if}
-          </button>
-          <span class="pxy-h pxy-h-right">·</span>
+      <div class="dm-tbl" role="table" aria-label="Sites">
+        <div class="dm-tr dm-th" role="row" style="grid-template-columns: {SITE_COLS}">
+          <span role="columnheader">{#if canDelete}<input type="checkbox" aria-label="Select all" checked={allSelected} onchange={() => (selected = allSelected ? new Set() : new Set(visible.map((r) => r.id)))} />{/if}</span>
+          <span role="columnheader"></span>
+          <span role="columnheader">Site</span>
+          <span role="columnheader">Goes to</span>
+          <span role="columnheader">HTTPS</span>
+          <span role="columnheader">Options</span>
+          <span role="columnheader" class="num-h">Req/s</span>
+          <span role="columnheader">On</span>
+          <span role="columnheader"></span>
         </div>
-
         {#each visible as r (r.id)}
-          <div class="pxy-row" class:pxy-row-selected={selected.has(r.id)} class:pxy-row-disabled={!r.enabled}>
-            <span class="pxy-col-check">
-              <input
-                type="checkbox"
-                checked={selected.has(r.id)}
-                onchange={() => toggleOne(r.id)}
-              />
+          {@const op = opOf(r.host)}
+          {@const opts = optionSummary(r.options)}
+          {@const m = perHost.get(r.host)}
+          <div class="dm-tr dm-click" role="row" class:dm-sel={selected.has(r.id)} style="grid-template-columns: {SITE_COLS}"
+            tabindex="0" onclick={() => (drawerSite = r)} onkeydown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) drawerSite = r; }}>
+            <span role="cell">
+              {#if canDelete}<input type="checkbox" aria-label="Select {r.host}" checked={selected.has(r.id)} onclick={(e) => e.stopPropagation()} onchange={() => toggleOne(r.id)} />{/if}
             </span>
-
-            <div class="pxy-cell-host">
-              <span class="pxy-host">{r.host}</span>
-              {#if !r.enabled}
-                <span class="pxy-disabled-pill" title="Route is disabled — kept in config but not served by Caddy">disabled</span>
-              {/if}
-              <a
-                href="https://{r.host}"
-                target="_blank"
-                rel="noopener"
-                class="pxy-host-open"
-                title="Open in browser"
-                aria-label="Open in browser"
-              >
-                <ExternalLink size={10} strokeWidth={1.5} />
-              </a>
-            </div>
-
-            <span class="pxy-cell-upstream">{r.upstream}</span>
-
-            <span class={tlsPillClass(r.tls_mode)}>
-              {#if r.tls_mode !== 'none'}
-                <Lock size={9} strokeWidth={1.8} />
-              {/if}
-              {tlsLabel(r.tls_mode)}
+            <span role="cell"><span class="dm-dot {siteTone(r)}"></span></span>
+            <span role="cell" class="dm-nm">
+              <span class="dm-t">{r.host}</span>
+              <small>{r.enabled ? (r.options?.routing?.www_redirect ? `www.${r.host} redirects here` : ' ') : 'disabled'}</small>
             </span>
-
-            <span class="pxy-cell-created">{fmtDate(r.created_at)}</span>
-
-            <div class="pxy-cell-actions">
-              <button
-                type="button"
-                class="pxy-icon-btn"
-                onclick={() => toggleEnabled(r)}
-                title={r.enabled ? 'Disable' : 'Enable'}
-                aria-label={r.enabled ? 'Disable' : 'Enable'}
-              >
-                {#if r.enabled}
-                  <PowerOff size={11} strokeWidth={1.5} />
-                {:else}
-                  <Power size={11} strokeWidth={1.5} />
-                {/if}
-              </button>
-              <button
-                type="button"
-                class="pxy-icon-btn"
-                onclick={() => openEdit(r)}
-                title="Edit"
-                aria-label="Edit"
-              >
-                <Edit2 size={11} strokeWidth={1.5} />
-              </button>
-              <button
-                type="button"
-                class="pxy-icon-btn pxy-icon-danger"
-                onclick={() => deleteRoute(r.id, r.host)}
-                title="Delete"
-                aria-label="Delete"
-              >
-                <Trash2 size={11} strokeWidth={1.5} />
-              </button>
-            </div>
+            <span role="cell" class="dm-mono px-up" title={r.upstream}>{r.upstream}</span>
+            <span role="cell" class="dm-nm">
+              {#if op && isActive(op)}
+                <OpProgress {op} compact />
+              {:else}
+                <span class="px-tls">{TLS_LABEL[r.tls_mode]}</span>
+                <small class:warn={r.tls_mode !== 'none' && r.enabled && (r.cert_days_left == null || r.cert_days_left < RENEW_WARN_DAYS)}>{httpsNote(r)}</small>
+              {/if}
+            </span>
+            <span role="cell" class="dm-dim" title={opts.join(', ')}>
+              {#if opts.length}{opts.slice(0, 2).join(', ')}{#if opts.length > 2} <span class="dm-num">+{opts.length - 2}</span>{/if}{:else}<span class="dm-dim">defaults</span>{/if}
+            </span>
+            <span role="cell" class="dm-num num-c">{r.enabled && m ? m.requests_per_second.toFixed(1) : '—'}</span>
+            <span role="cell"><span role="presentation" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+              <Switch checked={r.enabled} label="Serve {r.host}" hideLabel disabled={!canUpdate} onchange={() => toggleEnabled(r)} />
+            </span></span>
+            <span role="cell" class="dm-tr-menu"><span role="presentation" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+              <Menu label="Actions for {r.host}" items={menuFor(r)} />
+            </span></span>
           </div>
         {/each}
+        {#if visible.length === 0}<div class="dm-empty">No sites match “{search}”.</div>{/if}
       </div>
+      {#if metrics}
+        <p class="dm-sub px-foot">
+          All sites: {metrics.requests_per_second.toFixed(1)} req/s · p95 {metrics.p95_latency_ms.toFixed(0)} ms ·
+          {(metrics.status_buckets['5xx'] ?? 0).toLocaleString()} server errors since Caddy started
+        </p>
+      {/if}
     {/if}
-
-    <!-- ─────────────────────── Metrics + ACME timeline ─────────────────────── -->
-    {#if metrics || acmeEvents.length > 0}
-      <div class="pxy-insight-grid">
-        {#if metrics}
-          <div class="pxy-card pxy-metrics-card">
-            <Eyebrow>traffic · last 5 min</Eyebrow>
-            <div class="pxy-metric-row">
-              <div class="pxy-metric">
-                <div class="pxy-metric-value">{metrics.requests_per_second.toFixed(1)}</div>
-                <div class="pxy-metric-label">req/s</div>
-              </div>
-              <div class="pxy-metric">
-                <div class="pxy-metric-value">{metrics.p95_latency_ms.toFixed(0)}<span class="pxy-metric-unit">ms</span></div>
-                <div class="pxy-metric-label">p95 latency</div>
-              </div>
-              <div class="pxy-metric">
-                <div class="pxy-metric-value">{metrics.total_requests.toLocaleString()}</div>
-                <div class="pxy-metric-label">total requests</div>
-              </div>
-            </div>
-            {#if Object.keys(metrics.status_buckets).length > 0}
-              <div class="pxy-status-row">
-                {#each ['2xx','3xx','4xx','5xx'] as bucket}
-                  <span class="pxy-status-pill pxy-status-{bucket}">
-                    {bucket} · {(metrics.status_buckets[bucket] ?? 0).toLocaleString()}
-                  </span>
-                {/each}
-              </div>
-            {/if}
-            {#if metrics.per_host.length > 0}
-              <table class="pxy-per-host">
-                <thead>
-                  <tr><th>host</th><th>req/s</th><th>p95</th><th>2xx</th><th>4xx</th><th>5xx</th></tr>
-                </thead>
-                <tbody>
-                  {#each metrics.per_host as h (h.host)}
-                    <tr>
-                      <td class="pxy-per-host-name">{h.host}</td>
-                      <td>{h.requests_per_second.toFixed(1)}</td>
-                      <td>{h.p95_latency_ms.toFixed(0)}ms</td>
-                      <td>{(h.status_buckets['2xx'] ?? 0).toLocaleString()}</td>
-                      <td>{(h.status_buckets['4xx'] ?? 0).toLocaleString()}</td>
-                      <td>{(h.status_buckets['5xx'] ?? 0).toLocaleString()}</td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            {:else}
-              <p class="pxy-metrics-empty">
-                Caddy hasn't reported any requests since the last restart.
-              </p>
-            {/if}
-          </div>
-        {/if}
-
-        {#if acmeEvents.length > 0}
-          <div class="pxy-card pxy-acme-card">
-            <Eyebrow>ACME activity</Eyebrow>
-            <ul class="pxy-acme-list">
-              {#each [...acmeEvents].reverse() as ev}
-                <li
-                  class="pxy-acme-item"
-                  class:pxy-acme-success={ev.successful}
-                  class:pxy-acme-failure={!ev.successful}
-                >
-                  <span class="pxy-acme-kind pxy-acme-kind-{ev.kind}">{ev.kind}</span>
-                  <span class="pxy-acme-host">{ev.host ?? '—'}</span>
-                  <span class="pxy-acme-msg" title={ev.message}>{ev.message}</span>
-                  <span class="pxy-acme-ts">{new Date(ev.ts).toLocaleString()}</span>
-                </li>
-              {/each}
-            </ul>
-          </div>
-        {/if}
-      </div>
-    {/if}
-  </section>
-</EditorialPage>
-
-<!-- ───────────────────────── Create / Edit Modal ───────────────────────── -->
-<EditorialModal
-  bind:open={showModal}
-  eyebrow={editing ? 'Edit route' : 'New route'}
-  width={560}
->
-  {#snippet title()}
-    {#if editing}
-      Edit <em class="ed-accent">{editing.host}</em>
+  {:else if tab === 'certificates'}
+    {#if certSites.length === 0}
+      <EmptyState title="No HTTPS sites" description="Sites with Let's Encrypt or the internal CA show their certificate here." />
     {:else}
-      Add a <em>public hostname</em>
-    {/if}
-  {/snippet}
-
-  <form id="pxy-form" class="pxy-form" onsubmit={saveRoute}>
-    <Field label="Hostname" hint="Public DNS name. Wildcards (*.example.com) are allowed for auto-TLS with DNS-01.">
-      <input
-        class="dm-input pxy-input"
-        bind:value={formHost}
-        placeholder="grafana.example.com"
-        disabled={editing !== null || saving}
-      />
-    </Field>
-
-    <Field
-      label="Upstream"
-      hint="host:port — Caddy connects via the Docker network. Pick a container from the dropdown or type a custom upstream."
-    >
-      <input
-        class="dm-input pxy-input"
-        bind:value={formUpstream}
-        list="pxy-upstream-suggestions"
-        placeholder="container-name:8080 or 127.0.0.1:3000"
-        disabled={saving}
-        autocomplete="off"
-      />
-      <datalist id="pxy-upstream-suggestions">
-        {#each upstreamSuggestions as s (s.value)}
-          <option value={s.value} label={s.label}></option>
-        {/each}
-      </datalist>
-    </Field>
-
-    <Field label="TLS mode">
-      <div class="pxy-tls-picker" role="radiogroup">
-        {#each [
-          { id: 'auto'     as const, label: "Let's Encrypt",   hint: 'requires public DNS' },
-          { id: 'internal' as const, label: 'Internal CA',     hint: 'self-signed, for .local' },
-          { id: 'none'     as const, label: 'HTTP only',       hint: 'no TLS' },
-        ] as opt}
-          <button
-            type="button"
-            class="pxy-tls-option"
-            class:pxy-tls-active={formTls === opt.id}
-            onclick={() => (formTls = opt.id)}
-            disabled={saving}
-          >
-            <span class="pxy-tls-option-label">{opt.label}</span>
-            <span class="pxy-tls-option-hint">{opt.hint}</span>
-          </button>
+      <div class="dm-tbl" role="table" aria-label="Certificates">
+        <div class="dm-tr dm-th" role="row" style="grid-template-columns: {CERT_COLS}">
+          <span role="columnheader">Name</span><span role="columnheader">Issuer</span><span role="columnheader">Expires in</span><span role="columnheader">Status</span>
+        </div>
+        {#each certSites as r (r.id)}
+          {@const soon = r.cert_days_left != null && r.cert_days_left < RENEW_WARN_DAYS}
+          <div class="dm-tr dm-click" role="row" style="grid-template-columns: {CERT_COLS}" tabindex="0"
+            onclick={() => (drawerSite = r)} onkeydown={(e) => { if (e.key === 'Enter') drawerSite = r; }}>
+            <span role="cell" class="dm-mono">{r.host}</span>
+            <span role="cell" class="dm-dim">{r.cert_issuer || TLS_LABEL[r.tls_mode]}</span>
+            <span role="cell" class="dm-num" class:warn={soon}>{r.cert_days_left != null ? `${r.cert_days_left} days` : '—'}</span>
+            <span role="cell">
+              {#if !r.enabled}<StatusChip tone="off" label="site off" />
+              {:else if r.cert_days_left == null}<StatusChip tone="warn" label="not served" title="The name may not point to this server yet, or Caddy is still getting the certificate" />
+              {:else}<StatusChip tone={soon ? 'warn' : 'ok'} label={soon ? 'renew soon' : 'valid'} />{/if}
+            </span>
+          </div>
         {/each}
       </div>
-    </Field>
-  </form>
+      <p class="dm-sub px-foot">Caddy renews certificates on its own about 30 days before they expire. “Renew soon” means a renewal has not worked yet; Activity shows why.</p>
+    {/if}
+  {:else if tab === 'activity'}
+    {#if activity.length === 0}
+      <EmptyState title="No activity yet" description="Certificate events since Caddy started and the sites created in the last 7 days show up here." />
+    {:else}
+      <div class="dm-tbl" role="table" aria-label="Proxy activity">
+        {#each activity as a, i (i)}
+          <div class="dm-tr" class:dm-click={!!a.op} role="row" style="grid-template-columns: {ACT_COLS}" tabindex={a.op ? 0 : -1}
+            onclick={() => a.op && operations.open(a.op.id)} onkeydown={(e) => { if (e.key === 'Enter' && a.op) operations.open(a.op.id); }}>
+            <span role="cell" class="dm-num dm-dim" title={new Date(a.ts).toLocaleString()}>{ago(a.ts)}</span>
+            <span role="cell">{a.what}</span>
+            <span role="cell" class="dm-dim" title={a.text}>{a.text}</span>
+            <span role="cell">
+              {#if a.op && isActive(a.op)}<OpProgress op={a.op} compact />
+              {:else}<StatusChip tone={a.tone} label={a.tone === 'ok' ? 'ok' : a.tone === 'warn' ? 'warning' : a.tone === 'bad' ? 'failed' : 'running'} />{/if}
+            </span>
+          </div>
+        {/each}
+      </div>
+      <p class="dm-sub px-foot">Certificate events come from Caddy's log since it last started (the last 200).</p>
+    {/if}
+  {:else}
+    <CaddyTab running={!!status?.running} onchanged={load} />
+  {/if}
+</section>
 
-  {#snippet footer()}
-    <span></span>
-    <div class="pxy-modal-actions">
-      <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (showModal = false)}>
-        Cancel
-      </button>
-      <button
-        type="submit"
-        form="pxy-form"
-        class="dm-btn dm-btn-primary dm-btn-sm"
-        disabled={saving || !formHost.trim() || !formUpstream.trim()}
-      >
-        {saving ? 'Saving…' : editing ? 'Save' : 'Create'}
-      </button>
-    </div>
-  {/snippet}
-</EditorialModal>
+<SiteModal bind:open={showSite} {editing} onsaved={load} />
+<ImportModal bind:open={showImport} onimported={load} />
+<SiteDrawer bind:site={drawerSite} onedit={openEdit} ontoggle={toggleEnabled} ondelete={deleteSite} />
 
 <style>
-  .pxy {
-    display: flex;
-    flex-direction: column;
-    gap: 22px;
-  }
-
-  /* ── Header ─────────────────────────────────────────────────── */
-  .pxy-header {
-    display: flex;
-    align-items: flex-end;
-    gap: 24px;
-    flex-wrap: wrap;
-  }
-  .pxy-header-text { min-width: 0; max-width: 70ch; }
-  .pxy-title {
-    font-size: 28px;
-    line-height: 1.1;
-    margin-top: 12px;
-  }
-  .pxy-subtitle {
-    margin-top: 8px;
-    max-width: 70ch;
-  }
-
-  /* ── Status hero ────────────────────────────────────────────── */
-  .pxy-status {
-    padding: 16px 18px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    border-radius: 6px;
-    display: grid;
-    grid-template-columns: 44px 1fr auto;
-    gap: 14px;
-    align-items: center;
-  }
-  .pxy-status[data-state="running"] {
-    border-color: color-mix(in srgb, var(--color-success-500) 35%, var(--border));
-    background: color-mix(in srgb, var(--color-success-500) 4%, var(--surface));
-  }
-  .pxy-status[data-state="stopped"] {
-    border-color: color-mix(in srgb, var(--color-warning-500) 40%, var(--border));
-    background: color-mix(in srgb, var(--color-warning-500) 5%, var(--surface));
-  }
-  .pxy-status[data-state="off"] {
-    border-color: var(--border);
-    background: var(--surface);
-  }
-  .pxy-status-icon {
-    width: 44px;
-    height: 44px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--bg-elevated);
-    color: var(--fg-subtle);
-  }
-  .pxy-status[data-state="running"] .pxy-status-icon {
-    border-color: var(--color-success-500);
-    color: var(--color-success-400);
-  }
-  .pxy-status[data-state="stopped"] .pxy-status-icon {
-    border-color: var(--color-warning-500);
-    color: var(--color-warning-400);
-  }
-  .pxy-status-text { min-width: 0; }
-  .pxy-status-title {
-    font-size: 13.5px;
-    font-weight: 500;
-    color: var(--fg);
-  }
-  .pxy-status-stopped-em {
-    color: var(--color-warning-400);
-    font-style: normal;
-  }
-  .pxy-status-blurb {
-    margin-top: 4px;
-    max-width: 56ch;
-    font-size: 12px;
-  }
-  .pxy-status-meta {
-    margin-top: 4px;
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-  .pxy-meta-item {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-  }
-  .pxy-meta-ok { color: var(--color-success-400); }
-
-  .pxy-status-actions {
-    display: flex;
-    gap: 6px;
-    flex-shrink: 0;
-  }
-
-  /* ── Toolbar ────────────────────────────────────────────────── */
-  .pxy-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-  .pxy-search {
-    position: relative;
-    flex: 0 1 320px;
-    min-width: 220px;
-  }
-  .pxy-search :global(.pxy-search-icon) {
-    position: absolute;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--fg-subtle);
-    pointer-events: none;
-  }
-  .pxy-search-input {
-    padding-left: 18px;
-    font-size: 12.5px;
-    font-family: var(--font-mono);
-  }
-  .pxy-spacer { flex: 1; }
-  .pxy-spin { animation: pxy-spin 0.9s linear infinite; }
-  @keyframes pxy-spin {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
-  }
-
-  /* ── Bulk action bar ────────────────────────────────────────── */
-  .pxy-bulkbar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 14px;
-    border: 1px solid color-mix(in srgb, var(--color-brand-500) 35%, var(--border));
-    border-radius: 5px;
-    background: color-mix(in srgb, var(--color-brand-500) 5%, var(--surface));
-  }
-  .pxy-bulkbar-count {
-    font-size: 12.5px;
-    font-weight: 500;
-    color: var(--fg);
-  }
-  .pxy-bulkbar-actions {
-    display: flex;
-    gap: 6px;
-    margin-left: auto;
-  }
-  .pxy-danger-btn { color: var(--color-danger-400); }
-
-  /* ── Table ──────────────────────────────────────────────────── */
-  .pxy-table {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    overflow: hidden;
-  }
-  .pxy-row {
-    display: grid;
-    grid-template-columns: 28px minmax(220px, 1.4fr) minmax(200px, 1.4fr) 130px 100px 80px;
-    gap: 14px;
-    align-items: center;
-    padding: 11px 14px;
-    border-bottom: 1px solid var(--border-subtle);
-  }
-  .pxy-row:last-child { border-bottom: 0; }
-  .pxy-row-head {
-    background: var(--bg-elevated);
-    border-bottom: 1px solid var(--border);
-    padding: 10px 14px;
-  }
-  .pxy-row-selected {
-    background: color-mix(in srgb, var(--color-brand-500) 4%, transparent);
-  }
-
-  .pxy-col-check input { accent-color: var(--color-brand-500); }
-  .pxy-h {
-    background: transparent;
-    border: 0;
-    padding: 0;
-    text-align: left;
-    cursor: pointer;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--fg-subtle);
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .pxy-h:hover { color: var(--fg); }
-  .pxy-h-right { text-align: right; justify-content: flex-end; }
-
-  .pxy-cell-host {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-  }
-  .pxy-host {
-    font-family: var(--font-mono);
-    font-size: 12.5px;
-    color: var(--fg);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .pxy-row-disabled .pxy-host { color: var(--fg-muted); text-decoration: line-through; }
-  .pxy-disabled-pill {
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    padding: 1px 5px;
-    border-radius: 3px;
-    background: var(--surface-hover);
-    color: var(--fg-muted);
-    border: 1px solid var(--border-subtle);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-  .pxy-host-open {
-    color: var(--fg-subtle);
-    display: inline-flex;
-    text-decoration: none;
-    flex-shrink: 0;
-  }
-  .pxy-host-open:hover { color: var(--accent-fg); }
-
-  .pxy-cell-upstream {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .pxy-tls-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    border: 1px solid var(--border-subtle);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    width: fit-content;
-  }
-  .pxy-tls-auto {
-    color: var(--color-success-400);
-    border-color: color-mix(in srgb, var(--color-success-500) 35%, var(--border));
-    background: color-mix(in srgb, var(--color-success-500) 6%, transparent);
-  }
-  .pxy-tls-internal {
-    color: var(--accent-fg);
-    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
-    background: color-mix(in srgb, var(--accent) 6%, transparent);
-  }
-  .pxy-tls-none {
-    color: var(--fg-subtle);
-  }
-
-  .pxy-cell-created {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-  }
-
-  .pxy-cell-actions {
-    display: inline-flex;
-    justify-content: flex-end;
-    gap: 2px;
-  }
-  .pxy-icon-btn {
-    width: 24px;
-    height: 24px;
-    background: transparent;
-    border: 0;
-    border-radius: 4px;
-    color: var(--fg-muted);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .pxy-icon-btn:hover {
-    color: var(--fg);
-    background: var(--surface-hover);
-  }
-  .pxy-icon-danger { color: var(--color-danger-400); }
-  .pxy-icon-danger:hover {
-    color: var(--color-danger-400);
-    background: color-mix(in srgb, var(--color-danger-500) 12%, transparent);
-  }
-
-  /* ── Loading / empty ────────────────────────────────────────── */
-  .pxy-loading { padding: 0; }
-  .pxy-empty {
-    padding: 44px 24px;
-    text-align: center;
-    border: 1px dashed var(--border);
-    border-radius: 6px;
-    color: var(--fg-subtle);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-  }
-  .pxy-empty-title {
-    margin: 8px 0 0;
-    font-size: 16px;
-    color: var(--fg);
-    font-weight: 500;
-  }
-  .pxy-empty-blurb {
-    margin: 4px 0 12px;
-    max-width: 50ch;
-  }
-
-  /* ── Modal ──────────────────────────────────────────────────── */
-  .pxy-form {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
-  .pxy-form :global(.dm-input) {
-    font-size: 12.5px;
-    padding: 6px 10px;
-    line-height: 1.4;
-  }
-  .pxy-input {
-    font-family: var(--font-mono);
-  }
-  .pxy-tls-picker {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 6px;
-  }
-  .pxy-tls-option {
-    padding: 8px 10px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    cursor: pointer;
-    text-align: left;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    color: var(--fg-muted);
-    font: inherit;
-    transition: border-color 120ms, background 120ms;
-  }
-  .pxy-tls-option:hover:not(:disabled) { border-color: var(--border-strong); }
-  .pxy-tls-option:disabled { opacity: 0.5; cursor: not-allowed; }
-  .pxy-tls-active {
-    background: var(--accent-bg);
-    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-    color: var(--fg);
-  }
-  .pxy-tls-option-label {
-    font-size: 12.5px;
-    font-weight: 500;
-  }
-  .pxy-tls-option-hint {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--fg-subtle);
-  }
-  .pxy-modal-actions {
-    display: flex;
-    gap: 8px;
-  }
-
-  @media (max-width: 880px) {
-    .pxy-status {
-      grid-template-columns: 44px 1fr;
-    }
-    .pxy-status-actions { grid-column: 1 / -1; justify-content: flex-end; }
-    .pxy-row,
-    .pxy-row-head { display: none; }
-    .pxy-tls-picker { grid-template-columns: 1fr; }
-  }
-
-  /* ───────────────────── Metrics + ACME timeline ───────────────────── */
-  .pxy-insight-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 24px;
-    margin-top: 32px;
-  }
-  @media (max-width: 1100px) {
-    .pxy-insight-grid { grid-template-columns: 1fr; }
-  }
-  .pxy-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  .pxy-metric-row {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-  }
-  .pxy-metric { display: flex; flex-direction: column; gap: 2px; }
-  .pxy-metric-value {
-    font-size: 1.6rem;
-    font-weight: 600;
-    font-feature-settings: 'tnum';
-  }
-  .pxy-metric-unit { font-size: 0.8em; font-weight: 400; opacity: 0.6; margin-left: 2px; }
-  .pxy-metric-label {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    opacity: 0.6;
-  }
-  .pxy-status-row { display: flex; gap: 8px; flex-wrap: wrap; }
-  .pxy-status-pill {
-    font-size: 0.72rem;
-    padding: 3px 8px;
-    border-radius: 999px;
-    background: var(--surface-hover);
-    color: var(--fg-muted);
-    font-feature-settings: 'tnum';
-  }
-  .pxy-status-2xx {
-    background: color-mix(in srgb, var(--color-success-500) 14%, transparent);
-    color: var(--color-success-400);
-  }
-  .pxy-status-3xx {
-    background: color-mix(in srgb, var(--color-brand-500) 14%, transparent);
-    color: var(--color-brand-400);
-  }
-  .pxy-status-4xx {
-    background: color-mix(in srgb, var(--color-warning-500) 14%, transparent);
-    color: var(--color-warning-400);
-  }
-  .pxy-status-5xx {
-    background: color-mix(in srgb, var(--color-danger-500) 14%, transparent);
-    color: var(--color-danger-400);
-  }
-  .pxy-per-host {
-    width: 100%;
-    font-size: 0.78rem;
-    border-collapse: collapse;
-  }
-  .pxy-per-host th {
-    text-align: left;
-    text-transform: uppercase;
-    font-size: 0.65rem;
-    letter-spacing: 0.05em;
-    opacity: 0.6;
-    padding: 6px 4px;
-    border-bottom: 1px solid var(--border);
-  }
-  .pxy-per-host td {
-    padding: 6px 4px;
-    border-bottom: 1px solid var(--border-subtle);
-    font-feature-settings: 'tnum';
-  }
-  .pxy-per-host-name { font-family: var(--ed-font-mono, ui-monospace, monospace); }
-  .pxy-metrics-empty {
-    font-size: 0.8rem;
-    opacity: 0.6;
-    margin: 0;
-  }
-  .pxy-acme-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-  .pxy-acme-item {
-    display: grid;
-    grid-template-columns: 70px 1fr 2fr auto;
-    gap: 12px;
-    align-items: center;
-    font-size: 0.78rem;
-    padding: 6px 10px;
-    border-left: 2px solid var(--border);
-  }
-  .pxy-acme-success { border-left-color: var(--color-success-500); }
-  .pxy-acme-failure { border-left-color: var(--color-danger-500); }
-  .pxy-acme-kind {
-    font-size: 0.65rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 2px 6px;
-    border-radius: 3px;
-    background: rgba(0, 0, 0, 0.05);
-    text-align: center;
-  }
-  .pxy-acme-kind-obtain {
-    background: color-mix(in srgb, var(--color-success-500) 14%, transparent);
-    color: var(--color-success-400);
-  }
-  .pxy-acme-kind-renew {
-    background: color-mix(in srgb, var(--color-brand-500) 14%, transparent);
-    color: var(--color-brand-400);
-  }
-  .pxy-acme-kind-failure {
-    background: color-mix(in srgb, var(--color-danger-500) 14%, transparent);
-    color: var(--color-danger-400);
-  }
-  .pxy-acme-host { font-family: var(--ed-font-mono, ui-monospace, monospace); }
-  .pxy-acme-msg {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    opacity: 0.8;
-  }
-  .pxy-acme-ts {
-    font-size: 0.7rem;
-    opacity: 0.5;
-    font-feature-settings: 'tnum';
-  }
+  .ok { color: var(--ok); }
+  .bad { color: var(--bad); }
+  .px-notice {
+    display: flex; align-items: center; gap: 16px; padding: 12px 16px;
+    border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+    background: color-mix(in srgb, var(--warn) 8%, transparent);
+    border-radius: var(--r);
+  }
+  .px-notice > div { flex: 1; min-width: 0; }
+  .px-notice p { margin: 2px 0 0; color: var(--muted); font-size: var(--fs-sm); }
+  .px-up { font-size: 12.5px; }
+  .px-tls { font-weight: 500; }
+  .dm-nm small.warn, .dm-num.warn { color: var(--warn); }
+  .num-h, .num-c { text-align: right; }
+  .px-foot { margin: 8px 0 0; }
 </style>
