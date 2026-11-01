@@ -233,6 +233,7 @@ func TestCancelRunningInsideWindow(t *testing.T) {
 	}{
 		{"work stops with an error", ErrCancelled, StatusCancelled},
 		{"work completed anyway", nil, StatusSucceeded},
+		{"cancel came too late, a later step failed", errors.New("swap failed"), StatusFailed},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -267,6 +268,9 @@ func TestCancelRunningInsideWindow(t *testing.T) {
 			got, _ = s.Get(ctx, o.ID())
 			if got.Status != tc.wantStatus || got.Cancellable {
 				t.Fatalf("status %s, want %s", got.Status, tc.wantStatus)
+			}
+			if tc.wantStatus == StatusFailed && got.Steps[0].Status != StepFailed {
+				t.Fatalf("a real failure shown as %s", got.Steps[0].Status)
 			}
 			if tc.wantStatus == StatusCancelled {
 				if got.Error != "cancelled during “Pull image”" {

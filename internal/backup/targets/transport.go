@@ -16,7 +16,8 @@ const (
 	tlsHandshakeTimeout   = 15 * time.Second
 	responseHeaderTimeout = 10 * time.Minute
 	connIdleTimeout       = 90 * time.Second
-	transferIdleTimeout   = 5 * time.Minute
+	// transferIdleTimeout matches the idle timeout of a backup run.
+	transferIdleTimeout = 10 * time.Minute
 )
 
 // newTransferTransport returns an HTTP transport for moving whole archives.

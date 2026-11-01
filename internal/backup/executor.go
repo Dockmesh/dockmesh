@@ -192,6 +192,8 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64, stop cont
 	fail := func(stage string, err error) runOutcome {
 		if cause := stopCause(ctx); cause != nil {
 			err = cause
+		} else if isTimeout(err) {
+			err = fmt.Errorf("%w: %w", ErrTargetStalled, err)
 		}
 		e.logf(ctx, runID, "error", "%s: %s", stage, err)
 		err = fmt.Errorf("%s: %w", stage, err)
@@ -458,9 +460,15 @@ func (e *Executor) runHooks(ctx context.Context, runID int64, phase string, host
 		if h.Container == "" || len(h.Cmd) == 0 {
 			continue
 		}
+		// A cancel or stall stops the run between hooks, never inside one:
+		// docker cannot stop an exec, so the hook would finish unseen and
+		// the post-hooks would not know it ran.
+		if cause := stopCause(ctx); cause != nil {
+			return ran, cause
+		}
 		e.logf(ctx, runID, "info", "%s-hook: container=%s cmd=%s",
 			phase, h.Container, strings.Join(h.Cmd, " "))
-		hookCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		hookCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
 		out, exitCode, err := hostTarget.ContainerExec(hookCtx, h.Container, h.Cmd)
 		cancel()
 		// Capture up to ~16KB of output across stream types so noisy

@@ -34,7 +34,16 @@ const (
 	importExitRecover  = 4
 	importExitSwap     = 5
 	importExitStageDir = 6
+	importExitStuck    = 7
 )
+
+// importExclude keeps the restore's own paths out of backups and out of
+// what a restore extracts, so an archive can never collide with them.
+const importExclude = `--exclude='./.dockmesh-restore-*' --exclude='.dockmesh-restore-*'`
+
+// VolumeExportScript is the helper command that archives the volume
+// mounted read-only at /source to stdout.
+const VolumeExportScript = "tar czf - -C /source " + importExclude + " ."
 
 // importFuncs defines mvall (move every entry of $1 except the restore's
 // own paths into $2; the globs cover dotfiles and skip . and ..) and
@@ -48,6 +57,10 @@ mvall() {
   done
 }
 recover() {
+  for x in "$S" "$O" "$T"; do
+    if [ -L "$x" ] || { [ -e "$x" ] && [ ! -d "$x" ]; }; then rm -f "$x" || return 1; fi
+  done
+  if [ -L "$M" ] || [ -d "$M" ]; then rm -rf "$M" || return 1; fi
   if [ -d "$O" ]; then
     if [ -e "$M" ]; then
       mvall "$S" "$D" || return 1
@@ -70,7 +83,7 @@ func VolumeImportScript(replace bool, needBytes int64) string {
 	b.WriteString(importFuncs)
 	fmt.Fprintf(&b, "recover || { echo 'an earlier restore into this volume was interrupted and could not be undone; its files are in .dockmesh-restore-old and .dockmesh-restore-new' >&2; exit %d; }\n", importExitRecover)
 	if !replace {
-		b.WriteString("exec tar xzf - -C \"$D\"\n")
+		b.WriteString("exec tar xzf - -C \"$D\" " + importExclude + "\n")
 		return b.String()
 	}
 	if needKB := (needBytes + 1023) / 1024; needKB > 0 {
@@ -79,11 +92,14 @@ if [ -n "$avail" ] && [ "$avail" -lt %d ]; then echo "not enough free space in t
 `, needKB, needKB, importExitNoSpace)
 	}
 	fmt.Fprintf(&b, `mkdir "$S" || exit %d
-if ! tar xzf - -C "$S"; then rm -rf "$S"; exit 1; fi
-if ! { mkdir "$O" && mvall "$D" "$O" && touch "$M" && mvall "$S" "$D"; }; then recover; exit %d; fi
+if ! tar xzf - -C "$S" `+importExclude+`; then rm -rf "$S"; exit 1; fi
+if ! { mkdir "$O" && mvall "$D" "$O" && touch "$M" && mvall "$S" "$D"; }; then
+  if recover; then exit %d; fi
+  exit %d
+fi
 chown "$(stat -c %%u:%%g "$S")" "$D" 2>/dev/null; chmod "$(stat -c %%a "$S")" "$D" 2>/dev/null
 rmdir "$S" && mv "$O" "$T" && rm -f "$M" && rm -rf "$T"
-`, importExitStageDir, importExitSwap)
+`, importExitStageDir, importExitSwap, importExitStuck)
 	return b.String()
 }
 
@@ -108,6 +124,8 @@ func VolumeImportExitError(code int64, replace bool) error {
 		return errors.New("an earlier restore into this volume was interrupted and could not be undone; nothing was changed")
 	case importExitSwap:
 		return errors.New("swapping the restored files in failed; the previous contents were put back")
+	case importExitStuck:
+		return errors.New("swapping the restored files in failed and could not be undone; the previous contents are in .dockmesh-restore-old in the volume")
 	case importExitStageDir:
 		return errors.New("could not create the staging directory in the volume; nothing was changed")
 	}

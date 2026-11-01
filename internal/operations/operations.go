@@ -644,7 +644,12 @@ func (o *Op) StepWarn(key, detail string) { o.stepEnd(key, StepWarning, detail) 
 func (o *Op) StepSkip(key, detail string) { o.stepEnd(key, StepSkipped, detail) }
 
 // StepFail ends a step with an error; Finish still decides the outcome.
+// A step the user's cancel stopped ends cancelled.
 func (o *Op) StepFail(key string, err error) {
+	if errors.Is(err, ErrCancelled) {
+		o.stepEnd(key, StepCancelled, "cancelled")
+		return
+	}
 	msg := ""
 	if err != nil {
 		msg = err.Error()
@@ -658,9 +663,6 @@ func (o *Op) stepEnd(key string, status StepStatus, detail string) {
 	}
 	o.update(func(op *Operation, now time.Time) {
 		st := stepFor(op, key, "")
-		if status == StepFailed && op.CancelRequested {
-			status, detail = StepCancelled, "cancelled"
-		}
 		st.Status = status
 		st.Detail = truncate(o.mask(detail))
 		if st.StartedAt == nil && status != StepSkipped {
@@ -701,16 +703,16 @@ func (o *Op) Logf(level, format string, args ...any) {
 
 // Finish ends the operation: failed when err is set, else succeeded.
 // Steps still running fail with err; pending steps are skipped. Work a
-// user cancelled that ends with an error ends cancelled, naming the step
-// it stopped in.
+// user cancelled, whose error is ErrCancelled, ends cancelled, naming the
+// step it stopped in; a cancel that came too late changes nothing.
 func (o *Op) Finish(err error) {
 	if o == nil {
 		return
 	}
 	o.mu.Lock()
-	cancelled, step := o.op.CancelRequested, o.cancelStep
+	step := o.cancelStep
 	o.mu.Unlock()
-	if err != nil && cancelled {
+	if errors.Is(err, ErrCancelled) {
 		msg := "cancelled"
 		if step != "" {
 			msg = "cancelled during “" + step + "”"

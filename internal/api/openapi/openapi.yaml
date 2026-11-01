@@ -4703,8 +4703,9 @@ paths:
       summary: Cancel queued or running work
       description: |
         Cancels work while the operation is `cancellable`: queued containers
-        of a bulk update; a backup run in any step (post-backup hooks still
-        run, the unfinished archive is deleted from the target); an image
+        of a bulk update; a backup run in any step (a running hook finishes
+        first, post-backup hooks still run, the unfinished archive is deleted
+        from the target); an image
         update while it pulls; a restore while it downloads or verifies the
         archive, before anything is written; the certificate wait of a new
         proxy site (the site stays). Swapping files or containers is never

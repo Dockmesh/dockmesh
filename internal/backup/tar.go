@@ -18,7 +18,7 @@ import (
 
 const helperImage = "alpine:3.24"
 
-// tarVolume runs `tar czf - -C /source .` inside an alpine helper that
+// tarVolume runs agents.VolumeExportScript inside an alpine helper that
 // mounts the named volume read-only and streams the gzipped archive on
 // stdout. The returned ReadCloser yields the tar bytes; closing it
 // removes the helper container.
@@ -41,7 +41,7 @@ func tarVolume(ctx context.Context, dc *docker.Client, volumeName string) (io.Re
 
 	cfg := &container.Config{
 		Image:        helperImage,
-		Cmd:          []string{"sh", "-c", "tar czf - -C /source ."},
+		Cmd:          []string{"sh", "-c", agents.VolumeExportScript},
 		AttachStdout: true,
 		AttachStderr: true,
 		Labels: map[string]string{

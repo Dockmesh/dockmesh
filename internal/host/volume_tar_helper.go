@@ -10,6 +10,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/docker"
 )
 
@@ -35,7 +36,7 @@ func tarVolumeHelper(ctx context.Context, dc *docker.Client, volumeName string) 
 	}
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:        volumeTarHelperImage,
-		Cmd:          []string{"sh", "-c", "tar czf - -C /source ."},
+		Cmd:          []string{"sh", "-c", agents.VolumeExportScript},
 		AttachStdout: true,
 		AttachStderr: true,
 		Labels: map[string]string{

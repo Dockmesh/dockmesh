@@ -213,6 +213,40 @@ func TestVolumeRecoverInterruptedImport(t *testing.T) {
 	}
 }
 
+// The restore's own names in an archive (or left in a volume as files)
+// must not break the swap.
+func TestVolumeImportIgnoresReservedNames(t *testing.T) {
+	newFiles := map[string]string{"data.db": "new"}
+	poisoned := map[string]string{"data.db": "new", ".dockmesh-restore-old/x": "a", ".dockmesh-restore-new/y": "b", ".dockmesh-restore-swap": ""}
+	for _, replace := range []bool{true, false} {
+		dir := t.TempDir()
+		writeTree(t, dir, map[string]string{"data.db": "old", ".dockmesh-restore-trash": "file"})
+		if code := runScript(t, dir, VolumeImportScript(replace, 0), archive(t, poisoned)); code != 0 {
+			t.Fatalf("replace=%v: exit %d", replace, code)
+		}
+		sameTree(t, "after restore", readTree(t, dir), newFiles)
+	}
+}
+
+func TestVolumeExportSkipsReservedNames(t *testing.T) {
+	src := t.TempDir()
+	writeTree(t, src, map[string]string{"keep/a": "1", ".dockmesh-restore-old/x": "2", ".dockmesh-restore-new": "3"})
+	out := filepath.Join(t.TempDir(), "a.tgz")
+	script := strings.ReplaceAll(VolumeExportScript, "/source", src) + " > " + out
+	if code := runScript(t, src, script, nil); code != 0 {
+		t.Fatalf("export exit %d", code)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if code := runScript(t, dir, "tar xzf - -C "+importDest, data); code != 0 {
+		t.Fatalf("extract exit %d", code)
+	}
+	sameTree(t, "exported", readTree(t, dir), map[string]string{"keep/a": "1"})
+}
+
 func TestVolumeImportRecoversBeforeExtracting(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"data.db": "old"})

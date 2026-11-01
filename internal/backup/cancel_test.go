@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -93,13 +94,14 @@ func useStallTarget(t *testing.T, st *stallTarget) {
 	t.Cleanup(func() { wrapRunTarget = prev })
 }
 
-// hookHost records hooks; the hook in container "slow" blocks until its
-// context ends, the one in "slowpost" until release is closed. With
-// stallSource the volume stream stops after its first chunk.
+// hookHost records hooks; the hooks in containers "slow" and "slowpost"
+// block until release is closed. With stallSource the volume stream stops
+// after its first chunk.
 type hookHost struct {
 	*fakeHost
 	stallSource bool
 	release     chan struct{}
+	inSlow      atomic.Bool
 
 	mu       sync.Mutex
 	ran      []string
@@ -119,19 +121,15 @@ func (h *hookHost) VolumeTar(ctx context.Context, name string) (io.ReadCloser, e
 }
 
 func (h *hookHost) ContainerExec(ctx context.Context, container string, _ []string) ([]byte, int, error) {
-	switch container {
-	case "slow":
-		<-ctx.Done()
-		return nil, -1, ctx.Err()
-	case "slowpost":
+	if container == "slow" || container == "slowpost" {
+		h.inSlow.Store(true)
 		<-h.release
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.ran = append(h.ran, container)
-	if container == "slowpost" || container == "post" {
-		h.postErrs = append(h.postErrs, ctx.Err())
-	}
+	// No hook may run on a cancelled context: docker cannot stop an exec.
+	h.postErrs = append(h.postErrs, ctx.Err())
 	return nil, 0, nil
 }
 
@@ -200,9 +198,16 @@ func TestCancelBackupRunAtEachStep(t *testing.T) {
 		wantHooks     string
 	}{
 		{
-			name: "pre-hooks", step: StepPreHooks, wantCancelled: true,
-			pre:  []Hook{{Container: "ok", Cmd: []string{"true"}}, {Container: "slow", Cmd: []string{"sleep"}}},
-			post: []Hook{{Container: "post", Cmd: []string{"true"}}}, wantHooks: "ok,post",
+			name: "pre-hooks, second hook", step: StepPreHooks, wantCancelled: true,
+			pre: []Hook{{Container: "ok", Cmd: []string{"true"}}, {Container: "slow", Cmd: []string{"sleep"}},
+				{Container: "never", Cmd: []string{"true"}}},
+			post: []Hook{{Container: "post", Cmd: []string{"true"}}}, wantHooks: "ok,slow,post",
+		},
+		{
+			// The running hook finishes, so the post-hooks still undo it.
+			name: "pre-hooks, first hook", step: StepPreHooks, wantCancelled: true,
+			pre:  []Hook{{Container: "slow", Cmd: []string{"sleep"}}, {Container: "never", Cmd: []string{"true"}}},
+			post: []Hook{{Container: "post", Cmd: []string{"true"}}}, wantHooks: "slow,post",
 		},
 		{
 			name: "archive, source stalled", step: StepArchive, wantCancelled: true, stallSource: true,
@@ -249,7 +254,8 @@ func TestCancelBackupRunAtEachStep(t *testing.T) {
 			waitFor(t, c.step+" running and cancellable", func() bool {
 				op := runOp(t, ops, run.ID)
 				opID = op.ID
-				return op.Cancellable && stepOf(op, c.step).Status == operations.StepRunning
+				inHook := c.step != StepPreHooks && c.step != StepPostHooks || host.inSlow.Load()
+				return op.Cancellable && stepOf(op, c.step).Status == operations.StepRunning && inHook
 			})
 			if err := ops.Cancel(opID); err != nil {
 				t.Fatalf("cancel: %v", err)
@@ -286,7 +292,7 @@ func TestCancelBackupRunAtEachStep(t *testing.T) {
 			}
 			for _, err := range postErrs {
 				if err != nil {
-					t.Fatalf("post-hook ran with a cancelled context: %v", err)
+					t.Fatalf("hook ran with a cancelled context: %v", err)
 				}
 			}
 			if !svc.claim(job.ID) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"sync/atomic"
 	"time"
 
@@ -87,6 +88,13 @@ func stopCause(ctx context.Context) error {
 		return c
 	}
 	return nil
+}
+
+// isTimeout reports a connection whose idle deadline passed: the target
+// stopped answering.
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 // touchReader marks activity on every read that returns data.

@@ -770,7 +770,7 @@ func helperExitCode(cli *client.Client, id string) (int64, error) {
 }
 
 // runVolumeExportStream creates a temporary busybox container that mounts
-// the named volume read-only and runs `tar czf - -C /source .`, streaming
+// the named volume read-only and runs agents.VolumeExportScript, streaming
 // the gzipped archive to the server via stream.data frames. tar's exit
 // status decides whether the stream ends cleanly.
 func runVolumeExportStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) error {
@@ -784,7 +784,7 @@ func runVolumeExportStream(conn *websocket.Conn, cli *client.Client, open agents
 	}
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:        helperImage,
-		Cmd:          []string{"sh", "-c", "tar czf - -C /source ."},
+		Cmd:          []string{"sh", "-c", agents.VolumeExportScript},
 		AttachStdout: true,
 		AttachStderr: true,
 	}, &container.HostConfig{
@@ -865,6 +865,9 @@ func runVolumeImportStream(conn *websocket.Conn, cli *client.Client, open agents
 		return fmt.Errorf("start: %w", err)
 	}
 	if err := reg.pumpInput(conn, hijack.Conn); err != nil {
+		kctx, cancel := context.WithTimeout(context.Background(), helperTimeout)
+		_ = cli.ContainerKill(kctx, resp.ID, "KILL")
+		cancel()
 		return err
 	}
 	_ = hijack.CloseWrite()

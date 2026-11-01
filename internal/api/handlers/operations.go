@@ -207,6 +207,10 @@ func (h *Handlers) CancelOperation(w http.ResponseWriter, r *http.Request) {
 		hostID = "local"
 	}
 	res := h.stackScopeReq(hostID, op.Stack)
+	if op.Kind == opBackupRun {
+		// Starting a run is checked on the job's host, never on a stack.
+		res = h.hostScopeReq(hostID)
+	}
 	if perm == "" || !middleware.AllowedOn(r.Context(), perm, res) {
 		writeError(w, http.StatusForbidden, "cancelling this needs the "+string(perm)+" permission")
 		return

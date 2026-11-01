@@ -52,7 +52,7 @@ export function cancelConsequence(op: Operation): string {
   if (op.status === 'queued') return 'It is taken out of the queue and does not start.';
   switch (op.kind) {
     case 'backup.run':
-      return 'The run stops and is recorded as failed. Post-backup hooks still run, and the unfinished archive is deleted from the target.';
+      return 'The run stops and is recorded as failed. A hook that is running finishes first, post-backup hooks still run, and the unfinished archive is deleted from the target.';
     case 'backup.restore':
       return 'The restore stops before anything is written. The volumes and stack files keep their current contents.';
     case 'image.update':
