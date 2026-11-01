@@ -1,3 +1,3 @@
 kind: Upgrade notes
-body: On the first start the stored container metrics are moved to a layout keyed by host; every sample is kept. Update agents to record history on their hosts. Alert and autoscaling thresholds on CPU keep their per-core meaning (100 per busy core), and metric alert rules still evaluate containers on the server host only.
+body: "[update-agents, admins] Container metrics are moved to a layout keyed by host on the first start, keeping every sample. Update agents to record history on their hosts; until then their charts show live values. CPU thresholds of alert and autoscaling rules keep their per-core meaning (100 per busy core), and metric alert rules evaluate containers on the server host only"
 time: 2026-11-01T18:24:24.0428796+01:00
