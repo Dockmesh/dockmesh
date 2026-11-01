@@ -2331,7 +2331,7 @@
     border-bottom: 1px solid var(--border);
   }
   .ctn-port-row:last-child { border-bottom: 0; }
-  .ctn-port-name {}
+  .ctn-port-name { font-family: var(--font-mono); }
   .ctn-port-note {
     font-size: 11.5px;
     color: var(--fg-subtle);

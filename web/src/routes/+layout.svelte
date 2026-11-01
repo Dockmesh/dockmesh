@@ -14,7 +14,6 @@
   import Menu, { type MenuItem } from '$lib/components/ui/Menu.svelte';
   import NotificationCenter from '$lib/components/ui/NotificationCenter.svelte';
   import NoticeBanner from '$lib/components/ui/NoticeBanner.svelte';
-  import BackupHealthPill from '$lib/components/BackupHealthPill.svelte';
   import MigrationActivePill from '$lib/components/MigrationActivePill.svelte';
   import MigrationsDialog from '$lib/components/MigrationsDialog.svelte';
   import OperationsIndicator from '$lib/components/operations/OperationsIndicator.svelte';
@@ -336,7 +335,6 @@
         <div class="pills" aria-live="polite">
           <OperationsIndicator />
           <MigrationActivePill onOpen={() => (migDialogOpen = true)} />
-          <BackupHealthPill />
         </div>
 
         {#if hosts.available.length > 0 && lensHost}
@@ -350,7 +348,7 @@
           </Menu>
         {/if}
 
-        <span class="tb-bell"><NotificationCenter /></span>
+        <NotificationCenter />
 
         <button
           type="button"
@@ -436,20 +434,11 @@
     font: inherit;
   }
   .topbar :global(.tb-btn:hover) { border-color: var(--accent); }
-  .tb-icon { width: 32px; justify-content: center; padding: 0 !important; }
+  .topbar :global(.tb-icon) { width: 32px; justify-content: center; padding: 0 !important; }
   .lens-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .lensdot { width: 8px; height: 8px; border-radius: 4px; background: var(--ok); flex: none; }
   .lensdot.all { background: var(--accent); }
   .lensdot.warn { background: var(--bad); }
-  .tb-bell :global(> button) {
-    width: 32px !important;
-    height: 32px !important;
-    border: 1px solid var(--border) !important;
-    border-radius: var(--r) !important;
-    background: var(--surface) !important;
-    color: var(--fg) !important;
-  }
-  .tb-bell :global(> button:hover) { border-color: var(--accent) !important; }
   .page { flex: 1; min-width: 0; padding: 22px 32px 48px; }
   .settings-wrap {
     display: grid;

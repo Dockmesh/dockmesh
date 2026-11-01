@@ -1,355 +1,216 @@
 <script lang="ts">
-  // Notification Center — bell icon in the top-bar + a right-aligned
-  // side drawer. The drawer is portalled to document.body via a
-  // Svelte action so it escapes any ancestor with `transform`,
-  // `filter`, `perspective`, `will-change`, or `contain` set — any
-  // of those re-roots `position: fixed` onto that ancestor (CSS
-  // containing-block rule), which silently broke our previous
-  // in-tree drawer rendering. Inline-styled across the board so the
-  // editorial token cascade can't blank anything out either.
-  import {
-    api, ApiError,
-    type NotificationItem,
-  } from '$lib/api';
-  import { toast } from '$lib/stores/toast.svelte';
-  import { notices } from '$lib/stores/notices.svelte';
-  import { noticeAction, sortNotices } from '$lib/notices';
-  import NoticeLabel from './NoticeLabel.svelte';
-  import NoticeBody from './NoticeBody.svelte';
   import { goto } from '$app/navigation';
-  import {
-    Bell, X, CheckCheck, CheckCircle2, XCircle, AlertTriangle, Info, Trash2, ArrowRight,
-  } from 'lucide-svelte';
+  import { api, type NotificationItem } from '$lib/api';
+  import { fmtAgo } from '$lib/format';
+  import { badgeText } from '$lib/activity';
+  import { Bell } from 'lucide-svelte';
 
-  type Filter = 'all' | 'unread';
+  // Bell in the top bar: unread count and a short list of the latest
+  // notifications. The full history lives on the Activity page.
+  const LIMIT = 8;
 
   let open = $state(false);
   let unread = $state(0);
   let items = $state<NotificationItem[]>([]);
   let loading = $state(false);
-  let filter = $state<Filter>('all');
-  // Open notices count towards the badge: they stay until resolved, so
-  // they can't be "read" away like feed entries.
-  const badge = $derived(unread + notices.items.length);
+  let root = $state<HTMLElement | null>(null);
+  let trigger = $state<HTMLButtonElement | null>(null);
+
+  const badge = $derived(badgeText(unread));
 
   $effect(() => {
     let cancelled = false;
     async function refresh() {
       try {
-        if (open) {
-          await loadList();
-        } else {
-          const r = await api.notifications.unreadCount();
-          if (!cancelled) unread = r.unread;
-        }
-      } catch { /* tolerate poll failures */ }
+        const r = await api.notifications.unreadCount();
+        if (!cancelled) unread = r.unread;
+      } catch {
+        /* keep the last count on poll failures */
+      }
     }
     refresh();
     const id = setInterval(refresh, 30_000);
-    return () => { cancelled = true; clearInterval(id); };
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   });
 
   async function loadList() {
     loading = true;
     try {
-      items = await api.notifications.list({
-        unread: filter === 'unread',
-        limit: 100,
-      });
-      unread = items.filter((n) => !n.read_at).length;
-    } catch (err) {
-      toast.error('Load notifications failed', err instanceof ApiError ? err.message : undefined);
+      items = await api.notifications.list({ limit: LIMIT });
+    } catch {
+      items = [];
     } finally {
       loading = false;
     }
   }
 
-  async function markRead(n: NotificationItem) {
-    if (n.read_at) return;
-    try {
-      await api.notifications.markRead(n.id);
-      n.read_at = new Date().toISOString();
-      unread = Math.max(0, unread - 1);
-    } catch { /* non-fatal */ }
+  function toggle() {
+    open = !open;
+    if (open) loadList();
+  }
+  function close(refocus = false) {
+    open = false;
+    if (refocus) trigger?.focus();
+  }
+
+  $effect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (root && !root.contains(e.target as Node)) close();
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  });
+
+  async function openItem(n: NotificationItem) {
+    if (!n.read_at) {
+      try {
+        await api.notifications.markRead(n.id);
+        unread = Math.max(0, unread - 1);
+      } catch {
+        /* opening still works */
+      }
+    }
+    close();
+    if (n.link) goto(n.link);
   }
 
   async function markAllRead() {
     try {
       await api.notifications.markAllRead();
       const now = new Date().toISOString();
-      items = items.map((n) => n.read_at ? n : { ...n, read_at: now });
+      items = items.map((n) => (n.read_at ? n : { ...n, read_at: now }));
       unread = 0;
-    } catch (err) {
-      toast.error('Mark all read failed', err instanceof ApiError ? err.message : undefined);
+    } catch {
+      /* the count refreshes on the next poll */
     }
   }
 
-  async function remove(n: NotificationItem) {
-    try {
-      await api.notifications.delete(n.id);
-      items = items.filter((x) => x.id !== n.id);
-      if (!n.read_at) unread = Math.max(0, unread - 1);
-    } catch (err) {
-      toast.error('Delete failed', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  async function openItem(n: NotificationItem) {
-    await markRead(n);
-    if (n.link) {
-      open = false;
-      await goto(n.link);
-    }
-  }
-
-  function openDrawer() {
-    open = true;
-    filter = 'all';
-    loadList();
-    notices.refresh();
-  }
-
-  async function openNotice(link?: string) {
-    if (!link) return;
-    open = false;
-    await goto(link);
-  }
-
-  function severityColor(s: string): string {
-    if (s === 'success') return '#16a34a';
-    if (s === 'warning') return '#d97706';
-    if (s === 'error' || s === 'critical') return '#dc2626';
-    return '#64748b';
-  }
-
-  function relTime(iso: string): string {
-    const d = new Date(iso).getTime();
-    const diff = Date.now() - d;
-    const m = Math.floor(diff / 60_000);
-    if (m < 1) return 'just now';
-    if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h ago`;
-    const days = Math.floor(h / 24);
-    if (days < 30) return `${days}d ago`;
-    return new Date(iso).toLocaleDateString();
-  }
-
-  // Portal action — moves the node to document.body on mount so the
-  // drawer's position:fixed is anchored to the viewport, not to some
-  // transformed ancestor in the app shell.
-  function portal(node: HTMLElement) {
-    document.body.appendChild(node);
-    return {
-      destroy() {
-        if (node.parentNode === document.body) {
-          document.body.removeChild(node);
-        }
-      },
-    };
-  }
-
-  // Use the editorial CSS variables — they're defined on :root and
-  // get inherited even when the element is portalled to document.body
-  // (CSS variables cascade through the entire document tree, not the
-  // component tree). Fallbacks are dark-mode tones for the moment
-  // before the theme cascade is applied.
-  const dark    = 'var(--surface, #111c32)';
-  const darker  = 'var(--bg, #0b1424)';
-  const fg      = 'var(--fg, #f1f5f9)';
-  const fgMuted = 'var(--fg-muted, #94a3b8)';
-  const border  = 'var(--border, #1e293b)';
-  const brand   = 'var(--color-brand-500, #2563eb)';
-  // Light/dark-agnostic neutral fill — a 12% grey that reads on both
-  // themes without needing two separate tokens.
-  const subtleFill = 'rgba(127, 127, 127, 0.12)';
-  const subtleFillStrong = 'rgba(127, 127, 127, 0.18)';
-  const unreadTint = 'color-mix(in srgb, var(--color-brand-500, #2563eb) 8%, transparent)';
+  const TONE: Record<string, string> = { success: 'ok', warning: 'warn', error: 'bad', critical: 'bad' };
 </script>
 
-<button
-  type="button"
-  onclick={openDrawer}
-  aria-label="Notifications · {badge} need attention"
-  title="Notifications"
-  style="position: relative; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--fg-muted, #94a3b8); cursor: pointer;"
->
-  <Bell size={13} strokeWidth={1.5} />
-  {#if badge > 0}
-    <span style="position: absolute; top: -3px; right: -3px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: #dc2626; color: #ffffff; font-size: 9px; font-weight: 600; line-height: 14px; text-align: center;">
-      {badge > 99 ? '99+' : badge}
-    </span>
-  {/if}
-</button>
+<div class="nc" bind:this={root}>
+  <button
+    type="button"
+    class="tb-btn tb-icon bell"
+    bind:this={trigger}
+    onclick={toggle}
+    aria-haspopup="dialog"
+    aria-expanded={open}
+    aria-label={unread ? `Notifications, ${unread} unread` : 'Notifications'}
+    title="Notifications"
+  >
+    <Bell size={15} />
+    {#if badge}<span class="count" aria-hidden="true">{badge}</span>{/if}
+  </button>
 
-{#if open}
-  <!-- Portalled to <body> so position:fixed actually anchors to the
-       viewport. Backdrop + drawer share the same node so the action
-       moves both together; the drawer sits on top via flex order. -->
-  <div use:portal>
-    <!-- Backdrop -->
+  {#if open}
     <div
-      onclick={() => (open = false)}
-      onkeydown={(e) => { if (e.key === 'Escape') open = false; }}
-      role="button"
-      tabindex="-1"
-      aria-label="Close notifications"
-      style="position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); z-index: 9998;"
-    ></div>
-
-    <!-- Side drawer -->
-    <aside
+      class="pop"
       role="dialog"
-      aria-label="Notifications"
-      style="position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 92vw); background-color: {dark}; color: {fg}; border-left: 1px solid {border}; box-shadow: -12px 0 40px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; z-index: 9999; overflow: hidden;"
+      aria-label="Latest notifications"
+      tabindex="-1"
+      onkeydown={(e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation();
+          close(true);
+        }
+      }}
     >
-      <!-- Header -->
-      <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid {border}; background-color: {darker}; flex-shrink: 0;">
-        <div style="display: inline-flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; color: {fg};">
-          <Bell size={15} strokeWidth={1.5} />
-          <span>Notifications</span>
-          {#if unread > 0}
-            <span style="font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: #dc2626; color: #ffffff;">{unread}</span>
-          {/if}
-        </div>
-        <button
-          onclick={() => (open = false)}
-          aria-label="Close"
-          style="background: transparent; border: 0; padding: 6px; border-radius: 4px; color: {fgMuted}; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;"
-        >
-          <X size={16} strokeWidth={1.5} />
-        </button>
+      <div class="h">
+        <b>Notifications</b>
+        <span class="dm-sp"></span>
+        {#if unread > 0}<button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={markAllRead}>Mark all read</button>{/if}
       </div>
-
-      <!-- Toolbar -->
-      <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 18px; border-bottom: 1px solid {border}; gap: 8px; background-color: {dark}; flex-shrink: 0;">
-        <div style="display: flex; gap: 6px;">
-          <button
-            type="button"
-            onclick={() => { filter = 'all'; loadList(); }}
-            style="background-color: {filter === 'all' ? brand : subtleFill}; border: 1px solid {filter === 'all' ? brand : border}; border-radius: 999px; padding: 5px 14px; font-size: 12px; font-weight: 500; color: {filter === 'all' ? '#ffffff' : fg}; cursor: pointer;"
-          >All</button>
-          <button
-            type="button"
-            onclick={() => { filter = 'unread'; loadList(); }}
-            style="background-color: {filter === 'unread' ? brand : subtleFill}; border: 1px solid {filter === 'unread' ? brand : border}; border-radius: 999px; padding: 5px 14px; font-size: 12px; font-weight: 500; color: {filter === 'unread' ? '#ffffff' : fg}; cursor: pointer;"
-          >
-            Unread{#if unread > 0} · {unread}{/if}
-          </button>
-        </div>
-        {#if unread > 0}
-          <button
-            type="button"
-            onclick={markAllRead}
-            title="Mark all as read"
-            style="background-color: transparent; border: 1px solid {border}; border-radius: 6px; color: {fgMuted}; font-size: 11.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px;"
-          >
-            <CheckCheck size={12} strokeWidth={1.5} />
-            <span>Mark all read</span>
-          </button>
-        {/if}
-      </div>
-
-      <!-- Body -->
-      <div style="flex: 1 1 auto; overflow-y: auto; min-height: 0; background-color: {dark};">
-        {#if notices.items.length > 0}
-          <div style="padding: 8px 18px 6px; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: {fgMuted}; font-family: var(--font-mono, monospace);">Notices</div>
-          {#each sortNotices(notices.items) as n (n.id)}
-            {@const sev = severityColor(n.severity)}
-            <div style="display: flex; align-items: stretch; border-bottom: 1px solid {border}; background-color: {unreadTint};">
-              <div style="width: 3px; flex-shrink: 0; background-color: {sev};"></div>
-              <button
-                type="button"
-                onclick={() => openNotice(n.link)}
-                style="flex: 1; display: block; padding: 12px 18px 12px 14px; background-color: transparent; border: 0; text-align: left; color: {fg}; cursor: {n.link ? 'pointer' : 'default'}; min-width: 0;"
-              >
-                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                  <NoticeLabel severity={n.severity} />
-                  <span style="font-size: 13px; line-height: 1.4; color: {fg}; font-weight: 600;">{n.title}</span>
-                </div>
-                {#if n.body}
-                  <div style="margin-top: 6px; font-size: 12px;"><NoticeBody body={n.body} /></div>
-                {/if}
-                <div style="margin-top: 6px; display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: {fgMuted};">
-                  <span>{relTime(n.created_at)}</span>
-                  {#if n.link}
-                    <span style="display: inline-flex; align-items: center; gap: 3px; color: {fg};">{noticeAction(n)} <ArrowRight size={10} strokeWidth={1.6} /></span>
-                  {/if}
-                </div>
+      {#if loading && items.length === 0}
+        <div class="empty">Loading…</div>
+      {:else if items.length === 0}
+        <div class="empty">No notifications yet.</div>
+      {:else}
+        <ul>
+          {#each items as n (n.id)}
+            <li>
+              <button type="button" class="it" class:unread={!n.read_at} onclick={() => openItem(n)} title={n.body ?? n.title}>
+                <span class="dm-dot {TONE[n.severity] ?? ''}"></span>
+                <span class="t">{n.title}</span>
+                <span class="k dm-num" title={new Date(n.created_at).toLocaleString()}>{fmtAgo(n.created_at)}</span>
               </button>
-            </div>
+            </li>
           {/each}
-          <div style="padding: 10px 18px 6px; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: {fgMuted}; font-family: var(--font-mono, monospace);">Notifications</div>
-        {/if}
-        {#if loading && items.length === 0}
-          <div style="padding: 64px 24px; text-align: center; color: {fgMuted}; font-size: 13px;">Loading…</div>
-        {:else if items.length === 0}
-          <div style="padding: 64px 24px 32px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px;">
-            <div style="width: 56px; height: 56px; border-radius: 50%; background-color: rgba(127, 127, 127, 0.12); display: flex; align-items: center; justify-content: center; color: {fgMuted}; margin-bottom: 6px;">
-              <Bell size={28} strokeWidth={1.2} />
-            </div>
-            <div style="font-size: 14px; font-weight: 500; color: {fg};">
-              {filter === 'unread' ? "You're all caught up" : 'No notifications yet'}
-            </div>
-            <div style="font-size: 12px; color: {fgMuted}; max-width: 280px; line-height: 1.5;">
-              {filter === 'unread'
-                ? 'No unread notifications.'
-                : 'Deploy events, alerts, and backup runs will appear here.'}
-            </div>
-          </div>
-        {:else}
-          <div>
-            {#each items as n (n.id)}
-              {@const sev = severityColor(n.severity)}
-              <div
-                style="position: relative; display: flex; align-items: stretch; border-bottom: 1px solid {border}; background-color: {!n.read_at ? unreadTint : 'transparent'};"
-              >
-                <div style="width: 3px; flex-shrink: 0; background-color: {sev};"></div>
-                <button
-                  type="button"
-                  onclick={() => openItem(n)}
-                  style="flex: 1; display: flex; align-items: flex-start; gap: 10px; padding: 12px 8px 12px 14px; background-color: transparent; border: 0; text-align: left; color: {fg}; cursor: pointer; min-width: 0;"
-                >
-                  <div style="flex-shrink: 0; margin-top: 1px; color: {sev};">
-                    {#if n.severity === 'success'}
-                      <CheckCircle2 size={16} strokeWidth={1.6} />
-                    {:else if n.severity === 'warning'}
-                      <AlertTriangle size={16} strokeWidth={1.6} />
-                    {:else if n.severity === 'error'}
-                      <XCircle size={16} strokeWidth={1.6} />
-                    {:else}
-                      <Info size={16} strokeWidth={1.6} />
-                    {/if}
-                  </div>
-                  <div style="flex: 1; min-width: 0;">
-                    <div style="font-size: 13px; line-height: 1.4; color: {fg}; font-weight: {!n.read_at ? 600 : 500};">
-                      {n.title}
-                    </div>
-                    {#if n.body}
-                      <div style="margin-top: 3px; font-size: 11.5px; color: {fgMuted}; line-height: 1.45; word-break: break-word;">
-                        {n.body}
-                      </div>
-                    {/if}
-                    <div style="margin-top: 5px; display: flex; align-items: center; gap: 10px; font-size: 10.5px; color: {fgMuted};">
-                      <span>{relTime(n.created_at)}</span>
-                      <span style="padding: 1px 6px; border-radius: 3px; background-color: rgba(127, 127, 127, 0.15); font-family: var(--font-mono, monospace);">{n.kind}</span>
-                    </div>
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onclick={() => remove(n)}
-                  title="Remove"
-                  aria-label="Remove notification"
-                  style="background-color: transparent; border: 0; padding: 14px; color: {fgMuted}; cursor: pointer; display: flex; align-items: flex-start;"
-                >
-                  <Trash2 size={12} strokeWidth={1.5} />
-                </button>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    </aside>
-  </div>
-{/if}
+        </ul>
+      {/if}
+      <a class="all" href="/activity?tab=notifications" onclick={() => close()}>View all in Activity</a>
+    </div>
+  {/if}
+</div>
+
+<style>
+  .nc { position: relative; }
+  .bell { position: relative; }
+  .count {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--bad);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  :global([data-theme='dark']) .count { color: #1a0505; }
+  .pop {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    width: 360px;
+    background: var(--menu);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    box-shadow: var(--pop);
+    z-index: 60;
+    padding: 4px;
+    outline: none;
+  }
+  .h { display: flex; align-items: center; gap: 8px; padding: 8px 10px 6px; font-size: var(--fs-sm); }
+  ul { list-style: none; margin: 0; padding: 0; }
+  .it {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 34px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: var(--r-sm);
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-sm);
+    cursor: pointer;
+    text-align: left;
+  }
+  .it:hover, .it:focus-visible { background: var(--field); color: var(--fg); outline: none; }
+  .it.unread { color: var(--fg); font-weight: 600; }
+  .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .k { color: var(--subtle); font-size: var(--fs-xs); font-weight: 400; }
+  .empty { padding: 18px 10px; color: var(--subtle); font-size: var(--fs-sm); text-align: center; }
+  .all {
+    display: block;
+    margin-top: 4px;
+    padding: 8px 10px;
+    border-top: 1px solid var(--border);
+    color: var(--accent);
+    font-size: var(--fs-sm);
+    text-decoration: none;
+  }
+  .all:hover { text-decoration: underline; }
+</style>
