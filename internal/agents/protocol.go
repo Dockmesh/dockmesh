@@ -94,6 +94,15 @@ const (
 	// shape (no stdin, bounded stdout, we need the exit code).
 	FrameReqContainerExecRun = "req.container.exec_run"
 
+	// Container files (browse, preview, upload/edit, delete), answered by
+	// agents advertising CapContainerFiles. Downloads use the
+	// "container_file" stream kind after a stat.
+	FrameReqContainerFilesList   = "req.container.files.list"
+	FrameReqContainerFilesRead   = "req.container.files.read"
+	FrameReqContainerFilesStat   = "req.container.files.stat"
+	FrameReqContainerFilesWrite  = "req.container.files.write"
+	FrameReqContainerFilesDelete = "req.container.files.delete"
+
 	// Compose-file mirroring (P.7) — server pushes the canonical
 	// compose+env content to the agent after a successful deploy so
 	// each agent retains a local copy in case the main server is lost.
@@ -130,7 +139,7 @@ const (
 // ProtocolVersion is bumped whenever a frame or capability is added.
 // Agents that report an older version (or none) still work; the server
 // skips what they lack and recommends an update.
-const ProtocolVersion = 2
+const ProtocolVersion = 3
 
 // MaxFrameBytes bounds one inbound frame on either side; the largest
 // legitimate ones are 1 MiB file reads and exec output, base64-encoded.
@@ -149,6 +158,9 @@ const (
 	// CapVolumeStaged, agent: a replace restore extracts into a staging
 	// directory and swaps only after tar succeeded (VolumeImportScript).
 	CapVolumeStaged = "volume_import.staged"
+	// CapContainerFiles, agent: answers the req.container.files.* frames
+	// and serves the "container_file" stream kind.
+	CapContainerFiles = "container_files"
 )
 
 // Stream control ops beyond the exec "resize".
@@ -296,6 +308,18 @@ type ContainerExecRunReq struct {
 	Container      string   `json:"container"`
 	Cmd            []string `json:"cmd"`
 	MaxOutputBytes int64    `json:"max_output_bytes,omitempty"`
+}
+
+// ContainerFileReq is the payload of the req.container.files.* frames
+// and the params of the "container_file" stream. Path is absolute inside
+// the container; Data and Mode are only used by writes, MaxBytes only by
+// reads.
+type ContainerFileReq struct {
+	Container string `json:"container"`
+	Path      string `json:"path"`
+	MaxBytes  int64  `json:"max_bytes,omitempty"`
+	Data      []byte `json:"data,omitempty"`
+	Mode      int64  `json:"mode,omitempty"`
 }
 
 // ContainerExecRunRes is the response.

@@ -608,6 +608,14 @@ func agentBrowseError(err error) error {
 		ErrVolumeNotDir,
 		ErrVolumeNotFile,
 		ErrVolumeMountpointMissing,
+		ErrContainerPathInvalid,
+		ErrContainerNotDir,
+		ErrContainerNotFile,
+		ErrContainerPathDenied,
+		ErrContainerSymlink,
+		ErrContainerFileTooLarge,
+		ErrContainerDirTooLarge,
+		ErrContainerNoRm,
 	} {
 		if strings.Contains(msg, kind.Error()) {
 			return &agentError{err: err, kind: kind}
@@ -692,24 +700,76 @@ func (h *RemoteHost) CleanupPreview(ctx context.Context, name string) (*compose.
 	return nil, fmt.Errorf("resource cleanup on remote hosts is not yet implemented — the agent needs matching frame types (follow-up slice)")
 }
 
-// Container file-browser ops aren't carried by the agent protocol yet —
-// the central server can't CopyFromContainer against a remote daemon
-// without a matching frame type. Return clear errors so handlers 501
-// rather than emitting a confusing "frame not handled".
+// ErrAgentNoContainerFiles is returned for container file access on an
+// agent that predates the container file frames.
+var ErrAgentNoContainerFiles = errors.New("the agent on this host is too old to access container files; update it from the Hosts page")
+
+// fileRequest sends a container file frame to an agent that serves them.
+// The agent runs the same containerfs functions against its own daemon.
+func (h *RemoteHost) fileRequest(ctx context.Context, frameType string, req agents.ContainerFileReq, out any) error {
+	ag, err := h.live()
+	if err != nil {
+		return err
+	}
+	if !ag.Hello.Has(agents.CapContainerFiles) {
+		return ErrAgentNoContainerFiles
+	}
+	data, err := h.request(ctx, frameType, req)
+	if err != nil {
+		return agentBrowseError(err)
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("decode %s: %w", frameType, err)
+	}
+	return nil
+}
+
 func (h *RemoteHost) ContainerBrowseEntries(ctx context.Context, id, p string) ([]VolumeEntry, error) {
-	return nil, fmt.Errorf("browsing container files is available on the server host only; agent hosts follow in a later release")
+	var out []VolumeEntry
+	err := h.fileRequest(ctx, agents.FrameReqContainerFilesList, agents.ContainerFileReq{Container: id, Path: p}, &out)
+	return out, err
 }
 
 func (h *RemoteHost) ContainerReadFile(ctx context.Context, id, p string, maxBytes int64) (*VolumeFileResult, error) {
-	return nil, fmt.Errorf("browsing container files is available on the server host only; agent hosts follow in a later release")
+	var out VolumeFileResult
+	if err := h.fileRequest(ctx, agents.FrameReqContainerFilesRead,
+		agents.ContainerFileReq{Container: id, Path: p, MaxBytes: maxBytes}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
+// ContainerDownloadFile checks the file with a stat frame, so a bad path
+// fails before any bytes are sent, then streams its content.
 func (h *RemoteHost) ContainerDownloadFile(ctx context.Context, id, p string) (io.ReadCloser, string, int64, error) {
-	return nil, "", 0, fmt.Errorf("browsing container files is available on the server host only; agent hosts follow in a later release")
+	var st ContainerFileStat
+	if err := h.fileRequest(ctx, agents.FrameReqContainerFilesStat, agents.ContainerFileReq{Container: id, Path: p}, &st); err != nil {
+		return nil, "", 0, err
+	}
+	ag, err := h.live()
+	if err != nil {
+		return nil, "", 0, err
+	}
+	s, err := ag.OpenStream(ctx, "container_file", id, map[string]any{"path": p})
+	if err != nil {
+		return nil, "", 0, fmt.Errorf("open container_file stream: %w", err)
+	}
+	return s, st.Name, st.Size, nil
 }
 
 func (h *RemoteHost) ContainerWriteFile(ctx context.Context, id, p string, data []byte, mode int64) error {
-	return fmt.Errorf("browsing container files is available on the server host only; agent hosts follow in a later release")
+	if len(data) > MaxContainerUploadBytes {
+		return ErrContainerFileTooLarge
+	}
+	return h.fileRequest(ctx, agents.FrameReqContainerFilesWrite,
+		agents.ContainerFileReq{Container: id, Path: p, Data: data, Mode: mode}, nil)
+}
+
+func (h *RemoteHost) ContainerDeleteFile(ctx context.Context, id, p string) error {
+	return h.fileRequest(ctx, agents.FrameReqContainerFilesDelete, agents.ContainerFileReq{Container: id, Path: p}, nil)
 }
 
 // Errors

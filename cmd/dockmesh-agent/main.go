@@ -599,6 +599,8 @@ func startStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpe
 		err = runVolumeImportStream(conn, cli, open, reg)
 	case "events":
 		err = runEventsStream(conn, cli, reg)
+	case "container_file":
+		err = runContainerFileStream(conn, cli, open, reg)
 	default:
 		err = errors.New("unknown stream kind: " + open.Kind)
 	}
@@ -1068,6 +1070,11 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 			return
 		}
 		res, err := host.ReadVolumeFileOnHost(ctx, cli, req.Volume, mp, req.SubPath, req.MaxBytes)
+		respond(conn, f.ID, res, err)
+
+	case agents.FrameReqContainerFilesList, agents.FrameReqContainerFilesRead, agents.FrameReqContainerFilesStat,
+		agents.FrameReqContainerFilesWrite, agents.FrameReqContainerFilesDelete:
+		res, err := serveContainerFile(ctx, cli, f)
 		respond(conn, f.ID, res, err)
 
 	case agents.FrameReqDaemonInfo:

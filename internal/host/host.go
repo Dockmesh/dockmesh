@@ -107,6 +107,8 @@ type Host interface {
 	// ContainerWriteFile uploads a file into the container at the
 	// given absolute path. Parent dir must exist; mode defaults to 0644.
 	ContainerWriteFile(ctx context.Context, id, p string, data []byte, mode int64) error
+	// ContainerDeleteFile removes a file or symbolic link.
+	ContainerDeleteFile(ctx context.Context, id, p string) error
 
 	// Stack operations (slice 3.1.3). The handler reads the compose+env
 	// from the central server's filesystem once and passes the content
