@@ -750,17 +750,22 @@ func removeHelper(cli *client.Client, id string) {
 // helperExit waits for a helper container and turns a non-zero exit into
 // an error.
 func helperExit(cli *client.Client, id string) error {
+	code, err := helperExitCode(cli, id)
+	if err == nil && code != 0 {
+		return fmt.Errorf("tar exit %d", code)
+	}
+	return err
+}
+
+func helperExitCode(cli *client.Client, id string) (int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), helperTimeout)
 	defer cancel()
 	statusCh, errCh := cli.ContainerWait(ctx, id, container.WaitConditionNotRunning)
 	select {
 	case s := <-statusCh:
-		if s.StatusCode != 0 {
-			return fmt.Errorf("tar exit %d", s.StatusCode)
-		}
-		return nil
+		return s.StatusCode, nil
 	case err := <-errCh:
-		return err
+		return 0, err
 	}
 }
 
@@ -809,23 +814,33 @@ func runVolumeExportStream(conn *websocket.Conn, cli *client.Client, open agents
 }
 
 // runVolumeImportStream creates a temporary busybox container that mounts
-// the named volume and pipes incoming stream.data frames into `tar xzf -`.
-// Data that arrives before the helper runs waits in the stream's input
-// queue. The server ends its data with an eof control; the agent then
-// closes tar's stdin and reports tar's exit status in stream.close.
-func runVolumeImportStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) error {
+// the named volume and pipes incoming stream.data frames into
+// agents.VolumeImportScript. Data that arrives before the helper runs
+// waits in the stream's input queue. The server ends its data with an eof
+// control; the agent then closes the helper's stdin and reports its exit
+// status in stream.close. A stream that breaks off removes the helper
+// before tar sees an end of input, so a replace never swaps in a partial
+// archive; the volume is then put back with agents.VolumeRecoverScript.
+func runVolumeImportStream(conn *websocket.Conn, cli *client.Client, open agents.StreamOpen, reg *streamReg) (err error) {
 	ctx := reg.ctx
 	volumeName, _ := open.Params["volume"].(string)
 	replace, _ := open.Params["replace"].(bool)
+	need, _ := open.Params["need_bytes"].(float64)
 	if err := dockerwrap.CheckVolumeName(volumeName); err != nil {
 		return err
 	}
 	if err := ensureHelperImage(ctx, cli); err != nil {
 		return err
 	}
+	// Registered first so it runs after the import helper is gone.
+	defer func() {
+		if err != nil && replace {
+			recoverVolume(cli, volumeName)
+		}
+	}()
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:       helperImage,
-		Cmd:         []string{"sh", "-c", agents.VolumeImportScript(replace)},
+		Cmd:         []string{"sh", "-c", agents.VolumeImportScript(replace, int64(need))},
 		AttachStdin: true,
 		OpenStdin:   true,
 		StdinOnce:   true,
@@ -853,7 +868,36 @@ func runVolumeImportStream(conn *websocket.Conn, cli *client.Client, open agents
 		return err
 	}
 	_ = hijack.CloseWrite()
-	return helperExit(cli, resp.ID)
+	code, err := helperExitCode(cli, resp.ID)
+	if err != nil {
+		return err
+	}
+	return agents.VolumeImportExitError(code, replace)
+}
+
+// recoverVolume undoes what a failed replace restore left in the volume.
+func recoverVolume(cli *client.Client, volumeName string) {
+	ctx, cancel := context.WithTimeout(context.Background(), helperTimeout)
+	defer cancel()
+	resp, err := cli.ContainerCreate(ctx, &container.Config{
+		Image: helperImage,
+		Cmd:   []string{"sh", "-c", agents.VolumeRecoverScript()},
+	}, &container.HostConfig{
+		Binds:     []string{volumeName + ":/dest"},
+		LogConfig: container.LogConfig{Type: "none"},
+	}, nil, nil, "")
+	if err != nil {
+		slog.Warn("restore: clean up volume after a failed restore", "volume", volumeName, "err", err)
+		return
+	}
+	defer removeHelper(cli, resp.ID)
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		slog.Warn("restore: clean up volume after a failed restore", "volume", volumeName, "err", err)
+		return
+	}
+	if err := helperExit(cli, resp.ID); err != nil {
+		slog.Warn("restore: clean up volume after a failed restore", "volume", volumeName, "err", err)
+	}
 }
 
 // -----------------------------------------------------------------------------

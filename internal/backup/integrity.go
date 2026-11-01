@@ -19,14 +19,17 @@ var ErrArchiveMismatch = errors.New("archive does not match what the backup run 
 // readBack reads an uploaded archive back from the target and compares it
 // with what was written. A target can accept every write and still fail
 // or return other bytes on read, which otherwise only shows at restore.
-func readBack(ctx context.Context, t targets.Target, path string, size int64, sum string) error {
+// act, when set, is marked on every read, and the read is cut off when
+// ctx ends.
+func readBack(ctx context.Context, t targets.Target, path string, size int64, sum string, act *activity) error {
 	rc, err := t.Read(ctx, path)
 	if err != nil {
 		return fmt.Errorf("read back %s: %w", path, err)
 	}
 	defer rc.Close()
+	defer closeOnDone(ctx, rc.Close)()
 	h := sha256.New()
-	n, err := io.Copy(h, rc)
+	n, err := io.Copy(h, touchReader{r: rc, act: act})
 	if err != nil {
 		return fmt.Errorf("read back %s: %w", path, err)
 	}
@@ -41,12 +44,13 @@ func readBack(ctx context.Context, t targets.Target, path string, size int64, su
 // against the size and hash recorded at backup time, so a restore never
 // starts extracting bytes that differ from what was written. Closing the
 // returned reader removes the temp file.
-func fetchArchive(ctx context.Context, t targets.Target, run *Run) (io.ReadCloser, error) {
+func fetchArchive(ctx context.Context, t targets.Target, run *Run) (io.ReadSeekCloser, error) {
 	src, err := t.Read(ctx, run.TargetPath)
 	if err != nil {
 		return nil, err
 	}
 	defer src.Close()
+	defer closeOnDone(ctx, src.Close)()
 
 	tmp, err := os.CreateTemp("", "dm-restore-archive-*")
 	if err != nil {

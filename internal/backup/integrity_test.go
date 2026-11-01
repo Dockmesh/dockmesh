@@ -94,7 +94,7 @@ func TestArchiveIntegrity(t *testing.T) {
 			tg := &readTarget{stored: tt.served, reader: tt.reader}
 			run := &Run{TargetPath: "jobs/a/x.tar.gz.age", SizeBytes: int64(len(stored)), SHA256: sha(stored)}
 
-			err := readBack(context.Background(), tg, run.TargetPath, run.SizeBytes, run.SHA256)
+			err := readBack(context.Background(), tg, run.TargetPath, run.SizeBytes, run.SHA256, nil)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("readBack err = %v, want error %v", err, tt.wantErr)
 			}

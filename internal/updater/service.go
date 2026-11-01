@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
@@ -222,19 +223,10 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 	op.AddSecrets(secrets...)
 	op.StepStart(StepPull, "")
 	op.Logf("info", "pulling %s", ref)
-	rc, err := cli.ImagePull(ctx, ref, imagetypes.PullOptions{RegistryAuth: authBlob})
-	if err != nil {
-		err = fmt.Errorf("pull %s: %w", ref, err)
+	if err := s.pull(ctx, cli, ref, authBlob, secrets); err != nil {
 		op.StepFail(StepPull, err)
 		return nil, err
 	}
-	if err := drainPull(rc, op, secrets); err != nil {
-		rc.Close()
-		err = fmt.Errorf("pull %s: %w", ref, err)
-		op.StepFail(StepPull, err)
-		return nil, err
-	}
-	rc.Close()
 
 	newInfo, err := cli.ImageInspect(ctx, ref)
 	if err != nil {
@@ -311,6 +303,36 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 	res.RollbackTag = rollbackTag
 	res.Updated = true
 	return res, nil
+}
+
+// pull pulls ref and reads the progress stream to its end. Only the pull
+// can be cancelled: nothing has changed yet, and the container keeps
+// running on its current image.
+func (s *Service) pull(ctx context.Context, cli *client.Client, ref, authBlob string, secrets []string) error {
+	op := operations.FromContext(ctx)
+	pctx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+	op.AllowCancel(stop)
+	defer op.DisallowCancel()
+	rc, err := cli.ImagePull(pctx, ref, imagetypes.PullOptions{RegistryAuth: authBlob})
+	if err == nil {
+		defer closeOnDone(pctx, rc)()
+		err = drainPull(rc, op, secrets)
+		rc.Close()
+	}
+	if c := context.Cause(pctx); pctx.Err() != nil && errors.Is(c, operations.ErrCancelled) {
+		err = c
+	}
+	if err != nil {
+		return fmt.Errorf("pull %s: %w", ref, err)
+	}
+	return nil
+}
+
+// closeOnDone closes rc when ctx ends, which ends a blocked read of the
+// pull stream.
+func closeOnDone(ctx context.Context, rc io.Closer) func() bool {
+	return context.AfterFunc(ctx, func() { _ = rc.Close() })
 }
 
 // Rollback reverts the container to the image stored in the given history

@@ -75,6 +75,8 @@ const (
 	// StepWarning ends a step whose outcome could not be confirmed
 	// without failing the operation, e.g. a certificate not seen yet.
 	StepWarning StepStatus = "warning"
+	// StepCancelled ends the step that ran when a user cancelled.
+	StepCancelled StepStatus = "cancelled"
 )
 
 const (
@@ -116,9 +118,13 @@ type Operation struct {
 	// unscoped admins see it.
 	AdminOnly  bool       `json:"-"`
 	Actor      string     `json:"actor,omitempty"`
-	Status     Status     `json:"status"`
-	Error      string     `json:"error,omitempty"`
-	Steps      []Step     `json:"steps"`
+	Status Status `json:"status"`
+	// Cancellable is set while a cancel request would stop the work;
+	// CancelRequested once one was made and the work is winding down.
+	Cancellable     bool   `json:"cancellable,omitempty"`
+	CancelRequested bool   `json:"cancel_requested,omitempty"`
+	Error           string `json:"error,omitempty"`
+	Steps           []Step `json:"steps"`
 	CreatedAt  time.Time  `json:"created_at"`
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
@@ -161,6 +167,9 @@ var ErrNotFound = errors.New("operation not found")
 // ErrNotCancellable is returned for operations that are not queued or
 // whose work cannot be stopped safely.
 var ErrNotCancellable = errors.New("operation cannot be cancelled")
+
+// ErrCancelled is the cause of the context of work a user cancelled.
+var ErrCancelled = errors.New("cancelled by a user")
 
 type Service struct {
 	db  *sql.DB
@@ -310,7 +319,9 @@ func (s *Service) List(ctx context.Context, f Filter) ([]Operation, error) {
 }
 
 // Cancel stops a queued operation whose owner registered a cancel
-// function. Running work is never interrupted.
+// function, or running work inside a window its owner opened with
+// AllowCancel. Running work ends on its own once it has stopped; Finish
+// then records it as cancelled.
 func (s *Service) Cancel(id string) error {
 	s.mu.Lock()
 	o := s.live[id]
@@ -322,14 +333,32 @@ func (s *Service) Cancel(id string) error {
 	cancel := o.cancel
 	queued := o.op.Status == StatusQueued
 	o.mu.Unlock()
-	if !queued || cancel == nil {
+	if queued && cancel != nil && cancel() {
+		o.end(StatusCancelled, "cancelled before it started")
+		return nil
+	}
+	o.mu.Lock()
+	stop := o.runCancel
+	if o.ended || stop == nil || o.op.CancelRequested {
+		o.mu.Unlock()
 		return ErrNotCancellable
 	}
-	if !cancel() {
-		return ErrNotCancellable
-	}
-	o.end(StatusCancelled, "cancelled before it started")
+	o.op.CancelRequested = true
+	o.op.Cancellable = false
+	o.cancelStep = runningStepLabel(&o.op)
+	o.mu.Unlock()
+	o.Logf("warn", "cancel requested")
+	stop(ErrCancelled)
 	return nil
+}
+
+func runningStepLabel(op *Operation) string {
+	for i := len(op.Steps) - 1; i >= 0; i-- {
+		if op.Steps[i].Status == StepRunning {
+			return op.Steps[i].Label
+		}
+	}
+	return ""
 }
 
 // Subscribe returns a channel of events for every live operation. Slow
@@ -456,8 +485,11 @@ type Op struct {
 	op        Operation
 	secrets   []string
 	cancel    func() bool
-	lastFlush time.Time
-	ended     bool
+	runCancel context.CancelCauseFunc
+	// cancelStep is the label of the step that ran when cancel was asked.
+	cancelStep string
+	lastFlush  time.Time
+	ended      bool
 }
 
 func (o *Op) ID() string {
@@ -492,6 +524,41 @@ func (o *Op) SetCancel(cancel func() bool) {
 	o.mu.Lock()
 	o.cancel = cancel
 	o.mu.Unlock()
+}
+
+// AllowCancel lets a user stop the running work until DisallowCancel:
+// Cancel calls stop with ErrCancelled. Work that must not be interrupted
+// (swapping files, replacing a container) runs outside such a window.
+func (o *Op) AllowCancel(stop context.CancelCauseFunc) {
+	if o == nil {
+		return
+	}
+	o.update(func(op *Operation, _ time.Time) {
+		o.runCancel = stop
+		op.Cancellable = !op.CancelRequested
+	})
+}
+
+// DisallowCancel closes the window opened by AllowCancel. A cancel that
+// was already requested stays requested.
+func (o *Op) DisallowCancel() {
+	if o == nil {
+		return
+	}
+	o.update(func(op *Operation, _ time.Time) {
+		o.runCancel = nil
+		op.Cancellable = false
+	})
+}
+
+// CancelRequested reports whether a user asked to cancel the work.
+func (o *Op) CancelRequested() bool {
+	if o == nil {
+		return false
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.op.CancelRequested
 }
 
 // Begin moves a queued operation to running.
@@ -599,6 +666,9 @@ func (o *Op) stepEnd(key string, status StepStatus, detail string) {
 	}
 	o.update(func(op *Operation, now time.Time) {
 		st := stepFor(op, key, "")
+		if status == StepFailed && op.CancelRequested {
+			status, detail = StepCancelled, "cancelled"
+		}
 		st.Status = status
 		st.Detail = truncate(o.mask(detail))
 		if st.StartedAt == nil && status != StepSkipped {
@@ -638,9 +708,21 @@ func (o *Op) Logf(level, format string, args ...any) {
 }
 
 // Finish ends the operation: failed when err is set, else succeeded.
-// Steps still running fail with err; pending steps are skipped.
+// Steps still running fail with err; pending steps are skipped. Work a
+// user cancelled that ends with an error ends cancelled, naming the step
+// it stopped in.
 func (o *Op) Finish(err error) {
 	if o == nil {
+		return
+	}
+	if err != nil && o.CancelRequested() {
+		o.mu.Lock()
+		msg := "cancelled"
+		if o.cancelStep != "" {
+			msg = "cancelled during “" + o.cancelStep + "”"
+		}
+		o.mu.Unlock()
+		o.end(StatusCancelled, msg)
 		return
 	}
 	if err != nil {
@@ -660,14 +742,20 @@ func (o *Op) end(status Status, msg string) {
 	o.op.Status = status
 	o.op.Error = truncate(o.mask(msg))
 	o.op.FinishedAt = &now
+	o.op.Cancellable = false
+	o.runCancel = nil
 	for i := range o.op.Steps {
 		st := &o.op.Steps[i]
 		switch st.Status {
 		case StepRunning:
 			st.FinishedAt = &now
-			if status == StatusSucceeded {
+			switch status {
+			case StatusSucceeded:
 				st.Status = StepSucceeded
-			} else {
+			case StatusCancelled:
+				st.Status = StepCancelled
+				st.Detail = "cancelled"
+			default:
 				st.Status = StepFailed
 				if st.Detail == "" || st.Progress != nil {
 					st.Detail = o.op.Error

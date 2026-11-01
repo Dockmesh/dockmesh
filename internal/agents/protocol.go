@@ -146,6 +146,9 @@ const (
 	CapVolumeReplace = "volume_import.replace" // agent: empties the volume first on params.replace
 	// CapMetricsHistory, agent: sends FrameAgentMetrics; server: stores them.
 	CapMetricsHistory = "metrics.history"
+	// CapVolumeStaged, agent: a replace restore extracts into a staging
+	// directory and swaps only after tar succeeded (VolumeImportScript).
+	CapVolumeStaged = "volume_import.staged"
 )
 
 // Stream control ops beyond the exec "resize".
@@ -269,16 +272,6 @@ type StackCheckScaleReq struct {
 	Compose string `json:"compose"`
 	Env     string `json:"env,omitempty"`
 	Service string `json:"service"`
-}
-
-// VolumeImportScript is the helper command that extracts a restore into
-// /dest. With replace the volume is emptied first: the globs cover
-// dotfiles, and rm -f ignores patterns that match nothing.
-func VolumeImportScript(replace bool) string {
-	if replace {
-		return "rm -rf /dest/..?* /dest/.[!.]* /dest/* && tar xzf - -C /dest"
-	}
-	return "tar xzf - -C /dest"
 }
 
 // VolumeTarReq identifies the volume for tar export/import.

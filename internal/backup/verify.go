@@ -23,6 +23,20 @@ type VerifyResult struct {
 	Summary  string        `json:"summary,omitempty"`
 	Counts   VerifyCounts  `json:"counts"`
 	SHA256OK bool          `json:"sha256_ok,omitempty"`
+	// diskNeed estimates the disk space each volume of the archive takes
+	// once extracted, keyed by volume ("" for a volume run).
+	diskNeed map[string]int64
+}
+
+// extractedSize estimates the disk space of an extracted archive: its
+// payload plus a block per entry.
+func extractedSize(bytes int64, entries int) int64 { return bytes + int64(entries)*4096 }
+
+func (r *VerifyResult) setNeed(vol string, bytes int64, entries int) {
+	if r.diskNeed == nil {
+		r.diskNeed = map[string]int64{}
+	}
+	r.diskNeed[vol] = extractedSize(bytes, entries)
 }
 
 // VerifyCheck mirrors the existing restore.SanityCheck shape so the UI
@@ -179,8 +193,9 @@ func verifyStackArchive(res *VerifyResult, r io.Reader) {
 				res.add(VerifyCheck{Name: "volume.malformed", Status: "warn", Message: name})
 				continue
 			}
-			n, err := walkInnerTar(io.LimitReader(tr, hdr.Size))
+			n, entries, err := walkInnerTar(io.LimitReader(tr, hdr.Size))
 			res.Counts.Bytes += n
+			res.setNeed(volName, n, entries)
 			if err != nil {
 				res.fail("volume."+volName, err.Error())
 				return
@@ -228,8 +243,9 @@ func volumeListCheck(m *stackManifest, found []string) VerifyCheck {
 // a valid gzipped tar. No structural rules beyond that — volume contents
 // are application-specific.
 func verifyVolumeArchive(res *VerifyResult, r io.Reader) {
-	n, err := walkInnerTar(r)
+	n, entries, err := walkInnerTar(r)
 	res.Counts.Bytes = n
+	res.setNeed("", n, entries)
 	if err != nil {
 		res.fail("tar", err.Error())
 		return
@@ -241,31 +257,33 @@ func verifyVolumeArchive(res *VerifyResult, r io.Reader) {
 }
 
 // walkInnerTar gunzip-walks a tar.gz stream, discarding payloads but
-// counting bytes. Returns the total uncompressed payload bytes seen
-// and any decode error.
-func walkInnerTar(r io.Reader) (int64, error) {
+// counting bytes. Returns the total uncompressed payload bytes and the
+// entries seen, and any decode error.
+func walkInnerTar(r io.Reader) (int64, int, error) {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
-		return 0, fmt.Errorf("gzip: %w", err)
+		return 0, 0, fmt.Errorf("gzip: %w", err)
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
 	var total int64
+	entries := 0
 	for {
 		_, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return total, err
+			return total, entries, err
 		}
+		entries++
 		n, err := io.Copy(io.Discard, tr)
 		total += n
 		if err != nil {
-			return total, err
+			return total, entries, err
 		}
 	}
-	return total, nil
+	return total, entries, nil
 }
 
 // shaCheck compares the recomputed hash with the stored one. An empty

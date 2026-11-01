@@ -48,7 +48,7 @@ func (f *fakeHost) ContainerExec(_ context.Context, container string, cmd []stri
 	return nil, f.hookExit[container], nil
 }
 
-func (f *fakeHost) VolumeImport(context.Context, string, io.Reader, bool) error {
+func (f *fakeHost) VolumeImport(context.Context, string, io.Reader, bool, int64) error {
 	return errors.New("fakeHost: import not supported")
 }
 

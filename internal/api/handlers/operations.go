@@ -189,8 +189,11 @@ func (h *Handlers) GetOperation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.viewOperations(r.Context(), []operations.Operation{*op})[0])
 }
 
-// CancelOperation cancels a queued operation. It needs the permission of
-// the action that started it.
+// CancelOperation cancels a queued operation, or running work in a step
+// that can be stopped safely (the operation's cancellable flag). It needs
+// the permission of the action that started it. Running work ends a
+// moment later; the response may still show it running with
+// cancel_requested set.
 //
 //	POST /api/v1/operations/{id}/cancel
 func (h *Handlers) CancelOperation(w http.ResponseWriter, r *http.Request) {
@@ -213,7 +216,7 @@ func (h *Handlers) CancelOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Operations.Cancel(op.ID); errors.Is(err, operations.ErrNotCancellable) {
-		writeError(w, http.StatusConflict, "only queued operations can be cancelled")
+		writeError(w, http.StatusConflict, "this operation cannot be cancelled now: it has ended, or its current step must not be interrupted")
 		return
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
