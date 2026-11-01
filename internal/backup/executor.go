@@ -261,7 +261,7 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	}
 	sum := hex.EncodeToString(hasher.Sum(nil))
 	e.logf(ctx, runID, "info", "wrote %d bytes, sha256=%s", stored.n, sum[:12])
-	op.StepDone(StepArchive, humanSize(stored.n)+" written")
+	op.StepDone(StepArchive, operations.HumanBytes(stored.n)+" written")
 	op.StepStart(StepVerify, "")
 	if err := readBack(ctx, target, relPath, stored.n, sum); err != nil {
 		e.logf(ctx, runID, "error", "%s", err)
@@ -664,9 +664,9 @@ func (e *Executor) startOp(ctx context.Context, job *Job, runID int64) *operatio
 		return nil
 	}
 	spec := operations.Spec{
-		Kind:      "backup.run",
+		Kind:      operations.KindBackupRun,
 		Target:    job.Name,
-		Ref:       "backup-run:" + strconv.FormatInt(runID, 10),
+		Ref:       operations.BackupRunRef(runID),
 		HostID:    defaultStr(job.HostID, "local"),
 		AdminOnly: HasSystemSource(job.Sources),
 		Actor:     operations.ActorFromContext(ctx),
@@ -712,20 +712,7 @@ func (p *progressWriter) Write(b []byte) (int, error) {
 	p.n += int64(n)
 	if p.op != nil && time.Since(p.last) >= time.Second {
 		p.last = time.Now()
-		p.op.StepDetail(p.step, humanSize(p.n)+" archived")
+		p.op.StepDetail(p.step, operations.HumanBytes(p.n)+" archived")
 	}
 	return n, err
-}
-
-func humanSize(n int64) string {
-	const unit = 1000
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for v := n / unit; v >= unit; v /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "kMGTPE"[exp])
 }

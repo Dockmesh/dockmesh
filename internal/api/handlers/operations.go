@@ -17,12 +17,11 @@ import (
 	"github.com/dockmesh/dockmesh/internal/updater"
 )
 
-// Operation kinds.
 const (
-	opImageUpdate   = "image.update"
-	opBackupRun     = "backup.run"
-	opBackupRestore = "backup.restore"
-	opProxySite     = "proxy.site"
+	opImageUpdate   = operations.KindImageUpdate
+	opBackupRun     = operations.KindBackupRun
+	opBackupRestore = operations.KindBackupRestore
+	opProxySite     = operations.KindProxySite
 )
 
 // opViewPerm is the permission that shows an operation of kind; the
@@ -90,7 +89,7 @@ func (h *Handlers) operationVisible(r *http.Request, op *operations.Operation) b
 // restoreOriginVisible checks the host a restored run was taken on; a
 // restore also shows what that host's archive held.
 func (h *Handlers) restoreOriginVisible(r *http.Request, ref string) bool {
-	id, err := strconv.ParseInt(strings.TrimPrefix(ref, "backup-run:"), 10, 64)
+	id, err := strconv.ParseInt(strings.TrimPrefix(ref, operations.BackupRunPrefix), 10, 64)
 	if err != nil || h.Backups == nil {
 		return false
 	}

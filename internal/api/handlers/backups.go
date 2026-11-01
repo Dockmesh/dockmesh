@@ -437,7 +437,7 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 	op := h.Operations.Start(r.Context(), operations.Spec{
 		Kind:   opBackupRestore,
 		Target: target,
-		Ref:    "backup-run:" + strconv.FormatInt(id, 10),
+		Ref:    operations.BackupRunRef(id),
 		HostID: opts.HostID,
 		Actor:  middleware.UserID(r.Context()),
 		Steps:  backup.RestoreSteps,

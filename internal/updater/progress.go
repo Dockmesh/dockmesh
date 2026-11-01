@@ -81,24 +81,11 @@ func drainPull(rc io.Reader, op *operations.Op) error {
 				total += layers[id].total
 			}
 			if total > 0 {
-				op.StepProgress(step, float64(cur)/float64(total), fmt.Sprintf("%s of %s", humanBytes(cur), humanBytes(total)))
+				op.StepProgress(step, float64(cur)/float64(total), fmt.Sprintf("%s of %s", operations.HumanBytes(cur), operations.HumanBytes(total)))
 				last = time.Now()
 			}
 		}
 	}
-}
-
-func humanBytes(n int64) string {
-	const unit = 1000
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for v := n / unit; v >= unit; v /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "kMGTPE"[exp])
 }
 
 // authSecrets returns the credential values inside a base64 registry

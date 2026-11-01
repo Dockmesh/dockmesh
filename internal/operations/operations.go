@@ -16,11 +16,40 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 )
+
+// Kinds of operation.
+const (
+	KindImageUpdate   = "image.update"
+	KindBackupRun     = "backup.run"
+	KindBackupRestore = "backup.restore"
+	KindProxySite     = "proxy.site"
+)
+
+// BackupRunPrefix starts the ref of operations on a backup run (the run
+// and its restores).
+const BackupRunPrefix = "backup-run:"
+
+func BackupRunRef(id int64) string { return BackupRunPrefix + strconv.FormatInt(id, 10) }
+
+// HumanBytes formats n with SI units for step details.
+func HumanBytes(n int64) string {
+	const unit = 1000
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "kMGTPE"[exp])
+}
 
 type Status string
 
