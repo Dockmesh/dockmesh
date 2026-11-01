@@ -3079,7 +3079,8 @@ paths:
       tags: [containers]
       summary: Newest CPU + memory sample of every running container on a host
       description: |
-        Containers that reported within the last 60 s and that the caller
+        Containers that reported within the last 60 s (180 s on agent
+        hosts, which send their samples once a minute) and that the caller
         may view. A host that records no history answers 200 with
         `history: false`, a `reason` and no containers.
       parameters:

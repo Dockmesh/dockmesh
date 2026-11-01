@@ -102,8 +102,16 @@ func (h *Handlers) knownHost(ctx context.Context, hostID string) bool {
 	return err == nil && a != nil
 }
 
+// Newest-sample windows of the batch stats: the server samples every
+// 30 s; an agent's samples arrive up to 90 s later, with its minute
+// batch.
+const (
+	latestLocal = 60
+	latestAgent = 180
+)
+
 // BatchContainerStats returns the newest CPU + memory sample of every
-// running container on the host that reported in the last 60 seconds.
+// running container on the host.
 //
 //	GET /api/v1/hosts/{id}/stats/containers
 func (h *Handlers) BatchContainerStats(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +158,11 @@ func (h *Handlers) BatchContainerStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cores, memTotal := hostCapacity(r.Context(), target)
-	latest, err := h.Metrics.LatestPerContainer(r.Context(), hostID, 60, cores)
+	maxAge := int64(latestAgent)
+	if hostID == metrics.LocalHostID {
+		maxAge = latestLocal
+	}
+	latest, err := h.Metrics.LatestPerContainer(r.Context(), hostID, maxAge, cores)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
