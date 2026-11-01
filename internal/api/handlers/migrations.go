@@ -46,10 +46,10 @@ func (h *Handlers) InitiateMigration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, audit.ActionStackDeploy, name, map[string]any{
-		"action":       "migrate",
+		"action":      "migrate",
 		"migration_id": m.ID,
-		"source":       m.SourceHostID,
-		"target":       m.TargetHostID,
+		"source":      m.SourceHostID,
+		"target":      m.TargetHostID,
 	})
 	writeJSON(w, http.StatusAccepted, m)
 }

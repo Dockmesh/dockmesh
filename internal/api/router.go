@@ -137,9 +137,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			// Self-service routes (any authenticated user)
 			r.Get("/me", h.Me)
 			r.Put("/users/{id}/password", h.ChangeUserPassword) // self or admin (enforced inside)
-			r.Get("/users/{id}/avatar", h.GetAvatar)            // any authed user
-			r.Post("/users/{id}/avatar", h.UploadAvatar)        // self or admin (enforced inside)
-			r.Delete("/users/{id}/avatar", h.DeleteAvatar)      // self or admin (enforced inside)
+			r.Get("/users/{id}/avatar", h.GetAvatar)              // any authed user
+			r.Post("/users/{id}/avatar", h.UploadAvatar)          // self or admin (enforced inside)
+			r.Delete("/users/{id}/avatar", h.DeleteAvatar)        // self or admin (enforced inside)
 			r.Post("/ws/ticket", h.WSTicket)
 
 			// P.12.1 — session management (self). Any authenticated
@@ -616,8 +616,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Put("/oidc/providers/{id}", h.UpdateOIDCProvider)
 				r.Delete("/oidc/providers/{id}", h.DeleteOIDCProvider)
 				r.Post("/oidc/providers/reload", h.ReloadOIDCProviders)
-				r.Post("/oidc/providers/test-discovery", h.TestOIDCDiscovery)
-				r.Post("/oidc/providers/{id}/test", h.TestOIDCProvider)
+			r.Post("/oidc/providers/test-discovery", h.TestOIDCDiscovery)
+			r.Post("/oidc/providers/{id}/test", h.TestOIDCProvider)
 			})
 
 			// -------------------------- SAML ADMIN ---------------------------

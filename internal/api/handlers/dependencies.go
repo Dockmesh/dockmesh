@@ -33,9 +33,9 @@ func (h *Handlers) GetStackDependencies(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"stack_name": name,
-		"depends_on": deps,
-		"dependents": dependents,
+		"stack_name":  name,
+		"depends_on":  deps,
+		"dependents":  dependents,
 	})
 }
 

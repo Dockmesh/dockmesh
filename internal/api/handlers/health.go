@@ -80,12 +80,12 @@ func (h *Handlers) Ready(w http.ResponseWriter, r *http.Request) {
 // SystemInfo returns detailed server instance info for the System tab.
 func (h *Handlers) SystemInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version":        version.Version,
-		"commit":         version.Commit,
-		"build_date":     version.Date,
-		"go_version":     runtime.Version(),
-		"os":             runtime.GOOS,
-		"arch":           runtime.GOARCH,
+		"version":    version.Version,
+		"commit":     version.Commit,
+		"build_date": version.Date,
+		"go_version": runtime.Version(),
+		"os":         runtime.GOOS,
+		"arch":       runtime.GOARCH,
 		"uptime_seconds": int64(time.Since(startedAt).Seconds()),
 	})
 }

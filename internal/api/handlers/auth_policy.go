@@ -35,7 +35,7 @@ func (h *Handlers) UpdatePasswordPolicy(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.audit(r, "auth.policy_update", "", map[string]any{
-		"min_length":       p.MinLength,
+		"min_length":      p.MinLength,
 		"lockout_attempts": p.LockoutMaxAttempts,
 	})
 	writeJSON(w, http.StatusOK, auth.LoadPolicy(h.Settings))

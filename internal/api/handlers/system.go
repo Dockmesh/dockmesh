@@ -90,14 +90,14 @@ func (h *Handlers) SystemMetrics(w http.ResponseWriter, r *http.Request) {
 // 36 h is the staleness threshold: daily cadence + 12 h grace so a job
 // that runs slightly late on a heavily loaded server still shows green.
 type BackupStatusResponse struct {
-	State      string     `json:"state"`
-	Enabled    bool       `json:"enabled"`
-	JobExists  bool       `json:"job_exists"`
-	LastRunAt  *time.Time `json:"last_run_at,omitempty"`
-	LastStatus string     `json:"last_status,omitempty"`
-	LastError  string     `json:"last_error,omitempty"`
-	LastSize   int64      `json:"last_size_bytes,omitempty"`
-	AgeSeconds int64      `json:"age_seconds,omitempty"`
+	State        string     `json:"state"`
+	Enabled      bool       `json:"enabled"`
+	JobExists    bool       `json:"job_exists"`
+	LastRunAt    *time.Time `json:"last_run_at,omitempty"`
+	LastStatus   string     `json:"last_status,omitempty"`
+	LastError    string     `json:"last_error,omitempty"`
+	LastSize     int64      `json:"last_size_bytes,omitempty"`
+	AgeSeconds   int64      `json:"age_seconds,omitempty"`
 }
 
 // BackupStatus returns a compact status record for the sidebar pill
@@ -194,10 +194,10 @@ func (h *Handlers) SetBackupEnabled(w http.ResponseWriter, r *http.Request) {
 //	fail — red (action required)
 //	off  — grey (feature disabled; not a problem in itself)
 type HealthCheck struct {
-	Name    string `json:"name"`              // stable id: "backup" | "proxy" | "agents" | "disk" | "scanner"
-	Label   string `json:"label"`             // human string for the popover row
-	Status  string `json:"status"`            // ok | warn | fail | off
-	Detail  string `json:"detail,omitempty"`  // sub-line shown under label
+	Name    string `json:"name"`            // stable id: "backup" | "proxy" | "agents" | "disk" | "scanner"
+	Label   string `json:"label"`           // human string for the popover row
+	Status  string `json:"status"`          // ok | warn | fail | off
+	Detail  string `json:"detail,omitempty"` // sub-line shown under label
 	LinkTo  string `json:"link_to,omitempty"` // UI route to jump to on click
 	Message string `json:"message,omitempty"` // tooltip (surfaces raw errors)
 }

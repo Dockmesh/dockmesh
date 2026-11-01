@@ -18,11 +18,11 @@ import (
 // Summary does the aggregation server-side, returns ~1 KB, and shaves
 // the `/containers` hot path off the dashboard's auto-refresh.
 type ContainerSummary struct {
-	Total     int                    `json:"total"`
-	Running   int                    `json:"running"`
-	Stopped   int                    `json:"stopped"`
-	Unhealthy int                    `json:"unhealthy"`
-	ByStack   map[string]StackRollup `json:"by_stack"`
+	Total      int                     `json:"total"`
+	Running    int                     `json:"running"`
+	Stopped    int                     `json:"stopped"`
+	Unhealthy  int                     `json:"unhealthy"`
+	ByStack    map[string]StackRollup  `json:"by_stack"`
 }
 
 // StackRollup is the per-stack aggregation consumed by the dashboard's
@@ -37,12 +37,11 @@ type StackRollup struct {
 }
 
 // ContainerSummaryEndpoint returns the aggregated view. Query params:
+//   ?host=local   default — local docker only
+//   ?host=<id>    specific agent
+//   ?host=all     fan out across every online host, merge rollups
 //
-//	  ?host=local   default — local docker only
-//	  ?host=<id>    specific agent
-//	  ?host=all     fan out across every online host, merge rollups
-//
-//		GET /api/v1/containers/summary
+//	GET /api/v1/containers/summary
 func (h *Handlers) ContainerSummaryEndpoint(w http.ResponseWriter, r *http.Request) {
 	hostID := r.URL.Query().Get("host")
 
