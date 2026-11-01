@@ -60,7 +60,7 @@ The upgrade mode decides what happens to agents whose version differs from the s
 
 ## What works on remote hosts
 
-Most day-to-day features work on every host: container lists and lifecycle, logs, exec, live stats, image, volume and network lists and inspect, stack deploy, stop and scale, host metrics, drains and stack migration.
+Most day-to-day features work on every host: container lists and lifecycle, logs, exec, live stats, image, volume and network lists and inspect, stack deploy, stop and scale, host metrics, drains, stack migration and the container file browser (it needs an agent of the same release as the server).
 
 These work on the local host only:
 
@@ -68,7 +68,6 @@ These work on the local host only:
 |---|---|
 | Rolling updates | Returns an error. |
 | Stack cleanup (preview and delete of leftover resources) | Returns an error. |
-| Container file browser | Returns an error. |
 | Image pull, volume and network create, remove and prune | Always run on the local host, whatever host is selected. |
 | Container metrics history | Only live stats; no stored history. |
 | Alerts | Rules evaluate local containers only. |

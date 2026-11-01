@@ -10,7 +10,7 @@ It is meant for people who already run Docker and Docker Compose and want one pl
 ## What it manages
 
 - **Stacks**: compose projects stored as `compose.yaml` files on disk. You edit, deploy, stop and roll them back in the UI; `dmctl` can deploy and stop them, and you can also edit the files directly. See [Stacks](../concepts/stacks.md).
-- **Containers, images, volumes, networks** on every connected host: logs, a terminal into running containers, live stats, and (on the local host) a file browser.
+- **Containers, images, volumes, networks** on every connected host: logs, a terminal into running containers, live stats, and a file browser.
 - **Hosts**: the local host the server runs on, plus remote hosts whose agents connect to the server. See [Hosts and agents](../concepts/hosts-and-agents.md).
 - **Around the stacks**: users and roles, single sign-on, API tokens, backups, alerts and notifications, an audit log, image vulnerability scans and an optional reverse proxy.
 

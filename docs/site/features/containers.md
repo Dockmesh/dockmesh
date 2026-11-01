@@ -55,20 +55,24 @@ Logs, stats, the terminal and inspect work for containers on remote hosts too; t
 
 The **Files** tab lists a directory in the container with size, mode and modification time. Click a file to preview it; text is shown inline (large files are truncated, binary files are not shown), and every file can be downloaded.
 
-With `containers.exec` you can also **Edit** a text file and **Save** it, or **Upload** a file into the current directory. Writing a file into a container is treated like a shell session, which is why it needs the exec permission.
+With the terminal extra as well you can also **Edit** a text file and **Save** it, **Upload** a file into the current directory (up to 8 MiB), and **Delete** a file or symbolic link. Writing a file into a container is treated like a shell session, which is why it needs both extras. Delete runs `rm` in the container, so it needs a running container whose image has `rm`. Every upload, save and delete is written to the audit log with the host, the container and the path.
 
-The **Files** tab works for containers on the local host only.
+Previews and edits are limited to 1 MiB; larger files can be downloaded. Paths are resolved inside the container: symbolic links are followed within the container's filesystem, and `/proc`, `/sys`, `/dev` and device files can't be opened, even through a link.
+
+The **Files** tab works on the local host and on agent hosts. An agent older than the server answers with a message to update it from the **Hosts** page.
 
 ## Permissions
 
 | Action | Permission |
 |---|---|
-| List, inspect, stats, browse and download files | `containers.view` |
+| List, inspect, stats | `containers.view` |
+| Browse, preview and download files | the files extra (`containers.files`) |
 | Stream logs | `containers.logs` |
-| Terminal, edit and upload files | `containers.exec` |
+| Terminal | `containers.exec` |
+| Edit, upload and delete files | `containers.files` and `containers.exec` |
 | Start, stop, restart, pause, kill, remove, image update | `containers.update` |
 
 Container removal is gated by `containers.update`; the separate `containers.delete` permission is not used for it.
 
 <!-- update after: rbac: scope read endpoints, limit grants, gate sensitive downloads -->
-**Inspect** shows the container's full configuration, including its environment variables, and the inspect endpoint does not check host or stack scope. Reading and downloading files needs only `containers.view`. Treat `containers.view` as access to the secrets inside your containers, and grant it accordingly. See [Permissions](../concepts/permissions.md).
+**Inspect** shows the container's full configuration, including its environment variables, and the inspect endpoint does not check host or stack scope. Treat `containers.view` as access to the secrets inside your containers, and grant it accordingly. See [Permissions](../concepts/permissions.md).
