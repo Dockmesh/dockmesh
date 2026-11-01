@@ -121,7 +121,7 @@ func (s *SFTP) connect() (*sftp.Client, *ssh.Client, error) {
 	}
 
 	addr := net.JoinHostPort(s.cfg.Host, fmt.Sprintf("%d", s.cfg.Port))
-	conn, err := ssh.Dial("tcp", addr, sshCfg)
+	conn, err := dialSSH(addr, sshCfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sftp: ssh dial: %w", err)
 	}
@@ -228,6 +228,31 @@ func (s *SFTP) StorageInfo() (total, used int64, err error) {
 	return total, used, nil
 }
 
+// sshHandshakeTimeout bounds the SSH handshake; ssh.ClientConfig.Timeout
+// only covers the TCP connect, so a server that accepts the connection and
+// then stops answering would hold the dial forever.
+const sshHandshakeTimeout = 30 * time.Second
+
+// dialSSH connects over an idle-deadline connection, so a transfer that
+// stops moving fails instead of hanging.
+func dialSSH(addr string, cfg *ssh.ClientConfig) (*ssh.Client, error) {
+	raw, err := dialTCP(addr)
+	if err != nil {
+		return nil, err
+	}
+	stuck := time.AfterFunc(sshHandshakeTimeout, func() { _ = raw.Close() })
+	c, chans, reqs, err := ssh.NewClientConn(raw, addr, cfg)
+	if !stuck.Stop() && err == nil {
+		c.Close()
+		err = fmt.Errorf("ssh handshake with %s timed out", addr)
+	}
+	if err != nil {
+		raw.Close()
+		return nil, err
+	}
+	return ssh.NewClient(c, chans, reqs), nil
+}
+
 type sftpWriter struct {
 	f      *sftp.File
 	client *sftp.Client
@@ -235,6 +260,7 @@ type sftpWriter struct {
 }
 
 func (w *sftpWriter) Write(p []byte) (int, error) { return w.f.Write(p) }
+func (w *sftpWriter) Break() error                { return w.conn.Close() }
 func (w *sftpWriter) Close() error {
 	w.f.Close()
 	w.client.Close()
@@ -248,6 +274,7 @@ type sftpReader struct {
 }
 
 func (r *sftpReader) Read(p []byte) (int, error) { return r.f.Read(p) }
+func (r *sftpReader) Break() error                { return r.conn.Close() }
 func (r *sftpReader) Close() error {
 	r.f.Close()
 	r.client.Close()

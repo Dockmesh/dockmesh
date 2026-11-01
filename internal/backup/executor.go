@@ -256,7 +256,12 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64, stop cont
 	hasher := sha256.New()
 	stored := &countingWriter{w: w, h: hasher, act: act}
 	// Unblocks a write to a target that stopped answering.
-	stopAbort := closeOnDone(ctx, stored.Abort)
+	stopAbort := closeOnDone(ctx, func() error {
+		if _, ok := w.(targets.Breaker); ok {
+			return targets.Break(w)
+		}
+		return stored.Abort()
+	})
 	encW, err := wrapEncrypt(stored, encryptionFor(job, e.secrets))
 	if err != nil {
 		stopAbort()

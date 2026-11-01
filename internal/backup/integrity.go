@@ -27,7 +27,7 @@ func readBack(ctx context.Context, t targets.Target, path string, size int64, su
 		return fmt.Errorf("read back %s: %w", path, err)
 	}
 	defer rc.Close()
-	defer closeOnDone(ctx, rc.Close)()
+	defer closeOnDone(ctx, func() error { return targets.Break(rc) })()
 	h := sha256.New()
 	n, err := io.Copy(h, touchReader{r: rc, act: act})
 	if err != nil {
@@ -50,7 +50,7 @@ func fetchArchive(ctx context.Context, t targets.Target, run *Run) (io.ReadSeekC
 		return nil, err
 	}
 	defer src.Close()
-	defer closeOnDone(ctx, src.Close)()
+	defer closeOnDone(ctx, func() error { return targets.Break(src) })()
 
 	tmp, err := os.CreateTemp("", "dm-restore-archive-*")
 	if err != nil {

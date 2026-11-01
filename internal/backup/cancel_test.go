@@ -20,6 +20,9 @@ import (
 type stallTarget struct {
 	targets.Target
 	stallWrite, stallRead bool
+	// netClose makes the stalled writer behave like SFTP: Close waits for
+	// the dead server, only Break ends it.
+	netClose bool
 }
 
 func (s *stallTarget) Open(ctx context.Context, path string) (io.WriteCloser, error) {
@@ -27,7 +30,27 @@ func (s *stallTarget) Open(ctx context.Context, path string) (io.WriteCloser, er
 	if err != nil || !s.stallWrite {
 		return w, err
 	}
-	return &stallWriter{w: w, closed: make(chan struct{})}, nil
+	sw := &stallWriter{w: w, closed: make(chan struct{})}
+	if s.netClose {
+		return &netWriter{stallWriter: sw, broken: make(chan struct{})}, nil
+	}
+	return sw, nil
+}
+
+type netWriter struct {
+	*stallWriter
+	breakOnce sync.Once
+	broken    chan struct{}
+}
+
+func (n *netWriter) Close() error {
+	<-n.broken
+	return n.stallWriter.Close()
+}
+
+func (n *netWriter) Break() error {
+	n.breakOnce.Do(func() { close(n.broken) })
+	return n.stallWriter.Close()
 }
 
 func (s *stallTarget) Read(ctx context.Context, path string) (io.ReadCloser, error) {
@@ -314,6 +337,7 @@ func TestIdleTimeoutFailsStalledRun(t *testing.T) {
 		stallSource bool
 	}{
 		{name: "target stops taking data", target: &stallTarget{stallWrite: true}},
+		{name: "network target whose close waits for the server", target: &stallTarget{stallWrite: true, netClose: true}},
 		{name: "target stops returning data on read-back", target: &stallTarget{stallRead: true}},
 		{name: "source stops sending", stallSource: true},
 	} {
