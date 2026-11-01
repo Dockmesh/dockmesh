@@ -39,6 +39,9 @@ func newBackupHostEnv(t *testing.T) *authzEnv {
 	if _, err := tags.Set(ctx, "agent-1", []string{"prod"}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := tags.Set(ctx, "local", []string{"srv"}); err != nil {
+		t.Fatal(err)
+	}
 	e.h.HostTags = tags
 	e.h.Agents = agents.NewService(e.db, nil, "http://dockmesh.test", "wss://dockmesh.test/connect")
 	e.h.Hosts = host.NewRegistry(nil, e.h.Agents)
@@ -46,17 +49,22 @@ func newBackupHostEnv(t *testing.T) *authzEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"web", "idle"} {
+	for _, name := range []string{"web", "idle", "pay"} {
 		if _, err := mgr.Create(name, "services:\n  app:\n    image: nginx\n", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
 	e.h.Stacks = mgr
-	if err := e.h.Deployments.Set(ctx, "web", "agent-1", "deployed"); err != nil {
-		t.Fatal(err)
+	for stack, hostID := range map[string]string{"web": "agent-1", "pay": "agent-2"} {
+		if err := e.h.Deployments.Set(ctx, stack, hostID, "deployed"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	volumes := map[string][]string{"local": {"data"}, "agent-1": {"pgdata"}, "agent-2": {"cache"}}
 	e.h.backupVolumeCheck = func(_ context.Context, hostID, name string) error {
+		if strings.ContainsAny(name, "/.") {
+			t.Errorf("volume lookup reached with %q", name)
+		}
 		if slices.Contains(volumes[hostID], name) {
 			return nil
 		}
@@ -130,6 +138,7 @@ func TestBackupJobPlacement(t *testing.T) {
 		{"stack on the wrong host", boss, backupJobBody("s2", "local", "stack", "web"), http.StatusBadRequest, ""},
 		{"undeployed stack", boss, backupJobBody("s3", "", "stack", "idle"), http.StatusBadRequest, ""},
 		{"missing stack", boss, backupJobBody("s4", "", "stack", "ghost"), http.StatusBadRequest, ""},
+		{"path as volume name", boss, backupJobBody("v5", "local", "volume", "../images/x/get"), http.StatusBadRequest, ""},
 		{"system job on an agent", boss, backupJobBody("sys2", "agent-1", "system", "*"), http.StatusBadRequest, ""},
 		{"scoped volume in scope", prod, backupJobBody("p1", "agent-1", "volume", "pgdata"), http.StatusCreated, "agent-1"},
 		{"scoped volume out of scope", prod, backupJobBody("p2", "agent-2", "volume", "cache"), http.StatusForbidden, ""},
@@ -204,5 +213,32 @@ func assertJobHost(t *testing.T, rr *httptest.ResponseRecorder, want string) {
 	}
 	if jobHostID(got.HostID) != want {
 		t.Errorf("host %q, want %q", got.HostID, want)
+	}
+}
+
+// A caller who can't manage backups where a stack runs gets the same answer
+// for it as for a stack that doesn't exist.
+func TestBackupJobStackOutOfScope(t *testing.T) {
+	e := newBackupHostEnv(t)
+	srv := e.user("srvadmin", "host-admin")
+	e.scopeUser(srv.ID, "srv")
+	tok := e.login("srvadmin").AccessToken
+	answer := func(hostID, stack string) string {
+		t.Helper()
+		rr := e.do(http.MethodPost, "/backups/jobs", tok, backupJobBody("j-"+stack, hostID, "stack", stack))
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("%s on %q: %d %s", stack, hostID, rr.Code, rr.Body)
+		}
+		return strings.ReplaceAll(rr.Body.String(), stack, "S")
+	}
+	missing := answer("local", "ghost")
+	for _, tt := range []struct{ hostID, stack string }{{"local", "pay"}, {"", "pay"}, {"", "ghost"}, {"local", "idle"}} {
+		got := answer(tt.hostID, tt.stack)
+		if got != missing {
+			t.Errorf("%s on %q: %s, want %s", tt.stack, tt.hostID, got, missing)
+		}
+		if strings.Contains(got, "agent-2") {
+			t.Errorf("answer names the deployment host: %s", got)
+		}
 	}
 }

@@ -79,7 +79,7 @@ func (h *Handlers) CreateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.deriveStackJobHost(r.Context(), nil, &in); err != nil {
+	if err := h.deriveStackJobHost(r, nil, &in); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -120,7 +120,7 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := h.deriveStackJobHost(r.Context(), prev, &in); err != nil {
+	if err := h.deriveStackJobHost(r, prev, &in); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

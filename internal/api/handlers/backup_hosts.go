@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/backup"
+	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
@@ -73,19 +75,22 @@ func jobPlacementChanged(prev *backup.Job, in backup.JobInput) bool {
 }
 
 // deriveStackJobHost sets the host of a stack job written without one to
-// the host the stack is deployed on.
-func (h *Handlers) deriveStackJobHost(ctx context.Context, prev *backup.Job, in *backup.JobInput) error {
+// the host the stack is deployed on. A stack the caller can't manage
+// backups of keeps the server host, so the answer looks the same as for a
+// stack that doesn't exist.
+func (h *Handlers) deriveStackJobHost(r *http.Request, prev *backup.Job, in *backup.JobInput) error {
 	if in.HostID != "" || len(in.Sources) != 1 || in.Sources[0].Type != "stack" || h.Deployments == nil {
 		return nil
 	}
 	if !jobPlacementChanged(prev, *in) {
 		return nil
 	}
-	dep, err := h.Deployments.Get(ctx, in.Sources[0].Name)
+	stack := in.Sources[0].Name
+	dep, err := h.Deployments.Get(r.Context(), stack)
 	if err != nil {
 		return err
 	}
-	if dep != nil && dep.HostID != "" {
+	if dep != nil && dep.HostID != "" && h.allowedOn(r, h.stackScopeReq(dep.HostID, stack)) {
 		in.HostID = dep.HostID
 	}
 	return nil
@@ -120,11 +125,15 @@ func (h *Handlers) checkBackupJobPlacement(w http.ResponseWriter, r *http.Reques
 	for _, src := range in.Sources {
 		switch src.Type {
 		case "stack":
-			if msg := h.stackJobProblem(r.Context(), src.Name, hostID); msg != "" {
+			if msg := h.stackJobProblem(r, src.Name, hostID); msg != "" {
 				writeError(w, http.StatusBadRequest, msg)
 				return false
 			}
 		case "volume":
+			if err := docker.CheckVolumeName(src.Name); err != nil {
+				writeError(w, http.StatusBadRequest, "volume source must be a Docker volume name: "+err.Error())
+				return false
+			}
 			if err := h.checkBackupVolume(r.Context(), hostID, src.Name); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return false
@@ -154,27 +163,36 @@ func (h *Handlers) knownHost(ctx context.Context, hostID string) (bool, error) {
 }
 
 // stackJobProblem explains why a stack can't be backed up on hostID, or
-// returns "" when it can.
-func (h *Handlers) stackJobProblem(ctx context.Context, stack, hostID string) string {
+// returns "" when it can. Stacks deployed where the caller can't manage
+// backups get the same answer as missing ones.
+func (h *Handlers) stackJobProblem(r *http.Request, stack, hostID string) string {
+	notHere := "stack " + stack + " is not deployed on host " + hostID
 	if h.Stacks != nil {
 		if _, err := h.Stacks.Get(stack); err != nil {
-			return "stack " + stack + " not found"
+			return notHere
 		}
 	}
 	if h.Deployments == nil {
 		return ""
 	}
-	dep, err := h.Deployments.Get(ctx, stack)
+	dep, err := h.Deployments.Get(r.Context(), stack)
 	if err != nil {
-		return "stack " + stack + ": " + err.Error()
+		slog.Warn("backup job stack deployment", "stack", stack, "err", err)
+		return notHere
 	}
-	if dep == nil || dep.HostID == "" {
-		return "stack " + stack + " is not deployed; deploy it before backing it up"
-	}
-	if dep.HostID != hostID {
+	switch {
+	case dep == nil || dep.HostID == "":
+		if h.allowedOn(r, h.stackScopeReq("", stack)) {
+			return notHere + "; deploy it before backing it up"
+		}
+		return notHere
+	case dep.HostID == hostID:
+		return ""
+	case h.allowedOn(r, h.stackScopeReq(dep.HostID, stack)):
 		return fmt.Sprintf("stack %s is deployed on host %s; its backup job has to run there", stack, dep.HostID)
+	default:
+		return notHere
 	}
-	return ""
 }
 
 func (h *Handlers) checkBackupVolume(ctx context.Context, hostID, name string) error {
@@ -195,7 +213,8 @@ func (h *Handlers) checkBackupVolume(ctx context.Context, hostID, name string) e
 		if cerrdefs.IsNotFound(err) {
 			return fmt.Errorf("volume %s not found on host %s", name, hostID)
 		}
-		return fmt.Errorf("can't check volume %s on host %s: %w", name, hostID, err)
+		slog.Warn("backup job volume check", "host", hostID, "volume", name, "err", err)
+		return fmt.Errorf("can't check volume %s on host %s", name, hostID)
 	}
 	return nil
 }
