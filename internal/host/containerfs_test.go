@@ -697,3 +697,29 @@ func TestContainerBrowseStopsOnHugeSubtrees(t *testing.T) {
 		t.Fatalf("huge subtree: %v", err)
 	}
 }
+
+func TestContainerMountBehindSymlink(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeFS()
+	f.dir("/mnt")
+	f.dir("/mnt/h")
+	f.file("/mnt/h/kcore", "kernel memory", 0o400)
+	f.link("/hostfs", "/mnt/h")
+	f.mounts = []container.MountPoint{{Type: "bind", Source: "/proc", Destination: "/hostfs"}}
+	for _, p := range []string{"/hostfs/kcore", "/mnt/h/kcore"} {
+		if _, err := ReadContainerFile(ctx, f, "c1", p, 0); !errors.Is(err, ErrContainerPathDenied) {
+			t.Errorf("read %s: %v", p, err)
+		}
+	}
+	if _, err := BrowseContainerDir(ctx, f, "c1", "/mnt"); !errors.Is(err, ErrContainerMountBelow) {
+		t.Errorf("browse /mnt: %v", err)
+	}
+
+	for _, src := range []string{"/run", "/var/run", "/run/containerd/containerd.sock", "/run/podman/podman.sock"} {
+		g := newFakeFS()
+		g.mounts = []container.MountPoint{{Type: "bind", Source: src, Destination: "/host" + src}}
+		if _, err := BrowseContainerDir(ctx, g, "c1", "/etc"); !errors.Is(err, ErrContainerFilesRefused) {
+			t.Errorf("mount of %s: %v", src, err)
+		}
+	}
+}

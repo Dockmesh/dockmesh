@@ -136,11 +136,51 @@ func openContainerFS(ctx context.Context, cli client.ContainerAPIClient, id stri
 		return nil, ErrContainerFilesRefused
 	}
 	for _, m := range info.Mounts {
-		if path.Base(m.Source) == "docker.sock" || path.Base(m.Destination) == "docker.sock" {
+		if runtimeSocket(m.Source) || runtimeSocket(m.Destination) {
 			return nil, ErrContainerFilesRefused
 		}
 	}
-	return &containerFS{cli: cli, id: id, mounts: info.Mounts}, nil
+	f := &containerFS{cli: cli, id: id, mounts: info.Mounts}
+	// A destination below a symlink in the image is mounted where the
+	// link points, so compare paths against where each mount really is.
+	for i, m := range f.mounts {
+		if real, err := f.follow(ctx, m.Destination); err == nil {
+			f.mounts[i].Destination = real
+		}
+	}
+	return f, nil
+}
+
+// runtimeSocket reports whether a mount path is a container runtime's
+// API socket or the directory that holds it.
+func runtimeSocket(p string) bool {
+	switch path.Base(p) {
+	case "docker.sock", "containerd.sock", "podman.sock":
+		return true
+	}
+	return p == "/run" || p == "/var/run" || p == "/run/docker" || p == "/var/run/docker"
+}
+
+// follow resolves the symlinks of an absolute path in the container
+// without the denied-area checks; missing components stay as they are.
+func (f *containerFS) follow(ctx context.Context, p string) (string, error) {
+	cur := "/"
+	for _, comp := range strings.Split(strings.TrimPrefix(path.Clean(p), "/"), "/") {
+		if comp == "" {
+			continue
+		}
+		next := path.Join(cur, comp)
+		st, err := f.cli.ContainerStatPath(ctx, f.id, next)
+		if err == nil && st.Mode&fs.ModeSymlink != 0 {
+			t, err := linkTarget(st)
+			if err != nil {
+				return "", err
+			}
+			next = t
+		}
+		cur = next
+	}
+	return cur, nil
 }
 
 // hostPath maps a resolved container path to the host path behind the
