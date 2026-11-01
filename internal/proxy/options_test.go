@@ -247,6 +247,9 @@ func TestRouteOptionsLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if plain.CreatedAt.IsZero() || plain.UpdatedAt.IsZero() || !plain.Enabled {
+		t.Fatalf("created route as returned: %+v", plain)
+	}
 	var raw string
 	if err := s.db.QueryRow(`SELECT options FROM proxy_routes WHERE id = ?`, plain.ID).Scan(&raw); err != nil {
 		t.Fatal(err)
@@ -428,6 +431,23 @@ func TestSiteConfigMasked(t *testing.T) {
 		}
 		if mask && (!strings.Contains(string(b), maskedValue) || !strings.Contains(string(b), "/api/verify")) {
 			t.Errorf("masked preview lost the header or the auth path: %s", b)
+		}
+	}
+}
+
+func TestPublicListsAreNeverNull(t *testing.T) {
+	for name, o := range map[string]SiteOptions{
+		"defaults":     {},
+		"forward auth": {Access: AccessOptions{ForwardAuth: &ForwardAuth{URL: "http://auth:9000/verify"}}},
+	} {
+		for _, view := range []SiteOptions{o.Public(), o.Public().Masked()} {
+			b, err := json.Marshal(view)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(b), "null") {
+				t.Errorf("%s: %s", name, b)
+			}
 		}
 	}
 }

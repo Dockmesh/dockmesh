@@ -116,14 +116,33 @@ func ParseOptions(raw []byte) (*SiteOptions, error) {
 	return &o, nil
 }
 
-// Public returns a copy without password hashes, for API responses.
+// Public returns a copy without password hashes and with every list
+// present (empty rather than null), for API responses.
 func (o SiteOptions) Public() SiteOptions {
 	users := make([]BasicAuthUser, len(o.Access.BasicAuth))
 	for i, u := range o.Access.BasicAuth {
 		users[i] = BasicAuthUser{Username: u.Username}
 	}
 	o.Access.BasicAuth = users
+	o.Routing.ExtraUpstreams = orEmpty(o.Routing.ExtraUpstreams)
+	o.Access.IPRanges = orEmpty(o.Access.IPRanges)
+	if f := o.Access.ForwardAuth; f != nil {
+		fa := *f
+		fa.CopyHeaders = orEmpty(fa.CopyHeaders)
+		o.Access.ForwardAuth = &fa
+	}
+	o.Headers.RequestSet = orEmpty(o.Headers.RequestSet)
+	o.Headers.RequestRemove = orEmpty(o.Headers.RequestRemove)
+	o.Headers.ResponseSet = orEmpty(o.Headers.ResponseSet)
+	o.Headers.ResponseRemove = orEmpty(o.Headers.ResponseRemove)
 	return o
+}
+
+func orEmpty[T any](in []T) []T {
+	if in == nil {
+		return []T{}
+	}
+	return in
 }
 
 // maskedValue stands in for header values shown to callers who cannot
@@ -148,9 +167,6 @@ func (o SiteOptions) Masked() SiteOptions {
 }
 
 func maskHeaders(in []Header) []Header {
-	if in == nil {
-		return nil
-	}
 	out := make([]Header, len(in))
 	for i, h := range in {
 		out[i] = Header{Name: h.Name, Value: maskedValue}

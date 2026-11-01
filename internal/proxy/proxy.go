@@ -248,7 +248,10 @@ func (s *Service) CreateRoute(ctx context.Context, spec RouteSpec) (*Route, erro
 	}
 	id, _ := res.LastInsertId()
 	op.StepDone(StepSave, "")
-	route := &Route{ID: id, Host: spec.Host, Upstream: spec.Upstream, TLSMode: spec.TLSMode, Enabled: !spec.Disabled, Options: opts.Public()}
+	route, err := s.GetRoute(ctx, id)
+	if err != nil {
+		return nil, err
+	}
 	if !s.Enabled() {
 		op.StepSkip(StepApply, "the proxy is off")
 	} else {
