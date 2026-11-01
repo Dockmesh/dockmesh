@@ -693,19 +693,19 @@ func (h *RemoteHost) CleanupPreview(ctx context.Context, name string) (*compose.
 // without a matching frame type. Return clear errors so handlers 501
 // rather than emitting a confusing "frame not handled".
 func (h *RemoteHost) ContainerBrowseEntries(ctx context.Context, id, p string) ([]VolumeEntry, error) {
-	return nil, fmt.Errorf("container file browsing on remote hosts is not yet implemented — the agent needs matching frame types (follow-up slice)")
+	return nil, fmt.Errorf("browsing container files is available on the server host only; agent hosts follow in a later release")
 }
 
 func (h *RemoteHost) ContainerReadFile(ctx context.Context, id, p string, maxBytes int64) (*VolumeFileResult, error) {
-	return nil, fmt.Errorf("container file browsing on remote hosts is not yet implemented — the agent needs matching frame types (follow-up slice)")
+	return nil, fmt.Errorf("browsing container files is available on the server host only; agent hosts follow in a later release")
 }
 
 func (h *RemoteHost) ContainerDownloadFile(ctx context.Context, id, p string) (io.ReadCloser, string, int64, error) {
-	return nil, "", 0, fmt.Errorf("container file browsing on remote hosts is not yet implemented — the agent needs matching frame types (follow-up slice)")
+	return nil, "", 0, fmt.Errorf("browsing container files is available on the server host only; agent hosts follow in a later release")
 }
 
 func (h *RemoteHost) ContainerWriteFile(ctx context.Context, id, p string, data []byte, mode int64) error {
-	return fmt.Errorf("container file browsing on remote hosts is not yet implemented — the agent needs matching frame types (follow-up slice)")
+	return fmt.Errorf("browsing container files is available on the server host only; agent hosts follow in a later release")
 }
 
 // Errors

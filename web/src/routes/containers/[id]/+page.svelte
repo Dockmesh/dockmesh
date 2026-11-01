@@ -11,7 +11,8 @@
     Skeleton,
     StatusChip,
     Tabs,
-    Menu
+    Menu,
+    EmptyState
   } from '$lib/components/ui';
   import type { MenuItem } from '$lib/components/ui/Menu.svelte';
   import { EdMetric } from '$lib/components/editorial';
@@ -33,7 +34,7 @@
   import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { allowed } from '$lib/rbac.svelte';
-  import { hosts } from '$lib/stores/host.svelte';
+  import { hosts, isAllHosts } from '$lib/stores/host.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import type { UpdatePreview, UpdateHistoryEntry } from '$lib/api';
   import {
@@ -54,7 +55,12 @@
   const id = $derived(page.params.id);
   // Resolve the host: prefer the URL ?host=… (set when the user navigated
   // here from a remote-host listing), otherwise the global selection.
-  const targetHost = $derived(page.url.searchParams.get('host') || hosts.id);
+  // "All hosts" is a list view; a single container without ?host= is the
+  // server's own.
+  const targetHost = $derived.by(() => {
+    const h = page.url.searchParams.get('host') || hosts.id;
+    return isAllHosts(h) ? 'local' : h;
+  });
   const isRemote = $derived(targetHost !== 'local');
 
   let info = $state<any>(null);
@@ -64,8 +70,12 @@
   const ctxStack = $derived(info?.Config?.Labels?.['com.docker.compose.project'] as string | undefined);
   const ctxService = $derived(info?.Config?.Labels?.['com.docker.compose.service'] as string | undefined);
   const ctxHost = $derived(targetHost);
-  const canControl = $derived(allowed('containers.update', { stack: ctxStack, host: ctxHost }));
-  const canExec = $derived(allowed('containers.exec', { stack: ctxStack, host: ctxHost }));
+  // Containers Dockmesh runs for itself (the reverse proxy) are managed
+  // from their own page; changing them here would be undone or break it.
+  const isSystem = $derived(info?.Config?.Labels?.['dockmesh.managed'] === 'true');
+  const systemComponent = $derived(info?.Config?.Labels?.['dockmesh.component'] as string | undefined);
+  const canControl = $derived(!isSystem && allowed('containers.update', { stack: ctxStack, host: ctxHost }));
+  const canExec = $derived(!isSystem && allowed('containers.exec', { stack: ctxStack, host: ctxHost }));
   let loading = $state(true);
   type TabKey = 'overview' | 'logs' | 'exec' | 'updates' | 'inspect' | 'network' | 'files';
   const TAB_KEYS: TabKey[] = ['overview', 'logs', 'exec', 'updates', 'inspect', 'network', 'files'];
@@ -157,6 +167,7 @@
   }
 
   async function loadFiles(targetPath: string) {
+    if (isRemote) return;
     filesLoading = true;
     filesError = null;
     try {
@@ -1022,6 +1033,7 @@
     <header class="dm-ph ctn-ph">
       <h1>{ctxService || containerName(info) || id.slice(0, 12)}</h1>
       <StatusChip tone={statusTone.tone} label={statusTone.label} title={info.State?.Status} />
+      {#if isSystem}<StatusChip tone="acc" label="System" title="Managed by Dockmesh" />{/if}
       <span class="dm-sub dm-mono ctn-ph-sub">
         {imageTag ? `${imageTag} · ` : ''}{info.State?.Running ? `up ${fmtRelTime(info.State?.StartedAt).replace(' ago', '')}` : 'not running'}{(info.RestartCount ?? 0) > 0 ? ` · ${info.RestartCount} restart${info.RestartCount === 1 ? '' : 's'}` : ''} · {hostName} · {id.slice(0, 12)}
       </span>
@@ -1038,6 +1050,17 @@
       {/if}
       <Menu label="More actions" items={headerMenu} />
     </header>
+  {/if}
+
+  {#if info && isSystem}
+    <div class="ctn-remote">
+      {#if systemComponent === 'proxy'}
+        Dockmesh runs this container as its reverse proxy and keeps it in sync with your sites. Change it under
+        <a href="/proxy">Reverse proxy</a>.
+      {:else}
+        Dockmesh runs this container for itself; it is shown read-only.
+      {/if}
+    </div>
   {/if}
 
   {#if isRemote}
@@ -1836,6 +1859,8 @@
         </div>
       {/if}
     </div>
+  {:else if tab === 'files' && info && canExec && isRemote}
+    <EmptyState title="Files" description="Browsing files is available for containers on the server host; agent hosts follow in a later release." />
   {:else if tab === 'files' && info && canExec}
     <div class="ctn-files-pane">
       <div class="ctn-files-bar">

@@ -15,8 +15,8 @@
   import type { Tone } from '$lib/components/ui/StatusChip.svelte';
   import { Box, AlertTriangle } from 'lucide-svelte';
 
-  const canControl = $derived(allowed('containers.update'));
-  const canExec = $derived(allowed('containers.exec'));
+  const canControlAll = $derived(allowed('containers.update'));
+  const canExecAll = $derived(allowed('containers.exec'));
   const isAll = $derived(hosts.isAll);
 
   interface Container {
@@ -89,7 +89,7 @@
   function detailHref(c: Container, tab?: string): string {
     const h = c.host_id ?? hosts.id;
     const q = new URLSearchParams();
-    if (h && h !== 'local') q.set('host', h);
+    if (h && (h !== 'local' || hosts.isAll)) q.set('host', h);
     if (tab) q.set('tab', tab);
     const qs = q.toString();
     return `/containers/${c.Id}${qs ? '?' + qs : ''}`;
@@ -180,10 +180,11 @@
       }),
   );
 
-  const allSelected = $derived(visible.length > 0 && visible.every((c) => selected.has(c.Id)));
+  const selectableRows = $derived(visible.filter((c) => !isSystem(c)));
+  const allSelected = $derived(selectableRows.length > 0 && selectableRows.every((c) => selected.has(c.Id)));
   function toggleAll() {
     if (allSelected) selected = new Set();
-    else selected = new Set(visible.map((c) => c.Id));
+    else selected = new Set(selectableRows.map((c) => c.Id));
   }
   function toggleOne(id: string) {
     const next = new Set(selected);
@@ -231,9 +232,14 @@
     return out.sort((a, b) => (a.key === '__standalone' ? 1 : b.key === '__standalone' ? -1 : a.label.localeCompare(b.label)));
   });
 
+  // Containers Dockmesh runs for itself are managed from their own page.
+  const isSystem = (c: Container) => c.Labels?.['dockmesh.managed'] === 'true';
+
   function rowMenu(c: Container): MenuItem[] {
     const running = c.State === 'running';
     const stack = stackOf(c);
+    const canControl = canControlAll && !isSystem(c);
+    const canExec = canExecAll && !isSystem(c);
     const items: MenuItem[] = [
       { label: 'Open', kbd: '↵', href: detailHref(c) },
       { label: 'Logs', href: detailHref(c, 'logs') },
@@ -250,6 +256,7 @@
     }
     items.push({ separator: true }, { label: 'Copy ID', onclick: () => copyId(c.Id) });
     if (stack) items.push({ label: `Open stack ${stack}`, href: `/stacks/${encodeURIComponent(stack)}` });
+    if (c.Labels?.['dockmesh.component'] === 'proxy') items.push({ label: 'Open reverse proxy', href: '/proxy' });
     if (canControl) items.push({ separator: true }, { label: 'Remove…', danger: true, onclick: () => action(c, 'remove') });
     return items;
   }
@@ -419,7 +426,7 @@
     </div>
   {/if}
 
-  {#if selected.size > 0 && canControl}
+  {#if selected.size > 0 && canControlAll}
     <div class="ct-bulk" role="region" aria-label="Bulk actions">
       <b>{selected.size} selected</b>
       <span class="dm-sp"></span>
@@ -443,7 +450,7 @@
     <div class="dm-tbl" role="table" aria-label="Containers">
       <div class="dm-tr dm-th" role="row" style="grid-template-columns: {cols}">
         <span role="columnheader">
-          {#if canControl}<input type="checkbox" checked={allSelected} onchange={toggleAll} aria-label="Select all visible containers" />{/if}
+          {#if canControlAll}<input type="checkbox" checked={allSelected} onchange={toggleAll} aria-label="Select all visible containers" />{/if}
         </span>
         <span role="columnheader"></span>
         <span role="columnheader"><button type="button" onclick={() => toggleSort('name')}>Name{sortArrow('name')}</button></span>
@@ -504,7 +511,7 @@
     onkeydown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) goto(detailHref(c)); }}
   >
     <span role="cell">
-      {#if canControl}
+      {#if canControlAll && !isSystem(c)}
         <input
           type="checkbox"
           checked={selected.has(c.Id)}
@@ -516,7 +523,7 @@
     </span>
     <span role="cell"><span class="dm-dot {st.tone === 'off' ? '' : st.tone}"></span></span>
     <span role="cell" class="dm-nm">
-      <a href={detailHref(c)} onclick={(e) => e.stopPropagation()} title={nameOf(c)}>{nameOf(c)}</a>
+      <a href={detailHref(c)} onclick={(e) => e.stopPropagation()} title={nameOf(c)}>{nameOf(c)}</a>{#if isSystem(c)} <StatusChip tone="acc" label="System" title="Managed by Dockmesh" />{/if}
       <small>
         {#if stack}{#if view !== 'stack'}{`stack ${stack} · `}{/if}{:else}<span class="ct-standalone">standalone</span>{' · '}{/if}<span class="dm-mono">{c.Id.slice(0, 12)}</span>{#if c.restart_count}<span class:ct-restarts={c.restart_count >= 5} title="Restarted {c.restart_count} times since it was created"> · ↻{c.restart_count}</span>{/if}
       </small>
