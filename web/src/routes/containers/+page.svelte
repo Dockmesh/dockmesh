@@ -233,7 +233,7 @@
   });
 
   // Containers Dockmesh runs for itself are managed from their own page.
-  const isSystem = (c: Container) => c.Labels?.['dockmesh.managed'] === 'true';
+  const isSystem = (c: Container) => !!c.Labels?.['dockmesh.component'];
 
   function rowMenu(c: Container): MenuItem[] {
     const running = c.State === 'running';

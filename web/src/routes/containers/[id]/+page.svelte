@@ -73,7 +73,7 @@
   const ctxHost = $derived(targetHost);
   // Containers Dockmesh runs for itself (the reverse proxy) are managed
   // from their own page; changing them here would be undone or break it.
-  const isSystem = $derived(info?.Config?.Labels?.['dockmesh.managed'] === 'true');
+  const isSystem = $derived(!!info?.Config?.Labels?.['dockmesh.component']);
   const systemComponent = $derived(info?.Config?.Labels?.['dockmesh.component'] as string | undefined);
   const canControl = $derived(!isSystem && allowed('containers.update', { stack: ctxStack, host: ctxHost }));
   const canExec = $derived(!isSystem && allowed('containers.exec', { stack: ctxStack, host: ctxHost }));

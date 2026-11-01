@@ -43,6 +43,11 @@
   let error = $state('');
   let stackFilter = $state<'all' | 'running' | 'issues' | 'stopped'>('all');
 
+  // Until the host list arrives the selection may still be a host the
+  // caller cannot read (a scoped user's stale 'local'). Without hosts.view
+  // the list never arrives and the selection is used as it is.
+  const lensKnown = () => hosts.isAll || !allowed('hosts.view') || hosts.available.some((h) => h.id === hosts.id);
+
   const nextLoad = latest();
   async function load() {
     const current = nextLoad();
@@ -51,8 +56,8 @@
     try {
       const [h, sysRaw, sum, stacksList, audit, hostListRaw, att, runList] = await Promise.all([
         api.health(),
-        allowed('system.view') ? api.system.metrics(hosts.id).catch(() => null) : Promise.resolve(null),
-        allowed('containers.view') ? api.containers.summary(hosts.id).catch(() => null) : Promise.resolve(null),
+        allowed('system.view') && lensKnown() ? api.system.metrics(hosts.id).catch(() => null) : Promise.resolve(null),
+        allowed('containers.view') && lensKnown() ? api.containers.summary(hosts.id).catch(() => null) : Promise.resolve(null),
         allowed('stacks.view') ? api.stacks.list().catch(() => []) : Promise.resolve([]),
         allowed('audit.view')
           ? api.audit.list(8, '', '', 'changes').catch(() => [])
@@ -99,6 +104,7 @@
 
   $effect(() => {
     hosts.id;
+    hosts.available.length;
     untrack(load);
   });
   $effect(() => autoRefresh(load, 10_000));
