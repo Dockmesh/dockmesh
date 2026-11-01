@@ -372,7 +372,7 @@
             </div>
             <div class="dm-tbl">
               {#each changes as e (e.id)}
-                <div class="dm-tr" style="grid-template-columns: 52px minmax(0, 1fr)" title={new Date(e.ts).toLocaleString()}>
+                <div class="dm-tr" style="grid-template-columns: 76px minmax(0, 1fr)" title={new Date(e.ts).toLocaleString()}>
                   <span class="dm-num dm-dim">{fmtAgo(e.ts)}</span>
                   <span class="dm-trunc"><b>{e.username || 'system'}</b> <span class="dm-mono act">{e.action}</span> {e.target ?? ''}</span>
                 </div>
