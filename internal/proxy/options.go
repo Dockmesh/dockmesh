@@ -569,12 +569,10 @@ func (o *SiteOptions) applySecrets(prev *SiteOptions, newUpstream bool) error {
 	if drop || pf == nil {
 		return nil
 	}
-	u, err := url.Parse(f.URL)
-	if err != nil || u.RawQuery != "" || u.ForceQuery {
-		return nil
-	}
-	old, err := url.Parse(pf.URL)
-	if err != nil || old.RawQuery == "" {
+	// A URL that doesn't parse is left to validate, which rejects it.
+	u, uerr := url.Parse(f.URL)
+	old, oerr := url.Parse(pf.URL)
+	if uerr != nil || oerr != nil || u.RawQuery != "" || u.ForceQuery || old.RawQuery == "" {
 		return nil
 	}
 	if !strings.EqualFold(u.Scheme, old.Scheme) || !strings.EqualFold(u.Host, old.Host) {
