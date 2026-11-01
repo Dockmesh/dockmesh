@@ -1,7 +1,6 @@
 version: 2
 updates:
-  # Setting labels replaces Dependabot's defaults; no-changelog skips the
-  # changelog check.
+  # no-changelog skips the changelog check.
   - package-ecosystem: gomod
     directory: /
     schedule:

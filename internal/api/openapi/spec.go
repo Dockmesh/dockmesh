@@ -5,7 +5,7 @@
 // in production. The server refuses to boot if the embedded file fails
 // to parse, so a spec syntax error is a loud failure, not a silent one.
 //
-// P.11.10. See CLAUDE.md "OpenAPI Contract" for the maintenance rule.
+// CONTRIBUTING.md describes how to change it.
 package openapi
 
 import (

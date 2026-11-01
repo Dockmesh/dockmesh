@@ -31,7 +31,8 @@ info:
 
     This spec is hand-maintained. `TestOpenAPIDriftAgainstRoutes` compares the
     registered chi routes against the operations declared here and fails CI on
-    mismatch — so every PR that touches a route must also touch this file.
+    mismatch — so every PR that touches a route must also update its tag's file under
+    `api/openapi/` and rebuild the bundle (`make openapi`).
   version: "1.0.0"
   license:
     name: AGPL-3.0-or-later

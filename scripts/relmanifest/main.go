@@ -151,9 +151,9 @@ type fragment struct {
 	Body string `yaml:"body"`
 }
 
-// checkFragments validates every fragment in dir by rendering all of them
-// as one [Unreleased] section and parsing it, so a fragment fails exactly
-// where its bullet would fail in a release. It returns the file names.
+// checkFragments parses each fragment in dir as its own bullet, then all of
+// them together to catch clashes such as duplicate upgrade ids. It returns
+// the file names.
 func checkFragments(dir string) (map[string]bool, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -176,7 +176,7 @@ func checkFragments(dir string) (map[string]bool, error) {
 		body := strings.TrimSpace(f.Body)
 		switch {
 		case !changelog.IsSubsection(f.Kind):
-			return nil, fmt.Errorf("%s: unknown kind %q (want Highlights, Added, Changed, Fixed, Security or Upgrade notes)", e.Name(), f.Kind)
+			return nil, fmt.Errorf("%s: unknown kind %q", e.Name(), f.Kind)
 		case body == "":
 			return nil, fmt.Errorf("%s: body is empty", e.Name())
 		case strings.ContainsAny(body, "\r\n"):
@@ -220,7 +220,7 @@ func changedFragments(path string, frags map[string]bool) (int, error) {
 }
 
 // hasNewRelease reports whether head carries a versioned section that base
-// lacks, i.e. the PR cuts a release and moves the Unreleased entries into it.
+// lacks, i.e. the PR cuts a release.
 func hasNewRelease(head, base []*changelog.Section) bool {
 	return len(newReleases(head, base)) > 0
 }
