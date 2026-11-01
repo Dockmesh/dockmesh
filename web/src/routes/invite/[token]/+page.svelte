@@ -5,7 +5,8 @@
   // No SMTP — admin shared this link manually.
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { api, ApiError } from '$lib/api';
+  import { api, ApiError, type Scope } from '$lib/api';
+  import { scopeLabel } from '$lib/access';
   import { auth } from '$lib/stores/auth.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { Eyebrow, Field } from '$lib/components/editorial';
@@ -13,7 +14,7 @@
 
   const token = $derived(page.params.token);
 
-  let preview = $state<{ role: string; scope_tags: string[]; email_hint?: string; expires_at: string } | null>(null);
+  let preview = $state<{ role: string; scopes: Scope[]; email_hint?: string; expires_at: string } | null>(null);
   let loadError = $state<string | null>(null);
   let loading = $state(true);
 
@@ -129,10 +130,8 @@
         <div class="invite-meta">
           <span class="invite-meta-label">Role</span>
           <span class="invite-meta-value">{preview.role}</span>
-          {#if preview.scope_tags?.length}
-            <span class="invite-meta-label">Scope</span>
-            <span class="invite-meta-value">{preview.scope_tags.join(', ')}</span>
-          {/if}
+          <span class="invite-meta-label">On</span>
+          <span class="invite-meta-value">{(preview.scopes ?? []).map((s) => scopeLabel(s)).join(', ') || 'everything'}</span>
         </div>
 
         <form class="login-fields" onsubmit={submit}>

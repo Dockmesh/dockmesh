@@ -43,7 +43,7 @@
     href: string;
   }
 
-  const canUpdate = $derived(allowed('containers.update'));
+  const canUpdate = $derived(allowed('containers.upgrade'));
   const canDeploy = $derived(allowed('stacks.deploy'));
 
   let loading = $state(true);
@@ -171,7 +171,7 @@
   }
 
   function denied(r: AppRow): string | null {
-    if (!canUpdate) return 'Needs the containers.update permission';
+    if (!canUpdate) return 'Needs the containers.upgrade permission';
     if (r.stack && !canDeploy) return `Updating a container of stack ${r.stack} rebuilds it from compose.yaml and needs stacks.deploy`;
     return null;
   }

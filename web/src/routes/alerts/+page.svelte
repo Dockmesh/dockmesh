@@ -40,12 +40,14 @@
   let histStatus = $state<string>('all');
 
   async function loadChannels() {
+    if (!allowed('alerts.view')) { chLoading = false; return; }
     chLoading = true;
     try { channels = await api.alerts.listChannels(); }
     catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
     finally { chLoading = false; }
   }
   async function loadRules() {
+    if (!allowed('alerts.view')) { rulesLoading = false; return; }
     rulesLoading = true;
     try { rules = await api.alerts.listRules(); }
     catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
@@ -53,13 +55,14 @@
   }
   async function loadHistory() {
     histLoading = true;
+    if (!allowed('alerts.history')) { histLoading = false; return; }
     try { history = await api.alerts.history(500); }
     catch (err) { toast.error('Failed', err instanceof ApiError ? err.message : undefined); }
     finally { histLoading = false; }
   }
 
   $effect(() => {
-    if (!allowed('alerts.view')) { goto('/'); return; }
+    if (!allowed('alerts.view') && !allowed('alerts.history')) { goto('/'); return; }
     // All three up front, so every tab counter is real from the start.
     // Untracked: request() reads the access token, and a token refresh
     // must not reload the page.

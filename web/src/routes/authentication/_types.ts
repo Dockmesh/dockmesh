@@ -5,9 +5,12 @@
 
 export type ProviderKind = 'oidc' | 'oauth2' | 'saml' | 'ldap';
 
+import type { Scope } from '$lib/api';
+
 export interface GroupMapping {
   group: string;
   role: string;
+  scope?: Scope;
 }
 
 export interface ProviderBase {

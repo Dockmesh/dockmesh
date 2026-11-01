@@ -263,12 +263,14 @@
 
   const canCreate = $derived(allowed('backups.create'));
   const canUpdate = $derived(allowed('backups.update'));
+  const canRun = $derived(allowed('backups.run'));
 
   function jobMenu(j: BackupJob): MenuItem[] {
     const last = lastRunOf(j);
     return [
       { label: 'Open', kbd: '↵', href: `/backups/jobs/${j.id}` },
-      ...(mayOnJob('backups.update', j) ? [{ label: 'Run now', disabled: !j.enabled, onclick: () => runJob(j) }, { label: 'Edit…', onclick: () => openEdit(j) }] : []),
+      ...(mayOnJob('backups.run', j) ? [{ label: 'Run now', disabled: !j.enabled, onclick: () => runJob(j) }] : []),
+      ...(mayOnJob('backups.update', j) ? [{ label: 'Edit…', onclick: () => openEdit(j) }] : []),
       ...(last && runRestorable(last) && mayOnJob('backups.restore', last) ? [{ label: 'Restore last run…', onclick: () => openRestore(last) }] : []),
       ...(pendingHostKey(j) && mayOnJob('backups.update', j) ? [{ label: 'Accept new host key…', danger: true, onclick: () => acceptHostKey(j) }] : []),
       ...(mayOnJob('backups.delete', j) ? [{ separator: true }, { label: 'Delete…', danger: true, onclick: () => deleteJob(j) }] : [])
@@ -325,7 +327,7 @@
     </span>
     <span class="dm-sp"></span>
     {#if tab === 'jobs'}
-      {#if canUpdate && jobs.some((j) => j.enabled)}
+      {#if canRun && jobs.some((j) => j.enabled)}
         <button type="button" class="dm-btn" onclick={runAllEnabled}><Play size={13} /> Run all enabled</button>
       {/if}
       {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={openNew}><Plus size={14} strokeWidth={2} /> New backup job</button>{/if}

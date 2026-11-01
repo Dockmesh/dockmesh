@@ -12,7 +12,7 @@ function jwt(serial: number, nowMs: number) {
   return `${b64url({ alg: 'HS256' })}.${b64url({ iat, exp: iat + LIFETIME_S, n: serial })}.sig`;
 }
 
-const user = { id: 'u1', username: 'admin', role: 'admin' };
+const user = { id: 'u1', username: 'admin' };
 
 function memStorage() {
   const data = new Map<string, string>();
@@ -238,7 +238,7 @@ describe('auth store', () => {
     browser.signIn(a);
     await vi.advanceTimersByTimeAsync(0);
     const t = server.issue();
-    a.setSession({ id: 'u2', username: 'other', role: 'viewer' }, t.access_token, t.refresh_token);
+    a.setSession({ id: 'u2', username: 'other' }, t.access_token, t.refresh_token);
     await vi.advanceTimersByTimeAsync(0);
     expect(b.isAuthenticated).toBe(false);
   });

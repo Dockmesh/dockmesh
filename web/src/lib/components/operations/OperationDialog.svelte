@@ -55,8 +55,8 @@
   // needs the same permission as starting it.
   const canRetry = $derived.by(() => {
     if (!op || isActive(op) || op.status === 'succeeded') return false;
-    if (op.kind === 'image.update') return allowed('containers.update');
-    if (op.kind === 'backup.run') return allowed('backups.update');
+    if (op.kind === 'image.update') return allowed('containers.upgrade');
+    if (op.kind === 'backup.run') return allowed('backups.run');
     return false;
   });
   let busy = $state(false);
@@ -139,7 +139,7 @@
     {#if op}
       {#if objectHref}<Button variant="ghost" onclick={() => { const h = objectHref; close(); goto(h); }}>Open {op.kind === 'proxy.site' ? 'reverse proxy' : op.kind === 'image.update' ? 'container' : 'run'}</Button>{/if}
       <span class="dm-sp"></span>
-      {#if op.status === 'queued' && allowed('containers.update')}<Button variant="secondary" loading={busy} onclick={cancel}>Cancel</Button>{/if}
+      {#if op.status === 'queued' && allowed(op.kind === 'backup.run' ? 'backups.run' : 'containers.upgrade')}<Button variant="secondary" loading={busy} onclick={cancel}>Cancel</Button>{/if}
       {#if canRetry}<Button variant="primary" loading={busy} onclick={retry}>Retry</Button>{/if}
       <Button variant="secondary" onclick={close}>Close</Button>
     {/if}

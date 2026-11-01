@@ -148,8 +148,6 @@
             client_secret: '',
             scopes: p.scopes,
             group_claim: p.group_claim,
-            admin_group: p.admin_group,
-            operator_group: p.operator_group,
             default_role: p.default_role,
             allow_email_link: !!p.allow_email_link,
             enabled: !p.enabled,

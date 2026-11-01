@@ -167,7 +167,7 @@
       {#if run.encrypted}<span class="dm-sub enc"><Lock size={12} /> encrypted</span>{/if}
       <span class="dm-sp"></span>
       <button type="button" class="dm-btn" onclick={copyDetails}><Copy size={13} /> Copy details</button>
-      {#if run.status === 'failed' && job && allowed('backups.update')}
+      {#if run.status === 'failed' && job && allowed('backups.run')}
         <button type="button" class="dm-btn dm-btn-primary" disabled={starting} onclick={runAgain}><Play size={13} /> Run again</button>
       {/if}
       {#if runRestorable(run) && canDownload}

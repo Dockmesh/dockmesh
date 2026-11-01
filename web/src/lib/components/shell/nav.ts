@@ -47,7 +47,7 @@ export const NAV: NavGroup[] = [
     title: 'Workloads',
     items: [
       { key: 'stacks', href: '/stacks', label: 'Stacks', icon: Layers, show: () => allowed('stacks.view') },
-      { key: 'containers', href: '/containers', label: 'Containers', icon: Box, show: () => allowed('containers.view') },
+      { key: 'containers', href: '/containers', label: 'Containers', icon: Box, show: () => allowed('networks.view') },
       { key: 'templates', href: '/templates', label: 'Templates', icon: LayoutTemplate, show: () => allowed('templates.view') }
     ]
   },
@@ -63,16 +63,16 @@ export const NAV: NavGroup[] = [
         show: () => allowed('images.view') || allowed('volumes.view') || allowed('networks.view'),
         also: ['/images', '/volumes', '/networks']
       },
-      { key: 'topology', href: '/topology', label: 'Topology', icon: Waypoints, show: () => allowed('containers.view') }
+      { key: 'topology', href: '/topology', label: 'Topology', icon: Waypoints, show: () => allowed('networks.view') }
     ]
   },
   {
     title: 'Operations',
     items: [
-      { key: 'updates', href: '/updates', label: 'Updates', icon: RefreshCw, show: () => allowed('containers.view') },
+      { key: 'updates', href: '/updates', label: 'Updates', icon: RefreshCw, show: () => allowed('networks.view') },
       { key: 'backups', href: '/backups', label: 'Backups', icon: Archive, show: () => allowed('backups.view'), also: ['/migrations'] },
       { key: 'proxy', href: '/proxy', label: 'Reverse proxy', icon: Globe, show: () => allowed('proxy.view') },
-      { key: 'alerts', href: '/alerts', label: 'Alerts', icon: Bell, show: () => allowed('alerts.view') }
+      { key: 'alerts', href: '/alerts', label: 'Alerts', icon: Bell, show: () => allowed('alerts.view') || allowed('alerts.history') }
     ]
   },
   {

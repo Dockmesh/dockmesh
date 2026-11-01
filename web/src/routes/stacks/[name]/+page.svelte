@@ -45,6 +45,7 @@
 
   let compose = $state('');
   let env = $state('');
+  let envHidden = $state(false);
   let services = $state<Array<{ service: string; container_id: string; state: string; status: string; image: string }>>([]);
   let loading = $state(true);
   // status === 'needs_recovery' when compose.yaml is missing/empty but
@@ -1239,6 +1240,7 @@
       const detail = await api.stacks.get(name);
       compose = detail.compose;
       env = detail.env ?? '';
+      envHidden = !!detail.env_hidden;
       modifiedOutside = detail.modified_outside ?? [];
       mountsStackDir = !!detail.mounts_stack_dir;
       stackStatus = detail.status === 'needs_recovery' ? 'needs_recovery' : 'ok';
@@ -1569,7 +1571,7 @@
     return !!imageUpdates[image]?.update_available;
   }
   const canUpdateImages = $derived(
-    !isRemote && canDeploy && allowed('containers.update', { stack: name, host: stackHost })
+    !isRemote && canDeploy && allowed('containers.upgrade', { stack: name, host: stackHost })
   );
   // Operation per service: the container id changes with the update, the
   // service name does not.
@@ -1631,6 +1633,8 @@
           <ArrowRightLeft size={13} strokeWidth={1.8} /> Migrate
         </button>
       {/if}
+    {/if}
+    {#if stackStatus !== 'needs_recovery' && allowed('stacks.operate', { stack: name, host: stackHost })}
       <button type="button" class="dm-btn" onclick={stop} disabled={anyBusy}>
         <Square size={12} strokeWidth={1.8} /> Stop
       </button>
@@ -1932,7 +1936,9 @@
     {/if}
 
     <!-- Environment -->
-    {#if activeTab === 'environment'}
+    {#if activeTab === 'environment' && envHidden}
+      <div class="dm-tbl"><div class="dm-empty">.env is hidden: reading it needs Deploy on this stack or the “See environment values” extra.</div></div>
+    {:else if activeTab === 'environment'}
       <div class="stk-toolbar">
         <span class="dm-sub">{envRows.length} variable{envRows.length === 1 ? '' : 's'} in .env{#if dirty}<span class="stk-unsaved"> · unsaved</span>{/if}</span>
         <span class="dm-sp"></span>
