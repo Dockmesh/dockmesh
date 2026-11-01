@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Role is a stored role: levels per area plus extras. Permissions is
@@ -224,6 +225,10 @@ func loadAssignments(ctx context.Context, q querier) ([]Assignment, error) {
 		var a Assignment
 		if err := rows.Scan(&a.ID, &a.UserID, &a.Role, &a.Scope.Type, &a.Scope.Host, &a.Scope.Value, &a.Source, &a.Via, &a.CreatedAt, &a.CreatedBy); err != nil {
 			return nil, err
+		}
+		// SQLite's CURRENT_TIMESTAMP is UTC without a zone.
+		if t, err := time.Parse(time.DateTime, a.CreatedAt); err == nil {
+			a.CreatedAt = t.UTC().Format(time.RFC3339)
 		}
 		out = append(out, a)
 	}

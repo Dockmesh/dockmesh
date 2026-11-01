@@ -98,7 +98,7 @@
   async function loadMe() {
     try {
       me = (await api.users.me()) as MeShape;
-      if (roleList.length === 0) roleList = await api.roles.list().catch(() => []);
+      if (roleList.length === 0 && allowed('roles.view')) roleList = await api.roles.list().catch(() => []);
       draftEmail = me.email ?? '';
     } catch (err) {
       toast.error('Failed to load profile', err instanceof ApiError ? err.message : undefined);

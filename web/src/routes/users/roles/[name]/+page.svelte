@@ -190,7 +190,7 @@
         </div>
         {#each summaries as s (s.key)}
           {@const area = catalog.areas.find((a) => a.key === s.key)}
-          <div class="dm-tr" role="row" style="grid-template-columns: {M_COLS}">
+          <div class="dm-tr tall" role="row" style="grid-template-columns: {M_COLS}">
             <span>{s.label}{#if !s.scoped}<span class="dm-dim" title="Only an assignment on everything grants this area"> · everything only</span>{/if}</span>
             <span>
               {#if editable && area}
@@ -266,6 +266,7 @@
   .meta { display: grid; grid-template-columns: 260px 220px minmax(260px, 1fr); gap: 12px; }
   .meta .wide { grid-column: span 1; }
   .lvl { width: 150px; min-height: 30px; }
+  .tall { height: auto; padding-top: 6px; padding-bottom: 6px; }
   .cc { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: var(--fs-sm); min-width: 0; }
   .can { color: var(--fg); }
   .cannot { color: var(--subtle); }
