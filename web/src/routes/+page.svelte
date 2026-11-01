@@ -43,10 +43,7 @@
   let error = $state('');
   let stackFilter = $state<'all' | 'running' | 'issues' | 'stopped'>('all');
 
-  // Until the host list arrives the selection may still be a host the
-  // caller cannot read (a scoped user's stale 'local'). Without hosts.view
-  // the list never arrives and the selection is used as it is.
-  const lensKnown = () => hosts.isAll || !allowed('hosts.view') || hosts.available.some((h) => h.id === hosts.id);
+  const lensKnown = () => hosts.usable(allowed('hosts.view'));
 
   const nextLoad = latest();
   async function load() {

@@ -22,3 +22,17 @@ describe('host selection fallback', () => {
     });
   }
 });
+
+describe('host selection usable', () => {
+  it('waits for the host list unless the caller cannot list hosts', () => {
+    const s = createHostStore();
+    s.set('local');
+    expect(s.usable(true)).toBe(false);
+    expect(s.usable(false)).toBe(true);
+    s.setAvailable([h('a1')]);
+    expect(s.id).toBe('a1');
+    expect(s.usable(true)).toBe(true);
+    s.set('all');
+    expect(s.usable(true)).toBe(true);
+  });
+});

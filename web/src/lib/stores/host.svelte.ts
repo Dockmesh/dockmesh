@@ -81,6 +81,12 @@ export function createHostStore() {
     get isAll(): boolean {
       return selectedId === ALL_HOSTS_ID;
     },
+    // Whether the selection is a host the caller can read. Until the list
+    // arrives it may still be a scoped user's stale 'local'; callers
+    // without hosts.view never get a list and use the selection as it is.
+    usable(canListHosts: boolean): boolean {
+      return selectedId === ALL_HOSTS_ID || !canListHosts || available.some((h) => h.id === selectedId);
+    },
     set,
     setAvailable
   };

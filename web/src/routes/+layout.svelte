@@ -121,7 +121,7 @@
     const host = hosts.id;
     const [stacks, summary] = await Promise.all([
       allowed('stacks.view') ? api.stacks.list().catch(() => null) : Promise.resolve(null),
-      allowed('containers.view') ? api.containers.summary(host).catch(() => null) : Promise.resolve(null)
+      allowed('containers.view') && hosts.usable(allowed('hosts.view')) ? api.containers.summary(host).catch(() => null) : Promise.resolve(null)
     ]);
     counts = {
       stacks: stacks?.length,
@@ -132,6 +132,7 @@
   $effect(() => {
     if (!auth.isAuthenticated) return;
     void hosts.id;
+    void hosts.available.length;
     void page.url.pathname;
     refreshCounts();
     const t = setInterval(refreshCounts, 30_000);
