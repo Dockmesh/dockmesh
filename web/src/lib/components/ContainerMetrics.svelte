@@ -1,6 +1,7 @@
 <script lang="ts" module>
   export interface LiveSample {
     cpu_percent: number;
+    cpu_percent_core: number;
     mem_used: number;
     mem_unlimited?: boolean;
     mem_limit: number;
@@ -17,6 +18,7 @@
   import { api, type HistoryReason, type MetricsSample } from '$lib/api';
   import MetricsChart, { type ChartEvent, type ChartSeries } from './ui/MetricsChart.svelte';
   import Segmented from './ui/Segmented.svelte';
+  import { HISTORY_RANGE_S, historyResolution, type MetricsRange } from '$lib/metricsRange';
 
   // Stored history feeds the time ranges; the live range uses the stats
   // websocket samples the page already receives.
@@ -36,10 +38,8 @@
     events?: ChartEvent[];
   } = $props();
 
-  type Range = 'live' | '1h' | '6h' | '24h' | '7d' | '30d';
-  const RANGE_S: Record<Range, number> = { live: 120, '1h': 3600, '6h': 21600, '24h': 86400, '7d': 604800, '30d': 2592000 };
-  // Set from the history response: hosts whose agent records no history
-  // answer with history=false and a reason.
+  type Range = MetricsRange;
+  const RANGE_S: Record<Range, number> = { live: 120, ...HISTORY_RANGE_S };
   let hasHistory = $state(true);
   let noHistoryReason = $state<HistoryReason | null>(null);
   let historyUnlimited = $state(false);
@@ -82,18 +82,12 @@
     liveBuf = [...prev.filter((x) => x.ts !== s.ts), s].slice(-240);
   });
 
-  function resolution(seconds: number): 'raw' | '1m' | '1h' {
-    if (seconds <= 6 * 3600) return 'raw';
-    if (seconds <= 7 * 86400) return '1m';
-    return '1h';
-  }
-
   async function load() {
     if (range === 'live' || !hasHistory) return;
     const to = zoom ? Math.floor(zoom[1] / 1000) : Math.floor(Date.now() / 1000);
     const from = zoom ? Math.floor(zoom[0] / 1000) : to - RANGE_S[range];
     try {
-      const res = await api.containers.metrics(id, from, to, resolution(to - from), host);
+      const res = await api.containers.metrics(id, from, to, historyResolution(to - from), host);
       samples = res.samples;
       historyUnlimited = res.mem_unlimited;
       hasHistory = res.history;
@@ -129,7 +123,6 @@
   const ts = $derived(data.map((s) => s.ts * 1000));
 
   const memLimit = $derived(data.reduce((m, s) => Math.max(m, s.mem_limit || 0), latest?.mem_limit ?? 0));
-  // Docker reports the host RAM as the limit when none is set.
   const limited = $derived(memLimit > 0 && !(range === 'live' ? latest?.mem_unlimited : historyUnlimited));
   const memBase = $derived(limited ? memLimit : memTotal || memLimit);
 
@@ -213,7 +206,7 @@
       CPU % is relative to all {cores} cores of {hostName}.
     {/if}
     {#if noHistoryReason === 'agent_no_history'}
-      History is not recorded for containers on agent hosts yet, so {hostName} shows live values only.
+      History is not recorded for containers on agent hosts, so {hostName} shows live values only.
     {/if}
   </p>
   {#if events.some((e) => e.ts >= domain[0] && e.ts <= domain[1])}

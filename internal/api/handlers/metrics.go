@@ -215,8 +215,7 @@ func (h *Handlers) GetMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.Samples = samples
 	if info.HostConfig != nil {
-		resp.MemUnlimited = info.HostConfig.Memory == 0 ||
-			docker.NoMemLimit(uint64(info.HostConfig.Memory), memTotal)
+		resp.MemUnlimited = docker.NoMemLimit(uint64(info.HostConfig.Memory), memTotal)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

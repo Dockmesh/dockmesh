@@ -468,6 +468,7 @@
   // Stats
   interface StatsSample {
     cpu_percent: number;
+    cpu_percent_core: number;
     mem_used: number;
     mem_limit: number;
     mem_unlimited?: boolean;
@@ -965,6 +966,7 @@
     stats
       ? {
           cpu_percent: stats.cpu_percent,
+          cpu_percent_core: stats.cpu_percent_core,
           mem_used: stats.mem_used,
           mem_limit: stats.mem_limit,
           mem_unlimited: stats.mem_unlimited,

@@ -71,7 +71,7 @@ export interface MetricsSample {
   ts: number;
   // 0..100 of the host; cpu_percent_core is 100 per busy core.
   cpu_percent: number;
-  cpu_percent_core?: number;
+  cpu_percent_core: number;
   mem_used: number;
   mem_limit: number;
   net_rx: number;

@@ -4,6 +4,7 @@
   import { api, type HistoryReason, type HostMetricsSample, type SystemMetrics } from '$lib/api';
   import MetricsChart, { type ChartSeries } from './ui/MetricsChart.svelte';
   import Segmented from './ui/Segmented.svelte';
+  import { HISTORY_RANGE_S, historyResolution, type MetricsRange } from '$lib/metricsRange';
 
   // Stored history feeds the time ranges; the live range collects the
   // snapshots the host page polls anyway.
@@ -17,8 +18,8 @@
     latest?: SystemMetrics | null;
   } = $props();
 
-  type Range = 'live' | '1h' | '6h' | '24h' | '7d' | '30d';
-  const RANGE_S: Record<Range, number> = { live: 600, '1h': 3600, '6h': 21600, '24h': 86400, '7d': 604800, '30d': 2592000 };
+  type Range = MetricsRange;
+  const RANGE_S: Record<Range, number> = { live: 600, ...HISTORY_RANGE_S };
 
   let hasHistory = $state(true);
   let noHistoryReason = $state<HistoryReason | null>(null);
@@ -30,13 +31,11 @@
 
   $effect(() => {
     void host;
-    untrack(() => {
-      hasHistory = true;
-      noHistoryReason = null;
-      liveBuf = [];
-      samples = [];
-      zoom = null;
-    });
+    hasHistory = true;
+    noHistoryReason = null;
+    liveBuf = [];
+    samples = [];
+    zoom = null;
   });
 
   $effect(() => {
@@ -58,18 +57,12 @@
     liveBuf = [...prev.filter((x) => x.ts !== s.ts), s].slice(-120);
   });
 
-  function resolution(seconds: number): 'raw' | '1m' | '1h' {
-    if (seconds <= 6 * 3600) return 'raw';
-    if (seconds <= 7 * 86400) return '1m';
-    return '1h';
-  }
-
   async function load() {
     if (range === 'live' || !hasHistory) return;
     const to = zoom ? Math.floor(zoom[1] / 1000) : Math.floor(Date.now() / 1000);
     const from = zoom ? Math.floor(zoom[0] / 1000) : to - RANGE_S[range];
     try {
-      const res = await api.hosts.metrics(host, from, to, resolution(to - from));
+      const res = await api.hosts.metrics(host, from, to, historyResolution(to - from));
       samples = res.samples;
       hasHistory = res.history;
       noHistoryReason = res.reason ?? null;
@@ -171,7 +164,7 @@
         : ''}.
     {/if}
     {#if noHistoryReason === 'agent_no_history'}
-      History is not recorded for agent hosts yet, so {hostName} shows live values while this page is open.
+      History is not recorded for agent hosts, so {hostName} shows live values while this page is open.
     {/if}
   </p>
 </section>

@@ -6,11 +6,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/docker"
-	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -63,7 +61,7 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rc.Close()
 
-	hostMem := h.hostMemTotal(ctx, target)
+	_, hostMem := hostCapacity(ctx, target)
 
 	// Rolling 5-sample CPU% window. Docker's stats stream ticks at
 	// ~1s, so this matches the 5-second smoothing we use on host
@@ -107,14 +105,3 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// hostMemTotal is the RAM of the host a container runs on, 0 when the
-// host does not answer in time.
-func (h *Handlers) hostMemTotal(ctx context.Context, target host.Host) uint64 {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	m, err := target.SystemMetrics(ctx)
-	if err != nil {
-		return 0
-	}
-	return m.MemTotal
-}

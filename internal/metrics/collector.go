@@ -385,8 +385,9 @@ func (c *Collector) HasHistory(ctx context.Context, hostID string) (bool, error)
 		    OR EXISTS (SELECT 1 FROM host_metrics_1m WHERE host_id = ?)
 		    OR EXISTS (SELECT 1 FROM host_metrics_1h WHERE host_id = ?)
 		    OR EXISTS (SELECT 1 FROM metrics_raw WHERE host_id = ?)
-		    OR EXISTS (SELECT 1 FROM metrics_1m WHERE host_id = ?)`,
-		hostID, hostID, hostID, hostID, hostID).Scan(&found)
+		    OR EXISTS (SELECT 1 FROM metrics_1m WHERE host_id = ?)
+		    OR EXISTS (SELECT 1 FROM metrics_1h WHERE host_id = ?)`,
+		hostID, hostID, hostID, hostID, hostID, hostID).Scan(&found)
 	return found, err
 }
 

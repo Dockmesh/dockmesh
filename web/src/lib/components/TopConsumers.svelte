@@ -68,7 +68,7 @@
     <div class="dm-tbl">
       <div class="dm-empty">
         {batch.reason === 'agent_no_history'
-          ? `Container samples are not recorded for agent hosts yet; open a container on ${hostName} for live values.`
+          ? `Container samples are not recorded for agent hosts; open a container on ${hostName} for live values.`
           : 'No container samples stored.'}
       </div>
     </div>
