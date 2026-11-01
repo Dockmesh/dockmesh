@@ -1,0 +1,3 @@
+kind: Fixed
+body: Backup retention only deletes archives recorded for the job's own runs instead of listing the target, and never the newest archive of a job. New archives go to a folder named after the job ID; existing archives are still managed where they are.
+time: 2026-11-01T12:01:11Z

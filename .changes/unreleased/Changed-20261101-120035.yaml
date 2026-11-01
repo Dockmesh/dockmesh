@@ -1,0 +1,3 @@
+kind: Changed
+body: '`dockmesh restore` uses the same staged swap: a restore that stops halfway no longer leaves stacks and data overwritten next to the old database, and it finishes on the next start. It takes `--key` for encrypted archives; `--skip-sanity` is gone, the checks always run.'
+time: 2026-11-01T12:00:35Z

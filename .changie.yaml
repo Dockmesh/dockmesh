@@ -1,0 +1,26 @@
+# Changelog fragments: https://changie.dev. CHANGELOG.md is generated from
+# .changes/ with `changie merge`; see RELEASING.md for cutting a release.
+changesDir: .changes
+unreleasedDir: unreleased
+headerPath: header.tpl.md
+changelogPath: CHANGELOG.md
+versionExt: md
+envPrefix: CHANGIE_
+fragmentFileFormat: '{{ replace " " "-" .Kind }}-{{.Time.Format "20060102-150405"}}'
+# CHANGIE_SEVERITY is security, recommended or normal.
+versionFormat: '## [{{.VersionNoPrefix}}] - {{.Time.Format "2006-01-02"}} [{{.Env.SEVERITY}}]'
+kindFormat: '### {{.Kind}}'
+changeFormat: '- {{.Body}}'
+newlines:
+  afterChangelogHeader: 1
+  afterChangelogVersion: 1
+  beforeHeaderFile: 1
+  beforeKind: 1
+  afterKind: 1
+kinds:
+  - label: Highlights
+  - label: Added
+  - label: Changed
+  - label: Fixed
+  - label: Security
+  - label: Upgrade notes

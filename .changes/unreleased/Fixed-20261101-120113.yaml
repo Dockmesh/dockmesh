@@ -1,0 +1,3 @@
+kind: Fixed
+body: A stack backup fails when the compose file can't be read or one of the stack's volumes can't be archived, instead of reporting success without that volume. Local volume archives fail when `tar` exits with an error.
+time: 2026-11-01T12:01:13Z

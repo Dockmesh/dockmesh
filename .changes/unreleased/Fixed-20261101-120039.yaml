@@ -1,0 +1,3 @@
+kind: Fixed
+body: Proxy routes in the API list empty options as `[]` instead of `null`, and a newly created route is returned with its real creation time.
+time: 2026-11-01T12:00:39Z

@@ -355,31 +355,46 @@ func TestReleaseRequiresHighlightsForMinor(t *testing.T) {
 }
 
 func TestCheckCommand(t *testing.T) {
-	base := "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Old entry.\n\n## [0.3.3] - 2026-10-01 [normal]\n\n### Fixed\n- x\n"
+	base := "# Changelog\n\n## [Unreleased]\n\n## [0.3.3] - 2026-10-01 [normal]\n\n### Fixed\n- x\n"
+	added := "kind: Added\nbody: A new thing.\ntime: 2026-11-01T12:00:00Z\n"
 	tests := []struct {
-		name    string
-		base    string // "" = base file missing
-		head    string
-		wantErr string
+		name     string
+		base     string // "" = base file missing
+		head     string
+		frags    map[string]string
+		changed  string
+		optional bool
+		wantErr  string
 	}{
-		{"entry added", base, strings.Replace(base, "- Old entry.\n", "- Old entry.\n- New entry.\n", 1), ""},
-		{"untouched", base, base, "was not changed"},
-		{"whitespace only", base, strings.Replace(base, "### Fixed\n- Old", "### Fixed\n\n- Old", 1), "was not changed"},
-		{"only a released section changed", base, strings.Replace(base, "- x\n", "- y\n", 1), "was not changed"},
-		{"minor release cut with highlights", base, cut("0.4.0", 3), ""},
-		{"minor release cut with four highlights", base, cut("0.4.0", 4), ""},
-		{"minor release cut without highlights", base, cut("0.4.0", 0), "needs 3 or 4 ### Highlights bullets, has 0"},
-		{"minor release cut with two highlights", base, cut("0.4.0", 2), "has 2"},
-		{"minor release cut with five highlights", base, cut("0.4.0", 5), "has 5"},
-		{"patch release cut without highlights", base, cut("0.3.4", 0), ""},
-		{"patch release cut with one highlight", base, cut("0.3.4", 1), ""},
-		{"unreleased highlights are optional", base, strings.Replace(base, "### Fixed\n- Old entry.\n", "### Highlights\n- One.\n\n### Fixed\n- Old entry.\n- New entry.\n", 1), ""},
-		{"old minor release without highlights is not rechecked",
-			"# Changelog\n\n## [Unreleased]\n\n## [0.3.0] - 2026-09-01 [normal]\n\n### Fixed\n- x\n",
-			"# Changelog\n\n## [Unreleased]\n\n### Fixed\n- y\n\n## [0.3.0] - 2026-09-01 [normal]\n\n### Fixed\n- x\n", ""},
-		{"no base changelog yet", "", base, ""},
-		{"head has no unreleased", base, "# Changelog\n", "no [Unreleased] section"},
-		{"malformed head", base, base + "\n### Removed\n- z\n", "unknown subsection"},
+		{name: "fragment added", base: base, head: base, frags: map[string]string{"a.yaml": added}, changed: ".changes/unreleased/a.yaml\n"},
+		{name: "no fragment changed", base: base, head: base, frags: map[string]string{"a.yaml": added}, changed: "README.md\n", wantErr: "no changelog fragment added"},
+		{name: "no fragments at all", base: base, head: base, changed: "", wantErr: "no changelog fragment added"},
+		{name: "other yaml files are not fragments", base: base, head: base, frags: map[string]string{"a.yaml": added}, changed: ".github/a.yml\n", wantErr: "no changelog fragment added"},
+		{name: "non-yaml file ignored", base: base, head: base, frags: map[string]string{"a.yaml": added, ".gitkeep": ""}, changed: ".changes/unreleased/a.yaml\n"},
+		{name: "unknown kind", base: base, head: base, frags: map[string]string{"a.yaml": "kind: Removed\nbody: x\n"}, changed: ".changes/unreleased/a.yaml\n", wantErr: `a.yaml: unknown kind "Removed"`},
+		{name: "empty body", base: base, head: base, frags: map[string]string{"a.yaml": "kind: Fixed\nbody: ''\n"}, changed: ".changes/unreleased/a.yaml\n", wantErr: "a.yaml: body is empty"},
+		{name: "multi-line body", base: base, head: base, frags: map[string]string{"a.yaml": "kind: Fixed\nbody: |\n  one\n  two\n"}, changed: ".changes/unreleased/a.yaml\n", wantErr: "a.yaml: body must be one line"},
+		{name: "invalid fragment fails even when not changed", base: base, head: base, frags: map[string]string{"a.yaml": added, "b.yaml": "kind: Fixed\n"}, changed: ".changes/unreleased/a.yaml\n", wantErr: "b.yaml: body is empty"},
+		{name: "upgrade note without id", base: base, head: base, frags: map[string]string{"a.yaml": "kind: Upgrade notes\nbody: Sign in again.\n"}, changed: ".changes/unreleased/a.yaml\n", wantErr: "must start with"},
+		{name: "upgrade note with id", base: base, head: base, frags: map[string]string{"a.yaml": "kind: Upgrade notes\nbody: '[re-login, all] Sign in again.'\n"}, changed: ".changes/unreleased/a.yaml\n"},
+		{name: "duplicate upgrade ids across fragments", base: base, head: base,
+			frags:   map[string]string{"a.yaml": "kind: Upgrade notes\nbody: '[re-login, all] One.'\n", "b.yaml": "kind: Upgrade notes\nbody: '[re-login, admins] Two.'\n"},
+			changed: ".changes/unreleased/b.yaml\n", wantErr: `duplicate upgrade action id "re-login"`},
+		{name: "minor release cut with highlights", base: base, head: cut("0.4.0", 3)},
+		{name: "minor release cut with four highlights", base: base, head: cut("0.4.0", 4)},
+		{name: "minor release cut without highlights", base: base, head: cut("0.4.0", 0), wantErr: "needs 3 or 4 ### Highlights bullets, has 0"},
+		{name: "minor release cut with two highlights", base: base, head: cut("0.4.0", 2), wantErr: "has 2"},
+		{name: "minor release cut with five highlights", base: base, head: cut("0.4.0", 5), wantErr: "has 5"},
+		{name: "patch release cut without highlights", base: base, head: cut("0.3.4", 0)},
+		{name: "old minor release without highlights is not rechecked",
+			base:  "# Changelog\n\n## [Unreleased]\n\n## [0.3.0] - 2026-09-01 [normal]\n\n### Fixed\n- x\n",
+			head:  "# Changelog\n\n## [Unreleased]\n\n## [0.3.0] - 2026-09-01 [normal]\n\n### Fixed\n- x\n",
+			frags: map[string]string{"a.yaml": added}, changed: ".changes/unreleased/a.yaml\n"},
+		{name: "no base changelog yet", head: base, frags: map[string]string{"a.yaml": added}, changed: ".changes/unreleased/a.yaml\n"},
+		{name: "head has no unreleased", base: base, head: "# Changelog\n", frags: map[string]string{"a.yaml": added}, changed: ".changes/unreleased/a.yaml\n", wantErr: "no [Unreleased] section"},
+		{name: "malformed head", base: base, head: base + "\n### Removed\n- z\n", wantErr: "unknown subsection"},
+		{name: "no-changelog label needs no fragment", base: base, head: base, optional: true},
+		{name: "no-changelog label still validates fragments", base: base, head: base, frags: map[string]string{"a.yaml": "kind: Fixed\n"}, optional: true, wantErr: "a.yaml: body is empty"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -389,7 +404,19 @@ func TestCheckCommand(t *testing.T) {
 			if tt.base != "" {
 				writeFile(t, dir, "base.md", tt.base)
 			}
-			err := run([]string{"check", "-changelog", head, "-base", basePath}, &bytes.Buffer{})
+			fragDir := filepath.Join(dir, "unreleased")
+			if err := os.Mkdir(fragDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for name, body := range tt.frags {
+				writeFile(t, fragDir, name, body)
+			}
+			changed := writeFile(t, dir, "changed.txt", tt.changed)
+			args := []string{"check", "-changelog", head, "-base", basePath, "-fragments", fragDir, "-changed", changed}
+			if tt.optional {
+				args = append(args, "-optional")
+			}
+			err := run(args, &bytes.Buffer{})
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatal(err)

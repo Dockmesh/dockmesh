@@ -1,10 +1,10 @@
 // Command relmanifest turns a CHANGELOG.md version section into GitHub
-// release notes and release-manifest.json, and checks pull requests for a
-// changelog entry. The changelog syntax is documented at the top of
-// CHANGELOG.md.
+// release notes and release-manifest.json, and checks the changie fragments
+// of pull requests. The changelog syntax is documented at the top of
+// CHANGELOG.md, which changie generates from .changes/.
 //
 //	relmanifest release -version v0.3.4 [-changelog CHANGELOG.md] -notes notes.md [-body body.md] -manifest release-manifest.json
-//	relmanifest check -base base-CHANGELOG.md [-changelog CHANGELOG.md]
+//	relmanifest check -base base-CHANGELOG.md -changed changed.txt [-changelog CHANGELOG.md] [-fragments .changes/unreleased]
 package main
 
 import (
@@ -14,8 +14,11 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/changelog"
+	"gopkg.in/yaml.v3"
 )
 
 func main() {
@@ -89,11 +92,18 @@ func runCheck(args []string, stdout io.Writer) error {
 	fl := flag.NewFlagSet("check", flag.ContinueOnError)
 	changelogPath := fl.String("changelog", "CHANGELOG.md", "changelog path in the PR head")
 	base := fl.String("base", "", "changelog from the PR base; a missing file counts as empty")
+	fragDir := fl.String("fragments", ".changes/unreleased", "changie fragments directory in the PR head")
+	changed := fl.String("changed", "", "file listing the paths the PR adds or modifies, one per line")
+	optional := fl.Bool("optional", false, "validate fragments but don't require one (PR labelled no-changelog)")
 	if err := fl.Parse(args); err != nil {
 		return err
 	}
-	if *base == "" {
-		return errors.New("check: -base is required")
+	if *base == "" || (*changed == "" && !*optional) {
+		return errors.New("check: -base and -changed are required")
+	}
+	frags, err := checkFragments(*fragDir)
+	if err != nil {
+		return err
 	}
 	head, err := parseFile(*changelogPath)
 	if err != nil {
@@ -117,11 +127,96 @@ func runCheck(args []string, stdout io.Writer) error {
 			}
 		}
 	}
-	if changelog.UnreleasedBody(head) == changelog.UnreleasedBody(baseSections) && !hasNewRelease(head, baseSections) {
-		return errors.New("CHANGELOG.md [Unreleased] was not changed; add an entry, or label the PR no-changelog if users won't notice the change")
+	if hasNewRelease(head, baseSections) {
+		fmt.Fprintln(stdout, "changelog: release section added")
+		return nil
 	}
-	fmt.Fprintln(stdout, "changelog: [Unreleased] updated")
+	if *optional {
+		fmt.Fprintf(stdout, "changelog: %d fragment(s) valid, none required\n", len(frags))
+		return nil
+	}
+	added, err := changedFragments(*changed, frags)
+	if err != nil {
+		return err
+	}
+	if added == 0 {
+		return fmt.Errorf("no changelog fragment added under %s; run changie new, or label the PR no-changelog if users won't notice the change", *fragDir)
+	}
+	fmt.Fprintf(stdout, "changelog: %d fragment(s) added or changed\n", added)
 	return nil
+}
+
+type fragment struct {
+	Kind string `yaml:"kind"`
+	Body string `yaml:"body"`
+}
+
+// checkFragments validates every fragment in dir by rendering all of them
+// as one [Unreleased] section and parsing it, so a fragment fails exactly
+// where its bullet would fail in a release. It returns the file names.
+func checkFragments(dir string) (map[string]bool, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	names := map[string]bool{}
+	byKind := map[string][]string{}
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".yaml" {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name())) //nolint:gosec // repository file
+		if err != nil {
+			return nil, err
+		}
+		var f fragment
+		if err := yaml.Unmarshal(b, &f); err != nil {
+			return nil, fmt.Errorf("%s: %w", e.Name(), err)
+		}
+		body := strings.TrimSpace(f.Body)
+		switch {
+		case !changelog.IsSubsection(f.Kind):
+			return nil, fmt.Errorf("%s: unknown kind %q (want Highlights, Added, Changed, Fixed, Security or Upgrade notes)", e.Name(), f.Kind)
+		case body == "":
+			return nil, fmt.Errorf("%s: body is empty", e.Name())
+		case strings.ContainsAny(body, "\r\n"):
+			return nil, fmt.Errorf("%s: body must be one line", e.Name())
+		}
+		if _, err := changelog.Parse("## [Unreleased]\n### " + f.Kind + "\n- " + body + "\n"); err != nil {
+			return nil, fmt.Errorf("%s: %w", e.Name(), err)
+		}
+		names[e.Name()] = true
+		byKind[f.Kind] = append(byKind[f.Kind], body)
+	}
+	var all strings.Builder
+	all.WriteString("## [Unreleased]\n")
+	for kind, bodies := range byKind {
+		all.WriteString("### " + kind + "\n")
+		for _, b := range bodies {
+			all.WriteString("- " + b + "\n")
+		}
+	}
+	if _, err := changelog.Parse(all.String()); err != nil {
+		return nil, fmt.Errorf("fragments: %w", err)
+	}
+	return names, nil
+}
+
+// changedFragments counts the paths listed in the file at path that name
+// one of the fragments.
+func changedFragments(path string, frags map[string]bool) (int, error) {
+	b, err := os.ReadFile(path) //nolint:gosec // path from the CLI caller
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && frags[filepath.Base(line)] {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // hasNewRelease reports whether head carries a versioned section that base

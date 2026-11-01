@@ -1,0 +1,3 @@
+kind: Fixed
+body: Backup jobs, runs and saved targets of hosts outside a user's scope are no longer listed or readable, and the system backup job and its runs are shown to admins only. Before, everyone with `backups.view` saw every job and run, including their errors, and users limited to some hosts saw a failing server backup in their overview. The system backup's last error in the sidebar status is shown to admins only, and testing or deleting a saved target now needs access to every job that uses it, like editing it.
+time: 2026-11-01T12:00:42Z

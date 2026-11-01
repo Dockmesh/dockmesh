@@ -1,0 +1,3 @@
+kind: Changed
+body: The dashboard and host page now list disk usage for every real filesystem of a host, with the mounts holding Docker, containerd, stacks, Dockmesh data and local backups labelled. The host's disk figure now shows the fullest of the Docker-related mounts instead of the data directory only, so a full Docker or containerd mount no longer goes unnoticed. Hosts with an older agent keep the single figure until the agent is updated.
+time: 2026-11-01T12:00:29Z

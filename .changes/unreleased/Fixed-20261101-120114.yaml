@@ -1,0 +1,3 @@
+kind: Fixed
+body: Verifying a stack backup checks that every volume the stack had is in the archive.
+time: 2026-11-01T12:01:14Z

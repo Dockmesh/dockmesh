@@ -1,0 +1,3 @@
+kind: Fixed
+body: Users limited to some hosts no longer get an error from the stack page while a newly created stack is not deployed yet.
+time: 2026-11-01T12:00:37Z

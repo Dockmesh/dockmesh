@@ -1,0 +1,3 @@
+kind: Changed
+body: 'Sizes follow Docker''s units everywhere: images, files, disks, transfers and backups in kB, MB and GB (base 1000), memory and memory limits in KiB, MiB and GiB (base 1024).'
+time: 2026-11-01T12:00:14Z

@@ -1,0 +1,3 @@
+kind: Added
+body: The hosts list and host page show "update recommended" for agents that speak an older protocol than the server, and the host page shows when the agent's certificate expires.
+time: 2026-11-01T12:00:06Z

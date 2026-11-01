@@ -1,0 +1,3 @@
+kind: Fixed
+body: A failing post-hook marks the run "completed with warnings" instead of failed; the archive can still be restored. Post-hooks also run when a later pre-hook or the upload fails, so a service stopped by a pre-hook is started again.
+time: 2026-11-01T12:01:15Z

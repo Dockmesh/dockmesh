@@ -1,0 +1,3 @@
+kind: Changed
+body: 'New look for the web UI: a calmer, flat design with equal light and dark themes that follow the system setting until you pick one. The sidebar is grouped into Workloads, Infrastructure, Operations and Admin, shows counts, and collapses to an icon rail. Authentication, registries and the global environment now sit under Settings with their own sub-navigation. Ctrl+K (⌘K) searches pages, stacks, containers, hosts and settings.'
+time: 2026-11-01T12:00:21Z

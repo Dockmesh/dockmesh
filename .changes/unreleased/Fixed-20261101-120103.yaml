@@ -1,0 +1,3 @@
+kind: Fixed
+body: Leaving a container or stack page while its logs, stats or terminal are connecting no longer leaves a socket open in the background.
+time: 2026-11-01T12:01:03Z

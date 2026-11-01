@@ -1,0 +1,3 @@
+kind: Added
+body: The Caddy version of the proxy can be switched between the versions tested with this release (`/api/v1/proxy/version`), with a rollback to the previous one. A version that doesn't come up with the current config is rolled back automatically. While `DOCKMESH_PROXY_IMAGE` is set the version can't be changed.
+time: 2026-11-01T12:00:12Z

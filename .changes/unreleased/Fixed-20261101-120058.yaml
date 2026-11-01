@@ -1,0 +1,3 @@
+kind: Fixed
+body: The volume detail page no longer reloads endlessly when the volume does not exist; it shows an error instead.
+time: 2026-11-01T12:00:58Z

@@ -1,0 +1,3 @@
+kind: Fixed
+body: Agents notice a vanished server within 90 seconds, reconnect immediately and then back off with jitter, and no longer leak a goroutine on every stack request.
+time: 2026-11-01T12:01:10Z

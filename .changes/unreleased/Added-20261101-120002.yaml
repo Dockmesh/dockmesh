@@ -1,0 +1,3 @@
+kind: Added
+body: Every audit log entry has a category (`changes`, `access`, `auth` or `system`), and the audit API filters by it with `?category=`.
+time: 2026-11-01T12:00:02Z

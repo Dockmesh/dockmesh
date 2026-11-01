@@ -1,0 +1,3 @@
+kind: Fixed
+body: Remote deploys, scale-ups and backup pre-hooks on agents are no longer cut off after 30 seconds; they get time for image pulls and database dumps, and a cancelled request now also stops on the agent.
+time: 2026-11-01T12:01:07Z

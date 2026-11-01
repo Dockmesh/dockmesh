@@ -1,0 +1,3 @@
+kind: Added
+body: System backups can be restored from the UI (Backups → a system run → Restore, or "Restore system from file" for an uploaded archive) and from the setup wizard of a fresh install ("Restore from a backup instead"), including encrypted backups together with the key file exported from the original server. The backup is unpacked and checked next to the live files first; the server then restarts and swaps the restored files in before it opens the database. The replaced files are kept in `<data>/.pre-restore/<time>` and `<stacks>.pre-restore-<time>`.
+time: 2026-11-01T12:00:08Z

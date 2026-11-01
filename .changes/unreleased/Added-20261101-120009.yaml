@@ -1,0 +1,3 @@
+kind: Added
+body: '`GET /api/v1/system/whats-new` returns the release notes of the running version and of a newer release, and `POST /api/v1/system/whats-new/seen` remembers per user that they were read. Changelog sections may start with a `### Highlights` list, which the release notes and `release-manifest.json` now include; the changelog check requires three or four of them in every minor release.'
+time: 2026-11-01T12:00:09Z

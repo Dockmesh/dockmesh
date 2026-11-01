@@ -1,0 +1,3 @@
+kind: Fixed
+body: Deleting a backup job keeps its runs restorable; runs whose archive was removed by retention are shown as pruned.
+time: 2026-11-01T12:01:16Z

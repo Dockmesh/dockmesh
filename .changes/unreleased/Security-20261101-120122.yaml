@@ -1,0 +1,3 @@
+kind: Security
+body: Restoring a stack backup writes that stack's compose file and environment, so it now needs the "Edit stacks" permission ("Create stacks" for a new name), the stack within your role scope, and the host the stack is deployed on within your scope. Before, `backups.restore` on the backup's host was enough to overwrite or create any stack, also for users limited to certain hosts.
+time: 2026-11-01T12:01:22Z

@@ -1,0 +1,3 @@
+kind: Changed
+body: The reverse proxy container Dockmesh runs for itself is marked System in the containers list and its detail page shows it read-only, with a link to the Reverse proxy page.
+time: 2026-11-01T12:00:16Z

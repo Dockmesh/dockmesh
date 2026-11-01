@@ -1,0 +1,3 @@
+kind: Changed
+body: Backup jobs now write to saved backup targets instead of keeping their own copy of the target settings. On upgrade, each job's settings are moved to a saved target named after the type and server (for example `sftp-nas.lan (migrated)`); jobs with the same settings share one target, and a job that already matches a saved target uses it. A new target set up in the job wizard is saved under the job's name. Editing a target shows how many jobs use it, and a target that jobs still use can't be deleted.
+time: 2026-11-01T12:00:30Z

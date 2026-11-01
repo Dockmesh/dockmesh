@@ -1,0 +1,3 @@
+kind: Fixed
+body: Backup runs that were still running when the server stopped are marked failed at the next start instead of showing "running" forever.
+time: 2026-11-01T12:01:18Z

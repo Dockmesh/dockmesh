@@ -1,0 +1,3 @@
+kind: Security
+body: A proxy route can no longer forward to the proxy's own admin API, which would have let anyone reaching the proxy change its configuration. The admin API now also refuses requests from browsers on other sites.
+time: 2026-11-01T12:01:21Z

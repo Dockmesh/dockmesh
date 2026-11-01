@@ -1,0 +1,3 @@
+kind: Changed
+body: Users with `alerts.view` can open the Alerts page and read rules, channels and history; creating, editing and deleting follow `alerts.create`, `alerts.update` and `alerts.delete`.
+time: 2026-11-01T12:00:17Z

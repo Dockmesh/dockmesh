@@ -1,0 +1,3 @@
+kind: Fixed
+body: Proxy routes keep working after the Caddy container restarts; before, it came back with no routes until Dockmesh pushed them again.
+time: 2026-11-01T12:00:55Z

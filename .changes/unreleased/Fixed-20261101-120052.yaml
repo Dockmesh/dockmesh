@@ -1,0 +1,3 @@
+kind: Fixed
+body: Updating a container's image no longer loses its anonymous volumes (`-v /data` or a `VOLUME` in the image); the new container gets the old volumes.
+time: 2026-11-01T12:00:52Z
