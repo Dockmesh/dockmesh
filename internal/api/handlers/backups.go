@@ -79,7 +79,11 @@ func (h *Handlers) CreateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !h.requireJobAccess(w, r, nil, &in) || !h.checkBackupJobScope(w, r, in) {
+	if err := h.deriveStackJobHost(r.Context(), nil, &in); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !h.requireJobAccess(w, r, nil, &in) || !h.checkBackupJobScope(w, r, in) || !h.checkBackupJobPlacement(w, r, nil, in) {
 		return
 	}
 	job, err := h.Backups.CreateJob(r.Context(), in)
@@ -116,7 +120,11 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !h.requireJobAccess(w, r, prev, &in) || !h.checkBackupJobScope(w, r, in) {
+	if err := h.deriveStackJobHost(r.Context(), prev, &in); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !h.requireJobAccess(w, r, prev, &in) || !h.checkBackupJobScope(w, r, in) || !h.checkBackupJobPlacement(w, r, prev, in) {
 		return
 	}
 	if err := resolveJobTargetSecrets(&in, prev); err != nil {

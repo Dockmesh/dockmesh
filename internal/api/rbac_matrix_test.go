@@ -298,6 +298,7 @@ var routeGates = []struct {
 	{"GET", "/api/v1/backups/jobs/{id}", rbac.PermBackupsView},
 	{"GET", "/api/v1/backups/targets", rbac.PermBackupsView},
 	{"GET", "/api/v1/backups/local-path", rbac.PermBackupsView},
+	{"GET", "/api/v1/backups/hosts", rbac.PermBackupsView},
 	{"GET", "/api/v1/backups/runs", rbac.PermBackupsView},
 	{"GET", "/api/v1/backups/schedule", rbac.PermBackupsView},
 	{"GET", "/api/v1/backups/runs/{id}", rbac.PermBackupsView},
