@@ -103,7 +103,7 @@ describe('cancel', () => {
   });
   it('names the consequence per kind', () => {
     const o = op([{ status: 'running' }]);
-    expect(cancelConsequence(o)).toContain('Post-backup hooks still run');
+    expect(cancelConsequence(o)).toContain('post-backup hooks still run');
     expect(cancelConsequence({ ...o, kind: 'backup.restore' })).toContain('before anything is written');
     expect(cancelConsequence({ ...o, kind: 'image.update' })).toContain('current image');
     expect(cancelConsequence({ ...o, kind: 'proxy.site' })).toContain('The site stays');
