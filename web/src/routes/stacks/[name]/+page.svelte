@@ -863,7 +863,9 @@
   // All stack names, for the picker dropdown in the editor.
   let allStackNames = $state<string[]>([]);
 
+  // Dependencies and overlays are served under stacks.deploy.
   async function loadDeps() {
+    if (!canDeploy) return;
     try {
       deps = await api.stacks.getDependencies(name);
     } catch {
@@ -899,6 +901,7 @@
   let envBusy = $state(false);
 
   async function loadEnvs() {
+    if (!canDeploy) return;
     try {
       envs = await api.stacks.getEnvironments(name);
     } catch {
@@ -1985,7 +1988,7 @@
           <p class="stk-line">
             {#if envs.active}Deploys merge <code>compose.{envs.active}.yaml</code> on top of the base.{:else}Deploys use the base compose.yaml as it is.{/if}
           </p>
-          {#if canWrite}
+          {#if canDeploy}
             <div class="stk-tags">
               <button type="button" class="stk-tag stk-pick" class:on={envs.active === ''} onclick={() => setActiveEnv('')} disabled={envBusy}>base</button>
               {#each envs.available as e (e)}
@@ -2159,7 +2162,7 @@
                 {#if deps.dependents.length > 0}<dt>Needed by</dt><dd>{#each deps.dependents as d, i (d)}{i > 0 ? ', ' : ''}<a href={`/stacks/${encodeURIComponent(d)}`}>{d}</a>{/each}</dd>{/if}
               </dl>
             {/if}
-            {#if canWrite}<button type="button" class="dm-btn" onclick={openDepsEditor}>Edit dependencies</button>{/if}
+            {#if canDeploy}<button type="button" class="dm-btn" onclick={openDepsEditor}>Edit dependencies</button>{/if}
           </div>
         </div>
 
