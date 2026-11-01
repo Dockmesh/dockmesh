@@ -374,11 +374,11 @@
     {:else}
       <div class="vol-detail-container-table">
         <div class="vol-detail-container-row vol-detail-container-row--head">
-          <span>name</span>
-          <span>state</span>
-          <span>image</span>
-          <span>mounted at</span>
-          <span>mode</span>
+          <span>Name</span>
+          <span>State</span>
+          <span>Image</span>
+          <span>Mounted at</span>
+          <span>Mode</span>
         </div>
         {#each attached as c (c.id)}
           <a href={`/containers/${c.id}`} class="vol-detail-container-row vol-detail-container-row--data">
@@ -509,7 +509,6 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-family: var(--font-mono);
     font-size: 11.5px;
     color: var(--fg-subtle);
     text-decoration: none;
@@ -544,7 +543,6 @@
   }
   .vol-detail-tile-text {
     font-size: 14px;
-    font-family: var(--font-mono);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -563,15 +561,12 @@
     margin: 0;
   }
   .vol-detail-dl dt {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     padding-top: 4px;
   }
   .vol-detail-dl dd { margin: 0; color: var(--fg); }
-  .vol-detail-pill { font-size: 9.5px; padding: 1px 6px; }
+  .vol-detail-pill { font-size: 11.5px; padding: 1px 6px; }
   .vol-detail-mountpoint {
     display: flex;
     align-items: center;
@@ -587,7 +582,7 @@
     padding: 2px 6px;
     border: 1px solid var(--border);
     border-radius: 3px;
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-muted);
     background: var(--surface);
   }
@@ -605,7 +600,7 @@
   }
   .vol-detail-foot {
     margin-top: 16px;
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     line-height: 1.6;
   }
@@ -637,10 +632,7 @@
   .vol-detail-container-row--head {
     background: var(--bg-elevated);
     color: var(--fg-subtle);
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
   }
   .vol-detail-container-row--data:hover { background: var(--surface-hover); }
   .vol-detail-container-name {
@@ -732,9 +724,9 @@
     color: var(--fg-subtle);
     text-align: right;
   }
-  .vol-detail-files-row-mtime { font-size: 10.5px; color: var(--fg-subtle); white-space: nowrap; }
+  .vol-detail-files-row-mtime { font-size: 11.5px; color: var(--fg-subtle); white-space: nowrap; }
   .vol-detail-files-row-link {
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -756,7 +748,7 @@
     white-space: nowrap;
   }
   .vol-detail-file-meta {
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-top: 3px;
   }
@@ -785,7 +777,7 @@
   }
   .vol-detail-truncated {
     margin-top: 6px;
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
   .vol-detail-error {

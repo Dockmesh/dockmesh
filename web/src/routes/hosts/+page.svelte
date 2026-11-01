@@ -10,7 +10,7 @@
   } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { fmtVersion } from '$lib/version';
-  import { Skeleton, EmptyState, StatBar, Segmented, ChipList, TagPill, Menu, Modal, LiveIndicator } from '$lib/components/ui';
+  import { Skeleton, EmptyState, StatBar, Segmented, ChipList, TagPill, Menu, Modal, LiveIndicator, InfoTip } from '$lib/components/ui';
   import type { MenuItem } from '$lib/components/ui/Menu.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
@@ -96,7 +96,6 @@
   }
 
   const stats = $derived.by(() => {
-    const outdated = rows.filter(needsUpgrade);
     const offline = rows.filter((r) => r.status === 'offline');
     let cores = 0;
     let mem = 0;
@@ -112,12 +111,6 @@
         value: `${counts.online} of ${counts.all}`,
         note: offline.length ? offline.map((r) => r.name).join(', ') + ' offline' : counts.pending ? `${counts.pending} pending` : '',
         tone: offline.length ? ('bad' as const) : ('' as const)
-      },
-      {
-        label: 'Agents outdated',
-        value: outdated.length,
-        note: upgradePolicy ? `upgrade policy: ${upgradePolicy.mode}` : '',
-        tone: outdated.length ? ('warn' as const) : ('' as const)
       },
       { label: 'Containers', value: containers },
       { label: 'Total capacity', value: cores ? `${Math.round(cores)} cores · ${fmtMem(mem)}` : '—' }
@@ -455,7 +448,7 @@
               <span role="cell" class="dm-num dm-dim">—</span>
               <span role="cell" class="dm-num dm-dim">—</span>
             {/if}
-            <span role="cell" class="dm-num" class:warn={needsUpgrade(r) || r.update_recommended} title={needsUpgrade(r) ? `Server is on ${fmtVersion(upgradePolicy?.server_version)}` : r.update_recommended ? 'This agent speaks an older protocol; some features are unavailable until it is upgraded' : ''}>
+            <span role="cell" class="dm-mono" class:warn={needsUpgrade(r) || r.update_recommended} title={[r.version ? fmtVersion(r.version) : '', needsUpgrade(r) ? `Server is on ${fmtVersion(upgradePolicy?.server_version)}` : r.update_recommended ? 'Older protocol: some features need an upgrade' : ''].filter(Boolean).join(' · ')}>
               {r.version ? fmtVersion(r.version) : '—'}{needsUpgrade(r) || r.update_recommended ? ' ↑' : ''}
             </span>
             <span role="cell" class="tagcell">
@@ -491,7 +484,7 @@
 
 <Modal bind:open={tagsOpen} title="Tags · {rows.find((r) => r.id === tagsHostId)?.name ?? ''}" maxWidth="max-w-lg">
   <div class="tagsdlg">
-    <p class="dm-sub">Tags group hosts for filtering and limit which hosts a user or role can see (host scope). Lowercase letters, digits and hyphens, at most 20.</p>
+    <p class="dm-sub">Tags group hosts and can limit which hosts a user sees. <InfoTip text="Used for filtering and for host scopes of users and roles. Lowercase letters, digits and hyphens, at most 20 tags." /></p>
     <div class="tagedit">
       {#each tagsDraft as t (t)}
         <span class="tagx"><TagPill label={t} /><button type="button" onclick={() => (tagsDraft = tagsDraft.filter((x) => x !== t))} aria-label="Remove {t}"><X size={11} /></button></span>

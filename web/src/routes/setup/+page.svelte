@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Logo from '$lib/components/shell/Logo.svelte';
   // Install wizard: one question per step, a review of every answer before
   // anything is written, then the live install log and the credentials.
   import { onMount, onDestroy } from 'svelte';
@@ -487,7 +488,7 @@
 <div class="sw">
   <header class="top">
     <div class="brand">
-      <img src="/logo-mark.svg" alt="" width="22" height="22" />
+      <span class="mark"><Logo width={54} height={22} /></span>
       <b>Dockmesh</b>
       <span class="dim">/ setup</span>
     </div>
@@ -696,7 +697,7 @@
         <div class="dm-field">
           <label for="admin-user">Username</label>
           <input id="admin-user" class="dm-input dm-mono" bind:value={adminUsername} spellcheck="false" autocomplete="off" />
-          <span class="hint">A local admin with full rights. You can disable it later once single sign-on works.</span>
+          <span class="hint">A local admin with full rights, which you can disable once single sign-on works.</span>
         </div>
         <div class="dm-field">
           <div class="lbl-row">
@@ -832,7 +833,7 @@
                   {#if copiedKey === 'pw'}<Check size={13} /> copied{:else}<Copy size={13} /> copy{/if}
                 </button>
               {:else}
-                <span class="dm-dim">the password you entered</span>
+                <span class="dm-dim">The password you entered</span>
               {/if}
             </dd>
           </dl>
@@ -879,6 +880,7 @@
     border-radius: var(--r-sm);
     padding: 2px 4px;
   }
+  .brand .mark { color: var(--accent); display: inline-flex; }
   .stepper button:not(:disabled) { cursor: pointer; }
   .stepper button:not(:disabled):hover .l { color: var(--fg); text-decoration: underline; }
   .stepper button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -891,7 +893,6 @@
     align-items: center;
     justify-content: center;
     font-size: 11px;
-    font-family: var(--font-mono);
   }
   .stepper .on button { color: var(--fg); font-weight: 600; }
   .stepper .on .n { border-color: var(--accent); color: var(--accent); }

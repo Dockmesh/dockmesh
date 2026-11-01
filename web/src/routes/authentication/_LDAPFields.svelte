@@ -167,7 +167,7 @@
 </div>
 
 <div class="ldap-fieldset">Group lookup</div>
-<Field label="Group search base" hint="DN under which to search for groups. Optional.">
+<Field label="Group search base" hint="Optional DN to search for groups under.">
   <input
     class="dm-input acc-input-mono"
     bind:value={config.group_search_base}
@@ -186,7 +186,7 @@
   {roles}
   groupClaim="group DN or CN"
   title="Group → role mappings"
-  hint="Match group DNs or CNs returned by the membership lookup. If a user is in several mapped groups, the one listed last decides."
+  hint="Group DNs or CNs; with several matches the last one listed wins."
 />
 
 <style>
@@ -195,7 +195,6 @@
     background: var(--bg-elevated);
     border: 1px dashed var(--border);
     border-radius: 4px;
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
     line-height: 1.55;
@@ -206,10 +205,7 @@
   .ldap-help-icon { flex-shrink: 0; font-size: 13px; line-height: 1; }
   .ldap-help-text { min-width: 0; }
   .ldap-fieldset {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-top: 6px;
   }
@@ -256,7 +252,7 @@
     min-width: 0;
   }
   .ldap-mode-label { font-size: 12.5px; font-weight: 500; }
-  .ldap-mode-blurb { font-family: var(--font-mono); font-size: 10px; color: var(--fg-subtle); }
+  .ldap-mode-blurb { font-size: 11.5px; color: var(--fg-subtle); }
   .ldap-grid-host {
     display: grid;
     grid-template-columns: 1fr 110px;

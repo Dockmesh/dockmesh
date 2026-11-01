@@ -158,7 +158,6 @@
     background: var(--bg-elevated);
     border: 1px dashed var(--border);
     border-radius: 4px;
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
     line-height: 1.55;
@@ -176,7 +175,6 @@
   .oidc-test-result {
     padding: 10px 12px;
     border-radius: 4px;
-    font-family: var(--font-mono);
     font-size: 11.5px;
     display: flex;
     align-items: center;

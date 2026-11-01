@@ -444,11 +444,8 @@
 
   .wiz-field { display: flex; flex-direction: column; gap: 4px; }
   .wiz-field-label {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
   }
   .wiz-field-hint {
     font-size: 11.5px;
@@ -507,8 +504,7 @@
     background: var(--surface);
     border: 1px solid var(--border);
     color: var(--fg-muted);
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     font-weight: 600;
     letter-spacing: 0.04em;
   }
@@ -616,7 +612,7 @@
   }
   .wiz-test-label { flex: 1; font-size: 12.5px; color: var(--fg); }
   .wiz-test-state {
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-left: auto;
   }

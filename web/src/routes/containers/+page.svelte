@@ -193,8 +193,8 @@
   }
   const cols = $derived(
     view === 'host'
-      ? '22px 14px minmax(220px, 2.2fr) 120px minmax(140px, 1.4fr) 110px 90px 40px'
-      : '22px 14px minmax(220px, 2.2fr) 120px 110px minmax(140px, 1.4fr) 110px 90px 40px'
+      ? '22px minmax(220px, 2.2fr) 130px minmax(140px, 1.4fr) 110px 90px 40px'
+      : '22px minmax(220px, 2.2fr) 130px 110px minmax(140px, 1.4fr) 110px 90px 40px'
   );
 
   interface Group {
@@ -452,7 +452,6 @@
         <span role="columnheader">
           {#if canControlAll}<input type="checkbox" checked={allSelected} onchange={toggleAll} aria-label="Select all visible containers" />{/if}
         </span>
-        <span role="columnheader"></span>
         <span role="columnheader"><button type="button" onclick={() => toggleSort('name')}>Name{sortArrow('name')}</button></span>
         <span role="columnheader"><button type="button" onclick={() => toggleSort('state')}>Status{sortArrow('state')}</button></span>
         {#if view !== 'host'}<span role="columnheader">Host</span>{/if}
@@ -460,7 +459,7 @@
         <span role="columnheader">Ports</span>
         <span role="columnheader"><button type="button" onclick={() => toggleSort('uptime')}>Uptime{sortArrow('uptime')}</button></span>
         <span role="columnheader" class="dm-tr-menu">
-          {#if sortKey !== 'urgency'}<button type="button" onclick={() => { sortKey = 'urgency'; sortAsc = true; }} title="Back to urgency order">reset</button>{/if}
+          {#if sortKey !== 'urgency'}<button type="button" onclick={() => { sortKey = 'urgency'; sortAsc = true; }} title="Back to urgency order">Reset</button>{/if}
         </span>
       </div>
 
@@ -521,20 +520,19 @@
         />
       {/if}
     </span>
-    <span role="cell"><span class="dm-dot {st.tone === 'off' ? '' : st.tone}"></span></span>
     <span role="cell" class="dm-nm">
-      <a href={detailHref(c)} onclick={(e) => e.stopPropagation()} title={nameOf(c)}>{nameOf(c)}</a>{#if isSystem(c)} <StatusChip tone="acc" label="System" title="Managed by Dockmesh" />{/if}
+      <a href={detailHref(c)} onclick={(e) => e.stopPropagation()} title={nameOf(c)}>{nameOf(c)}</a>
       <small>
-        {#if stack}{#if view !== 'stack'}{`stack ${stack} · `}{/if}{:else}<span class="ct-standalone">standalone</span>{' · '}{/if}<span class="dm-mono">{c.Id.slice(0, 12)}</span>{#if c.restart_count}<span class:ct-restarts={c.restart_count >= 5} title="Restarted {c.restart_count} times since it was created"> · ↻{c.restart_count}</span>{/if}
+        {#if isSystem(c)}<span title="Managed by Dockmesh">system · </span>{:else if stack}{#if view !== 'stack'}{`stack ${stack} · `}{/if}{:else}<span class="ct-standalone">standalone</span>{' · '}{/if}<span class="dm-mono">{c.Id.slice(0, 12)}</span>{#if c.restart_count}<span class:ct-restarts={c.restart_count >= 5} title="Restarted {c.restart_count} times since it was created"> · ↻{c.restart_count}</span>{/if}
       </small>
     </span>
     <span role="cell"><StatusChip tone={st.tone} label={st.label} title={c.Status} /></span>
-    {#if view !== 'host'}<span role="cell" class="dm-num dm-dim">{c.host_name || (isAll ? 'local' : (hosts.selected?.name ?? 'local'))}</span>{/if}
-    <span role="cell" class="dm-num" title={c.Image}>
+    {#if view !== 'host'}<span role="cell" class="dm-dim">{c.host_name || (isAll ? 'Local' : (hosts.selected?.name ?? 'Local'))}</span>{/if}
+    <span role="cell" class="dm-mono" title={c.Image}>
       <span class="dm-dim">{shortImage(img.name)}</span>{#if img.tag}:{img.tag}{/if}
       {#if c.image_update_available}<span class="ct-upd" title="A newer image is available"> · update</span>{/if}
     </span>
-    <span role="cell" class="dm-num dm-dim" title={portsTitle(c)}>{portsLabel(c)}</span>
+    <span role="cell" class="dm-mono dm-dim" title={portsTitle(c)}>{portsLabel(c)}</span>
     <span role="cell" class="dm-num dm-dim">{running ? uptime(c) : '—'}</span>
     <span role="cell" class="dm-tr-menu">
       <Menu label="Actions for {nameOf(c)}" items={rowMenu(c)} />

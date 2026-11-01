@@ -710,7 +710,7 @@
                             type="button"
                             class="ed-user-menu-item"
                             disabled
-                            title="Suspend will land with the user-disable backend slice (see memory)."
+                            title="Suspending users is not available yet."
                           >
                             Suspend
                           </button>

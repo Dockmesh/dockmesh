@@ -209,7 +209,7 @@
         <select id="rm-kind" class="dm-input" value={kind} disabled={!!editing} onchange={(e) => setKind((e.target as HTMLSelectElement).value as RuleKind)}>
           {#each KIND_GROUPS as g (g.group)}
             <optgroup label={g.group}>
-              {#each g.kinds as k (k)}<option value={k}>{g.group} · {kindLabel(k)}</option>{/each}
+              {#each g.kinds as k (k)}<option value={k}>{kindLabel(k)}</option>{/each}
             </optgroup>
           {/each}
         </select>
@@ -267,7 +267,7 @@
           <span>days</span>
           <span class="rm-hint">Caddy renews 30 days ahead, so this only fires when renewal keeps failing.</span>
         {:else if kind === 'container_stopped'}
-          <span class="rm-hint">Fires on exit codes other than 0. Stops through Dockmesh or docker stop are ignored.</span>
+          <span class="rm-hint">Fires on a non-zero exit, not on stops through Dockmesh or docker stop.</span>
         {:else if kind === 'backup_missed'}
           <span class="rm-hint">Fires when a job has no successful run within its schedule.</span>
         {:else}
@@ -312,7 +312,7 @@
     <div class="dm-field">
       <span class="rm-label">Notify</span>
       {#if channels.length === 0}
-        <span class="rm-hint">No channels yet. Create one under Channels; until then a firing rule is only recorded in the history.</span>
+        <span class="rm-hint">No channels yet; until you add one, fires are only recorded.</span>
       {:else}
         <div class="rm-opts">
           {#each channels as c (c.id)}

@@ -299,7 +299,7 @@
         <div class="tok-fresh">
           <div class="tok-fresh-head">
             <div class="tok-fresh-text">
-              <Eyebrow>↳ token created</Eyebrow>
+              <Eyebrow>Token created</Eyebrow>
               <h3 class="ed-title tok-fresh-title">
                 Copy <em class="ed-accent">{freshToken.name}</em> now — it won't be shown again.
               </h3>
@@ -364,10 +364,10 @@
       {:else if filtered.length === 0}
         <div class="tok-empty">
           {#if search}
-            <Eyebrow>no match</Eyebrow>
+            <Eyebrow>No match</Eyebrow>
             <p class="tok-empty-title">No tokens match „{search}".</p>
           {:else}
-            <Eyebrow>empty</Eyebrow>
+            <Eyebrow>Empty</Eyebrow>
             <p class="tok-empty-title">No API tokens yet.</p>
             <p class="ed-subtitle tok-empty-blurb">
               Create a token to authenticate CI pipelines, scripts, or dmctl against the API.
@@ -377,11 +377,11 @@
       {:else}
         <div class="tok-table">
           <div class="tok-row tok-row-head">
-            <span>name · prefix</span>
-            <span>scope</span>
-            <span>last used</span>
-            <span>created</span>
-            <span>expires</span>
+            <span>Name · prefix</span>
+            <span>Scope</span>
+            <span>Last used</span>
+            <span>Created</span>
+            <span>Expires</span>
             <span class="tok-col-action">·</span>
           </div>
           {#each filtered as t (t.id)}
@@ -406,7 +406,7 @@
                   {#if !t.revoked_at && t.legacy}
                     <span
                       class="dm-pill dm-pill-warning tok-mini-pill"
-                      title="Created before tokens had an owner. Works with its role, unlimited by any user's permissions. Recreate it and revoke this one."
+                      title="Created before tokens had owners, so no user limits it. Recreate it and revoke this one."
                     >
                       <span class="dm-pill-dot"></span>legacy
                     </span>
@@ -478,7 +478,7 @@
   width={560}
 >
   {#snippet title()}
-    Mint a new <em>API</em> token
+    New API token
   {/snippet}
 
   <form id="tok-create-form" class="tok-create" onsubmit={createApiToken}>
@@ -506,7 +506,7 @@
       </div>
     </Field>
 
-    <Field label="Expires" hint="Short-lived is safer. CI tokens often pin to 90 days.">
+    <Field label="Expires" hint="Shorter is safer; CI tokens often use 90 days.">
       <div class="tok-expires-row">
         {#each [['30d', '30 days'], ['90d', '90 days'], ['180d', '6 months'], ['365d', '1 year'], ['never', 'never']] as [key, label]}
           <button
@@ -677,10 +677,7 @@
   .tok-row-head {
     background: var(--bg-elevated);
     border-bottom: 1px solid var(--border);
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     padding: 10px 16px;
   }
@@ -705,14 +702,14 @@
   .tok-prefix {
     display: block;
     font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-top: 2px;
   }
-  .tok-mini-pill { padding: 0 5px; font-size: 9.5px; }
+  .tok-mini-pill { padding: 0 5px; font-size: 11.5px; }
 
   .tok-cell-scope { min-width: 0; }
-  .tok-scope-pill { padding: 1px 7px; font-size: 10.5px; }
+  .tok-scope-pill { padding: 1px 7px; font-size: 11.5px; }
 
   .tok-cell-mono {
     font-family: var(--font-mono);
@@ -734,8 +731,7 @@
   }
   .tok-revoke-btn { color: var(--color-danger-400); }
   .tok-dash {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
 
@@ -818,8 +814,7 @@
     font-weight: 500;
   }
   .tok-scope-card-blurb {
-    font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
 

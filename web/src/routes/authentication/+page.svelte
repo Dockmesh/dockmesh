@@ -341,9 +341,9 @@
         </div>
       </div>
     {:else}
-      <!-- ───────────────── 01 · Identity providers ─────────────── -->
+      <!-- ───────────────── Identity providers ─────────────── -->
       <section class="auth-section">
-        <Eyebrow>01 · Identity providers</Eyebrow>
+        <Eyebrow>Identity providers</Eyebrow>
 
         <div class="auth-providers-toolbar">
           <span class="auth-providers-meta">
@@ -362,7 +362,7 @@
           <Skeleton width="100%" height="6rem" />
         {:else if providers.length === 0}
           <div class="auth-empty">
-            <Eyebrow>empty</Eyebrow>
+            <Eyebrow>Empty</Eyebrow>
             <p class="auth-empty-title">No providers configured.</p>
             <p class="ed-subtitle auth-empty-blurb">
               Click „Add provider" to pick a kind (OIDC / OAuth2 / SAML / LDAP) and a template.
@@ -396,7 +396,7 @@
                 </div>
 
                 <div class="auth-provider-role">
-                  <span class="auth-provider-role-label">default role</span>
+                  <span class="auth-provider-role-label">Default role</span>
                   <span class="dm-pill dm-pill-neutral auth-provider-pill">
                     <span class="dm-pill-dot"></span>{p.default_role}
                   </span>
@@ -453,9 +453,9 @@
         </div>
       </section>
 
-      <!-- ──────────── 02 · Local password policy ───────────────── -->
+      <!-- ──────────── Local password policy ───────────────── -->
       <section class="auth-section">
-        <Eyebrow>02 · Local password policy</Eyebrow>
+        <Eyebrow>Local password policy</Eyebrow>
 
         {#if policy}
           <div class="dm-card auth-policy-card">
@@ -556,9 +556,9 @@
         {/if}
       </section>
 
-      <!-- ─────── 03 · Sessions & sign-in flow ─────── -->
+      <!-- ─────── Sessions & sign-in flow ─────── -->
       <section class="auth-section">
-        <Eyebrow>03 · Sessions &amp; sign-in flow</Eyebrow>
+        <Eyebrow>Sessions &amp; sign-in flow</Eyebrow>
 
         {#if signin}
           <div class="dm-card auth-policy-card">
@@ -597,7 +597,7 @@
                   oninput={(e) => setSigninField('session_absolute_ttl_hr', parseInt((e.target as HTMLInputElement).value) || 1)}
                 />
               </Field>
-              <Field label="Max sessions per user" hint="0 = unlimited. Oldest by last-seen gets evicted first.">
+              <Field label="Max sessions per user" hint="0 means no limit; the least recently used session ends first.">
                 <input
                   type="number"
                   class="dm-input acc-input-mono"
@@ -718,7 +718,6 @@
     flex-wrap: wrap;
   }
   .auth-providers-meta {
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
   }
@@ -759,10 +758,7 @@
   }
   .auth-provider-kind-pill {
     padding: 0 6px;
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
     border-radius: 3px;
@@ -773,12 +769,11 @@
     font-weight: 500;
     color: var(--fg);
   }
-  .auth-provider-pill { padding: 0 5px; font-size: 9.5px; }
+  .auth-provider-pill { padding: 0 5px; font-size: 11.5px; }
   .auth-provider-sub {
     display: flex;
     gap: 8px;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
   .auth-provider-issuer {
@@ -797,10 +792,7 @@
     min-width: 0;
   }
   .auth-provider-role-label {
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
   .auth-provider-actions {
@@ -903,7 +895,6 @@
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 999px;
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
     cursor: pointer;

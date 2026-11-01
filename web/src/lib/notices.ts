@@ -13,9 +13,22 @@ export function sortNotices(list: Notice[]): Notice[] {
   return [...list].sort((a, b) => rank[a.severity] - rank[b.severity] || a.created_at.localeCompare(b.created_at));
 }
 
-/** The one notice the app shell shows as a banner; info notices never are. */
+/** Notices the banner carries for this user: warnings and critical ones
+ * the user has not hidden. Info notices never are. */
+export function bannerNotices(list: Notice[]): Notice[] {
+  return sortNotices(list).filter((n) => n.severity !== 'info' && !n.dismissed);
+}
+
+/** The one notice the app shell shows as a banner. */
 export function bannerNotice(list: Notice[]): Notice | undefined {
-  return sortNotices(list).find((n) => n.severity !== 'info' && !n.dismissed);
+  return bannerNotices(list)[0];
+}
+
+/** Drops the attention items the banner already shows, so one notice is
+ * never in both places; a notice hidden from the banner comes back here. */
+export function withoutBanner<T extends { kind: string; object?: { id: string } }>(items: T[], list: Notice[]): T[] {
+  const inBanner = new Set(bannerNotices(list).map((n) => String(n.id)));
+  return items.filter((a) => a.kind !== 'notice' || !inBanner.has(a.object?.id ?? ''));
 }
 
 /** Info notices only explain a change, so their link shows details; the

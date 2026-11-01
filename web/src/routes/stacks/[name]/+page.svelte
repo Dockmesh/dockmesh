@@ -1436,6 +1436,7 @@
   let delNetworks = $state(true);
   let delVolumes = $state(false);
   let delImages = $state(false);
+  let delTyped = $state('');
   let delPlan = $state<StackCleanupPlan | null>(null);
   let delPlanError = $state<string | null>(null);
   let delPlanLoading = $state(false);
@@ -1445,12 +1446,15 @@
     delNetworks = true;
     delVolumes = false;
     delImages = false;
+    delTyped = '';
     delPlan = null;
     delPlanError = null;
     showDelete = true;
     delPlanLoading = true;
     try {
-      delPlan = await api.stacks.cleanupPreview(name);
+      const plan = await api.stacks.cleanupPreview(name);
+      // Empty lists come back as null.
+      delPlan = { ...plan, networks: plan.networks ?? [], volumes: plan.volumes ?? [], images: plan.images ?? [], skipped_in_use: plan.skipped_in_use ?? [] };
     } catch (err) {
       delPlanError = err instanceof ApiError ? err.message : String(err);
     } finally {
@@ -1458,7 +1462,7 @@
     }
   }
   async function confirmDelete() {
-    if (delBusy) return;
+    if (delBusy || delTyped.trim() !== name) return;
     delBusy = true;
     try {
       const res = await stackOps.run(stackHost, name, () =>
@@ -1608,7 +1612,7 @@
     <h1 class="stk-name">{name}</h1>
     <StatusChip tone={stackState.tone} label={stackState.label} />
     <span class="dm-sub stk-sub">
-      {#if services.length > 0}{services.filter((s) => s.state === 'running').length} / {services.length} running · {/if}{isRemote && hosts.selected ? hosts.selected.name : 'local'}{#if lastDeploy} · deployed {fmtAgo(lastDeploy.deployed_at)}{#if lastDeploy.deployed_by_name} by {lastDeploy.deployed_by_name}{/if}{/if}
+      {#if services.length > 0}{services.filter((s) => s.state === 'running').length} / {services.length} running · {/if}{isRemote && hosts.selected ? hosts.selected.name : 'Local'}{#if lastDeploy} · deployed {fmtAgo(lastDeploy.deployed_at)}{#if lastDeploy.deployed_by_name} by {lastDeploy.deployed_by_name}{/if}{/if}
       {#if anyBusy || deployProgress}
         ·
         <span
@@ -1763,10 +1767,10 @@
               <Skeleton width="100%" height="3rem" />
             </div>
           {:else if services.length > 0}
-            {@const cols = '14px minmax(140px, 1.3fr) minmax(140px, 1.5fr) 104px 64px 84px 34px'}
+            {@const cols = 'minmax(140px, 1.3fr) minmax(140px, 1.5fr) 120px 64px 84px 34px'}
             <div class="dm-tbl">
               <div class="dm-tr dm-th" style="grid-template-columns: {cols}">
-                <span></span><span>Service</span><span>Image</span><span>State</span><span class="r">CPU</span><span class="r">Memory</span><span></span>
+                <span>Service</span><span>Image</span><span>State</span><span class="r">CPU</span><span class="r">Memory</span><span></span>
               </div>
               {#each services as s (s.service + s.container_id)}
                 {@const count = replicaCounts.get(s.service) ?? 0}
@@ -1781,14 +1785,13 @@
                   onclick={() => goto(`/containers/${s.container_id}?from=stack`)}
                   onkeydown={(e) => e.key === 'Enter' && goto(`/containers/${s.container_id}?from=stack`)}
                 >
-                  <span class="dm-dot {s.state !== 'running' ? '' : unhealthy ? 'warn' : 'ok'}"></span>
                   <span class="dm-nm">
                     <a href={`/containers/${s.container_id}?from=stack`} onclick={(e) => e.stopPropagation()}>{s.service}{#if count > 1}<span class="stk-rep"> ×{count}</span>{/if}</a>
                     <small title={s.status}>{s.status || s.state}</small>
                   </span>
-                  <span class="dm-num dm-dim stk-img" title={s.image}>
+                  <span class="dm-mono dm-dim stk-img" title={s.image}>
                     {s.image.split('/').pop()}
-                    {#if hasImageUpdate(s.image)}<StatusChip tone="acc" label="update" title="A newer image is available" />{/if}
+                    {#if hasImageUpdate(s.image)}<span class="stk-upd" title="A newer image is available"> · update</span>{/if}
                   </span>
                   <span>
                     {#if op && (isActive(op) || Date.now() - Date.parse(op.finished_at ?? op.created_at) < 60_000)}
@@ -1859,7 +1862,7 @@
               <dt>Endpoints</dt>
               <dd class="dm-num">
                 {#if composeEndpoints.length === 0}
-                  <span class="dm-dim">no ports declared</span>
+                  <span class="dm-dim">No ports declared</span>
                 {:else}
                   {#each composeEndpoints as ep, i (ep.service + i)}
                     <div>{ep.service} :{ep.port}{#if ep.mode === 'host'} <ExternalLink size={10} />{:else} <span class="dm-dim">internal</span>{/if}</div>
@@ -2187,7 +2190,7 @@
   {/if}
 </section>
 
-<!-- View YAML snapshot modal (P.12.6) -->
+<!-- View YAML snapshot modal -->
 <Modal bind:open={showYaml} title={yamlEntry ? `Deploy #${yamlEntry.version} — ${new Date(yamlEntry.deployed_at).toLocaleString()}` : 'Deploy snapshot'} maxWidth="max-w-3xl">
   {#if yamlEntry}
     <div class="space-y-3">
@@ -2264,7 +2267,7 @@
   {/snippet}
 </Modal>
 
-<!-- Dependencies editor modal (P.12.7) -->
+<!-- Dependencies editor modal -->
 <Modal bind:open={showDepsEditor} title="Dependencies for {name}" maxWidth="max-w-lg">
   <div class="space-y-4 text-sm">
     <div class="text-xs text-[var(--fg-muted)]">
@@ -2324,7 +2327,7 @@
   {/snippet}
 </Modal>
 
-<!-- Rollback confirm modal (P.12.6) -->
+<!-- Rollback confirm modal -->
 <Modal bind:open={showRollbackConfirm} title="Roll back to deploy #{rollbackEntry?.version}" maxWidth="max-w-lg">
   {#if rollbackEntry}
     <div class="space-y-4 text-sm">
@@ -2430,7 +2433,7 @@
   {/snippet}
 </Modal>
 
-<!-- Rolling update modal (P.12.5b) -->
+<!-- Rolling update modal -->
 <Modal bind:open={showRolling} title="Rolling update: {rollingTarget}" maxWidth="max-w-md">
   <div class="space-y-3">
     <p class="text-xs text-[var(--fg-muted)]">
@@ -2543,7 +2546,7 @@
   {/snippet}
 </Modal>
 
-<!-- Git source configure dialog (P.11.11) -->
+<!-- Git source configure dialog -->
 <Modal bind:open={showGitDialog} title={gitSource ? 'Edit git source' : 'Connect a git repository'} maxWidth="max-w-lg">
   <form onsubmit={saveGitSource} id="git-form" class="space-y-4">
     <div>
@@ -2648,7 +2651,7 @@
      opt-in only because they cause data loss / re-pull cost. -->
 <Modal bind:open={showDelete} title="Delete stack {name}" maxWidth="max-w-lg">
   <div class="space-y-3 text-sm">
-    <p>This removes <span class="font-mono">compose.yaml</span> from disk. Pick what else should be cleaned up:</p>
+    <p>Removes the stack's <span class="dm-mono">compose.yaml</span>. Choose what else goes with it:</p>
 
     {#if delPlanError}
       <div class="p-2.5 rounded-md border border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-500)_8%,transparent)] text-xs">
@@ -2665,7 +2668,7 @@
         <span class="font-medium">Stop and remove containers</span>
         <span class="block text-xs text-[var(--fg-muted)] mt-0.5">
           {#if services.length > 0}
-            {services.length} container{services.length === 1 ? '' : 's'} currently running. If unchecked, they keep running after the stack is deleted (and can be re-adopted later).
+            {services.length} container{services.length === 1 ? '' : 's'}; unchecked, they keep running and can be adopted again.
           {:else}
             No containers are currently running for this stack.
           {/if}
@@ -2697,7 +2700,7 @@
         <span class="font-medium flex items-center gap-1.5">
           <AlertTriangle class="w-3.5 h-3.5 text-[var(--color-danger-400)]" />
           Remove volumes
-          <span class="text-[10px] px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--color-danger-500)_15%,transparent)] text-[var(--color-danger-400)] font-normal">unrecoverable</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--color-danger-500)_15%,transparent)] text-[var(--color-danger-400)] font-normal">Unrecoverable</span>
         </span>
         <span class="block text-xs text-[var(--fg-muted)] mt-0.5">
           Deletes data inside these volumes <span class="font-medium">permanently</span>. External volumes are never touched.
@@ -2715,7 +2718,7 @@
       <div class="px-2.5 py-2 rounded-md bg-[color-mix(in_srgb,var(--color-danger-500)_12%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_40%,transparent)] text-xs text-[var(--color-danger-400)] flex items-start gap-2">
         <AlertTriangle class="w-4 h-4 shrink-0 mt-0.5" />
         <span>
-          You are about to <span class="font-medium">permanently delete</span> the data in {delPlan.volumes.length} volume{delPlan.volumes.length === 1 ? '' : 's'}. This cannot be undone — no snapshot, no trash, no recovery. Take a backup first if the data matters.
+          The data in {delPlan.volumes.length} volume{delPlan.volumes.length === 1 ? '' : 's'} is deleted for good. Take a backup first if it matters.
         </span>
       </div>
     {/if}
@@ -2736,14 +2739,17 @@
           {#if delPlan && delPlan.skipped_in_use && delPlan.skipped_in_use.length > 0}
             <span class="block mt-1">Skipped (still used elsewhere): {delPlan.skipped_in_use.length} image{delPlan.skipped_in_use.length === 1 ? '' : 's'}</span>
           {/if}
-          <span class="block mt-1">Next deploy re-pulls them — can be slow on metered connections.</span>
         </span>
       </span>
     </label>
+    <div class="dm-field">
+      <label for="del-typed">Type <b class="dm-mono">{name}</b> to confirm</label>
+      <input id="del-typed" class="dm-input" bind:value={delTyped} autocomplete="off" spellcheck="false" />
+    </div>
   </div>
   {#snippet footer()}
     <Button variant="secondary" onclick={() => (showDelete = false)} disabled={delBusy}>Cancel</Button>
-    <Button variant="danger" onclick={confirmDelete} loading={delBusy} disabled={delBusy}>
+    <Button variant="danger" onclick={confirmDelete} loading={delBusy} disabled={delBusy || delTyped.trim() !== name}>
       <Trash2 class="w-4 h-4" />
       Delete
     </Button>
@@ -2809,7 +2815,6 @@
     background: var(--field);
     color: var(--muted);
     font-size: var(--fs-xs);
-    font-family: var(--font-mono);
     border: 0;
     white-space: nowrap;
   }
@@ -2922,4 +2927,5 @@
   .diff-marker { display: inline-block; width: 12px; color: var(--subtle); user-select: none; }
   .diff-add .diff-marker { color: var(--ok); }
   .diff-del .diff-marker { color: var(--bad); }
+  .stk-upd { color: var(--accent); font-family: var(--font-sans); }
 </style>

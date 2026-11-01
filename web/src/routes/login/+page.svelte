@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Logo from '$lib/components/shell/Logo.svelte';
   import { goto } from '$app/navigation';
   import { auth, consumeSignOutReason } from '$lib/stores/auth.svelte';
   import { api, ApiError } from '$lib/api';
@@ -165,7 +166,7 @@
 
   <div class="login-stack">
     <div class="login-brand">
-      <img src="/logo-mark.svg" alt="" width="28" height="28" />
+      <span class="mark"><Logo width={66} height={27} /></span>
       <span>Dockmesh</span>
     </div>
 
@@ -330,10 +331,7 @@
     font-weight: 600;
     letter-spacing: -0.005em;
   }
-  .login-brand img {
-    color: var(--color-brand-400);
-    display: inline-block;
-  }
+  .login-brand .mark { color: var(--accent); display: inline-flex; }
 
   .login-card {
     width: 100%;
@@ -371,7 +369,6 @@
   }
 
   .login-aside {
-    font-family: var(--font-mono);
     font-size: 11.5px;
     color: var(--fg-subtle);
     text-decoration: none;
@@ -450,9 +447,6 @@
     margin-top: 6px;
     color: var(--fg-subtle);
     font-size: 11.5px;
-    font-family: var(--font-mono);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
   }
   .login-divider-line {
     height: 1px;
@@ -477,11 +471,8 @@
 
   .login-footer {
     margin: 8px 0 0;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
     text-align: center;
   }
 </style>

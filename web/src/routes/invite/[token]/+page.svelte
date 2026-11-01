@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Logo from '$lib/components/shell/Logo.svelte';
   // Public invite redeem page. The token in the URL is shown by the
   // backend without auth and consumed by submitting username + password.
   // No SMTP — admin shared this link manually.
@@ -99,7 +100,7 @@
 
   <div class="login-stack">
     <div class="login-brand">
-      <img src="/logo-mark.svg" alt="" width="28" height="28" />
+      <span class="mark"><Logo width={66} height={27} /></span>
       <span>Dockmesh</span>
     </div>
 
@@ -126,10 +127,10 @@
           {/if}
         </p>
         <div class="invite-meta">
-          <span class="invite-meta-label">role</span>
+          <span class="invite-meta-label">Role</span>
           <span class="invite-meta-value">{preview.role}</span>
           {#if preview.scope_tags?.length}
-            <span class="invite-meta-label">scope</span>
+            <span class="invite-meta-label">Scope</span>
             <span class="invite-meta-value">{preview.scope_tags.join(', ')}</span>
           {/if}
         </div>
@@ -157,7 +158,7 @@
             />
           </Field>
 
-          <Field label="Password" hint="At least 8 characters. You can change it later from Account settings.">
+          <Field label="Password" hint="At least 8 characters; you can change it later.">
             <input
               class="ed-input ed-input-mono"
               type="password"
@@ -209,6 +210,7 @@
     font-weight: 600;
     letter-spacing: -0.005em;
   }
+  .login-brand .mark { color: var(--accent); display: inline-flex; }
   .login-card {
     width: 100%;
     background: var(--surface);
@@ -242,11 +244,8 @@
   }
   .login-footer {
     margin: 8px 0 0;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
     text-align: center;
   }
   .invite-blurb {
@@ -279,15 +278,11 @@
     background: var(--surface-hover);
   }
   .invite-meta-label {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     line-height: 1.8;
   }
   .invite-meta-value {
-    font-family: var(--font-mono);
     font-size: 12.5px;
     color: var(--fg);
     line-height: 1.8;

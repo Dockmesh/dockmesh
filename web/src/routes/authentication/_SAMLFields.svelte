@@ -93,7 +93,7 @@
 {/if}
 
 <div class="saml-fieldset">Service provider</div>
-<Field label="SP entity ID" hint="Dockmesh's identifier toward the IdP. Defaults to the metadata URL.">
+<Field label="SP entity ID" hint="How the IdP knows Dockmesh; defaults to the metadata URL.">
   <input
     class="dm-input acc-input-mono"
     bind:value={config.sp_entity_id}
@@ -102,7 +102,7 @@
 </Field>
 
 <div class="saml-grid-2">
-  <Field label="ACS URL (read-only)" hint="Assertion Consumer Service. Configure this on the IdP.">
+  <Field label="ACS URL (read-only)" hint="Assertion Consumer Service URL to enter at the IdP.">
     {#snippet right()}
       <button
         type="button"
@@ -152,7 +152,7 @@
 </Field>
 
 <div class="saml-fieldset">Signing &amp; encryption</div>
-<Field label="Signing certificate (PEM)" hint="IdP cert used to verify SAML responses. Optional if metadata XML embeds it.">
+<Field label="Signing certificate (PEM)" hint="Verifies SAML responses; optional when the metadata contains it.">
   <textarea
     class="dm-input acc-input-mono saml-cert"
     bind:value={config.signing_cert}
@@ -160,7 +160,7 @@
     placeholder={'-----BEGIN CERTIFICATE-----\nMIID…\n-----END CERTIFICATE-----'}
   ></textarea>
 </Field>
-<Field label="Encryption certificate (PEM)" hint="Optional. Required only if the IdP encrypts assertions.">
+<Field label="Encryption certificate (PEM)" hint="Needed only when the IdP encrypts assertions.">
   <textarea
     class="dm-input acc-input-mono saml-cert"
     bind:value={config.encryption_cert}
@@ -183,7 +183,7 @@
   </Field>
   <Field
     label="Subject attribute (optional)"
-    hint="Identify the account by this attribute instead of the NameID, e.g. the Entra object ID. Use an ID the user can't change; changing this later disconnects existing accounts."
+    hint="Use a stable ID such as the Entra object ID; changing it later disconnects accounts."
   >
     <input
       class="dm-input acc-input-mono"
@@ -211,7 +211,7 @@
   {roles}
   groupClaim={config.groups_attribute}
   title="SAML attribute → role mappings"
-  hint="Match values from the configured groups attribute. If a user has several mapped values, the one listed last decides."
+  hint="Values of the groups attribute; with several matches the last one listed wins."
 />
 
 <style>
@@ -220,7 +220,6 @@
     background: var(--bg-elevated);
     border: 1px dashed var(--border);
     border-radius: 4px;
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
     line-height: 1.55;
@@ -231,10 +230,7 @@
   .saml-help-icon { flex-shrink: 0; font-size: 13px; line-height: 1; }
   .saml-help-text { min-width: 0; }
   .saml-fieldset {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-top: 6px;
   }

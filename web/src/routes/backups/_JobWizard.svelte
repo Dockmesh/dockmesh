@@ -650,11 +650,8 @@
 
   .wiz-field { display: flex; flex-direction: column; gap: 4px; }
   .wiz-field-label {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
   }
   .wiz-field-hint {
     font-size: 11.5px;
@@ -709,7 +706,7 @@
   }
   .wiz-radio-card-label { font-size: 13px; color: var(--fg); }
   .wiz-radio-card.active .wiz-radio-card-label { color: var(--accent-fg); }
-  .wiz-radio-card-meta { font-size: 10.5px; color: var(--fg-subtle); }
+  .wiz-radio-card-meta { font-size: 11.5px; color: var(--fg-subtle); }
 
   /* Segmented control */
   .wiz-segctrl {
@@ -725,7 +722,6 @@
     border-right: 1px solid var(--border);
     background: transparent;
     cursor: pointer;
-    font-family: var(--font-mono);
     font-size: 11.5px;
     color: var(--fg-subtle);
     transition: color 120ms, background 120ms;
@@ -814,8 +810,7 @@
     background: var(--surface);
     border: 1px solid var(--border);
     color: var(--fg-muted);
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     font-weight: 600;
     letter-spacing: 0.04em;
   }
@@ -827,7 +822,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .wiz-target-pick-meta { font-size: 10.5px; color: var(--fg-subtle); }
+  .wiz-target-pick-meta { font-size: 11.5px; color: var(--fg-subtle); }
   .wiz-target-pick-fill {
     display: flex;
     flex-direction: column;
@@ -849,7 +844,7 @@
     border-radius: 2px;
   }
   .wiz-target-pick-free {
-    font-size: 10px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
 
@@ -916,7 +911,7 @@
   .wiz-hook-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .wiz-hook-label { font-size: 12.5px; color: var(--fg); }
   .wiz-hook-cmd {
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     word-break: break-all;
     line-height: 1.4;

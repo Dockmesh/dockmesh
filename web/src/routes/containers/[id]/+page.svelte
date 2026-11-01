@@ -1081,19 +1081,19 @@
         <section class="ctn-block">
           <h3 class="ctn-h3">Identity</h3>
           <dl class="ctn-kv">
-            <dt>id</dt>
+            <dt>ID</dt>
             <dd>{id.slice(0, 12)}</dd>
 
-            <dt>image</dt>
+            <dt>Image</dt>
             <dd>{info.Config?.Image}</dd>
 
             {#if cmdParts.length > 0}
-              <dt>cmd</dt>
+              <dt>Command</dt>
               <dd>{JSON.stringify(cmdParts)}</dd>
             {/if}
 
             {#if envLines.length > 0}
-              <dt>env</dt>
+              <dt>Environment</dt>
               <dd class="ctn-kv-env">
                 {#each (envExpanded ? envLines : envLines.slice(0, 3)) as e (e)}
                   {@const idx = e.indexOf('=')}
@@ -1119,22 +1119,22 @@
             {/if}
 
             {#if portRows.length > 0}
-              <dt>ports</dt>
+              <dt>Ports</dt>
               <dd>
                 {#each portRows as p, i (p.port)}{#if i > 0} · {/if}{p.port}{/each}
               </dd>
             {/if}
 
-            <dt>created</dt>
+            <dt>Created</dt>
             <dd>{info.Created?.slice(0, 19).replace('T', ' ')} · {fmtRelTime(info.Created)}</dd>
 
             {#if info.HostConfig?.RestartPolicy?.Name}
-              <dt>restart</dt>
+              <dt>Restart</dt>
               <dd>{info.HostConfig.RestartPolicy.Name}</dd>
             {/if}
 
             {#if info.Config?.User}
-              <dt>user</dt>
+              <dt>User</dt>
               <dd>{info.Config.User}</dd>
             {/if}
           </dl>
@@ -1162,7 +1162,7 @@
                 <div class="ed-row" data-status="failing" style="grid-template-columns: 6px 1fr auto auto">
                   <span class="stripe"></span>
                   <div class="ctn-health-namecell">
-                    <span class="ctn-health-name">healthcheck</span>
+                    <span class="ctn-health-name">Healthcheck</span>
                     <div class="ctn-health-detail">{probeMeta}</div>
                   </div>
                   <div class="ctn-health-status">
@@ -1180,7 +1180,7 @@
                 <div class="ed-row" data-status="degraded" style="grid-template-columns: 6px 1fr auto auto">
                   <span class="stripe"></span>
                   <div class="ctn-health-namecell">
-                    <span class="ctn-health-name">healthcheck</span>
+                    <span class="ctn-health-name">Healthcheck</span>
                     <div class="ctn-health-detail">{probeMeta}</div>
                   </div>
                   <div class="ctn-health-status">
@@ -1192,7 +1192,7 @@
                 <div class="ed-row" data-status="running" style="grid-template-columns: 6px 1fr auto auto">
                   <span class="stripe"></span>
                   <div class="ctn-health-namecell">
-                    <span class="ctn-health-name">healthcheck</span>
+                    <span class="ctn-health-name">Healthcheck</span>
                     <div class="ctn-health-detail">{probeMeta}</div>
                   </div>
                   <div class="ctn-health-status">
@@ -1311,14 +1311,14 @@
                   {#each p.bindings as b (b.HostIp + b.HostPort)}
                     <li>
                       <span class="ctn-endpoint-port">:{b.HostPort} → {p.port}</span>
-                      <span class="ctn-endpoint-mode-host">host</span>
+                      <span class="ctn-endpoint-mode-host">Host</span>
                       <ExternalLink size={11} strokeWidth={1.5} class="ctn-endpoint-icon" />
                     </li>
                   {/each}
                 {:else}
                   <li>
                     <span class="ctn-endpoint-port">{p.port}</span>
-                    <span class="ctn-endpoint-mode">internal</span>
+                    <span class="ctn-endpoint-mode">Internal</span>
                   </li>
                 {/if}
               {/each}
@@ -1405,14 +1405,14 @@
           {filteredLogLines.length} of {logs.length} lines · stream
           <em class="ed-accent">{containerName(info) || id.slice(0, 12)}</em>
         </span>
-        <span>tail · since boot</span>
+        <span>Tail · since boot</span>
       </div>
     </div>
   {:else if tab === 'exec' && canExec}
     <div class="ctn-tab-pane">
       <div class="ctn-term-bar">
         <div class="ctn-term-shell-pills">
-          <span class="ctn-term-shell-label">shell:</span>
+          <span class="ctn-term-shell-label">Shell:</span>
           {#each ['sh', 'bash'] as const as s (s)}
             <button
               type="button"
@@ -1593,7 +1593,7 @@
               <div class="ctn-updates-imgdiff">
                 {#if sizeDelta !== null}
                   <div class="ed-metric ctn-updates-metric">
-                    <span class="ed-metric-label">size delta</span>
+                    <span class="ed-metric-label">Size delta</span>
                     <div
                       class="ed-metric-value"
                       class:ctn-updates-delta-down={sizeDelta < 0}
@@ -1603,21 +1603,21 @@
                   </div>
                 {:else if updatePreview.remote_size}
                   <div class="ed-metric ctn-updates-metric">
-                    <span class="ed-metric-label">remote size</span>
+                    <span class="ed-metric-label">Remote size</span>
                     <div class="ed-metric-value">{fmtBytes(updatePreview.remote_size, '—')}</div>
-                    <span class="ed-metric-meta">on registry</span>
+                    <span class="ed-metric-meta">On registry</span>
                   </div>
                 {/if}
                 {#if updatePreview.remote_last_updated}
                   <div class="ed-metric ctn-updates-metric">
-                    <span class="ed-metric-label">pushed</span>
+                    <span class="ed-metric-label">Pushed</span>
                     <div class="ed-metric-value">{fmtRelTime(updatePreview.remote_last_updated)}</div>
                     <span class="ed-metric-meta">{newTag || updatePreview.latest_release?.tag || 'latest tag'}</span>
                   </div>
                 {/if}
                 {#if updatePreview.current_digest}
                   <div class="ed-metric ctn-updates-metric">
-                    <span class="ed-metric-label">local digest</span>
+                    <span class="ed-metric-label">Local digest</span>
                     <div class="ed-metric-value mono">{shortDigest(updatePreview.current_digest)}</div>
                     <span class="ed-metric-meta">built {fmtRelTime(updatePreview.current_created)}</span>
                   </div>
@@ -1793,8 +1793,8 @@
               {:else}
                 <div class="ctn-port-row">
                   <span class="ctn-port-name">{p.port}</span>
-                  <span class="dm-pill dm-pill-neutral ctn-meta-pill">internal</span>
-                  <span class="ctn-port-note">no host binding</span>
+                  <span class="dm-pill dm-pill-neutral ctn-meta-pill">Internal</span>
+                  <span class="ctn-port-note">No host binding</span>
                 </div>
               {/if}
             {/each}
@@ -1879,10 +1879,10 @@
 
       <div class="ctn-files-table">
         <div class="ctn-files-head">
-          <span>name</span>
-          <span class="ctn-files-cell-right">size</span>
-          <span>mode</span>
-          <span>modified</span>
+          <span>Name</span>
+          <span class="ctn-files-cell-right">Size</span>
+          <span>Mode</span>
+          <span>Modified</span>
           <span></span>
         </div>
         {#if filesLoading && !filesEntries.length}
@@ -1909,7 +1909,7 @@
               </span>
               <span class="ctn-files-cell-right">—</span>
               <span class="ctn-files-mode">—</span>
-              <span class="ctn-files-modified">parent</span>
+              <span class="ctn-files-modified">Parent</span>
               <span></span>
             </div>
           {/if}
@@ -2052,7 +2052,7 @@
 
   .ctn-meta-sep { color: var(--border-strong); }
 
-  .ctn-meta-pill { font-size: 9.5px; }
+  .ctn-meta-pill { font-size: 11.5px; }
 
   .ctn-remote {
     display: inline-flex;
@@ -2103,7 +2103,7 @@
   .ctn-kv dt {
     margin: 0;
     color: var(--fg-subtle);
-    font-size: 10.5px;
+    font-size: 11.5px;
     letter-spacing: 0.06em;
     text-transform: lowercase;
   }
@@ -2130,22 +2130,19 @@
   }
   .ctn-health-namecell { display: flex; flex-direction: column; gap: 2px; }
   .ctn-health-name {
-    font-family: var(--font-mono);
     font-size: 12px;
     color: var(--fg);
     font-weight: 500;
   }
   .ctn-health-detail {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     letter-spacing: 0.04em;
   }
   .ctn-health-status { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; color: var(--fg-muted); }
-  .ctn-health-pill { font-size: 9.5px; }
+  .ctn-health-pill { font-size: 11.5px; }
   .ctn-health-streak { font-size: 11.5px; }
   .ctn-health-when {
-    font-family: var(--font-mono);
     font-size: 11.5px;
     color: var(--fg-subtle);
   }
@@ -2186,8 +2183,7 @@
   }
   .ctn-restart-note {
     margin: 8px 0 0;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     line-height: 1.55;
     letter-spacing: 0.02em;
@@ -2214,7 +2210,7 @@
   .ctn-mount-name { color: var(--accent-fg); word-break: break-all; }
   .ctn-mount-arrow { color: var(--fg-subtle); }
   .ctn-mount-dest { color: var(--fg-muted); word-break: break-all; }
-  .ctn-mount-ro { font-size: 9px; padding: 0 4px; }
+  .ctn-mount-ro { font-size: 11.5px; padding: 0 4px; }
 
   .ctn-networks {
     list-style: none;
@@ -2261,16 +2257,14 @@
   .ctn-endpoints li:last-child { border-bottom: 0; }
   .ctn-endpoint-port { color: var(--fg); }
   .ctn-endpoint-mode-host {
-    font-size: 9.5px;
+    font-size: 11.5px;
     padding: 1px 5px;
     border-radius: 3px;
     border: 1px solid color-mix(in srgb, var(--color-success-500) 40%, var(--border));
     color: var(--color-success-400);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
   }
   .ctn-endpoint-mode {
-    font-size: 9.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     text-transform: lowercase;
     letter-spacing: 0.04em;
@@ -2300,8 +2294,7 @@
     color: var(--fg);
   }
   .ctn-network-meta {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     letter-spacing: 0.04em;
   }
@@ -2313,13 +2306,12 @@
   }
   .ctn-network-mac {
     color: var(--fg-subtle);
-    font-size: 10.5px;
+    font-size: 11.5px;
     margin-top: 2px;
   }
   .ctn-network-note {
     margin: 8px 0 0;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     line-height: 1.55;
   }
@@ -2341,8 +2333,7 @@
   .ctn-port-row:last-child { border-bottom: 0; }
   .ctn-port-name { font-family: var(--font-mono); font-size: 12.5px; color: var(--fg); }
   .ctn-port-note {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     letter-spacing: 0.04em;
   }
@@ -2463,11 +2454,8 @@
   .ctn-files-head {
     background: var(--surface);
     border-bottom: 1px solid var(--border);
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
   }
   .ctn-files-row {
     width: 100%;
@@ -2506,7 +2494,6 @@
   }
   .ctn-files-cell-right {
     text-align: right;
-    font-family: var(--font-mono);
     font-size: 11.5px;
     color: var(--fg-muted);
   }
@@ -2662,7 +2649,6 @@
     background: transparent;
     border: 1px solid var(--border);
     color: var(--fg-muted);
-    font-family: var(--font-mono);
     font-size: 11px;
     padding: 4px 9px;
     border-radius: 4px;
@@ -2679,7 +2665,7 @@
     color: var(--fg);
   }
   .ctn-log-filter:disabled { opacity: 0.4; cursor: not-allowed; }
-  .ctn-log-filter-count { color: var(--fg-subtle); font-size: 10px; }
+  .ctn-log-filter-count { color: var(--fg-subtle); font-size: 11.5px; }
 
   .ctn-log-actions { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .ctn-log-grep {
@@ -2712,7 +2698,6 @@
     border: 1px solid var(--border);
     border-radius: 4px;
     color: var(--fg-muted);
-    font-family: var(--font-mono);
     font-size: 11px;
     padding: 4px 9px;
     cursor: pointer;
@@ -2752,16 +2737,14 @@
   }
   .ctn-log-ts {
     font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: rgba(230, 237, 243, 0.45);
     letter-spacing: 0.02em;
     white-space: nowrap;
     text-align: right;
   }
   .ctn-log-lvl {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    font-size: 11.5px;
     color: rgba(230, 237, 243, 0.55);
     text-align: right;
   }
@@ -2778,7 +2761,6 @@
   .ctn-log-foot {
     display: flex;
     justify-content: space-between;
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
   }
@@ -2794,9 +2776,7 @@
   .ctn-term-shell-pills { display: inline-flex; gap: 6px; align-items: center; }
   .ctn-term-shell-label {
     font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-right: 4px;
   }
@@ -2805,7 +2785,6 @@
     border: 1px solid var(--border);
     border-radius: 4px;
     color: var(--fg-muted);
-    font-family: var(--font-mono);
     font-size: 11px;
     padding: 4px 10px;
     cursor: pointer;
@@ -2846,7 +2825,6 @@
     background: transparent;
     border: 1px solid var(--border);
     color: var(--fg-muted);
-    font-family: var(--font-mono);
     font-size: 11px;
     padding: 4px 10px;
     border-radius: 4px;
@@ -2881,7 +2859,6 @@
   .ctn-updates-rail-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
   .ctn-updates-rail-empty {
     margin: 0;
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
   }
@@ -2926,7 +2903,6 @@
   .ctn-updates-banner-eyebrow { display: block; }
   .ctn-updates-banner-actions { display: inline-flex; gap: 8px; flex-shrink: 0; align-items: center; }
   .ctn-updates-rel {
-    font-family: var(--font-mono);
     font-style: normal;
     color: var(--fg);
     letter-spacing: 0.01em;
@@ -3006,7 +2982,6 @@
   }
   .ctn-updates-image-meta {
     margin-top: 6px;
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
     line-height: 1.6;
@@ -3015,7 +2990,6 @@
     margin-top: 8px;
     display: flex;
     gap: 14px;
-    font-family: var(--font-mono);
     font-size: 11px;
   }
   .ctn-updates-links a {
@@ -3028,8 +3002,7 @@
   }
   .ctn-updates-links a:hover { color: var(--fg); }
   .ctn-updates-warnings {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--color-warning-400);
     letter-spacing: 0.04em;
   }
@@ -3055,7 +3028,6 @@
     border: 1px solid var(--border);
     border-radius: 5px;
     background: var(--bg-elevated);
-    font-family: var(--font-mono);
     font-size: 11.5px;
     color: var(--fg-muted);
     white-space: pre-wrap;
@@ -3113,7 +3085,6 @@
     word-break: break-all;
   }
   .ctn-updates-history-meta {
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
     letter-spacing: 0.02em;

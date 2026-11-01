@@ -220,7 +220,7 @@
             {repoTag.repo}:{repoTag.tag}
           {:else if inspect}
             &lt;none&gt;:&lt;none&gt;
-            <span class="dm-pill dm-pill-warning img-detail-pill">dangling</span>
+            <span class="dm-pill dm-pill-warning img-detail-pill">Dangling</span>
           {:else}
             {shortSha(id)}
           {/if}
@@ -299,7 +299,7 @@
         </span>
       {:else}
         <div class="ed-metric-value muted">—</div>
-        <span class="ed-metric-meta">not scanned</span>
+        <span class="ed-metric-meta">Not scanned</span>
       {/if}
     </div>
   </div>
@@ -472,11 +472,11 @@
         {:else}
           <div class="img-detail-cve-table">
             <div class="img-detail-cve-row img-detail-cve-row--head">
-              <span>severity</span>
-              <span>package</span>
-              <span>version</span>
-              <span>fixed in</span>
-              <span>cve</span>
+              <span>Severity</span>
+              <span>Package</span>
+              <span>Version</span>
+              <span>Fixed in</span>
+              <span>CVE</span>
             </div>
             {#each scanFiltered as v (v.id + v.package)}
               <div class="img-detail-cve-row">
@@ -512,7 +512,7 @@
       <div class="img-detail-layer-table">
         <div class="img-detail-layer-row img-detail-layer-row--head">
           <span>#</span>
-          <span>digest</span>
+          <span>Digest</span>
         </div>
         {#each layers as digest, i (digest + i)}
           <div class="img-detail-layer-row">
@@ -568,9 +568,9 @@
     {:else}
       <div class="img-detail-using-table">
         <div class="img-detail-using-row img-detail-using-row--head">
-          <span>name</span>
-          <span>state</span>
-          <span>started</span>
+          <span>Name</span>
+          <span>State</span>
+          <span>Started</span>
         </div>
         {#each using as c (c.id)}
           <a href={`/containers/${c.id}`} class="img-detail-using-row img-detail-using-row--data">
@@ -600,7 +600,6 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-family: var(--font-mono);
     font-size: 11.5px;
     color: var(--fg-subtle);
     text-decoration: none;
@@ -630,7 +629,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .img-detail-pill { font-size: 9.5px; padding: 1px 6px; }
+  .img-detail-pill { font-size: 11.5px; padding: 1px 6px; }
   .img-detail-danger { color: var(--color-danger-400); }
 
   /* ─── Banners ─── */
@@ -666,7 +665,6 @@
   .img-detail-summary :global(.ed-metric-value.warn) { color: var(--color-warning-400); }
   .img-detail-tile-text {
     font-size: 14px;
-    font-family: var(--font-mono);
   }
 
   .img-detail-tabs { margin-top: 14px; }
@@ -682,10 +680,7 @@
     margin: 0;
   }
   .img-detail-dl dt {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     padding-top: 4px;
   }
@@ -703,7 +698,7 @@
     padding: 2px 6px;
     border: 1px solid var(--border);
     border-radius: 3px;
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-muted);
     background: var(--surface);
   }
@@ -787,10 +782,7 @@
     color: var(--fg);
   }
   .img-detail-cve-tile-label {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-top: 2px;
   }
@@ -823,10 +815,7 @@
   .img-detail-cve-row--head {
     background: var(--bg-elevated);
     color: var(--fg-subtle);
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
   }
   .img-detail-cve-link {
     color: var(--accent-fg);
@@ -835,7 +824,7 @@
   .img-detail-cve-link:hover { text-decoration: underline; }
   .img-detail-cve-foot {
     margin-top: 10px;
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
 
@@ -858,10 +847,7 @@
   .img-detail-layer-row--head {
     background: var(--bg-elevated);
     color: var(--fg-subtle);
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
   }
   .img-detail-layer-digest {
     color: var(--fg-muted);
@@ -925,10 +911,7 @@
   .img-detail-using-row--head {
     background: var(--bg-elevated);
     color: var(--fg-subtle);
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
   }
   .img-detail-using-row--data:hover { background: var(--surface-hover); }
   .img-detail-using-name {

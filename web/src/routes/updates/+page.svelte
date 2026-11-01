@@ -2,7 +2,7 @@
   import { untrack } from 'svelte';
   import { api, ApiError, isFanOut, type Operation, type UpdateStatus } from '$lib/api';
   import { fmtAgo } from '$lib/format';
-  import { StatusChip, StatBar, EmptyState, Skeleton, LiveIndicator } from '$lib/components/ui';
+  import { StatusChip, StatBar, EmptyState, Skeleton, LiveIndicator, InfoTip } from '$lib/components/ui';
   import type { Stat } from '$lib/components/ui/StatBar.svelte';
   import OpProgress from '$lib/components/operations/OpProgress.svelte';
   import { operations, isActive, opRef } from '$lib/stores/operations.svelte';
@@ -240,11 +240,11 @@
       <h2 class="dm-h2">System</h2>
       <div class="dm-tbl" role="table" aria-label="System updates">
         {#each system as s (s.name)}
-          {@const kind = semverBump(s.from.replace(/^v/, ''), s.to.replace(/^v/, '')) ?? 'patch'}
+          {@const kind = semverBump(s.from.replace(/^v/, ''), s.to.replace(/^v/, ''))}
           <div class="dm-tr" role="row" style="grid-template-columns: {SYS_COLS}">
             <span role="cell" class="dm-nm"><span class="dm-t">{s.name}</span><small>{s.note}</small></span>
-            <span role="cell" class="dm-mono up-ver">{s.from} → <b>{s.to}</b></span>
-            <span role="cell"><StatusChip tone={kind === 'major' ? 'warn' : 'off'} label={kind} /></span>
+            <span role="cell" class="dm-mono up-ver" title="{s.from} → {s.to}">{s.from} → <b>{s.to}</b></span>
+            <span role="cell">{#if kind}<StatusChip tone={kind === 'major' ? 'warn' : 'off'} label={kind} />{:else}<span class="dm-dim" title="Not a release version, so there is no update kind">—</span>{/if}</span>
             <span role="cell"></span>
             <span role="cell" class="up-act"><a class="dm-btn dm-btn-sm" href={s.href}>Open</a></span>
           </div>
@@ -292,7 +292,7 @@
               <small>{r.stack ? `stack ${r.stack}` : 'standalone'}</small>
             </span>
             <span role="cell" class="dm-mono up-ver" title={r.image}>{r.image}</span>
-            <span role="cell" class="dm-num dm-dim" title={r.check ? `${r.check.local_digest ?? ''} → ${r.check.remote_digest ?? ''}` : ''}>
+            <span role="cell" class="dm-mono dm-dim" title={r.check ? `${r.check.local_digest ?? ''} → ${r.check.remote_digest ?? ''}` : ''}>
               {shortDigest(r.check?.local_digest)} → <b class="up-new">{shortDigest(r.check?.remote_digest)}</b>
             </span>
             <span role="cell" class="dm-num dm-dim">{fmtAgo(r.check?.checked_at)}</span>
@@ -309,7 +309,7 @@
           </div>
         {/each}
       </div>
-      <p class="dm-sub up-note">An update pulls the image, keeps the current one as rollback target and replaces the container once the new one runs. Stack containers are rebuilt from the stack's compose.yaml.</p>
+      <p class="dm-sub up-note">An update pulls the new image and replaces the container once it runs. <InfoTip text="The current image stays as the rollback target. Stack containers are rebuilt from the stack's compose.yaml." /></p>
     {/if}
   </div>
 

@@ -305,7 +305,7 @@
   }
 
   const lensIsThis = $derived(hosts.id === id);
-  const CT_COLS = '14px minmax(180px, 1.4fr) minmax(160px, 1.4fr) 110px 150px';
+  const CT_COLS = 'minmax(180px, 1.4fr) minmax(160px, 1.4fr) 120px 150px';
   const ST_COLS = 'minmax(180px, 1.6fr) 110px 110px 120px';
   const MG_COLS = 'minmax(160px, 1.4fr) minmax(140px, 1fr) 110px 110px 120px 110px';
 </script>
@@ -436,18 +436,17 @@
       {:else}
         <div class="dm-tbl" role="table" aria-label="Containers on {hostName}">
           <div class="dm-tr dm-th" role="row" style="grid-template-columns: {CT_COLS}">
-            <span role="columnheader"></span><span role="columnheader">Container</span><span role="columnheader">Image</span><span role="columnheader">State</span><span role="columnheader">Status</span>
+            <span role="columnheader">Container</span><span role="columnheader">Image</span><span role="columnheader">State</span><span role="columnheader">Status</span>
           </div>
           {#each containers as c (c.Id)}
             {@const name = c.Names?.[0]?.replace(/^\//, '') ?? c.Id.slice(0, 12)}
             {@const href = `/containers/${c.Id}${isLocal ? '' : `?host=${id}`}`}
             {@const st = c.State === 'running' ? (String(c.Status).includes('unhealthy') ? 'warn' : 'ok') : c.State === 'exited' || c.State === 'dead' ? 'bad' : 'off'}
             <a class="dm-tr dm-click lnk" role="row" style="grid-template-columns: {CT_COLS}" {href}>
-              <span role="cell"><span class="dm-dot {st === 'off' ? '' : st}"></span></span>
               <span role="cell" class="dm-nm"><span class="dm-t">{name}</span><small>{c.Labels?.['com.docker.compose.project'] ?? 'standalone'}</small></span>
-              <span role="cell" class="dm-num dm-dim" title={c.Image}>{c.Image}</span>
-              <span role="cell"><StatusChip tone={st as Tone} label={c.State} /></span>
-              <span role="cell" class="dm-num dm-dim" title={c.Status}>{c.Status ?? '—'}</span>
+              <span role="cell" class="dm-mono dm-dim" title={c.Image}>{c.Image}</span>
+              <span role="cell"><StatusChip tone={st as Tone} label={st === 'warn' ? 'unhealthy' : c.State} /></span>
+              <span role="cell" class="dm-dim" title={c.Status}>{c.Status ?? '—'}</span>
             </a>
           {/each}
         </div>
@@ -627,7 +626,7 @@
 
 <Modal bind:open={tokenModal.open} title="New enrollment token for {hostName}" maxWidth="max-w-xl">
   <div class="tok">
-    <p class="dm-sub">Run this command on the agent host. The old certificate stays valid until the agent presents the new one.</p>
+    <p class="dm-sub">Run this on the agent host; the old certificate works until the new one is in use.</p>
     <pre class="cmd dm-mono">{tokenModal.install}</pre>
     <p class="dm-sub">The token is shown only once and expires {tokenModal.expiresAt ? new Date(tokenModal.expiresAt).toLocaleString() : '—'}.</p>
     <dl class="dm-kv"><dt>Token</dt><dd class="dm-mono">{tokenModal.token}</dd></dl>

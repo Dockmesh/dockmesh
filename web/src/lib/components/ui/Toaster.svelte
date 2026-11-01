@@ -1,9 +1,10 @@
 <script lang="ts">
   import { toast } from '$lib/stores/toast.svelte';
+  import { dialogs } from '$lib/stores/dialogs.svelte';
   import { X } from 'lucide-svelte';
 </script>
 
-<div class="toasts">
+<div class="toasts" class:top={dialogs.open > 0}>
   {#each toast.items as t (t.id)}
     <div
       class="toast {t.variant}"
@@ -28,7 +29,7 @@
 <style>
   .toasts {
     position: fixed;
-    right: min(calc(18px + var(--drawer-w, 0px)), calc(100vw - min(380px, 100vw - 36px) - 18px));
+    right: 18px;
     bottom: 18px;
     display: flex;
     flex-direction: column;
@@ -37,6 +38,7 @@
     pointer-events: none;
     width: min(380px, calc(100vw - 36px));
   }
+  .toasts.top { bottom: auto; top: 12px; flex-direction: column-reverse; }
   .toast {
     pointer-events: auto;
     display: flex;

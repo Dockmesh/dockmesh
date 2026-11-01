@@ -1,16 +1,6 @@
 <script lang="ts">
-  // Topbar pill that surfaces active stack migrations + recent failures.
-  // Migrations are operational events tied to stacks/hosts and have no
-  // dedicated page anymore — this pill plus a global drawer takes the
-  // sidebar entry's place.
-  //
-  // Three render states:
-  //   - hidden — no active runs + no recent failures (don't nag)
-  //   - active — warning-tinted, "N running"
-  //   - failed — danger-tinted, "N failed" (over the last 24h)
-  //
-  // Polls every 5s while gated on stack.deploy — fast enough to feel
-  // alive during a multi-minute migration, cheap enough at small scale.
+  // Top-bar pill for running stack migrations and failures of the last
+  // 24 h; hidden when there is neither. Opens the migrations dialog.
   import { api, type Migration } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { ArrowRightLeft, AlertTriangle } from 'lucide-svelte';

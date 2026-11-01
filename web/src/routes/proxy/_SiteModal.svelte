@@ -180,7 +180,7 @@
           <datalist id="ns-targets">
             {#each targets as t (t.container)}{#each t.ports as p (p)}<option value="{t.container}:{p}"></option>{/each}{/each}
           </datalist>
-          <span class="hint">host:port. Caddy reaches containers by name over the Docker network.</span>
+          <span class="hint">host:port; Caddy reaches containers by name over the Docker network.</span>
         </div>
       {/if}
     {/if}

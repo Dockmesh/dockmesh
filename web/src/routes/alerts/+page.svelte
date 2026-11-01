@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fmtAgo } from '$lib/format';
   import { untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { sevTone } from './ruleKinds';
@@ -96,7 +97,7 @@
     return `${e.value.toFixed(1)} %${e.threshold != null ? ` / ${e.threshold} %` : ''}`;
   }
 
-  const HCOLS = '14px 84px 84px minmax(160px, 1fr) minmax(140px, 0.9fr) 110px minmax(220px, 1.6fr) 150px';
+  const HCOLS = '110px minmax(160px, 1fr) minmax(140px, 0.9fr) 110px minmax(220px, 1.6fr) 150px';
 
   function exportCSV() {
     const csv = ['Time,Status,Rule,Container,Value,Threshold,Message']
@@ -178,8 +179,6 @@
       </div>
       <div class="dm-tbl" role="table" aria-label="Alert history">
         <div class="dm-tr dm-th" role="row" style="grid-template-columns: {HCOLS}">
-          <span role="columnheader"></span>
-          <span role="columnheader">Severity</span>
           <span role="columnheader">Status</span>
           <span role="columnheader">Rule</span>
           <span role="columnheader">Object</span>
@@ -191,9 +190,9 @@
           {@const sev = ruleSeverity.get(e.rule_id)}
           {@const fired = e.status === 'fired'}
           <div class="dm-tr" role="row" style="grid-template-columns: {HCOLS}">
-            <span role="cell"><span class="dm-dot {fired ? (sev === 'critical' ? 'bad' : 'warn') : 'ok'}"></span></span>
-            <span role="cell">{#if sev}<StatusChip tone={sevTone(sev)} label={sev} />{:else}<span class="dm-dim">—</span>{/if}</span>
-            <span role="cell"><StatusChip tone={fired ? 'bad' : 'ok'} label={fired ? 'fired' : 'resolved'} /></span>
+            <span role="cell">
+              {#if fired}<StatusChip tone={sev ? sevTone(sev) : 'bad'} label={sev ?? 'fired'} title="Fired" />{:else}<StatusChip tone="ok" label="Resolved" />{/if}
+            </span>
             <span role="cell" class="dm-nm">
               <span class="dm-t" title={e.rule_name}>{e.rule_name}</span>
               {#if e.notified === false}<small title="Recorded without notifying channels (muted or in cooldown)">silenced</small>{/if}
@@ -203,7 +202,7 @@
             </span>
             <span role="cell" class="dm-num" class:bad={fired}>{fmtValue(e)}</span>
             <span role="cell" class="dm-dim" title={e.message}>{e.message}</span>
-            <span role="cell" class="dm-num dm-dim">{new Date(e.occurred_at).toLocaleString()}</span>
+            <span role="cell" class="dm-num dm-dim" title={new Date(e.occurred_at).toLocaleString()}>{fmtAgo(e.occurred_at)}</span>
           </div>
         {:else}
           <div class="dm-empty">No alerts match this filter.</div>

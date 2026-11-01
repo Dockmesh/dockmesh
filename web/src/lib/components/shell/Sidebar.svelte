@@ -6,6 +6,7 @@
 </script>
 
 <script lang="ts">
+  import Logo from '$lib/components/shell/Logo.svelte';
   import { page } from '$app/state';
   import { auth } from '$lib/stores/auth.svelte';
   import { NAV, activeItem } from './nav';
@@ -42,7 +43,7 @@
 <nav class="app-side" class:collapsed aria-label="Main navigation">
   <div class="brand">
     <a href="/" class="logo" aria-label="Dockmesh overview" onclick={onnavigate}>
-      <img src="/logo-mark.svg" alt="" width="24" height="24" />
+      <span class="mark"><Logo width={collapsed ? 44 : 66} height={collapsed ? 18 : 27} /></span>
       {#if !collapsed}<b>dock<span>mesh</span></b>{/if}
     </a>
     <button
@@ -141,6 +142,7 @@
   .logo { display: flex; align-items: center; gap: 10px; color: var(--fg); text-decoration: none; min-width: 0; }
   .logo b { font-size: 15px; letter-spacing: -0.01em; }
   .logo b span { color: var(--accent); }
+  .logo .mark { color: var(--accent); display: inline-flex; }
   .collapse-btn {
     margin-left: auto;
     width: 26px;

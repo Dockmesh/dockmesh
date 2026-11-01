@@ -378,7 +378,7 @@
                       <span class="env-templates-item-hint">{tpl.hint}</span>
                     </div>
                     {#if exists}
-                      <span class="env-templates-item-exists">added</span>
+                      <span class="env-templates-item-exists">Added</span>
                     {/if}
                   </button>
                 {/each}
@@ -441,7 +441,7 @@
       </div>
     {:else if visible.length === 0}
       <div class="env-empty">
-        <Eyebrow>no match</Eyebrow>
+        <Eyebrow>No match</Eyebrow>
         <p class="env-empty-title">No variables match „{search}".</p>
       </div>
     {:else}
@@ -473,9 +473,9 @@
             {#if !isCollapsed}
               <div class="env-group-body">
                 <div class="env-row env-row-head">
-                  <span>key</span>
-                  <span>value</span>
-                  <span>updated</span>
+                  <span>Key</span>
+                  <span>Value</span>
+                  <span>Updated</span>
                   <span class="env-col-right">·</span>
                 </div>
                 {#each rows as v (v.id)}
@@ -490,7 +490,7 @@
                       {#if v.encrypted}
                         <span class="env-value-secret">
                           <span class="env-value-mask">•••••••••••••••</span>
-                          <span class="env-value-encrypted-pill">hidden</span>
+                          <span class="env-value-encrypted-pill">Hidden</span>
                         </span>
                       {:else}
                         <code class="env-value-text" title={v.value}>{v.value || ' '}</code>
@@ -565,7 +565,7 @@
           placeholder="BASE_DOMAIN"
         />
       </Field>
-      <Field label="Group" hint="Free-form. Used to organise the list.">
+      <Field label="Group" hint="Free text that groups the list.">
         <input
           class="dm-input acc-input-mono"
           bind:value={formGroup}
@@ -625,7 +625,7 @@
   {/snippet}
 
   <div class="env-form">
-    <Field label="Default group" hint="All imported entries land in this group. Move them individually after.">
+    <Field label="Default group" hint="Imported entries go into this group.">
       <input
         class="dm-input acc-input-mono"
         bind:value={importGroup}
@@ -636,7 +636,7 @@
 
     <Field
       label=".env content"
-      hint="Comments (#) and blank lines are skipped. Keys matching password/secret/key/token are flagged as worth-marking-secret (manual toggle arrives with the next backend update)."
+      hint="One KEY=value per line; comments and blank lines are skipped."
     >
       <textarea
         class="dm-input acc-input-mono env-import-textarea"
@@ -649,7 +649,7 @@
     {#if parsedImport.length > 0}
       <div class="env-import-preview">
         <div class="env-import-preview-head">
-          <Eyebrow>preview · {parsedImport.length} entr{parsedImport.length === 1 ? 'y' : 'ies'}</Eyebrow>
+          <Eyebrow>Preview · {parsedImport.length} entr{parsedImport.length === 1 ? 'y' : 'ies'}</Eyebrow>
         </div>
         <div class="env-import-preview-body">
           {#each parsedImport as p (p.key)}
@@ -664,7 +664,7 @@
                 {p.secretSuggested ? '•••' : p.value || ' '}
               </span>
               {#if exists}
-                <span class="env-import-preview-skip-label">already exists</span>
+                <span class="env-import-preview-skip-label">Already exists</span>
               {/if}
             </div>
           {/each}
@@ -797,10 +797,7 @@
     background: var(--surface);
   }
   .env-templates-group-label {
-    font-family: var(--font-mono);
     font-size: 11px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
     color: var(--fg-subtle);
     display: inline-flex;
     align-items: center;
@@ -811,7 +808,7 @@
     background: transparent;
     border: 0;
     color: var(--accent-fg);
-    font-size: 10.5px;
+    font-size: 11.5px;
     cursor: pointer;
     padding: 0;
   }
@@ -853,8 +850,7 @@
     color: var(--fg-subtle);
   }
   .env-templates-item-exists {
-    font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     flex-shrink: 0;
   }
@@ -918,15 +914,11 @@
   }
   .env-group-chev[data-open="true"] { transform: rotate(90deg); }
   .env-group-name {
-    font-family: var(--font-mono);
     font-size: 11px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
     color: var(--fg);
   }
   .env-group-count {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
   .env-group-secret-count {
@@ -934,8 +926,7 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 11.5px;
     color: var(--color-warning-400);
   }
   .env-group-body {
@@ -954,10 +945,7 @@
   .env-row:first-child { border-top: 0; }
   .env-row-head {
     background: var(--surface);
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     padding: 8px 14px;
   }
@@ -1011,20 +999,16 @@
     user-select: none;
   }
   .env-value-encrypted-pill {
-    font-family: var(--font-mono);
-    font-size: 9.5px;
+    font-size: 11.5px;
     padding: 1px 5px;
     border-radius: 999px;
     color: var(--color-warning-400);
     border: 1px solid color-mix(in srgb, var(--color-warning-500) 35%, var(--border));
     background: color-mix(in srgb, var(--color-warning-500) 6%, transparent);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
   }
 
   .env-cell-updated {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
 
@@ -1161,7 +1145,7 @@
     min-width: 0;
   }
   .env-import-preview-skip-label {
-    font-size: 10px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-left: auto;
     text-decoration: none;

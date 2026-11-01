@@ -3,7 +3,6 @@
   import { sevTone } from './alerts/ruleKinds';
   import { fmtAgo, fmtMem, pctTone } from '$lib/format';
   import { goto } from '$app/navigation';
-  import { page } from '$app/state';
   import { api, isFanOut, type AttentionItem, type SystemMetrics, type ContainerSummary, type HostInfo, type BackupRun } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
@@ -11,8 +10,13 @@
   import { latest } from '$lib/latest';
   import { fmtVersion } from '$lib/version';
   import { Skeleton, StatBar, StatusChip, Segmented, LiveIndicator, EmptyState } from '$lib/components/ui';
-  import type { Tone } from '$lib/components/ui/StatusChip.svelte';
+  import { notices } from '$lib/stores/notices.svelte';
+  import { withoutBanner } from '$lib/notices';
+  import { sortAttention } from '$lib/attention';
+  import { inAppLink } from '$lib/links';
+  import { stackInLens } from '$lib/lens';
   import type { Stat } from '$lib/components/ui/StatBar.svelte';
+  import StackHealth from '$lib/components/ui/StackHealth.svelte';
   import MountTable from '$lib/components/MountTable.svelte';
   import { AlertTriangle } from 'lucide-svelte';
 
@@ -73,7 +77,7 @@
         sysMetrics = sysRaw as SystemMetrics | null;
       }
       summary = sum;
-      stackRows = stacksList.map((s: any): StackRow => {
+      stackRows = stacksList.filter((s: any) => stackInLens(s, hosts.id, !!sum?.by_stack[s.name])).map((s: any): StackRow => {
         if (!sum) return { name: s.name, state: 'unknown', total: 0, running: 0, unhealthy: 0, hosts: [] };
         const r = sum.by_stack[s.name];
         if (!r) return { name: s.name, state: 'stopped', total: 0, running: 0, unhealthy: 0, hosts: [] };
@@ -107,12 +111,6 @@
   $effect(() => autoRefresh(load, 10_000));
 
   const ORDER: Record<StackState, number> = { unhealthy: 0, partial: 1, running: 2, stopped: 3, unknown: 4 };
-  function stackTone(s: StackState): Tone {
-    return s === 'running' ? 'ok' : s === 'unhealthy' ? 'bad' : s === 'partial' ? 'warn' : 'off';
-  }
-  function stackLabel(s: StackState): string {
-    return s === 'running' ? 'running' : s === 'unhealthy' ? 'unhealthy' : s === 'partial' ? 'degraded' : s === 'unknown' ? 'no status' : 'stopped';
-  }
   const hostName = (id: string) => hostList.find((h) => h.id === id)?.name ?? id;
 
   // Hosts in the lens: every host in all-mode, else the selected one. A
@@ -148,22 +146,9 @@
   const issues = $derived(stackRows.filter((s) => s.state === 'unhealthy' || s.state === 'partial'));
   const runs24 = $derived(runs ? runs.filter((r) => Date.now() - Date.parse(r.started_at) < 86_400_000) : null);
   const failed24 = $derived(runs24 ? runs24.filter((r) => r.status === 'failed') : []);
-  const SEV: Record<string, number> = { critical: 0, warning: 1, info: 2 };
   const ATTN_LIMIT = 5;
-  const attnAll = $derived(page.url.searchParams.get('attention') === 'all');
-  const attnSev = $derived(page.url.searchParams.get('severity') ?? '');
-  const attnSorted = $derived(
-    (attention ?? [])
-      .slice()
-      .sort((a, b) => (SEV[a.severity] ?? 3) - (SEV[b.severity] ?? 3) || Date.parse(b.since ?? '0') - Date.parse(a.since ?? '0'))
-  );
-  const attnShown = $derived(attnAll ? attnSorted.filter((a) => !attnSev || a.severity === attnSev) : attnSorted.slice(0, ATTN_LIMIT));
-  const attnCounts = $derived({
-    '': attnSorted.length,
-    critical: attnSorted.filter((a) => a.severity === 'critical').length,
-    warning: attnSorted.filter((a) => a.severity === 'warning').length,
-    info: attnSorted.filter((a) => a.severity === 'info').length
-  });
+  const TILE_LIMIT = 10;
+  const attnSorted = $derived(attention ? sortAttention(withoutBanner(attention, notices.items)) : null);
   const fleetCpu = $derived.by(() => {
     if (sysMetrics) return Math.round(sysMetrics.cpu_percent);
     if (!perHostMetrics.length) return null;
@@ -269,8 +254,8 @@
     <StatBar items={stats} />
 
     {#if tiles.length}
-      <div class="hoststrip">
-        {#each tiles as t (t.id)}
+      <div class="hoststrip" class:single={tiles.length === 1}>
+        {#each tiles.slice(0, TILE_LIMIT) as t (t.id)}
           {@const st = t.status !== 'online' ? 'bad' : (t.cpu ?? 0) >= 80 || (t.mem ?? 0) >= 80 ? 'warn' : 'ok'}
           <a class="hostcard" href="/hosts/{t.id}">
             <span class="hc-top">
@@ -281,51 +266,41 @@
             {#if t.status === 'online' && t.cpu != null}
               <span class="bar"><span>CPU</span><i><b class={pctTone(t.cpu)} style="width:{Math.min(100, t.cpu)}%"></b></i><span>{t.cpu}%</span></span>
               <span class="bar"><span>RAM</span>{#if t.mem != null}<i><b class={pctTone(t.mem, 80)} style="width:{Math.min(100, t.mem)}%"></b></i><span>{t.mem}%</span>{:else}<i></i><span>—</span>{/if}</span>
+              {#if tiles.length === 1}
+                <span class="bar"><span>Disk</span>{#if t.disk != null}<i><b class={pctTone(t.disk, 80)} style="width:{Math.min(100, t.disk)}%"></b></i><span>{t.disk}%</span>{:else}<i></i><span>—</span>{/if}</span>
+              {/if}
             {:else}
               <span class="hc-off dm-trunc">{t.status === 'online' ? 'no metrics' : t.status}</span>
               <span class="hc-pad"></span>
             {/if}
           </a>
         {/each}
+        {#if tiles.length > TILE_LIMIT}
+          <a class="hostcard more" href="/hosts">{tiles.length - TILE_LIMIT} more hosts →</a>
+        {/if}
       </div>
     {/if}
 
-    {#if attention}
+    {#if attnSorted}
       <div class="box">
-        {#if attention.length}
+        {#if attnSorted.length}
           <div class="box-h">
-            <h3>Needs attention <span class="dm-dim">{attention.length}</span></h3>
-            {#if attnAll}
-              <Segmented
-                label="Severity"
-                size="sm"
-                value={attnSev}
-                options={[
-                  { key: '', label: 'All', count: attnCounts[''] },
-                  { key: 'critical', label: 'Critical', count: attnCounts.critical },
-                  { key: 'warning', label: 'Warning', count: attnCounts.warning },
-                  { key: 'info', label: 'Info', count: attnCounts.info }
-                ]}
-                onchange={(v: string) => goto(v ? `/?attention=all&severity=${v}` : '/?attention=all', { replaceState: true })}
-              />
-              <span class="dm-sp"></span>
-              <a class="dm-btn dm-btn-ghost dm-btn-sm" href="/">Show top {ATTN_LIMIT}</a>
-            {/if}
+            <h3>Needs attention <span class="dm-dim dm-num">{attnSorted.length}</span></h3>
           </div>
-          {#each attnShown as a (a.id)}
+          {#each attnSorted.slice(0, ATTN_LIMIT) as a (a.id)}
             <div class="attn">
               <StatusChip tone={sevTone(a.severity)} label={a.severity} />
-              <div class="t dm-trunc"><b>{a.title}</b>{#if a.detail}<span> — {a.detail}</span>{/if}</div>
-              {#if a.since}<span class="dm-num dm-dim">{fmtAgo(a.since)}</span>{/if}
-              <a class="dm-btn dm-btn-sm" href={a.link}>Open</a>
+              <div class="t dm-trunc" title={a.detail ? `${a.title} — ${a.detail}` : a.title}><b>{a.title}</b>{#if a.detail}<span> — {a.detail}</span>{/if}</div>
+              {#if a.since}<span class="dm-num dm-dim" title={new Date(a.since).toLocaleString()}>{fmtAgo(a.since)}</span>{/if}
+              {#if inAppLink(a.link)}<a class="dm-btn dm-btn-sm" href={inAppLink(a.link)}>Open</a>{/if}
             </div>
           {/each}
-          {#if !attnAll && attention.length > ATTN_LIMIT}
-            <div class="attn more"><a class="dm-btn dm-btn-ghost dm-btn-sm" href="/?attention=all">+{attention.length - ATTN_LIMIT} more</a></div>
+          {#if attnSorted.length > ATTN_LIMIT}
+            <div class="attn more"><a class="dm-btn dm-btn-ghost dm-btn-sm" href="/activity">View all ({attnSorted.length})</a></div>
           {/if}
         {:else}
           <div class="attn">
-            <StatusChip tone="ok" label="all good" />
+            <StatusChip tone="ok" label="All good" />
             <div class="t dm-trunc"><b>Nothing needs attention.</b> <span>Hosts online, containers healthy, last backups succeeded.</span></div>
           </div>
         {/if}
@@ -359,22 +334,16 @@
             {:else}
               <div class="dm-tbl">
                 {#each filteredStacks.slice(0, STACK_LIMIT) as s (s.name)}
-                  {@const tone = stackTone(s.state)}
                   <div
                     class="dm-tr dm-click"
                     role="link"
                     tabindex="0"
-                    style="grid-template-columns: 14px minmax(0, 1fr) auto 52px 90px"
+                    style="grid-template-columns: minmax(0, 1fr) 190px"
                     onclick={() => goto(`/stacks/${encodeURIComponent(s.name)}`)}
                     onkeydown={(e) => { if (e.key === 'Enter') goto(`/stacks/${encodeURIComponent(s.name)}`); }}
                   >
-                    <span class="dm-dot {tone === 'off' ? '' : tone}"></span>
                     <span class="dm-trunc"><b>{s.name}</b> <span class="dm-dim">· {s.hosts.length ? s.hosts.map(hostName).join(', ') : s.state === 'unknown' ? 'container status not available' : 'not running'}</span></span>
-                    <span class="dm-mini" title="{s.running} of {s.total} running{s.unhealthy ? `, ${s.unhealthy} unhealthy` : ''}">
-                      {#each Array(Math.min(s.total, 12)) as _, i (i)}<i class={i < s.unhealthy ? 'warn' : i < s.running ? '' : 'off'}></i>{/each}
-                    </span>
-                    <span class="dm-num dm-dim" style="text-align: right">{s.total ? `${s.running}/${s.total}` : '—'}</span>
-                    <span><StatusChip {tone} label={stackLabel(s.state)} /></span>
+                    <StackHealth running={s.running} total={s.total} unhealthy={s.unhealthy} unknown={s.state === 'unknown'} />
                   </div>
                 {:else}
                   <div class="dm-empty">No stacks match.</div>
@@ -404,7 +373,7 @@
             </div>
             <div class="dm-tbl">
               {#each changes as e (e.id)}
-                <div class="dm-tr" style="grid-template-columns: 52px minmax(0, 1fr)" title={new Date(e.ts).toLocaleString()}>
+                <div class="dm-tr" style="grid-template-columns: 76px minmax(0, 1fr)" title={new Date(e.ts).toLocaleString()}>
                   <span class="dm-num dm-dim">{fmtAgo(e.ts)}</span>
                   <span class="dm-trunc"><b>{e.username || 'system'}</b> <span class="dm-mono act">{e.action}</span> {e.target ?? ''}</span>
                 </div>
@@ -429,7 +398,11 @@
   .notice.bad { border-color: var(--bad-bd); background: var(--bad-bg); color: var(--bad); }
   .notice span { color: var(--fg); }
 
-  .hoststrip { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 10px; }
+  .hoststrip { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 10px; }
+  .hoststrip.single .hostcard { flex-direction: row; align-items: center; gap: 24px; }
+  .hoststrip.single .hc-top { flex: 0 1 340px; }
+  .hoststrip.single .bar { flex: 1; }
+  .hostcard.more { justify-content: center; align-items: center; color: var(--muted); }
   .hostcard {
     display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; min-width: 0;
     border: 1px solid var(--border); border-radius: var(--r); background: var(--surface);

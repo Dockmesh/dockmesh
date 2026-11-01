@@ -152,7 +152,7 @@
     <div class="ed-metric">
       <span class="ed-metric-label">Containers</span>
       <div class="ed-metric-value">{attached.length || (inspectLoading ? '…' : '0')}</div>
-      <span class="ed-metric-meta">attached</span>
+      <span class="ed-metric-meta">Attached</span>
     </div>
     <div class="ed-metric">
       <span class="ed-metric-label">Subnet</span>
@@ -167,7 +167,7 @@
         {#if inspect?.IPv6Enabled}<span class="dm-pill dm-pill-neutral net-detail-pill">ipv6</span>{/if}
         {#if !inspect?.Internal && !inspect?.Attachable && !inspect?.IPv6Enabled}<span class="font-mono muted">none</span>{/if}
       </div>
-      <span class="ed-metric-meta">scope flags</span>
+      <span class="ed-metric-meta">Scope flags</span>
     </div>
   </div>
 
@@ -252,10 +252,10 @@
     {:else}
       <div class="net-detail-container-table">
         <div class="net-detail-container-row net-detail-container-row--head">
-          <span>name</span>
-          <span>ipv4</span>
-          <span>ipv6</span>
-          <span>mac</span>
+          <span>Name</span>
+          <span>IPv4</span>
+          <span>IPv6</span>
+          <span>MAC</span>
         </div>
         {#each attached as c (c.id)}
           <a href={`/containers/${c.id}`} class="net-detail-container-row net-detail-container-row--data">
@@ -283,10 +283,10 @@
       {:else}
         <div class="net-detail-ipam-table">
           <div class="net-detail-ipam-row net-detail-ipam-row--head">
-            <span>subnet</span>
-            <span>gateway</span>
-            <span>ip range</span>
-            <span>aux addresses</span>
+            <span>Subnet</span>
+            <span>Gateway</span>
+            <span>IP range</span>
+            <span>Aux addresses</span>
           </div>
           {#each ipamConfig as cfg, i (i)}
             <div class="net-detail-ipam-row">
@@ -320,7 +320,6 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-family: var(--font-mono);
     font-size: 11.5px;
     color: var(--fg-subtle);
     text-decoration: none;
@@ -345,7 +344,7 @@
     align-items: center;
     gap: 6px;
   }
-  .net-detail-pill { font-size: 9.5px; padding: 1px 6px; }
+  .net-detail-pill { font-size: 11.5px; padding: 1px 6px; }
   .net-detail-danger { color: var(--color-danger-400); }
 
   /* ─── Summary ─── */
@@ -360,7 +359,6 @@
   }
   .net-detail-tile-text {
     font-size: 14px;
-    font-family: var(--font-mono);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -385,10 +383,7 @@
     margin: 0;
   }
   .net-detail-dl dt {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     padding-top: 4px;
   }
@@ -407,7 +402,7 @@
     padding: 2px 6px;
     border: 1px solid var(--border);
     border-radius: 3px;
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-muted);
     background: var(--surface);
   }
@@ -450,10 +445,7 @@
   .net-detail-container-row--head {
     background: var(--bg-elevated);
     color: var(--fg-subtle);
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
   }
   .net-detail-container-row--data:hover { background: var(--surface-hover); }
   .net-detail-container-name {
@@ -491,9 +483,7 @@
     background: var(--bg-elevated);
     color: var(--fg-subtle);
     font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
   }
 
   .muted { color: var(--fg-subtle); }

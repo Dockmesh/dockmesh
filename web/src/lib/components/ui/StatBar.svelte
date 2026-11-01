@@ -35,10 +35,10 @@
     border-bottom: 1px solid var(--border);
   }
   .it {
-    flex: 1 1 160px;
+    flex: 1 1 120px;
     min-width: 0;
-    padding: 10px 20px 10px 0;
-    margin-right: 20px;
+    padding: 10px 16px 10px 0;
+    margin-right: 16px;
     border-right: 1px solid var(--border);
   }
   .it:last-child { border-right: 0; margin-right: 0; }

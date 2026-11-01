@@ -1,15 +1,11 @@
 <script lang="ts">
-  // Deploy-Drawer — side panel from the right for deploying a template.
-  // Shows: Stack name + Host picker + Parameter form + Preview compose.
-  // Port-parameter inputs trigger a port-conflict check against the
-  // target host's running containers (smart heuristic from the legacy
-  // code — drop would be a regression).
   import { api, ApiError, type StackTemplate, type StackTemplateParam } from '$lib/api';
   import { goto } from '$app/navigation';
   import { hosts } from '$lib/stores/host.svelte';
   import { toast } from '$lib/stores/toast.svelte';
-  import { Eyebrow, Field } from '$lib/components/editorial';
-  import { X, Rocket, AlertCircle, ChevronRight } from 'lucide-svelte';
+  import { Field } from '$lib/components/editorial';
+  import { Modal } from '$lib/components/ui';
+  import { Rocket, AlertCircle, ChevronRight } from 'lucide-svelte';
 
   interface Props {
     open: boolean;
@@ -24,11 +20,9 @@
   let err = $state<string | null>(null);
   let showPreview = $state(false);
 
-  // Port-conflict heuristic: when the drawer opens, fetch running
-  // containers on the target host and keep their host-published ports
-  // in a Set. Parameters whose name contains "port" warn if the value
-  // matches an already-bound port.
+  // Port parameters warn when the value is already published on the host.
   let usedPorts = $state<Set<number>>(new Set());
+  let lastHost = '';
 
   function isPortParam(p: StackTemplateParam): boolean {
     return /port/i.test(p.name);
@@ -51,7 +45,6 @@
     }
   }
 
-  // Hydrate the form when the drawer opens with a new template.
   let lastOpen = false;
   let lastTemplateId: number | null = null;
   $effect(() => {
@@ -64,24 +57,19 @@
       }
       err = null;
       showPreview = false;
+      lastHost = targetHost;
       refreshUsedPorts(targetHost);
       lastTemplateId = template.id;
     }
     lastOpen = open;
   });
 
-  // Re-check ports when the host changes.
-  let lastHost = '';
   $effect(() => {
     if (open && targetHost && targetHost !== lastHost) {
       lastHost = targetHost;
       refreshUsedPorts(targetHost);
     }
   });
-
-  function onKeydown(e: KeyboardEvent) {
-    if (open && e.key === 'Escape' && !busy) close();
-  }
 
   function close() {
     if (busy) return;
@@ -114,9 +102,7 @@
     return 'text';
   }
 
-  // Render a compose preview by substituting {{param}} / ${param}
-  // placeholders with current values. Best-effort — operators read
-  // this as a sanity-check, not a definitive plan.
+  // Compose with {{param}} / ${param} placeholders filled in.
   function previewCompose(t: StackTemplate, vals: Record<string, string>): string {
     let out = t.compose;
     for (const [k, v] of Object.entries(vals)) {
@@ -131,44 +117,15 @@
 
   const preview = $derived(template ? previewCompose(template, values) : '');
 
-  // Available remote hosts (excluding the synthetic "all" entry).
   const hostOptions = $derived(hosts.available.filter((h) => h.kind !== 'all'));
 </script>
 
-<svelte:window onkeydown={onKeydown} />
-
-{#if open && template}
-  <div class="dd-scrim" onclick={close} role="presentation"></div>
-  <aside class="dd-drawer" role="dialog" aria-label="Deploy template">
-    <header class="dd-head">
-      <div class="dd-head-icon">
-        {#if template.icon_url}
-          <img src={template.icon_url} alt="" />
-        {:else}
-          📦
-        {/if}
-      </div>
-      <div class="dd-head-text">
-        <Eyebrow>Deploy template</Eyebrow>
-        <h2 class="ed-title dd-head-title">{template.name}</h2>
-        {#if template.description}
-          <p class="ed-subtitle dd-head-blurb">{template.description}</p>
-        {/if}
-      </div>
-      <button
-        type="button"
-        class="dd-close"
-        onclick={close}
-        aria-label="Close"
-        disabled={busy}
-      >
-        <X size={14} strokeWidth={1.5} />
-      </button>
-    </header>
-
+<Modal bind:open title={template ? `Deploy ${template.name}` : 'Deploy template'} maxWidth="max-w-2xl" onclose={close}>
+  {#if template}
+    {#if template.description}<p class="dd-blurb">{template.description}</p>{/if}
     <form id="dd-form" class="dd-body" onsubmit={(e) => { e.preventDefault(); doDeploy(); }}>
       <div class="dd-grid-2">
-        <Field label="Stack name" hint="Lowercase, dashes. Must be unique on the host.">
+        <Field label="Stack name" hint="Lowercase letters and dashes, unique on the host.">
           <input
             class="dm-input dd-input"
             bind:value={stackName}
@@ -177,7 +134,7 @@
         </Field>
         <Field label="Target host" hint="Where the stack will run.">
           <select class="dm-input dd-input" bind:value={targetHost}>
-            <option value="local">local (central daemon)</option>
+            <option value="local">Local</option>
             {#each hostOptions as h (h.id)}
               {#if h.id !== 'local'}
                 <option value={h.id} disabled={h.status !== 'online'}>
@@ -198,11 +155,11 @@
               label={p.name}
               hint={portConflict
                 ? `Port ${values[p.name]} is already bound on this host.`
-                : (p.description || (p.secret ? 'Secret — auto-generated if blank.' : ''))}
+                : (p.description || (p.secret ? 'Generated when left empty.' : ''))}
             >
               {#snippet right()}
                 {#if p.required}
-                  <span class="dd-required">required</span>
+                  <span class="dd-required">Required</span>
                 {/if}
               {/snippet}
               {#if p.enum && p.enum.length > 0}
@@ -230,7 +187,7 @@
           {/each}
         </div>
       {:else}
-        <div class="dd-no-params">No parameters — this template deploys as-is.</div>
+        <div class="dd-no-params">This template has no parameters.</div>
       {/if}
 
       <button
@@ -253,123 +210,19 @@
         </div>
       {/if}
     </form>
-
-    <footer class="dd-foot">
-      <span class="dd-foot-meta">
-        will create <em>{stackName || '—'}</em> on <em>{targetHost}</em>
-      </span>
-      <div class="dd-foot-actions">
-        <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={close} disabled={busy}>
-          Cancel
-        </button>
-        <button
-          type="submit"
-          form="dd-form"
-          class="dm-btn dm-btn-primary dm-btn-sm"
-          disabled={busy || !stackName.trim()}
-        >
-          <Rocket size={12} strokeWidth={1.5} />
-          {busy ? 'Deploying…' : 'Deploy'}
-        </button>
-      </div>
-    </footer>
-  </aside>
-{/if}
+  {/if}
+  {#snippet footer()}
+    <span class="dd-foot-meta">Creates <b>{stackName || '—'}</b> on <b>{hostOptions.find((h) => h.id === targetHost)?.name ?? targetHost}</b></span>
+    <span class="dm-sp"></span>
+    <button type="button" class="dm-btn dm-btn-ghost" onclick={close} disabled={busy}>Cancel</button>
+    <button type="submit" form="dd-form" class="dm-btn dm-btn-primary" disabled={busy || !stackName.trim()}>
+      <Rocket size={13} strokeWidth={1.6} />
+      {busy ? 'Deploying…' : 'Deploy'}
+    </button>
+  {/snippet}
+</Modal>
 
 <style>
-  .dd-scrim {
-    position: fixed;
-    inset: 0;
-    background: rgba(2, 6, 23, 0.55);
-    z-index: 99;
-    animation: dd-fade 150ms ease-out;
-  }
-  @keyframes dd-fade {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
-  .dd-drawer {
-    position: fixed;
-    top: 0;
-    right: 0;
-    height: 100vh;
-    width: min(560px, 92vw);
-    background: var(--surface);
-    border-left: 1px solid var(--border-strong);
-    z-index: 100;
-    display: flex;
-    flex-direction: column;
-    animation: dd-slide 180ms cubic-bezier(.2,.7,.3,1);
-  }
-  @keyframes dd-slide {
-    from { transform: translateX(20px); opacity: 0.5; }
-    to { transform: translateX(0); opacity: 1; }
-  }
-
-  .dd-head {
-    padding: 22px 24px 16px;
-    display: grid;
-    grid-template-columns: 44px 1fr 28px;
-    gap: 12px;
-    align-items: flex-start;
-    border-bottom: 1px solid var(--border-subtle);
-  }
-  .dd-head-icon {
-    width: 44px;
-    height: 44px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--surface);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 24px;
-    line-height: 1;
-    overflow: hidden;
-  }
-  .dd-head-icon img {
-    width: 32px;
-    height: 32px;
-    object-fit: contain;
-  }
-  .dd-head-text { min-width: 0; }
-  .dd-head-title {
-    font-size: 22px;
-    line-height: 1.15;
-    margin-top: 6px;
-  }
-  .dd-head-blurb {
-    margin-top: 6px;
-    max-width: 60ch;
-    font-size: 12.5px;
-  }
-  .dd-close {
-    width: 28px;
-    height: 28px;
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--fg-subtle);
-    border-radius: 4px;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .dd-close:hover {
-    color: var(--fg);
-    border-color: var(--border-strong);
-    background: var(--surface-hover);
-  }
-
-  .dd-body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 18px 24px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
   .dd-grid-2 {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -382,10 +235,7 @@
     line-height: 1.4;
   }
   .dd-section-head {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-top: 8px;
   }
@@ -395,11 +245,8 @@
     gap: 10px;
   }
   .dd-required {
-    font-family: var(--font-mono);
-    font-size: 9.5px;
+    font-size: 11.5px;
     color: var(--color-warning-400);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
   }
   .dd-no-params {
     padding: 10px 12px;
@@ -414,8 +261,7 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--color-warning-400);
   }
 
@@ -430,8 +276,6 @@
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
     align-self: flex-start;
     margin-top: 4px;
   }
@@ -462,7 +306,6 @@
     border: 1px solid color-mix(in srgb, var(--color-danger-500) 45%, var(--border));
     background: color-mix(in srgb, var(--color-danger-500) 6%, var(--surface));
     border-radius: 4px;
-    font-family: var(--font-mono);
     font-size: 11.5px;
     color: var(--color-danger-400);
     display: flex;
@@ -470,31 +313,18 @@
     gap: 8px;
   }
 
-  .dd-foot {
-    padding: 14px 24px;
-    border-top: 1px solid var(--border-subtle);
-    background: var(--surface);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
   .dd-foot-meta {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
-  .dd-foot-meta em {
+  .dd-foot-meta b {
     color: var(--fg);
     font-style: normal;
-  }
-  .dd-foot-actions {
-    display: flex;
-    gap: 8px;
   }
 
   @media (max-width: 640px) {
     .dd-grid-2 { grid-template-columns: 1fr; }
   }
+  .dd-blurb { margin: 0 0 14px; color: var(--muted); font-size: var(--fs-sm); }
+  .dd-body { display: flex; flex-direction: column; gap: 14px; }
 </style>

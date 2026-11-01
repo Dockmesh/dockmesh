@@ -310,7 +310,7 @@
 
       <aside class="side" aria-label="Selection">
         {#if !sel}
-          <p class="dm-sub">Select a node to see its details. Search dims everything that does not match.</p>
+          <p class="dm-sub">Select a node to see its details.</p>
           <dl class="dm-kv">
             <dt>Stacks</dt><dd>{totals.groups}</dd>
             <dt>Containers</dt><dd>{totals.containers}</dd>
@@ -326,7 +326,7 @@
             <dt>Containers</dt>
             <dd>
               {#each sel.members as m (m.l.container_id)}
-                <div class="dm-trunc"><span>{m.c?.name ?? m.l.container_id.slice(0, 12)}</span>{#if m.l.ipv4}<span class="dm-num dm-dim"> {m.l.ipv4}</span>{/if}</div>
+                <div class="dm-trunc"><span>{m.c?.name ?? m.l.container_id.slice(0, 12)}</span>{#if m.l.ipv4}<span class="dm-mono dm-dim"> {m.l.ipv4}</span>{/if}</div>
               {:else}—{/each}
             </dd>
           </dl>
@@ -342,7 +342,7 @@
             <dt>Networks</dt>
             <dd>
               {#each sel.memberships as m (m.l.network_id)}
-                <div class="dm-trunc">{m.n?.name ?? m.l.network_id.slice(0, 12)}{#if m.l.ipv4}<span class="dm-num dm-dim"> {m.l.ipv4}</span>{/if}</div>
+                <div class="dm-trunc">{m.n?.name ?? m.l.network_id.slice(0, 12)}{#if m.l.ipv4}<span class="dm-mono dm-dim"> {m.l.ipv4}</span>{/if}</div>
               {:else}—{/each}
             </dd>
             <dt>Domain</dt><dd>{domains.join(', ') || '—'}</dd>

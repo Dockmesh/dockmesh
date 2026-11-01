@@ -127,10 +127,7 @@
     gap: 2px;
   }
   .gml-title {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
   .gml-hint {
@@ -150,11 +147,9 @@
     align-items: center;
   }
   .gml-group {
-    font-family: var(--font-mono);
     font-size: 12px;
   }
   .gml-role {
-    font-family: var(--font-mono);
     font-size: 12px;
   }
   .gml-remove {
@@ -174,14 +169,10 @@
     border-top: 1px dashed var(--border-subtle);
   }
   .gml-default-label {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
   .gml-default-select {
-    font-family: var(--font-mono);
     font-size: 12px;
   }
   .gml-default-hint {

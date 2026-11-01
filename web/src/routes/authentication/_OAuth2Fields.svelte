@@ -79,7 +79,7 @@
   </Field>
 </div>
 
-<Field label="Scopes" hint="Space-separated. Provider-specific.">
+<Field label="Scopes" hint="Space-separated, as the provider expects them.">
   <input class="dm-input acc-input-mono" bind:value={config.scopes} />
 </Field>
 
@@ -91,7 +91,7 @@
   <Field label="Email field">
     <input class="dm-input acc-input-mono" bind:value={config.email_field} placeholder="email" />
   </Field>
-  <Field label="Groups field" hint="Optional. Often a separate /orgs lookup needed.">
+  <Field label="Groups field" hint="Optional; some providers need a separate /orgs lookup.">
     <input class="dm-input acc-input-mono" bind:value={config.groups_field} placeholder="groups" />
   </Field>
 </div>
@@ -122,7 +122,6 @@
     background: var(--bg-elevated);
     border: 1px dashed var(--border);
     border-radius: 4px;
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
     line-height: 1.55;
@@ -143,10 +142,7 @@
     gap: 10px;
   }
   .oa-fieldset {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-top: 6px;
   }

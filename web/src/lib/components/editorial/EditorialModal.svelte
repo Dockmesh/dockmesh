@@ -2,6 +2,7 @@
   import type { Snippet } from 'svelte';
   import { X } from 'lucide-svelte';
   import Eyebrow from './Eyebrow.svelte';
+  import { dialogs } from '$lib/stores/dialogs.svelte';
 
   interface Props {
     open: boolean;
@@ -26,6 +27,10 @@
     children,
     footer,
   }: Props = $props();
+
+  $effect(() => {
+    if (open) return dialogs.track();
+  });
 
   function close() {
     open = false;
@@ -69,7 +74,7 @@
 
       {#if eyebrow || title}
         <div class="ed-modal-header">
-          {#if eyebrow}<Eyebrow>{eyebrow}</Eyebrow>{/if}
+          {#if eyebrow && !title}<Eyebrow>{eyebrow}</Eyebrow>{/if}
           {#if title}
             <h2 class="ed-title ed-modal-title">
               {#if typeof title === 'string'}{title}{:else}{@render title()}{/if}

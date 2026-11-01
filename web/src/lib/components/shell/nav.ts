@@ -12,6 +12,7 @@ import {
   Bell,
   Users,
   Activity,
+  Inbox,
   Settings
 } from 'lucide-svelte';
 import { allowed } from '$lib/rbac.svelte';
@@ -37,7 +38,10 @@ export const SETTINGS_PATHS = ['/settings', '/authentication', '/registries', '/
 export const NAV: NavGroup[] = [
   {
     title: null,
-    items: [{ key: 'overview', href: '/', label: 'Overview', icon: LayoutDashboard, show: () => true }]
+    items: [
+      { key: 'overview', href: '/', label: 'Overview', icon: LayoutDashboard, show: () => true },
+      { key: 'activity', href: '/activity', label: 'Activity', icon: Inbox, show: () => true }
+    ]
   },
   {
     title: 'Workloads',

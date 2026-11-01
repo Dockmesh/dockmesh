@@ -1,0 +1,3 @@
+kind: Fixed
+body: With the host filter on one host, Overview and Stacks list and count only that host's stacks instead of showing other hosts' stacks as stopped
+time: 2026-11-01T15:52:20.479639+01:00

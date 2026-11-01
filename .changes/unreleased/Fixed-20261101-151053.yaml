@@ -1,0 +1,3 @@
+kind: Fixed
+body: Users with view access to backups can open the Backups page; each action is offered only with its permission
+time: 2026-11-01T15:10:53.5617898+01:00

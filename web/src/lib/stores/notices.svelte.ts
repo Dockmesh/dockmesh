@@ -1,7 +1,7 @@
 import { api, type Notice } from '$lib/api';
 
-// Shared by the banner and the bell drawer so both show the same set and
-// the server is polled once.
+// Shared by the banner, the overview and the Activity page so all show the
+// same set and the server is polled once.
 function createNoticeStore() {
   let items = $state<Notice[]>([]);
 

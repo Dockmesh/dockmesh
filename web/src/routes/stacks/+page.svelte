@@ -5,7 +5,9 @@
     type StackDeployment, type DiscoveredStack, type StackGitSourceInput, type EnvDrift,
   } from '$lib/api';
   import { goto } from '$app/navigation';
-  import { Button, Modal, Input, Skeleton, Segmented, StatBar, StatusChip, LiveIndicator, Menu, EmptyState } from '$lib/components/ui';
+  import { stackInLens } from '$lib/lens';
+  import { Button, Modal, Input, Skeleton, Segmented, StatBar, LiveIndicator, Menu, EmptyState } from '$lib/components/ui';
+  import StackHealth from '$lib/components/ui/StackHealth.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { stackOps } from '$lib/stores/stackOps.svelte';
@@ -114,7 +116,7 @@
         byStack.get(proj)!.push(c);
       }
 
-      stackCards = stackList.map((s) => {
+      stackCards = stackList.filter((s) => stackInLens(s, hosts.id, byStack.has(s.name))).map((s) => {
         const cs = byStack.get(s.name) ?? [];
         const running = cs.filter((c) => c.State === 'running').length;
         const unhealthy = cs.filter((c) =>
@@ -365,23 +367,12 @@
     return `${Math.floor(secs / 86400)}d ago`;
   }
 
-  const COLS = '14px minmax(240px, 2.4fr) 120px minmax(100px, 1fr) 100px 110px 40px';
+  const COLS = 'minmax(240px, 2.4fr) 210px minmax(100px, 1fr) 110px 40px';
 
-  function stateTone(s: StackState): 'ok' | 'warn' | 'bad' | 'off' {
-    if (s === 'running') return 'ok';
-    if (s === 'unhealthy') return 'bad';
-    if (s === 'partial') return 'warn';
-    return 'off';
-  }
   function stateLabel(s: StackState): string {
     return { running: 'running', partial: 'degraded', unhealthy: 'unhealthy', stopped: 'stopped' }[s];
   }
-  function svcTone(svc: { state: string; status: string }): string {
-    if (svc.status.toLowerCase().includes('unhealthy')) return 'bad';
-    if (svc.state === 'running') return '';
-    if (svc.state === 'restarting' || svc.state === 'paused') return 'warn';
-    return 'off';
-  }
+  const isUnhealthy = (svc: { status: string }) => svc.status.toLowerCase().includes('unhealthy');
   function stackHost(s: StackCard): string {
     return s.deployment?.host_id ?? s.hosts[0]?.id ?? (hosts.isAll ? 'local' : hosts.id);
   }
@@ -442,7 +433,8 @@
   const subtitleLine = $derived.by(() => {
     const totalHosts = hosts.available.filter((h) => h.kind !== 'all').length;
     const base = `${counts.all} stack${counts.all === 1 ? '' : 's'}`;
-    return totalHosts > 1 ? `${base} on ${totalHosts} hosts` : base;
+    if (totalHosts <= 1) return base;
+    return hosts.isAll ? `${base} on ${totalHosts} hosts` : `${base} on ${hosts.selected?.name ?? 'this host'}`;
   });
 </script>
 
@@ -541,16 +533,13 @@
   {:else}
     <div class="dm-tbl" role="table" aria-label="Stacks">
       <div class="dm-tr dm-th" role="row" style="grid-template-columns: {COLS}">
-        <span role="columnheader"></span>
         <span role="columnheader"><button type="button" onclick={() => (sortMode = 'name')}>Name · services{sortMode === 'name' ? ' ↓' : ''}</button></span>
         <span role="columnheader"><button type="button" onclick={() => (sortMode = 'state')}>Status{sortMode === 'state' ? ' ↓' : ''}</button></span>
         <span role="columnheader">Host</span>
-        <span role="columnheader">Containers</span>
         <span role="columnheader"><button type="button" onclick={() => (sortMode = 'deployed')}>Last deploy{sortMode === 'deployed' ? ' ↓' : ''}</button></span>
         <span role="columnheader"></span>
       </div>
       {#each visible as s (s.name)}
-        {@const tone = stateTone(s.state)}
         {@const running = s.services.filter((x) => x.state === 'running').length}
         {@const host = stackHost(s)}
         <div
@@ -561,21 +550,21 @@
           onkeydown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) goto(`/stacks/${encodeURIComponent(s.name)}`); }}
           tabindex="0"
         >
-          <span role="cell"><span class="dm-dot {tone === 'off' ? '' : tone}"></span></span>
           <span role="cell" class="dm-nm">
             <a href="/stacks/{encodeURIComponent(s.name)}" onclick={(e) => e.stopPropagation()}>{s.name}</a>
             <small title={s.services.map((x) => `${x.name}: ${x.status || x.state}`).join('\n')}>
-              {#if s.services.length}
-                <span class="dm-mini">{#each s.services as svc (svc.name)}<i class={svcTone(svc)}></i>{/each}</span>
-                {running}/{s.services.length} · {s.services.map((x) => x.name).join(' · ')}
-              {:else}
-                no containers
-              {/if}
+              {#if s.services.length}{s.services.map((x) => x.name).join(' · ')}{:else}No containers{/if}
             </small>
           </span>
-          <span role="cell"><StatusChip tone={tone} label={stateLabel(s.state)} /></span>
-          <span role="cell" class="dm-num dm-dim" title={hostLabel(s)}>{hostLabel(s)}</span>
-          <span role="cell" class="dm-num">{s.services.length ? `${running} / ${s.services.length}` : '—'}</span>
+          <span role="cell">
+            <StackHealth
+              {running}
+              total={s.services.length}
+              unhealthy={s.services.filter(isUnhealthy).length}
+              members={s.services.map((x) => ({ name: x.name, state: x.state, unhealthy: isUnhealthy(x) }))}
+            />
+          </span>
+          <span role="cell" class="dm-dim" title={hostLabel(s)}>{hostLabel(s)}</span>
           <span role="cell" class="dm-num dm-dim" title={s.deployment?.deployed_at ? new Date(s.deployment.deployed_at).toLocaleString() : ''}>
             {s.deployment?.deployed_at ? fmtRelTime(s.deployment.deployed_at) : '—'}
           </span>
