@@ -61,7 +61,7 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rc.Close()
 
-	_, hostMem := hostCapacity(r.Context(), target)
+	_, hostMem := hostCapacity(r.Context(), target) //nolint:contextcheck // r is the request wsAuth returned
 
 	// Rolling 5-sample CPU% window. Docker's stats stream ticks at
 	// ~1s, so this matches the 5-second smoothing we use on host
