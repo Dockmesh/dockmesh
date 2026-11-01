@@ -617,6 +617,8 @@ func agentBrowseError(err error) error {
 		ErrContainerDirTooLarge,
 		ErrContainerNoRm,
 		ErrContainerModeInvalid,
+		ErrContainerFilesRefused,
+		ErrContainerMountBelow,
 	} {
 		if strings.Contains(msg, kind.Error()) {
 			return &agentError{err: err, kind: kind}

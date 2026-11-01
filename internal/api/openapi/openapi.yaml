@@ -2926,10 +2926,13 @@ paths:
         the archive at depth 1. Path must be absolute. Works on the server
         host and on agent hosts whose agent supports container files.
         Paths that resolve into /proc, /sys or /dev, and device files, are
-        refused; symbolic links are resolved inside the container. Requires
+        refused, also when they lie behind a bind mount of the host's
+        /proc, /sys or /dev; symbolic links are resolved inside the
+        container. Dockmesh's own containers and containers with the Docker
+        socket mounted are refused (403). Requires
         `containers.files` on the container, like every container file
         endpoint, and is audited on every call. A directory with more than
-        10000 entries is refused.
+        10000 entries or more than 256 MiB of content below it is refused.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
         - $ref: "#/components/parameters/HostQuery"
@@ -2968,8 +2971,9 @@ paths:
         running container is effectively code injection. Parent directory
         must already exist; a symbolic link is not written through. Content
         is base64-encoded so binary uploads work over plain JSON and may be
-        at most 8 MiB. A replaced file keeps its permissions unless `mode`
-        is set. Audited.
+        at most 8 MiB. The file is written by the daemon as root; a replaced
+        file keeps its owner and permissions unless `mode` is set, a new one
+        gets the owner of its directory. Audited.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
         - $ref: "#/components/parameters/HostQuery"
@@ -2990,8 +2994,8 @@ paths:
                 mode:
                   type: integer
                   minimum: 0
-                  maximum: 4095
-                  description: Unix permission bits; defaults to the existing file's, or 0644 (420) for a new file.
+                  maximum: 511
+                  description: Unix permission bits without setuid, setgid or sticky; defaults to the existing file's, or 0644 (420) for a new file.
       responses:
         "200":
           description: File written.

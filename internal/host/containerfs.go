@@ -43,12 +43,19 @@ var (
 	// MaxContainerUploadBytes.
 	ErrContainerFileTooLarge = fmt.Errorf("file is larger than the %d MiB upload limit", MaxContainerUploadBytes>>20)
 	// ErrContainerDirTooLarge is returned for directories with more than
-	// maxContainerDirEntries direct children.
-	ErrContainerDirTooLarge = fmt.Errorf("directory has more than %d entries", maxContainerDirEntries)
+	// maxContainerDirEntries direct children or maxBrowseTarBytes below it.
+	ErrContainerDirTooLarge = fmt.Errorf("directory is too large to list (more than %d entries or %d MiB below it)", maxContainerDirEntries, maxBrowseTarBytes>>20)
 	// ErrContainerNoRm is returned when a delete can't run rm in the
 	// container (stopped, or an image without rm such as scratch).
 	ErrContainerNoRm        = errors.New("deleting needs a running container with an rm command")
-	ErrContainerModeInvalid = errors.New("mode must be between 0 and 07777")
+	ErrContainerModeInvalid = errors.New("mode must be between 0 and 0777")
+	// ErrContainerFilesRefused is returned for containers whose files
+	// would reach the Docker daemon or Dockmesh itself.
+	ErrContainerFilesRefused = errors.New("files of Dockmesh's own containers and of containers with the Docker socket mounted are not accessible")
+	// ErrContainerMountBelow is returned for a listing that would tar a
+	// mount of the host's /proc, /sys, /dev or of a directory containing
+	// them.
+	ErrContainerMountBelow = errors.New("this directory contains a mount of the host's /proc, /sys or /dev; open a subdirectory instead")
 )
 
 const (
@@ -59,7 +66,8 @@ const (
 	// base64-encoded, well inside one agent frame.
 	MaxContainerUploadBytes = 8 << 20
 	maxContainerDirEntries  = 10000
-	maxContainerPathDepth   = 64
+	maxContainerPathDepth   = 32
+	maxBrowseTarBytes       = 256 << 20
 )
 
 // deniedContainerRoots are refused wherever a path resolves to.
@@ -106,15 +114,96 @@ func statErr(err error) error {
 	return err
 }
 
-// resolveContainerPath resolves every component of an absolute, clean
-// path inside the container, following symlinks. The daemon evaluates a
-// link in the scope of the container's root filesystem and reports the
-// result as LinkTarget, so the walk never leaves that root; each step is
-// also checked against the denied areas, so a link into /proc is refused
-// the same as the path itself.
-func resolveContainerPath(ctx context.Context, cli client.ContainerAPIClient, id, clean string) (string, container.PathStat, error) {
+// containerFS is one container's file access: its mounts, so a path can
+// be judged by where it lands on the host, not only by its name inside
+// the container.
+type containerFS struct {
+	cli    client.ContainerAPIClient
+	id     string
+	mounts []container.MountPoint
+}
+
+// openContainerFS inspects the container and refuses Dockmesh's own
+// helper containers and containers with the Docker socket mounted: files
+// there reach the daemon itself, which is the host, or hold Dockmesh's
+// keys and database.
+func openContainerFS(ctx context.Context, cli client.ContainerAPIClient, id string) (*containerFS, error) {
+	info, err := cli.ContainerInspect(ctx, id)
+	if err != nil {
+		return nil, statErr(err)
+	}
+	if info.Config != nil && info.Config.Labels["dockmesh.component"] != "" {
+		return nil, ErrContainerFilesRefused
+	}
+	for _, m := range info.Mounts {
+		if path.Base(m.Source) == "docker.sock" || path.Base(m.Destination) == "docker.sock" {
+			return nil, ErrContainerFilesRefused
+		}
+	}
+	return &containerFS{cli: cli, id: id, mounts: info.Mounts}, nil
+}
+
+// hostPath maps a resolved container path to the host path behind the
+// mount it lies in (the longest matching destination).
+func (f *containerFS) hostPath(p string) (string, bool) {
+	best := -1
+	for i, m := range f.mounts {
+		if m.Source == "" || !pathWithin(p, m.Destination) {
+			continue
+		}
+		if best < 0 || len(m.Destination) > len(f.mounts[best].Destination) {
+			best = i
+		}
+	}
+	if best < 0 {
+		return "", false
+	}
+	m := f.mounts[best]
+	return path.Join(m.Source, strings.TrimPrefix(p, m.Destination)), true
+}
+
+func pathWithin(p, dir string) bool {
+	return p == dir || dir == "/" || strings.HasPrefix(p, dir+"/")
+}
+
+// denied reports whether p, inside the container or on the host behind a
+// mount such as node-exporter's /proc:/host/proc, is in a denied area.
+func (f *containerFS) denied(p string) bool {
+	if deniedContainerPath(p) {
+		return true
+	}
+	hp, ok := f.hostPath(p)
+	return ok && deniedContainerPath(hp)
+}
+
+// deniedBelow reports whether listing dir would tar a mount of a denied
+// host area (or of a host directory containing one, such as /:/rootfs).
+func (f *containerFS) deniedBelow(dir string) bool {
+	for _, m := range f.mounts {
+		if m.Source == "" || !pathWithin(m.Destination, dir) {
+			continue
+		}
+		if deniedContainerPath(m.Source) {
+			return true
+		}
+		for _, d := range deniedContainerRoots {
+			if pathWithin(d, m.Source) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// resolve resolves every component of an absolute, clean path inside the
+// container, following symlinks. The daemon evaluates a link in the scope
+// of the container's root filesystem and reports the result as
+// LinkTarget, so the walk never leaves that root; each step is also
+// checked against the denied areas, so a link into /proc is refused the
+// same as the path itself.
+func (f *containerFS) resolve(ctx context.Context, clean string) (string, container.PathStat, error) {
 	cur := "/"
-	st, err := cli.ContainerStatPath(ctx, id, cur)
+	st, err := f.cli.ContainerStatPath(ctx, f.id, cur)
 	if err != nil {
 		return "", st, statErr(err)
 	}
@@ -123,10 +212,10 @@ func resolveContainerPath(ctx context.Context, cli client.ContainerAPIClient, id
 			continue
 		}
 		next := path.Join(cur, comp)
-		if deniedContainerPath(next) {
+		if f.denied(next) {
 			return "", st, ErrContainerPathDenied
 		}
-		st, err = cli.ContainerStatPath(ctx, id, next)
+		st, err = f.cli.ContainerStatPath(ctx, f.id, next)
 		if err != nil {
 			return "", st, statErr(err)
 		}
@@ -135,11 +224,11 @@ func resolveContainerPath(ctx context.Context, cli client.ContainerAPIClient, id
 			if err != nil {
 				return "", st, err
 			}
-			if deniedContainerPath(target) {
+			if f.denied(target) {
 				return "", st, ErrContainerPathDenied
 			}
 			next = target
-			st, err = cli.ContainerStatPath(ctx, id, next)
+			st, err = f.cli.ContainerStatPath(ctx, f.id, next)
 			if err != nil {
 				return "", st, statErr(err)
 			}
@@ -166,14 +255,14 @@ func linkTarget(st container.PathStat) (string, error) {
 	return t, nil
 }
 
-// resolveContainerParent resolves the directory of clean and stats the
-// last element itself without following it. exists is false when the
-// last element doesn't exist yet.
-func resolveContainerParent(ctx context.Context, cli client.ContainerAPIClient, id, clean string) (dir, name string, st container.PathStat, exists bool, err error) {
+// resolveParent resolves the directory of clean and stats the last
+// element itself without following it. exists is false when the last
+// element doesn't exist yet.
+func (f *containerFS) resolveParent(ctx context.Context, clean string) (dir, name string, st container.PathStat, exists bool, err error) {
 	if clean == "/" {
 		return "", "", st, false, ErrContainerNotFile
 	}
-	dir, dst, err := resolveContainerPath(ctx, cli, id, path.Dir(clean))
+	dir, dst, err := f.resolve(ctx, path.Dir(clean))
 	if err != nil {
 		return "", "", st, false, err
 	}
@@ -182,10 +271,10 @@ func resolveContainerParent(ctx context.Context, cli client.ContainerAPIClient, 
 	}
 	name = path.Base(clean)
 	full := path.Join(dir, name)
-	if deniedContainerPath(full) {
+	if f.denied(full) {
 		return "", "", st, false, ErrContainerPathDenied
 	}
-	st, err = cli.ContainerStatPath(ctx, id, full)
+	st, err = f.cli.ContainerStatPath(ctx, f.id, full)
 	if err != nil {
 		if cerrdefs.IsNotFound(err) {
 			return dir, name, st, false, nil
@@ -198,6 +287,20 @@ func resolveContainerParent(ctx context.Context, cli client.ContainerAPIClient, 
 	return dir, name, st, true, nil
 }
 
+// owner returns the uid and gid of p from the first header of its tar.
+func (f *containerFS) owner(ctx context.Context, p string) (int, int, error) {
+	rdr, _, err := f.cli.CopyFromContainer(ctx, f.id, p)
+	if err != nil {
+		return 0, 0, statErr(err)
+	}
+	defer rdr.Close()
+	hdr, err := tar.NewReader(rdr).Next()
+	if err != nil {
+		return 0, 0, err
+	}
+	return hdr.Uid, hdr.Gid, nil
+}
+
 // BrowseContainerDir lists the direct children of a path inside the
 // container by asking the daemon for a tar of that path and walking
 // the archive at depth 1. Works against scratch / distroless images
@@ -207,19 +310,29 @@ func BrowseContainerDir(ctx context.Context, cli client.ContainerAPIClient, id, 
 	if err != nil {
 		return nil, err
 	}
-	resolved, stat, err := resolveContainerPath(ctx, cli, id, clean)
+	cfs, err := openContainerFS(ctx, cli, id)
+	if err != nil {
+		return nil, err
+	}
+	resolved, stat, err := cfs.resolve(ctx, clean)
 	if err != nil {
 		return nil, err
 	}
 	if !stat.Mode.IsDir() {
 		return nil, ErrContainerNotDir
 	}
+	if cfs.deniedBelow(resolved) {
+		return nil, ErrContainerMountBelow
+	}
 
-	rdr, _, err := cli.CopyFromContainer(ctx, id, resolved)
+	rc, _, err := cli.CopyFromContainer(ctx, id, resolved)
 	if err != nil {
 		return nil, statErr(err)
 	}
-	defer rdr.Close()
+	defer rc.Close()
+	// The daemon tars the whole subtree to list one level; stop reading
+	// a huge one instead of letting a listing stream a whole volume.
+	rdr := &io.LimitedReader{R: rc, N: maxBrowseTarBytes}
 
 	// Docker tars the path as `<basename>/...` — e.g. CopyFromContainer
 	// of "/etc" yields entries like "etc/", "etc/passwd", "etc/nginx/".
@@ -238,6 +351,9 @@ func BrowseContainerDir(ctx context.Context, cli client.ContainerAPIClient, id, 
 	var out []VolumeEntry
 	for {
 		hdr, err := tr.Next()
+		if rdr.N <= 0 {
+			return nil, ErrContainerDirTooLarge
+		}
 		if err == io.EOF {
 			break
 		}
@@ -282,7 +398,11 @@ func openContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, p
 	if err != nil {
 		return nil, nil, err
 	}
-	resolved, stat, err := resolveContainerPath(ctx, cli, id, clean)
+	cfs, err := openContainerFS(ctx, cli, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	resolved, stat, err := cfs.resolve(ctx, clean)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -381,14 +501,28 @@ func WriteContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, 
 	if len(data) > MaxContainerUploadBytes {
 		return ErrContainerFileTooLarge
 	}
-	if mode < 0 || mode > 0o7777 {
+	if mode < 0 || mode > 0o777 {
 		return ErrContainerModeInvalid
 	}
 	clean, err := sanitizeContainerPath(p)
 	if err != nil {
 		return err
 	}
-	dir, name, st, exists, err := resolveContainerParent(ctx, cli, id, clean)
+	cfs, err := openContainerFS(ctx, cli, id)
+	if err != nil {
+		return err
+	}
+	dir, name, st, exists, err := cfs.resolveParent(ctx, clean)
+	if err != nil {
+		return err
+	}
+	// The daemon extracts as root; the file keeps the owner it had, or
+	// gets its directory's, instead of becoming root's.
+	ownerOf := dir
+	if exists {
+		ownerOf = path.Join(dir, name)
+	}
+	uid, gid, err := cfs.owner(ctx, ownerOf)
 	if err != nil {
 		return err
 	}
@@ -412,6 +546,8 @@ func WriteContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, 
 	if err := tw.WriteHeader(&tar.Header{
 		Name:    name,
 		Mode:    mode,
+		Uid:     uid,
+		Gid:     gid,
 		Size:    int64(len(data)),
 		ModTime: time.Now(),
 	}); err != nil {
@@ -434,7 +570,11 @@ func DeleteContainerFile(ctx context.Context, cli client.ContainerAPIClient, id,
 	if err != nil {
 		return err
 	}
-	dir, name, st, exists, err := resolveContainerParent(ctx, cli, id, clean)
+	cfs, err := openContainerFS(ctx, cli, id)
+	if err != nil {
+		return err
+	}
+	dir, name, st, exists, err := cfs.resolveParent(ctx, clean)
 	if err != nil {
 		return err
 	}

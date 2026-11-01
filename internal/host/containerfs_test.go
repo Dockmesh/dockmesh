@@ -28,8 +28,9 @@ import (
 )
 
 type fakeNode struct {
-	mode fs.FileMode
-	data []byte
+	mode     fs.FileMode
+	data     []byte
+	uid, gid int
 	link string // raw symlink target, absolute or relative
 }
 
@@ -43,6 +44,8 @@ type fakeContainerFS struct {
 	mu      sync.Mutex
 	nodes   map[string]*fakeNode
 	noRm    bool
+	labels  map[string]string
+	mounts  []container.MountPoint
 	execs   [][]string
 	execCmd []string
 }
@@ -100,6 +103,10 @@ func (f *fakeContainerFS) resolve(p string, followLast bool, depth int) (string,
 	return cur, nil
 }
 
+func (f *fakeContainerFS) ContainerInspect(context.Context, string) (container.InspectResponse, error) {
+	return container.InspectResponse{Config: &container.Config{Labels: f.labels}, Mounts: f.mounts}, nil
+}
+
 func (f *fakeContainerFS) ContainerStatPath(_ context.Context, _, p string) (container.PathStat, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -134,7 +141,7 @@ func (f *fakeContainerFS) CopyFromContainer(_ context.Context, _, p string) (io.
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	write := func(name string, n *fakeNode) {
-		h := &tar.Header{Name: name, Mode: int64(n.mode.Perm()), Size: int64(len(n.data)), ModTime: time.Unix(0, 0)}
+		h := &tar.Header{Name: name, Mode: int64(n.mode.Perm()), Size: int64(len(n.data)), ModTime: time.Unix(0, 0), Uid: n.uid, Gid: n.gid}
 		switch {
 		case n.mode.IsDir():
 			h.Typeflag, h.Size, h.Name = tar.TypeDir, 0, name+"/"
@@ -193,7 +200,7 @@ func (f *fakeContainerFS) CopyToContainer(_ context.Context, _, dst string, cont
 			return err
 		}
 		data, _ := io.ReadAll(tr)
-		f.nodes[path.Join(dir, h.Name)] = &fakeNode{mode: fs.FileMode(h.Mode).Perm(), data: data}
+		f.nodes[path.Join(dir, h.Name)] = &fakeNode{mode: fs.FileMode(h.Mode).Perm(), data: data, uid: h.Uid, gid: h.Gid}
 	}
 }
 
@@ -252,7 +259,7 @@ func TestContainerPathRules(t *testing.T) {
 		{path: "app/conf", wantErr: ErrContainerPathInvalid},
 		{path: "", wantErr: ErrContainerPathInvalid},
 		{path: "/app\x00/conf", wantErr: ErrContainerPathInvalid},
-		{path: "/" + strings.Repeat("a/", 100), wantErr: ErrVolumePathTooLong},
+		{path: "/" + strings.Repeat("a/", 40), wantErr: ErrVolumePathTooLong},
 		{path: "/" + strings.Repeat("a", MaxBrowsePathLen), wantErr: ErrVolumePathTooLong},
 		{path: "/proc", wantErr: ErrContainerPathDenied},
 		{path: "/proc/1", wantErr: ErrContainerPathDenied},
@@ -360,6 +367,7 @@ func TestContainerWriteAndDelete(t *testing.T) {
 		{name: "root", path: "/", wantErr: ErrContainerNotFile},
 		{name: "missing parent", path: "/nope/x", wantErr: fs.ErrNotExist},
 		{name: "relative", path: "app/x", wantErr: ErrContainerPathInvalid},
+		{name: "setuid mode", path: "/app/x", mode: 0o4755, wantErr: ErrContainerModeInvalid},
 		{name: "bad mode", path: "/app/x", mode: 0o10000, wantErr: ErrContainerModeInvalid},
 	}
 	for _, tt := range writes {
@@ -581,5 +589,111 @@ func TestOldAgentGetsUpdateHint(t *testing.T) {
 		if !errors.Is(err, ErrAgentNoContainerFiles) || !strings.Contains(err.Error(), "update it") {
 			t.Errorf("%s on an old agent: %v", op, err)
 		}
+	}
+}
+
+func TestContainerHostMountsAndRefusedContainers(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeFS()
+	f.dir("/host")
+	f.dir("/host/proc")
+	f.file("/host/proc/kcore", "kernel memory", 0o400)
+	f.dir("/host/data")
+	f.file("/host/data/ok.txt", "fine", 0o644)
+	f.dir("/rootfs")
+	f.dir("/rootfs/etc")
+	f.file("/rootfs/etc/hostname", "dm-agent1", 0o644)
+	f.dir("/rootfs/proc")
+	f.file("/rootfs/proc/kcore", "kernel memory", 0o400)
+	f.link("/app/k", "/host/proc/kcore")
+	f.mounts = []container.MountPoint{
+		{Type: "bind", Source: "/proc", Destination: "/host/proc"},
+		{Type: "bind", Source: "/srv/data", Destination: "/host/data"},
+		{Type: "bind", Source: "/", Destination: "/rootfs"},
+		{Type: "tmpfs", Destination: "/tmp"},
+	}
+
+	for p, want := range map[string]error{
+		"/host/proc/kcore":     ErrContainerPathDenied,
+		"/app/k":               ErrContainerPathDenied,
+		"/rootfs/proc/kcore":   ErrContainerPathDenied,
+		"/host/data/ok.txt":    nil,
+		"/rootfs/etc/hostname": nil,
+	} {
+		_, err := ReadContainerFile(ctx, f, "c1", p, 0)
+		if !errors.Is(err, want) {
+			t.Errorf("read %s: %v, want %v", p, err, want)
+		}
+	}
+	for p, want := range map[string]error{
+		"/host/proc":  ErrContainerPathDenied,
+		"/host":       ErrContainerMountBelow,
+		"/rootfs":     ErrContainerMountBelow,
+		"/":           ErrContainerMountBelow,
+		"/host/data":  nil,
+		"/rootfs/etc": nil,
+	} {
+		_, err := BrowseContainerDir(ctx, f, "c1", p)
+		if !errors.Is(err, want) {
+			t.Errorf("browse %s: %v, want %v", p, err, want)
+		}
+	}
+	if err := WriteContainerFile(ctx, f, "c1", "/rootfs/proc/sysrq-trigger", []byte("b"), 0); !errors.Is(err, ErrContainerPathDenied) {
+		t.Errorf("write into host proc: %v", err)
+	}
+
+	for name, setup := range map[string]func(*fakeContainerFS){
+		"dockmesh component": func(f *fakeContainerFS) { f.labels = map[string]string{"dockmesh.component": "proxy"} },
+		"docker socket": func(f *fakeContainerFS) {
+			f.mounts = []container.MountPoint{{Type: "bind", Source: "/var/run/docker.sock", Destination: "/var/run/docker.sock"}}
+		},
+		"socket elsewhere": func(f *fakeContainerFS) {
+			f.mounts = []container.MountPoint{{Type: "bind", Source: "/run/docker.sock", Destination: "/sock/docker.sock"}}
+		},
+	} {
+		g := newFakeFS()
+		setup(g)
+		if _, err := BrowseContainerDir(ctx, g, "c1", "/etc"); !errors.Is(err, ErrContainerFilesRefused) {
+			t.Errorf("%s browse: %v", name, err)
+		}
+		if _, err := ReadContainerFile(ctx, g, "c1", "/etc/hostname", 0); !errors.Is(err, ErrContainerFilesRefused) {
+			t.Errorf("%s read: %v", name, err)
+		}
+		if err := WriteContainerFile(ctx, g, "c1", "/etc/x", []byte("x"), 0); !errors.Is(err, ErrContainerFilesRefused) {
+			t.Errorf("%s write: %v", name, err)
+		}
+		if err := DeleteContainerFile(ctx, g, "c1", "/etc/hostname"); !errors.Is(err, ErrContainerFilesRefused) {
+			t.Errorf("%s delete: %v", name, err)
+		}
+	}
+}
+
+func TestContainerWriteKeepsOwner(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeFS()
+	f.nodes["/data"].uid, f.nodes["/data"].gid = 999, 998
+	f.file("/data/app.conf", "x", 0o640)
+	f.nodes["/data/app.conf"].uid, f.nodes["/data/app.conf"].gid = 1000, 1001
+	if err := WriteContainerFile(ctx, f, "c1", "/data/app.conf", []byte("y"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.nodes["/data/app.conf"]; n.uid != 1000 || n.gid != 1001 || n.mode.Perm() != 0o640 {
+		t.Errorf("replaced file: uid %d gid %d mode %v", n.uid, n.gid, n.mode)
+	}
+	if err := WriteContainerFile(ctx, f, "c1", "/data/new.conf", []byte("y"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.nodes["/data/new.conf"]; n.uid != 999 || n.gid != 998 {
+		t.Errorf("new file: uid %d gid %d, want the directory's", n.uid, n.gid)
+	}
+}
+
+func TestContainerBrowseStopsOnHugeSubtrees(t *testing.T) {
+	f := newFakeFS()
+	f.dir("/data/vol")
+	f.dir("/data/vol/sub")
+	f.file("/data/vol/sub/big", strings.Repeat("z", maxBrowseTarBytes+1), 0o644)
+	if _, err := BrowseContainerDir(context.Background(), f, "c1", "/data/vol"); !errors.Is(err, ErrContainerDirTooLarge) {
+		t.Fatalf("huge subtree: %v", err)
 	}
 }

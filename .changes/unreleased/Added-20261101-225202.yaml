@@ -1,3 +1,3 @@
 kind: Added
-body: 'The container Files tab works on agent hosts too: browse, preview, download, edit and upload, plus deleting a file or symbolic link on every host. Uploads are limited to 8 MiB, previews and edits to 1 MiB, and /proc, /sys, /dev and device files can''t be opened. Agents older than the server ask to be updated.'
+body: 'The container Files tab works on agent hosts too: browse, preview, download, edit and upload, plus deleting a file or symbolic link on every host. Uploads are limited to 8 MiB, previews and edits to 1 MiB, and /proc, /sys, /dev and device files can''t be opened, also behind a bind mount of the host''s /proc. Files of Dockmesh''s own containers and of containers with the Docker socket are not accessible. Agents older than the server ask to be updated.'
 time: 2026-11-01T22:52:02.0243965+01:00
