@@ -58,4 +58,4 @@ dmctl stacks deploy my-stack
 - Create one token per use, so you can revoke one without breaking the others.
 - Give tokens an expiry, and restrict CI tokens to what the pipeline needs, for example the Deployer role on the one stack it deploys.
 - Store tokens in your CI's secret store, not in repositories.
-- For Prometheus, restrict the token to a custom role with only Hosts: View, on everything. See [Monitoring](./monitoring.md).
+- For Prometheus, restrict the token to a custom role with only Settings & audit: View, on everything. See [Monitoring](./monitoring.md).
