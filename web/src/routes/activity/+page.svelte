@@ -57,9 +57,10 @@
 
   const att = $derived(attention ? sortAttention(withoutBanner(attention, notices.items)) : []);
   const hostName = (id: string) => hosts.available.find((h) => h.id === id)?.name ?? id;
-  const attHosts = $derived([...new Set(att.map((a) => a.object?.host_id).filter((h): h is string => !!h))]);
-  const attShown = $derived(att.filter((a) => (!sev || a.severity === sev) && (!hostF || a.object?.host_id === hostF)));
-  const sevCount = (s: string) => att.filter((a) => (!s || a.severity === s) && (!hostF || a.object?.host_id === hostF)).length;
+  const attHosts = $derived([...new Set(att.map((a) => a.object.host_id).filter((h): h is string => !!h))]);
+  const attOnHost = $derived(hostF ? att.filter((a) => a.object.host_id === hostF) : att);
+  const attShown = $derived(attOnHost.filter((a) => !sev || a.severity === sev));
+  const sevCount = (s: string) => attOnHost.filter((a) => !s || a.severity === s).length;
 
   const feed = $derived(buildFeed(items, ops, notices.items));
   const unread = $derived(feed.filter((e) => e.unread).length);
@@ -161,7 +162,7 @@
           <div class="dm-tr" role="row" style="grid-template-columns: {ATT_COLS}">
             <span role="cell"><StatusChip tone={sevTone(a.severity)} label={a.severity} /></span>
             <span role="cell" class="dm-trunc" title={a.detail ? `${a.title} — ${a.detail}` : a.title}><b>{a.title}</b>{#if a.detail}<span class="dm-dim"> — {a.detail}</span>{/if}</span>
-            <span role="cell" class="dm-dim dm-trunc">{a.object?.host_id ? hostName(a.object.host_id) : '—'}</span>
+            <span role="cell" class="dm-dim dm-trunc">{a.object.host_id ? hostName(a.object.host_id) : '—'}</span>
             <span role="cell" class="dm-num dm-dim" title={a.since ? new Date(a.since).toLocaleString() : ''}>{a.since ? fmtAgo(a.since) : '—'}</span>
             <span role="cell" class="dm-tr-menu">{#if inAppLink(a.link)}<a class="dm-btn dm-btn-sm" href={inAppLink(a.link)}>Open</a>{/if}</span>
           </div>

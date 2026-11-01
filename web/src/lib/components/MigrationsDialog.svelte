@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   // Running and recent stack migrations, opened from the top-bar pill.
   // Polls while open; closing it leaves the migrations running.
   import { fmtBytes, fmtAgo } from '$lib/format';
@@ -31,24 +32,16 @@
       const m = new Map<string, string>();
       for (const h of hosts) m.set(h.id, h.name);
       hostNames = m;
-    } catch {
-      /* keep prior */
     } finally {
       loading = false;
     }
   }
 
-  let timer: ReturnType<typeof setInterval> | null = null;
   $effect(() => {
-    if (open) {
-      load();
-      timer = setInterval(load, 5_000);
-    } else {
-      if (timer) { clearInterval(timer); timer = null; }
-    }
-    return () => {
-      if (timer) { clearInterval(timer); timer = null; }
-    };
+    if (!open) return;
+    untrack(load);
+    const t = setInterval(load, 5_000);
+    return () => clearInterval(t);
   });
 
   function close() { open = false; }

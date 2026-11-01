@@ -341,7 +341,7 @@
         </div>
       </div>
     {:else}
-      <!-- ───────────────── 01 · Identity providers ─────────────── -->
+      <!-- ───────────────── Identity providers ─────────────── -->
       <section class="auth-section">
         <Eyebrow>Identity providers</Eyebrow>
 
@@ -453,7 +453,7 @@
         </div>
       </section>
 
-      <!-- ──────────── 02 · Local password policy ───────────────── -->
+      <!-- ──────────── Local password policy ───────────────── -->
       <section class="auth-section">
         <Eyebrow>Local password policy</Eyebrow>
 
@@ -556,7 +556,7 @@
         {/if}
       </section>
 
-      <!-- ─────── 03 · Sessions & sign-in flow ─────── -->
+      <!-- ─────── Sessions & sign-in flow ─────── -->
       <section class="auth-section">
         <Eyebrow>Sessions &amp; sign-in flow</Eyebrow>
 

@@ -1126,7 +1126,7 @@ export interface NotificationItem {
 }
 
 // Action-required notices: open conditions someone has to act on, shown
-// as a banner and pinned in the bell drawer until the server resolves them.
+// in the banner or in Needs attention until the server resolves them.
 export type NoticeSeverity = 'info' | 'warning' | 'critical';
 
 export interface Notice {

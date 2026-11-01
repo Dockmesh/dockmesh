@@ -442,8 +442,7 @@ body {
     cursor: not-allowed;
   }
 
-  /* ── Pill — flat status indicator. Smaller and more line-art than .dm-badge,
-     intended for high-density tables and per-row status tags. */
+  /* Flat status pill for dense tables. */
   .dm-pill {
     display: inline-flex;
     align-items: center;
@@ -470,12 +469,7 @@ body {
   .dm-pill-neutral { color: var(--muted); }
   .dm-pill-info    { color: var(--accent); background: var(--accent-soft); }
 
-  /* Numeric count badge — square corners, mono, subtle, with a hairline
-     border. Used for tab counts, filter-pill counts, "N items"
-     indicators. Status uses the round dm-pill family above; counts use
-     this. Aligned with .ed-tab .count further down so any count badge
-     in the app renders identically regardless of which class it carries.
-     See feedback memory: count badges square, status pills round. */
+  /* Numeric count badge for tab and filter counts. */
   .ed-count {
     display: inline-flex;
     align-items: center;
@@ -490,14 +484,10 @@ body {
     border: 0;
     border-radius: 9px;
   }
-  /* Active variant — when the count belongs to the currently-selected
-     tab/pill, tint the border with brand accent. Matches .ed-tab.active
-     .count below. */
   .ed-count.active,
   .active > .ed-count,
   [aria-selected="true"] > .ed-count {
     color: var(--accent-fg);
-    border-color: color-mix(in srgb, var(--color-brand-500) 40%, var(--border));
   }
 
   /* Resource bar — thin, line-art. */
@@ -573,7 +563,7 @@ body {
     border-color: color-mix(in srgb, var(--color-brand-500) 40%, var(--border));
   }
 
-  /* ── Data table — flat, hairline rows, mono uppercase headers. */
+  /* ── Data table — flat, hairline rows. */
   .ed-table {
     width: 100%;
     border-collapse: collapse;

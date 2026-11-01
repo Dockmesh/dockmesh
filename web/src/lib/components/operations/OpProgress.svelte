@@ -4,7 +4,7 @@
   import StatusChip from '$lib/components/ui/StatusChip.svelte';
 
   // Inline progress for a list row: the step that runs now and a thin bar.
-  // Clicking opens the drawer with all steps and the live log.
+  // Clicking opens the progress dialog with all steps and the live log.
   let { op, compact = false }: { op: Operation; compact?: boolean } = $props();
 
   const step = $derived(currentStep(op));

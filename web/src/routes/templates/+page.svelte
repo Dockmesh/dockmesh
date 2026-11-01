@@ -22,7 +22,6 @@
   let search = $state('');
   let sortKey = $state<'name' | 'source'>('name');
 
-  // Deploy drawer
   let deployOpen = $state(false);
   let deployTarget = $state<StackTemplate | null>(null);
 

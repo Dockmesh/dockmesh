@@ -21,7 +21,6 @@
 
   type Metrics = { requests: number; requests_per_second: number; status_buckets: Record<string, number>; p95_latency_ms: number };
   let site = $state<Site | null>(null);
-  let missing = $state(false);
   let loading = $state(true);
   let metrics = $state<Metrics | null>(null);
   let acme = $state<ACMEEvent[]>([]);
@@ -47,7 +46,6 @@
       ]);
       const s = routes.find((r) => r.host === host) ?? null;
       site = s;
-      missing = !s;
       acme = events.filter((e) => e.host === host);
       ops = list.filter((o) => o.ref === opRef.proxySite(host));
       operations.track(ops);
@@ -166,7 +164,7 @@
   {#if loading}
     <Skeleton width="40%" height="1.6rem" />
     <Skeleton width="100%" height="3.2rem" />
-  {:else if missing || !site}
+  {:else if !site}
     <EmptyState title="Site not found" description="It was deleted, or the name is spelled differently.">
       {#snippet action()}<a class="dm-btn dm-btn-primary" href="/proxy">Back to the reverse proxy</a>{/snippet}
     </EmptyState>

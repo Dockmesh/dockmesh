@@ -37,8 +37,9 @@
     open = false;
     if (refocus) trigger?.focus();
   }
+  const usable = (h: HostInfo) => h.kind === 'all' || h.id === 'local' || h.status === 'online';
   function pick(h: HostInfo) {
-    if (h.status !== 'online' && h.kind !== 'all' && h.id !== 'local') return;
+    if (!usable(h)) return;
     hosts.set(h.id);
     hide(true);
   }
@@ -74,7 +75,6 @@
     return () => document.removeEventListener('mousedown', onDown);
   });
 
-  const usable = (h: HostInfo) => h.kind === 'all' || h.id === 'local' || h.status === 'online';
   const tone = (h: HostInfo) => (h.kind === 'all' ? 'acc' : h.status === 'online' ? 'ok' : h.status === 'pending' ? 'warn' : 'bad');
 </script>
 
@@ -114,6 +114,7 @@
         <ul id={listId} role="listbox" aria-label="Hosts">
           {#each rows as h, i (h.id)}
             {@const tags = h.tags ?? []}
+            <!-- svelte-ignore a11y_click_events_have_key_events (keys are handled on the popover) -->
             <li
               id="{listId}-{h.id}"
               role="option"
@@ -125,7 +126,6 @@
               class:sep={h.kind === 'all'}
               title={usable(h) ? '' : `${h.name} is ${h.status}`}
               onclick={() => pick(h)}
-              onkeydown={() => {}}
               onmouseenter={() => (active = i)}
             >
               <span class="ck">{#if h.id === hosts.id}<Check size={13} />{/if}</span>

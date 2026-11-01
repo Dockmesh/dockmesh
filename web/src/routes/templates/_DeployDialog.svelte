@@ -1,6 +1,4 @@
 <script lang="ts">
-  // Port parameters are checked against the ports already published on
-  // the target host.
   import { api, ApiError, type StackTemplate, type StackTemplateParam } from '$lib/api';
   import { goto } from '$app/navigation';
   import { hosts } from '$lib/stores/host.svelte';
@@ -22,7 +20,9 @@
   let err = $state<string | null>(null);
   let showPreview = $state(false);
 
+  // Port parameters warn when the value is already published on the host.
   let usedPorts = $state<Set<number>>(new Set());
+  let lastHost = '';
 
   function isPortParam(p: StackTemplateParam): boolean {
     return /port/i.test(p.name);
@@ -57,14 +57,13 @@
       }
       err = null;
       showPreview = false;
+      lastHost = targetHost;
       refreshUsedPorts(targetHost);
       lastTemplateId = template.id;
     }
     lastOpen = open;
   });
 
-  // Re-check ports when the host changes.
-  let lastHost = '';
   $effect(() => {
     if (open && targetHost && targetHost !== lastHost) {
       lastHost = targetHost;
@@ -103,9 +102,7 @@
     return 'text';
   }
 
-  // Render a compose preview by substituting {{param}} / ${param}
-  // placeholders with current values. Best-effort — operators read
-  // this as a sanity-check, not a definitive plan.
+  // Compose with {{param}} / ${param} placeholders filled in.
   function previewCompose(t: StackTemplate, vals: Record<string, string>): string {
     let out = t.compose;
     for (const [k, v] of Object.entries(vals)) {
@@ -120,101 +117,99 @@
 
   const preview = $derived(template ? previewCompose(template, values) : '');
 
-  // Available remote hosts (excluding the synthetic "all" entry).
   const hostOptions = $derived(hosts.available.filter((h) => h.kind !== 'all'));
 </script>
 
 <Modal bind:open title={template ? `Deploy ${template.name}` : 'Deploy template'} maxWidth="max-w-2xl" onclose={close}>
   {#if template}
     {#if template.description}<p class="dd-blurb">{template.description}</p>{/if}
-  <form id="dd-form" class="dd-body" onsubmit={(e) => { e.preventDefault(); doDeploy(); }}>
-    <div class="dd-grid-2">
-      <Field label="Stack name" hint="Lowercase letters and dashes, unique on the host.">
-        <input
-          class="dm-input dd-input"
-          bind:value={stackName}
-          placeholder="my-app"
-        />
-      </Field>
-      <Field label="Target host" hint="Where the stack will run.">
-        <select class="dm-input dd-input" bind:value={targetHost}>
-          <option value="local">Local</option>
-          {#each hostOptions as h (h.id)}
-            {#if h.id !== 'local'}
-              <option value={h.id} disabled={h.status !== 'online'}>
-                {h.name}{h.status !== 'online' ? ` (${h.status})` : ''}
-              </option>
-            {/if}
-          {/each}
-        </select>
-      </Field>
-    </div>
-
-    {#if template.parameters && template.parameters.length > 0}
-      <div class="dd-section-head">Parameters</div>
-      <div class="dd-params">
-        {#each template.parameters as p (p.name)}
-          {@const portConflict = isPortParam(p) && usedPorts.has(Number(values[p.name]))}
-          <Field
-            label={p.name}
-            hint={portConflict
-              ? `Port ${values[p.name]} is already bound on this host.`
-              : (p.description || (p.secret ? 'Generated when left empty.' : ''))}
-          >
-            {#snippet right()}
-              {#if p.required}
-                <span class="dd-required">Required</span>
+    <form id="dd-form" class="dd-body" onsubmit={(e) => { e.preventDefault(); doDeploy(); }}>
+      <div class="dd-grid-2">
+        <Field label="Stack name" hint="Lowercase letters and dashes, unique on the host.">
+          <input
+            class="dm-input dd-input"
+            bind:value={stackName}
+            placeholder="my-app"
+          />
+        </Field>
+        <Field label="Target host" hint="Where the stack will run.">
+          <select class="dm-input dd-input" bind:value={targetHost}>
+            <option value="local">Local</option>
+            {#each hostOptions as h (h.id)}
+              {#if h.id !== 'local'}
+                <option value={h.id} disabled={h.status !== 'online'}>
+                  {h.name}{h.status !== 'online' ? ` (${h.status})` : ''}
+                </option>
               {/if}
-            {/snippet}
-            {#if p.enum && p.enum.length > 0}
-              <select class="dm-input dd-input" bind:value={values[p.name]}>
-                {#each p.enum as opt}
-                  <option value={opt}>{opt}</option>
-                {/each}
-              </select>
-            {:else}
-              <input
-                type={paramInputType(p)}
-                class="dm-input dd-input"
-                bind:value={values[p.name]}
-                placeholder={p.default ?? ''}
-                pattern={p.pattern ?? undefined}
-              />
-            {/if}
-            {#if portConflict}
-              <div class="dd-port-warn">
-                <AlertCircle size={11} strokeWidth={1.5} />
-                <span>Will collide with an existing container's port.</span>
-              </div>
-            {/if}
-          </Field>
-        {/each}
+            {/each}
+          </select>
+        </Field>
       </div>
-    {:else}
-      <div class="dd-no-params">This template has no parameters.</div>
-    {/if}
 
-    <button
-      type="button"
-      class="dd-preview-toggle"
-      onclick={() => (showPreview = !showPreview)}
-      aria-expanded={showPreview}
-    >
-      <ChevronRight size={11} strokeWidth={1.5} class="dd-preview-chev" data-open={showPreview} />
-      {showPreview ? 'Hide' : 'Preview'} compose.yaml
-    </button>
-    {#if showPreview}
-      <pre class="dd-preview">{preview}</pre>
-    {/if}
+      {#if template.parameters && template.parameters.length > 0}
+        <div class="dd-section-head">Parameters</div>
+        <div class="dd-params">
+          {#each template.parameters as p (p.name)}
+            {@const portConflict = isPortParam(p) && usedPorts.has(Number(values[p.name]))}
+            <Field
+              label={p.name}
+              hint={portConflict
+                ? `Port ${values[p.name]} is already bound on this host.`
+                : (p.description || (p.secret ? 'Generated when left empty.' : ''))}
+            >
+              {#snippet right()}
+                {#if p.required}
+                  <span class="dd-required">Required</span>
+                {/if}
+              {/snippet}
+              {#if p.enum && p.enum.length > 0}
+                <select class="dm-input dd-input" bind:value={values[p.name]}>
+                  {#each p.enum as opt}
+                    <option value={opt}>{opt}</option>
+                  {/each}
+                </select>
+              {:else}
+                <input
+                  type={paramInputType(p)}
+                  class="dm-input dd-input"
+                  bind:value={values[p.name]}
+                  placeholder={p.default ?? ''}
+                  pattern={p.pattern ?? undefined}
+                />
+              {/if}
+              {#if portConflict}
+                <div class="dd-port-warn">
+                  <AlertCircle size={11} strokeWidth={1.5} />
+                  <span>Will collide with an existing container's port.</span>
+                </div>
+              {/if}
+            </Field>
+          {/each}
+        </div>
+      {:else}
+        <div class="dd-no-params">This template has no parameters.</div>
+      {/if}
 
-    {#if err}
-      <div class="dd-error" role="alert">
-        <AlertCircle size={12} strokeWidth={1.6} />
-        <span>{err}</span>
-      </div>
-    {/if}
-  </form>
+      <button
+        type="button"
+        class="dd-preview-toggle"
+        onclick={() => (showPreview = !showPreview)}
+        aria-expanded={showPreview}
+      >
+        <ChevronRight size={11} strokeWidth={1.5} class="dd-preview-chev" data-open={showPreview} />
+        {showPreview ? 'Hide' : 'Preview'} compose.yaml
+      </button>
+      {#if showPreview}
+        <pre class="dd-preview">{preview}</pre>
+      {/if}
 
+      {#if err}
+        <div class="dd-error" role="alert">
+          <AlertCircle size={12} strokeWidth={1.6} />
+          <span>{err}</span>
+        </div>
+      {/if}
+    </form>
   {/if}
   {#snippet footer()}
     <span class="dd-foot-meta">Creates <b>{stackName || '—'}</b> on <b>{hostOptions.find((h) => h.id === targetHost)?.name ?? targetHost}</b></span>
@@ -228,9 +223,6 @@
 </Modal>
 
 <style>
-
-
-
   .dd-grid-2 {
     display: grid;
     grid-template-columns: 1fr 1fr;

@@ -71,7 +71,7 @@ function createOperationsStore() {
     try {
       const list = await api.operations.list({ limit: 50 });
       for (const op of list) upsert(op);
-      // Drawer log follows the poll while the socket is down.
+      // The open dialog's log follows the poll while the socket is down.
       if (dialogId && conn !== 'live' && byId[dialogId] && isActive(byId[dialogId])) await load(dialogId);
     } catch {
       /* next poll retries */

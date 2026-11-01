@@ -1452,7 +1452,9 @@
     showDelete = true;
     delPlanLoading = true;
     try {
-      delPlan = await api.stacks.cleanupPreview(name);
+      const plan = await api.stacks.cleanupPreview(name);
+      // Empty lists come back as null.
+      delPlan = { ...plan, networks: plan.networks ?? [], volumes: plan.volumes ?? [], images: plan.images ?? [], skipped_in_use: plan.skipped_in_use ?? [] };
     } catch (err) {
       delPlanError = err instanceof ApiError ? err.message : String(err);
     } finally {

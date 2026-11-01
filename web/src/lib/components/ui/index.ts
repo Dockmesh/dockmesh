@@ -17,7 +17,6 @@ export { default as Tabs } from './Tabs.svelte';
 export { default as Segmented } from './Segmented.svelte';
 export { default as Switch } from './Switch.svelte';
 export { default as Stepper } from './Stepper.svelte';
-export { default as Drawer } from './Drawer.svelte';
 export { default as Menu } from './Menu.svelte';
 export { default as LiveIndicator } from './LiveIndicator.svelte';
 export { default as MetricsChart } from './MetricsChart.svelte';

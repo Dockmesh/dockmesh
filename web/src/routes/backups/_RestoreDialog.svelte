@@ -53,7 +53,7 @@
   }
 
   // The restore request stays open until the restore ends. Once its
-  // operation shows up, the dialog hands over to the progress drawer;
+  // operation shows up, the dialog hands over to the progress dialog;
   // a request refused before any work started never gets one and is
   // reported here instead.
   async function submit() {

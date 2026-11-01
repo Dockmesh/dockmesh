@@ -2,7 +2,7 @@
   import { untrack } from 'svelte';
   import { page } from '$app/state';
   import { replaceState } from '$app/navigation';
-  import { api, ApiError, type AuditWebhookConfig, type AuditRetentionConfig, type AuditRetentionPreview, type AuditRetentionResult } from '$lib/api';
+  import { api, ApiError, type AuditWebhookConfig, type AuditRetentionPreview, type AuditRetentionResult } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { fmtAgo } from '$lib/format';
   import { Skeleton, Segmented, Modal, Tabs, EmptyState, StatusChip } from '$lib/components/ui';
@@ -135,7 +135,6 @@
   let webhookFilterDraft = $state('');
   let webhookBusy = $state(false);
   async function loadWebhook() {
-    if (!allowed('audit.write')) return;
     try {
       webhookCfg = await api.audit.getWebhook();
       webhookURL = webhookCfg.url ?? '';
@@ -184,7 +183,6 @@
     webhookFilter = webhookFilter.filter((f) => f !== v);
   }
 
-  let retentionCfg = $state<AuditRetentionConfig | null>(null);
   let retentionPreview = $state<AuditRetentionPreview | null>(null);
   let retentionMode = $state<'forever' | 'days' | 'archive_local' | 'archive_target'>('forever');
   let retentionDays = $state(365);
@@ -194,10 +192,8 @@
   let retentionBusy = $state(false);
   let retentionLastResult = $state<AuditRetentionResult | null>(null);
   async function loadRetention() {
-    if (!allowed('audit.write')) return;
     try {
       const res = await api.audit.getRetention();
-      retentionCfg = res.config;
       retentionPreview = res.preview;
       retentionMode = res.config.mode;
       retentionDays = res.config.days || 365;
@@ -218,7 +214,6 @@
         local_dir: retentionMode === 'archive_local' ? retentionLocalDir || undefined : undefined,
         target_id: retentionMode === 'archive_target' ? retentionTargetID || undefined : undefined
       });
-      retentionCfg = res.config;
       retentionPreview = res.preview;
       toast.success('Retention policy saved');
     } catch (err) {
