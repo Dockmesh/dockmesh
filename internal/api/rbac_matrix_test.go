@@ -116,6 +116,7 @@ var routeGates = []struct {
 	{"GET", "/api/v1/volumes", rbac.PermVolumesView},
 	{"GET", "/api/v1/volumes/{name}", rbac.PermVolumesView},
 	{"GET", "/api/v1/system/metrics", rbac.PermHostsView},
+	{"GET", "/api/v1/hosts/{id}/metrics", rbac.PermHostsView},
 	{"GET", "/api/v1/system/backup-status", rbac.PermSystemView},
 	{"GET", "/api/v1/system/health", rbac.PermSystemView},
 	{"GET", "/api/v1/system/info", rbac.PermSystemView},

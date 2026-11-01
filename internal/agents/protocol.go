@@ -110,6 +110,10 @@ const (
 	// the same host ID back in a res frame.
 	FrameAgentCertRenew = "agent.cert_renew"
 
+	// FrameAgentMetrics carries a MetricsBatch of host and container
+	// samples (agent → server, no response).
+	FrameAgentMetrics = "agent.metrics"
+
 	// Single response type. Errors set OK=false and put the message in Error.
 	FrameRes = "res"
 
@@ -140,6 +144,8 @@ const (
 	CapDiskMounts    = "disk_mounts"           // agent: answers FrameReqSystemDisks
 	CapDockerEvents  = "docker_events"         // agent: serves the "events" stream kind
 	CapVolumeReplace = "volume_import.replace" // agent: empties the volume first on params.replace
+	// CapMetricsHistory, agent: sends FrameAgentMetrics; server: stores them.
+	CapMetricsHistory = "metrics.history"
 )
 
 // Stream control ops beyond the exec "resize".

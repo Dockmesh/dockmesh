@@ -84,8 +84,12 @@ type Service struct {
 	publicURL string // public HTTPS URL of the main dockmesh server
 	agentURL  string // wss URL of the mTLS agent listener (e.g. wss://host:8443)
 	notifs    *notifications.Service
-	enrollTTL time.Duration
-	now       func() time.Time
+	// metricsSink stores agent history; nil turns it off.
+	metricsSink MetricsSink
+	intakeMu    sync.Mutex
+	intakes     map[string]*metricsIntake
+	enrollTTL   time.Duration
+	now         func() time.Time
 
 	mu        sync.RWMutex
 	connected map[string]*ConnectedAgent // keyed by agent id
@@ -532,6 +536,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	s.disconnect(id)
+	s.deleteHistory(ctx, id)
 	return nil
 }
 

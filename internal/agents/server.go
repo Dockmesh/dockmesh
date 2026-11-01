@@ -115,7 +115,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		AgentName:       agent.Name,
 		ServerVersion:   version.Label(),
 		ProtocolVersion: ProtocolVersion,
-		Capabilities:    serverCapabilities,
+		Capabilities:    h.svc.capabilities(),
 	})
 	if err := writeFrame(conn, Frame{Type: FrameServerWelcome, Payload: welcome}); err != nil {
 		return
@@ -155,6 +155,13 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				defer ag.renewing.Store(false)
 				h.svc.handleCertRenew(ctx, ag, f)
 			}(f)
+		case FrameAgentMetrics:
+			in := h.svc.intake(ag.ID)
+			if len(f.Payload) > maxMetricsBytes || !in.begin(time.Now()) {
+				ag.refuseMetrics(f)
+				continue
+			}
+			go h.svc.handleMetrics(ctx, ag, in, f)
 		}
 	}
 }
@@ -184,8 +191,14 @@ func (h *WSHandler) pump(ag *ConnectedAgent, conn *websocket.Conn) {
 	}
 }
 
-// serverCapabilities is what this server offers agents in the welcome.
-var serverCapabilities = []string{CapStreamCredit, CapCertRenew}
+// capabilities is what this server offers agents in the welcome.
+func (s *Service) capabilities() []string {
+	caps := []string{CapStreamCredit, CapCertRenew}
+	if s.metricsSink != nil {
+		caps = append(caps, CapMetricsHistory)
+	}
+	return caps
+}
 
 func writeFrame(conn *websocket.Conn, f Frame) error {
 	b, err := json.Marshal(f)

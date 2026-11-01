@@ -1,7 +1,9 @@
 <script lang="ts" module>
   export interface LiveSample {
     cpu_percent: number;
+    cpu_percent_core: number;
     mem_used: number;
+    mem_unlimited?: boolean;
     mem_limit: number;
     net_rx: number;
     net_tx: number;
@@ -13,9 +15,10 @@
 <script lang="ts">
   import { fmtBytes, fmtMem } from '$lib/format';
   import { untrack } from 'svelte';
-  import { api, type MetricsSample } from '$lib/api';
+  import { api, type HistoryReason, type MetricsSample } from '$lib/api';
   import MetricsChart, { type ChartEvent, type ChartSeries } from './ui/MetricsChart.svelte';
   import Segmented from './ui/Segmented.svelte';
+  import { HISTORY_RANGE_S, historyHint, historyResolution, type MetricsRange } from '$lib/metricsRange';
 
   // Stored history feeds the time ranges; the live range uses the stats
   // websocket samples the page already receives.
@@ -35,10 +38,11 @@
     events?: ChartEvent[];
   } = $props();
 
-  type Range = 'live' | '1h' | '6h' | '24h' | '7d' | '30d';
-  const RANGE_S: Record<Range, number> = { live: 120, '1h': 3600, '6h': 21600, '24h': 86400, '7d': 604800, '30d': 2592000 };
-  // History is collected on the server for its own containers only.
-  const hasHistory = $derived(host === 'local');
+  type Range = MetricsRange;
+  const RANGE_S: Record<Range, number> = { live: 120, ...HISTORY_RANGE_S };
+  let hasHistory = $state(true);
+  let noHistoryReason = $state<HistoryReason | null>(null);
+  let historyUnlimited = $state(false);
 
   let range = $state<Range>('1h');
   let zoom = $state<[number, number] | null>(null);
@@ -47,6 +51,12 @@
   let cores = $state(0);
   let memTotal = $state(0);
   let now = $state(Date.now());
+
+  $effect(() => {
+    void host;
+    hasHistory = true;
+    noHistoryReason = null;
+  });
 
   $effect(() => {
     if (!hasHistory) range = 'live';
@@ -72,18 +82,16 @@
     liveBuf = [...prev.filter((x) => x.ts !== s.ts), s].slice(-240);
   });
 
-  function resolution(seconds: number): 'raw' | '1m' | '1h' {
-    if (seconds <= 6 * 3600) return 'raw';
-    if (seconds <= 7 * 86400) return '1m';
-    return '1h';
-  }
-
   async function load() {
     if (range === 'live' || !hasHistory) return;
     const to = zoom ? Math.floor(zoom[1] / 1000) : Math.floor(Date.now() / 1000);
     const from = zoom ? Math.floor(zoom[0] / 1000) : to - RANGE_S[range];
     try {
-      samples = await api.containers.metrics(id, from, to, resolution(to - from));
+      const res = await api.containers.metrics(id, from, to, historyResolution(to - from), host);
+      samples = res.samples;
+      historyUnlimited = res.mem_unlimited;
+      hasHistory = res.history;
+      noHistoryReason = res.reason ?? null;
     } catch {
       samples = [];
     }
@@ -94,6 +102,7 @@
     void range;
     void zoom;
     void id;
+    void host;
     load();
     if (range === 'live') return;
     const t = setInterval(load, 30_000);
@@ -114,8 +123,7 @@
   const ts = $derived(data.map((s) => s.ts * 1000));
 
   const memLimit = $derived(data.reduce((m, s) => Math.max(m, s.mem_limit || 0), latest?.mem_limit ?? 0));
-  // Docker reports the host RAM as the limit when none is set.
-  const limited = $derived(memLimit > 0 && (!memTotal || memLimit < memTotal * 0.98));
+  const limited = $derived(memLimit > 0 && !(range === 'live' ? latest?.mem_unlimited : historyUnlimited));
   const memBase = $derived(limited ? memLimit : memTotal || memLimit);
 
   function rate(cur: number, prev: number | undefined, dt: number): number | null {
@@ -124,8 +132,7 @@
   }
 
   const series = $derived.by<ChartSeries[]>(() => {
-    const c = cores || 1;
-    const cpu = data.map((s) => (running || range !== 'live' ? s.cpu_percent / c : null));
+    const cpu = data.map((s) => (running || range !== 'live' ? s.cpu_percent : null));
     const mem = data.map((s) => (memBase > 0 ? (s.mem_used / memBase) * 100 : null));
     const net = data.map((s, i) =>
       i === 0 ? null : rate(s.net_rx + s.net_tx, data[i - 1].net_rx + data[i - 1].net_tx, s.ts - data[i - 1].ts)
@@ -198,9 +205,7 @@
     {#if cores}
       CPU % is relative to all {cores} cores of {hostName}.
     {/if}
-    {#if !hasHistory}
-      History is stored for containers on the server host; agent hosts show live values.
-    {/if}
+    {historyHint(noHistoryReason, hostName)}
   </p>
   {#if events.some((e) => e.ts >= domain[0] && e.ts <= domain[1])}
     <p class="dm-sub cm-legend"><span style="color: var(--accent)">┊</span> event · drag across a chart to zoom</p>

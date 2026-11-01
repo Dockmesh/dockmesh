@@ -1,0 +1,3 @@
+kind: Added
+body: The host page charts CPU, memory and disk over time (live up to 30 days) and lists the containers using the most CPU or memory. Agents record host and container history too and send it to the server every minute, also catching up after a short disconnect; agents older than this release keep working with live values only
+time: 2026-11-01T18:23:53.5605471+01:00

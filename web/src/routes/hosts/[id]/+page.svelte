@@ -22,6 +22,8 @@
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import { hosts } from '$lib/stores/host.svelte';
   import MountTable from '$lib/components/MountTable.svelte';
+  import HostMetrics from '$lib/components/HostMetrics.svelte';
+  import TopConsumers from '$lib/components/TopConsumers.svelte';
   import { ArrowDownToLine, RefreshCw, Trash2, X, AlertTriangle } from 'lucide-svelte';
 
   const id = $derived(page.params.id ?? '');
@@ -352,8 +354,10 @@
 
     {#if tab === 'overview'}
       <StatBar items={snapshot} />
+      <HostMetrics host={id} {hostName} latest={metrics} />
       <div class="grid2">
         <div class="col">
+          <TopConsumers host={id} {hostName} memTotal={metrics?.mem_total ?? 0} refreshAt={lastLoaded} />
           {#if metrics && (metrics.mounts?.length || metrics.mounts_unsupported)}
             <div>
               <h2 class="dm-h2">Disks</h2>

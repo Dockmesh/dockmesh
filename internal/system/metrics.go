@@ -90,6 +90,18 @@ type DockerInfoFn func(ctx context.Context) (DockerSnapshot, bool)
 
 var dockerInfoFn atomic.Pointer[DockerInfoFn]
 
+var dockerRoot atomic.Value
+
+// SetDockerRoot records Docker's data root (DockerRootDir of `docker
+// info`), which the disk figure measures.
+func SetDockerRoot(path string) { dockerRoot.Store(path) }
+
+// DockerRoot returns the path set by SetDockerRoot, "" before that.
+func DockerRoot() string {
+	p, _ := dockerRoot.Load().(string)
+	return p
+}
+
 // SetDockerInfoFn wires a lookup function that the samplers use to
 // override CPUCores + MemTotal with Docker's configured limits.
 // Called once from main() after the docker.Client is up. Safe to call

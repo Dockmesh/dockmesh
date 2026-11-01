@@ -189,6 +189,7 @@ func main() {
 	// jitter between 15% and 20% each poll while local already
 	// reports a smoothed value.
 	system.StartSampler(ctx)
+	go runHistorySampler(ctx)
 
 	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(os.Getpid()))) //nolint:gosec // reconnect jitter, not a secret
 	attempt := 0
@@ -287,6 +288,9 @@ func runOnce(ctx context.Context, dialURL string, tlsCfg *tls.Config, store *cer
 			}
 		}
 	}()
+	if slices.Contains(welcome.Capabilities, agents.CapMetricsHistory) {
+		go flushHistory(ctxConn, conn)
+	}
 	if slices.Contains(welcome.Capabilities, agents.CapCertRenew) {
 		go renewLoop(ctxConn, conn, store)
 	} else if time.Until(store.notAfter()) < agents.RenewBefore {
@@ -1225,6 +1229,7 @@ func agentRolePaths(cli *client.Client) system.RolePathsFn {
 		defer cancel()
 		if info, err := cli.Info(ictx); err == nil && info.DockerRootDir != "" {
 			paths = append(paths, system.RolePath{Role: system.RoleDockerRoot, Path: info.DockerRootDir})
+			system.SetDockerRoot(info.DockerRootDir)
 		}
 		return paths
 	}

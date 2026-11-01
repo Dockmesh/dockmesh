@@ -18,9 +18,8 @@ import (
 //     allocation (0..100). Sum of per-container `cpuDelta/systemDelta
 //     × num_cpus × 100` normalised by Docker's cpu cap.
 //
-//   - memUsed: raw bytes of resident memory across all running
-//     containers. Uses the Docker convention of `Usage - cache` which
-//     matches what `docker stats` displays in its MEM USAGE column.
+//   - memUsed: bytes of memory in use across all running containers,
+//     without page cache, as `docker stats` shows it.
 //
 // Concurrency capped at 8 parallel goroutines and a 3-second deadline
 // so a hung container or slow daemon can't stall the sampler loop.
@@ -66,12 +65,11 @@ func aggregateDockerStats(parent context.Context, cli *docker.Client) (cpuPercen
 				return
 			}
 
-			cpuPct := dockerContainerCPU(&stats)
-			mem := dockerContainerMem(&stats)
+			n := docker.Normalize(&stats)
 
 			mu.Lock()
-			totalCPU += cpuPct
-			totalMem += mem
+			totalCPU += n.CPUPercentCore
+			totalMem += n.MemUsed
 			mu.Unlock()
 		}(c.ID)
 	}
@@ -96,46 +94,6 @@ func aggregateDockerStats(parent context.Context, cli *docker.Client) (cpuPercen
 	}
 	memUsed = totalMem
 	return
-}
-
-// dockerContainerCPU computes a single container's CPU usage as
-// "percent of one core" using the same delta-math as `docker stats`.
-//
-// Formula (matches moby/cli/command/stats.go's calculateCPUPercentUnix):
-//
-//	cpuDelta     = CPUStats.CPUUsage.TotalUsage    - PreCPUStats.CPUUsage.TotalUsage
-//	systemDelta  = CPUStats.SystemUsage            - PreCPUStats.SystemUsage
-//	onlineCPUs   = max(CPUStats.OnlineCPUs, len(PercpuUsage))
-//	percent      = cpuDelta / systemDelta * onlineCPUs * 100
-//
-// The "percent of one core" convention means a container saturating
-// 2 cores reads 200%, matching `docker stats` display.
-func dockerContainerCPU(s *container.StatsResponse) float64 {
-	cpuDelta := float64(s.CPUStats.CPUUsage.TotalUsage) - float64(s.PreCPUStats.CPUUsage.TotalUsage)
-	systemDelta := float64(s.CPUStats.SystemUsage) - float64(s.PreCPUStats.SystemUsage)
-	if systemDelta <= 0 || cpuDelta <= 0 {
-		return 0
-	}
-	onlineCPUs := float64(s.CPUStats.OnlineCPUs)
-	if onlineCPUs == 0 {
-		onlineCPUs = float64(len(s.CPUStats.CPUUsage.PercpuUsage))
-	}
-	if onlineCPUs == 0 {
-		onlineCPUs = 1
-	}
-	return (cpuDelta / systemDelta) * onlineCPUs * 100.0
-}
-
-// dockerContainerMem returns the resident (non-cache) memory usage of
-// a single container in bytes. `Usage - cache` is the convention
-// `docker stats` uses for the MEM USAGE column — cache pages are
-// reclaimable at any time, counting them would overstate pressure.
-func dockerContainerMem(s *container.StatsResponse) uint64 {
-	used := s.MemoryStats.Usage
-	if cache, ok := s.MemoryStats.Stats["cache"]; ok && cache < used {
-		used -= cache
-	}
-	return used
 }
 
 // needsDockerLimitCheck returns true on platforms where we should

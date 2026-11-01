@@ -242,7 +242,7 @@ func (c *Controller) serviceAvg(ctx context.Context, stackName, service, metric 
 		for _, s := range samples {
 			switch strings.ToLower(metric) {
 			case "cpu":
-				total += s.CPUPercent
+				total += s.CPUPercentCore
 			case "memory":
 				if s.MemLimit > 0 {
 					total += float64(s.MemUsed) / float64(s.MemLimit) * 100
