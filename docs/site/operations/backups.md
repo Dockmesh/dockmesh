@@ -22,7 +22,15 @@ What a stack backup does not contain: bind-mounted host paths and anything outsi
 <!-- update after: backups: keep retention per job, fail on partial or missing data -->
 If the stack's compose file cannot be parsed, or a volume cannot be read, the run still reports success and the archive is missing that data. The run log does not mention skipped data, so after the first run of every new job download the archive and check that it contains `volumes/<name>.tar.gz` for every volume you expect.
 
-Jobs created in the web UI always read volumes from the local host; the wizard has no host picker. A `volume` job for a remote host can be created through the API by setting `host_id`, and the data then streams through the server. The agent stream can drop chunks under load, so archives of remote volumes may be silently incomplete; test-restore them. Volume backups use a small helper container (`alpine:3.24`), which Dockmesh pulls if it is missing.
+Every job runs on one host (`host_id`, empty means the server host):
+
+- A **volume** job runs on the host you pick; the wizard then lists that host's volumes. Changing the host of an existing job asks for the volume again.
+- A **stack** job runs on the host the stack is deployed on. The wizard shows that host and doesn't let you change it. A stack that isn't deployed can't be backed up. Through the API, a stack job sent without `host_id` gets its deployment host.
+- A **system** job always runs on the server host.
+
+The wizard only offers hosts on which you may create (or, when editing, change) backup jobs. When a job is saved with a new host or source, the server checks that the host exists, that the volume exists on it, and that the stack is deployed there, and rejects the job otherwise.
+
+Remote volumes stream through the server. The agent stream can drop chunks under load, so archives of remote volumes may be silently incomplete; test-restore them. Volume backups use a small helper container (`alpine:3.24`), which Dockmesh pulls if it is missing.
 
 ## Targets
 
@@ -56,7 +64,7 @@ Know the limits of each target type before you rely on it:
 
 Click **New backup job** on the **Jobs** tab. The wizard asks for:
 
-1. **Job name** and **Source**: pick a stack or a volume, or **Whole dockmesh**.
+1. **Job name** and **Source**: pick a stack, a host and one of its volumes, or **Whole dockmesh**.
 2. **Frequency**: hourly, every 6 hours, daily, weekly, or a raw 5-field cron expression.
 3. **Write to target**: a saved target or an inline one.
 4. Encryption, retention and pre-backup hooks.
