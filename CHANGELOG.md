@@ -28,6 +28,16 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
 ## [Unreleased]
 
 ### Added
+- Image updates, backup runs, restores and new proxy sites show their real steps and a live log
+  while they run. A running-operations indicator in the top bar lists running and recently
+  finished work and opens its progress from any page; a toast says when your own work finishes,
+  and a failure shows the step it failed at with its last log lines. Operations are kept for
+  7 days and listed under `GET /api/v1/operations` (live on `/ws/events`); credentials are masked
+  before anything is stored or shown, and you only see operations on hosts and stacks in your
+  scope. Work still running when the server stops is marked failed on the next start.
+- An Updates page lists available app image updates next to the Dockmesh, Caddy and agent
+  versions; several containers can be updated at once (`POST /api/v1/containers/updates`), one
+  after another on the server, each with its own progress.
 - Every audit log entry has a category (`changes`, `access`, `auth` or `system`), and the audit
   API filters by it with `?category=`.
 - `GET /api/v1/attention` lists what needs attention in your scope: offline hosts, restarting,
