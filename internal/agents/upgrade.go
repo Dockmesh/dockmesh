@@ -84,6 +84,9 @@ var (
 	// ErrAgentCurrent is returned when the agent already runs the build
 	// the server would send.
 	ErrAgentCurrent = errors.New("the agent already runs the build this server offers")
+	// ErrAgentUpgrading is returned while the agent is still replacing
+	// itself after an earlier request.
+	ErrAgentUpgrading = errors.New("the agent is already upgrading")
 	// errUpgradeBackoff marks an automatic attempt skipped by the back-off.
 	errUpgradeBackoff = errors.New("automatic upgrade backed off")
 )
@@ -332,16 +335,16 @@ func (c *UpgradeController) upgradeOne(ctx context.Context, ag *ConnectedAgent, 
 	payload, _ := json.Marshal(req)
 	resp, err := ag.Request(ctx, Frame{Type: FrameReqAgentUpgrade, Payload: payload})
 	if err != nil {
-		// The agent answers an identical binary with a request error.
-		if errors.Is(upgradeRefusal(err.Error()), ErrAgentCurrent) {
-			return req, ErrAgentCurrent
+		// The agent answers refusals with a request error.
+		if r := upgradeRefusal(err.Error()); errors.Is(r, ErrAgentCurrent) || errors.Is(r, ErrAgentUpgrading) {
+			return req, r
 		}
 		slog.Warn("agent upgrade push failed", "agent", ag.ID, "err", err)
 		return req, err
 	}
 	if !resp.OK {
 		err := upgradeRefusal(resp.Error)
-		if !errors.Is(err, ErrAgentCurrent) {
+		if !errors.Is(err, ErrAgentCurrent) && !errors.Is(err, ErrAgentUpgrading) {
 			slog.Warn("agent upgrade rejected", "agent", ag.ID, "err", resp.Error)
 		}
 		return req, err
@@ -350,11 +353,14 @@ func (c *UpgradeController) upgradeOne(ctx context.Context, ag *ConnectedAgent, 
 	return req, nil
 }
 
-// upgradeRefusal maps an agent's refusal to an error; an identical binary
-// (errSameBinary in cmd/dockmesh-agent) becomes ErrAgentCurrent.
+// upgradeRefusal maps an agent's refusal to an error, by the texts of
+// errSameBinary and errUpgradeBusy in cmd/dockmesh-agent.
 func upgradeRefusal(msg string) error {
-	if strings.Contains(msg, "already running this agent build") {
+	switch {
+	case strings.Contains(msg, "already running this agent build"):
 		return ErrAgentCurrent
+	case strings.Contains(msg, "an upgrade is already in progress"):
+		return ErrAgentUpgrading
 	}
 	return errors.New(msg)
 }
