@@ -74,7 +74,9 @@ func isWizardOnlyPath(path string) bool {
 	if path == "/setup" || strings.HasPrefix(path, "/setup/") {
 		return true
 	}
-	if path == "/api/v1/setup/status" {
+	// The run stream replays a finished install to a wizard that subscribed
+	// late; a fast install ends setup before the EventSource connects.
+	if path == "/api/v1/setup/status" || strings.HasPrefix(path, "/api/v1/setup/stream/") {
 		return false
 	}
 	if strings.HasPrefix(path, "/api/v1/setup/") || path == "/api/v1/setup" {

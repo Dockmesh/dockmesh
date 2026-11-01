@@ -427,6 +427,9 @@ paths:
         install step (timestamp, step id, message, status). When the
         runner finishes, an `event: end` frame closes the stream. The
         wizard's Step 7 terminal animation reads from this directly.
+        Stays available after setup has ended, so a wizard that connects
+        after a fast install still gets the full history; runs are
+        dropped 10 minutes after they finish (then 404).
       security: []
       parameters:
         - in: path

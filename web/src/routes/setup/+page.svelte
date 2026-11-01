@@ -369,6 +369,9 @@
         return;
       }
       const { run_id, stream_url } = await r.json();
+      // Setup ends with the install, and the wizard endpoints with it.
+      if (serverInfoTimer) clearInterval(serverInfoTimer);
+      serverInfoTimer = null;
       completed = new Set([1, 2, 3, 4, 5, 6]);
       step = 7;
       window.scrollTo({ top: 0, behavior: 'instant' });
