@@ -53,6 +53,14 @@ func writeProxyRouteError(w http.ResponseWriter, err error) bool {
 	return true
 }
 
+// orNone keeps an empty change list as [] in audit details.
+func orNone(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
+}
+
 // canEditProxy reports whether the caller may see header values and the
 // full forward-auth URL; viewers get them masked.
 func canEditProxy(r *http.Request) bool {
@@ -207,11 +215,19 @@ func (h *Handlers) CreateProxyRoute(w http.ResponseWriter, r *http.Request) {
 	if writeProxyRouteError(w, err) {
 		return
 	}
+	if err != nil && route != nil {
+		writeError(w, http.StatusInternalServerError, proxy.ErrConfigRejected.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, "proxy.route_create", req.Host, map[string]string{"upstream": req.Upstream, "tls_mode": req.TLSMode})
+	details := map[string]any{"upstream": req.Upstream, "tls_mode": req.TLSMode}
+	if opts != nil {
+		details["options"] = orNone(proxy.ChangedGroups(proxy.SiteOptions{}, *opts))
+	}
+	h.audit(r, "proxy.route_create", req.Host, details)
 	writeJSON(w, http.StatusCreated, route)
 }
 
@@ -237,15 +253,22 @@ func (h *Handlers) UpdateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	err = h.Proxy.UpdateRoute(r.Context(), id, req.Upstream, req.TLSMode, req.Enabled, opts)
+	changed, err := h.Proxy.UpdateRoute(r.Context(), id, req.Upstream, req.TLSMode, req.Enabled, opts)
+	if changed != nil || err == nil {
+		h.audit(r, "proxy.route_update", idStr, map[string]any{"changed": orNone(changed)})
+	}
 	if writeProxyRouteError(w, err) {
+		return
+	}
+	if err != nil && changed != nil {
+		slog.Warn("proxy: site saved but not applied", "id", id, "err", err)
+		writeError(w, http.StatusInternalServerError, proxy.ErrConfigRejected.Error())
 		return
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.audit(r, "proxy.route_update", idStr, nil)
 	route, err := h.Proxy.GetRoute(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

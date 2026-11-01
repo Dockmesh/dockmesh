@@ -231,7 +231,7 @@ func (s *Service) CreateRoute(ctx context.Context, spec RouteSpec) (*Route, erro
 		hashes := opts
 		prev = &hashes
 	}
-	raw, err := s.prepareOptions(ctx, 0, spec.Host, spec.TLSMode, &opts, prev)
+	raw, err := s.prepareOptions(ctx, 0, spec.Host, spec.TLSMode, &opts, prev, false)
 	if err != nil {
 		return nil, err
 	}
@@ -270,28 +270,41 @@ func (s *Service) CreateRoute(ctx context.Context, spec RouteSpec) (*Route, erro
 // UpdateRoute replaces the upstream and TLS mode of an existing route,
 // its enabled state unless enabled is nil and its options unless opts is
 // nil. A disabled route stays in the table but is left out of the
-// generated config, so traffic stops without losing config.
-func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode string, enabled *bool, opts *SiteOptions) error {
+// generated config, so traffic stops without losing config. It returns
+// what changed (upstream, tls_mode, enabled, options.<group>), non-nil
+// once the change is saved, also when applying it to Caddy fails.
+func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode string, enabled *bool, opts *SiteOptions) ([]string, error) {
 	if err := validateTLSMode(tlsMode); err != nil {
-		return err
+		return nil, err
 	}
 	if err := checkUpstream(upstream); err != nil {
-		return err
+		return nil, err
 	}
 	cur, err := s.getRoute(ctx, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	next := cur.Options
+	// Kept options go through the same refill as sent ones, so secret
+	// request headers are checked against a changed upstream too.
+	next.Headers.RequestSet = make([]Header, len(cur.Options.Headers.RequestSet))
+	for i, h := range cur.Options.Headers.RequestSet {
+		next.Headers.RequestSet[i] = h
+		if h.Secret {
+			next.Headers.RequestSet[i].Value = ""
+		}
+	}
 	prev := &cur.Options
 	if opts != nil {
 		next = *opts
 	} else if cur.optionsErr != nil {
-		return fmt.Errorf("%w: stored options can't be read (%w); send new options", ErrInvalidOptions, cur.optionsErr)
+		return nil, fmt.Errorf("%w: stored options can't be read (%w); send new options", ErrInvalidOptions, cur.optionsErr)
 	}
-	raw, err := s.prepareOptions(ctx, id, cur.Host, tlsMode, &next, prev)
+	newUpstream := addsUpstream(append([]string{cur.Upstream}, cur.Options.Routing.ExtraUpstreams...),
+		append([]string{upstream}, next.Routing.ExtraUpstreams...))
+	raw, err := s.prepareOptions(ctx, id, cur.Host, tlsMode, &next, prev, newUpstream)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	on := cur.Enabled
 	if enabled != nil {
@@ -301,15 +314,48 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode s
 		`UPDATE proxy_routes SET upstream = ?, tls_mode = ?, enabled = ?, options = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		upstream, tlsMode, boolToInt(on), raw, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return s.SyncFromDB(ctx)
+	changed := []string{}
+	if upstream != cur.Upstream {
+		changed = append(changed, "upstream")
+	}
+	if tlsMode != cur.TLSMode {
+		changed = append(changed, "tls_mode")
+	}
+	if on != cur.Enabled {
+		changed = append(changed, "enabled")
+	}
+	if cur.optionsErr != nil {
+		changed = append(changed, "options")
+	} else {
+		changed = append(changed, ChangedGroups(cur.Options, next)...)
+	}
+	return changed, s.SyncFromDB(ctx)
 }
 
-// prepareOptions hashes new passwords, validates the options of the
-// site with id (0 for a new one) and returns them encoded for storage.
-func (s *Service) prepareOptions(ctx context.Context, id int64, host, tlsMode string, o, prev *SiteOptions) (string, error) {
+// addsUpstream reports whether next has an upstream address not in cur.
+func addsUpstream(cur, next []string) bool {
+	known := map[string]bool{}
+	for _, u := range cur {
+		known[strings.ToLower(u)] = true
+	}
+	for _, u := range next {
+		if !known[strings.ToLower(u)] {
+			return true
+		}
+	}
+	return false
+}
+
+// prepareOptions hashes new passwords, fills kept secrets, validates the
+// options of the site with id (0 for a new one) and returns them encoded
+// for storage. newUpstream is set when the site gains an upstream address.
+func (s *Service) prepareOptions(ctx context.Context, id int64, host, tlsMode string, o, prev *SiteOptions, newUpstream bool) (string, error) {
 	if err := o.applyPasswords(prev); err != nil {
+		return "", err
+	}
+	if err := o.applySecrets(prev, newUpstream); err != nil {
 		return "", err
 	}
 	o.normalize()
@@ -360,8 +406,9 @@ type SitePreview struct {
 }
 
 // SiteConfig returns the config the site gets when enabled, with
-// basic-auth hashes redacted and without the admin section. With mask
-// it is built from Masked options.
+// basic-auth hashes, secret header values and the forward-auth query
+// redacted and without the admin section. With mask it is built from
+// Masked options.
 func (s *Service) SiteConfig(ctx context.Context, id int64, mask bool) (*SitePreview, error) {
 	routes, err := s.listRoutes(ctx)
 	if err != nil {
@@ -384,6 +431,7 @@ func (s *Service) SiteConfig(ctx context.Context, id int64, mask bool) (*SitePre
 		}
 	}
 	g := s.ProxySettings()
+	one.Options = one.Options.withoutSecrets()
 	if mask {
 		one.Options = one.Options.Masked()
 		g = g.Masked()

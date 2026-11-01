@@ -1,6 +1,8 @@
 import { fmtBytes } from '$lib/format';
 export type TLSMode = 'auto' | 'internal' | 'none';
 
+export interface SiteHeader { name: string; value?: string; secret?: boolean; value_set?: boolean }
+
 export interface SiteOptions {
   routing?: { extra_upstreams?: string[]; lb_policy?: string; health_path?: string; www_redirect?: boolean };
   https?: { allow_http?: boolean; hsts?: boolean };
@@ -14,8 +16,19 @@ export interface SiteOptions {
     stream_close_delay?: string;
     compression?: boolean;
   };
-  access?: { basic_auth?: Array<{ username: string }>; ip_mode?: string; ip_ranges?: string[]; forward_auth?: { url: string } | null };
-  headers?: { security?: boolean; request_set?: Array<{ name: string }>; request_remove?: string[]; response_set?: Array<{ name: string }>; response_remove?: string[] };
+  access?: {
+    basic_auth?: Array<{ username: string; password?: string }>;
+    ip_mode?: string;
+    ip_ranges?: string[];
+    forward_auth?: { url: string; copy_headers?: string[]; query_set?: boolean; clear_query?: boolean } | null;
+  };
+  headers?: {
+    security?: boolean;
+    request_set?: SiteHeader[];
+    request_remove?: string[];
+    response_set?: SiteHeader[];
+    response_remove?: string[];
+  };
   logs?: { access_log?: boolean };
 }
 

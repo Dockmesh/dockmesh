@@ -5,9 +5,12 @@
   import { operations, opRef } from '$lib/stores/operations.svelte';
   import { hosts } from '$lib/stores/host.svelte';
   import { TLS_LABEL, type Site, type TLSMode } from './_site';
+  import OptionsEditor from './_OptionsEditor.svelte';
+  import { toForm, toPayload, changedGroups, parseFieldError, type OptionsForm } from './_options';
 
-  // New site as three short questions (name, where it goes, certificate);
-  // editing an existing site is one form for its destination and HTTPS.
+  // New site as three short questions (name, where it goes, certificate)
+  // and an optional fourth with the advanced options; editing an existing
+  // site is one form for its destination and HTTPS.
   let {
     open = $bindable(false),
     editing = null,
@@ -30,13 +33,18 @@
   let saving = $state(false);
   let error = $state('');
   let targets = $state<Target[]>([]);
+  let options = $state<OptionsForm>(toForm(null));
+  let fieldErrors = $state<Record<string, string>>({});
 
-  const STEPS = ['Name', 'Destination', 'Certificate'];
+  const STEPS = ['Name', 'Destination', 'Certificate', 'Advanced'];
+  const ADVANCED = 3;
 
   $effect(() => {
     if (!open) return;
     error = '';
     saving = false;
+    fieldErrors = {};
+    options = toForm(null);
     if (editing) {
       host = editing.host;
       address = editing.upstream;
@@ -103,6 +111,7 @@
 
   async function save() {
     error = '';
+    fieldErrors = {};
     if (editing && !UPSTREAM_RE.test(upstream)) {
       error = 'Enter host:port, e.g. grafana:3000.';
       return;
@@ -114,7 +123,8 @@
         toast.success('Site updated', editing.host);
       } else {
         const since = Date.now();
-        await api.proxy.createRoute(host, upstream, tls);
+        const custom = changedGroups(options, toForm(null)).length > 0;
+        await api.proxy.createRoute(host, upstream, tls, custom ? toPayload(options) : undefined);
         const op = await operations.find(opRef.proxySite(host), 'proxy.site', since);
         if (op) await operations.open(op.id);
         else toast.success('Site created', host);
@@ -123,6 +133,12 @@
       onsaved?.();
     } catch (e) {
       error = e instanceof ApiError ? e.message : 'Saving failed';
+      const fe = editing ? null : parseFieldError(error);
+      if (fe) {
+        fieldErrors = { [fe.field]: fe.message };
+        error = 'Check the advanced options.';
+        step = ADVANCED;
+      }
     } finally {
       saving = false;
     }
@@ -135,7 +151,7 @@
   ];
 </script>
 
-<Modal bind:open title={editing ? `Edit ${editing.host}` : 'New site'} maxWidth="max-w-xl">
+<Modal bind:open title={editing ? `Edit ${editing.host}` : 'New site'} maxWidth={step === ADVANCED && !editing ? 'max-w-3xl' : 'max-w-xl'}>
   {#if !editing}
     <Stepper steps={STEPS} current={step} />
   {/if}
@@ -205,8 +221,13 @@
         {/each}
       </div>
       {#if !editing}
-        <p class="result"><b class="dm-mono">{host}</b> → <span class="dm-mono">{upstream}</span> with {TLS_LABEL[tls]}. Caddy defaults for everything else; you can see each step after creating it.</p>
+        <p class="result"><b class="dm-mono">{host}</b> → <span class="dm-mono">{upstream}</span> with {TLS_LABEL[tls]}. Caddy defaults for everything else unless you change them under Advanced; you can see each step after creating it.</p>
       {/if}
+    {/if}
+
+    {#if !editing && step === ADVANCED}
+      <p class="result">Optional. Open a group to change it; everything you leave closed keeps Caddy's defaults. You can change all of this later on the site's Options tab.</p>
+      <OptionsEditor bind:form={options} {tls} {host} errors={fieldErrors} collapsible />
     {/if}
 
     {#if error}<p class="err" role="alert">{error}</p>{/if}
@@ -220,7 +241,10 @@
       {#if step > 0}<button type="button" class="dm-btn" onclick={() => { error = ''; step--; }}>Back</button>
       {:else}<button type="button" class="dm-btn" onclick={() => (open = false)}>Cancel</button>{/if}
       {#if step < 2}<button type="button" class="dm-btn dm-btn-primary" onclick={next}>Next</button>
-      {:else}<button type="button" class="dm-btn dm-btn-primary" disabled={saving} onclick={save}>Create site</button>{/if}
+      {:else}
+        {#if step === 2}<button type="button" class="dm-btn" onclick={next}>Advanced</button>{/if}
+        <button type="button" class="dm-btn dm-btn-primary" disabled={saving} onclick={save}>Create site</button>
+      {/if}
     {/if}
   {/snippet}
 </Modal>

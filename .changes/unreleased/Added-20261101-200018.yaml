@@ -1,0 +1,3 @@
+kind: Added
+body: 'Proxy sites have an Options tab to edit routing, HTTPS, performance, access, headers and logs, with a warning on risky settings and server errors shown next to the field; the new-site dialog has an optional Advanced step with the same groups, and a Config tab shows the Caddy config the saved site produces. Header values can be marked secret, and secret values, basic-auth passwords and the forward-auth query are write-only: never shown again, kept when left empty, and hidden from the config preview for everyone. Site changes are audited with the option groups that changed.'
+time: 2026-11-01T20:00:18.8381626+01:00

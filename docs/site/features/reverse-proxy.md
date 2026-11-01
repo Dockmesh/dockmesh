@@ -56,8 +56,9 @@ Every change sends the whole config to Caddy's `/load` endpoint, with no contain
 
 ## Site options
 
-<!-- update after: proxy: per-site options (UI) -->
-Each route can carry options in its `options` object (`POST /api/v1/proxy/routes`, `PUT /api/v1/proxy/routes/{id}`). The UI doesn't show them yet. An empty object keeps Caddy's defaults, so existing routes behave as before.
+Open a site on the **Proxy** page and switch to its **Options** tab to change them. Each group starts at Caddy's defaults; options with side effects (plain HTTP next to HTTPS, HSTS, an IP allow list, forward auth, health checks, buffered uploads) carry a warning with the consequence. **Save options** sends the whole set; Dockmesh checks every value and shows a rejected one next to its field. When you create a site, the optional **Advanced** step offers the same groups, closed until you open one. The **Config** tab shows the Caddy JSON the saved site produces. Users who can only view the proxy see the options read-only.
+
+Over the API the options are the `options` object of `POST /api/v1/proxy/routes` and `PUT /api/v1/proxy/routes/{id}`. An empty object keeps Caddy's defaults, so existing routes behave as before.
 
 | Section | Options |
 |---|---|
@@ -68,7 +69,17 @@ Each route can carry options in its `options` object (`POST /api/v1/proxy/routes
 | `headers` | `security` (nosniff, SAMEORIGIN framing, strict referrer), `request_set`, `request_remove`, `response_set`, `response_remove` |
 | `logs` | `access_log` (one line per request in `docker logs dockmesh-proxy`) |
 
-A `PUT` without `options` keeps the stored ones; a `PUT` with `options` replaces them. Basic-auth passwords are stored as bcrypt hashes and never returned; send a user without `password` to keep its password. Values can't contain Caddy placeholders (`{…}`), and there's no way to add raw Caddy directives. `GET /api/v1/proxy/routes/{id}/config` returns the Caddy config Dockmesh generates for one site, with password hashes redacted. Users who can view proxy routes but not edit them (`proxy.update`) see header names with the values replaced by `********` and the forward-auth URL without its query, in the route list and in the config preview.
+A `PUT` without `options` keeps the stored ones; a `PUT` with `options` replaces them. Values can't contain Caddy placeholders (`{…}`), and there's no way to add raw Caddy directives.
+
+Some values are write-only: once saved they are never shown again, not even to admins, and leaving the field empty keeps the stored value.
+
+- Basic-auth passwords are stored as bcrypt hashes; send a user without `password` to keep its password.
+- Request headers marked **Secret** (`"secret": true`, e.g. an `Authorization` or API-key header to the app) come back with an empty `value` and `value_set: true`; send them with an empty value to keep it. When the site gets an upstream it didn't have before (a new destination or an added load-balanced upstream), enter the value again. Response headers can't be secret, since every visitor receives them.
+- The query of the forward-auth URL (it can hold a token) is left out of every response, with `query_set: true`. A URL sent without a query keeps the stored one as long as scheme and host stay the same; for another server enter the query again, or set `clear_query` to drop it.
+
+Write-only keeps values out of the UI and the API; it doesn't protect them from someone who can edit the proxy and points another site, such as the auth service's own site, at a server they control. Caddy also keeps the full config in its own volume (`dockmesh-caddy-config`), so anyone who can browse that volume or the `dockmesh-proxy` container's files can read the values there.
+
+`GET /api/v1/proxy/routes/{id}/config` returns the Caddy config Dockmesh generates for one site, with password hashes, secret header values and the forward-auth query replaced. Users who can view proxy routes but not edit them (`proxy.update`) also see every other header value as `********`. Changing a site writes a `proxy.route_update` audit entry that lists what changed (`upstream`, `tls_mode`, `enabled`, `options.<group>`), never the values.
 
 ### Importing a Caddyfile
 

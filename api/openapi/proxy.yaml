@@ -206,8 +206,9 @@ paths:
       description: |
         The Caddy JSON config Dockmesh generates for this site alone, as it
         would be served when enabled. Basic-auth password hashes are replaced
-        by `REDACTED`; the admin section is left out. `blocked` is true when
-        the stored route fails validation and is not served. For callers
+        by `REDACTED`, secret header values and the forward-auth query by
+        `********` for every caller; the admin section is left out. `blocked`
+        is true when the stored route fails validation and is not served. For callers
         without `proxy.update` the config is built with header values masked
         and the forward-auth URL's query removed, as in the route list.
       responses:
@@ -477,7 +478,12 @@ components:
             Per-site options. Omitted on update: the stored options are kept.
             Sent: they replace the stored options and fields left out take their
             default. A basic-auth user sent without `password` keeps the stored
-            password of the same username. Invalid options are rejected with 400
+            password of the same username. A secret request header sent with an
+            empty `value` keeps the stored value of the same name, unless the
+            update adds an upstream address the site didn't have (400 then:
+            send the value again), and a forward-auth `url` without a query keeps the stored query
+            while it points at the same scheme and host (400 otherwise; send the
+            query again or set `clear_query`). Invalid options are rejected with 400
             naming the field (`options.<section>.<field>: ...`); a www redirect
             onto a name that is a site of its own is rejected with 409.
     ProxySitePreview:
@@ -582,7 +588,15 @@ components:
                 url:
                   type: string
                   example: http://authelia:9091/api/verify?rd=https://auth.example.org
-                  description: Auth service URL; a 2xx answer lets the request through, any other answer is returned to the client.
+                  description: Auth service URL; a 2xx answer lets the request through, any other answer is returned to the client. Responses never include the query, since it can carry a token.
+                query_set:
+                  type: boolean
+                  readOnly: true
+                  description: The stored URL has a query.
+                clear_query:
+                  type: boolean
+                  writeOnly: true
+                  description: Drop the stored query when `url` is sent without one.
                 copy_headers:
                   type: array
                   items: {type: string}
@@ -645,4 +659,14 @@ components:
       required: [name, value]
       properties:
         name: {type: string}
-        value: {type: string, maxLength: 4096}
+        value:
+          type: string
+          maxLength: 4096
+          description: Empty in responses for secret headers. Callers without `proxy.update` get `********` for every header.
+        secret:
+          type: boolean
+          description: Write-only value, e.g. an `Authorization` header to the upstream. Also hidden from the config preview. Only for `request_set`; a secret response header is rejected (400), since visitors receive it.
+        value_set:
+          type: boolean
+          readOnly: true
+          description: A secret header has a stored value.

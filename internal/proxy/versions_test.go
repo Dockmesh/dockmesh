@@ -260,7 +260,7 @@ func TestUpdateRouteKeepsEnabledWhenOmitted(t *testing.T) {
 	if err := s.SetRouteEnabled(ctx, r.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", nil, nil); err != nil {
+	if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetRoute(ctx, r.ID)
@@ -271,7 +271,7 @@ func TestUpdateRouteKeepsEnabledWhenOmitted(t *testing.T) {
 		t.Fatalf("route = %+v", got)
 	}
 	on := true
-	if err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", &on, nil); err != nil {
+	if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", &on, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := s.GetRoute(ctx, r.ID); !got.Enabled {

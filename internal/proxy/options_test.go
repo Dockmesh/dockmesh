@@ -283,14 +283,14 @@ func TestRouteOptionsLifecycle(t *testing.T) {
 
 	// Updating without options keeps them; resending a user without a
 	// password keeps its hash.
-	if err := s.UpdateRoute(ctx, r.ID, "10.0.0.3:80", "auto", nil, nil); err != nil {
+	if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.3:80", "auto", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := s.getRoute(ctx, r.ID); got.Options.Access.BasicAuth[0].Hash != hash || !got.Options.Performance.FlushImmediately {
 		t.Fatalf("options lost on update without options: %+v", got.Options)
 	}
 	keep := SiteOptions{Access: AccessOptions{BasicAuth: []BasicAuthUser{{Username: "marcel"}}}}
-	if err := s.UpdateRoute(ctx, r.ID, "10.0.0.3:80", "auto", nil, &keep); err != nil {
+	if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.3:80", "auto", nil, &keep); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.getRoute(ctx, r.ID)
@@ -299,10 +299,10 @@ func TestRouteOptionsLifecycle(t *testing.T) {
 	}
 
 	hsts := SiteOptions{HTTPS: HTTPSOptions{HSTS: true}}
-	if err := s.UpdateRoute(ctx, r.ID, "10.0.0.3:80", "none", nil, &hsts); !errors.Is(err, ErrInvalidOptions) {
+	if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.3:80", "none", nil, &hsts); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("hsts on tls none: err = %v", err)
 	}
-	if err := s.UpdateRoute(ctx, 999, "10.0.0.3:80", "auto", nil, nil); !errors.Is(err, ErrRouteNotFound) {
+	if _, err := s.UpdateRoute(ctx, 999, "10.0.0.3:80", "auto", nil, nil); !errors.Is(err, ErrRouteNotFound) {
 		t.Fatalf("missing route: err = %v", err)
 	}
 
