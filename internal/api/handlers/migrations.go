@@ -21,7 +21,7 @@ func (h *Handlers) InitiateMigration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), "", name)
+	scopeReq := h.stackRes(r, name)
 	if !h.checkRoleScope(r, scopeReq) {
 		h.writeRoleScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
 		return
@@ -84,7 +84,7 @@ func (h *Handlers) RollbackMigration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), "", name)
+	scopeReq := h.stackRes(r, name)
 	if !h.checkRoleScope(r, scopeReq) {
 		h.writeRoleScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
 		return
@@ -135,7 +135,7 @@ func (h *Handlers) PreflightMigration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), "", name)
+	scopeReq := h.stackRes(r, name)
 	if !h.checkRoleScope(r, scopeReq) {
 		h.writeRoleScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
 		return
@@ -162,7 +162,7 @@ func (h *Handlers) PurgeSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), "", name)
+	scopeReq := h.stackRes(r, name)
 	if !h.checkRoleScope(r, scopeReq) {
 		h.writeRoleScopeDenied(w, r, rbac.PermStacksMigrate, scopeReq, "stack "+name)
 		return

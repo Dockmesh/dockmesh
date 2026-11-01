@@ -292,8 +292,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Post("/stacks/adopt", h.AdoptStack)
 			})
 
-			// Git source CRUD (P.11.11). Configuring a source writes
-			// compose.yaml into the stack FS, so it rides on stacks.update.
+			// Git sources. Connecting a repository is stack management;
+			// syncing it redeploys.
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermStacksGit))
 				r.Post("/stacks/{name}/git", h.ConfigureGitSource)
@@ -301,8 +301,6 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			})
 			r.With(middleware.RequirePerm(rbac.PermStacksView)).Get("/stacks/{name}/git", h.GetGitSource)
 			r.With(middleware.RequirePerm(rbac.PermStacksDeploy)).Post("/stacks/{name}/git/sync", h.SyncGitSource)
-			r.Group(func(r chi.Router) {
-			})
 
 			// Stack templates (P.11.12) — split create/update/delete +
 			// deploy. Listing remains open below.
@@ -766,11 +764,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermBackupsDelete))
 				r.Delete("/backups/jobs/{id}", h.DeleteBackupJob)
-			})
-			r.With(middleware.RequirePerm(rbac.PermBackupsRun)).Post("/backups/jobs/{id}/run", h.RunBackupJob)
-			r.Group(func(r chi.Router) {
 				r.Delete("/backups/targets/{id}", h.DeleteBackupTarget)
 			})
+			r.With(middleware.RequirePerm(rbac.PermBackupsRun)).Post("/backups/jobs/{id}/run", h.RunBackupJob)
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermBackupsRestore))
 				r.Post("/backups/runs/{id}/restore", h.RestoreBackup)

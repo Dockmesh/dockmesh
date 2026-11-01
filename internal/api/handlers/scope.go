@@ -371,3 +371,18 @@ func (h *Handlers) filterContainerRowsByRoleScope(r *http.Request, in []containe
 func (h *Handlers) hostVisible(r *http.Request, id string) bool {
 	return h.allowedOn(r, h.hostScopeReq(r.Context(), id))
 }
+
+// stackRes is the resource of stack name: the one StackScope resolved for
+// this request, or the stack on its deployment host.
+func (h *Handlers) stackRes(r *http.Request, name string) rbac.Resource {
+	if res, ok := middleware.ResourceOf(r.Context()); ok && res.StackName == name {
+		return res
+	}
+	hostID := ""
+	if h.Deployments != nil {
+		if d, err := h.Deployments.Get(r.Context(), name); err == nil && d != nil {
+			hostID = d.HostID
+		}
+	}
+	return h.stackScopeReq(r.Context(), hostID, name)
+}

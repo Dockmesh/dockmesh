@@ -15,11 +15,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/registry"
-	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 )
 
@@ -288,7 +288,7 @@ func (s *Service) ResolveAuth(ctx context.Context, image string, hostTags []stri
 			return "", nil, err
 		}
 		r.ScopeTags = parseScope(scope)
-		if !rbac.ScopeMatchesHost(r.ScopeTags, hostTags) {
+		if !tagsMatch(r.ScopeTags, hostTags) {
 			continue
 		}
 		plain, err := s.secrets.Decrypt(pw)
@@ -435,4 +435,18 @@ func updateErr(err error) error {
 		return ErrDuplicate
 	}
 	return err
+}
+
+// tagsMatch reports whether a registry limited to scope tags applies to a
+// host with hostTags: no tags means every host, otherwise any shared tag.
+func tagsMatch(scope, hostTags []string) bool {
+	if len(scope) == 0 {
+		return true
+	}
+	for _, t := range scope {
+		if slices.Contains(hostTags, t) {
+			return true
+		}
+	}
+	return false
 }

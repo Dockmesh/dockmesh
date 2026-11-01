@@ -181,7 +181,7 @@ func (h *Handlers) RecoverStack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	scopeReq := h.stackScopeReq(r.Context(), "", name)
+	scopeReq := h.stackRes(r, name)
 	if !h.checkRoleScope(r, scopeReq) {
 		h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
 		return
@@ -284,7 +284,7 @@ func (h *Handlers) RecoverStack(w http.ResponseWriter, r *http.Request) {
 // containers that came from it. Inverse of RecoverStack.
 func (h *Handlers) DiscardStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), "", name)
+	scopeReq := h.stackRes(r, name)
 	if !h.checkRoleScope(r, scopeReq) {
 		h.writeRoleScopeDenied(w, r, rbac.PermStacksDelete, scopeReq, "stack "+name)
 		return
@@ -454,7 +454,7 @@ func (h *Handlers) CreateStackFromGit(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) UpdateStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), "", name)
+	scopeReq := h.stackRes(r, name)
 	if !h.checkRoleScope(r, scopeReq) {
 		h.writeRoleScopeDenied(w, r, rbac.PermStacksUpdate, scopeReq, "stack "+name)
 		return
@@ -479,7 +479,7 @@ func (h *Handlers) UpdateStack(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) DeleteStack(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), "", name)
+	scopeReq := h.stackRes(r, name)
 	if !h.checkRoleScope(r, scopeReq) {
 		h.writeRoleScopeDenied(w, r, rbac.PermStacksDelete, scopeReq, "stack "+name)
 		return
