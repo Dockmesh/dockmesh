@@ -31,7 +31,7 @@ type fakeNode struct {
 	mode     fs.FileMode
 	data     []byte
 	uid, gid int
-	link string // raw symlink target, absolute or relative
+	link     string // raw symlink target, absolute or relative
 }
 
 // fakeContainerFS models the daemon's archive API on an in-memory tree:
