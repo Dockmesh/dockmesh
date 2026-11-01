@@ -1608,7 +1608,7 @@
     <h1 class="stk-name">{name}</h1>
     <StatusChip tone={stackState.tone} label={stackState.label} />
     <span class="dm-sub stk-sub">
-      {#if services.length > 0}{services.filter((s) => s.state === 'running').length} / {services.length} running · {/if}{isRemote && hosts.selected ? hosts.selected.name : 'local'}{#if lastDeploy} · deployed {fmtAgo(lastDeploy.deployed_at)}{#if lastDeploy.deployed_by_name} by {lastDeploy.deployed_by_name}{/if}{/if}
+      {#if services.length > 0}{services.filter((s) => s.state === 'running').length} / {services.length} running · {/if}{isRemote && hosts.selected ? hosts.selected.name : 'Local'}{#if lastDeploy} · deployed {fmtAgo(lastDeploy.deployed_at)}{#if lastDeploy.deployed_by_name} by {lastDeploy.deployed_by_name}{/if}{/if}
       {#if anyBusy || deployProgress}
         ·
         <span
@@ -1763,10 +1763,10 @@
               <Skeleton width="100%" height="3rem" />
             </div>
           {:else if services.length > 0}
-            {@const cols = '14px minmax(140px, 1.3fr) minmax(140px, 1.5fr) 104px 64px 84px 34px'}
+            {@const cols = 'minmax(140px, 1.3fr) minmax(140px, 1.5fr) 120px 64px 84px 34px'}
             <div class="dm-tbl">
               <div class="dm-tr dm-th" style="grid-template-columns: {cols}">
-                <span></span><span>Service</span><span>Image</span><span>State</span><span class="r">CPU</span><span class="r">Memory</span><span></span>
+                <span>Service</span><span>Image</span><span>State</span><span class="r">CPU</span><span class="r">Memory</span><span></span>
               </div>
               {#each services as s (s.service + s.container_id)}
                 {@const count = replicaCounts.get(s.service) ?? 0}
@@ -1781,14 +1781,13 @@
                   onclick={() => goto(`/containers/${s.container_id}?from=stack`)}
                   onkeydown={(e) => e.key === 'Enter' && goto(`/containers/${s.container_id}?from=stack`)}
                 >
-                  <span class="dm-dot {s.state !== 'running' ? '' : unhealthy ? 'warn' : 'ok'}"></span>
                   <span class="dm-nm">
                     <a href={`/containers/${s.container_id}?from=stack`} onclick={(e) => e.stopPropagation()}>{s.service}{#if count > 1}<span class="stk-rep"> ×{count}</span>{/if}</a>
                     <small title={s.status}>{s.status || s.state}</small>
                   </span>
                   <span class="dm-mono dm-dim stk-img" title={s.image}>
                     {s.image.split('/').pop()}
-                    {#if hasImageUpdate(s.image)}<StatusChip tone="acc" label="update" title="A newer image is available" />{/if}
+                    {#if hasImageUpdate(s.image)}<span class="stk-upd" title="A newer image is available"> · update</span>{/if}
                   </span>
                   <span>
                     {#if op && (isActive(op) || Date.now() - Date.parse(op.finished_at ?? op.created_at) < 60_000)}
@@ -2921,4 +2920,5 @@
   .diff-marker { display: inline-block; width: 12px; color: var(--subtle); user-select: none; }
   .diff-add .diff-marker { color: var(--ok); }
   .diff-del .diff-marker { color: var(--bad); }
+  .stk-upd { color: var(--accent); font-family: var(--font-sans); }
 </style>

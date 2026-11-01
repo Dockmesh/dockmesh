@@ -50,7 +50,7 @@
   }
 
   $effect(() => {
-    if (!allowed('backups.update')) { goto('/'); return; }
+    if (!allowed('backups.view')) { goto('/'); return; }
     untrack(loadAll);
   });
   $effect(() => autoRefresh(loadAll, 5_000));
@@ -261,6 +261,9 @@
     running: runs.filter((r) => r.status === 'running').length
   });
 
+  const canCreate = $derived(allowed('backups.create'));
+  const canUpdate = $derived(allowed('backups.update'));
+
   function jobMenu(j: BackupJob): MenuItem[] {
     const last = lastRunOf(j);
     return [
@@ -283,11 +286,14 @@
   function targetMenu(t: BackupTarget): MenuItem[] {
     return [
       { label: 'Open', kbd: '↵', href: `/backups/targets/${t.id}` },
-      { label: 'Test connection', onclick: () => testTarget(t) },
-      { label: 'Edit…', onclick: () => openEditTarget(t) },
-      ...(targetPendingHostKey(t) ? [{ label: 'Accept new host key…', danger: true, onclick: () => acceptTargetHostKey(t) }] : []),
-      { separator: true },
-      { label: 'Delete…', danger: true, onclick: () => deleteTarget(t) }
+      ...(canUpdate
+        ? [
+            { label: 'Test connection', onclick: () => testTarget(t) },
+            { label: 'Edit…', onclick: () => openEditTarget(t) },
+            ...(targetPendingHostKey(t) ? [{ label: 'Accept new host key…', danger: true, onclick: () => acceptTargetHostKey(t) }] : [])
+          ]
+        : []),
+      ...(allowed('backups.delete') ? [{ separator: true }, { label: 'Delete…', danger: true, onclick: () => deleteTarget(t) }] : [])
     ];
   }
   function rowKey(e: KeyboardEvent, href: string) {
@@ -295,7 +301,7 @@
   }
 
   const JOB_COLS = '14px minmax(160px, 1.2fr) minmax(160px, 1.3fr) 110px minmax(110px, 0.9fr) minmax(130px, 1fr) minmax(170px, 1.2fr) 50px 40px';
-  const RUN_COLS = '14px 110px minmax(150px, 1fr) minmax(150px, 1fr) 90px 100px minmax(120px, 1fr) 40px';
+  const RUN_COLS = '110px minmax(150px, 1fr) minmax(220px, 1.4fr) 90px 100px minmax(120px, 1fr) 40px';
   const TGT_COLS = '14px minmax(160px, 1fr) 80px minmax(200px, 2fr) 60px minmax(150px, 1fr) 40px';
 
   function targetLocation(t: BackupTarget): string {
@@ -319,15 +325,15 @@
     </span>
     <span class="dm-sp"></span>
     {#if tab === 'jobs'}
-      {#if jobs.some((j) => j.enabled)}
+      {#if canUpdate && jobs.some((j) => j.enabled)}
         <button type="button" class="dm-btn" onclick={runAllEnabled}><Play size={13} /> Run all enabled</button>
       {/if}
-      <button type="button" class="dm-btn dm-btn-primary" onclick={openNew}><Plus size={14} strokeWidth={2} /> New backup job</button>
+      {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={openNew}><Plus size={14} strokeWidth={2} /> New backup job</button>{/if}
     {:else if tab === 'runs'}
       {#if allowed('system.upgrade')}
         <button type="button" class="dm-btn" onclick={() => { systemRestoreRun = null; systemRestoreOpen = true; }}>Restore system from file…</button>
       {/if}
-    {:else}
+    {:else if canCreate}
       <button type="button" class="dm-btn dm-btn-primary" onclick={openNewTarget}><Plus size={14} strokeWidth={2} /> New target</button>
     {/if}
   </div>
@@ -344,7 +350,7 @@
   />
 
   {#if tab === 'jobs'}
-    {#if reviewJobs.length > 0}
+    {#if canUpdate && reviewJobs.length > 0}
       <div class="attn" role="status">
         <div class="attn-h">
           <AlertTriangle size={14} strokeWidth={1.8} />
@@ -382,7 +388,7 @@
         description="Create a job for the Dockmesh server, a stack or a volume. Start with a daily backup of the server to a target on another machine (SFTP, SMB, S3)."
       >
         {#snippet action()}
-          <button type="button" class="dm-btn dm-btn-primary" onclick={openNew}><Plus size={14} strokeWidth={2} /> New backup job</button>
+          {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={openNew}><Plus size={14} strokeWidth={2} /> New backup job</button>{/if}
         {/snippet}
       </EmptyState>
     {:else}
@@ -402,7 +408,7 @@
               {#if pendingHostKey(j)}<small class="bad">SFTP host key changed</small>{:else if !j.enabled}<small>disabled</small>{/if}
             </span>
             <span class="dm-nm"><span class="dm-t what">{jobSourceName(j)}</span><small>{jobSourceKind(j)}</small></span>
-            <span class="dm-num dm-dim">{hostLabel(j.host_id)}</span>
+            <span class="dm-dim dm-trunc" title={hostLabel(j.host_id)}>{hostLabel(j.host_id)}</span>
             <span class="dm-trunc muted" title={tgt ? `${tgt.name} (${targetTypeLabel(tgt.type)})` : targetTypeLabel(j.target_type)}>{tgt?.name ?? targetTypeLabel(j.target_type)}</span>
             <span class="dm-trunc muted" title={j.schedule}>{cronHuman(j.schedule)}</span>
             <span class="dm-nm">
@@ -417,7 +423,7 @@
                 <span class="dm-dim">never</span>
               {/if}
             </span>
-            <span onclick={(e) => e.stopPropagation()} role="presentation"><Switch checked={j.enabled} label="Enabled" hideLabel onchange={() => toggleJob(j)} /></span>
+            <span onclick={(e) => e.stopPropagation()} role="presentation"><Switch checked={j.enabled} label="Enabled" hideLabel disabled={!mayOnJob('backups.update', j)} onchange={() => toggleJob(j)} /></span>
             <span class="dm-tr-menu" onclick={(e) => e.stopPropagation()} role="presentation"><Menu label="Actions for {j.name}" items={jobMenu(j)} /></span>
           </div>
         {/each}
@@ -449,20 +455,19 @@
     {:else}
       <div class="dm-tbl" role="table" aria-label="Backup runs">
         <div class="dm-tr dm-th" role="row" style="grid-template-columns: {RUN_COLS}">
-          <span></span><span>When</span><span>Job</span><span>Result</span><span>Size</span><span>Duration</span><span>Archive</span><span></span>
+          <span>When</span><span>Job</span><span>Result</span><span>Size</span><span>Duration</span><span>Archive</span><span></span>
         </div>
         {#each filteredRuns as r (r.id)}
           {@const op = operations.backupRun(r.id)}
           {@const href = `/backups/runs/${r.id}`}
           <div class="dm-tr dm-click" role="row" tabindex="0" style="grid-template-columns: {RUN_COLS}" onclick={() => goto(href)} onkeydown={(e) => rowKey(e, href)}>
-            <span><span class="dm-dot {runTone(r.status) === 'acc' ? 'ok' : runTone(r.status) === 'off' ? '' : runTone(r.status)}"></span></span>
             <span class="dm-num dm-dim" title={new Date(r.started_at).toLocaleString()}>{fmtAgo(r.started_at)}</span>
             <span class="dm-nm"><a {href} onclick={(e) => e.stopPropagation()}>{r.job_name}</a>{#if r.encrypted}<span class="lock" title="Encrypted"><Lock size={11} /></span>{/if}</span>
             <span>
               {#if op && (isActive(op) || r.status === 'running')}
                 <OpProgress {op} />
               {:else if r.status === 'failed'}
-                <span class="fail-cell"><StatusChip tone="bad" label="failed" /><span class="dm-trunc bad" title={r.error}>{r.error ?? ''}</span></span>
+                <span class="fail-cell"><StatusChip tone="bad" label="Failed" /><span class="dm-trunc dm-dim" title={r.error}>{r.error ?? ''}</span></span>
               {:else}
                 <StatusChip tone={runTone(r.status)} label={runLabel(r.status)} title={r.error} />
               {/if}
@@ -487,7 +492,7 @@
         description="A target is where archives go: a local directory, an SMB share, SFTP, S3-compatible storage or WebDAV. Several jobs can share one."
       >
         {#snippet action()}
-          <button type="button" class="dm-btn dm-btn-primary" onclick={openNewTarget}><Plus size={14} strokeWidth={2} /> New target</button>
+          {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={openNewTarget}><Plus size={14} strokeWidth={2} /> New target</button>{/if}
         {/snippet}
       </EmptyState>
     {:else}

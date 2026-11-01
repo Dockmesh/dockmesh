@@ -147,12 +147,20 @@
     return out.sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 20);
   });
 
+  const ACT_COLS = '90px 150px minmax(0, 1fr)';
+
   const menu = $derived.by<MenuItem[]>(() => {
     const items: MenuItem[] = [{ label: `Visit ${site?.host ?? ''}`, href: url }];
     if (canDelete) items.push({ separator: true }, { label: 'Delete…', danger: true, onclick: remove });
     return items;
   });
 </script>
+
+{#snippet actRow(a: Row)}
+  <span class="dm-num dm-dim" title={new Date(a.ts).toLocaleString()}>{fmtAgo(a.ts)}</span>
+  <span class="ev"><span class="dm-dot {a.tone === 'off' ? '' : a.tone}"></span>{a.what}</span>
+  <span class="dm-trunc dm-dim" title={a.text}>{a.text || '—'}</span>
+{/snippet}
 
 <section class="dm-page">
   {#if loading}
@@ -215,12 +223,14 @@
         <h2 class="dm-h2">Activity</h2>
         <div class="dm-tbl">
           {#each activity as a, i (i)}
-            <div class="dm-tr" class:dm-click={!!a.op} style="grid-template-columns: 90px 150px minmax(0, 1fr)" role={a.op ? 'button' : undefined} tabindex={a.op ? 0 : undefined}
-              onclick={() => a.op && operations.open(a.op.id)} onkeydown={(e) => { if (e.key === 'Enter' && a.op) operations.open(a.op.id); }}>
-              <span class="dm-num dm-dim" title={new Date(a.ts).toLocaleString()}>{fmtAgo(a.ts)}</span>
-              <span class="ev"><span class="dm-dot {a.tone === 'off' ? '' : a.tone}"></span>{a.what}</span>
-              <span class="dm-trunc dm-dim" title={a.text}>{a.text || '—'}</span>
-            </div>
+            {#if a.op}
+              {@const op = a.op}
+              <button type="button" class="dm-tr dm-click act" style="grid-template-columns: {ACT_COLS}" onclick={() => operations.open(op.id)}>
+                {@render actRow(a)}
+              </button>
+            {:else}
+              <div class="dm-tr" style="grid-template-columns: {ACT_COLS}">{@render actRow(a)}</div>
+            {/if}
           {:else}
             <div class="dm-empty">No certificate events for this site yet.</div>
           {/each}
@@ -247,6 +257,8 @@
   .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; align-items: start; }
   @media (max-width: 1100px) { .cols { grid-template-columns: minmax(0, 1fr); } }
   .sp { margin-top: 20px; }
+  .act { width: 100%; background: none; border: 0; border-bottom: 1px solid var(--border); font: inherit; color: inherit; text-align: left; }
+  .act:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .ev { display: inline-flex; align-items: center; gap: 8px; }
   .sec-h { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
   .sec-h .dm-h2 { margin: 0; }

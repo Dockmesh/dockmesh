@@ -95,7 +95,7 @@
     }
   }
 
-  const RUN_COLS = '14px 120px 110px 90px 100px minmax(0, 1fr)';
+  const RUN_COLS = '120px 150px 90px 100px minmax(0, 1fr)';
 </script>
 
 {#if loading && !job}
@@ -163,14 +163,13 @@
             {#each jobRuns.slice(0, 20) as r (r.id)}
               {@const op = operations.backupRun(r.id)}
               <a class="dm-tr dm-click row" role="row" style="grid-template-columns: {RUN_COLS}" href="/backups/runs/{r.id}">
-                <span><span class="dm-dot {runTone(r.status) === 'bad' ? 'bad' : runTone(r.status) === 'warn' ? 'warn' : 'ok'}"></span></span>
                 <span class="dm-num dm-dim" title={new Date(r.started_at).toLocaleString()}>{fmtAgo(r.started_at)}</span>
                 <span>
                   {#if op && isActive(op)}<OpProgress {op} compact />{:else}<StatusChip tone={runTone(r.status)} label={runLabel(r.status)} title={r.error} />{/if}
                 </span>
                 <span class="dm-num">{r.status === 'failed' ? '—' : fmtBytes(r.size_bytes)}</span>
                 <span class="dm-num dm-dim">{fmtDuration(r.started_at, r.finished_at)}</span>
-                <span class="dm-trunc bad small" title={r.error}>{r.status === 'failed' ? (r.error ?? '') : ''}</span>
+                <span class="dm-trunc dm-dim small" title={r.error}>{r.status === 'failed' ? (r.error ?? '') : ''}</span>
               </a>
             {/each}
           </div>
@@ -206,7 +205,6 @@
   .title { min-width: 0; }
   .grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr); gap: 28px; align-items: start; }
   .row { color: inherit; text-decoration: none; }
-  .bad { color: var(--bad); }
   .small { font-size: 12px; }
   .hook { font-size: 12.5px; overflow-wrap: anywhere; }
   .live { display: flex; align-items: center; gap: 12px; min-height: 44px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 0 6px; }

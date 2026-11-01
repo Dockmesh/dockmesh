@@ -122,10 +122,12 @@
       {#if allowed('backups.delete')}
         <button type="button" class="dm-btn dm-btn-danger" onclick={deleteTarget}><Trash2 size={13} /> Delete</button>
       {/if}
-      <a href="/backups?tab=targets&edit={target.id}" class="dm-btn"><Pencil size={13} /> Edit</a>
-      <button type="button" class="dm-btn dm-btn-primary" onclick={runTest} disabled={testing}>
-        <RefreshCw size={13} /> {testing ? 'Testing…' : 'Test connection'}
-      </button>
+      {#if allowed('backups.update')}
+        <a href="/backups?tab=targets&edit={target.id}" class="dm-btn"><Pencil size={13} /> Edit</a>
+        <button type="button" class="dm-btn dm-btn-primary" onclick={runTest} disabled={testing}>
+          <RefreshCw size={13} /> {testing ? 'Testing…' : 'Test connection'}
+        </button>
+      {/if}
     </div>
 
     {#if pendingHostKey}
@@ -133,7 +135,7 @@
         <b>The SFTP server presented a different host key.</b>
         <span class="dm-dim">Backups to this target stop until the key is accepted.</span>
         <span class="dm-sp"></span>
-        <button type="button" class="dm-btn dm-btn-sm dm-btn-danger" onclick={acceptHostKey}>Accept new host key…</button>
+        {#if allowed('backups.update')}<button type="button" class="dm-btn dm-btn-sm dm-btn-danger" onclick={acceptHostKey}>Accept new host key…</button>{/if}
       </div>
     {/if}
 

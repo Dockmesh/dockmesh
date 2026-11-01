@@ -209,7 +209,7 @@
         <select id="rm-kind" class="dm-input" value={kind} disabled={!!editing} onchange={(e) => setKind((e.target as HTMLSelectElement).value as RuleKind)}>
           {#each KIND_GROUPS as g (g.group)}
             <optgroup label={g.group}>
-              {#each g.kinds as k (k)}<option value={k}>{g.group} · {kindLabel(k)}</option>{/each}
+              {#each g.kinds as k (k)}<option value={k}>{kindLabel(k)}</option>{/each}
             </optgroup>
           {/each}
         </select>

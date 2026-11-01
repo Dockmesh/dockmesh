@@ -1,9 +1,10 @@
 <script lang="ts">
   import { api, ApiError, type AlertRule, type NotificationChannel } from '$lib/api';
-  import { appliesTo, kindLabel, kindOf, ruleSentence, ruleToInput, sevTone } from './ruleKinds';
+  import { appliesTo, kindLabel, kindOf, ruleSentence, ruleToInput } from './ruleKinds';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
-  import { EmptyState, Skeleton, StatusChip, Switch } from '$lib/components/ui';
+  import { EmptyState, Skeleton, Switch } from '$lib/components/ui';
+  import { statusWord } from '$lib/components/ui/StatusChip.svelte';
   import Menu from '$lib/components/ui/Menu.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { BellRing, Plus } from 'lucide-svelte';
@@ -148,7 +149,7 @@
       {@const chs = channelNames(r)}
       <div class="dm-tr" class:rt-off={!r.enabled} role="row" style="grid-template-columns: {COLS}">
         <span role="cell"><span class="dm-dot {dotTone(r)}" title={r.firing_since ? `Firing since ${new Date(r.firing_since).toLocaleString()}` : r.enabled ? 'Quiet' : 'Paused'}></span></span>
-        <span role="cell"><StatusChip tone={sevTone(r.severity || 'warning')} label={r.severity || 'warning'} /></span>
+        <span role="cell" class="dm-dim">{statusWord(r.severity || 'warning')}</span>
         <span role="cell" class="dm-nm">
           {#if canUpdate}<button type="button" class="rt-name dm-t" title={r.name} onclick={() => onEdit(r)}>{r.name}</button>{:else}<span class="dm-t" title={r.name}>{r.name}</span>{/if}
           <small>
