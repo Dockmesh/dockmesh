@@ -1,7 +1,6 @@
 package host
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -147,26 +146,6 @@ func (s *volumeTarStream) Close() error {
 // execHelper runs a command in an existing container and returns the
 // merged stdout/stderr. Used for backup pre-hooks.
 func execHelper(ctx context.Context, dc *docker.Client, containerID string, cmd []string) ([]byte, int, error) {
-	cli := dc.Raw()
-	exec, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
-		Cmd:          cmd,
-		AttachStdout: true,
-		AttachStderr: true,
-	})
-	if err != nil {
-		return nil, -1, err
-	}
-	attach, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecStartOptions{})
-	if err != nil {
-		return nil, -1, err
-	}
-	defer attach.Close()
-	var out bytes.Buffer
-	// read up to 1 MiB of output — pre-hooks shouldn't print books.
-	_, _ = io.CopyN(&out, attach.Reader, 1<<20)
-	insp, err := cli.ContainerExecInspect(ctx, exec.ID)
-	if err != nil {
-		return out.Bytes(), -1, err
-	}
-	return out.Bytes(), insp.ExitCode, nil
+	// Up to 1 MiB of output; pre-hooks shouldn't print books.
+	return docker.RunExec(ctx, dc.Raw(), containerID, cmd, 1<<20)
 }

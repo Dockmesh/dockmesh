@@ -1,7 +1,6 @@
 package backup
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -522,25 +521,7 @@ func containerNames(list []container.Summary) []string {
 }
 
 func (l *localBackupTarget) ContainerExec(ctx context.Context, containerID string, cmd []string) ([]byte, int, error) {
-	cli := l.dc.Raw()
-	exec, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
-		Cmd: cmd, AttachStdout: true, AttachStderr: true,
-	})
-	if err != nil {
-		return nil, -1, err
-	}
-	attach, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecStartOptions{})
-	if err != nil {
-		return nil, -1, err
-	}
-	defer attach.Close()
-	var out bytes.Buffer
-	_, _ = io.CopyN(&out, attach.Reader, 1<<20)
-	insp, inspErr := cli.ContainerExecInspect(ctx, exec.ID)
-	if inspErr != nil {
-		return out.Bytes(), -1, inspErr
-	}
-	return out.Bytes(), insp.ExitCode, nil
+	return docker.RunExec(ctx, l.dc.Raw(), containerID, cmd, 1<<20)
 }
 
 // applyRetention deletes archives beyond the newest RetentionCount and
