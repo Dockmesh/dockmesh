@@ -43,7 +43,7 @@
       roles = r;
       catalog = c;
       hostNames = Object.fromEntries(h.map((x) => [x.id, x.name]));
-      invites = inv;
+      invites = inv ?? [];
     } catch (err) {
       toast.error('Could not load users', err instanceof ApiError ? err.message : undefined);
     } finally {

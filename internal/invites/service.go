@@ -226,7 +226,7 @@ func (s *Service) List(ctx context.Context, limit int) ([]Invite, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Invite
+	out := []Invite{}
 	for rows.Next() {
 		var inv Invite
 		var tagsJSON string
