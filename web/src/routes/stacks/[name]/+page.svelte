@@ -645,7 +645,9 @@
   let showRollbackConfirm = $state(false);
   let rollbackBusy = $state(false);
 
+  // Deploy history is served under stacks.deploy.
   async function loadHistory() {
+    if (!canDeploy) return;
     historyLoading = true;
     try {
       const raw = await api.stacks.listDeployments(name);
@@ -1510,7 +1512,7 @@
     { key: 'compose', label: 'Compose', dot: dirty },
     { key: 'environment', label: 'Environment', count: envRows.length || null },
     { key: 'logs', label: 'Logs' },
-    { key: 'history', label: 'History', count: historyEntries.length || null },
+    ...(canDeploy ? [{ key: 'history', label: 'History', count: historyEntries.length || null }] : []),
     { key: 'settings', label: 'Settings' }
   ]);
 
@@ -1807,6 +1809,7 @@
             <div class="dm-tbl"><div class="dm-empty">No containers run for this stack. Deploy it to start them.</div></div>
           {/if}
 
+          {#if canDeploy}
           <section>
             <div class="stk-sec-h">
               <h2 class="dm-h2">Recent deploys</h2>
@@ -1833,6 +1836,7 @@
               </div>
             {/if}
           </section>
+          {/if}
         </div>
 
         <aside class="stk-col">

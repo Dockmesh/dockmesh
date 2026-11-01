@@ -332,6 +332,10 @@ func (c *UpgradeController) upgradeOne(ctx context.Context, ag *ConnectedAgent, 
 	payload, _ := json.Marshal(req)
 	resp, err := ag.Request(ctx, Frame{Type: FrameReqAgentUpgrade, Payload: payload})
 	if err != nil {
+		// The agent answers an identical binary with a request error.
+		if errors.Is(upgradeRefusal(err.Error()), ErrAgentCurrent) {
+			return req, ErrAgentCurrent
+		}
 		slog.Warn("agent upgrade push failed", "agent", ag.ID, "err", err)
 		return req, err
 	}
