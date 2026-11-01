@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { sevTone } from './ruleKinds';
-  import { setTabParam } from '$lib/tabs';
+  import { urlTab } from '$lib/urlTab.svelte';
   import { page } from '$app/state';
   import { api, ApiError } from '$lib/api';
   import type { AlertRule, NotificationChannel, AlertHistoryEntry, HostInfo } from '$lib/api';
@@ -17,11 +17,9 @@
 
   type Tab = 'rules' | 'channels' | 'history';
 
-  let tab = $state<Tab>((new URLSearchParams(page.url.search).get('tab') as Tab) || 'rules');
-  function setTab(t: string) {
-    tab = t as Tab;
-    setTabParam(t, 'rules');
-  }
+  const tabs = urlTab<Tab>(['rules', 'channels', 'history'], 'rules');
+  const tab = $derived(tabs.current);
+  const setTab = (t: string) => tabs.set(t);
 
   let channels = $state<NotificationChannel[]>([]);
   let rules = $state<AlertRule[]>([]);

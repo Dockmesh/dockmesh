@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { tagProblem } from '../_host';
-  import { setTabParam } from '$lib/tabs';
+  import { urlTab } from '$lib/urlTab.svelte';
   import { fmtAgo } from '$lib/format';
   const fmtAgoNever = (iso?: string) => fmtAgo(iso, 'never');
   import { latest } from '$lib/latest';
@@ -29,11 +29,8 @@
 
   type TabId = 'overview' | 'containers' | 'stacks' | 'migrations' | 'tags' | 'maintenance';
   const TAB_IDS: TabId[] = ['overview', 'containers', 'stacks', 'migrations', 'tags', 'maintenance'];
-  let tab = $state<TabId>('overview');
-  $effect(() => {
-    const t = (page.url.searchParams.get('tab') ?? 'overview') as TabId;
-    if (TAB_IDS.includes(t)) tab = t;
-  });
+  const openTab = urlTab(TAB_IDS, 'overview');
+  const tab = $derived(openTab.current);
 
   let agent = $state<Agent | null>(null);
   let localName = $state('local');
@@ -167,8 +164,7 @@
     return (bytes / 1024 ** 3).toFixed(1);
   }
   function selectTab(t: string) {
-    tab = t as TabId;
-    setTabParam(t, 'overview');
+    openTab.set(t);
   }
 
   const status = $derived(isLocal ? 'online' : (agent?.status ?? 'offline'));

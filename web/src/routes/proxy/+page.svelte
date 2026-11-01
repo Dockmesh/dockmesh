@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { page } from '$app/state';
-  import { setTabParam } from '$lib/tabs';
+  import { urlTab } from '$lib/urlTab.svelte';
   import { fmtAgo } from '$lib/format';
   import { api, ApiError, type Operation } from '$lib/api';
   import { Skeleton, StatusChip, Tabs, Switch, Menu, EmptyState, LiveIndicator } from '$lib/components/ui';
@@ -33,12 +33,9 @@
 
   type TabKey = 'sites' | 'certificates' | 'activity' | 'caddy';
   const TABS: TabKey[] = ['sites', 'certificates', 'activity', 'caddy'];
-  const fromUrl = page.url.searchParams.get('tab') ?? '';
-  let tab = $state<TabKey>((TABS as string[]).includes(fromUrl) ? (fromUrl as TabKey) : 'sites');
-  function setTab(k: string) {
-    tab = k as TabKey;
-    setTabParam(k, 'sites');
-  }
+  const tabs = urlTab(TABS, 'sites');
+  const tab = $derived(tabs.current);
+  const setTab = (k: string) => tabs.set(k);
 
   let status = $state<ProxyStatus | null>(null);
   let routes = $state<Site[]>([]);

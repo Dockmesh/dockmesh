@@ -1,6 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { setTabParam } from '$lib/tabs';
+  import { urlTab } from '$lib/urlTab.svelte';
   import { page } from '$app/state';
   import { api, ApiError, runRestorable } from '$lib/api';
   import type { BackupJob, BackupJobInput, BackupRun, BackupTarget } from '$lib/api';
@@ -25,13 +25,9 @@
 
   type Tab = 'jobs' | 'runs' | 'targets';
   const TABS: Tab[] = ['jobs', 'runs', 'targets'];
-  const tab = $derived.by<Tab>(() => {
-    const t = page.url.searchParams.get('tab') as Tab | null;
-    return t && TABS.includes(t) ? t : 'jobs';
-  });
-  function setTab(t: string) {
-    setTabParam(t, 'jobs');
-  }
+  const tabs = urlTab(TABS, 'jobs');
+  const tab = $derived(tabs.current);
+  const setTab = (t: string) => tabs.set(t);
 
   let jobs = $state<BackupJob[]>([]);
   let runs = $state<BackupRun[]>([]);
