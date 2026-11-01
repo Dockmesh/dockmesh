@@ -116,6 +116,51 @@ func (h *Handlers) requireRunAccess(w http.ResponseWriter, r *http.Request, run 
 	return true
 }
 
+// backupRunVisible applies backupJobVisible to the job a run belongs to.
+// System runs and runs of a deleted job are admin-only, like their
+// archives. jobs holds the current jobs by id.
+func (h *Handlers) backupRunVisible(r *http.Request, run *backup.Run, jobs map[int64]backup.Job) bool {
+	if backup.HasSystemSource(run.Sources) {
+		return h.callerIsAdmin(r)
+	}
+	job, ok := jobs[run.JobID]
+	if !ok {
+		return h.callerIsAdmin(r)
+	}
+	return h.backupJobVisible(r, job)
+}
+
+func (h *Handlers) backupJobsByID(r *http.Request) (map[int64]backup.Job, error) {
+	jobs, err := h.Backups.ListJobs(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]backup.Job, len(jobs))
+	for _, j := range jobs {
+		out[j.ID] = j
+	}
+	return out, nil
+}
+
+// backupTargetVisible hides a saved target whose jobs the caller cannot
+// all see: its settings name the share, bucket or server those jobs write
+// to. A target no job uses stays visible so it can be picked for a new job.
+func (h *Handlers) backupTargetVisible(r *http.Request, targetID int64) (bool, error) {
+	if h.Backups == nil || h.callerIsAdmin(r) {
+		return true, nil
+	}
+	jobs, err := h.Backups.JobsUsingTarget(r.Context(), targetID)
+	if err != nil {
+		return false, err
+	}
+	for _, j := range jobs {
+		if !h.backupJobVisible(r, j) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // runForAccess loads the run named by {id} and applies requireRunAccess.
 func (h *Handlers) runForAccess(w http.ResponseWriter, r *http.Request, perm rbac.Perm) (*backup.Run, bool) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)

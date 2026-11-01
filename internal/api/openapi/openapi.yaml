@@ -3380,7 +3380,10 @@ paths:
     get:
       operationId: backups.list_jobs
       tags: [backups]
-      summary: List all backup jobs
+      summary: List backup jobs
+      description: >-
+        Jobs whose host and stack sources are in the caller's scope; jobs with
+        a system source only for admins without a scope.
       responses:
         "200":
           description: Jobs.
@@ -3420,6 +3423,7 @@ paths:
       operationId: backups.get_job
       tags: [backups]
       summary: Inspect one backup job
+      description: 404 for a job the caller cannot see (see the job list).
       responses:
         "200":
           description: Job.
@@ -3570,6 +3574,9 @@ paths:
       operationId: backups.list_runs
       tags: [backups]
       summary: Recent backup runs, newest first
+      description: >-
+        Runs of jobs the caller can see (see the job list). System runs and
+        runs of a deleted job only for admins without a scope.
       parameters:
         - name: job_id
           in: query
@@ -3917,6 +3924,9 @@ paths:
       operationId: backups.list_targets
       tags: [backups]
       summary: List saved backup targets (SFTP, SMB, WebDAV, S3, local)
+      description: >-
+        Leaves out targets used by a job the caller cannot see; targets no
+        job uses are listed for everyone.
       responses:
         "200":
           description: Targets.
@@ -3974,6 +3984,9 @@ paths:
       operationId: backups.delete_target
       tags: [backups]
       summary: Delete a backup target
+      description: >-
+        Needs access to every job that uses or used the target, like an
+        update; admin only if a system job uses it.
       responses:
         "204": { description: Deleted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -3990,6 +4003,9 @@ paths:
       operationId: backups.test_target
       tags: [backups]
       summary: Verify connectivity to a saved target
+      description: >-
+        Stores the result as the target's status, so it needs the same access
+        as an update (403 otherwise).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       responses:
@@ -4564,6 +4580,7 @@ paths:
       operationId: system.backup_status
       tags: [metrics]
       summary: Default system backup summary for the sidebar pill
+      description: "`last_error` is only returned to admins without a scope."
       responses:
         "200":
           description: Backup status.
@@ -7222,6 +7239,7 @@ paths:
       operationId: backups.run_get
       tags: [backups]
       summary: Get a single run
+      description: 404 for a run the caller cannot see (see the run list).
       parameters:
         - in: path
           name: id

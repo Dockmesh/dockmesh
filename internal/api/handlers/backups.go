@@ -29,9 +29,11 @@ func (h *Handlers) ListBackupJobs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	out := make([]*backup.Job, len(jobs))
+	out := make([]*backup.Job, 0, len(jobs))
 	for i := range jobs {
-		out[i] = redactJob(&jobs[i])
+		if h.backupJobVisible(r, jobs[i]) {
+			out = append(out, redactJob(&jobs[i]))
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -53,6 +55,10 @@ func (h *Handlers) GetBackupJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !h.backupJobVisible(r, *job) {
+		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, redactJob(job))
@@ -256,7 +262,18 @@ func (h *Handlers) ListBackupRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, runs)
+	jobs, err := h.backupJobsByID(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]backup.Run, 0, len(runs))
+	for i := range runs {
+		if h.backupRunVisible(r, &runs[i], jobs) {
+			out = append(out, runs[i])
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // GetBackupRun returns a single run row. The run-detail drawer in the
@@ -280,6 +297,17 @@ func (h *Handlers) GetBackupRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jobs := map[int64]backup.Job{}
+	if job, err := h.Backups.GetJob(r.Context(), run.JobID); err == nil {
+		jobs[job.ID] = *job
+	} else if !errors.Is(err, backup.ErrJobNotFound) {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !h.backupRunVisible(r, run, jobs) {
+		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, run)

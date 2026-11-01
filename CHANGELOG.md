@@ -188,6 +188,12 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   the server's image update checks, and can no longer rotate the token of, upgrade or revoke an
   agent outside their scope tags. Their overview no longer shows 0 of 0 hosts and their stacks
   as stopped when their scope leaves out the server host.
+- Backup jobs, runs and saved targets of hosts outside a user's scope are no longer listed or
+  readable, and the system backup job and its runs are shown to admins only. Before, everyone
+  with `backups.view` saw every job and run, including their errors, and users limited to some
+  hosts saw a failing server backup in their overview. The system backup's last error in the
+  sidebar status is shown to admins only, and testing or deleting a saved target now needs
+  access to every job that uses it, like editing it.
 - An image update whose pull fails inside Docker's progress stream (rate limit, missing
   credentials, unknown tag) now fails instead of reporting the container as already up to date.
 - Backup hook output in the run log no longer starts every line with stray characters.
