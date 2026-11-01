@@ -96,6 +96,7 @@ var categories = map[string]string{
 	ActionContainerUpdate:           CategoryChanges,
 	ActionContainerRollback:         CategoryChanges,
 	ActionContainerWriteFile:        CategoryChanges,
+	ActionContainerRmFile:           CategoryChanges,
 	ActionImagePull:                 CategoryChanges,
 	ActionImageRemove:               CategoryChanges,
 	ActionImagePrune:                CategoryChanges,

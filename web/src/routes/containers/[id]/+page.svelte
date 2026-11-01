@@ -11,8 +11,7 @@
     Skeleton,
     StatusChip,
     Tabs,
-    Menu,
-    EmptyState
+    Menu
   } from '$lib/components/ui';
   import type { MenuItem } from '$lib/components/ui/Menu.svelte';
   import { EdMetric } from '$lib/components/editorial';
@@ -77,7 +76,10 @@
   const systemComponent = $derived(info?.Config?.Labels?.['dockmesh.component'] as string | undefined);
   const canControl = $derived(!isSystem && allowed('containers.update'));
   const canExec = $derived(!isSystem && allowed('containers.exec'));
-  const canFiles = $derived(!isSystem && (allowed('containers.files') || canExec));
+  const canFiles = $derived(!isSystem && allowed('containers.files'));
+  // Writing into a container is as strong as a shell, so upload, edit and
+  // delete also need the terminal extra.
+  const canWriteFiles = $derived(canFiles && canExec);
   const canRemove = $derived(!isSystem && allowed('containers.delete'));
   const canUpgrade = $derived(!isSystem && allowed('containers.upgrade'));
   let loading = $state(true);
@@ -171,7 +173,6 @@
   }
 
   async function loadFiles(targetPath: string) {
-    if (isRemote) return;
     filesLoading = true;
     filesError = null;
     try {
@@ -309,7 +310,24 @@
     }
   }
 
+  // Matches the server's upload limit.
+  const UPLOAD_LIMIT_MIB = 8;
+
   async function uploadFile(file: File) {
+    if (file.size > UPLOAD_LIMIT_MIB << 20) {
+      toast.error(`${file.name} is larger than the ${UPLOAD_LIMIT_MIB} MiB upload limit`);
+      return;
+    }
+    if (filesEntries.some((e) => e.name === file.name)) {
+      const ok = await confirm.ask({
+        title: 'Replace file',
+        message: `Replace ${joinPath(filesPath, file.name)}?`,
+        body: 'The file in the container is overwritten with the uploaded one.',
+        confirmLabel: 'Replace',
+        danger: true
+      });
+      if (!ok) return;
+    }
     const reader = new FileReader();
     reader.onload = async () => {
       const arr = new Uint8Array(reader.result as ArrayBuffer);
@@ -326,6 +344,30 @@
       }
     };
     reader.readAsArrayBuffer(file);
+  }
+
+  async function deleteEntry(entry: CtnFileEntry) {
+    const full = joinPath(filesPath, entry.name);
+    const what = entry.type === 'symlink' ? 'symbolic link' : 'file';
+    const ok = await confirm.ask({
+      title: `Delete ${what}`,
+      message: `Delete ${full}?`,
+      body: entry.type === 'symlink' ? 'Only the link is removed, not its target.' : 'The file is removed from the container. This cannot be undone.',
+      confirmLabel: 'Delete',
+      danger: true
+    });
+    if (!ok) return;
+    try {
+      await api.containers.files.delete(id, full, targetHost);
+      toast.success(`Deleted ${entry.name}`);
+      if (filesPreview?.path === full) {
+        filesPreview = null;
+        filesEditing = false;
+      }
+      await loadFiles(filesPath);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Delete failed');
+    }
   }
 
   function pickAndUpload() {
@@ -1845,8 +1887,6 @@
         </div>
       {/if}
     </div>
-  {:else if tab === 'files' && info && canFiles && isRemote}
-    <EmptyState title="Files" description="Browsing files is available for containers on the server host; agent hosts follow in a later release." />
   {:else if tab === 'files' && info && canFiles}
     <div class="ctn-files-pane">
       <div class="ctn-files-bar">
@@ -1868,8 +1908,8 @@
             type="button"
             class="ctn-files-action"
             onclick={pickAndUpload}
-            disabled={!canExec || isRemote}
-            title={isRemote ? 'Container files browse on remote hosts not yet implemented' : (!canExec ? 'Upload requires containers.exec' : 'Upload a file into this directory')}
+            disabled={!canWriteFiles}
+            title={canWriteFiles ? `Upload a file (up to ${UPLOAD_LIMIT_MIB} MiB) into this directory` : 'Uploading also needs the terminal permission'}
           >
             <Upload size={13} strokeWidth={1.6} />
             <span>Upload</span>
@@ -1956,6 +1996,17 @@
                     <Download size={13} strokeWidth={1.6} />
                   </button>
                 {/if}
+                {#if canWriteFiles && entry.type !== 'dir'}
+                  <button
+                    type="button"
+                    class="ctn-files-row-action"
+                    onclick={(e) => { e.stopPropagation(); deleteEntry(entry); }}
+                    title="Delete"
+                    aria-label="Delete {entry.name}"
+                  >
+                    <Trash size={13} strokeWidth={1.6} />
+                  </button>
+                {/if}
               </span>
             </div>
           {/each}
@@ -2011,8 +2062,8 @@
                     type="button"
                     class="ctn-files-action"
                     onclick={() => { filesEditValue = filesPreview?.content ?? ''; filesEditing = true; }}
-                    disabled={!canExec || isRemote}
-                    title={isRemote ? 'Editing on remote hosts not yet implemented' : (!canExec ? 'Edit requires containers.exec' : 'Edit this file')}
+                    disabled={!canWriteFiles}
+                    title={canWriteFiles ? 'Edit this file' : 'Editing also needs the terminal permission'}
                   >
                     <Pencil size={13} strokeWidth={1.6} />
                     <span>Edit</span>

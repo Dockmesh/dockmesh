@@ -1,0 +1,3 @@
+kind: Changed
+body: Container files need the files extra on the container's host or stack; uploading, editing and deleting need the terminal extra as well. Roles with only the terminal extra no longer see the Files tab.
+time: 2026-11-01T22:52:02.6436103+01:00

@@ -139,7 +139,7 @@ To bring the host back, add it again with **Add host** and run the new install c
 
 ## Limits
 
-- Rolling updates, cleanup and container file operations are not supported on remote hosts.
+- Rolling updates and cleanup are not supported on remote hosts.
 - One-click image updates, vulnerability scans, alert rules and the metrics history cover the local host only.
 - Agent requests time out after 30 seconds. That includes image pulls during a remote deploy, so pull large images on the host in advance.
 

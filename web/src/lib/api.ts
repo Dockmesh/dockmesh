@@ -2093,6 +2093,11 @@ export const api = {
           method: 'POST',
           body: JSON.stringify({ path, content: contentB64, mode })
         });
+      },
+      delete: (id: string, path: string, host = 'local') => {
+        const qs = new URLSearchParams({ path });
+        if (host && host !== 'local') qs.set('host', host);
+        return request<void>(`/containers/${id}/files?${qs.toString()}`, { method: 'DELETE' });
       }
     }
   },

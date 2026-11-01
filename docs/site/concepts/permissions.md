@@ -25,7 +25,7 @@ A role picks one level per area. Levels are cumulative: Deploy includes Operate 
 
 On top of the levels, a role can hold **extras**. No level includes them:
 
-- **Terminal**: open a shell in containers, write container files.
+- **Terminal**: open a shell in containers. Together with **Files**: upload, edit and delete container files.
 - **Files**: browse and read files in containers and volumes.
 - **Environment values**: see environment values in container inspect and a stack's `.env`. Deploy on a stack shows its `.env` too.
 - **Download backups**: download decrypted backup archives.

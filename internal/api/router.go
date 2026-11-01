@@ -215,18 +215,15 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/hosts/{id}/stats/containers", h.BatchContainerStats)
 			})
 
-			// Container file access, read and write, is gated on
-			// containers.exec: files hold the same secrets a shell
-			// reaches, and anyone with a shell can read them anyway.
+			// Writing a file into a container is as strong as a shell in
+			// it, so writes also need containers.exec.
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermContainersFiles))
 				r.Get("/containers/{id}/files", h.BrowseContainerFiles)
 				r.Get("/containers/{id}/files/content", h.ReadContainerFile)
 				r.Get("/containers/{id}/files/download", h.DownloadContainerFile)
-			})
-			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermContainersExec))
-				r.Post("/containers/{id}/files", h.WriteContainerFile)
+				r.With(middleware.RequirePerm(rbac.PermContainersExec)).Post("/containers/{id}/files", h.WriteContainerFile)
+				r.With(middleware.RequirePerm(rbac.PermContainersExec)).Delete("/containers/{id}/files", h.DeleteContainerFile)
 			})
 
 			r.Group(func(r chi.Router) {
