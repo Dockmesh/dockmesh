@@ -27,7 +27,7 @@ const (
 // agentCapabilities is what this agent advertises in its hello.
 var agentCapabilities = []string{
 	agents.CapRequestCancel, agents.CapStreamCredit, agents.CapDiskMounts, agents.CapDockerEvents,
-	agents.CapVolumeReplace,
+	agents.CapVolumeReplace, agents.CapMetricsHistory,
 }
 
 // reconnectDelay is the wait before reconnect attempt n (0-based): the

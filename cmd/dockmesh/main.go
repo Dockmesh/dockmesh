@@ -615,6 +615,7 @@ func main() {
 			"fix", "dockmesh ca reissue-server --add-san "+h+", then restart")
 	}
 	agentsSvc := agents.NewService(database, pkiMgr, cfg.BaseURL, agentPublic)
+	agentsSvc.SetMetricsSink(metricsCol.StoreAgentBatch)
 	agentsSvc.SetEnrollTokenTTL(cfg.AgentEnrollTokenTTL)
 	hostRegistry := host.NewRegistry(dockerCli, agentsSvc)
 

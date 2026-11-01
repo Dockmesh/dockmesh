@@ -104,4 +104,3 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-

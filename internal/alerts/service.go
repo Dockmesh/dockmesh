@@ -513,8 +513,9 @@ func metricExpr(metric string) (string, error) {
 	return "", ErrInvalidMetric
 }
 
-// evalRule loads the recent sample series per matching container and
-// lets decide() compute the edge. Containers that are firing but have
+// evalRule loads the recent sample series per matching container on the
+// server host and lets decide() compute the edge; fired alerts are filed
+// under host "local", so agent samples are left out. Containers that are firing but have
 // no samples left in the lookback window are resolved.
 func (s *Service) evalRule(ctx context.Context, r *Rule, now time.Time) error {
 	col, err := metricExpr(r.Metric)
@@ -540,7 +541,7 @@ func (s *Service) evalRule(ctx context.Context, r *Rule, now time.Time) error {
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT container_name, ts, %s
 		  FROM metrics_raw
-		 WHERE ts >= ? AND ts <= ?%s
+		 WHERE host_id = 'local' AND ts >= ? AND ts <= ?%s
 		 ORDER BY container_name, ts`, col, whereName), args...)
 	if err != nil {
 		return err

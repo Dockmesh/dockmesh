@@ -18,7 +18,7 @@
   import { api, type HistoryReason, type MetricsSample } from '$lib/api';
   import MetricsChart, { type ChartEvent, type ChartSeries } from './ui/MetricsChart.svelte';
   import Segmented from './ui/Segmented.svelte';
-  import { HISTORY_RANGE_S, historyResolution, type MetricsRange } from '$lib/metricsRange';
+  import { HISTORY_RANGE_S, historyHint, historyResolution, type MetricsRange } from '$lib/metricsRange';
 
   // Stored history feeds the time ranges; the live range uses the stats
   // websocket samples the page already receives.
@@ -205,9 +205,7 @@
     {#if cores}
       CPU % is relative to all {cores} cores of {hostName}.
     {/if}
-    {#if noHistoryReason === 'agent_no_history'}
-      History is not recorded for containers on agent hosts, so {hostName} shows live values only.
-    {/if}
+    {historyHint(noHistoryReason, hostName)}
   </p>
   {#if events.some((e) => e.ts >= domain[0] && e.ts <= domain[1])}
     <p class="dm-sub cm-legend"><span style="color: var(--accent)">┊</span> event · drag across a chart to zoom</p>

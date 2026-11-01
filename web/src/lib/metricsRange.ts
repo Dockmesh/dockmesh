@@ -1,3 +1,12 @@
+import type { HistoryReason } from '$lib/api';
+
+// Why a host shows no stored history, for the chart hints.
+export function historyHint(reason: HistoryReason | null | undefined, hostName: string): string {
+  if (reason === 'agent_outdated') return `Update the agent on ${hostName} to record history; until then it shows live values.`;
+  if (reason === 'agent_offline') return `${hostName} is offline and has no stored history.`;
+  return '';
+}
+
 export type MetricsRange = 'live' | '1h' | '6h' | '24h' | '7d' | '30d';
 
 // Window of each history range in seconds; callers pick their own live window.

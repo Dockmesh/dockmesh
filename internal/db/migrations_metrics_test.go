@@ -39,14 +39,14 @@ func TestMetricsHostIDMigration(t *testing.T) {
 			t.Errorf("%s: rows=%d local=%d cpu=%v, want 2 rows on local with cpu 150", table, n, local, cpu)
 		}
 		// Same container name and time on another host is a separate row.
-		if _, err := database.Exec(`INSERT INTO `+table+`
+		if _, err := database.Exec(`INSERT INTO ` + table + `
 			(host_id, container_name, ts, cpu_percent, mem_used, mem_limit, net_rx, net_tx, blk_read, blk_write)
 			VALUES ('agent-1', 'web', 100, 1, 1, 1, 1, 1, 1, 1)`); err != nil {
 			t.Errorf("%s: second host with the same name: %v", table, err)
 		}
 	}
 	for _, table := range []string{"host_metrics_raw", "host_metrics_1m", "host_metrics_1h"} {
-		if _, err := database.Exec(`INSERT INTO `+table+`
+		if _, err := database.Exec(`INSERT INTO ` + table + `
 			(host_id, ts, cpu_percent, cpu_cores, mem_used, mem_total, disk_used, disk_total)
 			VALUES ('local', 100, 5, 4, 1, 2, 3, 4)`); err != nil {
 			t.Errorf("%s: %v", table, err)

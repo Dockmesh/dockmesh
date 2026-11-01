@@ -4,7 +4,7 @@
   import { api, type HistoryReason, type HostMetricsSample, type SystemMetrics } from '$lib/api';
   import MetricsChart, { type ChartSeries } from './ui/MetricsChart.svelte';
   import Segmented from './ui/Segmented.svelte';
-  import { HISTORY_RANGE_S, historyResolution, type MetricsRange } from '$lib/metricsRange';
+  import { HISTORY_RANGE_S, historyHint, historyResolution, type MetricsRange } from '$lib/metricsRange';
 
   // Stored history feeds the time ranges; the live range collects the
   // snapshots the host page polls anyway.
@@ -163,9 +163,7 @@
         ? `, disk to the ${fmtBytes(latest.disk_total)} filesystem at ${latest.disk_path}`
         : ''}.
     {/if}
-    {#if noHistoryReason === 'agent_no_history'}
-      History is not recorded for agent hosts, so {hostName} shows live values while this page is open.
-    {/if}
+    {historyHint(noHistoryReason, hostName)}
   </p>
 </section>
 

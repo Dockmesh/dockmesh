@@ -84,8 +84,10 @@ type Service struct {
 	publicURL string // public HTTPS URL of the main dockmesh server
 	agentURL  string // wss URL of the mTLS agent listener (e.g. wss://host:8443)
 	notifs    *notifications.Service
-	enrollTTL time.Duration
-	now       func() time.Time
+	// metricsSink stores agent history; nil turns it off.
+	metricsSink MetricsSink
+	enrollTTL   time.Duration
+	now         func() time.Time
 
 	mu        sync.RWMutex
 	connected map[string]*ConnectedAgent // keyed by agent id
@@ -116,7 +118,9 @@ type ConnectedAgent struct {
 	certNotAfter time.Time
 	// renewing allows one renewal in flight, renewed one per session.
 	renewing atomic.Bool
-	renewed  atomic.Bool
+	// ingesting allows one metrics batch in flight.
+	ingesting atomic.Bool
+	renewed   atomic.Bool
 
 	pendingMu sync.Mutex
 	pending   map[string]chan Frame

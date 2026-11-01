@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/db"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/system"
@@ -115,5 +116,36 @@ func TestHostSeriesAndDownsample(t *testing.T) {
 		if has != want {
 			t.Errorf("HasHistory(%s) = %v, want %v", host, has, want)
 		}
+	}
+}
+
+func TestStoreAgentBatch(t *testing.T) {
+	c := newTestCollector(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+	err := c.StoreAgentBatch(ctx, "agent-1", agents.MetricsBatch{
+		Host:       []agents.MetricsHostSample{{TS: now, CPUPercent: 40, CPUCores: 2, MemTotal: 8}},
+		Containers: []agents.MetricsContainerSample{{TS: now, Name: "web", CPUPercentCore: 100, OnlineCPUs: 2}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs, err := c.QueryHost(ctx, Query{HostID: "agent-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs, err := c.Query(ctx, Query{HostID: "agent-1", Name: "web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hs) != 1 || hs[0].CPUPercent != 40 || len(cs) != 1 || cs[0].CPUPercent != 50 {
+		t.Errorf("agent-1 host %+v containers %+v, want cpu 40 and 50", hs, cs)
+	}
+	local, err := c.Query(ctx, Query{Name: "web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(local) != 0 {
+		t.Errorf("agent samples leaked into local: %+v", local)
 	}
 }

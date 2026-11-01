@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/metrics"
@@ -15,9 +16,11 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// historyReasonAgent is the empty-state reason for a host whose agent
-// does not record history.
-const historyReasonAgent = "agent_no_history"
+// Empty-state reasons of a host without stored history.
+const (
+	historyReasonOutdated = "agent_outdated" // its agent predates history
+	historyReasonOffline  = "agent_offline"  // offline, nothing stored yet
+)
 
 // containerMetricsResponse is the stored history of one container.
 type containerMetricsResponse struct {
@@ -52,17 +55,27 @@ type batchStatsResponse struct {
 	Containers []containerLatest `json:"containers"`
 }
 
-// hostHistory reports whether hostID has stored samples, and the
-// empty-state reason when it has none. The server host always records.
+// hostHistory reports whether hostID records or has stored history, and
+// the empty-state reason when not. The server host always records.
 func (h *Handlers) hostHistory(ctx context.Context, hostID string) (bool, string, error) {
 	if hostID == metrics.LocalHostID {
+		return true, "", nil
+	}
+	var live *agents.ConnectedAgent
+	if h.Agents != nil {
+		live = h.Agents.GetConnected(hostID)
+	}
+	if live != nil && live.RecordsHistory() {
 		return true, "", nil
 	}
 	ok, err := h.Metrics.HasHistory(ctx, hostID)
 	if err != nil || ok {
 		return ok, "", err
 	}
-	return false, historyReasonAgent, nil
+	if live != nil {
+		return false, historyReasonOutdated, nil
+	}
+	return false, historyReasonOffline, nil
 }
 
 // hostCapacity returns the core count and RAM of a host, zeros when it

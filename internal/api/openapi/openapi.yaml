@@ -2869,7 +2869,7 @@ paths:
           schema: {type: string, enum: [raw, 1m, 1h], default: raw}
         - name: from
           in: query
-          description: Unix seconds; default one hour ago.
+          description: Unix seconds; default one hour before `to`. Clamped to about the retention of the resolution (25 h raw, 31 days 1m, 366 days 1h).
           schema: {type: integer, format: int64}
         - name: to
           in: query
@@ -3624,7 +3624,7 @@ paths:
           schema: {type: string, enum: [raw, 1m, 1h], default: raw}
         - name: from
           in: query
-          description: Unix seconds; default one hour ago.
+          description: Unix seconds; default one hour before `to`. Clamped to about the retention of the resolution (25 h raw, 31 days 1m, 366 days 1h).
           schema: {type: integer, format: int64}
         - name: to
           in: query
@@ -8396,8 +8396,8 @@ components:
         error: {type: string}
     HistoryReason:
       type: string
-      enum: [agent_no_history]
-      description: "Why a host has no stored history: `agent_no_history`, its agent does not record history."
+      enum: [agent_outdated, agent_offline]
+      description: "Why a host has no stored history: `agent_outdated`, its agent is too old to record it; `agent_offline`, the agent is offline and nothing is stored yet."
     Error:
       type: object
       required: [error]

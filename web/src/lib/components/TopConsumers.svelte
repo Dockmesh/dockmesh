@@ -2,6 +2,7 @@
   import { fmtMem } from '$lib/format';
   import { api, type ContainerStatsBatch } from '$lib/api';
   import Segmented from './ui/Segmented.svelte';
+  import { historyHint } from '$lib/metricsRange';
 
   // Newest stored sample per container, ranked; refetched whenever the
   // host page refreshes (refreshAt).
@@ -67,9 +68,7 @@
   {:else if batch && !batch.history}
     <div class="dm-tbl">
       <div class="dm-empty">
-        {batch.reason === 'agent_no_history'
-          ? `Container samples are not recorded for agent hosts; open a container on ${hostName} for live values.`
-          : 'No container samples stored.'}
+        {historyHint(batch.reason, hostName) || 'No container samples stored.'}
       </div>
     </div>
   {:else if batch && rows.length === 0}

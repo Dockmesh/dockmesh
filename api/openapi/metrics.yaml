@@ -77,7 +77,7 @@ paths:
           schema: {type: string, enum: [raw, 1m, 1h], default: raw}
         - name: from
           in: query
-          description: Unix seconds; default one hour ago.
+          description: Unix seconds; default one hour before `to`. Clamped to about the retention of the resolution (25 h raw, 31 days 1m, 366 days 1h).
           schema: {type: integer, format: int64}
         - name: to
           in: query

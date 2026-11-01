@@ -81,7 +81,7 @@ export interface MetricsSample {
 }
 
 // Why a host has no stored history.
-export type HistoryReason = 'agent_no_history';
+export type HistoryReason = 'agent_outdated' | 'agent_offline';
 
 export interface ContainerMetrics {
   host_id: string;

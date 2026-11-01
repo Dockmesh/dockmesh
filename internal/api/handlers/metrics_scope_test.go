@@ -58,13 +58,13 @@ func TestHostMetricsScopeAndEmptyState(t *testing.T) {
 		samplesField string
 	}{
 		{"boss", "/hosts/local/metrics", http.StatusOK, true, "", 1, "samples"},
-		{"boss", "/hosts/agent-dev/metrics", http.StatusOK, false, "agent_no_history", 0, "samples"},
+		{"boss", "/hosts/agent-dev/metrics", http.StatusOK, false, "agent_offline", 0, "samples"},
 		{"boss", "/hosts/nope/metrics", http.StatusNotFound, false, "", 0, ""},
-		{"boss", "/hosts/agent-dev/stats/containers", http.StatusOK, false, "agent_no_history", 0, "containers"},
-		{"team", "/hosts/agent-prod/metrics", http.StatusOK, false, "agent_no_history", 0, "samples"},
+		{"boss", "/hosts/agent-dev/stats/containers", http.StatusOK, false, "agent_offline", 0, "containers"},
+		{"team", "/hosts/agent-prod/metrics", http.StatusOK, false, "agent_offline", 0, "samples"},
 		{"team", "/hosts/local/metrics", http.StatusForbidden, false, "", 0, ""},
 		{"team", "/hosts/agent-dev/metrics", http.StatusForbidden, false, "", 0, ""},
-		{"team", "/hosts/agent-prod/stats/containers", http.StatusOK, false, "agent_no_history", 0, "containers"},
+		{"team", "/hosts/agent-prod/stats/containers", http.StatusOK, false, "agent_offline", 0, "containers"},
 		{"team", "/hosts/agent-dev/stats/containers", http.StatusForbidden, false, "", 0, ""},
 	}
 	for _, tt := range tests {

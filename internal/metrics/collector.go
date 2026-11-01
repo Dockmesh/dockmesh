@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/agents"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/system"
 )
@@ -165,6 +166,35 @@ func (c *Collector) InsertHost(ctx context.Context, hostID string, ts int64, m s
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		hostID, ts, m.CPUPercent, m.CPUCores, m.MemUsed, m.MemTotal, m.DiskUsed, m.DiskTotal)
 	return err
+}
+
+// StoreAgentBatch stores the samples an agent shipped, under its id.
+func (c *Collector) StoreAgentBatch(ctx context.Context, agentID string, b agents.MetricsBatch) error {
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, h := range b.Host {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT OR REPLACE INTO host_metrics_raw
+				(host_id, ts, cpu_percent, cpu_cores, mem_used, mem_total, disk_used, disk_total)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			agentID, h.TS, h.CPUPercent, h.CPUCores, h.MemUsed, h.MemTotal, h.DiskUsed, h.DiskTotal); err != nil {
+			return err
+		}
+	}
+	for _, s := range b.Containers {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT OR REPLACE INTO metrics_raw
+				(host_id, container_name, ts, cpu_percent, cpu_cores, mem_used, mem_limit, net_rx, net_tx, blk_read, blk_write)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			agentID, s.Name, s.TS, s.CPUPercentCore, s.OnlineCPUs, s.MemUsed, s.MemLimit,
+			s.NetRx, s.NetTx, s.BlkRead, s.BlkWrite); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (c *Collector) downsampleLoop(ctx context.Context) {
