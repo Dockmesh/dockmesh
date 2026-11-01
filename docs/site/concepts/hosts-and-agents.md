@@ -90,7 +90,7 @@ A host can carry up to 20 tags. Tags are lowercase letters, digits and hyphens, 
 Tags are used for:
 
 - **Searching** on the Hosts page.
-- **Scoping access.** A user's scope tags and a custom role's `host_tag` scope match against host tags. See [Permissions](./permissions.md#scopes).
+- **Scoping access.** An assignment on a host tag covers every host carrying the tag. See [Permissions](./permissions.md#scopes).
 
 Leave the **Scope (host tags)** field on saved registry credentials empty: Dockmesh never passes host tags when it looks up credentials, so a credential with any scope tag is never used.
 

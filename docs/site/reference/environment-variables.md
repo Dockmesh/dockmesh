@@ -59,7 +59,6 @@ Relative defaults resolve against the server's working directory. The installers
 | `DOCKMESH_SCANNER_BINARY` | `grype` | Name or path of the Grype binary, looked up in `PATH` |
 | `DOCKMESH_PROXY_ENABLED` | `false` | Default for the reverse proxy. See the note below |
 | `DOCKMESH_METRICS_AUTH` | `true` | Require a bearer token with `metrics.view` on `/metrics`. `false` makes it public |
-| `DOCKMESH_RBAC_V2_ENFORCE` | `true` | Enforce role scopes (per host, stack, host tag). `false` turns role scopes off; permissions and user scope tags still apply |
 | `DOCKMESH_SETUP_FORCE` | `false` | Start in setup mode and skip creating the bootstrap admin. `install.sh` sets it; the web wizard removes it from `dockmesh.env` when it finishes |
 
 <!-- update after: proxy: keep the Caddy container, resume routes, serve tls none as http -->

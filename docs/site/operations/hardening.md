@@ -64,13 +64,11 @@ The setup wizard is open while no admin user exists or while `DOCKMESH_SETUP_FOR
 
 ## Users and roles
 
-<!-- update after: rbac: scope read endpoints, limit grants, gate sensitive downloads -->
-- **`backups.view`** lets a user download any backup decrypted, including system archives with the database, the JWT secret and the age key, and read backup target credentials. Every built-in role, viewer included, has it. Give users you don't fully trust a custom role without it. Built-in roles cannot be edited. See [Backups](./backups.md#permissions).
-- **host-admin** is close to admin: it holds `system.update` (settings, SSO configuration, global environment) and `backups.restore`, which includes exporting the age key and extracting an archive into any host path as root (an absolute path as restore target becomes a bind mount). Assign it like admin.
-- `backups.create` and `backups.update` let a user run arbitrary commands in any container through backup hooks.
-- User and role management don't check that a grant is within the granter's own permissions, and nothing stops the last admin from being removed. Keep `users.*` and `roles.*` with admins.
-- Many read endpoints ignore host and role scopes. Treat a scoped role as a convenience filter, not as a security boundary.
-- Review users, roles and [API tokens](../features/api-tokens.md) regularly and remove what is no longer needed.
+- Proxy, users and roles, settings and the audit log only follow from assignments on everything. Give people narrow assignments (a host, a host tag or a stack) where you can.
+- The extras are the risky part of a role: **Terminal**, **Files** and **Environment values** reveal secrets inside containers, **Download backups** hands out full volume data, and **Export the backup key** decrypts every backup. Keep them off custom roles unless needed.
+- Backup jobs with hooks run commands in containers and need the Terminal extra on those containers.
+- Grants never exceed the granter's own access, and the last admin assignment on everything can't be removed.
+- Review users, roles and [API tokens](../features/api-tokens.md) regularly, and restrict tokens to what they need.
 
 <!-- update after: auth: hide sign-in settings that aren't enforced -->
 Some sign-in settings under **Authentication** are stored but not enforced, including **Require 2FA for admin role**, self-registration, password reuse and password rotation. Don't rely on them; ask admins to set up two-factor authentication themselves. See [Authentication](../features/authentication.md).

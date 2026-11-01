@@ -1,117 +1,81 @@
 ---
 title: Permissions
-description: How Dockmesh's role-based access control works, what each built-in role can do, how scopes narrow access, and where the model has gaps you should plan around.
+description: How access works in Dockmesh - roles as a level per area plus extras, assignments of a role on a scope, the built-in roles, API tokens and identity provider groups.
 ---
 
-Every user has exactly one role. A role is a set of permissions, and a permission allows one kind of action on one kind of resource. Scopes can additionally narrow a user or role to certain hosts or stacks. RBAC, custom roles and scopes are all part of the open-source build.
+Access in Dockmesh comes from **assignments**. An assignment gives a user a **role** on a **scope**: everything, one host, all hosts with a host tag, or one stack. A user can have several assignments; they add up, and none of them can take away what another gives. Roles, custom roles and assignments are part of the open-source build.
 
-Manage users and roles under **Users & Roles**, which has a **Users** tab and a **Roles** tab.
+Manage them under **Users & roles**. Each user has a detail page with an **Access** tab that lists the assignments, shows what the user can do where, and answers "Can this user do X on Y?" with the assignment that allows it.
 
-## Permissions
+## Roles
 
-Permissions are written `domain.verb`, for example `stacks.deploy` or `containers.exec`. There are 71 permissions in 17 domains:
+A role picks one level per area. Levels are cumulative: Deploy includes Operate and View.
 
-| Domain | Permissions |
-|---|---|
-| `containers` | `view`, `update` (start, stop, restart, pause, kill, remove, one-click image update and rollback), `delete` (not checked), `exec`, `logs` |
-| `stacks` | `view`, `create`, `update` (edit files), `delete`, `deploy` (deploy, stop, scale, rollback, deploy history, dependencies, environment overrides, scaling rules, template deploy), `migrate`, `adopt` |
-| `volumes` | `view`, `create`, `delete`, `browse`, `read_file` |
-| `networks` | `view`, `create`, `delete` |
-| `images` | `view`, `create` (pull), `delete`, `scan` |
-| `registries` | `view`, `create`, `update`, `delete` |
-| `hosts` | `view`, `create` (add a host), `update` (drain, upgrade, re-issue enrollment token, agent upgrade policy), `delete` (revoke), `tag` |
-| `users` | `view`, `create`, `update`, `delete`, `password_reset`, `suspend` |
-| `roles` | `view`, `create`, `update`, `delete` |
-| `tokens` | `view`, `create`, `delete`, `manage_others` |
-| `backups` | `view`, `create`, `update`, `delete`, `restore` |
-| `proxy` | `view`, `create`, `update`, `delete` |
-| `alerts` | `view`, `create`, `update`, `delete` |
-| `templates` | `view`, `create`, `update`, `delete` |
-| `audit` | `view`, `export`, `write` |
-| `system` | `view`, `update` (settings, global environment, sign-in policy, SSO), `upgrade` |
-| `metrics` | `view` (the Prometheus `/metrics` endpoint) |
+| Area | Levels | What the top levels add |
+|---|---|---|
+| Stacks | None, View, Operate, Deploy, Manage | View: stacks, compose, logs, templates. Operate: stop stacks, start/stop/restart their containers. Deploy: deploy, edit compose and `.env`, roll back, deploy templates. Manage: create, delete, migrate, adopt, connect git, manage templates |
+| Containers | None, View, Operate, Manage | View: containers, metrics, logs. Operate: start, stop, restart, pause. Manage: remove, update and roll back images |
+| Images, volumes, networks & registries | None, View, Manage | Manage: pull, remove, prune, create volumes and networks, scans, registry credentials |
+| Hosts | None, View, Manage | View: hosts and host metrics. Manage: add and revoke hosts, host tags, drain, agent upgrades |
+| Proxy | None, View, Manage | Manage: routes, the proxy itself |
+| Backups | None, View, Operate, Manage | Operate: run jobs, restore. Manage: jobs and targets |
+| Alerts | None, View, Manage | View: rules and alert history. Manage: rules and notification channels |
+| Users & roles | None, View, Manage | Manage: users, invites, roles, assignments, other users' API tokens |
+| Settings & audit | None, View, Manage | View: the audit log. Manage: instance settings, sign-in and identity providers, audit retention and webhook, Dockmesh updates |
 
-`GET /api/v1/roles/permissions` returns the full list with descriptions; the role editor builds its permission matrix from it.
+On top of the levels, a role can hold **extras**. No level includes them:
 
-Six permissions appear in the matrix but are not checked by any endpoint: `audit.export`, `users.password_reset`, `users.suspend`, `volumes.read_file`, `containers.delete` and `templates.view`. Reading a file inside a volume is covered by `volumes.browse`, removing a container by `containers.update`, and any signed-in user can read templates. Resetting another user's password requires the built-in `admin` role, whatever permissions a custom role holds.
+- **Terminal**: open a shell in containers, write container files.
+- **Files**: browse and read files in containers and volumes.
+- **Environment values**: see environment values in container inspect and a stack's `.env`. Deploy on a stack shows its `.env` too.
+- **Download backups**: download decrypted backup archives.
+- **Export the backup key**: export the key that decrypts every backup. Only on an assignment on everything.
 
-## Built-in roles
+### Built-in roles
 
-Dockmesh ships five roles, from least to most privileged: `viewer`, `operator`, `deployer`, `host-admin` and `admin`. They cannot be edited or deleted. Select a role in the **Roles** tab to see its exact permissions.
+| Role | Levels | Extras |
+|---|---|---|
+| Admin | everything at the top level | all |
+| Host Admin | Stacks, Containers, Resources, Hosts, Proxy, Backups, Alerts: Manage; Settings & audit: View | terminal, files, env, download backups |
+| Deployer | Stacks: Deploy; Containers: Operate; Resources, Hosts, Proxy, Backups, Alerts: View | none |
+| Operator | Stacks, Containers: Operate; Resources, Hosts, Backups, Alerts: View | terminal |
+| Viewer | Stacks, Containers, Resources, Hosts, Proxy, Backups, Alerts, Settings & audit: View | none |
 
-<!-- update after: rbac: scope read endpoints, limit grants, gate sensitive downloads -->
-| Domain | viewer | operator | deployer | host-admin | admin |
-|---|---|---|---|---|---|
-| containers | view | view, update, exec, logs | all | all | all |
-| stacks | view | view, deploy | all except migrate | all | all |
-| volumes | view | view | view, create | all | all |
-| networks | view | view | view, create | all | all |
-| images | view | view, scan | view, create, scan | all | all |
-| registries | view | view | view | all | all |
-| hosts | view | view | view | all | all |
-| users, roles | view | view | view | view | all |
-| tokens (own) | view | view, delete | view, create, delete | view, create, delete | all, incl. `manage_others` |
-| backups | view | view | view | all | all |
-| proxy, alerts | view | view | view | all | all |
-| templates | view | view | view, create, update | all | all |
-| audit | view | view | view | view, export | all |
-| system | view | view | view | view, update | all |
-| metrics | view | view | view | view | view |
-
-Viewers read everything, operators run existing stacks and containers, deployers also write compose files and pull images, host-admins run the whole fleet and its integrations, and only admins manage users, roles, audit settings and secrets-key rotation, and run an on-demand update check. Host-admins can still turn automatic update checks off or change their interval, because those are ordinary settings.
-
-<!-- update after: rbac: scope read endpoints, limit grants, gate sensitive downloads -->
-> **Warning:** `host-admin` holds `system.update` and `backups.restore`. Together these let a host-admin change sign-in and SSO settings and export the secrets encryption key. Give `host-admin` only to people you would trust as admins.
-
-New local users get the role you pick when you create or invite them. Users created through SSO get the role from the provider's role settings. See [SSO](../features/sso.md).
-
-<!-- update after: sso: link by email only when verified and allowed, keep manual roles -->
-SSO sign-ins set the user's role from the provider mapping on every login, so a role you change by hand for an SSO user is overwritten at their next sign-in.
-
-## Custom roles
-
-In the **Roles** tab, click **New** to open **New custom role**. Give it a **Role name**, a **Display name**, an optional description, a permission set from the matrix and optional scopes. Custom roles appear in the role picker for users and invites.
-
-A custom role is the way to give someone less than a built-in role offers, for example a deployer without `containers.exec`, or a viewer without `backups.view`.
+Built-in roles can't be changed. **Duplicate** one to start a custom role.
 
 ## Scopes
 
-Permissions say what a user can do; scopes say where. There are two layers, and a request has to pass both.
+| Scope | Covers |
+|---|---|
+| Everything | every host and stack, and the instance-wide areas |
+| Host | one host, its containers, images, volumes, networks and stacks |
+| Host tag | every host carrying the tag, now and later |
+| Stack | one stack on one host. Stack names are unique; the scope covers the stack while it runs on that host or isn't deployed |
 
-**Role scopes** are set on a custom role. Each entry is one of:
+Proxy, alert rules and notification channels, users and roles, settings and the audit log are instance-wide. Only an assignment on **everything** grants them; a narrower assignment of the same role does not. Host tags, enrolling new hosts, registry credentials, templates and the backup key are instance-wide for the same reason.
 
-| Type | Value | Matches |
-|---|---|---|
-| `host` | a host ID (`local` or an agent ID) | requests on that host |
-| `stack` | a stack name | requests on that stack |
-| `host_tag` | a host tag | requests on any host carrying the tag |
+A stack that exists only as files and was never deployed has no host yet. Only assignments on everything or on that stack see it.
 
-A role with several entries matches if any entry matches. A role with no entries is unscoped; all built-in roles are unscoped. A request that carries no stack name (pulling an image, creating a volume, browsing a volume) cannot match a `stack` entry, so a role scoped only to stacks cannot do host-level actions.
+Every signed-in user can always see their own profile, sessions, 2FA and API tokens, server health and version, and receive live updates.
 
-**User scope tags** are set per user with **Edit role & scope** in the **Users** tab. They are plain host tags. An empty list means no extra restriction. With tags set, the user can act on a host only if the host carries at least one of them. Untagged hosts, including an untagged local host, are out of reach for that user.
+## Who can grant what
 
-Host tags are described in [Hosts and agents](./hosts-and-agents.md#host-tags). If you send a user update through the API, include `scope_tags`; omitting the field clears the user's scope.
-
-### What scope restricts
-
-<!-- update after: rbac: scope read endpoints, limit grants, gate sensitive downloads -->
-Scope is enforced mainly on actions that change something on a specific host or stack: deploy, stop, edit and delete stacks, container lifecycle and removal, logs, exec and stats sessions, image pull, removal and scan, volume and network create, remove and prune, volume browsing, and migrations. The container, host and stack lists are also filtered.
-
-Many reads are not scoped. A scoped user can still see, among other things, the stack detail including its decrypted `.env`, container inspect output including environment variables, image, volume and network lists, metrics, topology, the live event feed, and everything under backups. Scope checks are also missing on stack dependencies, environment overrides, git sources, scaling rules, host tag edits and template deploys. On remote hosts, container actions under a stack-only role scope are denied, because the stack label is looked up on the local Docker engine.
-
-Treat scope as a guard against accidental changes outside a team's area, not as a confidentiality boundary. If teams must not see each other's secrets, run separate Dockmesh servers for them.
-
-## Gaps to plan around
-
-<!-- update after: rbac: scope read endpoints, limit grants, gate sensitive downloads -->
-- **Backups:** `backups.view` lists jobs and runs and downloads archives decrypted. A system backup contains the database and the data directory, including the secrets key. Every built-in role, `viewer` included, has `backups.view`. For users you don't fully trust, use a custom role without it.
-- **Granting roles:** anyone with `users.create` or `users.update` can assign any role, including `admin`, and anyone with `roles.update` can add any permission to a custom role. Treat these permissions as admin-equivalent. Nothing stops you from removing or demoting the last admin, so keep at least two.
-- **Container files:** browsing and downloading files inside a container needs only `containers.view`.
+To add or remove an assignment, you need Users & roles: Manage on everything, and you must hold every permission of the role everywhere the scope reaches. The same applies to roles: you can only create or change a role whose levels and extras you hold yourself. The last assignment of an admin role on everything can't be removed, and such a role can't be narrowed while it is the last one.
 
 ## API tokens
 
-API tokens act on behalf of the user who created them. A token has its own role, which you pick at creation and which must not exceed your own permissions. Each request must be allowed by the token's role and by the owner's current role, and the owner's current scope applies. If the owner is demoted, the token loses those permissions; if the owner is deleted, the token stops working. Tokens created before tokens had owners keep their fixed role and have no scope; Dockmesh shows admins a notice about them. See [API tokens](../features/api-tokens.md).
+A token acts with its owner's **current** access. When you create it you can restrict it further to a role on a scope; it never gets more than the owner has. See [API tokens](../features/api-tokens.md).
 
-## UI and API
+## Identity providers
 
-The UI hides or disables many actions you lack permission for, but not all of them. The server checks permissions on every request, so calling the API directly gives you no more than the UI would. Requests denied by a role scope are written to the audit log. See [Audit log](../features/audit-log.md).
+Group mappings on an OIDC, SAML, LDAP or OAuth2 provider map a group to a role on a scope. At every sign-in, Dockmesh replaces the user's identity provider assignments with one per matching group; with no match the provider's default role applies on everything. Assignments you add by hand stay. On the user's **Overview** tab you can switch off that sign-in updates the user's access from groups.
+
+If a sign-in would remove the last admin assignment on everything, Dockmesh keeps it and tells admins in a notice.
+
+## Audit
+
+Adding or removing an assignment, creating, changing or deleting a role, and creating an API token are recorded in the audit log under the **access** category.
+
+## Upgrading from v0.4
+
+The upgrade moves every user's role, the role's scopes and the user's host tags onto assignments that give the same access. Where that isn't possible, for example a scoped role combined with user host tags, the access is narrowed: such users get one assignment per host that matched at upgrade time. Custom roles get, per area, the highest level their old permissions fully covered. Nothing gains access, except that the built-in roles follow the new definitions above. An admin notice lists every account, role and token that changed, with before and after.
