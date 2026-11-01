@@ -1,5 +1,5 @@
 // Package openapi serves and verifies the hand-maintained OpenAPI 3.1
-// spec at docs/openapi.yaml.
+// spec bundled from api/openapi/ (see scripts/openapi).
 //
 // The spec is embedded into the binary at build time — no disk lookup
 // in production. The server refuses to boot if the embedded file fails
@@ -16,7 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// rawYAML is the literal bytes of docs/openapi.yaml shipped in every
+// rawYAML is the literal bytes of the bundled openapi.yaml shipped in every
 // Dockmesh binary. Embedded at build time via //go:embed below.
 //
 //go:embed openapi.yaml

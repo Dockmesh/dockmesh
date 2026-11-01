@@ -1,0 +1,285 @@
+paths:
+  /system/info:
+    get:
+      operationId: system.info
+      tags: [metrics]
+      summary: Dockmesh version + build info
+      responses:
+        "200":
+          description: Instance info.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: {type: string}
+                  commit: {type: string}
+                  build_date: {type: string}
+                  go_version: {type: string}
+                  os: {type: string}
+                  arch: {type: string}
+                  uptime_seconds: {type: integer, format: int64}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /system/metrics:
+    get:
+      operationId: system.metrics
+      tags: [metrics]
+      summary: Host-level CPU / memory / disk / uptime snapshot
+      description: Used by the dashboard's System Health panel. Works across local and remote hosts.
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cpu_percent: {type: number}
+                  cpu_cores: {type: integer}
+                  cpu_used_cores: {type: number}
+                  mem_percent: {type: number}
+                  mem_total: {type: integer, format: int64}
+                  mem_used: {type: integer, format: int64}
+                  disk_percent: {type: number}
+                  disk_total: {type: integer, format: int64}
+                  disk_used: {type: integer, format: int64}
+                  disk_path:
+                    type: string
+                    description: Mount the disk_* figures describe. With per-mount data this is the fullest mount holding Docker, containerd, stacks or Dockmesh data.
+                  uptime_seconds: {type: integer, format: int64}
+                  mounts:
+                    type: array
+                    description: Every real filesystem of the host, fullest first.
+                    items: {$ref: "#/components/schemas/DiskMount"}
+                  mounts_unsupported:
+                    type: boolean
+                    description: True when the host's agent is too old to report per-mount usage.
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /system/backup-status:
+    get:
+      operationId: system.backup_status
+      tags: [metrics]
+      summary: Default system backup summary for the sidebar pill
+      description: "`last_error` is only returned to admins without a scope."
+      responses:
+        "200":
+          description: Backup status.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackupStatus"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /system/health:
+    get:
+      operationId: system.health
+      tags: [metrics]
+      summary: Aggregated system health for the HealthDot popover
+      description: |
+        One-shot fetch of every passive health signal (backup, proxy,
+        agents, disk, CVE scanner) so the UI can render the HealthDot
+        badge + its click popover without N parallel requests.
+      responses:
+        "200":
+          description: Health summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  overall: {type: string, enum: [ok, warn, fail, off]}
+                  checks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: {type: string}
+                        label: {type: string}
+                        status: {type: string, enum: [ok, warn, fail, off]}
+                        detail: {type: string}
+                        link_to: {type: string}
+                        message: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /system/update-status:
+    get:
+      operationId: system.update_status
+      tags: [metrics]
+      summary: Cached self-update check result
+      description: |
+        Returns the last poll of the Dockmesh GitHub Releases API. The
+        checker runs once every 24h in the background; `POST /system/update-check`
+        forces an immediate refresh. `update_available` is computed against
+        the running binary's version — "dev" builds never show as upgradable.
+      responses:
+        "200":
+          description: Update status snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  current_version: {type: string}
+                  latest_version: {type: string}
+                  update_available: {type: boolean}
+                  release_url: {type: string}
+                  release_notes: {type: string}
+                  published_at: {type: string, format: date-time}
+                  checked_at: {type: string, format: date-time}
+                  enabled: {type: boolean}
+                  error: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /system/whats-new:
+    get:
+      operationId: system.whats_new
+      tags: [metrics]
+      summary: Release notes of the running version and of a newer release
+      description: |
+        `current` is the running version's section of the changelog embedded
+        in the binary; null for builds that are not a release. `latest` is
+        the newer release found by the update check, read from its
+        `release-manifest.json`; null when there is none, it has no
+        manifest, or the caller lacks `system.view`. `highlights` is empty when the changelog section has no
+        `### Highlights` list. `unseen` is true while the caller has not
+        marked the running version as seen; API tokens always get false.
+        Any authenticated caller.
+      responses:
+        "200":
+          description: Release notes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [current, latest, last_seen_version, unseen]
+                properties:
+                  current:
+                    oneOf:
+                      - $ref: "#/components/schemas/ReleaseNotes"
+                      - type: "null"
+                  latest:
+                    oneOf:
+                      - $ref: "#/components/schemas/ReleaseNotes"
+                      - type: "null"
+                  last_seen_version: {type: string, description: Empty when the caller never marked a version as seen.}
+                  unseen: {type: boolean}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /system/whats-new/seen:
+    post:
+      operationId: system.whats_new_seen
+      tags: [metrics]
+      summary: Mark the running version's release notes as seen
+      description: Per user. Requires a user session; API tokens get 404.
+      responses:
+        "204": {description: Marked (idempotent).}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /system/update-check:
+    post:
+      operationId: system.update_check
+      tags: [metrics]
+      summary: Force an immediate GitHub Releases lookup
+      description: |
+        Manual refresh button for the Settings → System panel. Returns the
+        refreshed status synchronously. Admin-only.
+      responses:
+        "200":
+          description: Refreshed update status (same schema as GET).
+          content:
+            application/json:
+              schema:
+                type: object
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /system/backup-key/export:
+    get:
+      operationId: system.backup_key_export
+      tags: [metrics]
+      summary: Download the age identity used for system-backup encryption
+      description: |
+        Returns the age private key used to encrypt system backups, so the
+        admin can store it offline for disaster recovery. Without this
+        key, an encrypted system backup cannot be restored on a fresh
+        host. Requires `backups.restore` plus admin (`system.update` with
+        no host or role scope); every export is audited.
+      responses:
+        "200":
+          description: age key file (text/plain).
+          content:
+            text/plain:
+              schema: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "503":
+          description: Age encryption not configured on this server.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /system/secrets/rotate:
+    post:
+      operationId: system.secrets_rotate
+      tags: [metrics]
+      summary: Rotate the age encryption key used for stack .env files
+      description: |
+        Generates a new age key, re-encrypts every stack `.env.age` against
+        it, atomically swaps the in-memory key on the running server, and
+        archives the previous key to `<path>.old` so legacy external
+        backups can still be decrypted out-of-band. Equivalent to
+        `dockmesh secrets rotate` but safe to run on a live server.
+      responses:
+        "200":
+          description: Rotation summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reencrypted: {type: integer}
+                  old_recipient: {type: string}
+                  new_recipient: {type: string}
+        "400":
+          description: Secrets encryption disabled.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: Another key rotation is already running.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: Secrets or stacks service not configured.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+components:
+  schemas:
+    ReleaseNotes:
+      type: object
+      required: [version, highlights, added, changed, fixed, security]
+      properties:
+        version: {type: string, example: 0.5.0}
+        date: {type: string, format: date}
+        severity: {type: string, enum: [security, recommended, normal]}
+        summary: {type: string}
+        highlights: {type: array, items: {type: string}, description: 3-4 plain-language lines; may be empty.}
+        added: {type: array, items: {type: string}}
+        changed: {type: array, items: {type: string}}
+        fixed: {type: array, items: {type: string}}
+        security: {type: array, items: {type: string}, description: Security entries, advisories as "GHSA-… (severity): title".}
+    DiskMount:
+      type: object
+      required: [mount_point, fs_type, total, used, percent]
+      properties:
+        mount_point: {type: string}
+        fs_type: {type: string}
+        total: {type: integer, format: int64}
+        used: {type: integer, format: int64}
+        percent: {type: number}
+        roles:
+          type: array
+          items:
+            type: string
+            enum: [docker_root, containerd_root, stacks, data, backup_target]
+        error: {type: string, description: Set when usage could not be read (for example a hung network mount).}

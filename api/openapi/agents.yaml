@@ -1,0 +1,347 @@
+paths:
+  /agents:
+    get:
+      operationId: agents.list
+      tags: [agents]
+      summary: List all registered remote agents
+      description: |
+        Only agents whose host is in the caller's scope (scope tags and role
+        scope), the same hosts `GET /hosts` returns.
+      responses:
+        "200":
+          description: Agents.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Agent"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+    post:
+      operationId: agents.create
+      tags: [agents]
+      summary: Register a new agent and issue a one-time install token
+      description: |
+        Allocates the agent row in `pending` state and returns a one-time
+        enrollment token the admin pastes into the agent host's install
+        command. The plaintext token is shown ONCE — lose it and you
+        revoke + recreate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, example: prod-01}
+      responses:
+        "201":
+          description: Agent registered; install hint returned.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AgentCreateResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: Name already taken.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /agents/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: agents.get
+      tags: [agents]
+      summary: Inspect one agent
+      description: An agent outside the caller's scope answers 404.
+      responses:
+        "200":
+          description: Agent.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Agent"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      operationId: agents.delete
+      tags: [agents]
+      summary: Revoke an agent
+      description: |
+        Removes the DB row. The agent's client cert is no longer recognised
+        by the mTLS listener on the next reconnect. Host tags are dropped
+        automatically.
+      responses:
+        "204": {description: Revoked.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /agents/{id}/upgrade:
+    post:
+      operationId: agents.upgrade
+      tags: [agents]
+      summary: Trigger a self-upgrade on a connected agent
+      description: |
+        The agent downloads a fresh `dockmesh-agent-linux-<arch>` binary
+        from the agent listener over mTLS (agents older than this release
+        use the server's `/install/` path), verifies it against the SHA-256
+        sent over the mTLS channel and restarts its systemd unit. Agent
+        must be currently connected. Automatic upgrades back off after
+        three attempts per target binary; this endpoint always dispatches.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Upgrade dispatched.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: upgrading}
+                  version: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: The agent already runs the build this server offers, or is still installing an earlier upgrade.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "422":
+          description: Agent is too old to self-upgrade; re-run the installer once.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: Agent is not currently connected, or no agent binary for its architecture is bundled.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /agents/{id}/rotate-token:
+    post:
+      operationId: agents.rotate_enroll_token
+      tags: [agents]
+      summary: Rotate the enrollment token of an existing agent
+      description: |
+        Generates a new enrollment token (the previous one stops working)
+        with the configured lifetime. Running the returned install command
+        re-enrolls the host under the same ID: stacks, tags and backup jobs
+        stay attached; when the new enrollment completes the old client
+        cert stops working and its live session is closed. Requires
+        `hosts.create` and host scope for the host, for pending and enrolled
+        hosts alike. Revoked hosts return 404.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: New enrollment token and install command.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AgentCreateResult"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /agents/upgrade-policy:
+    get:
+      operationId: agents.upgrade_policy_get
+      tags: [agents]
+      summary: Current fleet-wide upgrade policy + snapshot (P.11.16)
+      responses:
+        "200":
+          description: Policy + fleet snapshot.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AgentUpgradePolicy"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    put:
+      operationId: agents.upgrade_policy_set
+      tags: [agents]
+      summary: Update the fleet-wide upgrade mode
+      description: |
+        `auto` pushes FrameReqAgentUpgrade to every drifted agent on
+        every evaluation (60s tick). `staged` upgrades N% of drifted
+        agents per tick so an incompatible binary can't take down
+        the whole fleet at once. `manual` (default) only upgrades
+        when the admin hits the per-agent Upgrade button.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AgentUpgradeInput"}
+      responses:
+        "200":
+          description: Updated policy.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AgentUpgradePolicy"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /agents/upgrade-policy/run:
+    post:
+      operationId: agents.upgrade_policy_run
+      tags: [agents]
+      summary: Force one evaluation pass now (no waiting for the 60s tick)
+      responses:
+        "200":
+          description: Evaluation completed; snapshot reflects any just-dispatched upgrades.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AgentUpgradePolicy"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /agents/enroll:
+    post:
+      operationId: agents.enroll
+      tags: [agents]
+      summary: "Public: swap a one-time token for an agent client cert (legacy)"
+      description: |
+        Kept for agents installed by older installers. Current agents enroll
+        at `/enroll` on the agent listener (the `enroll_url` of
+        `AgentCreateResult`), where the TLS chain is signed by the pinned
+        agents CA. There is NO Bearer auth on this route — the one-time
+        token IS the authentication. Tokens are single-use and expire.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AgentEnrollRequest"}
+      responses:
+        "200":
+          description: Enrollment successful — cert issued.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AgentEnrollResponse"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401":
+          description: Invalid, expired or already-used token.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+components:
+  schemas:
+    Agent:
+      type: object
+      required: [id, name, status, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        status:
+          type: string
+          enum: [pending, online, offline, revoked]
+        version: {type: string}
+        os: {type: string}
+        arch: {type: string}
+        hostname: {type: string}
+        docker_version: {type: string}
+        cert_fingerprint: {type: string}
+        last_seen_at: {type: string, format: date-time}
+        online_since: {type: string, format: date-time}
+        cert_expires_at:
+          type: string
+          format: date-time
+          description: Expiry of the client cert the agent last connected with. Agents renew it automatically within 30 days of expiry.
+        protocol_version:
+          type: integer
+          description: Agent protocol version of the live session; only set while online.
+        update_recommended:
+          type: boolean
+          description: True while online if the agent speaks an older protocol than the server and lacks some features.
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    AgentCreateResult:
+      type: object
+      required: [agent, token, token_expires_at, enroll_url, agent_url, ca_fingerprint, install_hint]
+      description: |
+        Returned on agent creation and token rotation. `token` is shown
+        only here; a lost or expired token is replaced via
+        `POST /agents/{id}/rotate-token`.
+      properties:
+        agent: {$ref: "#/components/schemas/Agent"}
+        token:
+          type: string
+          description: One-time enrollment token. Paste into the install command on the agent host.
+        token_expires_at:
+          type: string
+          format: date-time
+          description: When the token stops working (DOCKMESH_AGENT_ENROLL_TOKEN_TTL, default 24h).
+        enroll_url:
+          type: string
+          format: uri
+          description: https URL of the enrollment endpoint on the agent listener.
+        agent_url:
+          type: string
+          description: wss:// URL the agent will dial after enrollment.
+        ca_fingerprint:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: SHA-256 of the agents CA certificate; the agent refuses to enroll with any other CA.
+        install_hint:
+          type: string
+          description: Single-line install command to run on the agent host as root.
+    AgentUpgradePolicy:
+      type: object
+      description: Fleet-wide agent upgrade policy (P.11.16) + live snapshot.
+      required: [mode, server_version, connected_total, connected_up_to_date, connected_pending]
+      properties:
+        mode:
+          type: string
+          enum: [auto, manual, staged]
+        stage_percent:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: Wave size as percent of drifted agents (staged mode).
+        stage_gap_sec:
+          type: integer
+          minimum: 60
+          description: Minimum seconds between staged waves.
+        server_version: {type: string}
+        connected_total: {type: integer}
+        connected_up_to_date: {type: integer}
+        connected_pending:
+          type: integer
+          description: Connected agents whose version != server_version.
+        last_run_at: {type: string, format: date-time}
+    AgentUpgradeInput:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [auto, manual, staged]
+        stage_percent: {type: integer, minimum: 1, maximum: 100}
+        stage_gap_sec: {type: integer, minimum: 60}
+    AgentEnrollRequest:
+      type: object
+      required: [token, hostname, os, arch, version]
+      properties:
+        token: {type: string}
+        hostname: {type: string}
+        os: {type: string, example: linux}
+        arch: {type: string, example: amd64}
+        version: {type: string}
+        docker_version: {type: string}
+    AgentEnrollResponse:
+      type: object
+      required: [agent_id, agent_name, client_cert, client_key, ca_cert, agent_url]
+      properties:
+        agent_id: {type: string, format: uuid}
+        agent_name: {type: string}
+        client_cert: {type: string, description: PEM-encoded client cert.}
+        client_key: {type: string, description: PEM-encoded private key (shown once).}
+        ca_cert: {type: string, description: PEM-encoded CA cert the agent should pin.}
+        agent_url: {type: string, description: 'wss:// URL the agent should dial.'}

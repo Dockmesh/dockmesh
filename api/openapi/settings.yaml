@@ -1,0 +1,190 @@
+paths:
+  /settings:
+    get:
+      operationId: settings.list
+      tags: [settings]
+      summary: Effective server settings (runtime-overridable key/value pairs)
+      description: |
+        The audit webhook keys (`audit.webhook_url`,
+        `audit.webhook_hmac_secret`, `audit.webhook_filter_actions`) are
+        omitted; read them through `GET /audit/webhook`.
+      responses:
+        "200":
+          description: Settings.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [key, value]
+                  properties:
+                    key: {type: string}
+                    value: {type: string}
+                    from_env: {type: boolean, description: True when the value was read from env vars instead of DB.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    put:
+      operationId: settings.update
+      tags: [settings]
+      summary: Update one or more settings
+      description: |
+        `trusted_proxies` is a comma-separated list of IPs or CIDRs whose
+        X-Forwarded-For / X-Real-IP / X-Forwarded-Proto headers are
+        believed (empty = loopback only); invalid entries are rejected with
+        400 and nothing is saved.
+
+        The audit webhook keys are rejected with 400; configure them via
+        `PUT /audit/webhook`. The response omits them like `GET /settings`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                required: [key, value]
+                properties:
+                  key: {type: string}
+                  value: {type: string}
+              example:
+                - {key: base_url, value: "https://dockmesh.example.com"}
+                - {key: trusted_proxies, value: "192.0.2.5, 198.51.100.0/24"}
+      responses:
+        "200":
+          description: Saved; all settings.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    key: {type: string}
+                    value: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /notifications:
+    get:
+      operationId: notifications.list
+      tags: [settings]
+      summary: List the caller's notifications (own + broadcast), newest first
+      parameters:
+        - in: query
+          name: unread
+          schema: {type: boolean}
+        - in: query
+          name: limit
+          schema: {type: integer, default: 100}
+      responses:
+        "200":
+          description: Notifications.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: object, additionalProperties: true}
+  /notifications/unread-count:
+    get:
+      operationId: notifications.unread_count
+      tags: [settings]
+      summary: Bell-icon badge count — unread notifications for the caller
+      responses:
+        "200":
+          description: Count.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unread: {type: integer}
+  /notifications/{id}/read:
+    post:
+      operationId: notifications.mark_read
+      tags: [settings]
+      summary: Mark a single notification as read
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "204": {description: Marked.}
+        "403": {description: Not your notification.}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /notifications/read-all:
+    post:
+      operationId: notifications.mark_all_read
+      tags: [settings]
+      summary: Clear the unread badge for the caller (own + broadcast)
+      responses:
+        "204": {description: Cleared.}
+  /notifications/{id}:
+    delete:
+      operationId: notifications.delete
+      tags: [settings]
+      summary: Hard-delete a notification from the caller's feed
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "204": {description: Deleted.}
+        "403": {description: Not your notification.}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /notices:
+    get:
+      operationId: notices.list
+      tags: [settings]
+      summary: Open action-required notices for the caller
+      description: |
+        Notices that need someone to act, typically after an upgrade (for
+        example "webhook disabled, secret missing"). Only notices whose
+        audience includes the caller are returned; they disappear once the
+        server resolves the condition. `dismissed` reflects the caller's own
+        banner dismissal.
+      responses:
+        "200":
+          description: Open notices, critical first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Notice"}
+  /notices/{id}/dismiss:
+    post:
+      operationId: notices.dismiss
+      tags: [settings]
+      summary: Hide a non-critical notice from the caller's banner
+      description: |
+        Per user. The notice stays listed until it is resolved, and is shown
+        again if the condition is resolved and comes back. Requires a user
+        session; API tokens get 404.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "204": {description: Dismissed (idempotent).}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+components:
+  schemas:
+    Notice:
+      type: object
+      required: [id, key, severity, title, created_at, dismissible, dismissed]
+      properties:
+        id: {type: integer, format: int64}
+        key: {type: string, description: Stable identifier of the condition.}
+        severity: {type: string, enum: [info, warning, critical]}
+        title: {type: string}
+        body: {type: string, description: Plain text instructions.}
+        link: {type: string, description: "In-app path where the action is taken, e.g. /stacks/web."}
+        created_at: {type: string, format: date-time}
+        dismissible: {type: boolean, description: False for critical notices.}
+        dismissed: {type: boolean}

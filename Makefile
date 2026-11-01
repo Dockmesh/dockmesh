@@ -1,4 +1,4 @@
-.PHONY: dev build test test-e2e lint docker clean tidy frontend-install frontend-build backend-build agent agent-linux agent-bundle dmctl dmctl-bundle
+.PHONY: dev build test test-e2e lint docker clean tidy openapi frontend-install frontend-build backend-build agent agent-linux agent-bundle dmctl dmctl-bundle
 
 VERSION ?= dev
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -84,3 +84,7 @@ clean:
 		web/build web/.svelte-kit \
 		cmd/dockmesh/web_dist/*
 	touch cmd/dockmesh/web_dist/.gitkeep
+
+# Bundle api/openapi/*.yaml into the spec the server embeds.
+openapi:
+	go run ./scripts/openapi

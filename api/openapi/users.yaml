@@ -1,0 +1,278 @@
+paths:
+  /users/{id}/unlock:
+    post:
+      operationId: users.unlock
+      tags: [users]
+      summary: "Admin: clear a user's lockout state"
+      description: |
+        After too many failed logins a user's account is locked. This
+        endpoint clears the lockout, the failed-attempts counter and the
+        per-account login limit so they can log in again. Admin-only —
+        call after verifying via another channel that the real user is
+        who asked for the unlock.
+      parameters:
+        - $ref: "#/components/parameters/UserIDPath"
+      responses:
+        "204": {description: Unlocked.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /me:
+    get:
+      operationId: users.me
+      tags: [users]
+      summary: The authenticated user's own profile
+      description: |
+        Includes role, scope_tags, and MFA state — used by the UI to gate
+        buttons. For an API token, `permissions` lists only what both the
+        token's role and its owner's current role allow, and `scope_tags`
+        are the owner's.
+      responses:
+        "200":
+          description: Profile.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/User"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /invites:
+    get:
+      operationId: invites.list
+      tags: [users]
+      summary: List recent invites (admin overview)
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, default: 100, minimum: 1, maximum: 500}
+      responses:
+        "200":
+          description: Invite list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: object}
+    post:
+      operationId: invites.create
+      tags: [users]
+      summary: Mint a one-time invite link
+      description: |
+        The role must exist (400) and may not exceed the caller's rights;
+        a caller with host scope tags must give the invite tags within
+        its own (403).
+        Returns the raw token + accept URL exactly once. The admin
+        copies the URL out and shares it manually. No SMTP dependency.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: {type: string}
+                scope_tags:
+                  type: array
+                  items: {type: string}
+                email_hint: {type: string}
+                ttl_hours: {type: integer, minimum: 1, maximum: 168}
+      responses:
+        "201":
+          description: Invite minted.
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /invites/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    delete:
+      operationId: invites.revoke
+      tags: [users]
+      summary: Revoke a pending invite
+      responses:
+        "204": {description: Revoked.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /users:
+    get:
+      operationId: users.list
+      tags: [users]
+      summary: List all local users
+      responses:
+        "200":
+          description: Users.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/User"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      operationId: users.create
+      tags: [users]
+      summary: Create a new local user
+      description: The role may not exceed the caller's rights, and callers with host scope tags create users through scoped invites instead (403).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, role]
+              properties:
+                username: {type: string, minLength: 1}
+                email: {type: string, format: email}
+                password: {type: string, format: password, minLength: 8}
+                role:
+                  type: string
+                  description: Role name — `admin`, `operator`, `viewer`, or a custom role.
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/User"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: Username already taken.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UserIDPath"
+    put:
+      operationId: users.update
+      tags: [users]
+      summary: Update user email, role, and scope tags
+      description: |
+        The caller must hold every permission of both the user's current
+        role and the new one, and a scoped caller can only assign scope
+        tags within its own (403). Demoting the last account that holds
+        `system.update` and all `users.*` permissions returns 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: {type: string, format: email}
+                role: {type: string, description: Omitted or empty keeps the current role.}
+                display_name: {type: string}
+                scope_tags:
+                  type: array
+                  items: {type: string}
+                  description: Host tag scope. Omitted keeps the current tags; empty = access to all hosts.
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/User"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+    delete:
+      operationId: users.delete
+      tags: [users]
+      summary: Delete a local user
+      description: Same rules as update; deleting the last admin-capable account returns 409.
+      responses:
+        "204": {description: Deleted.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /users/{id}/password:
+    put:
+      operationId: users.change_password
+      tags: [users]
+      summary: Admin-set a user's password
+      description: Minimum 8 chars. Admin-only — regular users change their own password via a (future) self-service endpoint.
+      parameters:
+        - $ref: "#/components/parameters/UserIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: {type: string, format: password, minLength: 8}
+      responses:
+        "204": {description: Password updated.}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /users/{id}/mfa:
+    delete:
+      operationId: users.mfa_reset
+      tags: [users]
+      summary: "Admin: clear MFA for a user"
+      description: |
+        Used when a user has lost access to their TOTP device and recovery
+        codes. Not for the caller's own account (400): turning off your own
+        MFA goes through `DELETE /mfa` with a code.
+      parameters:
+        - $ref: "#/components/parameters/UserIDPath"
+      responses:
+        "204": {description: MFA cleared.}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /users/{id}/avatar:
+    get:
+      operationId: users.avatar_get
+      tags: [users]
+      summary: Serve a user's avatar bytes
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Avatar bytes.
+          content:
+            image/*:
+              schema: {type: string, format: binary}
+        "404": {$ref: "#/components/responses/NotFound"}
+    post:
+      operationId: users.avatar_upload
+      tags: [users]
+      summary: Upload (or replace) the user's avatar — png/jpeg/webp, ≤1 MiB
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: {type: string, format: binary}
+      responses:
+        "204": {description: Stored.}
+    delete:
+      operationId: users.avatar_delete
+      tags: [users]
+      summary: Remove the user's avatar
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      responses:
+        "204": {description: Removed.}

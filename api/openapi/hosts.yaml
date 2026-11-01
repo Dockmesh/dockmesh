@@ -1,0 +1,38 @@
+paths:
+  /hosts:
+    get:
+      operationId: hosts.list
+      tags: [hosts]
+      summary: List all hosts visible to the caller
+      description: |
+        Returns the local docker daemon plus every registered agent (online
+        or offline), decorated with host tags. Scoped users (P.11.3) see
+        only hosts whose tags match their scope.
+      responses:
+        "200":
+          description: Host list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/HostInfo"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+components:
+  schemas:
+    HostInfo:
+      type: object
+      required: [id, name, kind, status]
+      properties:
+        id:
+          type: string
+          description: '"local" for the central daemon, otherwise an agent UUID.'
+        name: {type: string}
+        kind:
+          type: string
+          enum: [local, agent]
+        status:
+          type: string
+          enum: [online, offline, pending, revoked]
+        tags:
+          type: array
+          items: {type: string}

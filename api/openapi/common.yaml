@@ -1,0 +1,146 @@
+components:
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: invalid credentials
+    Operation:
+      type: object
+      required: [id, kind, target, status, steps, created_at]
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [image.update, backup.run, backup.restore, proxy.site]}
+        target: {type: string, description: "Container, backup job, restored volume or stack, or site host."}
+        ref: {type: string, description: "What it belongs to: `container:<id>`, `backup-run:<id>`, `proxy-site:<host>`."}
+        group_id: {type: string, description: "Shared by the operations of one bulk update."}
+        host_id: {type: string}
+        stack: {type: string}
+        actor: {type: string, description: "User id (the owner for an owned API token), `api-token:<id>` for an unowned token, empty for scheduled work."}
+        actor_name: {type: string}
+        status: {type: string, enum: [queued, running, succeeded, failed, cancelled]}
+        error: {type: string}
+        steps:
+          type: array
+          items: {$ref: "#/components/schemas/OperationStep"}
+        created_at: {type: string, format: date-time}
+        started_at: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time}
+        log:
+          type: array
+          description: Only on `GET /operations/{id}`.
+          items: {$ref: "#/components/schemas/OperationLogLine"}
+    OperationStep:
+      type: object
+      required: [key, label, status]
+      properties:
+        key: {type: string}
+        label: {type: string}
+        status: {type: string, enum: [pending, running, succeeded, failed, skipped, warning]}
+        detail: {type: string}
+        progress: {type: number, minimum: 0, maximum: 1, description: "Absent when the step cannot measure its progress."}
+        started_at: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time}
+    OperationLogLine:
+      type: object
+      required: [ts, level, text]
+      properties:
+        ts: {type: string, format: date-time}
+        level: {type: string, enum: [info, warn, error]}
+        text: {type: string, maxLength: 1024}
+    Empty:
+      type: object
+      description: Empty body — use for 204 No Content endpoints.
+    User:
+      type: object
+      required: [id, username, role, mfa_enabled]
+      properties:
+        id: {type: string, format: uuid}
+        username: {type: string}
+        email: {type: string, format: email}
+        role: {type: string, example: operator}
+        scope_tags:
+          type: array
+          items: {type: string}
+          description: Host tags this user is scoped to. Empty / omitted = access to all hosts.
+        mfa_enabled: {type: boolean}
+        locked_until:
+          type: string
+          format: date-time
+          description: Only in the user list, while the account is blocked by failed sign-ins. Clear it with the unlock endpoint.
+    BackupStatus:
+      type: object
+      properties:
+        enabled: {type: boolean}
+        last_run_at: {type: string, format: date-time}
+        last_run_status: {type: string, enum: [success, failed, running]}
+        last_run_size_bytes: {type: integer, format: int64}
+        last_run_age_seconds: {type: integer}
+        next_run_at: {type: string, format: date-time}
+    VolumeEntry:
+      type: object
+      description: One row in a volume directory listing (P.11.8).
+      required: [name, type, size, mode, mod_time]
+      properties:
+        name: {type: string}
+        type:
+          type: string
+          enum: [file, dir, symlink]
+        size: {type: integer, format: int64}
+        mode: {type: string, description: Unix-style "rwxr-xr-x" string.}
+        mod_time: {type: string, format: date-time}
+        link_dest: {type: string, description: "For symlinks, the target path."}
+    VolumeFileResult:
+      type: object
+      description: Inline file read from a volume (P.11.8).
+      required: [content, size, truncated, binary]
+      properties:
+        content:
+          type: string
+          format: byte
+          description: Base64-encoded file bytes — capped at 1 MiB.
+        size:
+          type: integer
+          format: int64
+          description: Actual file size on disk (may exceed content length when truncated).
+        truncated: {type: boolean}
+        binary:
+          type: boolean
+          description: True when the first 8 KiB contain a NUL byte.
+    MigrationStatus:
+      type: object
+      required: [id, stack, status]
+      properties:
+        id: {type: integer, format: int64}
+        stack: {type: string}
+        source_host_id: {type: string}
+        target_host_id: {type: string}
+        status:
+          type: string
+          enum: [pending, copying, deploying, verifying, succeeded, failed, rolled_back]
+        started_at: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time}
+        progress_percent: {type: number}
+        message: {type: string}
+    FanOutResponse:
+      type: object
+      description: |
+        Returned by list endpoints when `?host=all`. `items` is the flat
+        aggregated list; `errors` lists hosts that failed to respond so
+        the UI can show partial results with a warning banner.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {type: object}
+          description: Rows from every host that answered. Shape depends on the endpoint.
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              host_id: {type: string}
+              host_name: {type: string}
+              error: {type: string}

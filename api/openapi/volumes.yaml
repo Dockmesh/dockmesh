@@ -1,0 +1,181 @@
+paths:
+  /volumes:
+    get:
+      operationId: volumes.list
+      tags: [volumes]
+      summary: List volumes (fan-out capable)
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Volume list.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items: {type: object}
+                  - $ref: "#/components/schemas/FanOutResponse"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+    post:
+      operationId: volumes.create
+      tags: [volumes]
+      summary: Create a volume on the central daemon
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+                driver: {type: string, default: local}
+                labels:
+                  type: object
+                  additionalProperties: {type: string}
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: {type: object}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /volumes/prune:
+    post:
+      operationId: volumes.prune
+      tags: [volumes]
+      summary: Remove unused volumes
+      responses:
+        "200":
+          description: Prune report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  space_reclaimed: {type: integer, format: int64}
+                  volumes_deleted:
+                    type: array
+                    items: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /volumes/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: {type: string}
+      - $ref: "#/components/parameters/HostQuery"
+    get:
+      operationId: volumes.inspect
+      tags: [volumes]
+      summary: Inspect one volume
+      responses:
+        "200":
+          description: Volume.
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      operationId: volumes.remove
+      tags: [volumes]
+      summary: Remove a volume (must be unused unless forced)
+      parameters:
+        - name: force
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        "204": {description: Removed.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Volume is in use.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /volumes/{name}/browse:
+    get:
+      operationId: volumes.browse
+      tags: [volumes]
+      summary: List one directory level inside a volume (P.11.8)
+      description: Admin-only; every call is audited. Read-only.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: {type: string}
+        - $ref: "#/components/parameters/HostQuery"
+        - name: path
+          in: query
+          schema: {type: string, default: "/"}
+          description: Path relative to the volume root.
+      responses:
+        "200":
+          description: Directory entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/VolumeEntry"}
+        "400":
+          description: |
+            Path leaves the volume root (`..` or a symlink pointing outside
+            the volume), is too long, or is not a directory.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Volume driver doesn't expose a host-filesystem mountpoint.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /volumes/{name}/browse/file:
+    get:
+      operationId: volumes.browse_file
+      tags: [volumes]
+      summary: Read a single file inside a volume, capped at 1 MiB
+      description: |
+        Returns up to 1 MiB of content. `truncated: true` signals the file
+        is larger — the UI then offers a download link instead of an inline
+        preview. `binary: true` is set when a NUL byte is found in the
+        first 8 KiB (same heuristic git uses).
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: {type: string}
+        - $ref: "#/components/parameters/HostQuery"
+        - name: path
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: File content.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VolumeFileResult"}
+        "400":
+          description: |
+            `path` is missing, leaves the volume root (`..` or a symlink
+            pointing outside the volume), is too long, or is not a regular file.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Volume driver doesn't expose a host-filesystem mountpoint.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}

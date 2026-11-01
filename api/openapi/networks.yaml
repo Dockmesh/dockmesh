@@ -1,0 +1,123 @@
+paths:
+  /networks:
+    get:
+      operationId: networks.list
+      tags: [networks]
+      summary: List networks (fan-out capable)
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Networks.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items: {type: object}
+                  - $ref: "#/components/schemas/FanOutResponse"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+    post:
+      operationId: networks.create
+      tags: [networks]
+      summary: Create a network on the central daemon
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+                driver: {type: string, default: bridge}
+                labels:
+                  type: object
+                  additionalProperties: {type: string}
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: {type: object}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /networks/prune:
+    post:
+      operationId: networks.prune
+      tags: [networks]
+      summary: Remove unused networks
+      responses:
+        "200":
+          description: Prune report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  networks_deleted:
+                    type: array
+                    items: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /networks/topology:
+    get:
+      operationId: networks.topology
+      tags: [networks]
+      summary: Network → containers graph for the topology view
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Nodes + edges ready for the d3 force graph.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  networks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string}
+                        name: {type: string}
+                        driver: {type: string}
+                        containers:
+                          type: array
+                          items: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /networks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - $ref: "#/components/parameters/HostQuery"
+    get:
+      operationId: networks.inspect
+      tags: [networks]
+      summary: Inspect one network
+      responses:
+        "200":
+          description: Network.
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      operationId: networks.remove
+      tags: [networks]
+      summary: Remove a network
+      responses:
+        "204": {description: Removed.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Network still has active endpoints.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}

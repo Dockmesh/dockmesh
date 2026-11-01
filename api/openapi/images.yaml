@@ -1,0 +1,223 @@
+paths:
+  /images:
+    get:
+      operationId: images.list
+      tags: [images]
+      summary: List images on one or all hosts
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
+        - name: all
+          in: query
+          schema: {type: boolean, default: false}
+          description: Include intermediate / dangling image layers.
+      responses:
+        "200":
+          description: Image list (passthrough of Docker SDK image.Summary plus host_id/host_name in fan-out mode).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items: {type: object}
+                  - $ref: "#/components/schemas/FanOutResponse"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /images/updates:
+    get:
+      operationId: images.updates
+      tags: [images]
+      summary: Map of cached image-update availability
+      description: |
+        Returns the snapshot of the background update watcher: for every
+        image reference a running container on the local host used in the
+        last 30 days, whether a newer manifest is available upstream.
+        Refreshed every 30 minutes and kept across restarts. Private
+        images are checked with the matching registry credential. Images
+        without a registry digest (built or loaded locally) report an
+        `error` instead of an update. Map key is the normalized image ref
+        (e.g. `nginx:1.27`).
+        Empty for callers whose scope does not include the server host.
+      responses:
+        "200":
+          description: Update info per image ref.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  properties:
+                    image: {type: string}
+                    update_available: {type: boolean}
+                    local_digest: {type: string}
+                    remote_digest: {type: string}
+                    checked_at: {type: string, format: date-time}
+                    error: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /images/pull:
+    post:
+      operationId: images.pull
+      tags: [images]
+      summary: Pull an image (streams progress as ndjson)
+      description: |
+        Streams Docker's pull-progress lines as `application/x-ndjson`.
+        Registry credentials from Settings → Registries (P.11.7) are
+        applied automatically based on the image reference. Only hits
+        the central server's local daemon; agent-side pulls with creds
+        are tracked as P.12.28.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image: {type: string, example: "ghcr.io/foo/bar:tag"}
+      responses:
+        "200":
+          description: Streaming ndjson of progress frames.
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                description: Newline-delimited JSON — one progress frame per line.
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "503":
+          description: Docker daemon unavailable.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /images/{id}:
+    get:
+      operationId: images.inspect
+      tags: [images]
+      summary: Inspect an image
+      description: |
+        Returns the full Docker `ImageInspect` payload (RepoTags, RepoDigests,
+        Config, RootFS layers, Architecture, Os, Created, Size, Labels, …).
+        Remote agents currently respond 501 — image inspect is not yet
+        carried over the agent protocol.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+          description: Image id (sha256:…) or repo:tag.
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Docker ImageInspect.
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "501":
+          description: Inspect not yet supported on this host (remote agent).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+    delete:
+      operationId: images.remove
+      tags: [images]
+      summary: Remove an image
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+          description: Image id or name:tag.
+        - $ref: "#/components/parameters/HostQuery"
+        - name: force
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        "200":
+          description: List of layers / references deleted.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: object}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Image is in use by a container.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /images/prune:
+    post:
+      operationId: images.prune
+      tags: [images]
+      summary: Remove dangling images
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Prune report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  space_reclaimed: {type: integer, format: int64}
+                  images_deleted:
+                    type: array
+                    items: {type: object}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /images/{id}/scan:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+        description: Image id or name:tag.
+    post:
+      operationId: images.scan_start
+      tags: [images]
+      summary: Kick off a Grype vulnerability scan
+      responses:
+        "202":
+          description: Scan queued — poll `GET /images/{id}/scan` for results.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: queued}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "503":
+          description: Scanner is disabled (grype not installed).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+    get:
+      operationId: images.scan_result
+      tags: [images]
+      summary: Fetch the latest scan result for an image
+      responses:
+        "200":
+          description: "Scan summary, or just {\"scanned\": false} when the image has not been scanned yet."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scanned: {type: boolean, description: Present and false only when no scan exists.}
+                  image: {type: string}
+                  scanned_at: {type: string, format: date-time}
+                  critical: {type: integer}
+                  high: {type: integer}
+                  medium: {type: integer}
+                  low: {type: integer}
+                  negligible: {type: integer}
+                  vulnerabilities:
+                    type: array
+                    items: {type: object}
+        "401": {$ref: "#/components/responses/Unauthorized"}

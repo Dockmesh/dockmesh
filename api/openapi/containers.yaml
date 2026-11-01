@@ -1,0 +1,718 @@
+paths:
+  /containers:
+    get:
+      operationId: containers.list
+      tags: [containers]
+      summary: List containers across one or all hosts
+      description: |
+        Fan-out capable via `?host=all`. Each row is a Docker SDK
+        `Container` summary plus `host_id` / `host_name` when fanning out.
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
+        - name: all
+          in: query
+          schema: {type: boolean, default: false}
+          description: Include stopped containers.
+      responses:
+        "200":
+          description: Container list. Shape differs between single-host (array) and fan-out (FanOutResponse).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items: {$ref: "#/components/schemas/Container"}
+                  - $ref: "#/components/schemas/FanOutResponse"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "503":
+          description: Docker daemon is unreachable on the target host.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /containers/summary:
+    get:
+      operationId: containers.summary
+      tags: [containers]
+      summary: Aggregated container counts + per-stack rollup
+      description: |
+        Server-side aggregation of container state used by the dashboard's
+        auto-refresh — cuts a ~15 KB full-list response down to ~1 KB of
+        counts. Fan-out capable via `?host=all`: merges per-host rollups
+        into a single summary.
+      parameters:
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "200":
+          description: Summary snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: {type: integer}
+                  running: {type: integer}
+                  stopped: {type: integer}
+                  unhealthy: {type: integer}
+                  by_stack:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        total: {type: integer}
+                        running: {type: integer}
+                        unhealthy: {type: integer}
+                        hosts: {type: array, items: {type: string}}
+                        services: {type: array, items: {type: string}}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "503":
+          description: Docker daemon is unreachable on the target host.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /containers/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ContainerIDPath"
+      - $ref: "#/components/parameters/HostQuery"
+    get:
+      operationId: containers.inspect
+      tags: [containers]
+      summary: Inspect one container
+      description: The container must be within the caller's host scope and role scope (403 otherwise).
+      responses:
+        "200":
+          description: Full container inspect response from the Docker daemon.
+          content:
+            application/json:
+              schema: {type: object, description: Passthrough of the Docker SDK container.InspectResponse.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      operationId: containers.remove
+      tags: [containers]
+      summary: Remove a container
+      parameters:
+        - name: force
+          in: query
+          schema: {type: boolean, default: false}
+          description: Kill running containers before removing.
+      responses:
+        "204": {description: Removed.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /containers/{id}/start:
+    post:
+      operationId: containers.start
+      tags: [containers]
+      summary: Start a container
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "204": {description: Started.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /containers/{id}/stop:
+    post:
+      operationId: containers.stop
+      tags: [containers]
+      summary: Stop a container (SIGTERM, then SIGKILL after timeout)
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "204": {description: Stopped.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /containers/{id}/restart:
+    post:
+      operationId: containers.restart
+      tags: [containers]
+      summary: Restart a container
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "204": {description: Restarted.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /containers/{id}/pause:
+    post:
+      operationId: containers.pause
+      tags: [containers]
+      summary: Freeze all processes via the cgroup freezer
+      description: |
+        Pauses the container without losing state — useful for incident
+        inspection. Unpause with `/containers/{id}/unpause`. P.11.4.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "204": {description: Paused.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /containers/{id}/unpause:
+    post:
+      operationId: containers.unpause
+      tags: [containers]
+      summary: Resume a paused container
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+      responses:
+        "204": {description: Resumed.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /containers/{id}/kill:
+    post:
+      operationId: containers.kill
+      tags: [containers]
+      summary: Send a signal to a container
+      description: |
+        Default signal is SIGKILL. Accepts any signal name Docker accepts
+        (SIGTERM, SIGHUP, SIGUSR1, …) in the request body. P.11.4.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                signal: {type: string, example: SIGTERM, default: SIGKILL}
+      responses:
+        "204": {description: Signal sent.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /containers/{id}/update:
+    post:
+      operationId: containers.update
+      tags: [containers]
+      summary: Pull a newer image tag and recreate the container
+      description: |
+        Pulls the container's image tag and, when it resolves to a new
+        image, replaces the container. A container that belongs to a
+        managed stack is rebuilt from the stack's compose.yaml (all
+        replicas of its service) and the change is recorded in the stack's
+        deploy history; other containers are rebuilt from their own config.
+        Volumes, including anonymous ones, are carried over. The old
+        container is only removed once the new one is running; on failure
+        the old one is restored and the old image stays tagged as the
+        rollback target. Older rollback tags beyond the configured count
+        (`DOCKMESH_UPDATE_ROLLBACK_KEEP`, default 3) are pruned.
+        Because a stack container is rebuilt from compose.yaml, updating
+        one also needs `stacks.deploy`.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+      responses:
+        "200":
+          description: Update complete, or `updated=false` when already up to date.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ContainerUpdateResult"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: An update of this container or its stack is already running.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "500":
+          description: Pull or swap failed; the previous container is kept.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /containers/{id}/rollback:
+    post:
+      operationId: containers.rollback
+      tags: [containers]
+      summary: Roll a container back to its previous image
+      description: |
+        Recreates the container from the rollback tag stored in the given
+        update-history entry of this container, with the same swap and volume handling as
+        `/containers/{id}/update`. Stack containers keep their compose.yaml
+        config; the stack's deploy history notes that the next deploy uses
+        the image compose.yaml names again.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [history_id]
+              properties:
+                history_id: {type: integer, format: int64}
+      responses:
+        "200":
+          description: Rolled back.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ContainerUpdateResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Already rolled back, the rollback image was pruned or removed, or an update of this container or its stack is running.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /containers/{id}/update-info:
+    get:
+      operationId: containers.update_info
+      tags: [containers]
+      summary: Check whether a newer image is available for this container
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+      responses:
+        "200":
+          description: Update availability — registry/release metadata for the container's image.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [image]
+                properties:
+                  image: {type: string}
+                  current_digest: {type: string}
+                  current_created: {type: string, format: date-time}
+                  local_size: {type: integer, format: int64}
+                  remote_last_updated: {type: string, format: date-time}
+                  remote_size: {type: integer, format: int64}
+                  docker_hub_url: {type: string, format: uri}
+                  github_url: {type: string, format: uri}
+                  latest_release:
+                    type: object
+                    properties:
+                      tag: {type: string}
+                      name: {type: string}
+                      url: {type: string, format: uri}
+                      body: {type: string}
+                      published: {type: string, format: date-time}
+                  warnings:
+                    type: array
+                    items: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /containers/{id}/update-history:
+    get:
+      operationId: containers.update_history
+      tags: [containers]
+      summary: List prior image updates for this container
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+      responses:
+        "200":
+          description: Update history entries, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: {type: integer, format: int64}
+                    old_image: {type: string}
+                    new_image: {type: string}
+                    updated_at: {type: string, format: date-time}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /ws/logs/{id}:
+    get:
+      operationId: ws.logs
+      tags: [containers]
+      summary: WebSocket stream of container stdout/stderr
+      description: |
+        Upgrade path for container log streaming. Pass `?ticket=<jwt>`
+        for auth (see `POST /ws/ticket`). Server writes lines as text
+        frames. The HTTP response code only shows up if the upgrade
+        fails — otherwise it's 101 Switching Protocols.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+          description: Container id.
+        - $ref: "#/components/parameters/HostQuery"
+        - name: ticket
+          in: query
+          required: true
+          schema: {type: string}
+        - name: tail
+          in: query
+          schema: {type: string, default: "100"}
+          description: "`all` or an integer — number of existing lines to send before following."
+        - name: follow
+          in: query
+          schema: {type: boolean, default: true}
+      responses:
+        "101":
+          description: Upgraded to WebSocket.
+        "401":
+          description: Missing / invalid ticket.
+        "404": {$ref: "#/components/responses/NotFound"}
+  /ws/stats/{id}:
+    get:
+      operationId: ws.stats
+      tags: [containers]
+      summary: WebSocket stream of per-container stats samples
+      description: Ticket auth via `?ticket=`. Server emits JSON frames (cpu %, mem, network, block IO) at docker's cadence.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+        - $ref: "#/components/parameters/HostQuery"
+        - name: ticket
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        "101":
+          description: Upgraded to WebSocket.
+        "401":
+          description: Missing / invalid ticket.
+        "404": {$ref: "#/components/responses/NotFound"}
+  /ws/exec/{id}:
+    get:
+      operationId: ws.exec
+      tags: [containers]
+      summary: Interactive exec session (pty) over WebSocket
+      description: |
+        Bidirectional: server writes merged stdout/stderr as binary
+        frames; client writes stdin the same way. Control frames
+        (JSON) carry tty-resize events.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+        - $ref: "#/components/parameters/HostQuery"
+        - name: ticket
+          in: query
+          required: true
+          description: Single-use ticket from `POST /ws/ticket?for=containers.exec`.
+          schema: {type: string}
+        - name: cmd
+          in: query
+          schema: {type: string, default: "/bin/sh"}
+          description: Command to exec. `sh` or `bash` are the usual picks.
+      responses:
+        "101":
+          description: Upgraded to WebSocket.
+        "401":
+          description: Missing, invalid or already used ticket.
+        "403":
+          description: Ticket not minted for exec, permission lost, or container outside the caller's host or role scope.
+        "404": {$ref: "#/components/responses/NotFound"}
+  /ws/events:
+    get:
+      operationId: ws.events
+      tags: [containers]
+      summary: WebSocket fan-out of container / stack change events
+      description: |
+        Global event stream — container state transitions, stack file
+        changes (fsnotify), deploy completions. The UI subscribes once
+        and invalidates its client-side caches as events arrive.
+      parameters:
+        - name: ticket
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        "101":
+          description: Upgraded to WebSocket.
+        "401":
+          description: Missing / invalid ticket.
+  /containers/{id}/metrics:
+    get:
+      operationId: containers.metrics
+      tags: [containers]
+      summary: Historical CPU / memory / network / disk samples
+      description: |
+        Returns time-series samples from the internal metrics collector
+        (30s raw, 1m, 1h retention per concept §15.4). Used by the
+        container detail page's charts.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - name: resolution
+          in: query
+          schema: {type: string, enum: [raw, 1m, 1h], default: raw}
+        - name: from
+          in: query
+          schema: {type: string, format: date-time}
+        - name: to
+          in: query
+          schema: {type: string, format: date-time}
+      responses:
+        "200":
+          description: Metric samples.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    ts: {type: string, format: date-time}
+                    cpu_percent: {type: number}
+                    mem_bytes: {type: integer, format: int64}
+                    mem_percent: {type: number}
+                    net_rx_bytes: {type: integer, format: int64}
+                    net_tx_bytes: {type: integer, format: int64}
+                    block_read_bytes: {type: integer, format: int64}
+                    block_write_bytes: {type: integer, format: int64}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /containers/{id}/files:
+    get:
+      operationId: containers.files.browse
+      tags: [containers]
+      summary: List one directory level inside a container's filesystem
+      description: |
+        Tar-streams the requested path out of the container and walks
+        the archive at depth 1. Path must be absolute. Requires
+        `containers.exec`, like every container file endpoint, and is
+        audited on every call.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+        - name: path
+          in: query
+          schema: {type: string, default: "/"}
+          description: Absolute path inside the container.
+      responses:
+        "200":
+          description: Directory entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/VolumeEntry"}
+        "400":
+          description: Path is empty, not absolute, or points to a non-directory.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    post:
+      operationId: containers.files.write
+      tags: [containers]
+      summary: Upload a single file into the container at an absolute path
+      description: |
+        Requires `containers.exec` because writing a file into a running
+        container is effectively code injection. Parent directory must
+        already exist. Content is base64-encoded so binary uploads work
+        over plain JSON.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, content]
+              properties:
+                path:
+                  type: string
+                  description: Absolute path inside the container.
+                content:
+                  type: string
+                  description: Base64-encoded file content.
+                mode:
+                  type: integer
+                  description: Unix permission bits; defaults to 0644 (420).
+      responses:
+        "200":
+          description: File written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path: {type: string}
+                  bytes: {type: integer}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /containers/{id}/files/content:
+    get:
+      operationId: containers.files.read
+      tags: [containers]
+      summary: Read a file inside the container as a text/binary preview
+      description: |
+        Requires `containers.exec`; audited.
+        Returns up to 1 MiB of content. `truncated: true` signals the
+        file is larger — the UI then offers a download link. `binary:
+        true` is set when a NUL byte appears in the first 8 KiB (same
+        heuristic git uses) so the UI can avoid rendering garbage.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+        - name: path
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: File content.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VolumeFileResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /containers/{id}/files/download:
+    get:
+      operationId: containers.files.download
+      tags: [containers]
+      summary: Stream a file's raw bytes out of the container for download
+      description: |
+        Streams `application/octet-stream` with `Content-Disposition:
+        attachment` so the browser triggers a file save. Used for binary
+        files and files larger than the preview cap. Requires
+        `containers.exec`; audited.
+      parameters:
+        - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
+        - name: path
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Raw file bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /containers/updates:
+    post:
+      operationId: containers.updateBulk
+      tags: [containers]
+      summary: Update the images of several containers in the background
+      description: |
+        Queues an image update (as `POST /containers/{id}/update`) for each
+        container and runs them one after another on the server, each as
+        its own operation in one group. Every container is checked like a
+        single update first (`containers.update`, its scope, and
+        `stacks.deploy` for stack containers); one denial rejects the whole
+        request and nothing is queued. At most 100 containers. Ids are
+        pinned to the full container id. Each item is authorised again
+        under the caller's current role, scope and session (or API token)
+        right before it runs; an item that is no longer allowed fails with
+        "not started".
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [container_ids]
+              properties:
+                container_ids:
+                  type: array
+                  maxItems: 100
+                  items: {type: string}
+      responses:
+        "202":
+          description: Updates queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [group_id, operations]
+                properties:
+                  group_id: {type: string}
+                  operations:
+                    type: array
+                    items: {$ref: "#/components/schemas/Operation"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503":
+          description: The updater is not configured.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /hosts/{id}/stats/containers:
+    get:
+      operationId: hosts.batch_container_stats
+      tags: [containers]
+      summary: Latest CPU + memory sample per container (used by list view)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Array of latest samples.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: object, additionalProperties: true}
+components:
+  schemas:
+    ContainerUpdateResult:
+      type: object
+      required: [container_id, container_name, image, old_digest, new_digest, updated]
+      properties:
+        container_id: {type: string, description: ID of the container now running under the name.}
+        container_name: {type: string}
+        image: {type: string, description: Image ref that was pulled (update) or the rollback tag (rollback).}
+        old_digest: {type: string, description: Image ID before the change.}
+        new_digest: {type: string, description: Image ID after the change.}
+        updated: {type: boolean}
+        rollback_tag: {type: string, description: Tag that keeps the previous image for a rollback.}
+        history_id: {type: integer, format: int64}
+        stack: {type: string, description: Set when the container belongs to a managed stack and was rebuilt from its compose.yaml.}
+    Container:
+      type: object
+      description: |
+        Docker container summary. Mirrors the Docker SDK's
+        `container.Summary` with `host_id` + `host_name` added when the
+        response comes from a fan-out list. Most fields are passthrough.
+      properties:
+        Id: {type: string}
+        Names:
+          type: array
+          items: {type: string}
+        Image: {type: string}
+        ImageID: {type: string}
+        Command: {type: string}
+        Created: {type: integer, format: int64}
+        State:
+          type: string
+          enum: [created, restarting, running, removing, paused, exited, dead]
+        Status: {type: string, example: "Up 5 minutes"}
+        Labels:
+          type: object
+          additionalProperties: {type: string}
+        host_id: {type: string}
+        host_name: {type: string}

@@ -1,0 +1,149 @@
+paths:
+  /settings/registries:
+    get:
+      operationId: registries.list
+      tags: [registries]
+      summary: List saved registry credentials (passwords redacted)
+      responses:
+        "200":
+          description: Registries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Registry"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      operationId: registries.create
+      tags: [registries]
+      summary: Save a new registry credential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RegistryInput"}
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Registry"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: A registry with this URL already exists.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /settings/registries/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IntIDPath"
+    put:
+      operationId: registries.update
+      tags: [registries]
+      summary: Update a saved registry
+      description: |
+        `password` empty = keep existing. Set `clear_password: true` to
+        explicitly wipe the stored password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RegistryInput"}
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Registry"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Another registry already has this URL.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+    delete:
+      operationId: registries.delete
+      tags: [registries]
+      summary: Delete a registry entry
+      responses:
+        "204": {description: Deleted.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /settings/registries/{id}/test:
+    post:
+      operationId: registries.test
+      tags: [registries]
+      summary: Verify credentials by calling docker RegistryLogin
+      parameters:
+        - $ref: "#/components/parameters/IntIDPath"
+      responses:
+        "200":
+          description: Login succeeded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: {type: boolean}
+                  status: {type: string}
+                  identity: {type: boolean}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "502":
+          description: Registry rejected the credentials.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, example: false}
+                  error: {type: string}
+components:
+  schemas:
+    Registry:
+      type: object
+      description: Saved private-registry credentials (P.11.7).
+      required: [id, name, url, has_password, created_at, updated_at]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        url: {type: string, example: ghcr.io}
+        username: {type: string}
+        has_password:
+          type: boolean
+          description: True when a password is stored. The plaintext is never returned.
+        scope_tags:
+          type: array
+          items: {type: string}
+          description: Host tag scope. Empty = apply to all hosts.
+        last_tested_at: {type: string, format: date-time}
+        last_test_ok: {type: boolean}
+        last_test_error: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    RegistryInput:
+      type: object
+      required: [name, url]
+      properties:
+        name: {type: string}
+        url: {type: string}
+        username: {type: string}
+        password:
+          type: string
+          format: password
+          description: Omit / empty on update to keep the existing password.
+        clear_password:
+          type: boolean
+          description: Explicitly wipe the stored password. Takes precedence over `password`.
+        scope_tags:
+          type: array
+          items: {type: string}
