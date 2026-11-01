@@ -96,7 +96,6 @@
   }
 
   const stats = $derived.by(() => {
-    const outdated = rows.filter(needsUpgrade);
     const offline = rows.filter((r) => r.status === 'offline');
     let cores = 0;
     let mem = 0;
@@ -112,12 +111,6 @@
         value: `${counts.online} of ${counts.all}`,
         note: offline.length ? offline.map((r) => r.name).join(', ') + ' offline' : counts.pending ? `${counts.pending} pending` : '',
         tone: offline.length ? ('bad' as const) : ('' as const)
-      },
-      {
-        label: 'Agents outdated',
-        value: outdated.length,
-        note: upgradePolicy ? `upgrade policy: ${upgradePolicy.mode}` : '',
-        tone: outdated.length ? ('warn' as const) : ('' as const)
       },
       { label: 'Containers', value: containers },
       { label: 'Total capacity', value: cores ? `${Math.round(cores)} cores · ${fmtMem(mem)}` : '—' }
@@ -455,7 +448,7 @@
               <span role="cell" class="dm-num dm-dim">—</span>
               <span role="cell" class="dm-num dm-dim">—</span>
             {/if}
-            <span role="cell" class="dm-mono" class:warn={needsUpgrade(r) || r.update_recommended} title={needsUpgrade(r) ? `Server is on ${fmtVersion(upgradePolicy?.server_version)}` : r.update_recommended ? 'This agent speaks an older protocol; some features are unavailable until it is upgraded' : ''}>
+            <span role="cell" class="dm-mono" class:warn={needsUpgrade(r) || r.update_recommended} title={[r.version ? fmtVersion(r.version) : '', needsUpgrade(r) ? `Server is on ${fmtVersion(upgradePolicy?.server_version)}` : r.update_recommended ? 'Older protocol: some features need an upgrade' : ''].filter(Boolean).join(' · ')}>
               {r.version ? fmtVersion(r.version) : '—'}{needsUpgrade(r) || r.update_recommended ? ' ↑' : ''}
             </span>
             <span role="cell" class="tagcell">

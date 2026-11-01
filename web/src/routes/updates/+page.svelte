@@ -240,11 +240,11 @@
       <h2 class="dm-h2">System</h2>
       <div class="dm-tbl" role="table" aria-label="System updates">
         {#each system as s (s.name)}
-          {@const kind = semverBump(s.from.replace(/^v/, ''), s.to.replace(/^v/, '')) ?? 'patch'}
+          {@const kind = semverBump(s.from.replace(/^v/, ''), s.to.replace(/^v/, ''))}
           <div class="dm-tr" role="row" style="grid-template-columns: {SYS_COLS}">
             <span role="cell" class="dm-nm"><span class="dm-t">{s.name}</span><small>{s.note}</small></span>
-            <span role="cell" class="dm-mono up-ver">{s.from} → <b>{s.to}</b></span>
-            <span role="cell"><StatusChip tone={kind === 'major' ? 'warn' : 'off'} label={kind} /></span>
+            <span role="cell" class="dm-mono up-ver" title="{s.from} → {s.to}">{s.from} → <b>{s.to}</b></span>
+            <span role="cell">{#if kind}<StatusChip tone={kind === 'major' ? 'warn' : 'off'} label={kind} />{:else}<span class="dm-dim" title="Not a release version, so there is no update kind">—</span>{/if}</span>
             <span role="cell"></span>
             <span role="cell" class="up-act"><a class="dm-btn dm-btn-sm" href={s.href}>Open</a></span>
           </div>
