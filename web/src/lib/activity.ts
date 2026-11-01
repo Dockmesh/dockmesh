@@ -1,6 +1,7 @@
 import type { Notice, NotificationItem, Operation } from '$lib/api';
 import type { Tone } from '$lib/components/ui/StatusChip.svelte';
 import { kindLabel } from '$lib/operationsProgress';
+import { inAppLink } from '$lib/links';
 
 export type FeedCategory = 'alerts' | 'operations' | 'deploys' | 'backups' | 'updates' | 'hosts' | 'migrations' | 'notices' | 'other';
 
@@ -70,7 +71,7 @@ export function buildFeed(items: NotificationItem[], ops: Operation[], open: Not
       word,
       title: n.title,
       body: n.body,
-      link: n.link,
+      link: inAppLink(n.link),
       ts: n.created_at,
       unread: !n.read_at,
       notification: n
@@ -98,7 +99,7 @@ export function buildFeed(items: NotificationItem[], ops: Operation[], open: Not
       tone: n.severity === 'critical' ? 'bad' : n.severity === 'warning' ? 'warn' : 'off',
       word: n.severity === 'critical' ? 'Critical' : n.severity === 'warning' ? 'Action required' : 'Info',
       title: n.title,
-      link: n.link,
+      link: inAppLink(n.link),
       ts: n.created_at,
       unread: false
     });

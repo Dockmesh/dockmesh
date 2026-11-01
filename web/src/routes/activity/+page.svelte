@@ -11,6 +11,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { withoutBanner } from '$lib/notices';
   import { sortAttention } from '$lib/attention';
+  import { inAppLink } from '$lib/links';
   import { buildFeed, CATEGORY_LABEL, type FeedCategory, type FeedEntry } from '$lib/activity';
   import { Tabs, Segmented, StatusChip, Menu, EmptyState, Skeleton, LiveIndicator } from '$lib/components/ui';
   import { sevTone } from '../alerts/ruleKinds';
@@ -162,7 +163,7 @@
             <span role="cell" class="dm-trunc" title={a.detail ? `${a.title} — ${a.detail}` : a.title}><b>{a.title}</b>{#if a.detail}<span class="dm-dim"> — {a.detail}</span>{/if}</span>
             <span role="cell" class="dm-dim dm-trunc">{a.object?.host_id ? hostName(a.object.host_id) : '—'}</span>
             <span role="cell" class="dm-num dm-dim" title={a.since ? new Date(a.since).toLocaleString() : ''}>{a.since ? fmtAgo(a.since) : '—'}</span>
-            <span role="cell" class="dm-tr-menu">{#if a.link}<a class="dm-btn dm-btn-sm" href={a.link}>Open</a>{/if}</span>
+            <span role="cell" class="dm-tr-menu">{#if inAppLink(a.link)}<a class="dm-btn dm-btn-sm" href={inAppLink(a.link)}>Open</a>{/if}</span>
           </div>
         {:else}
           <div class="dm-empty">Nothing matches this filter.</div>

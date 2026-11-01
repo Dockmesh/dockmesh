@@ -17,7 +17,7 @@
   import SiteModal from '../_SiteModal.svelte';
   import { TLS_LABEL, certNeedsAttention, optionSummary, type Site, type ACMEEvent } from '../_site';
 
-  const host = $derived(decodeURIComponent(page.params.site ?? ''));
+  const host = $derived(page.params.site ?? '');
 
   type Metrics = { requests: number; requests_per_second: number; status_buckets: Record<string, number>; p95_latency_ms: number };
   let site = $state<Site | null>(null);

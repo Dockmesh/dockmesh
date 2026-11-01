@@ -3,6 +3,7 @@
   import { api, type NotificationItem } from '$lib/api';
   import { fmtAgo } from '$lib/format';
   import { badgeText } from '$lib/activity';
+  import { inAppLink } from '$lib/links';
   import { Bell } from 'lucide-svelte';
 
   // Bell in the top bar: unread count and a short list of the latest
@@ -75,7 +76,8 @@
       }
     }
     close();
-    if (n.link) goto(n.link);
+    const link = inAppLink(n.link);
+    if (link) goto(link);
   }
 
   async function markAllRead() {

@@ -13,6 +13,7 @@
   import { notices } from '$lib/stores/notices.svelte';
   import { withoutBanner } from '$lib/notices';
   import { sortAttention } from '$lib/attention';
+  import { inAppLink } from '$lib/links';
   import type { Stat } from '$lib/components/ui/StatBar.svelte';
   import StackHealth from '$lib/components/ui/StackHealth.svelte';
   import MountTable from '$lib/components/MountTable.svelte';
@@ -290,7 +291,7 @@
               <StatusChip tone={sevTone(a.severity)} label={a.severity} />
               <div class="t dm-trunc" title={a.detail ? `${a.title} — ${a.detail}` : a.title}><b>{a.title}</b>{#if a.detail}<span> — {a.detail}</span>{/if}</div>
               {#if a.since}<span class="dm-num dm-dim" title={new Date(a.since).toLocaleString()}>{fmtAgo(a.since)}</span>{/if}
-              <a class="dm-btn dm-btn-sm" href={a.link}>Open</a>
+              {#if inAppLink(a.link)}<a class="dm-btn dm-btn-sm" href={inAppLink(a.link)}>Open</a>{/if}
             </div>
           {/each}
           {#if attnSorted.length > ATTN_LIMIT}
