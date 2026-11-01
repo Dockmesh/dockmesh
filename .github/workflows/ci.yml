@@ -101,6 +101,31 @@ jobs:
             exit 1
           }
 
+  migrations:
+    name: migrations
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: merged migrations are unchanged, new ones are timestamped
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          dir=internal/db/migrations/
+          # Installs record a migration by file name: a renamed one runs again.
+          changed=$(git diff --no-renames --name-only --diff-filter=DMT "$BASE_SHA" HEAD -- "$dir")
+          if [ -n "$changed" ]; then
+            echo "::error::merged migrations must not be edited, renamed or removed:"; echo "$changed"; exit 1
+          fi
+          bad=$(git diff --no-renames --name-only --diff-filter=A "$BASE_SHA" HEAD -- "$dir" |
+            grep -Ev "^${dir}[0-9]{14}_[a-z0-9_]+\.sql$" || true)
+          if [ -n "$bad" ]; then
+            echo "::error::new migrations are named YYYYMMDDHHMMSS_<slug>.sql (make migration name=<slug>):"; echo "$bad"; exit 1
+          fi
+
   go-test:
     name: go test (${{ matrix.name }})
     needs: changes
@@ -371,7 +396,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, changelog, go-test, integration, lint, govulncheck, web, docs-scripts, build, licenses]
+    needs: [changes, changelog, migrations, go-test, integration, lint, govulncheck, web, docs-scripts, build, licenses]
     runs-on: ubuntu-latest
     steps:
       - name: every job passed or was skipped

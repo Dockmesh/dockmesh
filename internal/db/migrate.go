@@ -89,10 +89,9 @@ func loadMigrations(fsys fs.FS) ([]migration, error) {
 // Migrate applies all pending migrations. On an existing database it first
 // writes a snapshot next to the DB file (see snapshotBeforeMigrate).
 //
-// Every migration that is not recorded as applied runs, in version order,
-// even when a newer one was applied before it: branches developed in
-// parallel can merge in any order. Migrations of one release therefore must
-// not depend on each other's order.
+// Pending migrations run in version order even when a newer one is
+// already applied, so migrations of one release must not depend on each
+// other's order.
 func Migrate(db *sql.DB) error { return migrate(db, migrationFS(), "") }
 
 // migrateUpTo applies migrations up to and including last ("" = all), so
@@ -118,6 +117,9 @@ func migrate(db *sql.DB, fsys fs.FS, last string) error {
 	if err != nil {
 		return err
 	}
+	if err := checkRenamed(all, applied); err != nil {
+		return err
+	}
 	var pending []migration
 	for _, m := range all {
 		if !applied[m.name] {
@@ -139,6 +141,25 @@ func migrate(db *sql.DB, fsys fs.FS, last string) error {
 	for _, m := range pending {
 		if err := applyMigration(db, fsys, m.name); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// checkRenamed refuses to migrate when an applied migration's version
+// ships under a different file name: the renamed file would run again.
+func checkRenamed(all []migration, applied map[string]bool) error {
+	byVersion := make(map[string]string, len(all))
+	for _, m := range all {
+		byVersion[m.version] = m.name
+	}
+	for name := range applied {
+		m, err := parseMigrationName(name)
+		if err != nil {
+			continue
+		}
+		if shipped, ok := byVersion[m.version]; ok && shipped != name {
+			return fmt.Errorf("applied migration %s ships as %s: migrations must not be renamed", name, shipped)
 		}
 	}
 	return nil

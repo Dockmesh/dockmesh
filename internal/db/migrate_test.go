@@ -10,9 +10,9 @@ import (
 	"testing/fstest"
 )
 
-// v042Migrations reports whether name shipped in v0.4.2, the last release
+// shippedInV042 reports whether name shipped in v0.4.2, the last release
 // before 072 and 079+ were merged.
-func v042Migrations(name string) bool {
+func shippedInV042(name string) bool {
 	return name <= "076" && !strings.HasPrefix(name, "072_")
 }
 
@@ -83,12 +83,15 @@ func tableExists(t *testing.T, database *sql.DB, name string) bool {
 	return n == 1
 }
 
-func TestShippedMigrationNames(t *testing.T) {
+func TestShippedMigrations(t *testing.T) {
 	all, err := loadMigrations(migrationFS())
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, m := range all {
+		if !hasStatement(t, m.name) {
+			t.Errorf("%s has no SQL: an empty migration is recorded as applied and its later content never runs", m.name)
+		}
 		if numberedName.MatchString(m.name) && !slices.Contains(numberedMigrations, m.name) {
 			t.Errorf("%s: numbered migration names are frozen, name it YYYYMMDDHHMMSS_<slug>.sql (UTC)", m.name)
 		}
@@ -97,6 +100,38 @@ func TestShippedMigrationNames(t *testing.T) {
 		if !slices.ContainsFunc(all, func(m migration) bool { return m.name == name }) {
 			t.Errorf("%s is missing: an applied migration must never be renamed or removed", name)
 		}
+	}
+}
+
+func hasStatement(t *testing.T, name string) bool {
+	t.Helper()
+	b, err := fs.ReadFile(migrationFS(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if l := strings.TrimSpace(line); l != "" && !strings.HasPrefix(l, "--") {
+			return true
+		}
+	}
+	return false
+}
+
+func TestMigrateRefusesRenamed(t *testing.T) {
+	t.Setenv(SkipSnapshotEnv, "1")
+	database, _ := openFileDB(t)
+	create := []byte(`CREATE TABLE widget (id INTEGER);`)
+	if err := migrate(database, fstest.MapFS{"20261101000000_add_widget.sql": {Data: create}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	err := migrate(database, fstest.MapFS{"20261101000000_add_widgets.sql": {Data: create}}, "")
+	if err == nil || !strings.Contains(err.Error(), "must not be renamed") {
+		t.Fatalf("error = %v, want rename refusal", err)
+	}
+	// A newer database migrated by a later release still starts on this
+	// binary, as before.
+	if err := migrate(database, fstest.MapFS{}, ""); err != nil {
+		t.Errorf("unknown applied migration: %v", err)
 	}
 }
 
@@ -213,7 +248,7 @@ func TestMigrateUpgrade(t *testing.T) {
 	}{
 		{
 			name:    "from v0.4.2",
-			seed:    v042Migrations,
+			seed:    shippedInV042,
 			wantNew: []string{"072_image_update_checks.sql", "079_alert_engine.sql", tsMigration},
 		},
 		{
@@ -345,9 +380,6 @@ func TestSnapshotReusedOnlyForSameState(t *testing.T) {
 	}
 	t.Setenv(SkipSnapshotEnv, "")
 
-	// A pending migration with an older timestamp leaves MAX(version)
-	// unchanged, so the snapshot must still be taken once it is applied
-	// and another one arrives.
 	fsys["20261101000000_older.sql"] = &fstest.MapFile{Data: []byte(`CREATE TABLE older (id INTEGER);`)}
 	if err := migrate(database, fsys, ""); err != nil {
 		t.Fatal(err)

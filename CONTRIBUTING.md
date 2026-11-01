@@ -41,6 +41,7 @@ current `main`.
 | Job | What it runs |
 |---|---|
 | `changelog` | validates the changelog fragments and that `CHANGELOG.md` matches them |
+| `migrations` | merged migrations stay unchanged and new ones are timestamped |
 | `go test` | `go test -race ./...` in five shards (includes the OpenAPI drift and bundle tests) |
 | `integration` | backup targets against real SMB, SFTP, WebDAV and S3 servers |
 | `lint` | golangci-lint (including govet), reporting only issues your change introduces |
@@ -78,8 +79,9 @@ make migration name=add_widget_table
 # creates internal/db/migrations/20261101093000_add_widget_table.sql
 ```
 
-The numbered files (`001_…` to `085_…`) are frozen; tests fail on a new
-numbered name, a duplicate version or a renamed migration. On start the
+The numbered files (`001_…` to `085_…`) are frozen. CI fails on a new
+numbered name, a duplicate version, an empty migration, or an edited,
+renamed or removed merged one. On start the
 server applies every migration it has not applied yet, in version order,
 even when one with an older timestamp arrives after a newer one was
 applied (two PRs merged in a different order than they were written).

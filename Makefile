@@ -91,5 +91,5 @@ openapi:
 
 # New migration named with the current UTC time: make migration name=<slug>
 migration:
-	@test -n "$(name)" || { echo "usage: make migration name=<lower_case_slug>"; exit 1; }
-	@f=internal/db/migrations/$$(date -u +%Y%m%d%H%M%S)_$(name).sql; touch $$f; echo $$f
+	@echo "$(name)" | grep -Eqx '[a-z0-9_]+' || { echo "usage: make migration name=<lower_case_slug>"; exit 1; }
+	@f=internal/db/migrations/$$(date -u +%Y%m%d%H%M%S)_$(name).sql; echo '-- $(name)' > $$f; echo $$f
