@@ -27,13 +27,13 @@ const progressEvery = 250 * time.Millisecond
 
 // drainPull reads the pull stream to the end, as the pull only finishes
 // once it is consumed, and reports layer progress and status lines to op.
-// A stream that stops parsing is still read to the end.
-func drainPull(rc io.Reader, op *operations.Op) error {
+// A stream that stops parsing is still read to the end. Docker reports a
+// failed pull (auth, rate limit, missing tag) inside the stream with an
+// HTTP 200, so the first error line becomes the returned error, with the
+// registry credentials in secrets masked.
+func drainPull(rc io.Reader, op *operations.Op, secrets []string) error {
 	const step = StepPull
-	if op == nil {
-		_, err := io.Copy(io.Discard, rc)
-		return err
-	}
+	var pullErr error
 	type layer struct{ cur, total int64 }
 	layers := map[string]*layer{}
 	var order []string
@@ -43,19 +43,24 @@ func drainPull(rc io.Reader, op *operations.Op) error {
 		var m pullMessage
 		if err := dec.Decode(&m); err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-				return nil
+				return pullErr
 			}
 			var se *json.SyntaxError
 			var te *json.UnmarshalTypeError
 			if !errors.As(err, &se) && !errors.As(err, &te) {
 				return err
 			}
-			_, cerr := io.Copy(io.Discard, io.MultiReader(dec.Buffered(), rc))
-			return cerr
+			if _, cerr := io.Copy(io.Discard, io.MultiReader(dec.Buffered(), rc)); cerr != nil {
+				return cerr
+			}
+			return pullErr
 		}
 		switch {
 		case m.Error != "":
 			op.Logf("error", "%s", m.Error)
+			if pullErr == nil {
+				pullErr = errors.New(operations.MaskText(m.Error, secrets))
+			}
 		case m.ID == "":
 			op.Logf("info", "%s", m.Status)
 		case m.Status == "Downloading":

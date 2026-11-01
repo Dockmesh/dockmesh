@@ -218,7 +218,8 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 
 	op := operations.FromContext(ctx)
 	authBlob := s.resolveImageAuth(ctx, ref)
-	op.AddSecrets(authSecrets(authBlob)...)
+	secrets := authSecrets(authBlob)
+	op.AddSecrets(secrets...)
 	op.StepStart(StepPull, "")
 	op.Logf("info", "pulling %s", ref)
 	rc, err := cli.ImagePull(ctx, ref, imagetypes.PullOptions{RegistryAuth: authBlob})
@@ -227,8 +228,9 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 		op.StepFail(StepPull, err)
 		return nil, err
 	}
-	if err := drainPull(rc, op); err != nil {
+	if err := drainPull(rc, op, secrets); err != nil {
 		rc.Close()
+		err = fmt.Errorf("pull %s: %w", ref, err)
 		op.StepFail(StepPull, err)
 		return nil, err
 	}

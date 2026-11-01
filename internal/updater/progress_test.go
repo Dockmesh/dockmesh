@@ -46,8 +46,9 @@ func TestDrainPullReportsProgressWithoutSecrets(t *testing.T) {
 		`{"status":"Digest: sha256:abc"}`,
 		`{"status":"Status: Downloaded newer image for nginx:1.27, auth ` + auth + `"}`,
 	}, "\n")
-	if err := drainPull(strings.NewReader(stream), op); err != nil {
-		t.Fatal(err)
+	err := drainPull(strings.NewReader(stream), op, authSecrets(auth))
+	if err == nil || strings.Contains(err.Error(), pw) || !strings.Contains(err.Error(), "unauthorized") {
+		t.Fatalf("pull error %v: want the stream's error with the password masked", err)
 	}
 	op.StepDone(StepPull, "")
 	op.Finish(nil)
@@ -85,7 +86,7 @@ func TestDrainPullReportsProgressWithoutSecrets(t *testing.T) {
 
 func TestDrainPullWithoutOperationReadsToEnd(t *testing.T) {
 	r := strings.NewReader(`{"status":"a"}` + "\n" + `not json` + "\n")
-	if err := drainPull(r, nil); err != nil {
+	if err := drainPull(r, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if r.Len() != 0 {
@@ -94,10 +95,42 @@ func TestDrainPullWithoutOperationReadsToEnd(t *testing.T) {
 	r = strings.NewReader(`{"status":"a"}` + "\n" + `not json, more` + "\n")
 	ops := newOps(t)
 	op := ops.Start(context.Background(), operations.Spec{Kind: "image.update"})
-	if err := drainPull(r, op); err != nil {
+	if err := drainPull(r, op, nil); err != nil {
 		t.Fatal(err)
 	}
 	if r.Len() != 0 {
 		t.Fatalf("%d bytes left unread after a parse error", r.Len())
+	}
+}
+
+func TestDrainPullReturnsStreamErrors(t *testing.T) {
+	tests := []struct {
+		name, stream, want string
+		withOp             bool
+	}{
+		{"clean pull", `{"status":"Pulling from library/app"}` + "\n" + `{"status":"Digest: sha256:aa"}` + "\n", "", true},
+		{"rate limit with operation", `{"status":"Pulling from library/app"}` + "\n" + `{"errorDetail":{"message":"toomanyrequests"},"error":"toomanyrequests: rate limit"}` + "\n", "toomanyrequests: rate limit", true},
+		{"auth without operation", `{"error":"unauthorized: authentication required"}` + "\n" + `{"error":"second"}` + "\n", "unauthorized: authentication required", false},
+		{"error then garbage", `{"error":"manifest unknown"}` + "\n" + `not json` + "\n", "manifest unknown", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var op *operations.Op
+			if tt.withOp {
+				op = newOps(t).Start(context.Background(), operations.Spec{Kind: "image.update"})
+			}
+			r := strings.NewReader(tt.stream)
+			err := drainPull(r, op, nil)
+			got := ""
+			if err != nil {
+				got = err.Error()
+			}
+			if got != tt.want {
+				t.Fatalf("error %q, want %q", got, tt.want)
+			}
+			if r.Len() != 0 {
+				t.Fatalf("%d bytes left unread", r.Len())
+			}
+		})
 	}
 }
