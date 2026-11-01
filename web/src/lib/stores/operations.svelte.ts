@@ -18,7 +18,7 @@ const POLL_OFFLINE_MS = 4_000;
 const RECENT_MS = 30 * 60_000;
 
 export { kindLabel, isActive, currentStep, overallProgress, opRef, hasWarning, failedStep, elapsed } from '$lib/operationsProgress';
-import { kindLabel, isActive, opRef, failedStep } from '$lib/operationsProgress';
+import { kindLabel, isActive, opRef, failedStep, shortMessage } from '$lib/operationsProgress';
 
 function createOperationsStore() {
   let byId = $state<Record<string, Operation>>({});
@@ -47,11 +47,11 @@ function createOperationsStore() {
     const what = `${kindLabel(op.kind)} ${op.target}`;
     if (op.status === 'succeeded') {
       const warned = op.steps.find((s) => s.status === 'warning');
-      if (warned) toast.warning(`${what} finished with a warning`, warned.detail);
+      if (warned) toast.warning(`${what} finished with a warning`, shortMessage(warned.detail));
       else toast.success(`${what} finished`);
     } else if (op.status === 'failed') {
       const failed = failedStep(op);
-      toast.error(`${what} failed${failed ? ` at “${failed.label}”` : ''}`, op.error);
+      toast.error(`${what} failed${failed ? ` at “${failed.label}”` : ''}`, shortMessage(op.error));
     } else if (op.status === 'cancelled') {
       toast.info(`${what} cancelled`);
     }

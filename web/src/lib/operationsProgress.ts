@@ -62,3 +62,15 @@ export function elapsed(start?: string, end?: string): string {
   const sec = Math.max(0, Math.round((stop - Date.parse(start)) / 1000));
   return sec < 60 ? `${sec} s` : `${Math.floor(sec / 60)} min ${sec % 60} s`;
 }
+
+// Toasts carry a short form of a step's message: the sentence before the
+// first colon when that is where a raw upstream error starts, else the
+// first 140 characters. The drawer shows the full text.
+export function shortMessage(msg: string | null | undefined, max = 140): string {
+  if (!msg) return '';
+  const m = msg.trim();
+  if (m.length <= max) return m;
+  const colon = m.indexOf(': ');
+  if (colon >= 20 && colon <= max) return m.slice(0, colon) + '.';
+  return m.slice(0, max - 1).trimEnd() + '…';
+}

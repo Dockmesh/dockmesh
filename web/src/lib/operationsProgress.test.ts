@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Operation, OperationStep } from '$lib/api';
-import { currentStep, elapsed, failedStep, hasWarning, isActive, kindLabel, opRef, overallProgress } from './operationsProgress';
+import { currentStep, elapsed, failedStep, hasWarning, isActive, kindLabel, opRef, overallProgress, shortMessage } from './operationsProgress';
 
 function op(steps: Partial<OperationStep>[], status: Operation['status'] = 'running'): Operation {
   return {
@@ -71,5 +71,17 @@ describe('elapsed', () => {
   });
   it('is empty without a start', () => {
     expect(elapsed(undefined)).toBe('');
+  });
+});
+
+describe('shortMessage', () => {
+  const acme = 'Caddy could not get a certificate yet and keeps retrying: could not get certificate from issuer: HTTP 400 urn:ietf:params:acme:error:rejectedIdentifier - Error creating new order :: Cannot issue for "x.example.com": forbidden by policy';
+  it.each([
+    ['short text stays', 'Pull failed: rate limit', 'Pull failed: rate limit'],
+    ['raw error after the first colon is dropped', acme, 'Caddy could not get a certificate yet and keeps retrying.'],
+    ['long text without a sentence prefix is cut', 'x'.repeat(200), 'x'.repeat(139) + '…'],
+    ['empty', '', '']
+  ])('%s', (_n, input, want) => {
+    expect(shortMessage(input)).toBe(want);
   });
 });
