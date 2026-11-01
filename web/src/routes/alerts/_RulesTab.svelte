@@ -5,6 +5,7 @@
   import { confirm } from '$lib/stores/confirm.svelte';
   import { EmptyState, Skeleton, StatusChip, Switch } from '$lib/components/ui';
   import Menu from '$lib/components/ui/Menu.svelte';
+  import { allowed } from '$lib/rbac.svelte';
   import { BellRing, Plus } from 'lucide-svelte';
 
   interface Props {
@@ -18,6 +19,9 @@
   }
 
   let { rules, channels, loading, hostName, onEdit, onCreate, onReload }: Props = $props();
+  const canCreate = $derived(allowed('alerts.create'));
+  const canUpdate = $derived(allowed('alerts.update'));
+  const canDelete = $derived(allowed('alerts.delete'));
 
   const COLS = '14px 84px minmax(170px, 1.2fr) minmax(220px, 1.6fr) minmax(140px, 1fr) minmax(90px, 0.7fr) 96px 44px 36px';
 
@@ -118,7 +122,7 @@
     description="A rule watches container metrics and events, hosts, disks, backups or certificates and notifies a channel."
   >
     {#snippet action()}
-      <button type="button" class="dm-btn dm-btn-primary" onclick={onCreate}><Plus size={14} strokeWidth={2} /> New rule</button>
+      {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={onCreate}><Plus size={14} strokeWidth={2} /> New rule</button>{/if}
     {/snippet}
   </EmptyState>
 {:else}
@@ -146,7 +150,7 @@
         <span role="cell"><span class="dm-dot {dotTone(r)}" title={r.firing_since ? `Firing since ${new Date(r.firing_since).toLocaleString()}` : r.enabled ? 'Quiet' : 'Paused'}></span></span>
         <span role="cell"><StatusChip tone={sevTone(r.severity || 'warning')} label={r.severity || 'warning'} /></span>
         <span role="cell" class="dm-nm">
-          <button type="button" class="rt-name dm-t" title={r.name} onclick={() => onEdit(r)}>{r.name}</button>
+          {#if canUpdate}<button type="button" class="rt-name dm-t" title={r.name} onclick={() => onEdit(r)}>{r.name}</button>{:else}<span class="dm-t" title={r.name}>{r.name}</span>{/if}
           <small>
             {r.builtin ? 'built-in' : 'custom'} · {kindLabel(kindOf(r))}{#if r.firing_since}<span class="rt-fire"> · firing</span>{/if}{#if muted} · muted until {new Date(r.muted_until!).toLocaleString()}{/if}
           </small>
@@ -158,22 +162,24 @@
         </span>
         <span role="cell" class="dm-num dm-dim" title={r.last_triggered_at ? new Date(r.last_triggered_at).toLocaleString() : ''}>{fmtRel(r.last_triggered_at)}</span>
         <span role="cell" class="dm-tr-menu">
-          <Switch checked={r.enabled} label={r.enabled ? `Pause ${r.name}` : `Resume ${r.name}`} hideLabel onchange={(v) => update(r, { enabled: v })} />
+          <Switch checked={r.enabled} disabled={!canUpdate} label={r.enabled ? `Pause ${r.name}` : `Resume ${r.name}`} hideLabel onchange={(v) => update(r, { enabled: v })} />
         </span>
         <span role="cell" class="dm-tr-menu">
-          <Menu
-            label="Actions for {r.name}"
-            items={[
-              { label: 'Edit…', onclick: () => onEdit(r) },
-              { label: 'Duplicate', onclick: () => duplicate(r) },
-              muted
-                ? { label: 'Unmute', onclick: () => update(r, { muted_until: '' }, 'Unmuted') }
-                : { label: 'Mute for 1 hour', onclick: () => update(r, { muted_until: new Date(Date.now() + 3600000).toISOString() }, 'Muted for 1 h') },
-              ...(r.builtin
-                ? []
-                : [{ separator: true }, { label: 'Delete…', danger: true, onclick: () => deleteRule(r) }])
-            ]}
-          />
+          {#if canUpdate || canCreate || (canDelete && !r.builtin)}
+            <Menu
+              label="Actions for {r.name}"
+              items={[
+                ...(canUpdate ? [{ label: 'Edit…', onclick: () => onEdit(r) }] : []),
+                ...(canCreate ? [{ label: 'Duplicate', onclick: () => duplicate(r) }] : []),
+                ...(!canUpdate
+                  ? []
+                  : muted
+                    ? [{ label: 'Unmute', onclick: () => update(r, { muted_until: '' }, 'Unmuted') }]
+                    : [{ label: 'Mute for 1 hour', onclick: () => update(r, { muted_until: new Date(Date.now() + 3600000).toISOString() }, 'Muted for 1 h') }]),
+                ...(r.builtin || !canDelete ? [] : [{ separator: true }, { label: 'Delete…', danger: true, onclick: () => deleteRule(r) }])
+              ]}
+            />
+          {/if}
         </span>
       </div>
     {:else}

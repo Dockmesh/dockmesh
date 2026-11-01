@@ -4,6 +4,7 @@
   import { confirm } from '$lib/stores/confirm.svelte';
   import { EmptyState, Skeleton, Switch } from '$lib/components/ui';
   import Menu from '$lib/components/ui/Menu.svelte';
+  import { allowed } from '$lib/rbac.svelte';
   import { Bell, Plus, Send } from 'lucide-svelte';
 
   const COLS = '14px minmax(170px, 1.1fr) minmax(220px, 1.6fr) 90px minmax(160px, 1fr) 84px 44px 36px';
@@ -18,6 +19,9 @@
   }
 
   let { channels, rules, loading, onEdit, onCreate, onReload }: Props = $props();
+  const canCreate = $derived(allowed('alerts.create'));
+  const canUpdate = $derived(allowed('alerts.update'));
+  const canDelete = $derived(allowed('alerts.delete'));
 
   let testing = $state<Record<number, 'running' | 'ok' | 'fail'>>({});
 
@@ -109,7 +113,7 @@
     description="Add a webhook, ntfy, Discord, Slack, Teams, Gotify, email, PagerDuty or Pushover destination."
   >
     {#snippet action()}
-      <button type="button" class="dm-btn dm-btn-primary" onclick={onCreate}><Plus size={14} strokeWidth={2} /> New channel</button>
+      {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={onCreate}><Plus size={14} strokeWidth={2} /> New channel</button>{/if}
     {/snippet}
   </EmptyState>
 {:else}
@@ -131,7 +135,7 @@
       <div class="dm-tr" role="row" style="grid-template-columns: {COLS}">
         <span role="cell"><span class="dm-dot {!c.enabled ? '' : failing ? 'bad' : 'ok'}"></span></span>
         <span role="cell" class="dm-nm">
-          <button type="button" class="ct-name dm-t" title={c.name} onclick={() => onEdit(c)}>{c.name}</button>
+          {#if canUpdate}<button type="button" class="ct-name dm-t" title={c.name} onclick={() => onEdit(c)}>{c.name}</button>{:else}<span class="dm-t" title={c.name}>{c.name}</span>{/if}
           <small>{c.type}{c.enabled ? '' : ' · disabled'}</small>
         </span>
         <span role="cell" class="dm-mono dm-dim ct-dest" title={configSummary(c)}>{configSummary(c)}</span>
@@ -142,24 +146,26 @@
             type="button"
             class="dm-btn dm-btn-sm dm-btn-ghost"
             onclick={() => testFire(c)}
-            disabled={!c.enabled || tState === 'running'}
+            disabled={!canUpdate || !c.enabled || tState === 'running'}
             title="Send a test notification"
           >
             {#if tState === 'running'}Sending…{:else if tState === 'ok'}Sent{:else if tState === 'fail'}Failed{:else}<Send size={12} strokeWidth={1.8} /> Test{/if}
           </button>
         </span>
         <span role="cell" class="dm-tr-menu">
-          <Switch checked={c.enabled} label={c.enabled ? `Disable ${c.name}` : `Enable ${c.name}`} hideLabel onchange={() => toggleEnabled(c)} />
+          <Switch checked={c.enabled} disabled={!canUpdate} label={c.enabled ? `Disable ${c.name}` : `Enable ${c.name}`} hideLabel onchange={() => toggleEnabled(c)} />
         </span>
         <span role="cell" class="dm-tr-menu">
-          <Menu
-            label="Actions for {c.name}"
-            items={[
-              { label: 'Edit…', onclick: () => onEdit(c) },
-              { separator: true },
-              { label: 'Delete…', danger: true, onclick: () => deleteChannel(c) }
-            ]}
-          />
+          {#if canUpdate || canDelete}
+            <Menu
+              label="Actions for {c.name}"
+              items={[
+                ...(canUpdate ? [{ label: 'Edit…', onclick: () => onEdit(c) }] : []),
+                ...(canUpdate && canDelete ? [{ separator: true }] : []),
+                ...(canDelete ? [{ label: 'Delete…', danger: true, onclick: () => deleteChannel(c) }] : [])
+              ]}
+            />
+          {/if}
         </span>
       </div>
     {/each}

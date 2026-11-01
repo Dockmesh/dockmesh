@@ -57,7 +57,7 @@
   }
 
   $effect(() => {
-    if (!allowed('alerts.update')) { goto('/'); return; }
+    if (!allowed('alerts.view')) { goto('/'); return; }
     // All three up front, so every tab counter is real from the start.
     Promise.all([loadRules(), loadChannels(), loadHistory()]);
     api.hosts.list().then((h) => (hosts = h)).catch(() => (hosts = []));
@@ -123,9 +123,9 @@
     </span>
     <span class="dm-sp"></span>
     {#if tab === 'rules'}
-      <button type="button" class="dm-btn dm-btn-primary" onclick={openNewRule}><Plus size={14} strokeWidth={2} /> New rule</button>
+      {#if allowed('alerts.create')}<button type="button" class="dm-btn dm-btn-primary" onclick={openNewRule}><Plus size={14} strokeWidth={2} /> New rule</button>{/if}
     {:else if tab === 'channels'}
-      <button type="button" class="dm-btn dm-btn-primary" onclick={openNewChannel}><Plus size={14} strokeWidth={2} /> New channel</button>
+      {#if allowed('alerts.create')}<button type="button" class="dm-btn dm-btn-primary" onclick={openNewChannel}><Plus size={14} strokeWidth={2} /> New channel</button>{/if}
     {:else}
       <button type="button" class="dm-btn" onclick={exportCSV} disabled={filteredHistory.length === 0}><Download size={14} strokeWidth={1.8} /> Export CSV</button>
     {/if}
