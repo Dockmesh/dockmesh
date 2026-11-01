@@ -274,7 +274,7 @@ type sftpReader struct {
 }
 
 func (r *sftpReader) Read(p []byte) (int, error) { return r.f.Read(p) }
-func (r *sftpReader) Break() error                { return r.conn.Close() }
+func (r *sftpReader) Break() error               { return r.conn.Close() }
 func (r *sftpReader) Close() error {
 	r.f.Close()
 	r.client.Close()
