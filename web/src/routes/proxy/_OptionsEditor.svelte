@@ -26,6 +26,8 @@
   const wwwPossible = $derived(!/^(www\.|\*\.)/i.test(host) && !/^[\d.:[\]]+$/.test(host));
 
   const SECRET_HINT = 'set — leave empty to keep';
+  // Keeps password managers from storing these as a Dockmesh login.
+  const NO_MANAGER = { 'data-1p-ignore': '', 'data-lpignore': 'true', 'data-bwignore': '' };
 
   function addHeader(list: HeaderRow[]) {
     list.push({ name: '', value: '', secret: false, valueSet: false });
@@ -44,21 +46,21 @@
   <span class="ck-l"><label for={id}>{label}</label><span class="hint">{hint}</span></span>
 {/snippet}
 
-{#snippet headerRows(list: HeaderRow[], field: string, label: string)}
+{#snippet headerRows(list: HeaderRow[], field: string, label: string, secrets: boolean)}
   <div class="dm-field wide">
     <span class="lbl">{label}</span>
     {#each list as h, i (i)}
-      <div class="hrow">
+      <div class="hrow" class:nosecret={!secrets}>
         <input class="dm-input dm-mono" bind:value={h.name} placeholder="Header-Name" aria-label="{label} name" disabled={readonly} autocomplete="off" />
         {#if h.secret}
           <input class="dm-input dm-mono" type="password" bind:value={h.value} aria-label="{label} value"
-            placeholder={h.valueSet ? SECRET_HINT : 'value'} disabled={readonly} autocomplete="new-password" />
+            placeholder={h.valueSet ? SECRET_HINT : 'value'} disabled={readonly} autocomplete="new-password" {...NO_MANAGER} />
         {:else}
           <input class="dm-input dm-mono" bind:value={h.value} placeholder="value" aria-label="{label} value" disabled={readonly} autocomplete="off" />
         {/if}
-        <label class="chk sm" title={h.secret && h.valueSet && !h.value ? 'Enter the value again to make it visible' : 'Write-only: the value is never shown again, also not in the config preview'}>
+        {#if secrets}<label class="chk sm" title={h.secret && h.valueSet && !h.value ? 'Enter the value again to make it visible' : 'Write-only: the value is never shown again, also not in the config preview'}>
           <input type="checkbox" bind:checked={h.secret} disabled={readonly || (h.secret && h.valueSet && !h.value)} /> Secret
-        </label>
+        </label>{/if}
         {#if !readonly}
           <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" aria-label="Remove header" onclick={() => list.splice(i, 1)}><X size={13} /></button>
         {/if}
@@ -174,7 +176,7 @@
         <div class="hrow">
           <input class="dm-input" bind:value={u.username} placeholder="user name" aria-label="User name" disabled={readonly} autocomplete="off" />
           <input class="dm-input" type="password" bind:value={u.password} aria-label="Password for {u.username || 'new user'}"
-            placeholder={u.stored ? SECRET_HINT : 'password, 8 characters or more'} disabled={readonly} autocomplete="new-password" />
+            placeholder={u.stored ? SECRET_HINT : 'password, 8 characters or more'} disabled={readonly} autocomplete="new-password" {...NO_MANAGER} />
           {#if !readonly}
             <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" aria-label="Remove user" onclick={() => form.access.users.splice(i, 1)}><X size={13} /></button>
           {/if}
@@ -234,19 +236,19 @@
       <input id="o-sh" type="checkbox" bind:checked={form.headers.security} disabled={readonly} />
       {@render check('o-sh', 'Security headers', 'nosniff, SAMEORIGIN frames and a strict referrer policy.')}
     </div>
-    {@render headerRows(form.headers.requestSet, 'headers.request_set', 'Set on requests to the upstream')}
+    {@render headerRows(form.headers.requestSet, 'headers.request_set', 'Set on requests to the upstream', true)}
     <div class="dm-field wide">
       <label for="o-rqr">Remove from requests</label>
       <input id="o-rqr" class="dm-input dm-mono" bind:value={form.headers.requestRemove} disabled={readonly} placeholder="X-Debug, Cookie" autocomplete="off" />
       {@render err('headers.request_remove')}
     </div>
-    {@render headerRows(form.headers.responseSet, 'headers.response_set', 'Set on responses to visitors')}
+    {@render headerRows(form.headers.responseSet, 'headers.response_set', 'Set on responses to visitors', false)}
     <div class="dm-field wide">
       <label for="o-rsr">Remove from responses</label>
       <input id="o-rsr" class="dm-input dm-mono" bind:value={form.headers.responseRemove} disabled={readonly} placeholder="Server, X-Powered-By" autocomplete="off" />
       {@render err('headers.response_remove')}
     </div>
-    <span class="hint">Mark values like API keys as secret: they are stored but never shown again.</span>
+    <span class="hint">Mark request header values like API keys as secret: they are stored but never shown again, and have to be entered again when the site gets another upstream.</span>
   {:else if key === 'logs'}
     <div class="ck">
       <input id="o-al" type="checkbox" bind:checked={form.logs.accessLog} disabled={readonly} />
@@ -289,6 +291,7 @@
   .chk { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); white-space: nowrap; }
   .chk.sm { font-size: var(--fs-xs); color: var(--muted); }
   .hrow { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr) auto auto; gap: 6px; align-items: center; }
+  .hrow.nosecret { grid-template-columns: minmax(0, 220px) minmax(0, 1fr) auto; }
   .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
   .size { display: grid; grid-template-columns: minmax(0, 1fr) 84px; gap: 6px; }
   .ta { resize: vertical; min-height: 0; }

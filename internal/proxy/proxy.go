@@ -231,7 +231,7 @@ func (s *Service) CreateRoute(ctx context.Context, spec RouteSpec) (*Route, erro
 		hashes := opts
 		prev = &hashes
 	}
-	raw, err := s.prepareOptions(ctx, 0, spec.Host, spec.TLSMode, &opts, prev)
+	raw, err := s.prepareOptions(ctx, 0, spec.Host, spec.TLSMode, &opts, prev, false)
 	if err != nil {
 		return nil, err
 	}
@@ -271,8 +271,8 @@ func (s *Service) CreateRoute(ctx context.Context, spec RouteSpec) (*Route, erro
 // its enabled state unless enabled is nil and its options unless opts is
 // nil. A disabled route stays in the table but is left out of the
 // generated config, so traffic stops without losing config. It returns
-// what changed (upstream, tls_mode, enabled, options.<group>) once the
-// change is saved, also when applying it to Caddy fails.
+// what changed (upstream, tls_mode, enabled, options.<group>), non-nil
+// once the change is saved, also when applying it to Caddy fails.
 func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode string, enabled *bool, opts *SiteOptions) ([]string, error) {
 	if err := validateTLSMode(tlsMode); err != nil {
 		return nil, err
@@ -291,7 +291,9 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode s
 	} else if cur.optionsErr != nil {
 		return nil, fmt.Errorf("%w: stored options can't be read (%w); send new options", ErrInvalidOptions, cur.optionsErr)
 	}
-	raw, err := s.prepareOptions(ctx, id, cur.Host, tlsMode, &next, prev)
+	newUpstream := addsUpstream(append([]string{cur.Upstream}, cur.Options.Routing.ExtraUpstreams...),
+		append([]string{upstream}, next.Routing.ExtraUpstreams...))
+	raw, err := s.prepareOptions(ctx, id, cur.Host, tlsMode, &next, prev, newUpstream)
 	if err != nil {
 		return nil, err
 	}
@@ -305,7 +307,7 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode s
 	if err != nil {
 		return nil, err
 	}
-	var changed []string
+	changed := []string{}
 	if upstream != cur.Upstream {
 		changed = append(changed, "upstream")
 	}
@@ -323,13 +325,28 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode s
 	return changed, s.SyncFromDB(ctx)
 }
 
-// prepareOptions hashes new passwords, validates the options of the
-// site with id (0 for a new one) and returns them encoded for storage.
-func (s *Service) prepareOptions(ctx context.Context, id int64, host, tlsMode string, o, prev *SiteOptions) (string, error) {
+// addsUpstream reports whether next has an upstream address not in cur.
+func addsUpstream(cur, next []string) bool {
+	known := map[string]bool{}
+	for _, u := range cur {
+		known[strings.ToLower(u)] = true
+	}
+	for _, u := range next {
+		if !known[strings.ToLower(u)] {
+			return true
+		}
+	}
+	return false
+}
+
+// prepareOptions hashes new passwords, fills kept secrets, validates the
+// options of the site with id (0 for a new one) and returns them encoded
+// for storage. newUpstream is set when the site gains an upstream address.
+func (s *Service) prepareOptions(ctx context.Context, id int64, host, tlsMode string, o, prev *SiteOptions, newUpstream bool) (string, error) {
 	if err := o.applyPasswords(prev); err != nil {
 		return "", err
 	}
-	if err := o.applySecrets(prev); err != nil {
+	if err := o.applySecrets(prev, newUpstream); err != nil {
 		return "", err
 	}
 	o.normalize()

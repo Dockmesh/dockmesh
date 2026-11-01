@@ -22,7 +22,7 @@ func TestProxyRouteSecretsNeedUpdatePermission(t *testing.T) {
 	e.router.With(middleware.NewAuth(e.h.Auth), view).Get("/proxy/routes/{id}/config", e.h.GetProxyRouteConfig)
 
 	opts := proxy.SiteOptions{
-		Access:  proxy.AccessOptions{ForwardAuth: &proxy.ForwardAuth{URL: "http://authelia:9091/api/verify?token=fa-s3cret"}},
+		Access: proxy.AccessOptions{ForwardAuth: &proxy.ForwardAuth{URL: "http://authelia:9091/api/verify?token=fa-s3cret"}},
 		Headers: proxy.HeaderOptions{RequestSet: []proxy.Header{
 			{Name: "X-Plain", Value: "hdr-plain"},
 			{Name: "Authorization", Value: "Bearer hdr-s3cret", Secret: true},

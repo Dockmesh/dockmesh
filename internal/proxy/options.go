@@ -475,6 +475,9 @@ func (h *HeaderOptions) validate() error {
 			return optErr(l.field, "at most %d headers", maxListEntries)
 		}
 		for _, hd := range l.set {
+			if hd.Secret && l.field == "headers.response_set" {
+				return optErr(l.field, "%s can't be secret: response headers are sent to every visitor", hd.Name)
+			}
 			if !headerNameRe.MatchString(hd.Name) {
 				return optErr(l.field, "%q is not a header name", hd.Name)
 			}
@@ -525,36 +528,35 @@ func (o *SiteOptions) applyPasswords(prev *SiteOptions) error {
 }
 
 // applySecrets fills write-only values the client left empty from prev:
-// secret header values by list and name, and the forward-auth query as
-// long as the URL still points at the same server, since the query would
-// otherwise go to a host the stored token was never meant for.
-func (o *SiteOptions) applySecrets(prev *SiteOptions) error {
+// secret request header values by name while newUpstream is false, and
+// the forward-auth query while the URL points at the same server. Either
+// would otherwise go to a host the stored token was never meant for, and
+// an editor could read it there.
+func (o *SiteOptions) applySecrets(prev *SiteOptions, newUpstream bool) error {
 	var prevOpts SiteOptions
 	if prev != nil {
 		prevOpts = *prev
 	}
-	for _, l := range []struct {
-		field     string
-		set, prev []Header
-	}{
-		{"headers.request_set", o.Headers.RequestSet, prevOpts.Headers.RequestSet},
-		{"headers.response_set", o.Headers.ResponseSet, prevOpts.Headers.ResponseSet},
-	} {
-		for i := range l.set {
-			h := &l.set[i]
-			h.ValueSet = false
-			if !h.Secret || h.Value != "" {
-				continue
+	for i := range o.Headers.ResponseSet {
+		o.Headers.ResponseSet[i].ValueSet = false
+	}
+	for i := range o.Headers.RequestSet {
+		h := &o.Headers.RequestSet[i]
+		h.ValueSet = false
+		if !h.Secret || h.Value != "" {
+			continue
+		}
+		for _, p := range prevOpts.Headers.RequestSet {
+			if strings.EqualFold(p.Name, h.Name) {
+				h.Value = p.Value
+				break
 			}
-			for _, p := range l.prev {
-				if strings.EqualFold(p.Name, h.Name) {
-					h.Value = p.Value
-					break
-				}
-			}
-			if h.Value == "" {
-				return optErr(l.field, "secret header %s needs a value", h.Name)
-			}
+		}
+		if h.Value == "" {
+			return optErr("headers.request_set", "secret header %s needs a value", h.Name)
+		}
+		if newUpstream {
+			return optErr("headers.request_set", "enter the value of secret header %s again; the site now sends it to another upstream", h.Name)
 		}
 	}
 	f := o.Access.ForwardAuth

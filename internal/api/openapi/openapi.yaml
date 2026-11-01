@@ -9000,9 +9000,10 @@ components:
             Per-site options. Omitted on update: the stored options are kept.
             Sent: they replace the stored options and fields left out take their
             default. A basic-auth user sent without `password` keeps the stored
-            password of the same username. A secret header sent with an empty
-            `value` keeps the stored value of the same name in the same list,
-            and a forward-auth `url` without a query keeps the stored query
+            password of the same username. A secret request header sent with an
+            empty `value` keeps the stored value of the same name, unless the
+            update adds an upstream address the site didn't have (400 then:
+            send the value again), and a forward-auth `url` without a query keeps the stored query
             while it points at the same scheme and host (400 otherwise; send the
             query again or set `clear_query`). Invalid options are rejected with 400
             naming the field (`options.<section>.<field>: ...`); a www redirect
@@ -9186,7 +9187,7 @@ components:
           description: Empty in responses for secret headers. Callers without `proxy.update` get `********` for every header.
         secret:
           type: boolean
-          description: Write-only value, e.g. an `Authorization` header to the upstream. Also hidden from the config preview.
+          description: Write-only value, e.g. an `Authorization` header to the upstream. Also hidden from the config preview. Only for `request_set`; a secret response header is rejected (400), since visitors receive it.
         value_set:
           type: boolean
           readOnly: true

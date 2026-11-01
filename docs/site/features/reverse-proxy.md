@@ -74,8 +74,10 @@ A `PUT` without `options` keeps the stored ones; a `PUT` with `options` replaces
 Some values are write-only: once saved they are never shown again, not even to admins, and leaving the field empty keeps the stored value.
 
 - Basic-auth passwords are stored as bcrypt hashes; send a user without `password` to keep its password.
-- Headers marked **Secret** (`"secret": true`, e.g. an `Authorization` or API-key header to the app) come back with an empty `value` and `value_set: true`; send them with an empty value to keep it.
+- Request headers marked **Secret** (`"secret": true`, e.g. an `Authorization` or API-key header to the app) come back with an empty `value` and `value_set: true`; send them with an empty value to keep it. When the site gets an upstream it didn't have before (a new destination or an added load-balanced upstream), enter the value again. Response headers can't be secret, since every visitor receives them.
 - The query of the forward-auth URL (it can hold a token) is left out of every response, with `query_set: true`. A URL sent without a query keeps the stored one as long as scheme and host stay the same; for another server enter the query again, or set `clear_query` to drop it.
+
+Write-only keeps values out of the UI and the API; it doesn't protect them from someone who can edit the proxy and points another site, such as the auth service's own site, at a server they control. Caddy also keeps the full config in its own volume (`dockmesh-caddy-config`), so anyone who can browse that volume or the `dockmesh-proxy` container's files can read the values there.
 
 `GET /api/v1/proxy/routes/{id}/config` returns the Caddy config Dockmesh generates for one site, with password hashes, secret header values and the forward-auth query replaced. Users who can view proxy routes but not edit them (`proxy.update`) also see every other header value as `********`. Changing a site writes a `proxy.route_update` audit entry that lists what changed (`upstream`, `tls_mode`, `enabled`, `options.<group>`), never the values.
 

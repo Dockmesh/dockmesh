@@ -14,7 +14,7 @@ func TestSecretHeaderWriteOnly(t *testing.T) {
 	s := newServiceDB(t)
 	opts := SiteOptions{Headers: HeaderOptions{
 		RequestSet:  []Header{{Name: "Authorization", Value: "Bearer tok-1", Secret: true}, {Name: "X-Plain", Value: "visible"}},
-		ResponseSet: []Header{{Name: "Authorization", Value: "resp-1", Secret: true}},
+		ResponseSet: []Header{{Name: "X-Robots-Tag", Value: "noindex"}},
 	}}
 	r, err := s.CreateRoute(ctx, RouteSpec{Host: "app.example.com", Upstream: "10.0.0.2:80", TLSMode: "auto", Options: &opts})
 	if err != nil {
@@ -34,23 +34,28 @@ func TestSecretHeaderWriteOnly(t *testing.T) {
 		return got.Options
 	}
 
+	keep := func() []Header { return []Header{{Name: "authorization", Secret: true}} }
 	tests := []struct {
 		name     string
+		upstream string
+		extra    []string
 		req, rsp []Header
 		wantReq  string
-		wantRsp  string
 		wantErr  string
 	}{
-		{"empty keeps per list", []Header{{Name: "authorization", Secret: true}}, []Header{{Name: "Authorization", Secret: true}}, "Bearer tok-1", "resp-1", ""},
-		{"public response sent back keeps", pub[:1], nil, "Bearer tok-1", "", ""},
-		{"new value replaces", []Header{{Name: "Authorization", Value: "Bearer tok-2", Secret: true}}, nil, "Bearer tok-2", "", ""},
-		{"no stored value", []Header{{Name: "X-Api-Key", Secret: true}}, nil, "", "", "headers.request_set"},
-		{"other list does not lend its value", nil, []Header{{Name: "X-Plain", Secret: true}}, "", "", "headers.response_set"},
+		{"empty keeps, any case", "10.0.0.2:80", nil, keep(), nil, "Bearer tok-1", ""},
+		{"public response sent back keeps", "10.0.0.2:80", nil, pub[:1], nil, "Bearer tok-1", ""},
+		{"new value replaces", "10.0.0.2:80", nil, []Header{{Name: "Authorization", Value: "Bearer tok-2", Secret: true}}, nil, "Bearer tok-2", ""},
+		{"no stored value", "10.0.0.2:80", nil, []Header{{Name: "X-Api-Key", Secret: true}}, nil, "", "headers.request_set"},
+		{"response headers can't be secret", "10.0.0.2:80", nil, nil, []Header{{Name: "X-Key", Value: "v", Secret: true}}, "", "headers.response_set"},
+		{"other upstream doesn't keep", "10.0.0.9:80", nil, keep(), nil, "", "headers.request_set"},
+		{"added upstream doesn't keep", "10.0.0.2:80", []string{"10.0.0.9:80"}, keep(), nil, "", "headers.request_set"},
+		{"other upstream with the value again", "10.0.0.9:80", nil, []Header{{Name: "Authorization", Value: "Bearer tok-3", Secret: true}}, nil, "Bearer tok-3", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			next := SiteOptions{Headers: HeaderOptions{RequestSet: tt.req, ResponseSet: tt.rsp}}
-			_, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "auto", nil, &next)
+			next := SiteOptions{Routing: RoutingOptions{ExtraUpstreams: tt.extra}, Headers: HeaderOptions{RequestSet: tt.req, ResponseSet: tt.rsp}}
+			_, err := s.UpdateRoute(ctx, r.ID, tt.upstream, "auto", nil, &next)
 			if tt.wantErr != "" {
 				var oe *OptionError
 				if !errors.As(err, &oe) || oe.Field != tt.wantErr {
@@ -64,9 +69,6 @@ func TestSecretHeaderWriteOnly(t *testing.T) {
 			got := stored()
 			if tt.wantReq != "" && got.Headers.RequestSet[0].Value != tt.wantReq {
 				t.Errorf("request value = %q, want %q", got.Headers.RequestSet[0].Value, tt.wantReq)
-			}
-			if tt.wantRsp != "" && got.Headers.ResponseSet[0].Value != tt.wantRsp {
-				t.Errorf("response value = %q, want %q", got.Headers.ResponseSet[0].Value, tt.wantRsp)
 			}
 			raw, _ := json.Marshal(got)
 			if strings.Contains(string(raw), "value_set") {
@@ -190,8 +192,8 @@ func TestUpdateRouteReportsChanges(t *testing.T) {
 		opts     *SiteOptions
 		want     []string
 	}{
-		{"nothing", "10.0.0.2:80", "auto", nil, nil, nil},
-		{"public options sent back", "10.0.0.2:80", "auto", nil, &SiteOptions{Access: AccessOptions{BasicAuth: []BasicAuthUser{{Username: "u1"}}}, Headers: HeaderOptions{RequestSet: []Header{}}}, nil},
+		{"nothing", "10.0.0.2:80", "auto", nil, nil, []string{}},
+		{"public options sent back", "10.0.0.2:80", "auto", nil, &SiteOptions{Access: AccessOptions{BasicAuth: []BasicAuthUser{{Username: "u1"}}}, Headers: HeaderOptions{RequestSet: []Header{}}}, []string{}},
 		{"new password", "10.0.0.2:80", "auto", nil, &SiteOptions{Access: AccessOptions{BasicAuth: []BasicAuthUser{{Username: "u1", Password: "password-2"}}}}, []string{"options.access"}},
 		{"destination and groups", "10.0.0.3:80", "internal", &on, &SiteOptions{Access: AccessOptions{BasicAuth: []BasicAuthUser{{Username: "u1"}}}, Performance: PerformanceOptions{ReadTimeout: "1h"}, Logs: LogOptions{AccessLog: true}}, []string{"upstream", "tls_mode", "enabled", "options.performance", "options.logs"}},
 	}

@@ -1,3 +1,3 @@
 kind: Upgrade notes
-body: API responses no longer include the query of a proxy site's forward-auth URL, also for users who can edit the proxy. Clients that send the URL back without a query keep the stored one; nothing else changes for existing sites.
+body: "[proxy-forward-auth-query, admins] API responses no longer include the query of a proxy site's forward-auth URL, also for users who can edit the proxy. Clients that send the URL back without a query keep the stored one; nothing else changes for existing sites."
 time: 2026-11-01T20:00:34.8009791+01:00

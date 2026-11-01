@@ -215,6 +215,10 @@ func (h *Handlers) CreateProxyRoute(w http.ResponseWriter, r *http.Request) {
 	if writeProxyRouteError(w, err) {
 		return
 	}
+	if err != nil && route != nil {
+		writeError(w, http.StatusInternalServerError, proxy.ErrConfigRejected.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -254,6 +258,11 @@ func (h *Handlers) UpdateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		h.audit(r, "proxy.route_update", idStr, map[string]any{"changed": orNone(changed)})
 	}
 	if writeProxyRouteError(w, err) {
+		return
+	}
+	if err != nil && changed != nil {
+		slog.Warn("proxy: site saved but not applied", "id", id, "err", err)
+		writeError(w, http.StatusInternalServerError, proxy.ErrConfigRejected.Error())
 		return
 	}
 	if err != nil {
