@@ -1,0 +1,3 @@
+kind: Changed
+body: 'API: GET /containers/{id}/metrics and GET /hosts/{id}/stats/containers return an object with host_id, history and the samples instead of a bare array; cpu_percent is now 0-100 of the host, cpu_percent_core keeps the per-core value; new GET /hosts/{id}/metrics'
+time: 2026-11-01T18:24:17.796671+01:00

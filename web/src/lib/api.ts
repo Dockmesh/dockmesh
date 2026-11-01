@@ -69,13 +69,62 @@ export interface UpdatePreview {
 
 export interface MetricsSample {
   ts: number;
+  // 0..100 of the host; cpu_percent_core is 100 per busy core.
   cpu_percent: number;
+  cpu_percent_core: number;
   mem_used: number;
   mem_limit: number;
   net_rx: number;
   net_tx: number;
   blk_read: number;
   blk_write: number;
+}
+
+// Why a host has no stored history.
+export type HistoryReason = 'agent_outdated' | 'agent_offline';
+
+export interface ContainerMetrics {
+  host_id: string;
+  history: boolean;
+  reason?: HistoryReason;
+  mem_unlimited: boolean;
+  samples: MetricsSample[];
+}
+
+export interface HostMetricsSample {
+  ts: number;
+  cpu_percent: number;
+  cpu_cores: number;
+  mem_used: number;
+  mem_total: number;
+  disk_used: number;
+  disk_total: number;
+}
+
+export interface HostMetrics {
+  host_id: string;
+  history: boolean;
+  reason?: HistoryReason;
+  samples: HostMetricsSample[];
+}
+
+export interface ContainerLatest {
+  id: string;
+  name: string;
+  stack?: string;
+  ts: number;
+  cpu_percent: number;
+  cpu_percent_core: number;
+  mem_used: number;
+  mem_limit: number;
+  mem_unlimited: boolean;
+}
+
+export interface ContainerStatsBatch {
+  host_id: string;
+  history: boolean;
+  reason?: HistoryReason;
+  containers: ContainerLatest[];
 }
 
 export interface HostInfo {
@@ -1902,7 +1951,13 @@ export const api = {
       request<void>(`/hosts/${encodeURIComponent(hostId)}/tags/${encodeURIComponent(tag)}`, {
         method: 'DELETE'
       }),
-    allTags: () => request<string[]>('/hosts/tags/all')
+    allTags: () => request<string[]>('/hosts/tags/all'),
+    metrics: (hostId: string, from: number, to: number, resolution: 'raw' | '1m' | '1h' = 'raw') =>
+      request<HostMetrics>(
+        `/hosts/${encodeURIComponent(hostId)}/metrics?from=${from}&to=${to}&resolution=${resolution}`
+      ),
+    containerStats: (hostId: string) =>
+      request<ContainerStatsBatch>(`/hosts/${encodeURIComponent(hostId)}/stats/containers`)
   },
 
   containers: {
@@ -1981,10 +2036,11 @@ export const api = {
       }),
     updateHistory: (id: string) =>
       request<UpdateHistoryEntry[]>(`/containers/${id}/update-history`),
-    metrics: (id: string, from: number, to: number, resolution: 'raw' | '1m' | '1h' = 'raw') =>
-      request<MetricsSample[]>(
-        `/containers/${id}/metrics?from=${from}&to=${to}&resolution=${resolution}`
-      ),
+    metrics: (id: string, from: number, to: number, resolution: 'raw' | '1m' | '1h' = 'raw', host = 'local') => {
+      const qs = new URLSearchParams({ from: String(from), to: String(to), resolution });
+      if (host && host !== 'local') qs.set('host', host);
+      return request<ContainerMetrics>(`/containers/${id}/metrics?${qs.toString()}`);
+    },
     files: {
       // Path defaults to "/" — the root of the container filesystem.
       // Reuses VolumeEntry/VolumeFileResult shapes since a single

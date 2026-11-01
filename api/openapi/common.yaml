@@ -1,5 +1,9 @@
 components:
   schemas:
+    HistoryReason:
+      type: string
+      enum: [agent_outdated, agent_offline]
+      description: "Why a host has no stored history: `agent_outdated`, its agent is too old to record it; `agent_offline`, the agent is offline and nothing is stored yet."
     Error:
       type: object
       required: [error]

@@ -253,6 +253,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Use(middleware.RequirePerm(rbac.PermHostsView))
 				// Host-level CPU / RAM / disk snapshot for the dashboard.
 				r.Get("/system/metrics", h.SystemMetrics)
+				r.Get("/hosts/{id}/metrics", h.GetHostMetrics)
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermSystemView))

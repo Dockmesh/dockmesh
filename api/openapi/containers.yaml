@@ -368,7 +368,14 @@ paths:
       operationId: ws.stats
       tags: [containers]
       summary: WebSocket stream of per-container stats samples
-      description: Ticket auth via `?ticket=`. Server emits JSON frames (cpu %, mem, network, block IO) at docker's cadence.
+      description: |
+        Ticket auth via `?ticket=`. Server emits one JSON frame per Docker
+        stats tick: `cpu_percent` (0..100 of the host, mean of the last 5
+        frames), `cpu_percent_core` (100 per busy core, as `docker stats`
+        shows it), `online_cpus`, `mem_used` (without page cache),
+        `mem_limit`, `mem_percent`, `mem_unlimited` (no limit set; the limit
+        is the host RAM), `net_rx`, `net_tx`, `blk_read`, `blk_write`
+        (counters since container start) and `pids_current`.
       parameters:
         - name: id
           in: path
@@ -440,42 +447,42 @@ paths:
     get:
       operationId: containers.metrics
       tags: [containers]
-      summary: Historical CPU / memory / network / disk samples
+      summary: Stored CPU / memory / network / block I/O samples of a container
       description: |
-        Returns time-series samples from the internal metrics collector
-        (30s raw, 1m, 1h retention per concept §15.4). Used by the
-        container detail page's charts.
+        Samples of the metrics collector: 30 s raw for 24 h, 1 min
+        aggregates for 30 days, 1 h aggregates for a year. History is keyed
+        by host and container name, so it survives a recreate. A host that
+        records no history answers 200 with `history: false`, a `reason` and
+        no samples.
       parameters:
         - $ref: "#/components/parameters/ContainerIDPath"
+        - $ref: "#/components/parameters/HostQuery"
         - name: resolution
           in: query
           schema: {type: string, enum: [raw, 1m, 1h], default: raw}
         - name: from
           in: query
-          schema: {type: string, format: date-time}
+          description: Unix seconds; default one hour before `to`. Clamped to about the retention of the resolution (25 h raw, 31 days 1m, 366 days 1h).
+          schema: {type: integer, format: int64}
         - name: to
           in: query
-          schema: {type: string, format: date-time}
+          description: Unix seconds; default now.
+          schema: {type: integer, format: int64}
       responses:
         "200":
-          description: Metric samples.
+          description: Samples, oldest first.
           content:
             application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    ts: {type: string, format: date-time}
-                    cpu_percent: {type: number}
-                    mem_bytes: {type: integer, format: int64}
-                    mem_percent: {type: number}
-                    net_rx_bytes: {type: integer, format: int64}
-                    net_tx_bytes: {type: integer, format: int64}
-                    block_read_bytes: {type: integer, format: int64}
-                    block_write_bytes: {type: integer, format: int64}
+              schema: {$ref: "#/components/schemas/ContainerMetrics"}
+        "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "503":
+          description: The host is offline or metrics are not configured.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /containers/{id}/files:
     get:
       operationId: containers.files.browse
@@ -663,22 +670,80 @@ paths:
     get:
       operationId: hosts.batch_container_stats
       tags: [containers]
-      summary: Latest CPU + memory sample per container (used by list view)
+      summary: Newest CPU + memory sample of every running container on a host
+      description: |
+        Containers that reported within the last 60 s (180 s on agent
+        hosts, which send their samples once a minute) and that the caller
+        may view. A host that records no history answers 200 with
+        `history: false`, a `reason` and no containers.
       parameters:
         - in: path
           name: id
           required: true
+          description: Host id, `local` for the server.
           schema: {type: string}
       responses:
         "200":
-          description: Array of latest samples.
+          description: Newest samples.
           content:
             application/json:
-              schema:
-                type: array
-                items: {type: object, additionalProperties: true}
+              schema: {$ref: "#/components/schemas/ContainerStatsBatch"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503":
+          description: The host is offline or metrics are not configured.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
 components:
   schemas:
+    ContainerMetricsSample:
+      type: object
+      required: [ts, cpu_percent, cpu_percent_core, mem_used, mem_limit, net_rx, net_tx, blk_read, blk_write]
+      properties:
+        ts: {type: integer, format: int64, description: Unix seconds.}
+        cpu_percent: {type: number, description: 0..100 of the host.}
+        cpu_percent_core: {type: number, description: "100 per busy core, as `docker stats` shows it."}
+        mem_used: {type: integer, format: int64, description: Bytes without page cache.}
+        mem_limit: {type: integer, format: int64, description: The host RAM when no limit is set.}
+        net_rx: {type: integer, format: int64, description: Counter since container start.}
+        net_tx: {type: integer, format: int64}
+        blk_read: {type: integer, format: int64}
+        blk_write: {type: integer, format: int64}
+    ContainerMetrics:
+      type: object
+      required: [host_id, history, mem_unlimited, samples]
+      properties:
+        host_id: {type: string}
+        history: {type: boolean, description: False when the host records no history.}
+        reason: {$ref: "#/components/schemas/HistoryReason"}
+        mem_unlimited: {type: boolean, description: "The container has no memory limit; mem_limit is the host RAM."}
+        samples:
+          type: array
+          items: {$ref: "#/components/schemas/ContainerMetricsSample"}
+    ContainerStatsBatch:
+      type: object
+      required: [host_id, history, containers]
+      properties:
+        host_id: {type: string}
+        history: {type: boolean}
+        reason: {$ref: "#/components/schemas/HistoryReason"}
+        containers:
+          type: array
+          items:
+            type: object
+            required: [id, name, ts, cpu_percent, cpu_percent_core, mem_used, mem_limit, mem_unlimited]
+            properties:
+              id: {type: string}
+              name: {type: string}
+              stack: {type: string, description: "Compose project, empty for standalone containers."}
+              ts: {type: integer, format: int64}
+              cpu_percent: {type: number, description: 0..100 of the host.}
+              cpu_percent_core: {type: number}
+              mem_used: {type: integer, format: int64}
+              mem_limit: {type: integer, format: int64}
+              mem_unlimited: {type: boolean}
     ContainerUpdateResult:
       type: object
       required: [container_id, container_name, image, old_digest, new_digest, updated]

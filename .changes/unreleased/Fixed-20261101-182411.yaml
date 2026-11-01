@@ -1,0 +1,3 @@
+kind: Fixed
+body: Host disk usage follows a custom Docker data-root instead of always measuring /var/lib/docker
+time: 2026-11-01T18:24:11.5952819+01:00

@@ -1,0 +1,3 @@
+kind: Changed
+body: Container and host charts show CPU as a share of the whole host, memory without page cache (as docker stats shows it on cgroup v2), and say when a container has no memory limit
+time: 2026-11-01T18:23:49.3428935+01:00
