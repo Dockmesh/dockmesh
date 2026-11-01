@@ -99,11 +99,11 @@ func (h *Handlers) BatchContainerStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hostID := chi.URLParam(r, "id")
-	if !h.knownHost(r.Context(), hostID) {
-		writeError(w, http.StatusNotFound, "host not found")
+	if !h.requireHostAccess(w, r, hostID) {
 		return
 	}
-	if !h.requireHostAccess(w, r, hostID) {
+	if !h.knownHost(r.Context(), hostID) {
+		writeError(w, http.StatusNotFound, "host not found")
 		return
 	}
 	hist, reason, err := h.hostHistory(r.Context(), hostID)
@@ -230,12 +230,12 @@ func (h *Handlers) GetHostMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hostID := chi.URLParam(r, "id")
-	if !h.knownHost(r.Context(), hostID) {
-		writeError(w, http.StatusNotFound, "host not found")
-		return
-	}
 	if !h.inReadScope(r, hostID, "") {
 		writeError(w, http.StatusForbidden, "out of scope: your role does not include this host")
+		return
+	}
+	if !h.knownHost(r.Context(), hostID) {
+		writeError(w, http.StatusNotFound, "host not found")
 		return
 	}
 	hist, reason, err := h.hostHistory(r.Context(), hostID)

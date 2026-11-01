@@ -6,7 +6,6 @@ package metrics
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/system"
 )
@@ -136,7 +134,7 @@ func (c *Collector) collect(ctx context.Context) {
 			if name == "" {
 				return
 			}
-			s, err := fetchSample(ctx, cli, ct.ID)
+			s, err := docker.SampleStats(ctx, cli, ct.ID)
 			if err != nil {
 				slog.Debug("metrics stats", "container", name, "err", err)
 				return
@@ -147,28 +145,6 @@ func (c *Collector) collect(ctx context.Context) {
 		}()
 	}
 	wg.Wait()
-}
-
-// fetchSample reads 2 frames from a streaming ContainerStats request:
-// the first frame has no PreCPUStats baseline, so its CPU delta is 0.
-func fetchSample(ctx context.Context, cli interface {
-	ContainerStats(context.Context, string, bool) (container.StatsResponseReader, error)
-}, id string) (docker.NormalizedStats, error) {
-	resp, err := cli.ContainerStats(ctx, id, true)
-	if err != nil {
-		return docker.NormalizedStats{}, err
-	}
-	defer resp.Body.Close()
-
-	dec := json.NewDecoder(resp.Body)
-	var s container.StatsResponse
-	if err := dec.Decode(&s); err != nil {
-		return docker.NormalizedStats{}, err
-	}
-	if err := dec.Decode(&s); err != nil {
-		return docker.NormalizedStats{}, err
-	}
-	return docker.Normalize(&s), nil
 }
 
 // InsertContainer stores one container sample of hostID.
@@ -406,12 +382,23 @@ func resolutionSuffix(res string) (string, error) {
 	return "", ErrResolution
 }
 
-func (q *Query) window() {
-	if q.From.IsZero() {
-		q.From = time.Now().Add(-1 * time.Hour)
-	}
+// maxSpan bounds a query to roughly the retention of its table, so one
+// request reads at most a few thousand rows per series.
+var maxSpan = map[string]time.Duration{
+	"_raw": 25 * time.Hour,
+	"_1m":  31 * 24 * time.Hour,
+	"_1h":  366 * 24 * time.Hour,
+}
+
+func (q *Query) window(suffix string) {
 	if q.To.IsZero() {
 		q.To = time.Now()
+	}
+	if q.From.IsZero() {
+		q.From = q.To.Add(-1 * time.Hour)
+	}
+	if limit := q.To.Add(-maxSpan[suffix]); q.From.Before(limit) {
+		q.From = limit
 	}
 }
 
@@ -421,7 +408,7 @@ func (c *Collector) Query(ctx context.Context, q Query) ([]Sample, error) {
 	if err != nil {
 		return nil, err
 	}
-	q.window()
+	q.window(suffix)
 	rows, err := c.db.QueryContext(ctx, `
 		SELECT ts, cpu_percent, cpu_cores, mem_used, mem_limit, net_rx, net_tx, blk_read, blk_write
 		FROM metrics`+suffix+`
@@ -453,7 +440,7 @@ func (c *Collector) QueryHost(ctx context.Context, q Query) ([]HostSample, error
 	if err != nil {
 		return nil, err
 	}
-	q.window()
+	q.window(suffix)
 	rows, err := c.db.QueryContext(ctx, `
 		SELECT ts, cpu_percent, cpu_cores, mem_used, mem_total, disk_used, disk_total
 		FROM host_metrics`+suffix+`

@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 
 	"github.com/docker/docker/api/types/container"
@@ -39,6 +40,30 @@ func (c *Client) ContainerStats(ctx context.Context, containerID string) (io.Rea
 		return nil, err
 	}
 	return resp.Body, nil
+}
+
+// StatsReader is the part of the Docker SDK client SampleStats needs.
+type StatsReader interface {
+	ContainerStats(ctx context.Context, id string, stream bool) (container.StatsResponseReader, error)
+}
+
+// SampleStats reads two frames of a container's stats stream: the first
+// has no PreCPUStats baseline, so its CPU delta is 0.
+func SampleStats(ctx context.Context, cli StatsReader, id string) (NormalizedStats, error) {
+	resp, err := cli.ContainerStats(ctx, id, true)
+	if err != nil {
+		return NormalizedStats{}, err
+	}
+	defer resp.Body.Close()
+	dec := json.NewDecoder(resp.Body)
+	var s container.StatsResponse
+	if err := dec.Decode(&s); err != nil {
+		return NormalizedStats{}, err
+	}
+	if err := dec.Decode(&s); err != nil {
+		return NormalizedStats{}, err
+	}
+	return Normalize(&s), nil
 }
 
 // Normalize turns one Docker stats frame into NormalizedStats. The CPU
