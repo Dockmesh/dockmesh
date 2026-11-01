@@ -12,58 +12,45 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// enrichUserWithRBAC fills the User.Permissions + User.Scopes fields
-// from the rbac.Store (or the in-code fallback for built-in roles).
-// Idempotent — safe to call before writing /me or /login responses.
-func enrichUserWithRBAC(roles *rbac.Store, u *auth.User) {
-	if u == nil {
-		return
+// userView is a user with its assignments, as the users API returns it.
+type userView struct {
+	auth.User
+	Assignments []rbac.Assignment `json:"assignments"`
+}
+
+func (h *Handlers) viewUser(u auth.User) userView {
+	as := []rbac.Assignment{}
+	if h.Roles != nil {
+		as = append(as, h.Roles.UserAssignments(u.ID)...)
 	}
-	scopes := &auth.MeScopes{Stacks: []string{}, Hosts: []string{}, HostTags: []string{}}
-	if roles != nil {
-		if r, ok := roles.Get(u.Role); ok {
-			perms := make([]string, 0, len(r.Permissions))
-			for _, p := range r.Permissions {
-				perms = append(perms, string(p))
-			}
-			for _, sc := range r.Scopes {
-				switch sc.ScopeType {
-				case "stack":
-					scopes.Stacks = append(scopes.Stacks, sc.ScopeValue)
-				case "host":
-					scopes.Hosts = append(scopes.Hosts, sc.ScopeValue)
-				case "host_tag":
-					scopes.HostTags = append(scopes.HostTags, sc.ScopeValue)
-				}
-			}
-			u.Permissions = perms
-			u.Scopes = scopes
-			return
-		}
+	return userView{User: u, Assignments: as}
+}
+
+// withPermissions fills u.Permissions from access, for UI gating.
+func withPermissions(u *auth.User, access *rbac.Access) {
+	ps := access.Perms()
+	u.Permissions = make([]string, 0, len(ps))
+	for _, p := range ps {
+		u.Permissions = append(u.Permissions, string(p))
 	}
-	// Fallback: role not in store cache (fresh install, pre-migration).
-	// Mirror the in-code map for built-ins.
-	perms := []string{}
-	for _, p := range rbac.RolePerms(u.Role) {
-		perms = append(perms, string(p))
-	}
-	u.Permissions = perms
-	u.Scopes = scopes
 }
 
 type createUserRequest struct {
 	Username string `json:"username"`
 	Email    string `json:"email,omitempty"`
 	Password string `json:"password"`
-	Role     string `json:"role"`
+	// Role is assigned on Scope (default: everything); empty Role creates
+	// an account without access.
+	Role  string      `json:"role"`
+	Scope *rbac.Scope `json:"scope,omitempty"`
 }
 
 type updateUserRequest struct {
 	Email       string `json:"email,omitempty"`
-	Role        string `json:"role"` // empty = unchanged
 	DisplayName string `json:"display_name,omitempty"`
-	// ScopeTags: omitted = unchanged, [] = all hosts.
-	ScopeTags *[]string `json:"scope_tags"`
+	// Source "sso" lets sign-in replace the identity provider
+	// assignments; "manual" keeps access as it is. Empty = unchanged.
+	Source string `json:"source,omitempty"`
 }
 
 type changePasswordRequest struct {
@@ -74,7 +61,10 @@ type changePasswordRequest struct {
 }
 
 func (h *Handlers) isValidRole(name string) bool {
-	_, ok := h.permsForRoleName(name)
+	if h.Roles == nil {
+		return false
+	}
+	_, ok := h.Roles.Role(name)
 	return ok
 }
 
@@ -84,7 +74,23 @@ func (h *Handlers) ListUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, users)
+	out := make([]userView, 0, len(users))
+	for _, u := range users {
+		out = append(out, h.viewUser(u))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// GetUser returns one user with its assignments.
+//
+//	GET /api/v1/users/{id}
+func (h *Handlers) GetUser(w http.ResponseWriter, r *http.Request) {
+	u, err := h.Auth.GetUser(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, h.viewUser(*u))
 }
 
 func (h *Handlers) CreateUser(w http.ResponseWriter, r *http.Request) {
@@ -97,20 +103,25 @@ func (h *Handlers) CreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "username and password required")
 		return
 	}
-	if req.Role == "" {
-		req.Role = "viewer"
+	scope := rbac.Global
+	if req.Scope != nil && req.Scope.Type != "" {
+		scope = *req.Scope
 	}
-	if !h.isValidRole(req.Role) {
-		writeError(w, http.StatusBadRequest, "invalid role")
-		return
+	if req.Role != "" {
+		if !h.isValidRole(req.Role) {
+			writeError(w, http.StatusBadRequest, "invalid role")
+			return
+		}
+		if err := scope.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := h.checkGrant(r, req.Role, scope); err != nil {
+			writeGrantError(w, err)
+			return
+		}
 	}
-	// New accounts start without host scope, so a scoped caller can't
-	// create one; invites carry scope tags for that.
-	if err := h.checkGrant(r, req.Role, nil); err != nil {
-		writeGrantError(w, err)
-		return
-	}
-	u, err := h.Auth.CreateUser(r.Context(), req.Username, req.Email, req.Password, req.Role)
+	u, err := h.Auth.CreateUser(r.Context(), req.Username, req.Email, req.Password, "")
 	if err != nil {
 		status := http.StatusConflict
 		msg := err.Error()
@@ -127,8 +138,16 @@ func (h *Handlers) CreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, msg)
 		return
 	}
-	h.audit(r, audit.ActionUserCreate, u.ID, map[string]string{"username": u.Username, "role": u.Role})
-	writeJSON(w, http.StatusCreated, u)
+	h.audit(r, audit.ActionUserCreate, u.ID, map[string]string{"username": u.Username})
+	if req.Role != "" {
+		a, err := h.Roles.AddAssignment(r.Context(), rbac.Assignment{UserID: u.ID, Role: req.Role, Scope: scope, CreatedBy: actorID(r)})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		h.auditAssignment(r, audit.ActionAssignmentAdd, u.Username, a)
+	}
+	writeJSON(w, http.StatusCreated, h.viewUser(*u))
 }
 
 func (h *Handlers) UpdateUser(w http.ResponseWriter, r *http.Request) {
@@ -138,46 +157,31 @@ func (h *Handlers) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	curRole, curTags, ok := h.requireManageUser(w, r, id)
-	if !ok {
+	if _, ok := h.requireManageUser(w, r, id); !ok {
 		return
 	}
-	role, tags := curRole, curTags
-	if req.Role != "" {
-		role = req.Role
-	}
-	if req.ScopeTags != nil {
-		tags = *req.ScopeTags
-	}
-	if role != curRole && !h.isValidRole(role) {
-		writeError(w, http.StatusBadRequest, "invalid role")
+	switch req.Source {
+	case "", auth.RoleSourceManual, auth.RoleSourceSSO:
+	default:
+		writeError(w, http.StatusBadRequest, "source must be manual or sso")
 		return
 	}
-	if err := h.checkGrant(r, role, tags); err != nil {
-		writeGrantError(w, err)
-		return
-	}
-	if err := h.checkKeepsAdmin(r.Context(), id, curRole, curTags, role, tags, false); err != nil {
-		writeLastAdminError(w, err)
-		return
-	}
-	u, err := h.Auth.UpdateUser(r.Context(), id, req.Email, role, req.DisplayName)
+	u, err := h.Auth.UpdateUser(r.Context(), id, req.Email, req.DisplayName)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if req.ScopeTags != nil {
-		u, err = h.Auth.UpdateUserScope(r.Context(), id, tags)
-		if err != nil {
+	meta := map[string]any{}
+	if req.Source != "" && req.Source != u.Source {
+		if err := h.Auth.SetSource(r.Context(), id, req.Source); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		u.Source = req.Source
+		meta["source"] = req.Source
 	}
-	h.audit(r, audit.ActionUserUpdate, id, map[string]any{
-		"role":       u.Role,
-		"scope_tags": u.ScopeTags,
-	})
-	writeJSON(w, http.StatusOK, u)
+	h.audit(r, audit.ActionUserUpdate, id, meta)
+	writeJSON(w, http.StatusOK, h.viewUser(*u))
 }
 
 func (h *Handlers) DeleteUser(w http.ResponseWriter, r *http.Request) {
@@ -186,11 +190,10 @@ func (h *Handlers) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "cannot delete yourself")
 		return
 	}
-	role, tags, ok := h.requireManageUser(w, r, id)
-	if !ok {
+	if _, ok := h.requireManageUser(w, r, id); !ok {
 		return
 	}
-	if err := h.checkKeepsAdmin(r.Context(), id, role, tags, "", nil, true); err != nil {
+	if err := h.checkKeepsAdmin(func(a rbac.Assignment) bool { return a.UserID == id }); err != nil {
 		writeLastAdminError(w, err)
 		return
 	}
@@ -210,18 +213,14 @@ func (h *Handlers) ChangeUserPassword(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	callerID := middleware.UserID(r.Context())
 	isSelf := id == callerID
-	isAdmin := true
-	for _, role := range middleware.Roles(r.Context()) {
-		isAdmin = isAdmin && role == "admin"
-	}
-	// Self or admin can change password. Admin-for-other is allowed
-	// without current password; admin-for-self still needs it.
-	if !isSelf && !isAdmin {
+	// Self, or a caller who manages users and every assignment of the
+	// target. Resetting someone else's password needs no current password.
+	if !isSelf && !middleware.Allowed(r.Context(), rbac.PermUsersUpdate) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	if !isSelf {
-		if _, _, ok := h.requireManageUser(w, r, id); !ok {
+		if _, ok := h.requireManageUser(w, r, id); !ok {
 			return
 		}
 	}
@@ -269,38 +268,22 @@ func (h *Handlers) ChangeUserPassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Me returns the currently authenticated caller — user OR api-token.
-// dmctl hits this as a post-login sanity check, so it must succeed for
-// token-authed requests even though there's no user record behind them.
+// Me returns the currently authenticated caller — user OR api-token —
+// with the permissions it holds anywhere, for UI gating. dmctl hits this
+// as a post-login sanity check, so it must succeed for token callers.
 func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
+	access := middleware.AccessOf(r.Context())
 	uid := middleware.UserID(r.Context())
 	if uid == "" {
-		// API token path — no user session. Synthesise a User-shape
-		// with the token's role so the frontend's permission gates
-		// work the same whether the caller is a session or a token.
-		tokRole := middleware.Role(r.Context())
-		fake := &auth.User{
-			Username: "api-token",
-			Role:     tokRole,
-		}
-		enrichUserWithRBAC(h.Roles, fake)
-		// An owned token only gets what its owner's role also allows.
-		effective := make([]string, 0, len(fake.Permissions))
-		for _, p := range fake.Permissions {
-			if middleware.Allowed(r.Context(), rbac.Perm(p)) {
-				effective = append(effective, p)
-			}
-		}
-		fake.Permissions = effective
+		fake := &auth.User{Username: "api-token"}
+		withPermissions(fake, access)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"kind":         "api_token",
 			"username":     fake.Username,
-			"role":         fake.Role,
 			"api_token_id": middleware.APITokenID(r.Context()),
 			"mfa_enabled":  false,
 			"permissions":  fake.Permissions,
-			"scopes":       fake.Scopes,
-			"scope_tags":   middleware.ScopeTags(r.Context()),
+			"unscoped":     access.Unscoped(),
 		})
 		return
 	}
@@ -309,6 +292,12 @@ func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
 	}
-	enrichUserWithRBAC(h.Roles, u)
-	writeJSON(w, http.StatusOK, u)
+	withPermissions(u, access)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": u.ID, "username": u.Username, "display_name": u.DisplayName, "email": u.Email,
+		"source": u.Source, "mfa_enabled": u.MFAEnabled, "last_login_at": u.LastLoginAt,
+		"password_changed_at": u.PasswordChangedAt, "has_avatar": u.HasAvatar,
+		"permissions": u.Permissions, "unscoped": access.Unscoped(),
+		"assignments": h.viewUser(*u).Assignments,
+	})
 }

@@ -116,9 +116,6 @@ type Handlers struct {
 	RequestRestart func()
 	FinishSetup    func() error
 	setupRuns      sync.Map // runID → *setup.Runner; populated when SetupCommit fires
-	// RBACv2Enforce gates per-host + per-stack scope checks on typed-
-	// resource handlers. Wired from cfg.RBACv2Enforce.
-	RBACv2Enforce bool
 
 	// ClientIPs resolves client addresses behind trusted proxies; the
 	// router mounts its middleware.
@@ -190,7 +187,6 @@ type Deps struct {
 	RestoreConfig  *config.Config
 	RequestRestart func()
 	FinishSetup    func() error
-	RBACv2Enforce  bool
 }
 
 func New(d Deps) *Handlers {
@@ -248,7 +244,6 @@ func New(d Deps) *Handlers {
 		RestoreConfig:  d.RestoreConfig,
 		RequestRestart: d.RequestRestart,
 		FinishSetup:    d.FinishSetup,
-		RBACv2Enforce:  d.RBACv2Enforce,
 
 		mfaDisableLimiter: ratelimit.New(5, 15*time.Minute, 15*time.Minute),
 		mfaLimiter:        ratelimit.New(20, 15*time.Minute, 15*time.Minute),

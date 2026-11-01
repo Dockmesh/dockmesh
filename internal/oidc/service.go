@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"strings"
 	"sync"
 	"time"
@@ -29,10 +30,10 @@ import (
 )
 
 var (
-	ErrProviderNotFound  = errors.New("oidc provider not found")
-	ErrProviderDisabled  = errors.New("oidc provider disabled")
-	ErrInvalidState      = errors.New("invalid state")
-	ErrEmailRequired     = errors.New("provider did not return an email claim")
+	ErrProviderNotFound = errors.New("oidc provider not found")
+	ErrProviderDisabled = errors.New("oidc provider disabled")
+	ErrInvalidState     = errors.New("invalid state")
+	ErrEmailRequired    = errors.New("provider did not return an email claim")
 )
 
 // Provider is the public view of an OIDC provider config. Secrets are
@@ -40,8 +41,17 @@ var (
 // GroupMapping is one row in oidc_provider_group_mappings — maps a
 // group value emitted by the IdP to a Dockmesh role at SSO login time.
 type GroupMapping struct {
-	GroupValue string `json:"group_value"`
-	RoleName   string `json:"role_name"`
+	GroupValue string     `json:"group_value"`
+	RoleName   string     `json:"role_name"`
+	Scope      rbac.Scope `json:"scope"`
+}
+
+func groupRules(ms []GroupMapping) []rbac.GroupRule {
+	out := make([]rbac.GroupRule, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, rbac.GroupRule{Group: m.GroupValue, Role: m.RoleName, Scope: m.Scope})
+	}
+	return out
 }
 
 type Provider struct {
@@ -52,8 +62,6 @@ type Provider struct {
 	ClientID      string         `json:"client_id"`
 	Scopes        string         `json:"scopes"`
 	GroupClaim    string         `json:"group_claim,omitempty"`
-	AdminGroup    string         `json:"admin_group,omitempty"`    // deprecated — use GroupMappings
-	OperatorGroup string         `json:"operator_group,omitempty"` // deprecated — use GroupMappings
 	GroupMappings []GroupMapping `json:"group_mappings"`
 	DefaultRole   string         `json:"default_role"`
 	Enabled       bool           `json:"enabled"`
@@ -76,8 +84,6 @@ type ProviderInput struct {
 	ClientSecret  string         `json:"client_secret"`
 	Scopes        string         `json:"scopes"`
 	GroupClaim    string         `json:"group_claim"`
-	AdminGroup    string         `json:"admin_group"`
-	OperatorGroup string         `json:"operator_group"`
 	GroupMappings []GroupMapping `json:"group_mappings,omitempty"`
 	DefaultRole   string         `json:"default_role"`
 	Enabled       bool           `json:"enabled"`
@@ -99,9 +105,9 @@ type Service struct {
 }
 
 type cachedProvider struct {
-	provider *goidc.Provider
-	config   *Provider
-	verifier *goidc.IDTokenVerifier
+	provider  *goidc.Provider
+	config    *Provider
+	verifier  *goidc.IDTokenVerifier
 	fetchedAt time.Time
 }
 
@@ -122,7 +128,7 @@ func NewService(db *sql.DB, authSvc *auth.Service, secretsSvc *secrets.Service, 
 func (s *Service) ListProviders(ctx context.Context) ([]Provider, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, slug, display_name, issuer_url, client_id, scopes,
-		       group_claim, admin_group, operator_group, default_role,
+		       group_claim, default_role,
 		       enabled, is_default, last_tested_at, last_test_ok, last_test_error,
 		       created_at, updated_at
 		FROM oidc_providers ORDER BY id`)
@@ -200,10 +206,10 @@ func (s *Service) CreateProvider(ctx context.Context, in ProviderInput) (*Provid
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO oidc_providers
 			(slug, display_name, issuer_url, client_id, client_secret, scopes,
-			 group_claim, admin_group, operator_group, default_role, enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 group_claim, default_role, enabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, in.Slug, in.DisplayName, in.IssuerURL, in.ClientID, enc, in.Scopes,
-		nullable(in.GroupClaim), nullable(in.AdminGroup), nullable(in.OperatorGroup),
+		nullable(in.GroupClaim),
 		in.DefaultRole, boolInt(in.Enabled))
 	if err != nil {
 		return nil, fmt.Errorf("insert provider: %w", err)
@@ -226,11 +232,11 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 		_, err := s.db.ExecContext(ctx, `
 			UPDATE oidc_providers SET
 				display_name = ?, issuer_url = ?, client_id = ?, scopes = ?,
-				group_claim = ?, admin_group = ?, operator_group = ?,
+				group_claim = ?,
 				default_role = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?`,
 			in.DisplayName, in.IssuerURL, in.ClientID, in.Scopes,
-			nullable(in.GroupClaim), nullable(in.AdminGroup), nullable(in.OperatorGroup),
+			nullable(in.GroupClaim),
 			in.DefaultRole, boolInt(in.Enabled), id)
 		if err != nil {
 			return nil, err
@@ -243,11 +249,11 @@ func (s *Service) UpdateProvider(ctx context.Context, id int64, in ProviderInput
 		_, err = s.db.ExecContext(ctx, `
 			UPDATE oidc_providers SET
 				display_name = ?, issuer_url = ?, client_id = ?, client_secret = ?,
-				scopes = ?, group_claim = ?, admin_group = ?, operator_group = ?,
+				scopes = ?, group_claim = ?,
 				default_role = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?`,
 			in.DisplayName, in.IssuerURL, in.ClientID, enc, in.Scopes,
-			nullable(in.GroupClaim), nullable(in.AdminGroup), nullable(in.OperatorGroup),
+			nullable(in.GroupClaim),
 			in.DefaultRole, boolInt(in.Enabled), id)
 		if err != nil {
 			return nil, err
@@ -331,7 +337,7 @@ func (s *Service) GetProvider(ctx context.Context, id int64) (*Provider, error) 
 func (s *Service) getProvider(ctx context.Context, id int64) (*Provider, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, slug, display_name, issuer_url, client_id, scopes,
-		       group_claim, admin_group, operator_group, default_role,
+		       group_claim, default_role,
 		       enabled, is_default, last_tested_at, last_test_ok, last_test_error,
 		       created_at, updated_at
 		FROM oidc_providers WHERE id = ?`, id)
@@ -382,7 +388,7 @@ func (s *Service) getProviderBySlug(ctx context.Context, slug string) (int64, st
 // persist in a short-lived cookie.
 type Pending struct {
 	Slug     string `json:"slug"`
-	Verifier string `json:"v"`  // PKCE code_verifier
+	Verifier string `json:"v"` // PKCE code_verifier
 	State    string `json:"st"`
 	Nonce    string `json:"n"`
 }
@@ -519,25 +525,16 @@ func (s *Service) jitProvision(ctx context.Context, cfg *Provider, subject strin
 		name = strings.Split(email, "@")[0]
 	}
 
-	// Resolve role from groups.
-	role := cfg.DefaultRole
+	var groups []string
 	if cfg.GroupClaim != "" {
-		groups := extractGroups(claims, cfg.GroupClaim)
-		for _, g := range groups {
-			if cfg.AdminGroup != "" && g == cfg.AdminGroup {
-				role = "admin"
-				break
-			}
-			if cfg.OperatorGroup != "" && g == cfg.OperatorGroup {
-				role = "operator"
-			}
-		}
+		groups = extractGroups(claims, cfg.GroupClaim)
 	}
+	assignments := rbac.IdPAssignments("OIDC "+cfg.DisplayName, groups, groupRules(cfg.GroupMappings), cfg.DefaultRole, nil)
 
 	return s.auth.ProvisionSSOUser(ctx, auth.SSOIdentity{
 		Kind: "oidc", Provider: cfg.Slug, Subject: subject,
 		Email: email, EmailVerified: auth.ClaimTrue(claims, "email_verified"),
-		Username: name, Role: role,
+		Username: name, Assignments: assignments,
 	})
 }
 
@@ -648,13 +645,13 @@ type scanner interface {
 
 func scanProvider(r scanner) (*Provider, error) {
 	var p Provider
-	var groupClaim, adminGroup, operatorGroup, lastTestErr sql.NullString
+	var groupClaim, lastTestErr sql.NullString
 	var enabled, isDefault int
 	var lastTestedAt sql.NullTime
 	var lastTestOK sql.NullInt64
 	if err := r.Scan(
 		&p.ID, &p.Slug, &p.DisplayName, &p.IssuerURL, &p.ClientID, &p.Scopes,
-		&groupClaim, &adminGroup, &operatorGroup, &p.DefaultRole,
+		&groupClaim, &p.DefaultRole,
 		&enabled, &isDefault, &lastTestedAt, &lastTestOK, &lastTestErr,
 		&p.CreatedAt, &p.UpdatedAt,
 	); err != nil {
@@ -662,12 +659,6 @@ func scanProvider(r scanner) (*Provider, error) {
 	}
 	if groupClaim.Valid {
 		p.GroupClaim = groupClaim.String
-	}
-	if adminGroup.Valid {
-		p.AdminGroup = adminGroup.String
-	}
-	if operatorGroup.Valid {
-		p.OperatorGroup = operatorGroup.String
 	}
 	p.Enabled = enabled == 1
 	p.IsDefault = isDefault == 1
@@ -691,7 +682,7 @@ func scanProvider(r scanner) (*Provider, error) {
 // the full set (mostly Admin UI surfaces).
 func (s *Service) loadGroupMappings(ctx context.Context, p *Provider) error {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT group_value, role_name FROM oidc_provider_group_mappings
+		`SELECT group_value, role_name, scope_type, scope_host, scope_value FROM oidc_provider_group_mappings
 		  WHERE provider_id = ? ORDER BY group_value`, p.ID)
 	if err != nil {
 		return err
@@ -700,7 +691,7 @@ func (s *Service) loadGroupMappings(ctx context.Context, p *Provider) error {
 	p.GroupMappings = []GroupMapping{}
 	for rows.Next() {
 		var m GroupMapping
-		if err := rows.Scan(&m.GroupValue, &m.RoleName); err != nil {
+		if err := rows.Scan(&m.GroupValue, &m.RoleName, &m.Scope.Type, &m.Scope.Host, &m.Scope.Value); err != nil {
 			return err
 		}
 		p.GroupMappings = append(p.GroupMappings, m)
@@ -724,9 +715,16 @@ func (s *Service) SetGroupMappings(ctx context.Context, providerID int64, mappin
 		if m.GroupValue == "" || m.RoleName == "" {
 			continue
 		}
+		sc := m.Scope
+		if sc.Type == "" {
+			sc = rbac.Global
+		}
+		if err := sc.Validate(); err != nil {
+			return fmt.Errorf("group %s: %w", m.GroupValue, err)
+		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT OR REPLACE INTO oidc_provider_group_mappings (provider_id, group_value, role_name)
-			 VALUES (?, ?, ?)`, providerID, m.GroupValue, m.RoleName); err != nil {
+			`INSERT OR IGNORE INTO oidc_provider_group_mappings (provider_id, group_value, role_name, scope_type, scope_host, scope_value)
+			 VALUES (?, ?, ?, ?, ?, ?)`, providerID, m.GroupValue, m.RoleName, sc.Type, sc.Host, sc.Value); err != nil {
 			return err
 		}
 	}

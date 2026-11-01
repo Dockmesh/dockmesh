@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/docker"
@@ -510,11 +511,11 @@ func (h *Handlers) requireStackRestoreTarget(w http.ResponseWriter, r *http.Requ
 			perm = rbac.PermStacksUpdate
 		}
 	}
-	if !roleAllows(r, perm) {
+	if !middleware.Allowed(r.Context(), perm) {
 		writeError(w, http.StatusForbidden, "restoring stack "+stack+" needs the "+string(perm)+" permission")
 		return false
 	}
-	if scopeReq := h.stackScopeReq(r.Context(), "", stack); !h.checkRoleScope(r, scopeReq) {
+	if scopeReq := h.stackScopeReq(r.Context(), "", stack); !h.allowedOn(r, scopeReq, perm) {
 		h.writeRoleScopeDenied(w, r, perm, scopeReq, "stack "+stack)
 		return false
 	}
@@ -555,7 +556,7 @@ func (h *Handlers) checkBackupJobScope(w http.ResponseWriter, r *http.Request, i
 	if len(hooks) == 0 {
 		return true
 	}
-	if !roleAllows(r, rbac.PermContainersExec) {
+	if !middleware.Allowed(r.Context(), rbac.PermContainersExec) {
 		writeError(w, http.StatusForbidden, "backup hooks run commands in containers and need the containers.exec permission")
 		return false
 	}
@@ -571,7 +572,7 @@ func (h *Handlers) checkBackupJobScope(w http.ResponseWriter, r *http.Request, i
 			writeError(w, http.StatusBadRequest, "hook container "+hk.Container+" not found on the job's host")
 			return false
 		}
-		if !h.checkRoleScope(r, req) {
+		if !h.allowedOn(r, req, rbac.PermContainersExec) {
 			h.writeRoleScopeDenied(w, r, rbac.PermContainersExec, req, "container "+hk.Container)
 			return false
 		}
@@ -579,17 +580,17 @@ func (h *Handlers) checkBackupJobScope(w http.ResponseWriter, r *http.Request, i
 	return true
 }
 
-func (h *Handlers) hookScopeReq(r *http.Request, hostID, container string) (rbac.ScopeRequest, bool) {
+func (h *Handlers) hookScopeReq(r *http.Request, hostID, container string) (rbac.Resource, bool) {
 	if h.Hosts == nil {
-		return rbac.ScopeRequest{}, false
+		return rbac.Resource{}, false
 	}
 	target, err := h.Hosts.Pick(hostID)
 	if err != nil {
-		return rbac.ScopeRequest{}, false
+		return rbac.Resource{}, false
 	}
 	info, err := target.InspectContainer(r.Context(), container)
 	if err != nil {
-		return rbac.ScopeRequest{}, false
+		return rbac.Resource{}, false
 	}
 	req := h.hostScopeReq(r.Context(), hostID)
 	if info.Config != nil {

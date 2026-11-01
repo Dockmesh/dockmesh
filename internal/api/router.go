@@ -137,9 +137,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			// Self-service routes (any authenticated user)
 			r.Get("/me", h.Me)
 			r.Put("/users/{id}/password", h.ChangeUserPassword) // self or admin (enforced inside)
-			r.Get("/users/{id}/avatar", h.GetAvatar)              // any authed user
-			r.Post("/users/{id}/avatar", h.UploadAvatar)          // self or admin (enforced inside)
-			r.Delete("/users/{id}/avatar", h.DeleteAvatar)        // self or admin (enforced inside)
+			r.Get("/users/{id}/avatar", h.GetAvatar)            // any authed user
+			r.Post("/users/{id}/avatar", h.UploadAvatar)        // self or admin (enforced inside)
+			r.Delete("/users/{id}/avatar", h.DeleteAvatar)      // self or admin (enforced inside)
 			r.Post("/ws/ticket", h.WSTicket)
 
 			// P.12.1 — session management (self). Any authenticated
@@ -216,10 +216,13 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			// containers.exec: files hold the same secrets a shell
 			// reaches, and anyone with a shell can read them anyway.
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermContainersExec))
+				r.Use(middleware.RequirePerm(rbac.PermContainersFiles))
 				r.Get("/containers/{id}/files", h.BrowseContainerFiles)
 				r.Get("/containers/{id}/files/content", h.ReadContainerFile)
 				r.Get("/containers/{id}/files/download", h.DownloadContainerFile)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermContainersExec))
 				r.Post("/containers/{id}/files", h.WriteContainerFile)
 			})
 
@@ -244,9 +247,12 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			})
 
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermSystemView))
+				r.Use(middleware.RequirePerm(rbac.PermHostsView))
 				// Host-level CPU / RAM / disk snapshot for the dashboard.
 				r.Get("/system/metrics", h.SystemMetrics)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermSystemView))
 				// Default-system-backup status for the sidebar pill.
 				// Read-only — any authenticated viewer can see whether
 				// the server is self-protected.
@@ -289,11 +295,13 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			// Git source CRUD (P.11.11). Configuring a source writes
 			// compose.yaml into the stack FS, so it rides on stacks.update.
 			r.Group(func(r chi.Router) {
-				r.Use(middleware.RequirePerm(rbac.PermStacksUpdate))
-				r.Get("/stacks/{name}/git", h.GetGitSource)
+				r.Use(middleware.RequirePerm(rbac.PermStacksGit))
 				r.Post("/stacks/{name}/git", h.ConfigureGitSource)
 				r.Delete("/stacks/{name}/git", h.DeleteGitSource)
-				r.Post("/stacks/{name}/git/sync", h.SyncGitSource)
+			})
+			r.With(middleware.RequirePerm(rbac.PermStacksView)).Get("/stacks/{name}/git", h.GetGitSource)
+			r.With(middleware.RequirePerm(rbac.PermStacksDeploy)).Post("/stacks/{name}/git/sync", h.SyncGitSource)
+			r.Group(func(r chi.Router) {
 			})
 
 			// Stack templates (P.11.12) — split create/update/delete +
@@ -319,15 +327,17 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 
 			// Templates — read-only endpoints available to any
 			// authenticated user.
-			r.Get("/templates", h.ListTemplates)
-			r.Get("/templates/{id}", h.GetTemplate)
-			r.Get("/templates/{id}/export", h.ExportTemplate)
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermTemplatesView))
+				r.Get("/templates", h.ListTemplates)
+				r.Get("/templates/{id}", h.GetTemplate)
+				r.Get("/templates/{id}/export", h.ExportTemplate)
+			})
 
 			// -------------------------- STACK DEPLOY -------------------------
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermStacksDeploy))
 				r.Post("/stacks/{name}/deploy", h.DeployStack)
-				r.Post("/stacks/{name}/stop", h.StopStack)
 				// Service scaling (P.8)
 				r.Get("/stacks/{name}/scale", h.ListServiceScale)
 				r.Get("/stacks/{name}/services/{service}/scale", h.GetScale)
@@ -352,6 +362,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 
 			// Migration (P.9) — separate sensitive perm because it
 			// moves data between hosts.
+			r.With(middleware.RequirePerm(rbac.PermStacksOperate)).Post("/stacks/{name}/stop", h.StopStack)
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermStacksMigrate))
 				r.Post("/stacks/{name}/migrate", h.InitiateMigration)
@@ -389,7 +400,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermRolesView))
 				r.Get("/roles", h.ListRoles)
-				r.Get("/roles/permissions", h.AllPermissions)
+				r.Get("/roles/catalog", h.RoleCatalog)
 				r.Get("/roles/{name}", h.GetRole)
 			})
 			r.Group(func(r chi.Router) {
@@ -472,7 +483,10 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Post("/containers/{id}/pause", h.PauseContainer)
 				r.Post("/containers/{id}/unpause", h.UnpauseContainer)
 				r.Post("/containers/{id}/kill", h.KillContainer)
-				r.Delete("/containers/{id}", h.RemoveContainer)
+			})
+			r.With(middleware.RequirePerm(rbac.PermContainersDelete)).Delete("/containers/{id}", h.RemoveContainer)
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequirePerm(rbac.PermContainersUpgrade))
 				r.Get("/containers/{id}/update-info", h.PreviewUpdate)
 				r.Post("/containers/{id}/update", h.UpdateContainer)
 				r.Post("/containers/updates", h.BulkUpdateContainers)
@@ -541,6 +555,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermUsersView))
 				r.Get("/users", h.ListUsers)
+				r.Get("/users/{id}", h.GetUser)
+				r.Get("/assignments", h.ListAssignments)
+				r.Post("/access/check", h.CheckAccess)
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermUsersCreate))
@@ -557,6 +574,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Put("/users/{id}", h.UpdateUser)
 				// P.12.1 — admin-only account unlock.
 				r.Post("/users/{id}/unlock", h.UnlockUser)
+				r.Post("/assignments", h.CreateAssignment)
+				r.Delete("/assignments/{id}", h.DeleteAssignment)
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermUsersDelete))
@@ -616,8 +635,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Put("/oidc/providers/{id}", h.UpdateOIDCProvider)
 				r.Delete("/oidc/providers/{id}", h.DeleteOIDCProvider)
 				r.Post("/oidc/providers/reload", h.ReloadOIDCProviders)
-			r.Post("/oidc/providers/test-discovery", h.TestOIDCDiscovery)
-			r.Post("/oidc/providers/{id}/test", h.TestOIDCProvider)
+				r.Post("/oidc/providers/test-discovery", h.TestOIDCDiscovery)
+				r.Post("/oidc/providers/{id}/test", h.TestOIDCProvider)
 			})
 
 			// -------------------------- SAML ADMIN ---------------------------
@@ -661,8 +680,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Get("/notifications/channels", h.ListNotificationChannels)
 				r.Get("/alerts/rules", h.ListAlertRules)
 				r.Get("/alerts/rules/{id}/stats", h.GetAlertRuleStats)
-				r.Get("/alerts/history", h.ListAlertHistory)
 			})
+			r.With(middleware.RequirePerm(rbac.PermAlertsHistory)).Get("/alerts/history", h.ListAlertHistory)
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermAlertsCreate))
 				r.Post("/notifications/channels", h.CreateNotificationChannel)
@@ -737,7 +756,6 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermBackupsUpdate))
 				r.Put("/backups/jobs/{id}", h.UpdateBackupJob)
-				r.Post("/backups/jobs/{id}/run", h.RunBackupJob)
 				r.Post("/backups/jobs/{id}/accept-host-key", h.AcceptBackupHostKey)
 				r.Post("/backups/jobs/{id}/review/{mode}", h.AcknowledgeBackupJobReview)
 				r.Put("/backups/targets/{id}", h.UpdateBackupTarget)
@@ -748,6 +766,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermBackupsDelete))
 				r.Delete("/backups/jobs/{id}", h.DeleteBackupJob)
+			})
+			r.With(middleware.RequirePerm(rbac.PermBackupsRun)).Post("/backups/jobs/{id}/run", h.RunBackupJob)
+			r.Group(func(r chi.Router) {
 				r.Delete("/backups/targets/{id}", h.DeleteBackupTarget)
 			})
 			r.Group(func(r chi.Router) {
@@ -756,10 +777,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				// Stack-typed runs need their own entry point that writes
 				// stack/<rel> plus each volume.
 				r.Post("/backups/runs/{id}/restore-stack", h.RestoreStackBackup)
-				// The key decrypts every backup and stored secret; the
-				// handler additionally requires an admin.
-				r.Get("/system/backup-key/export", h.ExportBackupKey)
 			})
+			// The key decrypts every backup and stored secret.
+			r.With(middleware.RequirePerm(rbac.PermBackupsKeyExport)).Get("/system/backup-key/export", h.ExportBackupKey)
 			r.Group(func(r chi.Router) {
 				// Server-binary self-update + secrets-key rotation are the
 				// most destructive operations in the platform.

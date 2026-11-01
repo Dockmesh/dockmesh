@@ -38,7 +38,8 @@ func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
 	}
 
 	containerID := chi.URLParam(r, "id")
-	if !h.wsContainerAccess(w, r, rbac.PermContainersExec, target.ID(), containerID) {
+	res, allowed := h.wsContainerAccess(w, r, rbac.PermContainersExec, target.ID(), containerID)
+	if !allowed {
 		return
 	}
 	cmd := r.URL.Query().Get("cmd")
@@ -52,7 +53,7 @@ func (h *Handlers) WSExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	h.wsWatch(r, conn, rbac.PermContainersExec, target.ID())
+	h.wsWatch(r, conn, rbac.PermContainersExec, &res)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()

@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // ExportBackupKey returns the age private key used to encrypt stack .env
@@ -17,8 +19,8 @@ import (
 //
 // Admin-only. Every call is audited so a stolen key leaves a trail.
 func (h *Handlers) ExportBackupKey(w http.ResponseWriter, r *http.Request) {
-	if !h.callerIsAdmin(r) {
-		writeError(w, http.StatusForbidden, "only an admin can export the backup key")
+	if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermBackupsKeyExport) {
+		writeError(w, http.StatusForbidden, "exporting the backup key needs the key export extra on everything")
 		return
 	}
 	if h.Secrets == nil {

@@ -102,7 +102,7 @@ func (h *Handlers) wsAuth(w http.ResponseWriter, r *http.Request, want rbac.Perm
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return r, false
 	}
-	return r.WithContext(ctx), true
+	return r.WithContext(middleware.WithRoutePerm(ctx, want)), true
 }
 
 type wsTicketKey struct{}
@@ -130,20 +130,19 @@ func (h *Handlers) wsIdentity(ctx context.Context, t *auth.WSTicket) (middleware
 		}
 		return id, nil
 	}
-	role, scope, err := h.Auth.SessionIdentity(ctx, t.UserID, t.SessionID)
-	if err != nil {
+	if err := h.Auth.SessionLive(ctx, t.UserID, t.SessionID); err != nil {
 		return middleware.Identity{}, err
 	}
-	return middleware.Identity{UserID: t.UserID, Role: role, ScopeTags: scope, SessionID: t.SessionID}, nil
+	return middleware.Identity{UserID: t.UserID, SessionID: t.SessionID, Access: middleware.UserAccess(t.UserID)}, nil
 }
 
 // wsRecheckInterval is how often an open WebSocket re-checks its caller.
 var wsRecheckInterval = 30 * time.Second
 
-// wsWatch closes conn once the caller's session or token is gone, perm is
-// lost or hostID left the caller's scope, so revoking a session also ends
-// its open shells and log streams. Stops when the handler returns.
-func (h *Handlers) wsWatch(r *http.Request, conn *websocket.Conn, perm rbac.Perm, hostID string) {
+// wsWatch closes conn once the caller's session or token is gone or perm
+// is lost (on res, when given), so revoking a session or an assignment
+// also ends open shells and log streams. Stops when the handler returns.
+func (h *Handlers) wsWatch(r *http.Request, conn *websocket.Conn, perm rbac.Perm, res *rbac.Resource) {
 	t, _ := r.Context().Value(wsTicketKey{}).(*auth.WSTicket)
 	if t == nil {
 		return
@@ -160,7 +159,7 @@ func (h *Handlers) wsWatch(r *http.Request, conn *websocket.Conn, perm rbac.Perm
 			id, err := h.wsIdentity(ctx, t)
 			if err == nil {
 				idCtx := middleware.WithIdentity(ctx, id)
-				if middleware.Allowed(idCtx, perm) && (hostID == "" || h.canAccessHost(r.WithContext(idCtx), hostID)) {
+				if (res == nil && middleware.Allowed(idCtx, perm)) || (res != nil && middleware.AllowedOn(idCtx, perm, *res)) {
 					continue
 				}
 			}
@@ -173,19 +172,15 @@ func (h *Handlers) wsWatch(r *http.Request, conn *websocket.Conn, perm rbac.Perm
 	}(r.Context())
 }
 
-// wsContainerAccess applies the host scope of the caller and the role scope
-// for the container. Writes 403 and returns false when out of scope.
-func (h *Handlers) wsContainerAccess(w http.ResponseWriter, r *http.Request, perm rbac.Perm, hostID, containerID string) bool {
-	if !h.canAccessHost(r, hostID) {
-		http.Error(w, "out of scope: your role does not include this host", http.StatusForbidden)
-		return false
-	}
+// wsContainerAccess checks perm on the container and returns its resource
+// for wsWatch. Writes 403 and returns false when out of scope.
+func (h *Handlers) wsContainerAccess(w http.ResponseWriter, r *http.Request, perm rbac.Perm, hostID, containerID string) (rbac.Resource, bool) {
 	scopeReq := h.containerScopeReq(r.Context(), hostID, containerID)
-	if !h.checkRoleScope(r, scopeReq) {
+	if !h.allowedOn(r, scopeReq, perm) {
 		h.writeRoleScopeDenied(w, r, perm, scopeReq, "container "+containerID)
-		return false
+		return scopeReq, false
 	}
-	return true
+	return scopeReq, true
 }
 
 // WSLogs streams container logs over a WebSocket connection.
@@ -204,7 +199,8 @@ func (h *Handlers) WSLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	containerID := chi.URLParam(r, "id")
-	if !h.wsContainerAccess(w, r, rbac.PermContainersLogs, target.ID(), containerID) {
+	res, allowed := h.wsContainerAccess(w, r, rbac.PermContainersLogs, target.ID(), containerID)
+	if !allowed {
 		return
 	}
 	tail := r.URL.Query().Get("tail")
@@ -218,7 +214,7 @@ func (h *Handlers) WSLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	h.wsWatch(r, conn, rbac.PermContainersLogs, target.ID())
+	h.wsWatch(r, conn, rbac.PermContainersLogs, &res)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()

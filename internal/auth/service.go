@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -35,8 +35,9 @@ type User struct {
 	Username   string   `json:"username"`
 	DisplayName string  `json:"display_name,omitempty"`
 	Email      string   `json:"email,omitempty"`
-	Role       string   `json:"role"`
-	ScopeTags  []string `json:"scope_tags,omitempty"` // empty = all hosts
+	// Source is "sso" when sign-in replaces the account's identity
+	// provider assignments from its groups, "manual" otherwise.
+	Source     string   `json:"source"`
 	MFAEnabled bool     `json:"mfa_enabled"`
 	// Profile timestamps surfaced in the Account page.
 	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
@@ -48,22 +49,9 @@ type User struct {
 	// The actual bytes are served from a separate endpoint
 	// (GET /users/{id}/avatar) so we don't bloat every list response.
 	HasAvatar bool `json:"has_avatar,omitempty"`
-	// Effective v2.1 permissions + role scopes. Populated by the
-	// /login and /me handlers via rbac.Store lookup; left empty when
-	// the User flows through DB-only paths (e.g. ListUsers). Frontend
-	// reads these to drive UI gating without replicating the role-perm
-	// map locally.
-	Permissions []string  `json:"permissions,omitempty"`
-	Scopes      *MeScopes `json:"scopes,omitempty"`
-}
-
-// MeScopes is the per-scope-type breakdown returned with the User.
-// Each list is the set of allowed values for that scope type; empty
-// list = unscoped (full access to that resource type).
-type MeScopes struct {
-	Stacks   []string `json:"stacks"`
-	Hosts    []string `json:"hosts"`
-	HostTags []string `json:"host_tags"`
+	// Permissions the caller holds anywhere; set by /me and /login for
+	// UI gating.
+	Permissions []string `json:"permissions,omitempty"`
 }
 
 type LoginResult struct {
@@ -91,6 +79,9 @@ type Service struct {
 	// afterAcquire runs once an attempt is counted; tests use it to hang up
 	// mid-request.
 	afterAcquire func()
+
+	onAccessChange func(ctx context.Context)
+	syncIdP        func(ctx context.Context, userID string, want []rbac.Assignment) error
 }
 
 // NewService panics if secret is shorter than 32 bytes; config always
@@ -191,6 +182,8 @@ func (s *Service) Bootstrap(ctx context.Context) (username, password string, cre
 	return "admin", pw, true, nil
 }
 
+// CreateUser adds a local account. A non-empty role is assigned on
+// everything; pass "" to add assignments separately.
 func (s *Service) CreateUser(ctx context.Context, username, email, password, role string) (*User, error) {
 	if err := ValidatePassword(s.policy(), password); err != nil {
 		return nil, err
@@ -204,10 +197,15 @@ func (s *Service) CreateUser(ctx context.Context, username, email, password, rol
 	if email != "" {
 		emailNullable = email
 	}
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO users (id, username, email, password, role, password_changed_at)
-		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-		id, username, emailNullable, hash, role)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO users (id, username, email, password, password_changed_at)
+		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+		id, username, emailNullable, hash)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed: users.username") {
 			return nil, ErrUsernameTaken
@@ -217,7 +215,17 @@ func (s *Service) CreateUser(ctx context.Context, username, email, password, rol
 		}
 		return nil, fmt.Errorf("insert user: %w", err)
 	}
-	return &User{ID: id, Username: username, Email: email, Role: role}, nil
+	if role != "" {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES (?, ?, 'global')`, id, role); err != nil {
+			return nil, fmt.Errorf("assign role: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	s.accessChanged(ctx)
+	return &User{ID: id, Username: username, Email: email, Source: RoleSourceManual}, nil
 }
 
 // StartSessionForSSO mints a token pair for an SSO-authenticated user,
@@ -227,31 +235,16 @@ func (s *Service) StartSessionForSSO(ctx context.Context, u User, userAgent, ip 
 	return s.startSession(ctx, u, userAgent, ip)
 }
 
-// parseScopeTags decodes the stringified JSON array stored in
-// users.scope_tags. Nil / empty / NULL all return nil, which means
-// "all hosts" semantically. Malformed JSON is logged-worthy but we
-// treat it as no-scope rather than failing the whole request.
-func parseScopeTags(raw sql.NullString) []string {
-	if !raw.Valid || raw.String == "" || raw.String == "null" {
-		return nil
-	}
-	var out []string
-	if err := json.Unmarshal([]byte(raw.String), &out); err != nil {
-		return nil
-	}
-	return out
-}
-
 func (s *Service) GetUser(ctx context.Context, id string) (*User, error) {
 	var u User
-	var email, scope, displayName, avatarMime sql.NullString
+	var email, displayName, avatarMime sql.NullString
 	var totpVerified int
 	var lastLoginAt, pwChangedAt sql.NullTime
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, username, email, role, scope_tags, totp_verified,
+		`SELECT id, username, email, role_source, totp_verified,
 		        display_name, last_login_at, password_changed_at, avatar_mime
 		   FROM users WHERE id = ?`, id).
-		Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &totpVerified,
+		Scan(&u.ID, &u.Username, &email, &u.Source, &totpVerified,
 			&displayName, &lastLoginAt, &pwChangedAt, &avatarMime)
 	if err != nil {
 		return nil, err
@@ -270,7 +263,6 @@ func (s *Service) GetUser(ctx context.Context, id string) (*User, error) {
 		t := pwChangedAt.Time
 		u.PasswordChangedAt = &t
 	}
-	u.ScopeTags = parseScopeTags(scope)
 	u.MFAEnabled = totpVerified == 1
 	u.HasAvatar = avatarMime.Valid && avatarMime.String != ""
 	return &u, nil
@@ -336,19 +328,9 @@ func (s *Service) ListActiveUserIDs(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
-// UserAccess returns the role and host-tag scope of one user, for
-// deciding who a notification may reach.
-func (s *Service) UserAccess(ctx context.Context, userID string) (string, []string, error) {
-	u, err := s.GetUser(ctx, userID)
-	if err != nil {
-		return "", nil, err
-	}
-	return u.Role, u.ScopeTags, nil
-}
-
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, username, email, role, scope_tags, totp_verified,
+		`SELECT id, username, email, role_source, totp_verified,
 		        display_name, last_login_at, password_changed_at, avatar_mime,
 		        locked_until, login_limit_until
 		   FROM users ORDER BY username`)
@@ -360,11 +342,11 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	now := time.Now()
 	for rows.Next() {
 		var u User
-		var email, scope, displayName, avatarMime sql.NullString
+		var email, displayName, avatarMime sql.NullString
 		var totp int
 		var lastLoginAt, pwChangedAt, lockedUntil sql.NullTime
 		var limitUntil int64
-		if err := rows.Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &totp,
+		if err := rows.Scan(&u.ID, &u.Username, &email, &u.Source, &totp,
 			&displayName, &lastLoginAt, &pwChangedAt, &avatarMime,
 			&lockedUntil, &limitUntil); err != nil {
 			return nil, err
@@ -384,7 +366,6 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 			t := pwChangedAt.Time
 			u.PasswordChangedAt = &t
 		}
-		u.ScopeTags = parseScopeTags(scope)
 		u.MFAEnabled = totp == 1
 		u.HasAvatar = avatarMime.Valid && avatarMime.String != ""
 		out = append(out, u)
@@ -408,46 +389,26 @@ func activeLockEnd(now time.Time, lockedUntil sql.NullTime, limitUntil int64) *t
 	return &end
 }
 
-// UpdateUser edits email, role, and (optionally) display name. Scope
-// changes go through UpdateUserScope so callers don't need to pass
-// scope on every role change. A role changed here counts as set by an
-// admin, so SSO logins no longer overwrite it.
-func (s *Service) UpdateUser(ctx context.Context, id, email, role, displayName string) (*User, error) {
+// UpdateUser edits email and display name.
+func (s *Service) UpdateUser(ctx context.Context, id, email, displayName string) (*User, error) {
 	var emailNullable any
 	if email != "" {
 		emailNullable = email
 	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE users SET email = ?, display_name = ?,
-		                  role_source = CASE WHEN role = ? THEN role_source ELSE ? END,
-		                  role = ?, updated_at = CURRENT_TIMESTAMP
-		   WHERE id = ?`,
-		emailNullable, displayName, role, RoleSourceManual, role, id)
+		`UPDATE users SET email = ?, display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		emailNullable, displayName, id)
 	if err != nil {
 		return nil, err
 	}
 	return s.GetUser(ctx, id)
 }
 
-// UpdateUserScope sets the user's scope_tags. Pass nil / empty slice
-// to clear scope (= access to all hosts).
-func (s *Service) UpdateUserScope(ctx context.Context, id string, scopeTags []string) (*User, error) {
-	var val any
-	if len(scopeTags) > 0 {
-		b, err := json.Marshal(scopeTags)
-		if err != nil {
-			return nil, err
-		}
-		val = string(b)
-	}
-	// val = nil → stores NULL
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE users SET scope_tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		val, id)
-	if err != nil {
-		return nil, err
-	}
-	return s.GetUser(ctx, id)
+// SetSource switches whether sign-in replaces the account's identity
+// provider assignments ("sso") or leaves its access alone ("manual").
+func (s *Service) SetSource(ctx context.Context, id, source string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET role_source = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, source, id)
+	return err
 }
 
 func (s *Service) DeleteUser(ctx context.Context, id string) error {
@@ -569,15 +530,15 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 		return nil, err
 	}
 	var u User
-	var email, scope, displayName sql.NullString
+	var email, displayName sql.NullString
 	var hash string
 	var totpVerified int
 	var lockedUntil, pwChangedAt sql.NullTime
 	err = s.db.QueryRowContext(ctx,
-		`SELECT id, username, email, role, scope_tags, password, totp_verified,
+		`SELECT id, username, email, role_source, password, totp_verified,
 		        locked_until, display_name, password_changed_at
 		   FROM users WHERE username = ?`, username).
-		Scan(&u.ID, &u.Username, &email, &u.Role, &scope, &hash, &totpVerified,
+		Scan(&u.ID, &u.Username, &email, &u.Source, &hash, &totpVerified,
 			&lockedUntil, &displayName, &pwChangedAt)
 	found := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -619,7 +580,6 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 		t := pwChangedAt.Time
 		u.PasswordChangedAt = &t
 	}
-	u.ScopeTags = parseScopeTags(scope)
 	ok, err = VerifyPassword(password, hash)
 	if err != nil || !ok {
 		lockout := s.recordFailedLogin(ctx, u.ID, key)
@@ -828,49 +788,44 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 }
 
 // Validate parses an access token and checks that its session is still
-// live. Role and scope are re-read from the user row, so a demotion or a
-// scope change applies to the next request rather than after the token's
-// 15 minutes.
+// live. Access is not part of the token: callers evaluate the user's
+// current assignments on every request.
 func (s *Service) Validate(ctx context.Context, token string) (*Claims, error) {
 	c := &Claims{}
 	if err := s.keys.Parse(KindAccess, token, c); err != nil {
 		return nil, err
 	}
-	role, scope, err := s.SessionIdentity(ctx, c.UserID, c.SessionID)
-	if err != nil {
+	if err := s.SessionLive(ctx, c.UserID, c.SessionID); err != nil {
 		return nil, err
 	}
-	c.Role, c.ScopeTags = role, scope
 	return c, nil
 }
 
-// SessionIdentity returns the current role and scope of userID if
-// sessionID is one of their live sessions, ErrInvalidToken otherwise.
-func (s *Service) SessionIdentity(ctx context.Context, userID, sessionID string) (string, []string, error) {
+// SessionLive returns nil if sessionID is one of userID's live sessions,
+// ErrInvalidToken otherwise.
+func (s *Service) SessionLive(ctx context.Context, userID, sessionID string) error {
 	if userID == "" || sessionID == "" {
-		return "", nil, ErrInvalidToken
+		return ErrInvalidToken
 	}
 	var (
 		revokedAt sql.NullTime
 		expiresAt time.Time
-		role      string
-		scope     sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT s.revoked_at, s.expires_at, u.role, u.scope_tags
+		SELECT s.revoked_at, s.expires_at
 		  FROM sessions s JOIN users u ON u.id = s.user_id
 		 WHERE s.family_id = ? AND s.user_id = ?`, sessionID, userID).
-		Scan(&revokedAt, &expiresAt, &role, &scope)
+		Scan(&revokedAt, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil, ErrInvalidToken
+		return ErrInvalidToken
 	}
 	if err != nil {
-		return "", nil, err
+		return err
 	}
 	if revokedAt.Valid || time.Now().After(expiresAt) {
-		return "", nil, ErrInvalidToken
+		return ErrInvalidToken
 	}
-	return role, parseScopeTags(scope), nil
+	return nil
 }
 
 // RevokeUserSessions ends every live session of userID except
@@ -942,4 +897,18 @@ func nullable(s string) any {
 		return nil
 	}
 	return s
+}
+
+// SetAccessHooks wires the role store: changed reloads it after this
+// package wrote assignments, syncIdP replaces a user's identity provider
+// assignments at sign-in.
+func (s *Service) SetAccessHooks(changed func(ctx context.Context), syncIdP func(ctx context.Context, userID string, want []rbac.Assignment) error) {
+	s.onAccessChange = changed
+	s.syncIdP = syncIdP
+}
+
+func (s *Service) accessChanged(ctx context.Context) {
+	if s.onAccessChange != nil {
+		s.onAccessChange(ctx)
+	}
 }

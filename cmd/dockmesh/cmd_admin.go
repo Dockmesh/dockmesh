@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // runAdminCmd handles `dockmesh admin <subcommand>`. Bootstrap recovery
@@ -127,7 +128,7 @@ func adminCreate(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("created user: id=%s username=%s role=%s\n", user.ID, user.Username, user.Role)
+	fmt.Printf("created user: id=%s username=%s role=%s (on everything)\n", user.ID, user.Username, *role)
 	return nil
 }
 
@@ -196,7 +197,11 @@ func adminListUsers(args []string) error {
 		fmt.Println("(no users)")
 		return nil
 	}
-	fmt.Printf("%-40s  %-20s  %-10s  %-30s  %s\n", "ID", "USERNAME", "ROLE", "EMAIL", "MFA")
+	roles := rbac.NewStore(database)
+	if err := roles.Load(context.Background()); err != nil {
+		return err
+	}
+	fmt.Printf("%-40s  %-20s  %-30s  %-30s  %s\n", "ID", "USERNAME", "ACCESS", "EMAIL", "MFA")
 	for _, u := range users {
 		mfa := "no"
 		if u.MFAEnabled {
@@ -206,7 +211,14 @@ func adminListUsers(args []string) error {
 		if email == "" {
 			email = "-"
 		}
-		fmt.Printf("%-40s  %-20s  %-10s  %-30s  %s\n", u.ID, u.Username, u.Role, email, mfa)
+		var access []string
+		for _, a := range roles.UserAssignments(u.ID) {
+			access = append(access, a.Role+" on "+a.Scope.String())
+		}
+		if len(access) == 0 {
+			access = []string{"-"}
+		}
+		fmt.Printf("%-40s  %-20s  %-30s  %-30s  %s\n", u.ID, u.Username, strings.Join(access, ", "), email, mfa)
 	}
 	return nil
 }

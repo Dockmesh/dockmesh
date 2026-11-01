@@ -191,7 +191,7 @@ func (h *Handlers) ReadVolumeFile(w http.ResponseWriter, r *http.Request) {
 	}
 	scopeReq := h.hostScopeReq(r.Context(), target.ID())
 	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermVolumesReadFile, scopeReq, "host "+target.ID())
+		h.writeRoleScopeDenied(w, r, rbac.PermVolumesBrowse, scopeReq, "host "+target.ID())
 		return
 	}
 	name := chi.URLParam(r, "name")

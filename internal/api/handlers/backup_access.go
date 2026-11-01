@@ -12,11 +12,11 @@ import (
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
-// callerIsAdmin reports whether the caller may change system settings and
-// is limited to no host or stack. Material that unlocks the whole install
-// (system archives, the backup key) is restricted to such callers.
+// callerIsAdmin reports whether the caller may change instance settings,
+// which only an assignment on everything grants. Material that unlocks the
+// whole install (system archives) is restricted to such callers.
 func (h *Handlers) callerIsAdmin(r *http.Request) bool {
-	return middleware.Allowed(r.Context(), rbac.PermSystemUpdate) && h.callerUnscoped(r)
+	return middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermSystemUpdate)
 }
 
 // requireJobAccess guards every write to a backup job. A

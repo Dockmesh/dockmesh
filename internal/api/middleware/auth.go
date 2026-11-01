@@ -15,121 +15,92 @@ import (
 type ctxKey struct{ name string }
 
 var (
-	userIDKey     = ctxKey{"userID"}
-	roleKey       = ctxKey{"role"}
-	scopeTagsKey  = ctxKey{"scopeTags"}
-	apiTokenIDKey = ctxKey{"apiTokenID"}
-	ownerKey      = ctxKey{"tokenOwner"}
-	ownerRoleKey  = ctxKey{"tokenOwnerRole"}
-	sessionIDKey  = ctxKey{"sessionID"}
+	identityKey = ctxKey{"identity"}
+	routePerms  = ctxKey{"routePerms"}
+	resourceKey = ctxKey{"resource"}
 )
 
 // Identity is everything the auth layer knows about a caller. API-token
 // callers have no UserID; their owner is in TokenOwnerID.
 type Identity struct {
 	UserID       string
-	Role         string
-	ScopeTags    []string
 	SessionID    string
 	APITokenID   int64
 	TokenOwnerID string
-	// TokenOwnerRole is the owner's current role. Permission and role-scope
-	// checks must pass for Role and for TokenOwnerRole.
-	TokenOwnerRole string
+	// Access is evaluated from the user's (or the token owner's) current
+	// assignments when the request comes in.
+	Access *rbac.Access
 }
 
 // WithIdentity stores id in ctx. Used by NewAuth and by WebSocket handlers,
 // which authenticate with a ticket instead of a header.
 func WithIdentity(ctx context.Context, id Identity) context.Context {
-	ctx = context.WithValue(ctx, userIDKey, id.UserID)
-	ctx = context.WithValue(ctx, roleKey, id.Role)
-	ctx = context.WithValue(ctx, scopeTagsKey, id.ScopeTags)
-	ctx = context.WithValue(ctx, sessionIDKey, id.SessionID)
-	ctx = context.WithValue(ctx, apiTokenIDKey, id.APITokenID)
-	ctx = context.WithValue(ctx, ownerKey, id.TokenOwnerID)
-	return context.WithValue(ctx, ownerRoleKey, id.TokenOwnerRole)
+	return context.WithValue(ctx, identityKey, id)
+}
+
+func identity(ctx context.Context) Identity {
+	id, _ := ctx.Value(identityKey).(Identity)
+	return id
 }
 
 // SessionID is the session family of a user JWT, empty for API tokens.
-func SessionID(ctx context.Context) string {
-	v, _ := ctx.Value(sessionIDKey).(string)
-	return v
-}
+func SessionID(ctx context.Context) string { return identity(ctx).SessionID }
 
 // TokenOwnerID is the user an API token belongs to; empty for user
 // sessions and legacy tokens.
-func TokenOwnerID(ctx context.Context) string {
-	v, _ := ctx.Value(ownerKey).(string)
-	return v
-}
+func TokenOwnerID(ctx context.Context) string { return identity(ctx).TokenOwnerID }
 
-// TokenOwnerRole is the current role of the API token's owner.
-func TokenOwnerRole(ctx context.Context) string {
-	v, _ := ctx.Value(ownerRoleKey).(string)
-	return v
-}
+// UserID is the authenticated user, empty for API tokens; callers that
+// need an actor should fall back to TokenOwnerID or APITokenID.
+func UserID(ctx context.Context) string { return identity(ctx).UserID }
 
-// Roles returns every role a permission or role-scope check has to pass:
-// the caller's role, plus the owner's role for owned API tokens.
-func Roles(ctx context.Context) []string {
-	roles := []string{Role(ctx)}
-	if owner := TokenOwnerRole(ctx); owner != "" {
-		roles = append(roles, owner)
+// APITokenID is the API token of the request, 0 for user sessions.
+func APITokenID(ctx context.Context) int64 { return identity(ctx).APITokenID }
+
+// AccessOf returns the caller's evaluated access; never nil.
+func AccessOf(ctx context.Context) *rbac.Access {
+	if a := identity(ctx).Access; a != nil {
+		return a
 	}
-	return roles
+	return &rbac.Access{}
 }
 
-func roleAllowed(role string, perm rbac.Perm) bool {
-	if RBACStore != nil {
-		return RBACStore.AllowedDB(role, perm)
-	}
-	return rbac.Allowed(role, perm)
-}
-
-// Allowed reports whether the caller holds perm under every role in Roles.
+// Allowed reports whether the caller holds perm on at least one scope.
+// Handlers that act on a concrete host or stack must check that resource
+// as well (see AllowedOn).
 func Allowed(ctx context.Context, perm rbac.Perm) bool {
-	for _, role := range Roles(ctx) {
-		if !roleAllowed(role, perm) {
-			return false
-		}
-	}
-	return true
+	return AccessOf(ctx).Allows(perm)
 }
 
-// UserID extracts the authenticated user ID from the request context.
-// For API-token-authenticated requests, returns empty string (no user
-// session) — callers that need an actor identifier should use
-// TokenOwnerID (owned tokens) or APITokenID.
-func UserID(ctx context.Context) string {
-	v, _ := ctx.Value(userIDKey).(string)
+// AllowedOn reports whether the caller holds perm on res.
+func AllowedOn(ctx context.Context, perm rbac.Perm, res rbac.Resource) bool {
+	return AccessOf(ctx).AllowsOn(perm, res)
+}
+
+// RoutePerms returns the permissions the route's RequirePerm middleware
+// checked, so scope checks in the handler test the same permissions on
+// the resource the request acts on.
+func RoutePerms(ctx context.Context) []rbac.Perm {
+	v, _ := ctx.Value(routePerms).([]rbac.Perm)
 	return v
 }
 
-// Role extracts the authenticated user's role from the request context.
-// For API-token-authenticated requests, returns the role pinned to the
-// token at creation time; see Roles for the owner's role.
-func Role(ctx context.Context) string {
-	v, _ := ctx.Value(roleKey).(string)
-	return v
+// WithRoutePerm adds perm to the permissions scope checks test.
+func WithRoutePerm(ctx context.Context, perm rbac.Perm) context.Context {
+	return context.WithValue(ctx, routePerms, append(append([]rbac.Perm(nil), RoutePerms(ctx)...), perm))
 }
 
-// APITokenID returns the database id of the API token used to
-// authenticate this request, or 0 for JWT-authenticated user sessions.
-// Useful for audit logs that want to distinguish "alice logged in and
-// did X" from "the github-actions token did X".
-func APITokenID(ctx context.Context) int64 {
-	v, _ := ctx.Value(apiTokenIDKey).(int64)
-	return v
+// WithResource records the resource a route acts on (resolved by a
+// middleware before routing reaches RequirePerm), so RequirePerm checks
+// the permission there instead of anywhere.
+func WithResource(ctx context.Context, res rbac.Resource) context.Context {
+	return context.WithValue(ctx, resourceKey, res)
 }
 
-// ScopeTags returns the caller's host-tag scope. Empty / nil means the
-// caller has access to all hosts. Non-empty narrows access to hosts
-// whose host_tags intersect with the scope (OR match). Handlers that
-// act on a specific host should call Handlers.canAccessHost() which
-// combines this with the hosttags service.
-func ScopeTags(ctx context.Context) []string {
-	v, _ := ctx.Value(scopeTagsKey).([]string)
-	return v
+// ResourceOf returns the resource recorded by WithResource.
+func ResourceOf(ctx context.Context) (rbac.Resource, bool) {
+	res, ok := ctx.Value(resourceKey).(rbac.Resource)
+	return res, ok
 }
 
 // APITokensStore is set by main.go at startup so the auth middleware
@@ -137,13 +108,37 @@ func ScopeTags(ctx context.Context) []string {
 // JWTs are accepted.
 var APITokensStore *apitokens.Service
 
+// RBACStore is set by main.go at startup; it evaluates assignments.
+var RBACStore *rbac.Store
+
+// UserAccess evaluates the current assignments of a user.
+func UserAccess(userID string) *rbac.Access {
+	if RBACStore == nil {
+		return &rbac.Access{Authenticated: true}
+	}
+	return RBACStore.AccessFor(userID)
+}
+
 // TokenIdentity resolves an API token to the caller identity. An owned
-// token gets its owner's current scope and is checked against the owner's
-// current role as well; a token whose owner is gone stops working. Legacy
-// tokens (no owner on record) keep their pinned role and no scope.
+// token gets its owner's current access, narrowed to the token's role on
+// the token's scope when it has one; a token whose owner is gone stops
+// working. Legacy tokens (no owner on record) act as their role on the
+// token's scope.
 func TokenIdentity(ctx context.Context, svc *auth.Service, tok *apitokens.Token) (Identity, bool) {
-	id := Identity{Role: tok.Role, APITokenID: tok.ID}
+	id := Identity{APITokenID: tok.ID}
+	if RBACStore == nil {
+		return id, false
+	}
+	scope := tok.Scope
+	if scope.Type == "" {
+		scope = rbac.Global
+	}
 	if tok.Legacy {
+		perms, ok := RBACStore.RolePerms(tok.Role)
+		if !ok {
+			return id, false
+		}
+		id.Access = RBACStore.RoleAccess(tok.Role).Restrict(perms, scope)
 		return id, true
 	}
 	if tok.CreatedBy == nil {
@@ -154,8 +149,15 @@ func TokenIdentity(ctx context.Context, svc *auth.Service, tok *apitokens.Token)
 		return id, false
 	}
 	id.TokenOwnerID = owner.ID
-	id.TokenOwnerRole = owner.Role
-	id.ScopeTags = owner.ScopeTags
+	access := RBACStore.AccessFor(owner.ID)
+	if tok.Role != "" {
+		perms, ok := RBACStore.RolePerms(tok.Role)
+		if !ok {
+			perms = map[rbac.Perm]bool{}
+		}
+		access = access.Restrict(perms, scope)
+	}
+	id.Access = access
 	return id, true
 }
 
@@ -177,7 +179,6 @@ func NewAuth(svc *auth.Service) func(http.Handler) http.Handler {
 			}
 			token := strings.TrimPrefix(h, "Bearer ")
 
-			// API token path — only if the store is configured.
 			if strings.HasPrefix(token, apitokens.TokenPrefix) {
 				if APITokensStore == nil {
 					http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -205,7 +206,6 @@ func NewAuth(svc *auth.Service) func(http.Handler) http.Handler {
 				return
 			}
 
-			// User JWT path.
 			c, err := svc.Validate(r.Context(), token)
 			if err != nil {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -213,47 +213,29 @@ func NewAuth(svc *auth.Service) func(http.Handler) http.Handler {
 			}
 			next.ServeHTTP(w, r.WithContext(WithIdentity(r.Context(), Identity{
 				UserID:    c.UserID,
-				Role:      c.Role,
-				ScopeTags: c.ScopeTags,
 				SessionID: c.SessionID,
+				Access:    UserAccess(c.UserID),
 			})))
 		})
 	}
 }
 
-// RequireRole returns middleware that rejects requests whose user does not
-// have any of the allowed roles. Must be chained after NewAuth.
-func RequireRole(allowed ...string) func(http.Handler) http.Handler {
-	allowedSet := make(map[string]struct{}, len(allowed))
-	for _, r := range allowed {
-		allowedSet[r] = struct{}{}
-	}
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			role := Role(r.Context())
-			if _, ok := allowedSet[role]; !ok {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
-// RBACStore is set by main.go at startup so the middleware can use
-// DB-backed custom roles. If nil, falls back to hardcoded builtins.
-var RBACStore *rbac.Store
-
-// RequirePerm returns middleware that rejects requests unless Allowed
-// grants perm (every role in Roles). Must be chained after NewAuth.
+// RequirePerm rejects requests unless the caller holds perm: on the
+// resource recorded by WithResource when there is one, otherwise on at
+// least one scope. It records perm so the handler's scope checks test it
+// on the concrete resource. Must be chained after NewAuth.
 func RequirePerm(perm rbac.Perm) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !Allowed(r.Context(), perm) {
+			ok := Allowed(r.Context(), perm)
+			if res, scoped := ResourceOf(r.Context()); scoped {
+				ok = AllowedOn(r.Context(), perm, res)
+			}
+			if !ok {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(WithRoutePerm(r.Context(), perm)))
 		})
 	}
 }

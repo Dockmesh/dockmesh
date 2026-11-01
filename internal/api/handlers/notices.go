@@ -15,9 +15,8 @@ func (h *Handlers) noticeViewer(r *http.Request) notices.Viewer {
 	ctx := r.Context()
 	return notices.Viewer{
 		UserID: middleware.UserID(ctx),
-		Role:   middleware.Role(ctx),
 		Allowed: func(perm string) bool {
-			return middleware.Allowed(ctx, rbac.Perm(perm))
+			return middleware.AccessOf(ctx).AllowsGlobally(rbac.Perm(perm))
 		},
 	}
 }

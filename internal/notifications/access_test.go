@@ -45,7 +45,7 @@ func (f fakeRoles) AllowedDB(role string, perm rbac.Perm) bool {
 	return false
 }
 
-func (f fakeRoles) InScope(role string, req rbac.ScopeRequest) bool {
+func (f fakeRoles) InScope(role string, req rbac.Resource) bool {
 	sc := f.scopes[role]
 	if len(sc) == 0 {
 		return true

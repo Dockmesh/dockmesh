@@ -97,10 +97,9 @@ func Bullets(items []string) string {
 }
 
 // Viewer is the reading user. Allowed answers permission checks for the
-// viewer's role (custom roles included).
+// viewer's current access.
 type Viewer struct {
 	UserID  string
-	Role    string
 	Allowed func(perm string) bool
 }
 

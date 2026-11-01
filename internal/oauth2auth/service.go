@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"net/http"
 	"strings"
 	"sync"
@@ -31,51 +32,60 @@ var (
 )
 
 type GroupMapping struct {
-	GroupValue string `json:"group"`
-	RoleName   string `json:"role"`
+	GroupValue string     `json:"group"`
+	RoleName   string     `json:"role"`
+	Scope      rbac.Scope `json:"scope"`
+}
+
+func groupRules(ms []GroupMapping) []rbac.GroupRule {
+	out := make([]rbac.GroupRule, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, rbac.GroupRule{Group: m.GroupValue, Role: m.RoleName, Scope: m.Scope})
+	}
+	return out
 }
 
 type Provider struct {
-	ID            int64          `json:"id"`
-	Slug          string         `json:"slug"`
-	DisplayName   string         `json:"display_name"`
-	AuthorizationURL string      `json:"authorization_url"`
-	TokenURL      string         `json:"token_url"`
-	UserinfoURL   string         `json:"userinfo_url"`
-	ClientID      string         `json:"client_id"`
-	Scopes        string         `json:"scopes"`
-	UsernameField string         `json:"username_field"`
-	EmailField    string         `json:"email_field"`
-	GroupsField   string         `json:"groups_field"`
-	DefaultRole   string         `json:"default_role"`
-	GroupMappings []GroupMapping `json:"group_mappings"`
-	Enabled       bool           `json:"enabled"`
-	IsDefault     bool           `json:"is_default"`
-	LastTestedAt  *time.Time     `json:"last_tested_at,omitempty"`
-	LastTestOK    *bool          `json:"last_test_ok,omitempty"`
-	LastTestError string         `json:"last_test_error,omitempty"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	ID               int64          `json:"id"`
+	Slug             string         `json:"slug"`
+	DisplayName      string         `json:"display_name"`
+	AuthorizationURL string         `json:"authorization_url"`
+	TokenURL         string         `json:"token_url"`
+	UserinfoURL      string         `json:"userinfo_url"`
+	ClientID         string         `json:"client_id"`
+	Scopes           string         `json:"scopes"`
+	UsernameField    string         `json:"username_field"`
+	EmailField       string         `json:"email_field"`
+	GroupsField      string         `json:"groups_field"`
+	DefaultRole      string         `json:"default_role"`
+	GroupMappings    []GroupMapping `json:"group_mappings"`
+	Enabled          bool           `json:"enabled"`
+	IsDefault        bool           `json:"is_default"`
+	LastTestedAt     *time.Time     `json:"last_tested_at,omitempty"`
+	LastTestOK       *bool          `json:"last_test_ok,omitempty"`
+	LastTestError    string         `json:"last_test_error,omitempty"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
 
 	AllowEmailLink bool `json:"allow_email_link"`
 }
 
 type ProviderInput struct {
-	Slug          string         `json:"slug"`
-	DisplayName   string         `json:"display_name"`
-	AuthorizationURL string      `json:"authorization_url"`
-	TokenURL      string         `json:"token_url"`
-	UserinfoURL   string         `json:"userinfo_url"`
-	ClientID      string         `json:"client_id"`
-	ClientSecret  string         `json:"client_secret"`
-	Scopes        string         `json:"scopes"`
-	UsernameField string         `json:"username_field"`
-	EmailField    string         `json:"email_field"`
-	GroupsField   string         `json:"groups_field"`
-	DefaultRole   string         `json:"default_role"`
-	GroupMappings []GroupMapping `json:"group_mappings,omitempty"`
-	Enabled       bool           `json:"enabled"`
-	IsDefault     bool           `json:"is_default,omitempty"`
+	Slug             string         `json:"slug"`
+	DisplayName      string         `json:"display_name"`
+	AuthorizationURL string         `json:"authorization_url"`
+	TokenURL         string         `json:"token_url"`
+	UserinfoURL      string         `json:"userinfo_url"`
+	ClientID         string         `json:"client_id"`
+	ClientSecret     string         `json:"client_secret"`
+	Scopes           string         `json:"scopes"`
+	UsernameField    string         `json:"username_field"`
+	EmailField       string         `json:"email_field"`
+	GroupsField      string         `json:"groups_field"`
+	DefaultRole      string         `json:"default_role"`
+	GroupMappings    []GroupMapping `json:"group_mappings,omitempty"`
+	Enabled          bool           `json:"enabled"`
+	IsDefault        bool           `json:"is_default,omitempty"`
 
 	AllowEmailLink bool `json:"allow_email_link"`
 }
@@ -346,9 +356,16 @@ func (s *Service) SetGroupMappings(ctx context.Context, providerID int64, mappin
 		if m.GroupValue == "" || m.RoleName == "" {
 			continue
 		}
+		sc := m.Scope
+		if sc.Type == "" {
+			sc = rbac.Global
+		}
+		if err := sc.Validate(); err != nil {
+			return fmt.Errorf("group %s: %w", m.GroupValue, err)
+		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT OR REPLACE INTO oauth2_provider_group_mappings (provider_id, group_value, role_name)
-			 VALUES (?, ?, ?)`, providerID, m.GroupValue, m.RoleName); err != nil {
+			`INSERT OR IGNORE INTO oauth2_provider_group_mappings (provider_id, group_value, role_name, scope_type, scope_host, scope_value)
+			 VALUES (?, ?, ?, ?, ?, ?)`, providerID, m.GroupValue, m.RoleName, sc.Type, sc.Host, sc.Value); err != nil {
 			return err
 		}
 	}
@@ -357,7 +374,7 @@ func (s *Service) SetGroupMappings(ctx context.Context, providerID int64, mappin
 
 func (s *Service) loadGroupMappings(ctx context.Context, p *Provider) error {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT group_value, role_name FROM oauth2_provider_group_mappings
+		`SELECT group_value, role_name, scope_type, scope_host, scope_value FROM oauth2_provider_group_mappings
 		  WHERE provider_id = ? ORDER BY group_value`, p.ID)
 	if err != nil {
 		return err
@@ -366,7 +383,7 @@ func (s *Service) loadGroupMappings(ctx context.Context, p *Provider) error {
 	p.GroupMappings = []GroupMapping{}
 	for rows.Next() {
 		var m GroupMapping
-		if err := rows.Scan(&m.GroupValue, &m.RoleName); err != nil {
+		if err := rows.Scan(&m.GroupValue, &m.RoleName, &m.Scope.Type, &m.Scope.Host, &m.Scope.Value); err != nil {
 			return err
 		}
 		p.GroupMappings = append(p.GroupMappings, m)
@@ -454,19 +471,11 @@ func (s *Service) HandleCallback(ctx context.Context, pending *Pending, code, st
 		name = strings.Split(email, "@")[0]
 	}
 
-	role := p.DefaultRole
 	groups := stringSliceClaim(claims, p.GroupsField)
-	for _, g := range groups {
-		for _, m := range p.GroupMappings {
-			if g == m.GroupValue {
-				role = m.RoleName
-				break
-			}
-		}
-	}
+	assignments := rbac.IdPAssignments("OAuth2 "+p.DisplayName, groups, groupRules(p.GroupMappings), p.DefaultRole, nil)
 
 	// email_verified only speaks for the standard email field.
-	user, err := s.jitProvision(ctx, p, subject, name, email, role, p.EmailField == "email" && auth.ClaimTrue(claims, "email_verified"))
+	user, err := s.jitProvision(ctx, p, subject, name, email, assignments, p.EmailField == "email" && auth.ClaimTrue(claims, "email_verified"))
 	if err != nil {
 		return nil, err
 	}
@@ -509,11 +518,11 @@ func (s *Service) fetchUserinfo(ctx context.Context, p *Provider, tok *oauth2.To
 	return out, nil
 }
 
-func (s *Service) jitProvision(ctx context.Context, p *Provider, subject, name, email, role string, emailVerified bool) (*auth.User, error) {
+func (s *Service) jitProvision(ctx context.Context, p *Provider, subject, name, email string, assignments []rbac.Assignment, emailVerified bool) (*auth.User, error) {
 	return s.auth.ProvisionSSOUser(ctx, auth.SSOIdentity{
 		Kind: "oauth2", Provider: p.Slug, Subject: subject,
 		Email: email, EmailVerified: emailVerified,
-		Username: name, Role: role,
+		Username: name, Assignments: assignments,
 	})
 }
 

@@ -3,9 +3,6 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/dockmesh/dockmesh/internal/api/middleware"
-	"github.com/dockmesh/dockmesh/internal/host"
-	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 // ListHosts returns the local docker daemon plus every registered agent
@@ -31,17 +28,6 @@ func (h *Handlers) ListHosts(w http.ResponseWriter, r *http.Request) {
 			list[i].Tags = h.HostTags.Tags(list[i].ID)
 		}
 	}
-	// Apply user-level scope_tags filter (legacy, P.11.3). Empty → no-op.
-	if scope := middleware.ScopeTags(r.Context()); len(scope) > 0 {
-		filtered := make([]host.Info, 0, len(list))
-		for _, info := range list {
-			if rbac.ScopeMatchesHost(scope, info.Tags) {
-				filtered = append(filtered, info)
-			}
-		}
-		list = filtered
-	}
-	// Apply role-level scope filter (v2.1).
 	list = h.filterHostsByRoleScope(r, list)
 	writeJSON(w, http.StatusOK, list)
 }

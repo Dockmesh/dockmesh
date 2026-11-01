@@ -314,6 +314,13 @@ func (h *Handlers) GetStack(w http.ResponseWriter, r *http.Request) {
 		if d.ModifiedOutside, err = h.Stacks.ModifiedOutside(name); err != nil {
 			slog.Warn("stack file checksums", "stack", name, "err", err)
 		}
+		// .env usually holds secrets: callers who may deploy the stack
+		// edit it, others need the env extra.
+		if res, ok := middleware.ResourceOf(r.Context()); ok &&
+			!middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, res) && !middleware.AllowedOn(r.Context(), rbac.PermContainersEnv, res) {
+			d.Env = ""
+			d.EnvHidden = true
+		}
 		writeJSON(w, http.StatusOK, d)
 		return
 	}

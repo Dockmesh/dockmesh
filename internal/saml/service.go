@@ -21,6 +21,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"math/big"
 	"strings"
 	"sync"
@@ -59,8 +60,17 @@ func checkNameIDFormat(f string) (string, error) {
 
 // GroupMapping is one row of saml_provider_group_mappings.
 type GroupMapping struct {
-	GroupValue string `json:"group"`
-	RoleName   string `json:"role"`
+	GroupValue string     `json:"group"`
+	RoleName   string     `json:"role"`
+	Scope      rbac.Scope `json:"scope"`
+}
+
+func groupRules(ms []GroupMapping) []rbac.GroupRule {
+	out := make([]rbac.GroupRule, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, rbac.GroupRule{Group: m.GroupValue, Role: m.RoleName, Scope: m.Scope})
+	}
+	return out
 }
 
 // Provider is the public view of a SAML provider config. Raw metadata
@@ -391,9 +401,16 @@ func (s *Service) SetGroupMappings(ctx context.Context, providerID int64, mappin
 		if m.GroupValue == "" || m.RoleName == "" {
 			continue
 		}
+		sc := m.Scope
+		if sc.Type == "" {
+			sc = rbac.Global
+		}
+		if err := sc.Validate(); err != nil {
+			return fmt.Errorf("group %s: %w", m.GroupValue, err)
+		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT OR REPLACE INTO saml_provider_group_mappings (provider_id, group_value, role_name)
-			 VALUES (?, ?, ?)`, providerID, m.GroupValue, m.RoleName); err != nil {
+			`INSERT OR IGNORE INTO saml_provider_group_mappings (provider_id, group_value, role_name, scope_type, scope_host, scope_value)
+			 VALUES (?, ?, ?, ?, ?, ?)`, providerID, m.GroupValue, m.RoleName, sc.Type, sc.Host, sc.Value); err != nil {
 			return err
 		}
 	}
@@ -402,7 +419,7 @@ func (s *Service) SetGroupMappings(ctx context.Context, providerID int64, mappin
 
 func (s *Service) loadGroupMappings(ctx context.Context, p *Provider) error {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT group_value, role_name FROM saml_provider_group_mappings
+		`SELECT group_value, role_name, scope_type, scope_host, scope_value FROM saml_provider_group_mappings
 		  WHERE provider_id = ? ORDER BY group_value`, p.ID)
 	if err != nil {
 		return err
@@ -411,7 +428,7 @@ func (s *Service) loadGroupMappings(ctx context.Context, p *Provider) error {
 	p.GroupMappings = []GroupMapping{}
 	for rows.Next() {
 		var m GroupMapping
-		if err := rows.Scan(&m.GroupValue, &m.RoleName); err != nil {
+		if err := rows.Scan(&m.GroupValue, &m.RoleName, &m.Scope.Type, &m.Scope.Host, &m.Scope.Value); err != nil {
 			return err
 		}
 		p.GroupMappings = append(p.GroupMappings, m)

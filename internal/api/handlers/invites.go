@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -17,13 +18,13 @@ import (
 	"github.com/dockmesh/dockmesh/internal/notifications"
 )
 
-// CreateInviteInput is the admin-side request: pick a role + scope and
-// an optional email hint so the accept page can confirm "you're the
-// right person for this link".
+// CreateInviteInput is the admin-side request: a role, the scopes the new
+// account gets it on (default: everything) and an optional email hint so
+// the accept page can confirm "you're the right person for this link".
 type CreateInviteInput struct {
-	Role      string   `json:"role"`
-	ScopeTags []string `json:"scope_tags"`
-	EmailHint string   `json:"email_hint"`
+	Role      string       `json:"role"`
+	Scopes    []rbac.Scope `json:"scopes"`
+	EmailHint string       `json:"email_hint"`
 	// TTLHours overrides the default 24h expiry. Range clamped to
 	// 1..168 (1 hour … 7 days) so a stray "0" doesn't mint a
 	// never-expiring invite.
@@ -52,9 +53,18 @@ func (h *Handlers) CreateInvite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid role")
 		return
 	}
-	if err := h.checkGrant(r, in.Role, in.ScopeTags); err != nil {
-		writeGrantError(w, err)
-		return
+	if len(in.Scopes) == 0 {
+		in.Scopes = []rbac.Scope{rbac.Global}
+	}
+	for _, sc := range in.Scopes {
+		if err := sc.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := h.checkGrant(r, in.Role, sc); err != nil {
+			writeGrantError(w, err)
+			return
+		}
 	}
 	ttl := time.Duration(in.TTLHours) * time.Hour
 	if ttl > 7*24*time.Hour {
@@ -62,7 +72,7 @@ func (h *Handlers) CreateInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	invite, err := h.Invites.Create(r.Context(), invites.CreateInput{
 		Role:      in.Role,
-		ScopeTags: in.ScopeTags,
+		Scopes:    in.Scopes,
 		EmailHint: in.EmailHint,
 		TTL:       ttl,
 		CreatedBy: middleware.UserID(r.Context()),
@@ -72,9 +82,9 @@ func (h *Handlers) CreateInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, "user.invite_created", in.EmailHint, map[string]any{
-		"role":       in.Role,
-		"scope_tags": in.ScopeTags,
-		"invite_id":  invite.ID,
+		"role":      in.Role,
+		"scopes":    scopeLabels(in.Scopes),
+		"invite_id": invite.ID,
 	})
 	writeJSON(w, http.StatusCreated, invite)
 }
@@ -153,7 +163,7 @@ func (h *Handlers) PreviewInvite(w http.ResponseWriter, r *http.Request) {
 	// Strip private fields before returning to the public.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"role":       inv.Role,
-		"scope_tags": inv.ScopeTags,
+		"scopes":     inv.Scopes,
 		"email_hint": inv.EmailHint,
 		"expires_at": inv.ExpiresAt,
 	})
@@ -234,11 +244,13 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	asCreator := r.WithContext(middleware.WithIdentity(r.Context(), middleware.Identity{
-		UserID: creator.ID, Role: creator.Role, ScopeTags: creator.ScopeTags,
+		UserID: creator.ID, Access: middleware.UserAccess(creator.ID),
 	}))
-	if err := h.checkGrant(asCreator, inv.Role, inv.ScopeTags); err != nil {
-		writeError(w, http.StatusGone, "the user who created this invite can no longer grant it")
-		return
+	for _, sc := range inv.Scopes {
+		if err := h.checkGrant(asCreator, inv.Role, sc); err != nil {
+			writeError(w, http.StatusGone, "the user who created this invite can no longer grant it")
+			return
+		}
 	}
 	// Claim the token before creating the account so two concurrent
 	// accepts can't both succeed; a failed create hands it back.
@@ -247,7 +259,7 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.Auth.CreateUser(r.Context(), in.Username, in.Email, in.Password, inv.Role)
+	user, err := h.Auth.CreateUser(r.Context(), in.Username, in.Email, in.Password, "")
 	if err != nil {
 		failed = true
 		if rerr := h.Invites.Unclaim(r.Context(), token); rerr != nil {
@@ -264,22 +276,21 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A scoped invite must never leave an unscoped account behind.
-	if len(inv.ScopeTags) > 0 {
-		if _, err := h.Auth.UpdateUserScope(r.Context(), user.ID, inv.ScopeTags); err != nil {
+	// An account whose assignments could not be stored must not stay.
+	for _, sc := range inv.Scopes {
+		if _, err := h.Roles.AddAssignment(r.Context(), rbac.Assignment{UserID: user.ID, Role: inv.Role, Scope: sc, CreatedBy: inv.CreatedBy}); err != nil {
 			if derr := h.Auth.DeleteUser(r.Context(), user.ID); derr != nil {
-				slog.Error("invite: remove account after scope failure", "user", user.ID, "err", derr)
+				slog.Error("invite: remove account after assignment failure", "user", user.ID, "err", derr)
 			}
-			writeError(w, http.StatusInternalServerError, "could not apply the invite's scope: "+err.Error())
+			writeError(w, http.StatusInternalServerError, "could not apply the invite's access: "+err.Error())
 			return
 		}
-		user.ScopeTags = inv.ScopeTags
 	}
 
 	h.audit(r, audit.ActionUserCreate, user.Username, map[string]any{
-		"via":       "invite",
-		"role":      inv.Role,
-		"scope_tags": inv.ScopeTags,
+		"via":    "invite",
+		"role":   inv.Role,
+		"scopes": scopeLabels(inv.Scopes),
 	})
 
 	// Bell-icon ping to the admin who minted the invite. Per-user
@@ -310,4 +321,12 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		"access_token":  result.AccessToken,
 		"refresh_token": result.RefreshToken,
 	})
+}
+
+func scopeLabels(ss []rbac.Scope) []string {
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		out = append(out, s.String())
+	}
+	return out
 }

@@ -32,7 +32,7 @@ func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	h.wsWatch(r, conn, rbac.PermSystemView, "")
+	h.wsWatch(r, conn, rbac.PermSystemView, nil)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -170,5 +170,5 @@ func (h *Handlers) stackVisible(r *http.Request, name string) bool {
 	if hostID != "" {
 		return h.inReadScope(r, hostID, name)
 	}
-	return h.checkRoleScope(r, rbac.ScopeRequest{StackName: name})
+	return h.checkRoleScope(r, rbac.Resource{StackName: name})
 }

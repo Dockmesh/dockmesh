@@ -169,7 +169,7 @@ func (h *Handlers) MFAReset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "use DELETE /api/v1/mfa with a code to turn off your own 2FA")
 		return
 	}
-	if _, _, ok := h.requireManageUser(w, r, id); !ok {
+	if _, ok := h.requireManageUser(w, r, id); !ok {
 		return
 	}
 	if err := h.Auth.DisableTOTP(r.Context(), id); err != nil {

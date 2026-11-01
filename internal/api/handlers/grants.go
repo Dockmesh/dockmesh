@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
-	"github.com/dockmesh/dockmesh/internal/auth"
+	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
@@ -15,132 +16,176 @@ import (
 // what the caller holds; handlers turn it into 403.
 var errGrantExceedsCaller = errors.New("grant exceeds caller")
 
-var errLastAdmin = errors.New("this is the last account that can administer Dockmesh; give another account an admin role first")
+var errLastAdmin = errors.New("this is the last assignment of an admin role on everything; give another account the Admin role first")
 
-// adminPerms make a role able to administer the install; the last account
-// holding all of them must survive any change.
-var adminPerms = []rbac.Perm{rbac.PermSystemUpdate, rbac.PermUsersView, rbac.PermUsersCreate, rbac.PermUsersUpdate, rbac.PermUsersDelete}
-
-func permSet(ps []rbac.Perm) map[rbac.Perm]bool {
-	out := make(map[rbac.Perm]bool, len(ps))
-	for _, p := range ps {
-		out[p] = true
+// checkGrant reports whether the caller may hand out role on scope: the
+// caller must hold every permission of the role everywhere the scope
+// reaches. The same check guards changing or removing an assignment, so
+// nobody manages access above their own.
+func (h *Handlers) checkGrant(r *http.Request, role string, scope rbac.Scope) error {
+	if h.Roles == nil {
+		return errors.New("roles store unavailable")
 	}
-	return out
-}
-
-func hasAdminPerms(perms map[rbac.Perm]bool) bool {
-	for _, p := range adminPerms {
-		if !perms[p] {
-			return false
-		}
-	}
-	return true
-}
-
-// checkGrant reports whether the caller may hand out role together with
-// the user-level scope tags: every permission of the role must be one the
-// caller effectively holds, and neither the role's scope nor the tags may
-// reach further than the caller's own. The same check guards changing or
-// removing an existing assignment, so nobody manages users or roles above
-// themselves.
-func (h *Handlers) checkGrant(r *http.Request, role string, scopeTags []string) error {
-	perms, ok := h.permsForRoleName(role)
+	perms, ok := h.Roles.RolePerms(role)
 	if !ok {
 		return fmt.Errorf("unknown role %q", role)
 	}
-	var scopes []rbac.Scope
-	if h.Roles != nil {
-		if rd, ok := h.Roles.Get(role); ok {
-			scopes = rd.Scopes
-		}
-	}
-	if err := h.checkPermsGrant(r, perms, scopes); err != nil {
-		return err
-	}
-	return checkTagsGrant(r, scopeTags)
+	return h.checkPermsGrant(r, perms, scope)
 }
 
-// checkTagsGrant requires user-level scope tags to stay within the
-// caller's own tags when the caller has any.
-func checkTagsGrant(r *http.Request, scopeTags []string) error {
-	callerTags := middleware.ScopeTags(r.Context())
-	if len(callerTags) == 0 {
-		return nil
-	}
-	if len(scopeTags) == 0 {
-		return fmt.Errorf("%w: you are limited to hosts tagged %v and can't grant access to all hosts", errGrantExceedsCaller, callerTags)
-	}
-	allowed := make(map[string]bool, len(callerTags))
-	for _, t := range callerTags {
-		allowed[t] = true
-	}
-	for _, t := range scopeTags {
-		if !allowed[t] {
-			return fmt.Errorf("%w: host tag %q is outside your scope", errGrantExceedsCaller, t)
-		}
-	}
-	return nil
-}
-
-// checkPermsGrant is the role-definition half of checkGrant: perms must be
-// held by the caller, and if the caller's roles are scoped, scopes must be
-// non-empty and every entry must appear in each of those roles' scopes.
-func (h *Handlers) checkPermsGrant(r *http.Request, perms map[rbac.Perm]bool, scopes []rbac.Scope) error {
-	held := h.callerPermSet(r)
-	for p := range perms {
-		if !held[p] {
-			return fmt.Errorf("%w: you don't hold %s", errGrantExceedsCaller, p)
-		}
-	}
-	if !h.RBACv2Enforce || h.Roles == nil {
-		return nil
-	}
-	for _, callerRole := range middleware.Roles(r.Context()) {
-		rd, ok := h.Roles.Get(callerRole)
-		if !ok || len(rd.Scopes) == 0 {
+func (h *Handlers) checkPermsGrant(r *http.Request, perms map[rbac.Perm]bool, scope rbac.Scope) error {
+	acc := middleware.AccessOf(r.Context())
+	for _, p := range rbac.SortedPerms(perms) {
+		if rbac.IsBase(p) || (!scope.IsGlobal() && rbac.IsGlobalOnly(p)) {
 			continue
 		}
-		if len(scopes) == 0 {
-			return fmt.Errorf("%w: your role is scoped and can't grant unscoped access", errGrantExceedsCaller)
-		}
-		own := make(map[rbac.Scope]bool, len(rd.Scopes))
-		for _, sc := range rd.Scopes {
-			own[sc] = true
-		}
-		for _, sc := range scopes {
-			if !own[sc] {
-				return fmt.Errorf("%w: scope %s=%s is outside your role's scope", errGrantExceedsCaller, sc.ScopeType, sc.ScopeValue)
-			}
+		if !acc.HoldsOn(p, scope, h.hostTags) {
+			return fmt.Errorf("%w: you don't hold %s on %s", errGrantExceedsCaller, p, scope)
 		}
 	}
 	return nil
 }
 
-// checkRoleInput validates a role definition against the caller's rights.
+// checkRoleInput validates a role definition against the caller's rights:
+// a role can be assigned anywhere, so the caller needs its permissions on
+// everything.
 func (h *Handlers) checkRoleInput(r *http.Request, in rbac.RoleInput) error {
-	return h.checkPermsGrant(r, permSet(in.Permissions), in.Scopes)
+	if err := rbac.ValidateLevels(in.Levels, in.Extras); err != nil {
+		return err
+	}
+	return h.checkPermsGrant(r, rbac.PermsFor(in.Levels, in.Extras), rbac.Global)
 }
 
-// requireManageRole checks that the caller is unscoped and holds
-// everything the existing role grants before it is changed or deleted.
-func (h *Handlers) requireManageRole(w http.ResponseWriter, r *http.Request, name string) bool {
-	// A role reaches every holder, wherever they are; a caller limited to
-	// some hosts or stacks would act beyond its scope.
-	if !h.callerUnscoped(r) {
-		writeError(w, http.StatusForbidden, "callers limited to some hosts or stacks can't change or delete roles")
-		return false
-	}
-	rd, ok := h.Roles.Get(name)
+// requireManageRole checks that the caller holds everything the existing
+// role grants, on everything, before it is changed or deleted.
+func (h *Handlers) requireManageRole(w http.ResponseWriter, r *http.Request, name string) (rbac.Role, bool) {
+	rd, ok := h.Roles.Role(name)
 	if !ok {
 		writeError(w, http.StatusNotFound, "role not found")
-		return false
+		return rbac.Role{}, false
 	}
-	if err := h.checkPermsGrant(r, permSet(rd.Permissions), rd.Scopes); err != nil {
+	if rd.Builtin {
+		writeError(w, http.StatusConflict, rbac.ErrRoleBuiltin.Error())
+		return rbac.Role{}, false
+	}
+	perms, _ := h.Roles.RolePerms(name)
+	if err := h.checkPermsGrant(r, perms, rbac.Global); err != nil {
 		writeError(w, http.StatusForbidden, "you can't manage this role: "+err.Error())
-		return false
+		return rbac.Role{}, false
 	}
-	return true
+	return rd, true
+}
+
+// requireManageUser checks that the caller may manage every current
+// assignment of the target user. Writes the error and returns false
+// otherwise.
+func (h *Handlers) requireManageUser(w http.ResponseWriter, r *http.Request, id string) ([]rbac.Assignment, bool) {
+	if _, err := h.Auth.GetUser(r.Context(), id); err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return nil, false
+	}
+	if h.Roles == nil {
+		writeError(w, http.StatusServiceUnavailable, "roles store unavailable")
+		return nil, false
+	}
+	as := h.Roles.UserAssignments(id)
+	for _, a := range as {
+		if _, known := h.Roles.Role(a.Role); !known {
+			continue
+		}
+		if err := h.checkGrant(r, a.Role, a.Scope); err != nil {
+			writeError(w, http.StatusForbidden, "you can't manage this user: "+err.Error())
+			return nil, false
+		}
+	}
+	return as, true
+}
+
+// globalAdminAssignments counts the assignments of an admin role on
+// everything, skipping those skip matches.
+func (h *Handlers) globalAdminAssignments(skip func(a rbac.Assignment) bool) int {
+	n := 0
+	for _, a := range h.Roles.AllAssignments() {
+		if h.Roles.IsGlobalAdmin(a) && (skip == nil || !skip(a)) {
+			n++
+		}
+	}
+	return n
+}
+
+// checkKeepsAdmin fails with errLastAdmin when removing the assignments
+// skip matches would leave no admin role on everything.
+func (h *Handlers) checkKeepsAdmin(skip func(a rbac.Assignment) bool) error {
+	if h.Roles == nil {
+		return nil
+	}
+	if h.globalAdminAssignments(nil) > 0 && h.globalAdminAssignments(skip) == 0 {
+		return errLastAdmin
+	}
+	return nil
+}
+
+// checkRoleKeepsAdmin is checkKeepsAdmin for redefining or deleting a
+// role: if it is an admin role today and won't be, some admin assignment
+// of another role must remain.
+func (h *Handlers) checkRoleKeepsAdmin(role string, stillAdmin bool) error {
+	if stillAdmin || !h.Roles.IsAdminRole(role) {
+		return nil
+	}
+	return h.checkKeepsAdmin(func(a rbac.Assignment) bool { return a.Role == role })
+}
+
+// SyncIdPAssignments replaces a user's identity provider assignments at
+// sign-in. If that would remove the last admin assignment on everything,
+// the old admin assignments stay and admins are told to fix the group
+// mapping.
+func (h *Handlers) SyncIdPAssignments(ctx context.Context, userID string, want []rbac.Assignment) error {
+	if h.Roles == nil {
+		return errors.New("roles store unavailable")
+	}
+	var known []rbac.Assignment
+	for _, a := range want {
+		if _, ok := h.Roles.Role(a.Role); ok && a.Scope.Validate() == nil {
+			known = append(known, a)
+		}
+	}
+	err := h.checkKeepsAdmin(func(a rbac.Assignment) bool { return a.UserID == userID && a.Source == rbac.SourceIdP })
+	if errors.Is(err, errLastAdmin) {
+		keepsAdmin := false
+		for _, a := range known {
+			keepsAdmin = keepsAdmin || h.Roles.IsGlobalAdmin(a)
+		}
+		if !keepsAdmin {
+			for _, a := range h.Roles.UserAssignments(userID) {
+				if a.Source == rbac.SourceIdP && h.Roles.IsGlobalAdmin(a) {
+					known = append(known, a)
+				}
+			}
+			h.raiseLastAdminNotice(ctx, userID)
+		}
+	}
+	return h.Roles.ReplaceIdPAssignments(ctx, userID, known)
+}
+
+const lastAdminNoticeKey = "rbac-idp-last-admin"
+
+func (h *Handlers) raiseLastAdminNotice(ctx context.Context, userID string) {
+	if h.Notices == nil {
+		return
+	}
+	name := userID
+	if u, err := h.Auth.GetUser(ctx, userID); err == nil {
+		name = u.Username
+	}
+	if err := h.Notices.Raise(ctx, notices.RaiseInput{
+		Key: lastAdminNoticeKey, Audience: notices.Admins(), Severity: notices.SevWarning,
+		Title: "Identity provider sign-in would have removed the last admin",
+		Body: "The groups of " + name + " no longer map to the Admin role, but no other account holds Admin on everything. " +
+			"Dockmesh kept the Admin assignment so the instance stays manageable. Give another account the Admin role or fix the group mapping, then remove it.",
+		Link: "/users",
+	}); err != nil {
+		slog.Warn("raise last-admin notice", "err", err)
+	}
 }
 
 // writeLastAdminError maps a checkKeepsAdmin error to a response.
@@ -159,88 +204,4 @@ func writeGrantError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeError(w, http.StatusBadRequest, err.Error())
-}
-
-// isAdminRole reports whether role holds every adminPerms permission and
-// has no role scope.
-func (h *Handlers) isAdminRole(role string) bool {
-	perms, ok := h.permsForRoleName(role)
-	if !ok || !hasAdminPerms(perms) {
-		return false
-	}
-	if h.Roles != nil {
-		if rd, found := h.Roles.Get(role); found && len(rd.Scopes) > 0 {
-			return false
-		}
-	}
-	return true
-}
-
-// isAdminAccount is isAdminRole for an account without host scope tags.
-func (h *Handlers) isAdminAccount(role string, scopeTags []string) bool {
-	return len(scopeTags) == 0 && h.isAdminRole(role)
-}
-
-// otherAdminExists reports whether an account not matched by skip holds an
-// admin role.
-func (h *Handlers) otherAdminExists(ctx context.Context, skip func(u auth.User) bool) (bool, error) {
-	users, err := h.Auth.ListUsers(ctx)
-	if err != nil {
-		return false, err
-	}
-	for _, u := range users {
-		if !skip(u) && h.isAdminAccount(u.Role, u.ScopeTags) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// checkKeepsAdmin fails with errLastAdmin when userID is an admin account
-// today, wouldn't be afterwards (removed == true means it is deleted), and
-// no other admin account exists.
-func (h *Handlers) checkKeepsAdmin(ctx context.Context, userID, curRole string, curTags []string, newRole string, newTags []string, removed bool) error {
-	if !h.isAdminAccount(curRole, curTags) || (!removed && h.isAdminAccount(newRole, newTags)) {
-		return nil
-	}
-	ok, err := h.otherAdminExists(ctx, func(u auth.User) bool { return u.ID == userID })
-	if err != nil || ok {
-		return err
-	}
-	return errLastAdmin
-}
-
-// checkRoleKeepsAdmin is checkKeepsAdmin for editing or deleting a role:
-// if role grants admin today and won't afterwards, some account outside
-// it must still hold an admin role.
-func (h *Handlers) checkRoleKeepsAdmin(ctx context.Context, role string, stillAdmin bool) error {
-	if stillAdmin || !h.isAdminRole(role) {
-		return nil
-	}
-	ok, err := h.otherAdminExists(ctx, func(u auth.User) bool { return u.Role == role })
-	if err != nil || ok {
-		return err
-	}
-	return errLastAdmin
-}
-
-// requireManageUser loads the target user and checks that the caller may
-// manage that account as it is now. Writes the error and returns false
-// otherwise.
-func (h *Handlers) requireManageUser(w http.ResponseWriter, r *http.Request, id string) (role string, scopeTags []string, ok bool) {
-	u, err := h.Auth.GetUser(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "user not found")
-		return "", nil, false
-	}
-	// A user whose role was deleted holds nothing; only the tags matter.
-	check := checkTagsGrant(r, u.ScopeTags)
-	if _, known := h.permsForRoleName(u.Role); known {
-		check = h.checkGrant(r, u.Role, u.ScopeTags)
-	}
-	if check != nil {
-		writeError(w, http.StatusForbidden, "you can't manage this user: "+check.Error())
-		return "", nil, false
-	}
-	return u.Role, u.ScopeTags, true
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"net/http"
 	"net/url"
 	"strings"
@@ -253,27 +254,19 @@ func (s *Service) HandleACS(ctx context.Context, pending *Pending, r *http.Reque
 		return nil, err
 	}
 
-	role := p.DefaultRole
+	// Multi-valued group attributes are already coalesced into one
+	// delimited string by extractAssertion.
+	var groups []string
 	if groupsRaw := attrs[p.GroupsAttribute]; groupsRaw != "" {
-		// Group attribute may arrive as a single value (";"/","-
-		// separated) or repeated in attribute multi-values; we
-		// already coalesce multi-values into a delimited string in
-		// extractAssertion.
-		for _, g := range splitGroups(groupsRaw) {
-			for _, m := range p.GroupMappings {
-				if m.GroupValue == g {
-					role = m.RoleName
-					break
-				}
-			}
-		}
+		groups = splitGroups(groupsRaw)
 	}
+	assignments := rbac.IdPAssignments("SAML "+p.DisplayName, groups, groupRules(p.GroupMappings), p.DefaultRole, nil)
 
 	rekeyed, err := s.rekey(ctx, p.Slug, subject, email)
 	if err != nil {
 		return nil, err
 	}
-	user, err := s.jitProvision(ctx, p, subject, name, email, role)
+	user, err := s.jitProvision(ctx, p, subject, name, email, assignments)
 	if err != nil {
 		return nil, err
 	}
@@ -368,11 +361,11 @@ func (s *Service) rekey(ctx context.Context, slug, subject, email string) (strin
 	return ids[0], nil
 }
 
-func (s *Service) jitProvision(ctx context.Context, p *Provider, subject, name, email, role string) (*auth.User, error) {
+func (s *Service) jitProvision(ctx context.Context, p *Provider, subject, name, email string, assignments []rbac.Assignment) (*auth.User, error) {
 	return s.auth.ProvisionSSOUser(ctx, auth.SSOIdentity{
 		Kind: "saml", Provider: p.Slug, Subject: subject,
 		Email: email, EmailVerified: false,
-		Username: name, Role: role,
+		Username: name, Assignments: assignments,
 	})
 }
 

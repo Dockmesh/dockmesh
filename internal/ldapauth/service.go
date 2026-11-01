@@ -15,6 +15,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"strings"
 	"sync"
 	"time"
@@ -32,8 +33,17 @@ var (
 )
 
 type GroupMapping struct {
-	GroupValue string `json:"group"`
-	RoleName   string `json:"role"`
+	GroupValue string     `json:"group"`
+	RoleName   string     `json:"role"`
+	Scope      rbac.Scope `json:"scope"`
+}
+
+func groupRules(ms []GroupMapping) []rbac.GroupRule {
+	out := make([]rbac.GroupRule, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, rbac.GroupRule{Group: m.GroupValue, Role: m.RoleName, Scope: m.Scope})
+	}
+	return out
 }
 
 // Provider mirrors the LDAPConfig type in
@@ -339,9 +349,16 @@ func (s *Service) SetGroupMappings(ctx context.Context, providerID int64, mappin
 		if m.GroupValue == "" || m.RoleName == "" {
 			continue
 		}
+		sc := m.Scope
+		if sc.Type == "" {
+			sc = rbac.Global
+		}
+		if err := sc.Validate(); err != nil {
+			return fmt.Errorf("group %s: %w", m.GroupValue, err)
+		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT OR REPLACE INTO ldap_provider_group_mappings (provider_id, group_value, role_name)
-			 VALUES (?, ?, ?)`, providerID, m.GroupValue, m.RoleName); err != nil {
+			`INSERT OR IGNORE INTO ldap_provider_group_mappings (provider_id, group_value, role_name, scope_type, scope_host, scope_value)
+			 VALUES (?, ?, ?, ?, ?, ?)`, providerID, m.GroupValue, m.RoleName, sc.Type, sc.Host, sc.Value); err != nil {
 			return err
 		}
 	}
@@ -350,7 +367,7 @@ func (s *Service) SetGroupMappings(ctx context.Context, providerID int64, mappin
 
 func (s *Service) loadGroupMappings(ctx context.Context, p *Provider) error {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT group_value, role_name FROM ldap_provider_group_mappings
+		`SELECT group_value, role_name, scope_type, scope_host, scope_value FROM ldap_provider_group_mappings
 		  WHERE provider_id = ? ORDER BY group_value`, p.ID)
 	if err != nil {
 		return err
@@ -359,7 +376,7 @@ func (s *Service) loadGroupMappings(ctx context.Context, p *Provider) error {
 	p.GroupMappings = []GroupMapping{}
 	for rows.Next() {
 		var m GroupMapping
-		if err := rows.Scan(&m.GroupValue, &m.RoleName); err != nil {
+		if err := rows.Scan(&m.GroupValue, &m.RoleName, &m.Scope.Type, &m.Scope.Host, &m.Scope.Value); err != nil {
 			return err
 		}
 		p.GroupMappings = append(p.GroupMappings, m)
@@ -480,31 +497,25 @@ func (s *Service) Authenticate(ctx context.Context, slug, username, password str
 	}
 	groups := entry.GetAttributeValues(p.GroupMembershipAttribute)
 
-	role := p.DefaultRole
-	for _, g := range groups {
-		// AD typically returns full DNs in memberOf — match exact
-		// first, then by CN prefix as a convenience for admins
-		// who'd rather configure "Admins" than the full DN.
-		for _, m := range p.GroupMappings {
-			if g == m.GroupValue || strings.HasPrefix(strings.ToLower(g), "cn="+strings.ToLower(m.GroupValue)+",") {
-				role = m.RoleName
-				break
-			}
-		}
-	}
+	// AD typically returns full DNs in memberOf — match exact first, then
+	// by CN prefix as a convenience for admins who'd rather configure
+	// "Admins" than the full DN.
+	assignments := rbac.IdPAssignments("LDAP "+p.DisplayName, groups, groupRules(p.GroupMappings), p.DefaultRole, func(g, want string) bool {
+		return g == want || strings.HasPrefix(strings.ToLower(g), "cn="+strings.ToLower(want)+",")
+	})
 
-	user, err := s.jitProvision(ctx, p, dn, name, email, role)
+	user, err := s.jitProvision(ctx, p, dn, name, email, assignments)
 	if err != nil {
 		return nil, err
 	}
 	return s.auth.StartSessionForSSO(ctx, *user, userAgent, ip)
 }
 
-func (s *Service) jitProvision(ctx context.Context, p *Provider, subject, name, email, role string) (*auth.User, error) {
+func (s *Service) jitProvision(ctx context.Context, p *Provider, subject, name, email string, assignments []rbac.Assignment) (*auth.User, error) {
 	return s.auth.ProvisionSSOUser(ctx, auth.SSOIdentity{
 		Kind: "ldap", Provider: p.Slug, Subject: subject,
 		Email: email, EmailVerified: false,
-		Username: name, Role: role,
+		Username: name, Assignments: assignments,
 	})
 }
 
