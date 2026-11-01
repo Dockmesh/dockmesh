@@ -11,7 +11,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { allowed } from '$lib/rbac.svelte';
   import { Toaster, ConfirmDialog, UpdateBanner } from '$lib/components/ui';
-  import Menu, { type MenuItem } from '$lib/components/ui/Menu.svelte';
+  import HostLens from '$lib/components/shell/HostLens.svelte';
   import NotificationCenter from '$lib/components/ui/NotificationCenter.svelte';
   import NoticeBanner from '$lib/components/ui/NoticeBanner.svelte';
   import MigrationActivePill from '$lib/components/MigrationActivePill.svelte';
@@ -23,7 +23,7 @@
   import CommandPalette from '$lib/components/shell/CommandPalette.svelte';
   import SettingsNav from '$lib/components/shell/SettingsNav.svelte';
   import { activeItem, SETTINGS_PATHS, matches } from '$lib/components/shell/nav';
-  import { Sun, Moon, ChevronDown, Server, Menu as MenuIcon } from 'lucide-svelte';
+  import { Sun, Moon, Menu as MenuIcon } from 'lucide-svelte';
 
   let { children } = $props();
 
@@ -176,23 +176,6 @@
     return up ? `${fmtVersion(a.version)} · ${up}` : fmtVersion(a.version);
   }
 
-  const lensItems = $derived.by<MenuItem[]>(() => {
-    const out: MenuItem[] = [{ heading: 'Lens · filter every page by host' }];
-    hosts.withAll.forEach((h, i) => {
-      out.push({
-        label: h.name,
-        kbd: metaFor(h),
-        checked: h.id === hosts.id,
-        disabled: h.status !== 'online',
-        hint: h.status !== 'online' ? `${h.name} is ${h.status}` : undefined,
-        onclick: () => hosts.set(h.id)
-      });
-      if (i === 0 && h.kind === 'all') out.push({ separator: true });
-    });
-    out.push({ separator: true }, { label: 'Manage hosts', href: '/hosts', icon: Server });
-    return out;
-  });
-
   // Setup-mode probe: a fresh install sends everyone to /setup.
   let setupProbed = $state(false);
   let setupActive = $state(false);
@@ -284,7 +267,6 @@
   });
 
   const inSettings = $derived(SETTINGS_PATHS.some((s) => matches(page.url.pathname, s)));
-  const lensHost = $derived(hosts.selected ?? hosts.available[0]);
 </script>
 
 <svelte:window onkeydown={onGlobalKey} />
@@ -337,16 +319,7 @@
           <MigrationActivePill onOpen={() => (migDialogOpen = true)} />
         </div>
 
-        {#if hosts.available.length > 0 && lensHost}
-          {@const warn = lensHost.kind === 'agent' && lensHost.status !== 'online'}
-          <Menu label="Lens: filter pages by host" items={lensItems} width={280} triggerClass="tb-btn lens">
-            {#snippet trigger()}
-              <span class="lensdot" class:all={lensHost.kind === 'all'} class:warn></span>
-              <span class="lens-name">{lensHost.name}</span>
-              <ChevronDown size={13} />
-            {/snippet}
-          </Menu>
-        {/if}
+        {#if hosts.available.length > 0}<HostLens meta={metaFor} />{/if}
 
         <NotificationCenter />
 
@@ -435,10 +408,6 @@
   }
   .topbar :global(.tb-btn:hover) { border-color: var(--accent); }
   .topbar :global(.tb-icon) { width: 32px; justify-content: center; padding: 0 !important; }
-  .lens-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .lensdot { width: 8px; height: 8px; border-radius: 4px; background: var(--ok); flex: none; }
-  .lensdot.all { background: var(--accent); }
-  .lensdot.warn { background: var(--bad); }
   .page { flex: 1; min-width: 0; padding: 22px 32px 48px; }
   .settings-wrap {
     display: grid;
