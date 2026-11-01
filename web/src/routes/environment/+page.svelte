@@ -565,7 +565,7 @@
           placeholder="BASE_DOMAIN"
         />
       </Field>
-      <Field label="Group" hint="Free-form. Used to organise the list.">
+      <Field label="Group" hint="Free text that groups the list.">
         <input
           class="dm-input acc-input-mono"
           bind:value={formGroup}
@@ -625,7 +625,7 @@
   {/snippet}
 
   <div class="env-form">
-    <Field label="Default group" hint="All imported entries land in this group. Move them individually after.">
+    <Field label="Default group" hint="Imported entries go into this group.">
       <input
         class="dm-input acc-input-mono"
         bind:value={importGroup}
@@ -636,7 +636,7 @@
 
     <Field
       label=".env content"
-      hint="Comments (#) and blank lines are skipped. Keys matching password/secret/key/token are flagged as worth-marking-secret (manual toggle arrives with the next backend update)."
+      hint="One KEY=value per line; comments and blank lines are skipped."
     >
       <textarea
         class="dm-input acc-input-mono env-import-textarea"

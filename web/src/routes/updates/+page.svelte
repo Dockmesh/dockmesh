@@ -2,7 +2,7 @@
   import { untrack } from 'svelte';
   import { api, ApiError, isFanOut, type Operation, type UpdateStatus } from '$lib/api';
   import { fmtAgo } from '$lib/format';
-  import { StatusChip, StatBar, EmptyState, Skeleton, LiveIndicator } from '$lib/components/ui';
+  import { StatusChip, StatBar, EmptyState, Skeleton, LiveIndicator, InfoTip } from '$lib/components/ui';
   import type { Stat } from '$lib/components/ui/StatBar.svelte';
   import OpProgress from '$lib/components/operations/OpProgress.svelte';
   import { operations, isActive, opRef } from '$lib/stores/operations.svelte';
@@ -309,7 +309,7 @@
           </div>
         {/each}
       </div>
-      <p class="dm-sub up-note">An update pulls the image, keeps the current one as rollback target and replaces the container once the new one runs. Stack containers are rebuilt from the stack's compose.yaml.</p>
+      <p class="dm-sub up-note">An update pulls the new image and replaces the container once it runs. <InfoTip text="The current image stays as the rollback target. Stack containers are rebuilt from the stack's compose.yaml." /></p>
     {/if}
   </div>
 

@@ -310,7 +310,7 @@
 
       <aside class="side" aria-label="Selection">
         {#if !sel}
-          <p class="dm-sub">Select a node to see its details. Search dims everything that does not match.</p>
+          <p class="dm-sub">Select a node to see its details.</p>
           <dl class="dm-kv">
             <dt>Stacks</dt><dd>{totals.groups}</dd>
             <dt>Containers</dt><dd>{totals.containers}</dd>

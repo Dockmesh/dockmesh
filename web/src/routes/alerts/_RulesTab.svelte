@@ -3,7 +3,7 @@
   import { appliesTo, kindLabel, kindOf, ruleSentence, ruleToInput } from './ruleKinds';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
-  import { EmptyState, Skeleton, Switch } from '$lib/components/ui';
+  import { EmptyState, Skeleton, Switch, InfoTip } from '$lib/components/ui';
   import { statusWord } from '$lib/components/ui/StatusChip.svelte';
   import Menu from '$lib/components/ui/Menu.svelte';
   import { allowed } from '$lib/rbac.svelte';
@@ -187,7 +187,7 @@
       <div class="dm-empty">No rules match “{filter}”.</div>
     {/each}
   </div>
-  <p class="dm-sub">Where alerts are sent is set up once under Channels. A paused rule is not evaluated; a muted rule is evaluated and recorded but notifies nobody.</p>
+  <p class="dm-sub">Rules send to the channels set up under Channels. <InfoTip text="A paused rule is not evaluated. A muted rule is evaluated and recorded but notifies nobody." /></p>
 {/if}
 
 <style>

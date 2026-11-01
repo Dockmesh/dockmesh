@@ -48,7 +48,7 @@
       <label for="imp-text">Paste your Caddyfile</label>
       <textarea id="imp-text" class="dm-input dm-mono imp-text" bind:value={text} spellcheck="false"
         placeholder={'jellyfin.example.org {\n\treverse_proxy 192.168.10.40:8096\n}'}></textarea>
-      <span class="hint">Caddy translates it; nothing changes until you import. Imports of files and environment placeholders are refused.</span>
+      <span class="hint">Nothing changes until you import; file imports and environment placeholders are refused.</span>
     </div>
   {:else}
     <p class="dm-sub">{result.sites.length} site{result.sites.length === 1 ? '' : 's'} found · {importable} can be imported</p>

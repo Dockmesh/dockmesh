@@ -406,7 +406,7 @@
                   {#if !t.revoked_at && t.legacy}
                     <span
                       class="dm-pill dm-pill-warning tok-mini-pill"
-                      title="Created before tokens had an owner. Works with its role, unlimited by any user's permissions. Recreate it and revoke this one."
+                      title="Created before tokens had owners, so no user limits it. Recreate it and revoke this one."
                     >
                       <span class="dm-pill-dot"></span>legacy
                     </span>
@@ -506,7 +506,7 @@
       </div>
     </Field>
 
-    <Field label="Expires" hint="Short-lived is safer. CI tokens often pin to 90 days.">
+    <Field label="Expires" hint="Shorter is safer; CI tokens often use 90 days.">
       <div class="tok-expires-row">
         {#each [['30d', '30 days'], ['90d', '90 days'], ['180d', '6 months'], ['365d', '1 year'], ['never', 'never']] as [key, label]}
           <button

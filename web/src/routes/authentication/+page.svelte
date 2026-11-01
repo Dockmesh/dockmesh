@@ -597,7 +597,7 @@
                   oninput={(e) => setSigninField('session_absolute_ttl_hr', parseInt((e.target as HTMLInputElement).value) || 1)}
                 />
               </Field>
-              <Field label="Max sessions per user" hint="0 = unlimited. Oldest by last-seen gets evicted first.">
+              <Field label="Max sessions per user" hint="0 means no limit; the least recently used session ends first.">
                 <input
                   type="number"
                   class="dm-input acc-input-mono"

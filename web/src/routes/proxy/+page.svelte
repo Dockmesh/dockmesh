@@ -4,7 +4,7 @@
   import { urlTab } from '$lib/urlTab.svelte';
   import { fmtAgo } from '$lib/format';
   import { api, ApiError, type Operation } from '$lib/api';
-  import { Skeleton, StatusChip, Tabs, Switch, Menu, EmptyState, LiveIndicator } from '$lib/components/ui';
+  import { Skeleton, StatusChip, Tabs, Switch, Menu, EmptyState, LiveIndicator, InfoTip } from '$lib/components/ui';
   import type { MenuItem } from '$lib/components/ui/Menu.svelte';
   import OpProgress from '$lib/components/operations/OpProgress.svelte';
   import { operations, isActive, opRef } from '$lib/stores/operations.svelte';
@@ -394,7 +394,7 @@
           </div>
         {/each}
       </div>
-      <p class="dm-sub px-foot">Caddy renews certificates on its own about 30 days before they expire. “Renew soon” means a renewal has not worked yet; Activity shows why.</p>
+      <p class="dm-sub px-foot">Caddy renews certificates about 30 days before they expire. <InfoTip text="“Renew soon” means a renewal has not worked yet. The Activity tab shows why." /></p>
     {/if}
   {:else if tab === 'activity'}
     {#if activity.length === 0}

@@ -158,7 +158,7 @@
             />
           </Field>
 
-          <Field label="Password" hint="At least 8 characters. You can change it later from Account settings.">
+          <Field label="Password" hint="At least 8 characters; you can change it later.">
             <input
               class="ed-input ed-input-mono"
               type="password"

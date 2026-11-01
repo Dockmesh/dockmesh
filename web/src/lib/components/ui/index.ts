@@ -21,3 +21,5 @@ export { default as Drawer } from './Drawer.svelte';
 export { default as Menu } from './Menu.svelte';
 export { default as LiveIndicator } from './LiveIndicator.svelte';
 export { default as MetricsChart } from './MetricsChart.svelte';
+export { default as InfoTip } from './InfoTip.svelte';
+export { default as StackHealth } from './StackHealth.svelte';

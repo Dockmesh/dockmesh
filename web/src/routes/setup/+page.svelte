@@ -697,7 +697,7 @@
         <div class="dm-field">
           <label for="admin-user">Username</label>
           <input id="admin-user" class="dm-input dm-mono" bind:value={adminUsername} spellcheck="false" autocomplete="off" />
-          <span class="hint">A local admin with full rights. You can disable it later once single sign-on works.</span>
+          <span class="hint">A local admin with full rights, which you can disable once single sign-on works.</span>
         </div>
         <div class="dm-field">
           <div class="lbl-row">

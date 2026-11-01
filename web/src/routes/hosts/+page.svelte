@@ -10,7 +10,7 @@
   } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { fmtVersion } from '$lib/version';
-  import { Skeleton, EmptyState, StatBar, Segmented, ChipList, TagPill, Menu, Modal, LiveIndicator } from '$lib/components/ui';
+  import { Skeleton, EmptyState, StatBar, Segmented, ChipList, TagPill, Menu, Modal, LiveIndicator, InfoTip } from '$lib/components/ui';
   import type { MenuItem } from '$lib/components/ui/Menu.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
@@ -484,7 +484,7 @@
 
 <Modal bind:open={tagsOpen} title="Tags · {rows.find((r) => r.id === tagsHostId)?.name ?? ''}" maxWidth="max-w-lg">
   <div class="tagsdlg">
-    <p class="dm-sub">Tags group hosts for filtering and limit which hosts a user or role can see (host scope). Lowercase letters, digits and hyphens, at most 20.</p>
+    <p class="dm-sub">Tags group hosts and can limit which hosts a user sees. <InfoTip text="Used for filtering and for host scopes of users and roles. Lowercase letters, digits and hyphens, at most 20 tags." /></p>
     <div class="tagedit">
       {#each tagsDraft as t (t)}
         <span class="tagx"><TagPill label={t} /><button type="button" onclick={() => (tagsDraft = tagsDraft.filter((x) => x !== t))} aria-label="Remove {t}"><X size={11} /></button></span>

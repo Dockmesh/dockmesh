@@ -241,7 +241,7 @@
     <section>
       <div class="sec-h">
         <h2 class="dm-h2">Config preview</h2>
-        <span class="dm-sub">What Dockmesh sends to Caddy for this site. Read-only.</span>
+        <span class="dm-sub">What Dockmesh sends to Caddy for this site (read-only).</span>
         <span class="dm-sp"></span>
         {#if preview === null}<button type="button" class="dm-btn dm-btn-sm" onclick={loadPreview}>Show</button>{/if}
       </div>

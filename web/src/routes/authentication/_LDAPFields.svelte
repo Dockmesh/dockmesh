@@ -167,7 +167,7 @@
 </div>
 
 <div class="ldap-fieldset">Group lookup</div>
-<Field label="Group search base" hint="DN under which to search for groups. Optional.">
+<Field label="Group search base" hint="Optional DN to search for groups under.">
   <input
     class="dm-input acc-input-mono"
     bind:value={config.group_search_base}
@@ -186,7 +186,7 @@
   {roles}
   groupClaim="group DN or CN"
   title="Group → role mappings"
-  hint="Match group DNs or CNs returned by the membership lookup. If a user is in several mapped groups, the one listed last decides."
+  hint="Group DNs or CNs; with several matches the last one listed wins."
 />
 
 <style>

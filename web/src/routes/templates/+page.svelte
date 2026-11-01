@@ -380,7 +380,7 @@
             </div>
           {/each}
         </div>
-        <span class="dm-sub">Found in the compose file. Labels and defaults set here override the placeholder.</span>
+        <span class="dm-sub">Found in the compose file; labels and defaults set here win.</span>
       {/if}
     {/if}
 

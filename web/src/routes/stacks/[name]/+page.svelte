@@ -2186,7 +2186,7 @@
   {/if}
 </section>
 
-<!-- View YAML snapshot modal (P.12.6) -->
+<!-- View YAML snapshot modal -->
 <Modal bind:open={showYaml} title={yamlEntry ? `Deploy #${yamlEntry.version} — ${new Date(yamlEntry.deployed_at).toLocaleString()}` : 'Deploy snapshot'} maxWidth="max-w-3xl">
   {#if yamlEntry}
     <div class="space-y-3">
@@ -2263,7 +2263,7 @@
   {/snippet}
 </Modal>
 
-<!-- Dependencies editor modal (P.12.7) -->
+<!-- Dependencies editor modal -->
 <Modal bind:open={showDepsEditor} title="Dependencies for {name}" maxWidth="max-w-lg">
   <div class="space-y-4 text-sm">
     <div class="text-xs text-[var(--fg-muted)]">
@@ -2323,7 +2323,7 @@
   {/snippet}
 </Modal>
 
-<!-- Rollback confirm modal (P.12.6) -->
+<!-- Rollback confirm modal -->
 <Modal bind:open={showRollbackConfirm} title="Roll back to deploy #{rollbackEntry?.version}" maxWidth="max-w-lg">
   {#if rollbackEntry}
     <div class="space-y-4 text-sm">
@@ -2429,7 +2429,7 @@
   {/snippet}
 </Modal>
 
-<!-- Rolling update modal (P.12.5b) -->
+<!-- Rolling update modal -->
 <Modal bind:open={showRolling} title="Rolling update: {rollingTarget}" maxWidth="max-w-md">
   <div class="space-y-3">
     <p class="text-xs text-[var(--fg-muted)]">
@@ -2542,7 +2542,7 @@
   {/snippet}
 </Modal>
 
-<!-- Git source configure dialog (P.11.11) -->
+<!-- Git source configure dialog -->
 <Modal bind:open={showGitDialog} title={gitSource ? 'Edit git source' : 'Connect a git repository'} maxWidth="max-w-lg">
   <form onsubmit={saveGitSource} id="git-form" class="space-y-4">
     <div>

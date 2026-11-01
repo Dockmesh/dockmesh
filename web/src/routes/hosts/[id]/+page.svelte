@@ -626,7 +626,7 @@
 
 <Modal bind:open={tokenModal.open} title="New enrollment token for {hostName}" maxWidth="max-w-xl">
   <div class="tok">
-    <p class="dm-sub">Run this command on the agent host. The old certificate stays valid until the agent presents the new one.</p>
+    <p class="dm-sub">Run this on the agent host; the old certificate works until the new one is in use.</p>
     <pre class="cmd dm-mono">{tokenModal.install}</pre>
     <p class="dm-sub">The token is shown only once and expires {tokenModal.expiresAt ? new Date(tokenModal.expiresAt).toLocaleString() : '—'}.</p>
     <dl class="dm-kv"><dt>Token</dt><dd class="dm-mono">{tokenModal.token}</dd></dl>

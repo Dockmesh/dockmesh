@@ -79,7 +79,7 @@
   </Field>
 </div>
 
-<Field label="Scopes" hint="Space-separated. Provider-specific.">
+<Field label="Scopes" hint="Space-separated, as the provider expects them.">
   <input class="dm-input acc-input-mono" bind:value={config.scopes} />
 </Field>
 
@@ -91,7 +91,7 @@
   <Field label="Email field">
     <input class="dm-input acc-input-mono" bind:value={config.email_field} placeholder="email" />
   </Field>
-  <Field label="Groups field" hint="Optional. Often a separate /orgs lookup needed.">
+  <Field label="Groups field" hint="Optional; some providers need a separate /orgs lookup.">
     <input class="dm-input acc-input-mono" bind:value={config.groups_field} placeholder="groups" />
   </Field>
 </div>

@@ -129,7 +129,7 @@
     {#if template.description}<p class="dd-blurb">{template.description}</p>{/if}
   <form id="dd-form" class="dd-body" onsubmit={(e) => { e.preventDefault(); doDeploy(); }}>
     <div class="dd-grid-2">
-      <Field label="Stack name" hint="Lowercase, dashes. Must be unique on the host.">
+      <Field label="Stack name" hint="Lowercase letters and dashes, unique on the host.">
         <input
           class="dm-input dd-input"
           bind:value={stackName}

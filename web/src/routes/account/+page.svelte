@@ -374,7 +374,7 @@
             </div>
 
             <div class="acc-identity-fields">
-              <Field label="Username" hint="Used for sign-in. Cannot be changed.">
+              <Field label="Username" hint="Used for sign-in; it cannot be changed.">
                 <input class="dm-input acc-input-mono acc-input-locked" value={me.username} disabled />
               </Field>
 

@@ -514,8 +514,7 @@
           When Dockmesh pulls
           <code class="reg-hint-code">ghcr.io/org/app:tag</code>,
           it looks up the matching registry (<code class="reg-hint-code">ghcr.io</code>)
-          and applies the stored credentials automatically. Currently applies to local pulls on
-          the central server — agent-side pulls with credentials are tracked as a follow-up.
+          and applies the stored credentials. Only pulls on the Dockmesh server use them; agents pull without credentials.
         </p>
       </div>
     {/if}
@@ -587,7 +586,7 @@
       </Field>
       <Field
         label={editing?.has_password ? 'New token (leave blank to keep)' : 'Password / token'}
-        hint="Stored encrypted at rest (age). Never returned via the API."
+        hint="Stored encrypted and never shown again."
       >
         <input
           class="dm-input acc-input-mono"
@@ -598,7 +597,7 @@
       </Field>
     </div>
 
-    <Field label="Scope (host tags)" hint="Empty = applies to all hosts. Otherwise only on hosts tagged with any of these.">
+    <Field label="Scope (host tags)" hint="Leave empty for all hosts, or limit to hosts with these tags.">
       <div class="reg-scope-row">
         <input
           type="text"
