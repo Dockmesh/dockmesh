@@ -455,7 +455,7 @@
               <span role="cell" class="dm-num dm-dim">—</span>
               <span role="cell" class="dm-num dm-dim">—</span>
             {/if}
-            <span role="cell" class="dm-num" class:warn={needsUpgrade(r) || r.update_recommended} title={needsUpgrade(r) ? `Server is on ${fmtVersion(upgradePolicy?.server_version)}` : r.update_recommended ? 'This agent speaks an older protocol; some features are unavailable until it is upgraded' : ''}>
+            <span role="cell" class="dm-mono" class:warn={needsUpgrade(r) || r.update_recommended} title={needsUpgrade(r) ? `Server is on ${fmtVersion(upgradePolicy?.server_version)}` : r.update_recommended ? 'This agent speaks an older protocol; some features are unavailable until it is upgraded' : ''}>
               {r.version ? fmtVersion(r.version) : '—'}{needsUpgrade(r) || r.update_recommended ? ' ↑' : ''}
             </span>
             <span role="cell" class="tagcell">

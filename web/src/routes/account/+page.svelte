@@ -344,7 +344,7 @@
           </p>
         </div>
         <div class="acc-header-aside">
-          <span class="ed-eyebrow acc-aside-eyebrow">role</span>
+          <span class="ed-eyebrow acc-aside-eyebrow">Role</span>
           <div class="acc-aside-pills">
             <span class={rolePillClass(me.role)}>
               <span class="dm-pill-dot"></span>{me.role}
@@ -946,8 +946,7 @@
   }
   .acc-card-title em { font-style: normal; }
   .acc-card-meta {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
   .acc-pw-fields {
@@ -977,8 +976,7 @@
   .acc-strength-fill[data-level="3"],
   .acc-strength-fill[data-level="4"] { background: var(--color-success-500); }
   .acc-strength-label {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     min-width: 60px;
     text-align: right;
@@ -1075,10 +1073,9 @@
     color: var(--fg);
   }
   .acc-session-current { font-size: 11px; }
-  .acc-session-clipill { padding: 0 5px; font-size: 9.5px; }
+  .acc-session-clipill { padding: 0 5px; font-size: 11.5px; }
   .acc-session-meta {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
   .acc-session-ip {
@@ -1093,12 +1090,10 @@
     color: var(--fg);
   }
   .acc-session-geo {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
   .acc-session-time {
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-muted);
   }
@@ -1107,8 +1102,7 @@
     justify-content: flex-end;
   }
   .acc-session-dash {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
   .acc-sessions-toggle {

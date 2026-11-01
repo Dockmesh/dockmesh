@@ -396,7 +396,7 @@
                 </div>
 
                 <div class="auth-provider-role">
-                  <span class="auth-provider-role-label">default role</span>
+                  <span class="auth-provider-role-label">Default role</span>
                   <span class="dm-pill dm-pill-neutral auth-provider-pill">
                     <span class="dm-pill-dot"></span>{p.default_role}
                   </span>
@@ -718,7 +718,6 @@
     flex-wrap: wrap;
   }
   .auth-providers-meta {
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
   }
@@ -759,10 +758,7 @@
   }
   .auth-provider-kind-pill {
     padding: 0 6px;
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
     border-radius: 3px;
@@ -773,12 +769,11 @@
     font-weight: 500;
     color: var(--fg);
   }
-  .auth-provider-pill { padding: 0 5px; font-size: 9.5px; }
+  .auth-provider-pill { padding: 0 5px; font-size: 11.5px; }
   .auth-provider-sub {
     display: flex;
     gap: 8px;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
   .auth-provider-issuer {
@@ -797,10 +792,7 @@
     min-width: 0;
   }
   .auth-provider-role-label {
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
   .auth-provider-actions {
@@ -903,7 +895,6 @@
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 999px;
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
     cursor: pointer;

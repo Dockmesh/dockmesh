@@ -56,6 +56,7 @@
 
 /* ---------- tables: full width, hairline rows, no outer box ---------- */
 .dm-tbl {
+  font-variant-numeric: tabular-nums;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
@@ -121,13 +122,11 @@
 }
 
 /* ---------- text helpers ---------- */
-.dm-mono { font-family: var(--font-mono); }
+.dm-mono { font-family: var(--font-mono); font-size: 0.93em; }
 .dm-num {
-  font-family: var(--font-mono);
-  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
-.dm-num.warn { color: var(--warn); }
+.dm-num.warn, .dm-mono.warn { color: var(--warn); }
 .dm-num.bad { color: var(--bad); }
 .dm-num.dim, .dm-dim { color: var(--subtle); }
 .dm-trunc {
@@ -139,6 +138,7 @@
 .dm-dot {
   width: 8px;
   height: 8px;
+  border-radius: 50%;
   display: inline-block;
   flex: none;
   background: var(--off);
@@ -146,11 +146,7 @@
 .dm-dot.ok { background: var(--ok); }
 .dm-dot.warn { background: var(--warn); }
 .dm-dot.bad { background: var(--bad); }
-.dm-mini { display: inline-flex; gap: 2px; vertical-align: middle; }
-.dm-mini i { width: 6px; height: 10px; background: var(--ok); display: inline-block; }
-.dm-mini i.warn { background: var(--warn); }
-.dm-mini i.bad { background: var(--bad); }
-.dm-mini i.off { background: var(--field); }
+.dm-dot.acc { background: var(--accent); }
 
 /* ---------- key/value + sections ---------- */
 .dm-kv {

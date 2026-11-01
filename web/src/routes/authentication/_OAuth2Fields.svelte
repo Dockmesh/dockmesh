@@ -122,7 +122,6 @@
     background: var(--bg-elevated);
     border: 1px dashed var(--border);
     border-radius: 4px;
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
     line-height: 1.55;
@@ -143,10 +142,7 @@
     gap: 10px;
   }
   .oa-fieldset {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-top: 6px;
   }

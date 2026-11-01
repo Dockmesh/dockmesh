@@ -871,8 +871,6 @@
     margin-top: 4px;
     font-size: 11px;
     color: var(--fg-subtle);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
   }
   .audit-chain-meta em { color: var(--fg-muted); font-style: normal; }
   .audit-chain-warn { color: var(--color-warning-400); }
@@ -937,8 +935,7 @@
   .audit-cfg-radio-text { min-width: 0; }
   .audit-cfg-radio-label { font-size: 12.5px; color: var(--fg); }
   .audit-cfg-radio-hint {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-top: 2px;
   }
@@ -961,7 +958,7 @@
     margin-top: 12px;
   }
   .audit-cfg-hint {
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     line-height: 1.55;
     margin-top: 8px;
@@ -978,7 +975,7 @@
     text-transform: none;
     letter-spacing: 0;
     margin-left: 6px;
-    font-size: 10px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     font-family: var(--font-mono);
   }
@@ -1002,7 +999,7 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-top: 4px;
     cursor: pointer;
@@ -1014,7 +1011,7 @@
     margin-top: 4px;
   }
   .audit-cfg-chip {
-    font-size: 10px;
+    font-size: 11.5px;
     padding: 1px 6px;
     display: inline-flex;
     align-items: center;
@@ -1035,7 +1032,7 @@
     border: 0;
     border-bottom: 1px dashed var(--border);
     padding: 1px 4px;
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-muted);
     outline: none;
     min-width: 100px;
@@ -1052,7 +1049,7 @@
   }
   .audit-cfg-spacer { flex: 1; }
   .audit-cfg-pill {
-    font-size: 10px;
+    font-size: 11.5px;
     padding: 1px 6px;
   }
 
@@ -1084,8 +1081,7 @@
   }
   .audit-verify-text { min-width: 0; font-size: 12px; color: var(--fg); }
   .audit-verify-meta {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-top: 1px;
   }
@@ -1105,11 +1101,8 @@
     align-items: center;
   }
   .audit-entries-meta {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
   }
   .audit-filterbar {
     margin-top: 14px;
@@ -1151,8 +1144,7 @@
   }
   .audit-pill.muted .audit-pill-count { color: var(--fg-subtle); }
   .audit-pill-count {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     font-weight: 400;
     letter-spacing: 0.02em;
@@ -1223,7 +1215,6 @@
     border: 0;
     border-right: 1px solid var(--border);
     cursor: pointer;
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
   }
@@ -1235,10 +1226,7 @@
   }
 
   .audit-field-label {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-bottom: 4px;
   }
@@ -1271,14 +1259,11 @@
     color: var(--fg);
   }
   .audit-day-meta {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
   }
   .audit-day-rule { flex: 1; height: 1px; background: var(--border); }
-  .audit-day-iso { font-size: 10.5px; color: var(--fg-subtle); }
+  .audit-day-iso { font-size: 11.5px; color: var(--fg-subtle); }
 
   .audit-rows {
     list-style: none;
@@ -1345,7 +1330,7 @@
     text-overflow: ellipsis;
   }
   .audit-row-id {
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     letter-spacing: 0.02em;
   }
@@ -1401,9 +1386,7 @@
   }
   .audit-row-kv dt {
     font-family: var(--font-mono);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin: 0;
   }
@@ -1415,7 +1398,7 @@
   }
   .audit-row-kv-break { word-break: break-all; }
   .audit-row-kv-hash {
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     word-break: break-all;
   }
@@ -1559,7 +1542,7 @@
     gap: 10px;
   }
   .audit-modal-foot-meta {
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
 

@@ -126,10 +126,10 @@
           {/if}
         </p>
         <div class="invite-meta">
-          <span class="invite-meta-label">role</span>
+          <span class="invite-meta-label">Role</span>
           <span class="invite-meta-value">{preview.role}</span>
           {#if preview.scope_tags?.length}
-            <span class="invite-meta-label">scope</span>
+            <span class="invite-meta-label">Scope</span>
             <span class="invite-meta-value">{preview.scope_tags.join(', ')}</span>
           {/if}
         </div>
@@ -242,11 +242,8 @@
   }
   .login-footer {
     margin: 8px 0 0;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
     text-align: center;
   }
   .invite-blurb {
@@ -279,15 +276,11 @@
     background: var(--surface-hover);
   }
   .invite-meta-label {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     line-height: 1.8;
   }
   .invite-meta-value {
-    font-family: var(--font-mono);
     font-size: 12.5px;
     color: var(--fg);
     line-height: 1.8;

@@ -176,7 +176,7 @@
               </div>
               {#if !createResult && suggestionPool.filter((s) => !tags.includes(s)).length > 0}
                 <div class="ed-host-tags-suggest">
-                  <span class="font-mono ed-host-tags-suggest-label">suggestions</span>
+                  <span class="font-mono ed-host-tags-suggest-label">Suggestions</span>
                   {#each suggestionPool.filter((s) => !tags.includes(s)).slice(0, 8) as s (s)}
                     <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => addTag(s)}>+ {s}</button>
                   {/each}
@@ -218,7 +218,7 @@
               </button>
             </div>
             <div class="ed-add-host-tokenbox">
-              <span class="font-mono ed-add-host-tokenbox-label">enrollment token</span>
+              <span class="font-mono ed-add-host-tokenbox-label">Enrollment token</span>
               <code class="font-mono ed-add-host-tokenbox-value">{createResult.token}</code>
             </div>
           {/if}
@@ -324,8 +324,7 @@
   .ed-add-host-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
   .ed-add-host-section.muted { opacity: 0.5; }
   .ed-add-host-step {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     letter-spacing: 0.16em;
     padding-top: 4px;
@@ -341,14 +340,11 @@
 
   .ed-field { display: flex; flex-direction: column; gap: 6px; }
   .ed-field-label {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
     display: flex; align-items: baseline; justify-content: space-between;
   }
-  .ed-field-hint { font-size: 10px; color: var(--fg-subtle); text-transform: none; letter-spacing: 0.02em; }
+  .ed-field-hint { font-size: 11.5px; color: var(--fg-subtle); text-transform: none; letter-spacing: 0.02em; }
   .ed-soft-input {
     width: 100%;
     background: transparent;
@@ -383,8 +379,7 @@
     padding: 2px 6px;
     border: 1px solid var(--border-strong);
     border-radius: 3px;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg);
     background: var(--surface);
   }
@@ -398,8 +393,7 @@
     display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; align-items: center;
   }
   .ed-host-tags-suggest-label {
-    font-size: 9.5px; color: var(--fg-subtle); letter-spacing: 0.1em;
-    text-transform: uppercase; margin-right: 4px;
+    font-size: 11.5px; color: var(--fg-subtle); letter-spacing: 0.1em;
   }
 
   .ed-add-host-confirm {
@@ -437,7 +431,7 @@
     gap: 4px;
   }
   .ed-add-host-tokenbox-label {
-    font-size: 10px; color: var(--color-warning-400); letter-spacing: 0.06em; text-transform: uppercase;
+    font-size: 11.5px; color: var(--color-warning-400); letter-spacing: 0.06em; text-transform: uppercase;
   }
   .ed-add-host-tokenbox-value {
     font-size: 11.5px; color: var(--fg); word-break: break-all;
@@ -468,7 +462,7 @@
   .ed-add-host-waiting-meta { font-size: 11px; color: var(--fg-subtle); margin-top: 4px; letter-spacing: 0.02em; }
   .ed-add-host-troubleshoot {
     margin-top: 10px;
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     line-height: 1.6;
   }

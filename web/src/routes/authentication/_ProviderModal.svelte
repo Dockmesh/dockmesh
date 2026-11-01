@@ -741,8 +741,7 @@
     color: var(--fg);
   }
   .pm-kind-blurb {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -788,8 +787,7 @@
     color: var(--fg);
   }
   .pm-template-hint {
-    font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -814,10 +812,7 @@
     gap: 6px;
   }
   .pm-label {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
   .pm-hint {

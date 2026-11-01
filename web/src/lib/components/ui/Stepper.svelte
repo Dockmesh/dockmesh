@@ -24,7 +24,6 @@
     align-items: center;
     justify-content: center;
     font-size: 11px;
-    font-family: var(--font-mono);
   }
   .on { color: var(--fg); font-weight: 600; }
   .on .n { border-color: var(--accent); color: var(--accent); }

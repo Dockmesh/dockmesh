@@ -202,7 +202,7 @@
             >
               {#snippet right()}
                 {#if p.required}
-                  <span class="dd-required">required</span>
+                  <span class="dd-required">Required</span>
                 {/if}
               {/snippet}
               {#if p.enum && p.enum.length > 0}
@@ -382,10 +382,7 @@
     line-height: 1.4;
   }
   .dd-section-head {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-top: 8px;
   }
@@ -395,11 +392,8 @@
     gap: 10px;
   }
   .dd-required {
-    font-family: var(--font-mono);
-    font-size: 9.5px;
+    font-size: 11.5px;
     color: var(--color-warning-400);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
   }
   .dd-no-params {
     padding: 10px 12px;
@@ -414,8 +408,7 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--color-warning-400);
   }
 
@@ -430,8 +423,6 @@
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
     align-self: flex-start;
     margin-top: 4px;
   }
@@ -462,7 +453,6 @@
     border: 1px solid color-mix(in srgb, var(--color-danger-500) 45%, var(--border));
     background: color-mix(in srgb, var(--color-danger-500) 6%, var(--surface));
     border-radius: 4px;
-    font-family: var(--font-mono);
     font-size: 11.5px;
     color: var(--color-danger-400);
     display: flex;
@@ -481,8 +471,7 @@
     flex-wrap: wrap;
   }
   .dd-foot-meta {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
   .dd-foot-meta em {

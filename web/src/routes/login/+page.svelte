@@ -371,7 +371,6 @@
   }
 
   .login-aside {
-    font-family: var(--font-mono);
     font-size: 11.5px;
     color: var(--fg-subtle);
     text-decoration: none;
@@ -450,9 +449,6 @@
     margin-top: 6px;
     color: var(--fg-subtle);
     font-size: 11.5px;
-    font-family: var(--font-mono);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
   }
   .login-divider-line {
     height: 1px;
@@ -477,11 +473,8 @@
 
   .login-footer {
     margin: 8px 0 0;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
     text-align: center;
   }
 </style>

@@ -377,11 +377,11 @@
       {:else}
         <div class="tok-table">
           <div class="tok-row tok-row-head">
-            <span>name · prefix</span>
-            <span>scope</span>
-            <span>last used</span>
-            <span>created</span>
-            <span>expires</span>
+            <span>Name · prefix</span>
+            <span>Scope</span>
+            <span>Last used</span>
+            <span>Created</span>
+            <span>Expires</span>
             <span class="tok-col-action">·</span>
           </div>
           {#each filtered as t (t.id)}
@@ -677,10 +677,7 @@
   .tok-row-head {
     background: var(--bg-elevated);
     border-bottom: 1px solid var(--border);
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     padding: 10px 16px;
   }
@@ -705,14 +702,14 @@
   .tok-prefix {
     display: block;
     font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-top: 2px;
   }
-  .tok-mini-pill { padding: 0 5px; font-size: 9.5px; }
+  .tok-mini-pill { padding: 0 5px; font-size: 11.5px; }
 
   .tok-cell-scope { min-width: 0; }
-  .tok-scope-pill { padding: 1px 7px; font-size: 10.5px; }
+  .tok-scope-pill { padding: 1px 7px; font-size: 11.5px; }
 
   .tok-cell-mono {
     font-family: var(--font-mono);
@@ -734,8 +731,7 @@
   }
   .tok-revoke-btn { color: var(--color-danger-400); }
   .tok-dash {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
 
@@ -818,8 +814,7 @@
     font-weight: 500;
   }
   .tok-scope-card-blurb {
-    font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
 

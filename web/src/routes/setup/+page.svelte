@@ -832,7 +832,7 @@
                   {#if copiedKey === 'pw'}<Check size={13} /> copied{:else}<Copy size={13} /> copy{/if}
                 </button>
               {:else}
-                <span class="dm-dim">the password you entered</span>
+                <span class="dm-dim">The password you entered</span>
               {/if}
             </dd>
           </dl>
@@ -891,7 +891,6 @@
     align-items: center;
     justify-content: center;
     font-size: 11px;
-    font-family: var(--font-mono);
   }
   .stepper .on button { color: var(--fg); font-weight: 600; }
   .stepper .on .n { border-color: var(--accent); color: var(--accent); }

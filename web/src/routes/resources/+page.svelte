@@ -793,7 +793,7 @@
         <Search size={12} strokeWidth={1.5} class="res-toolbar-search-icon" />
         <input type="text" class="ed-underline-input res-search-input" placeholder="search by repo, tag or sha…" bind:value={imageSearch} />
       </div>
-      <span class="ed-metric-meta res-segctrl-label">show</span>
+      <span class="ed-metric-meta res-segctrl-label">Show</span>
       <div class="res-segctrl">
         {#each [
           ['all','all',imageCounts.all],
@@ -859,12 +859,12 @@
       <div class="res-table">
         <div class="res-row res-row--head" style="grid-template-columns: {grid};">
           <input type="checkbox" disabled={!canImageDelete} checked={imageSelected.size === visibleImages.length && visibleImages.length > 0} onchange={toggleImageAll} />
-          <span>repository : tag</span>
-          <span>size</span>
-          <span>created</span>
-          <span>used by</span>
-          <span>vulnerabilities</span>
-          <span>host</span>
+          <span>Repository : tag</span>
+          <span>Size</span>
+          <span>Created</span>
+          <span>Used by</span>
+          <span>Vulnerabilities</span>
+          <span>Host</span>
           <span></span>
         </div>
         {#each visibleImages as img (img.Id + (img.host_id ?? ''))}
@@ -879,7 +879,7 @@
                 </a>
               {:else}
                 <a href={`/images/${encodeURIComponent(img.Id)}${img.host_id && img.host_id !== 'local' ? `?host=${encodeURIComponent(img.host_id)}` : ''}`} class="res-col-tag-dangling res-col-tag-link">
-                  <span class="dm-pill dm-pill-warning res-mini-pill">dangling</span>
+                  <span class="dm-pill dm-pill-warning res-mini-pill">Dangling</span>
                   <span class="font-mono muted">&lt;none&gt;:&lt;none&gt;</span>
                 </a>
               {/if}
@@ -896,7 +896,7 @@
             </span>
             <div class="res-cve-cell">
               {#if !cve}
-                <span class="font-mono muted res-cve-empty">not scanned</span>
+                <span class="font-mono muted res-cve-empty">Not scanned</span>
                 {#if canImageScan}
                   <button type="button" class="res-cve-scan-btn" onclick={() => scanImage(img)} title="Scan with Grype">
                     <Shield size={10} strokeWidth={1.5} /> scan
@@ -947,7 +947,7 @@
         <Search size={12} strokeWidth={1.5} class="res-toolbar-search-icon" />
         <input type="text" class="ed-underline-input res-search-input" placeholder="search volume name…" bind:value={volumeSearch} />
       </div>
-      <span class="ed-metric-meta res-segctrl-label">show</span>
+      <span class="ed-metric-meta res-segctrl-label">Show</span>
       <div class="res-segctrl">
         {#each [
           ['all','all',volumeCounts.all],
@@ -1002,12 +1002,12 @@
       <div class="res-table">
         <div class="res-row res-row--head" style="grid-template-columns: {grid};">
           <input type="checkbox" disabled={!canVolDelete} checked={volumeSelected.size === visibleVolumes.length && visibleVolumes.length > 0} onchange={toggleVolumeAll} />
-          <span>name</span>
-          <span>driver</span>
-          <span>mountpoint</span>
-          <span>used by</span>
-          <span>created</span>
-          {#if isAll}<span>host</span>{/if}
+          <span>Name</span>
+          <span>Driver</span>
+          <span>Mountpoint</span>
+          <span>Used by</span>
+          <span>Created</span>
+          {#if isAll}<span>Host</span>{/if}
           <span></span>
         </div>
         {#each visibleVolumes as v (vKey(v))}
@@ -1034,7 +1034,7 @@
               {#if used > 0}
                 <span class="dm-pill dm-pill-success res-mini-pill"><span class="dm-pill-dot"></span> {used} container{used === 1 ? '' : 's'}</span>
               {:else}
-                <span class="dm-pill dm-pill-warning res-mini-pill">orphan</span>
+                <span class="dm-pill dm-pill-warning res-mini-pill">Orphan</span>
               {/if}
             </span>
             <span class="res-cell-mono">{fmtDate(v.CreatedAt)}</span>
@@ -1076,7 +1076,7 @@
         <Search size={12} strokeWidth={1.5} class="res-toolbar-search-icon" />
         <input type="text" class="ed-underline-input res-search-input" placeholder="search network…" bind:value={networkSearch} />
       </div>
-      <span class="ed-metric-meta res-segctrl-label">show</span>
+      <span class="ed-metric-meta res-segctrl-label">Show</span>
       <div class="res-segctrl">
         {#each [
           ['user','user',networkCounts.user],
@@ -1126,12 +1126,12 @@
       <div class="res-table">
         <div class="res-row res-row--head" style="grid-template-columns: {grid};">
           <span></span>
-          <span>name</span>
-          <span>driver / scope</span>
-          <span>subnet</span>
-          <span>flags</span>
-          <span>containers</span>
-          <span>created</span>
+          <span>Name</span>
+          <span>Driver / scope</span>
+          <span>Subnet</span>
+          <span>Flags</span>
+          <span>Containers</span>
+          <span>Created</span>
           <span></span>
         </div>
         {#each visibleNetworks as n (n.Id)}
@@ -1467,7 +1467,6 @@
     border-right: 1px solid var(--border);
     background: transparent;
     cursor: pointer;
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
     transition: color 120ms, background 120ms;
@@ -1512,7 +1511,7 @@
     margin-right: 4px;
   }
   .res-bulk-danger { color: var(--color-danger-400); }
-  .res-action-pill { font-size: 9.5px; margin-left: 4px; }
+  .res-action-pill { font-size: 11.5px; margin-left: 4px; }
 
   .res-toggle {
     display: inline-flex;
@@ -1563,11 +1562,10 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-family: var(--font-mono);
     font-size: 12px;
   }
   .res-col-tag-sha {
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-top: 3px;
   }
@@ -1581,14 +1579,13 @@
     min-width: 0;
   }
   .muted { color: var(--fg-subtle); }
-  .res-mini-pill { font-size: 9.5px; padding: 1px 6px; }
+  .res-mini-pill { font-size: 11.5px; padding: 1px 6px; }
   .res-flags { display: flex; gap: 4px; flex-wrap: wrap; }
   .res-row-danger { color: var(--color-danger-400); }
 
   .res-foot {
     margin-top: 12px;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     line-height: 1.6;
   }
@@ -1632,7 +1629,6 @@
     gap: 4px;
     font-size: 12px;
     color: var(--accent-fg);
-    font-family: var(--font-mono);
   }
   .res-topology-mini {
     height: 100px;
@@ -1662,8 +1658,7 @@
     border: 1px solid var(--border);
     border-radius: 3px;
     padding: 1px 6px;
-    font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     cursor: pointer;
     transition: color 120ms, border-color 120ms;
@@ -1680,8 +1675,7 @@
   }
   .res-cve-badges { gap: 4px; flex-wrap: wrap; }
   .cve-badge {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     padding: 1px 5px;
     border-radius: 3px;
     font-weight: 500;

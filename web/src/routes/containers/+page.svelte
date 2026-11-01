@@ -530,11 +530,11 @@
     </span>
     <span role="cell"><StatusChip tone={st.tone} label={st.label} title={c.Status} /></span>
     {#if view !== 'host'}<span role="cell" class="dm-num dm-dim">{c.host_name || (isAll ? 'local' : (hosts.selected?.name ?? 'local'))}</span>{/if}
-    <span role="cell" class="dm-num" title={c.Image}>
+    <span role="cell" class="dm-num dm-mono" title={c.Image}>
       <span class="dm-dim">{shortImage(img.name)}</span>{#if img.tag}:{img.tag}{/if}
       {#if c.image_update_available}<span class="ct-upd" title="A newer image is available"> · update</span>{/if}
     </span>
-    <span role="cell" class="dm-num dm-dim" title={portsTitle(c)}>{portsLabel(c)}</span>
+    <span role="cell" class="dm-mono dm-dim" title={portsTitle(c)}>{portsLabel(c)}</span>
     <span role="cell" class="dm-num dm-dim">{running ? uptime(c) : '—'}</span>
     <span role="cell" class="dm-tr-menu">
       <Menu label="Actions for {nameOf(c)}" items={rowMenu(c)} />

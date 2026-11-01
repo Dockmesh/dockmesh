@@ -445,9 +445,9 @@
             <a class="dm-tr dm-click lnk" role="row" style="grid-template-columns: {CT_COLS}" {href}>
               <span role="cell"><span class="dm-dot {st === 'off' ? '' : st}"></span></span>
               <span role="cell" class="dm-nm"><span class="dm-t">{name}</span><small>{c.Labels?.['com.docker.compose.project'] ?? 'standalone'}</small></span>
-              <span role="cell" class="dm-num dm-dim" title={c.Image}>{c.Image}</span>
+              <span role="cell" class="dm-mono dm-dim" title={c.Image}>{c.Image}</span>
               <span role="cell"><StatusChip tone={st as Tone} label={c.State} /></span>
-              <span role="cell" class="dm-num dm-dim" title={c.Status}>{c.Status ?? '—'}</span>
+              <span role="cell" class="dm-dim" title={c.Status}>{c.Status ?? '—'}</span>
             </a>
           {/each}
         </div>

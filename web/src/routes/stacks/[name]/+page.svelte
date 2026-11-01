@@ -1786,7 +1786,7 @@
                     <a href={`/containers/${s.container_id}?from=stack`} onclick={(e) => e.stopPropagation()}>{s.service}{#if count > 1}<span class="stk-rep"> ×{count}</span>{/if}</a>
                     <small title={s.status}>{s.status || s.state}</small>
                   </span>
-                  <span class="dm-num dm-dim stk-img" title={s.image}>
+                  <span class="dm-mono dm-dim stk-img" title={s.image}>
                     {s.image.split('/').pop()}
                     {#if hasImageUpdate(s.image)}<StatusChip tone="acc" label="update" title="A newer image is available" />{/if}
                   </span>
@@ -1859,7 +1859,7 @@
               <dt>Endpoints</dt>
               <dd class="dm-num">
                 {#if composeEndpoints.length === 0}
-                  <span class="dm-dim">no ports declared</span>
+                  <span class="dm-dim">No ports declared</span>
                 {:else}
                   {#each composeEndpoints as ep, i (ep.service + i)}
                     <div>{ep.service} :{ep.port}{#if ep.mode === 'host'} <ExternalLink size={10} />{:else} <span class="dm-dim">internal</span>{/if}</div>
@@ -2697,7 +2697,7 @@
         <span class="font-medium flex items-center gap-1.5">
           <AlertTriangle class="w-3.5 h-3.5 text-[var(--color-danger-400)]" />
           Remove volumes
-          <span class="text-[10px] px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--color-danger-500)_15%,transparent)] text-[var(--color-danger-400)] font-normal">unrecoverable</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--color-danger-500)_15%,transparent)] text-[var(--color-danger-400)] font-normal">Unrecoverable</span>
         </span>
         <span class="block text-xs text-[var(--fg-muted)] mt-0.5">
           Deletes data inside these volumes <span class="font-medium">permanently</span>. External volumes are never touched.
@@ -2809,7 +2809,6 @@
     background: var(--field);
     color: var(--muted);
     font-size: var(--fs-xs);
-    font-family: var(--font-mono);
     border: 0;
     white-space: nowrap;
   }

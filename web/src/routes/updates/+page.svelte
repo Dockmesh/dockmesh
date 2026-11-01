@@ -292,7 +292,7 @@
               <small>{r.stack ? `stack ${r.stack}` : 'standalone'}</small>
             </span>
             <span role="cell" class="dm-mono up-ver" title={r.image}>{r.image}</span>
-            <span role="cell" class="dm-num dm-dim" title={r.check ? `${r.check.local_digest ?? ''} → ${r.check.remote_digest ?? ''}` : ''}>
+            <span role="cell" class="dm-mono dm-dim" title={r.check ? `${r.check.local_digest ?? ''} → ${r.check.remote_digest ?? ''}` : ''}>
               {shortDigest(r.check?.local_digest)} → <b class="up-new">{shortDigest(r.check?.remote_digest)}</b>
             </span>
             <span role="cell" class="dm-num dm-dim">{fmtAgo(r.check?.checked_at)}</span>

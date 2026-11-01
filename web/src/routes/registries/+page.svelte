@@ -402,11 +402,11 @@
       {:else}
         <div class="reg-table">
           <div class="reg-row reg-row-head">
-            <span>label</span>
-            <span>url · user</span>
-            <span>rotation</span>
-            <span>last test</span>
-            <span>scope</span>
+            <span>Label</span>
+            <span>URL · user</span>
+            <span>Rotation</span>
+            <span>Last test</span>
+            <span>Scope</span>
             <span class="reg-col-action">·</span>
           </div>
           {#each filtered as r (r.id)}
@@ -440,8 +440,8 @@
                     </span>
                   {/if}
                 {:else}
-                  <span class="reg-rotation-text reg-muted">no token</span>
-                  <span class="reg-rotation-note">edit to add</span>
+                  <span class="reg-rotation-text reg-muted">No token</span>
+                  <span class="reg-rotation-note">Edit to add</span>
                 {/if}
               </div>
 
@@ -459,7 +459,7 @@
                     <span class="reg-test-err" title={r.last_test_error}>{r.last_test_error}</span>
                   {/if}
                 {:else}
-                  <span class="reg-muted reg-test-time">never</span>
+                  <span class="reg-muted reg-test-time">Never</span>
                 {/if}
               </div>
 
@@ -471,7 +471,7 @@
                     {/each}
                   </div>
                 {:else}
-                  <span class="reg-muted">all hosts</span>
+                  <span class="reg-muted">All hosts</span>
                 {/if}
               </div>
 
@@ -739,10 +739,7 @@
     border-color: color-mix(in srgb, var(--color-warning-500) 35%, var(--border));
   }
   .reg-metric-label {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
   .reg-metric-value {
@@ -755,17 +752,13 @@
     color: var(--color-warning-400);
   }
   .reg-metric-meta {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
 
   /* ── Provider rail ──────────────────────────────────────────── */
   .reg-rail-label {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     margin-bottom: 8px;
   }
@@ -812,7 +805,7 @@
   }
   .reg-rail-card-url {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -865,10 +858,7 @@
   .reg-row-head {
     background: var(--bg-elevated);
     border-bottom: 1px solid var(--border);
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     padding: 10px 16px;
   }
@@ -910,8 +900,7 @@
   }
   .reg-name:hover { color: var(--accent-fg); }
   .reg-type {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     display: block;
   }
@@ -927,8 +916,7 @@
     white-space: nowrap;
   }
   .reg-user {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -943,15 +931,13 @@
     min-width: 0;
   }
   .reg-rotation-text {
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-muted);
   }
   .reg-cell-rotation[data-tone="warn"] .reg-rotation-text { color: var(--color-warning-400); }
   .reg-cell-rotation[data-tone="danger"] .reg-rotation-text { color: var(--color-danger-400); }
   .reg-rotation-note {
-    font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 11.5px;
     color: var(--fg-subtle);
   }
   .reg-cell-rotation[data-tone="warn"] .reg-rotation-note { color: var(--color-warning-400); }
@@ -971,13 +957,11 @@
   .reg-cell-test :global(.reg-test-ok) { color: var(--color-success-400); }
   .reg-cell-test :global(.reg-test-fail) { color: var(--color-danger-400); }
   .reg-test-time {
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-muted);
   }
   .reg-test-err {
-    font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 11.5px;
     color: var(--color-danger-400);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -992,7 +976,7 @@
   }
   .reg-scope-tag {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 11.5px;
     padding: 1px 6px;
     border: 1px solid var(--border-subtle);
     border-radius: 3px;
@@ -1092,7 +1076,6 @@
     background: var(--bg-elevated);
     border: 1px dashed var(--border);
     border-radius: 4px;
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
     line-height: 1.55;
@@ -1128,8 +1111,7 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     padding: 1px 6px;
     border: 1px solid var(--border);
     border-radius: 3px;
@@ -1153,14 +1135,12 @@
     border-top: 1px solid var(--border-subtle);
   }
   .reg-test-hint {
-    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--fg-subtle);
   }
   .reg-test-result {
     padding: 10px 12px;
     border-radius: 4px;
-    font-family: var(--font-mono);
     font-size: 11.5px;
     display: flex;
     align-items: center;
