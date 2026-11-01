@@ -45,19 +45,12 @@ func Collect() Metrics {
 // collectOneShot is the old behaviour — used as a warm-up fallback
 // before the background sampler has filled its window.
 func collectOneShot() Metrics {
-	m := Metrics{
-		CPUCores: runtime.NumCPU(),
-		DiskPath: "/var/lib/docker",
-	}
+	m := Metrics{CPUCores: runtime.NumCPU()}
 	m.CPUPercent = readCPUPercentOneShot()
 	m.CPUUsed = float64(m.CPUCores) * m.CPUPercent / 100.0
 	m.MemTotal, m.MemUsed, m.MemPercent = readMem()
-	path := "/var/lib/docker"
-	if _, err := os.Stat(path); err != nil {
-		path = "/"
-	}
-	m.DiskPath = path
-	m.DiskTotal, m.DiskUsed, m.DiskPercent = readDisk(path)
+	m.DiskPath = dockerDiskPath()
+	m.DiskTotal, m.DiskUsed, m.DiskPercent = readDisk(m.DiskPath)
 	m.Uptime = readUptime()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -157,12 +150,8 @@ func runSampler(ctx context.Context) {
 			m.CPUPercent = avg
 			m.CPUUsed = float64(m.CPUCores) * avg / 100.0
 			m.MemTotal, m.MemUsed, m.MemPercent = readMem()
-			path := "/var/lib/docker"
-			if _, err := os.Stat(path); err != nil {
-				path = "/"
-			}
-			m.DiskPath = path
-			m.DiskTotal, m.DiskUsed, m.DiskPercent = readDisk(path)
+			m.DiskPath = dockerDiskPath()
+			m.DiskTotal, m.DiskUsed, m.DiskPercent = readDisk(m.DiskPath)
 			m.Uptime = readUptime()
 
 			samplerMu.Lock()
@@ -277,4 +266,18 @@ func readUptime() int64 {
 		return 0
 	}
 	return int64(f)
+}
+
+// dockerDiskPath is the directory whose filesystem the single disk figure
+// describes: Docker's data root, else the default one, else /.
+func dockerDiskPath() string {
+	for _, p := range []string{DockerRoot(), "/var/lib/docker"} {
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "/"
 }

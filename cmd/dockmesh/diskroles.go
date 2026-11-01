@@ -25,6 +25,7 @@ func serverRolePaths(database *sql.DB, cli *docker.Client, stacksRoot, dataDir s
 			defer cancel()
 			if info, err := cli.Info(ictx); err == nil && info.DockerRootDir != "" {
 				paths = append(paths, system.RolePath{Role: system.RoleDockerRoot, Path: info.DockerRootDir})
+				system.SetDockerRoot(info.DockerRootDir)
 			}
 		}
 		for _, p := range localBackupPaths(ctx, database) {

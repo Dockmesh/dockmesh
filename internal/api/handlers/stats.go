@@ -6,9 +6,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/host"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -61,12 +63,14 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rc.Close()
 
+	hostMem := h.hostMemTotal(ctx, target)
+
 	// Rolling 5-sample CPU% window. Docker's stats stream ticks at
 	// ~1s, so this matches the 5-second smoothing we use on host
 	// metrics. Memory / net / block I/O stay instant: they're byte
 	// counters Docker reports directly, no delta-division noise.
 	const cpuWindow = 5
-	cpuSamples := make([]float64, 0, cpuWindow)
+	cpuSamples := make([]docker.NormalizedStats, 0, cpuWindow)
 
 	dec := json.NewDecoder(rc)
 	for {
@@ -81,15 +85,18 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		norm := docker.Normalize(&raw)
-		cpuSamples = append(cpuSamples, norm.CPUPercent)
+		norm.MemUnlimited = docker.NoMemLimit(norm.MemLimit, hostMem)
+		cpuSamples = append(cpuSamples, norm)
 		if len(cpuSamples) > cpuWindow {
 			cpuSamples = cpuSamples[len(cpuSamples)-cpuWindow:]
 		}
-		var sum float64
+		var sum, sumCore float64
 		for _, s := range cpuSamples {
-			sum += s
+			sum += s.CPUPercent
+			sumCore += s.CPUPercentCore
 		}
 		norm.CPUPercent = sum / float64(len(cpuSamples))
+		norm.CPUPercentCore = sumCore / float64(len(cpuSamples))
 		b, err := json.Marshal(norm)
 		if err != nil {
 			continue
@@ -98,4 +105,16 @@ func (h *Handlers) WSStats(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// hostMemTotal is the RAM of the host a container runs on, 0 when the
+// host does not answer in time.
+func (h *Handlers) hostMemTotal(ctx context.Context, target host.Host) uint64 {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	m, err := target.SystemMetrics(ctx)
+	if err != nil {
+		return 0
+	}
+	return m.MemTotal
 }

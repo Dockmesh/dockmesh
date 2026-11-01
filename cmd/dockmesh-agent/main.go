@@ -1225,6 +1225,7 @@ func agentRolePaths(cli *client.Client) system.RolePathsFn {
 		defer cancel()
 		if info, err := cli.Info(ictx); err == nil && info.DockerRootDir != "" {
 			paths = append(paths, system.RolePath{Role: system.RoleDockerRoot, Path: info.DockerRootDir})
+			system.SetDockerRoot(info.DockerRootDir)
 		}
 		return paths
 	}

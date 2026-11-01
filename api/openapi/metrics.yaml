@@ -57,6 +57,56 @@ paths:
                     type: boolean
                     description: True when the host's agent is too old to report per-mount usage.
         "401": {$ref: "#/components/responses/Unauthorized"}
+  /hosts/{id}/metrics:
+    get:
+      operationId: hosts.metrics
+      tags: [metrics]
+      summary: Stored CPU / memory / disk samples of a host
+      description: |
+        Same retention as the container history. A host that records no
+        history answers 200 with `history: false`, a `reason` and no
+        samples.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: Host id, `local` for the server.
+          schema: {type: string}
+        - name: resolution
+          in: query
+          schema: {type: string, enum: [raw, 1m, 1h], default: raw}
+        - name: from
+          in: query
+          description: Unix seconds; default one hour ago.
+          schema: {type: integer, format: int64}
+        - name: to
+          in: query
+          description: Unix seconds; default now.
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: Samples, oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [host_id, history, samples]
+                properties:
+                  host_id: {type: string}
+                  history: {type: boolean}
+                  reason: {$ref: "#/components/schemas/HistoryReason"}
+                  samples:
+                    type: array
+                    items: {$ref: "#/components/schemas/HostMetricsSample"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503":
+          description: Metrics are not configured.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /system/backup-status:
     get:
       operationId: system.backup_status
@@ -254,6 +304,17 @@ paths:
               schema: {$ref: "#/components/schemas/Error"}
 components:
   schemas:
+    HostMetricsSample:
+      type: object
+      required: [ts, cpu_percent, cpu_cores, mem_used, mem_total, disk_used, disk_total]
+      properties:
+        ts: {type: integer, format: int64, description: Unix seconds.}
+        cpu_percent: {type: number, description: 0..100 of the host.}
+        cpu_cores: {type: integer}
+        mem_used: {type: integer, format: int64}
+        mem_total: {type: integer, format: int64}
+        disk_used: {type: integer, format: int64, description: "Filesystem holding Docker's data root."}
+        disk_total: {type: integer, format: int64}
     ReleaseNotes:
       type: object
       required: [version, highlights, added, changed, fixed, security]

@@ -413,6 +413,7 @@ func main() {
 		if err != nil {
 			return system.DockerSnapshot{}, false
 		}
+		system.SetDockerRoot(info.DockerRootDir)
 		snap := system.DockerSnapshot{
 			NCPU:     info.NCPU,
 			MemTotal: uint64(info.MemTotal),

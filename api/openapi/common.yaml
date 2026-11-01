@@ -1,5 +1,9 @@
 components:
   schemas:
+    HistoryReason:
+      type: string
+      enum: [agent_no_history]
+      description: "Why a host has no stored history: `agent_no_history`, its agent does not record history."
     Error:
       type: object
       required: [error]

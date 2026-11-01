@@ -2,31 +2,37 @@ package docker
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 
 	"github.com/docker/docker/api/types/container"
 )
 
-// NormalizedStats is the minimal stats payload the UI needs. Computed
-// server-side so the wire format stays tiny and the frontend doesn't have
-// to know Docker's full container.StatsResponse layout.
+// NormalizedStats is the stats payload of one container frame, computed
+// the same way for the live stream, the history collector and the
+// Docker Desktop host tiles.
 type NormalizedStats struct {
+	// CPUPercent is the share of the whole host, 0..100.
 	CPUPercent float64 `json:"cpu_percent"`
-	MemUsed    uint64  `json:"mem_used"`
-	MemLimit   uint64  `json:"mem_limit"`
-	MemPercent float64 `json:"mem_percent"`
-	NetRx      uint64  `json:"net_rx"`
-	NetTx      uint64  `json:"net_tx"`
-	BlkRead    uint64  `json:"blk_read"`
-	BlkWrite   uint64  `json:"blk_write"`
-	PidsCurr   uint64  `json:"pids_current"`
+	// CPUPercentCore is what `docker stats` shows: 100 per busy core.
+	CPUPercentCore float64 `json:"cpu_percent_core"`
+	OnlineCPUs     uint32  `json:"online_cpus"`
+	MemUsed        uint64  `json:"mem_used"`
+	MemLimit       uint64  `json:"mem_limit"`
+	MemPercent     float64 `json:"mem_percent"`
+	// MemUnlimited is set by callers that know the host RAM, see
+	// NoMemLimit.
+	MemUnlimited bool   `json:"mem_unlimited,omitempty"`
+	NetRx        uint64 `json:"net_rx"`
+	NetTx        uint64 `json:"net_tx"`
+	BlkRead      uint64 `json:"blk_read"`
+	BlkWrite     uint64 `json:"blk_write"`
+	PidsCurr     uint64 `json:"pids_current"`
 }
 
 // ContainerStats returns the raw stats stream from the docker daemon —
 // newline-delimited JSON matching the container.StatsResponse layout. Same wire format
 // the local handler and the remote agent use, so normalization can stay
-// in one place (the WS handler).
+// in one place (Normalize).
 func (c *Client) ContainerStats(ctx context.Context, containerID string) (io.ReadCloser, error) {
 	resp, err := c.cli.ContainerStats(ctx, containerID, true)
 	if err != nil {
@@ -35,84 +41,36 @@ func (c *Client) ContainerStats(ctx context.Context, containerID string) (io.Rea
 	return resp.Body, nil
 }
 
-// StreamStats returns a channel of normalized stats and an error channel.
-// The channels close when ctx is cancelled or the stats stream ends.
-func (c *Client) StreamStats(ctx context.Context, containerID string) (<-chan NormalizedStats, <-chan error) {
-	out := make(chan NormalizedStats, 4)
-	errCh := make(chan error, 1)
-
-	go func() {
-		defer close(out)
-		defer close(errCh)
-
-		resp, err := c.cli.ContainerStats(ctx, containerID, true)
-		if err != nil {
-			errCh <- err
-			return
-		}
-		defer resp.Body.Close()
-
-		dec := json.NewDecoder(resp.Body)
-		for {
-			if ctx.Err() != nil {
-				return
-			}
-			var s container.StatsResponse
-			if err := dec.Decode(&s); err != nil {
-				if err != io.EOF && ctx.Err() == nil {
-					errCh <- err
-				}
-				return
-			}
-			select {
-			case out <- normalize(&s):
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	return out, errCh
-}
-
-// Normalize is the exported version of normalize() so handlers that
-// stream raw stats (local or via remote agent) can convert frame-by-frame
-// without reimplementing the formulas.
-func Normalize(s *container.StatsResponse) NormalizedStats { return normalize(s) }
-
-func normalize(s *container.StatsResponse) NormalizedStats {
-	// CPU % — Linux formula (Windows path omitted; concept §10 targets Linux).
-	cpuDelta := float64(s.CPUStats.CPUUsage.TotalUsage - s.PreCPUStats.CPUUsage.TotalUsage)
-	sysDelta := float64(s.CPUStats.SystemUsage - s.PreCPUStats.SystemUsage)
-	cpus := float64(s.CPUStats.OnlineCPUs)
+// Normalize turns one Docker stats frame into NormalizedStats. The CPU
+// and memory formulas are the ones of the Docker CLI, so the numbers
+// match `docker stats` on cgroup v1 and v2.
+func Normalize(s *container.StatsResponse) NormalizedStats {
+	cpus := s.CPUStats.OnlineCPUs
 	if cpus == 0 {
-		cpus = float64(len(s.CPUStats.CPUUsage.PercpuUsage))
+		cpus = uint32(len(s.CPUStats.CPUUsage.PercpuUsage))
 	}
-	var cpuPct float64
-	if sysDelta > 0 && cpuDelta > 0 {
-		cpuPct = (cpuDelta / sysDelta) * cpus * 100
+	var hostPct float64
+	// Counters restart with the container; a frame across the restart
+	// would underflow.
+	if s.CPUStats.CPUUsage.TotalUsage > s.PreCPUStats.CPUUsage.TotalUsage &&
+		s.CPUStats.SystemUsage > s.PreCPUStats.SystemUsage {
+		cpuDelta := float64(s.CPUStats.CPUUsage.TotalUsage - s.PreCPUStats.CPUUsage.TotalUsage)
+		sysDelta := float64(s.CPUStats.SystemUsage - s.PreCPUStats.SystemUsage)
+		hostPct = cpuDelta / sysDelta * 100
 	}
 
-	// Memory — subtract page cache to match what `docker stats` shows.
-	memUsed := s.MemoryStats.Usage
-	if cache, ok := s.MemoryStats.Stats["cache"]; ok {
-		if cache < memUsed {
-			memUsed -= cache
-		}
-	}
+	memUsed := memUsedNoCache(s.MemoryStats)
 	var memPct float64
 	if s.MemoryStats.Limit > 0 {
 		memPct = float64(memUsed) / float64(s.MemoryStats.Limit) * 100
 	}
 
-	// Network — sum across interfaces.
 	var rx, tx uint64
 	for _, n := range s.Networks {
 		rx += n.RxBytes
 		tx += n.TxBytes
 	}
 
-	// Block I/O.
 	var blkR, blkW uint64
 	for _, e := range s.BlkioStats.IoServiceBytesRecursive {
 		switch e.Op {
@@ -124,14 +82,38 @@ func normalize(s *container.StatsResponse) NormalizedStats {
 	}
 
 	return NormalizedStats{
-		CPUPercent: cpuPct,
-		MemUsed:    memUsed,
-		MemLimit:   s.MemoryStats.Limit,
-		MemPercent: memPct,
-		NetRx:      rx,
-		NetTx:      tx,
-		BlkRead:    blkR,
-		BlkWrite:   blkW,
-		PidsCurr:   s.PidsStats.Current,
+		CPUPercent:     hostPct,
+		CPUPercentCore: hostPct * float64(cpus),
+		OnlineCPUs:     cpus,
+		MemUsed:        memUsed,
+		MemLimit:       s.MemoryStats.Limit,
+		MemPercent:     memPct,
+		NetRx:          rx,
+		NetTx:          tx,
+		BlkRead:        blkR,
+		BlkWrite:       blkW,
+		PidsCurr:       s.PidsStats.Current,
 	}
+}
+
+// memUsedNoCache subtracts the reclaimable page cache: total_inactive_file
+// on cgroup v1, inactive_file on cgroup v2 (the key decides the version).
+func memUsedNoCache(m container.MemoryStats) uint64 {
+	if v, ok := m.Stats["total_inactive_file"]; ok && v < m.Usage {
+		return m.Usage - v
+	}
+	if v := m.Stats["inactive_file"]; v < m.Usage {
+		return m.Usage - v
+	}
+	return m.Usage
+}
+
+// NoMemLimit reports whether a container's memory limit is just the host
+// RAM, which Docker reports when no limit is set. A limit within 2 % of
+// the host RAM is treated the same: it limits nothing in practice.
+func NoMemLimit(limit, hostMem uint64) bool {
+	if limit == 0 {
+		return true
+	}
+	return hostMem > 0 && limit >= hostMem-hostMem/50
 }
