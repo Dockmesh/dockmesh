@@ -255,6 +255,8 @@ func TestMaskText(t *testing.T) {
 		{"pem", "key -----BEGIN OPENSSH PRIVATE KEY-----\nAAAAB3Nza\n-----END OPENSSH PRIVATE KEY-----", nil, "AAAAB3Nza"},
 		{"base64", "auth=eyJ1c2VybmFtZSI6InUifQ", []string{`{"username":"u"}`}, "eyJ1c2VybmFtZSI6InUifQ"},
 		{"escaped", "GET /x?p=a%2Fb%3Dc", []string{"a/b=c"}, "a%2Fb%3Dc"},
+		{"key line", "hook printed b3BlbnNzaC1rZXktdjEAAAAA", []string{"-----BEGIN KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END KEY-----"}, "b3BlbnNzaC1rZXktdjEAAAAA"},
+		{"json escaped", `error: {"pw":"a\"quoted\"pw"}`, []string{`a"quoted"pw`}, `quoted\"pw`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

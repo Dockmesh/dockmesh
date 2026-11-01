@@ -155,12 +155,12 @@ func (s *Service) Start(ctx context.Context, spec Spec) *Op {
 		return nil
 	}
 	now := s.now().UTC()
-	o := &Op{s: s}
+	o := &Op{s: s, ctx: context.WithoutCancel(ctx)}
 	o.addSecrets(spec.Secrets)
 	op := Operation{
 		ID:        newID(),
 		Kind:      spec.Kind,
-		Target:    o.mask(spec.Target),
+		Target:    truncate(o.mask(spec.Target)),
 		Ref:       spec.Ref,
 		GroupID:   spec.GroupID,
 		HostID:    spec.HostID,
@@ -199,7 +199,7 @@ func (s *Service) Get(ctx context.Context, id string) (*Operation, error) {
 		op := o.snapshot(true)
 		return &op, nil
 	}
-	row := s.db.QueryRowContext(ctx, selectCols+` WHERE id = ?`, id)
+	row := s.db.QueryRowContext(ctx, selectOne+` WHERE id = ?`, id)
 	op, err := scanOp(row, true)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -218,7 +218,7 @@ type Filter struct {
 
 // List returns operations newest first, without their logs.
 func (s *Service) List(ctx context.Context, f Filter) ([]Operation, error) {
-	q := selectCols + ` WHERE 1=1`
+	q := selectList + ` WHERE 1=1`
 	var args []any
 	switch {
 	case strings.HasSuffix(f.Kind, "."):
@@ -417,6 +417,9 @@ func (s *Service) StartPruner(ctx context.Context) {
 // Op is the handle the working code reports through.
 type Op struct {
 	s *Service
+	// ctx carries the starting request's values without its cancellation;
+	// the record is written even after the request ended.
+	ctx context.Context
 
 	// wmu orders the database writes of this operation; mu guards op.
 	wmu       sync.Mutex
@@ -512,7 +515,7 @@ func (o *Op) StepProgress(key string, frac float64, detail string) {
 		if o.op.Steps[i].Key == key {
 			f := frac
 			o.op.Steps[i].Progress = &f
-			o.op.Steps[i].Detail = o.mask(detail)
+			o.op.Steps[i].Detail = truncate(o.mask(detail))
 		}
 	}
 	snap := o.snapshotLocked(false)
@@ -534,7 +537,7 @@ func (o *Op) StepDetail(key, detail string) {
 	}
 	for i := range o.op.Steps {
 		if o.op.Steps[i].Key == key {
-			o.op.Steps[i].Detail = o.mask(detail)
+			o.op.Steps[i].Detail = truncate(o.mask(detail))
 		}
 	}
 	snap := o.snapshotLocked(false)
@@ -568,7 +571,7 @@ func (o *Op) stepEnd(key string, status StepStatus, detail string) {
 	o.update(func(op *Operation, now time.Time) {
 		st := stepFor(op, key, "")
 		st.Status = status
-		st.Detail = o.mask(detail)
+		st.Detail = truncate(o.mask(detail))
 		if st.StartedAt == nil && status != StepSkipped {
 			st.StartedAt = &now
 		}
@@ -594,7 +597,7 @@ func (o *Op) Logf(level, format string, args ...any) {
 		o.mu.Unlock()
 		return
 	}
-	line := LogLine{TS: o.s.now().UTC(), Level: level, Text: truncate(o.mask(text), MaxLineBytes)}
+	line := LogLine{TS: o.s.now().UTC(), Level: level, Text: truncate(o.mask(text))}
 	o.op.Log = append(o.op.Log, line)
 	if n := len(o.op.Log); n > MaxLogLines {
 		o.op.Log = append(o.op.Log[:0:0], o.op.Log[n-MaxLogLines:]...)
@@ -626,7 +629,7 @@ func (o *Op) end(status Status, msg string) {
 	}
 	now := o.s.now().UTC()
 	o.op.Status = status
-	o.op.Error = o.mask(msg)
+	o.op.Error = truncate(o.mask(msg))
 	o.op.FinishedAt = &now
 	for i := range o.op.Steps {
 		st := &o.op.Steps[i]
@@ -722,12 +725,16 @@ func (o *Op) flush() {
 	op := o.snapshotLocked(true)
 	o.lastFlush = o.s.now()
 	o.mu.Unlock()
-	if err := o.s.save(context.Background(), &op); err != nil {
+	if err := o.s.save(o.ctx, &op); err != nil {
 		slog.Warn("operations: save", "id", op.ID, "err", err)
 	}
 }
 
-const selectCols = `SELECT id, kind, target, ref, group_id, host_id, stack, admin_only, actor, status, error, steps, log, created_at, started_at, finished_at FROM operations`
+// The list reads no log column; it would load up to 500 lines per row.
+const (
+	selectOne  = `SELECT id, kind, target, ref, group_id, host_id, stack, admin_only, actor, status, error, steps, log, created_at, started_at, finished_at FROM operations`
+	selectList = `SELECT id, kind, target, ref, group_id, host_id, stack, admin_only, actor, status, error, steps, '[]', created_at, started_at, finished_at FROM operations`
+)
 
 func (s *Service) insert(ctx context.Context, op *Operation) error {
 	steps, _ := json.Marshal(op.Steps)
@@ -791,7 +798,8 @@ func newID() string {
 	return hex.EncodeToString(b[:])
 }
 
-func truncate(s string, max int) string {
+func truncate(s string) string {
+	const max = MaxLineBytes
 	if len(s) <= max {
 		return s
 	}

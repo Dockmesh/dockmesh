@@ -28,7 +28,8 @@ const progressEvery = 250 * time.Millisecond
 // drainPull reads the pull stream to the end, as the pull only finishes
 // once it is consumed, and reports layer progress and status lines to op.
 // A stream that stops parsing is still read to the end.
-func drainPull(rc io.Reader, op *operations.Op, step string) error {
+func drainPull(rc io.Reader, op *operations.Op) error {
+	const step = StepPull
 	if op == nil {
 		_, err := io.Copy(io.Discard, rc)
 		return err

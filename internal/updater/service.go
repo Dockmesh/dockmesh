@@ -227,7 +227,7 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 		op.StepFail(StepPull, err)
 		return nil, err
 	}
-	if err := drainPull(rc, op, StepPull); err != nil {
+	if err := drainPull(rc, op); err != nil {
 		rc.Close()
 		op.StepFail(StepPull, err)
 		return nil, err

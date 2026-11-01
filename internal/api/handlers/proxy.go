@@ -195,9 +195,13 @@ func (h *Handlers) CreateProxyRoute(w http.ResponseWriter, r *http.Request) {
 	route, err := h.Proxy.CreateRoute(operations.WithOp(r.Context(), op), proxy.RouteSpec{
 		Host: req.Host, Upstream: req.Upstream, TLSMode: req.TLSMode, Options: opts,
 	})
-	if err != nil {
+	switch {
+	case err != nil && route != nil:
+		slog.Warn("proxy: new site saved but not applied", "host", route.Host, "err", err)
+		op.Finish(proxy.ErrConfigRejected)
+	case err != nil:
 		op.Finish(err)
-	} else {
+	default:
 		go h.Proxy.WatchCertificate(context.WithoutCancel(r.Context()), op, route.Host, route.TLSMode, started)
 	}
 	if writeProxyRouteError(w, err) {

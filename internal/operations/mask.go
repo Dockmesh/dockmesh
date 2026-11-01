@@ -2,6 +2,7 @@ package operations
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"net/url"
 	"regexp"
 	"strings"
@@ -57,7 +58,16 @@ func appendSecret(list []string, v string) []string {
 	if len(v) < minSecretLen {
 		return list
 	}
+	// Output is logged line by line, so a multi-line value such as a
+	// private key is also masked one line at a time.
+	if strings.Contains(v, "\n") {
+		for _, line := range strings.Split(v, "\n") {
+			list = appendSecret(list, line)
+		}
+	}
+	quoted, _ := json.Marshal(v)
 	for _, form := range []string{
+		strings.Trim(string(quoted), `"`),
 		base64.StdEncoding.EncodeToString([]byte(v)),
 		base64.URLEncoding.EncodeToString([]byte(v)),
 		base64.RawStdEncoding.EncodeToString([]byte(v)),

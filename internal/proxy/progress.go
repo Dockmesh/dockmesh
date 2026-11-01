@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"strings"
 	"time"
@@ -22,6 +23,11 @@ var NewSiteSteps = []operations.StepSpec{
 	{Key: StepApply, Label: "Apply the Caddy configuration"},
 	{Key: StepCertificate, Label: "Get a certificate"},
 }
+
+// ErrConfigRejected stands in for Caddy's own error in an operation: that
+// error can quote other sites' configuration, which proxy.view callers
+// only see masked.
+var ErrConfigRejected = errors.New("caddy rejected the configuration; the server log has the details")
 
 // SecretValues returns the values in the options that can carry
 // credentials: header values, basic-auth passwords and hashes and the

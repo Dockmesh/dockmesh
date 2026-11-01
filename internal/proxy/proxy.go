@@ -255,7 +255,7 @@ func (s *Service) CreateRoute(ctx context.Context, spec RouteSpec) (*Route, erro
 		op.StepStart(StepApply, "")
 	}
 	if err := s.SyncFromDB(ctx); err != nil {
-		op.StepFail(StepApply, err)
+		op.StepFail(StepApply, ErrConfigRejected)
 		return route, err
 	}
 	if s.Enabled() {

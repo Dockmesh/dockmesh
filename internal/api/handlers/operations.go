@@ -107,12 +107,16 @@ type operationView struct {
 	ActorName string `json:"actor_name,omitempty"`
 }
 
+// viewOperations names who started each operation for callers who may
+// see users, and for the actor themselves.
 func (h *Handlers) viewOperations(ctx context.Context, ops []operations.Operation) []operationView {
 	names := map[string]string{}
+	seeUsers := middleware.Allowed(ctx, rbac.PermUsersView)
+	self := middleware.UserID(ctx)
 	out := make([]operationView, len(ops))
 	for i, op := range ops {
 		out[i] = operationView{Operation: op}
-		if op.Actor == "" || h.DB == nil {
+		if op.Actor == "" || h.DB == nil || (!seeUsers && op.Actor != self) {
 			continue
 		}
 		name, ok := names[op.Actor]
@@ -231,16 +235,18 @@ func (h *Handlers) startImageUpdateOp(r *http.Request, containerID, group string
 			target = strings.TrimPrefix(info.Name, "/")
 		}
 	}
+	stack := h.Updater.ManagedStack(r.Context(), containerID)
 	return h.Operations.Start(r.Context(), operations.Spec{
 		Kind:    opImageUpdate,
 		Target:  target,
 		Ref:     "container:" + containerID,
 		GroupID: group,
 		HostID:  "local",
-		Stack:   h.Updater.ManagedStack(r.Context(), containerID),
+		Stack:   stack,
 		Actor:   middleware.UserID(r.Context()),
 		Steps:   updater.UpdateSteps,
 		Queued:  queued,
+		Secrets: h.stackEnvValues(stack),
 	})
 }
 

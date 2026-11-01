@@ -46,7 +46,7 @@ func TestDrainPullReportsProgressWithoutSecrets(t *testing.T) {
 		`{"status":"Digest: sha256:abc"}`,
 		`{"status":"Status: Downloaded newer image for nginx:1.27, auth ` + auth + `"}`,
 	}, "\n")
-	if err := drainPull(strings.NewReader(stream), op, StepPull); err != nil {
+	if err := drainPull(strings.NewReader(stream), op); err != nil {
 		t.Fatal(err)
 	}
 	op.StepDone(StepPull, "")
@@ -85,7 +85,7 @@ func TestDrainPullReportsProgressWithoutSecrets(t *testing.T) {
 
 func TestDrainPullWithoutOperationReadsToEnd(t *testing.T) {
 	r := strings.NewReader(`{"status":"a"}` + "\n" + `not json` + "\n")
-	if err := drainPull(r, nil, StepPull); err != nil {
+	if err := drainPull(r, nil); err != nil {
 		t.Fatal(err)
 	}
 	if r.Len() != 0 {
@@ -94,7 +94,7 @@ func TestDrainPullWithoutOperationReadsToEnd(t *testing.T) {
 	r = strings.NewReader(`{"status":"a"}` + "\n" + `not json, more` + "\n")
 	ops := newOps(t)
 	op := ops.Start(context.Background(), operations.Spec{Kind: "image.update"})
-	if err := drainPull(r, op, StepPull); err != nil {
+	if err := drainPull(r, op); err != nil {
 		t.Fatal(err)
 	}
 	if r.Len() != 0 {
