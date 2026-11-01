@@ -47,16 +47,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # Prebuilt binaries can lag behind the toolchain in go.mod, so build
-      # golangci-lint with the job's toolchain instead.
+      # Built with the job's toolchain, as prebuilt binaries can lag go.mod.
+      # Only issues added since the branch left main count; only-new-issues
+      # reads the PR patch, which GitHub does not serve past 20 000 lines.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.15.0
           install-mode: goinstall
-          only-new-issues: true
+          args: --new-from-merge-base=${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
 
   govulncheck:
     name: govulncheck
