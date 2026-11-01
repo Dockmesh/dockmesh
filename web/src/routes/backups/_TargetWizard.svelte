@@ -3,6 +3,7 @@
   // step 2 fills in the type-specific connection fields, step 3 runs
   // a live test (5 phases — connect / auth / write / read / delete).
   // Mockup reference: `Dockmesh Wizard (6)/backup-wizards.jsx::TargetWizard`.
+  import { fmtBytes } from '$lib/format';
   import { api, ApiError, targetUsage, type BackupTarget } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
   import { stepValid, type TargetType } from '$lib/backupTargetForm';
@@ -171,12 +172,6 @@
   }
   const meta = $derived(targetTypeMeta(type));
 
-  function fmtBytes(n?: number): string {
-    if (!n) return '—';
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
-  }
 </script>
 
 <WizardShell
@@ -415,7 +410,7 @@
             <span>
               Round-trip succeeded in <span class="font-mono">{testDurationMs}ms</span>.
               {#if testResult.total_bytes && testResult.total_bytes > 0}
-                Storage: <span class="font-mono">{fmtBytes(testResult.free_bytes)}</span> free of <span class="font-mono">{fmtBytes(testResult.total_bytes)}</span>.
+                Storage: <span class="font-mono">{fmtBytes(testResult.free_bytes, '—')}</span> free of <span class="font-mono">{fmtBytes(testResult.total_bytes, '—')}</span>.
               {:else}
                 Target ready to receive backups.
               {/if}

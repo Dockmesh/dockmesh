@@ -34,6 +34,7 @@
   import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { allowed } from '$lib/rbac.svelte';
+  import { fmtBytes } from '$lib/format';
   import { hosts, isAllHosts } from '$lib/stores/host.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import type { UpdatePreview, UpdateHistoryEntry } from '$lib/api';
@@ -333,13 +334,6 @@
     inp.click();
   }
 
-  function formatFileSize(n: number): string {
-    if (n < 1024) return `${n} B`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
-  }
-
   function formatRelativeTime(iso: string): string {
     if (!iso) return '';
     const t = new Date(iso).getTime();
@@ -432,18 +426,15 @@
   const updateAvailable = $derived(
     !!updatePreview?.latest_release && !!newTag && newTag !== currentTagShort
   );
-  // Size delta in MB. Positive = remote is larger. null when either side
+  // Size delta in bytes. Positive = remote is larger. null when either side
   // is missing — we don't fake a delta we can't compute.
-  const sizeDeltaMB = $derived.by<number | null>(() => {
+  const sizeDelta = $derived.by<number | null>(() => {
     const a = updatePreview?.local_size;
     const b = updatePreview?.remote_size;
     if (!a || !b) return null;
-    return (b - a) / (1024 * 1024);
+    return b - a;
   });
-  function fmtSizeDelta(mb: number): string {
-    const sign = mb >= 0 ? '+' : '−';
-    return `${sign}${Math.abs(mb).toFixed(1)} MB`;
-  }
+  const fmtSizeDelta = (d: number) => `${d >= 0 ? '+' : '−'}${fmtBytes(Math.abs(d))}`;
 
   // Logs
   let logs = $state<string[]>([]);
@@ -564,11 +555,6 @@
     if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
     if (d < 2592000) return `${Math.floor(d / 86400)}d ago`;
     return new Date(ts).toLocaleDateString();
-  }
-
-  function fmtMB(bytes?: number): string {
-    if (!bytes) return '—';
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   }
 
   function shortDigest(d?: string): string {
@@ -906,13 +892,6 @@
   // Helpers
   function containerName(inf: any): string {
     return (inf?.Name ?? '').replace(/^\//, '');
-  }
-
-  function formatBytes(n: number): string {
-    if (n < 1024) return `${n} B`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
   }
 
   // JSON syntax highlighting for Inspect tab
@@ -1508,7 +1487,7 @@
                   </div>
                   <p class="ctn-updates-banner-meta">
                     {#if updatePreview.remote_last_updated}
-                      Released <span class="ctn-updates-rel">{fmtRelTime(updatePreview.remote_last_updated)}</span>{#if updatePreview.remote_size} · <span class="ctn-updates-rel">{fmtMB(updatePreview.remote_size)}</span>{/if}.
+                      Released <span class="ctn-updates-rel">{fmtRelTime(updatePreview.remote_last_updated)}</span>{#if updatePreview.remote_size} · <span class="ctn-updates-rel">{fmtBytes(updatePreview.remote_size, '—')}</span>{/if}.
                     {/if}
                     {#if updatePreview.latest_release?.name && updatePreview.latest_release.name !== updatePreview.latest_release.tag}
                       {updatePreview.latest_release.name}.
@@ -1557,7 +1536,7 @@
                     <div class="ctn-updates-image-meta">
                       <div>local: {shortDigest(updatePreview.current_digest)} · built {fmtRelTime(updatePreview.current_created)}</div>
                       {#if updatePreview.remote_last_updated}
-                        <div>remote: pushed {fmtRelTime(updatePreview.remote_last_updated)} · {fmtMB(updatePreview.remote_size)}</div>
+                        <div>remote: pushed {fmtRelTime(updatePreview.remote_last_updated)} · {fmtBytes(updatePreview.remote_size, '—')}</div>
                       {/if}
                     </div>
                   </div>
@@ -1612,20 +1591,20 @@
                 {/if}
               </h3>
               <div class="ctn-updates-imgdiff">
-                {#if sizeDeltaMB !== null}
+                {#if sizeDelta !== null}
                   <div class="ed-metric ctn-updates-metric">
                     <span class="ed-metric-label">size delta</span>
                     <div
                       class="ed-metric-value"
-                      class:ctn-updates-delta-down={sizeDeltaMB < 0}
-                      class:ctn-updates-delta-up={sizeDeltaMB > 0}
-                    >{fmtSizeDelta(sizeDeltaMB)}</div>
-                    <span class="ed-metric-meta">from {fmtMB(updatePreview.local_size)}</span>
+                      class:ctn-updates-delta-down={sizeDelta < 0}
+                      class:ctn-updates-delta-up={sizeDelta > 0}
+                    >{fmtSizeDelta(sizeDelta)}</div>
+                    <span class="ed-metric-meta">from {fmtBytes(updatePreview.local_size, '—')}</span>
                   </div>
                 {:else if updatePreview.remote_size}
                   <div class="ed-metric ctn-updates-metric">
                     <span class="ed-metric-label">remote size</span>
-                    <div class="ed-metric-value">{fmtMB(updatePreview.remote_size)}</div>
+                    <div class="ed-metric-value">{fmtBytes(updatePreview.remote_size, '—')}</div>
                     <span class="ed-metric-meta">on registry</span>
                   </div>
                 {/if}
@@ -1833,25 +1812,25 @@
           <div class="ctn-throughput-grid">
             <EdMetric
               label="rx total"
-              value={formatBytes(stats.net_rx)}
+              value={fmtBytes(stats.net_rx)}
               meta="since start"
             />
             <EdMetric
               label="tx total"
-              value={formatBytes(stats.net_tx)}
+              value={fmtBytes(stats.net_tx)}
               meta="since start"
             />
             <EdMetric
               label="rx rate"
               value={statsHistory.length > 1
-                ? `${formatBytes(Math.max(0, stats.net_rx - statsHistory[0].net_rx) / Math.max(1, statsHistory.length))}/s`
+                ? `${fmtBytes(Math.max(0, stats.net_rx - statsHistory[0].net_rx) / Math.max(1, statsHistory.length))}/s`
                 : '—'}
               meta="avg over buffer"
             />
             <EdMetric
               label="tx rate"
               value={statsHistory.length > 1
-                ? `${formatBytes(Math.max(0, stats.net_tx - statsHistory[0].net_tx) / Math.max(1, statsHistory.length))}/s`
+                ? `${fmtBytes(Math.max(0, stats.net_tx - statsHistory[0].net_tx) / Math.max(1, statsHistory.length))}/s`
                 : '—'}
               meta="avg over buffer"
             />
@@ -1956,7 +1935,7 @@
                   <span class="ctn-files-link-dest">→ {entry.link_dest}</span>
                 {/if}
               </span>
-              <span class="ctn-files-cell-right">{entry.type === 'dir' ? '—' : formatFileSize(entry.size)}</span>
+              <span class="ctn-files-cell-right">{entry.type === 'dir' ? '—' : fmtBytes(entry.size)}</span>
               <span class="ctn-files-mode">{entry.mode}</span>
               <span class="ctn-files-modified">{formatRelativeTime(entry.mod_time)}</span>
               <span class="ctn-files-row-actions">
@@ -1982,7 +1961,7 @@
             <div class="ctn-files-preview-meta">
               <code class="ctn-files-preview-path">{filesPreview.path}</code>
               <span class="ctn-files-preview-size">
-                {formatFileSize(filesPreview.size)}
+                {fmtBytes(filesPreview.size)}
                 {#if filesPreview.truncated}
                   · truncated at 1 MiB
                 {/if}

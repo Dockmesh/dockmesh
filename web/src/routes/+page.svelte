@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { sevTone } from './alerts/ruleKinds';
-  import { fmtAgo, pctTone } from '$lib/format';
+  import { fmtAgo, fmtMem, pctTone } from '$lib/format';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { api, isFanOut, type AttentionItem, type SystemMetrics, type ContainerSummary, type HostInfo, type BackupRun } from '$lib/api';
@@ -199,7 +199,7 @@
       out.push({
         label: 'Memory',
         value: `${Math.round(sysMetrics.mem_percent)} %`,
-        note: `${(sysMetrics.mem_used / 1024 ** 3).toFixed(1)} of ${(sysMetrics.mem_total / 1024 ** 3).toFixed(0)} GB`
+        note: `${fmtMem(sysMetrics.mem_used)} of ${fmtMem(sysMetrics.mem_total)}`
       });
     }
     if (runs24) {

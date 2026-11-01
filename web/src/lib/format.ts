@@ -13,7 +13,7 @@ export function fmtAgo(ts?: string | number | null, empty = '—'): string {
   return new Date(t).toLocaleDateString();
 }
 
-// SI units, like the sizes the server reports in operation details.
+// SI units for image, file, disk, transfer and backup sizes, like Docker.
 export function fmtBytes(n?: number | null, empty = '0 B'): string {
   if (!n || n < 1) return empty;
   const units = ['B', 'kB', 'MB', 'GB', 'TB', 'PB'];
@@ -21,6 +21,19 @@ export function fmtBytes(n?: number | null, empty = '0 B'): string {
   let i = 0;
   while (v >= 1000 && i < units.length - 1) {
     v /= 1000;
+    i++;
+  }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+// Binary units for memory and memory limits, like `docker stats`.
+export function fmtMem(n?: number | null, empty = '0 B'): string {
+  if (!n || n < 1) return empty;
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
     i++;
   }
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;

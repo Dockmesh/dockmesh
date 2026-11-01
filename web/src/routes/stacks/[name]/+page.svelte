@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { fmtAgo, fmtBytes } from '$lib/format';
+  import { fmtAgo, fmtBytes, fmtMem } from '$lib/format';
   import { goto } from '$app/navigation';
   import { untrack } from 'svelte';
   import { api, ApiError, runRestorable, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments, type StackCleanupPlan } from '$lib/api';
@@ -526,8 +526,8 @@
       mem,
       memLim,
       memPct: memLim > 0 ? (mem / memLim) * 100 : 0,
-      memLabel: count > 0 ? fmtBytes(mem) : '—',
-      memMeta: count > 0 && memLim > 0 ? `of ${fmtBytes(memLim)} limit` : count > 0 ? 'no limit set' : 'no live samples',
+      memLabel: count > 0 ? fmtMem(mem) : '—',
+      memMeta: count > 0 && memLim > 0 ? `of ${fmtMem(memLim)} limit` : count > 0 ? 'no limit set' : 'no live samples',
       net: netRate,
       netLabel: count > 0 ? `${fmtBytes(netRate.rx)}/s ↓` : '—',
       netMeta: count > 0 ? `${fmtBytes(netRate.tx)}/s ↑` : 'no live samples',
@@ -1654,7 +1654,7 @@
               {:else if latestBackupRun === null}
                 No successful stack backup of {name} found.
               {:else}
-                {latestBackupRun.job_name} · {latestBackupRun.finished_at ? new Date(latestBackupRun.finished_at).toLocaleString() : 'unknown'} · {Math.round(latestBackupRun.size_bytes / 1024 / 1024)} MB. Replaces compose and named volumes; bind mounts stay.
+                {latestBackupRun.job_name} · {latestBackupRun.finished_at ? new Date(latestBackupRun.finished_at).toLocaleString() : 'unknown'} · {fmtBytes(latestBackupRun.size_bytes)}. Replaces compose and named volumes; bind mounts stay.
               {/if}
             </small>
           </span>
@@ -1793,7 +1793,7 @@
                     {/if}
                   </span>
                   <span class="dm-num r" class:warn={(st?.cpu_percent ?? 0) >= 80}>{st ? `${st.cpu_percent.toFixed(1)}%` : '—'}</span>
-                  <span class="dm-num r" class:warn={(st?.mem_percent ?? 0) >= 85}>{st ? fmtBytes(st.mem_used) : '—'}</span>
+                  <span class="dm-num r" class:warn={(st?.mem_percent ?? 0) >= 85}>{st ? fmtMem(st.mem_used) : '—'}</span>
                   <span class="dm-tr-menu" role="presentation" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
                     <Menu label={`Actions for ${s.service}`} items={serviceMenu(s)} width={220} />
                   </span>

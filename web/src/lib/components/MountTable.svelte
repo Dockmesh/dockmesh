@@ -1,5 +1,6 @@
 <script lang="ts">
   // Per-filesystem disk usage of one host, fullest first (server order).
+  import { fmtBytes } from '$lib/format';
   import type { DiskMount } from '$lib/api';
 
   interface Props {
@@ -16,13 +17,6 @@
     data: 'Dockmesh data',
     backup_target: 'backups',
   };
-
-  function fmtBytes(n: number): string {
-    if (!n) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-    const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
-    return `${(n / Math.pow(1024, i)).toFixed(i >= 3 ? 1 : 0)} ${units[i]}`;
-  }
 
   function level(pct: number): 'ok' | 'warn' | 'crit' {
     if (pct >= 90) return 'crit';

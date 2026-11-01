@@ -2,7 +2,7 @@
   import { untrack } from 'svelte';
   import { tagProblem } from '../_host';
   import { urlTab } from '$lib/urlTab.svelte';
-  import { fmtAgo } from '$lib/format';
+  import { fmtAgo, fmtBytes, fmtMem } from '$lib/format';
   const fmtAgoNever = (iso?: string) => fmtAgo(iso, 'never');
   import { latest } from '$lib/latest';
   import { fmtVersion } from '$lib/version';
@@ -160,9 +160,6 @@
   function fmtDate(iso?: string): string {
     return iso ? iso.slice(0, 10) : '—';
   }
-  function gb(bytes: number): string {
-    return (bytes / 1024 ** 3).toFixed(1);
-  }
   function selectTab(t: string) {
     openTab.set(t);
   }
@@ -200,13 +197,13 @@
     {
       label: metrics?.docker_limited ? 'Memory · Docker limit' : 'Memory',
       value: memPct != null ? `${memPct} %` : '—',
-      note: metrics && metrics.mem_total > 0 ? `${gb(metrics.mem_used)} of ${gb(metrics.mem_total)} GB` : 'unavailable on this host',
+      note: metrics && metrics.mem_total > 0 ? `${fmtMem(metrics.mem_used)} of ${fmtMem(metrics.mem_total)}` : 'unavailable on this host',
       tone: tone(memPct, 80)
     },
     {
       label: 'Disk',
       value: diskPct != null ? `${diskPct} %` : '—',
-      note: metrics && metrics.disk_total > 0 ? `${gb(metrics.disk_used)} of ${gb(metrics.disk_total)} GB` : 'unavailable on this host',
+      note: metrics && metrics.disk_total > 0 ? `${fmtBytes(metrics.disk_used)} of ${fmtBytes(metrics.disk_total)}` : 'unavailable on this host',
       tone: tone(diskPct, 80)
     },
     { label: 'Containers', value: `${running} / ${containers.length}`, note: 'running' },
@@ -389,7 +386,7 @@
               <dt>ID</dt><dd class="dm-mono">{id}</dd>
               <dt>Hostname</dt><dd class="dm-mono">{hostname || '—'}</dd>
               {#if !isLocal && agent}
-                <dt>OS</dt><dd>{agent.os ? `${agent.os}/${agent.arch}` : '—'}{metrics ? ` · ${metrics.cpu_cores} cores · ${gb(metrics.mem_total)} GB` : ''}</dd>
+                <dt>OS</dt><dd>{agent.os ? `${agent.os}/${agent.arch}` : '—'}{metrics ? ` · ${metrics.cpu_cores} cores · ${fmtMem(metrics.mem_total)}` : ''}</dd>
                 <dt>Docker</dt><dd class="dm-mono">{agent.docker_version || '—'}</dd>
                 <dt>Agent</dt>
                 <dd class="dm-mono">
@@ -403,7 +400,7 @@
                 <dt>Enrolled</dt><dd>{fmtDate(agent.created_at)}</dd>
               {:else}
                 <dt>Server</dt><dd class="dm-mono">{hostVersion ? fmtVersion(hostVersion) : '—'}</dd>
-                {#if metrics}<dt>Capacity</dt><dd>{metrics.cpu_cores} cores · {gb(metrics.mem_total)} GB</dd>{/if}
+                {#if metrics}<dt>Capacity</dt><dd>{metrics.cpu_cores} cores · {fmtMem(metrics.mem_total)}</dd>{/if}
                 <dt>Uptime</dt><dd>{metrics?.uptime_seconds ? fmtDur(metrics.uptime_seconds) : '—'}</dd>
               {/if}
               <dt>Containers</dt><dd>{running} of {containers.length} running</dd>

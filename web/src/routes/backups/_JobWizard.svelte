@@ -6,6 +6,7 @@
   // a `save` callback, the wizard packages the final BackupJobInput.
   import { api, ApiError, type BackupJob, type BackupJobInput, type BackupSource, type BackupHook, type BackupTarget } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
+  import { fmtBytes } from '$lib/format';
   import WizardShell from './_WizardShell.svelte';
   import {
     LayoutDashboard, Layers, HardDrive, Lock, Clock,
@@ -447,7 +448,7 @@
                 <span class="wiz-target-pick-fill">
                   <span class="wiz-target-pick-bar"><span class="wiz-target-pick-bar-fill" style="width: {usedPct}%"></span></span>
                   <span class="font-mono wiz-target-pick-free">
-                    {(t.free_bytes / 1024 / 1024 / 1024).toFixed(1)} GB free
+                    {fmtBytes(t.free_bytes)} free
                   </span>
                 </span>
               {/if}

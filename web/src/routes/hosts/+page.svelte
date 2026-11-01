@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { tagProblem } from './_host';
-  import { fmtAgo, pctTone } from '$lib/format';
+  import { fmtAgo, fmtMem, pctTone } from '$lib/format';
   const fmtAgoNever = (iso?: string) => fmtAgo(iso, 'never');
   import { goto } from '$app/navigation';
   import {
@@ -120,7 +120,7 @@
         tone: outdated.length ? ('warn' as const) : ('' as const)
       },
       { label: 'Containers', value: containers },
-      { label: 'Total capacity', value: cores ? `${Math.round(cores)} cores · ${Math.round(mem / 1024 ** 3)} GB` : '—' }
+      { label: 'Total capacity', value: cores ? `${Math.round(cores)} cores · ${fmtMem(mem)}` : '—' }
     ];
   });
 
@@ -446,7 +446,7 @@
             <span role="cell" class="dm-dim">{r.kind}</span>
             {#if online && m}
               <span role="cell" class="mbar"><i><b class={pctTone(cpuPct ?? 0)} style="width:{Math.min(100, cpuPct ?? 0)}%"></b></i><span class="dm-num">{cpuPct}%</span></span>
-              <span role="cell" class="mbar" title={memPct != null ? `${(m.memUsed / 1024 ** 3).toFixed(1)} of ${(m.memTotal / 1024 ** 3).toFixed(0)} GB` : 'unavailable'}>
+              <span role="cell" class="mbar" title={memPct != null ? `${fmtMem(m.memUsed)} of ${fmtMem(m.memTotal)}` : 'unavailable'}>
                 {#if memPct != null}<i><b class={pctTone(memPct, 80)} style="width:{Math.min(100, memPct)}%"></b></i><span class="dm-num">{memPct}%</span>{:else}<span class="dm-num dm-dim">—</span>{/if}
               </span>
               <span role="cell" class="mbar"><i><b class={pctTone(diskPct ?? 0, 80)} style="width:{Math.min(100, diskPct ?? 0)}%"></b></i><span class="dm-num">{diskPct}%</span></span>
