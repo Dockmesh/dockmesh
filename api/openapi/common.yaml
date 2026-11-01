@@ -53,18 +53,62 @@ components:
     Empty:
       type: object
       description: Empty body — use for 204 No Content endpoints.
+    Scope:
+      type: object
+      required: [type]
+      description: |
+        Where an assignment applies. `host` and `stack` carry the host id in
+        `host`; `host_tag` and `stack` carry the tag or stack name in
+        `value`. Stack names are unique across the instance; a stack scope
+        matches the stack while it is deployed on `host` or not deployed at
+        all, and a stack scope without `host` matches the stack anywhere.
+      properties:
+        type: {type: string, enum: [global, host, host_tag, stack]}
+        host: {type: string, example: local}
+        value: {type: string, example: web}
+    Assignment:
+      type: object
+      required: [id, user_id, role, scope, source]
+      properties:
+        id: {type: integer, format: int64}
+        user_id: {type: string}
+        role: {type: string}
+        scope: {$ref: "#/components/schemas/Scope"}
+        source:
+          type: string
+          enum: [manual, idp]
+          description: "`idp`: written by an identity provider's group mapping at sign-in and replaced on every sign-in."
+        via: {type: string, description: The group or default role an `idp` assignment came from.}
+        created_at: {type: string}
+        created_by: {type: string}
+    AssignmentView:
+      allOf:
+        - $ref: "#/components/schemas/Assignment"
+        - type: object
+          properties:
+            username: {type: string}
     User:
       type: object
-      required: [id, username, role, mfa_enabled]
+      required: [id, username, source, mfa_enabled]
       properties:
         id: {type: string, format: uuid}
         username: {type: string}
+        display_name: {type: string}
         email: {type: string, format: email}
-        role: {type: string, example: operator}
-        scope_tags:
+        source:
+          type: string
+          enum: [manual, sso]
+          description: "`sso`: sign-in replaces the account's identity provider assignments from its groups."
+        assignments:
           type: array
+          items: {$ref: "#/components/schemas/Assignment"}
+        permissions:
+          type: array
+          description: In /me and the login response only. Every permission the caller holds on at least one scope, for UI gating.
           items: {type: string}
-          description: Host tags this user is scoped to. Empty / omitted = access to all hosts.
+        unscoped:
+          type: boolean
+          description: In /me only. True when every permission is held on everything.
         mfa_enabled: {type: boolean}
         locked_until:
           type: string

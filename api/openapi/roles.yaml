@@ -3,21 +3,24 @@ paths:
     get:
       operationId: roles.list
       tags: [roles]
-      summary: List roles (built-in + custom)
+      summary: List roles (built-in + custom) with their assignment counts
       responses:
         "200":
-          description: Roles.
+          description: Roles, built-ins first.
           content:
             application/json:
               schema:
                 type: array
-                items: {$ref: "#/components/schemas/CustomRole"}
+                items: {$ref: "#/components/schemas/Role"}
         "401": {$ref: "#/components/responses/Unauthorized"}
     post:
       operationId: roles.create
       tags: [roles]
       summary: Create a custom role
-      description: Permissions and scopes may not exceed the caller's own (403).
+      description: |
+        A role is a level per area plus extras (see `/roles/catalog`). A
+        role can be assigned anywhere, so the caller must hold everything it
+        grants on everything (403).
       requestBody:
         required: true
         content:
@@ -28,7 +31,7 @@ paths:
           description: Created.
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/CustomRole"}
+              schema: {$ref: "#/components/schemas/Role"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
@@ -37,52 +40,53 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
-  /roles/permissions:
+  /roles/catalog:
     get:
-      operationId: roles.permissions
+      operationId: roles.catalog
       tags: [roles]
-      summary: Catalogue of permissions that can be granted to a role
-      description: |
-        Returns all `Perm` values the server knows about with a
-        human-readable description. Used by the role-create dialog to
-        render the permission-picker.
+      summary: Areas with their levels and the extras roles are built from
       responses:
         "200":
-          description: Permission catalogue.
+          description: Catalog.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  type: object
-                  required: [name, display_name, description, category, verb, danger_level]
-                  properties:
-                    name:
-                      type: string
-                      description: Backend identifier in `category.verb` dot-notation.
-                      example: containers.exec
-                    display_name:
-                      type: string
-                      description: Short human-readable label shown on the matrix cell tooltip and in Edit Role rows.
-                      example: Shell into container
-                    description:
-                      type: string
-                      description: One-line plain-language explanation. Renders as the `?` info-button tooltip.
-                    category:
-                      type: string
-                      description: Resource group the permissions matrix renders this row under.
-                      example: Containers
-                    verb:
-                      type: string
-                      description: Matrix column header within the category — e.g., view / deploy / update / delete or per-resource sensitive verb.
-                      example: exec
-                    danger_level:
-                      type: string
-                      enum: [low, medium, high]
-                      description: Drives UI tinting on dangerous grants.
-                    sensitive:
-                      type: boolean
-                      description: When true the permission belongs in the matrix's "Sensitive operations" sub-section rather than the standard verb columns.
+                type: object
+                required: [areas, extras]
+                properties:
+                  areas:
+                    type: array
+                    items:
+                      type: object
+                      required: [key, label, scoped, levels]
+                      properties:
+                        key: {type: string, example: stacks}
+                        label: {type: string, example: Stacks}
+                        scoped:
+                          type: boolean
+                          description: False for instance-wide areas, which only an assignment on everything grants.
+                        levels:
+                          type: array
+                          description: Cumulative, lowest first; the first is always `none`.
+                          items:
+                            type: object
+                            required: [key, label, items]
+                            properties:
+                              key: {type: string, example: deploy}
+                              label: {type: string, example: Deploy}
+                              items:
+                                type: array
+                                description: What the level adds, in plain words.
+                                items: {type: string}
+                  extras:
+                    type: array
+                    items:
+                      type: object
+                      required: [key, label, warning]
+                      properties:
+                        key: {type: string, example: terminal}
+                        label: {type: string}
+                        warning: {type: string}
         "401": {$ref: "#/components/responses/Unauthorized"}
   /roles/{name}:
     parameters:
@@ -93,23 +97,31 @@ paths:
     get:
       operationId: roles.get
       tags: [roles]
-      summary: Inspect one role
+      summary: Inspect one role and its assignments
       responses:
         "200":
           description: Role.
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/CustomRole"}
+              schema:
+                type: object
+                required: [role, assignments]
+                properties:
+                  role: {$ref: "#/components/schemas/Role"}
+                  assignments:
+                    type: array
+                    items: {$ref: "#/components/schemas/AssignmentView"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "404": {$ref: "#/components/responses/NotFound"}
     put:
       operationId: roles.update
       tags: [roles]
-      summary: Update a custom role's display name + permissions
+      summary: Change a custom role's levels and extras
       description: |
-        The caller must be unscoped (no host scope tags, no role scope) and
-        hold every permission of the role before and after the change (403). Taking admin rights from a role whose holders
-        are the last admins returns 409.
+        The caller must hold everything the role grants before and after
+        the change, on everything (403). Built-in roles can't be changed
+        (409; duplicate them instead), nor can the last admin role on
+        everything lose admin rights (409).
       requestBody:
         required: true
         content:
@@ -120,78 +132,167 @@ paths:
           description: Updated.
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/CustomRole"}
+              schema: {$ref: "#/components/schemas/Role"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
-        "409":
-          description: Role is built-in (cannot be renamed).
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/Error"}
+        "409": {$ref: "#/components/responses/Conflict"}
     delete:
       operationId: roles.delete
       tags: [roles]
       summary: Delete a custom role
       description: |
-        Built-in roles cannot be deleted — returns 409, as does deleting
-        the role of the last admins. The caller must be unscoped and hold
-        every permission of the role (403).
+        Built-in roles and roles that still have assignments or identity
+        provider group mappings can't be deleted (409). The caller must
+        hold everything the role grants (403).
       responses:
         "204": {description: Deleted.}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
-        "409":
-          description: Role is built-in or still referenced by users.
+        "409": {$ref: "#/components/responses/Conflict"}
+  /assignments:
+    get:
+      operationId: assignments.list
+      tags: [roles]
+      summary: List assignments, optionally of one user or one role
+      parameters:
+        - {name: user, in: query, schema: {type: string}}
+        - {name: role, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: Assignments.
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/Error"}
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/AssignmentView"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      operationId: assignments.create
+      tags: [roles]
+      summary: Give a user a role on a scope
+      description: |
+        Assignments add up. The caller must hold every permission of the
+        role everywhere the scope reaches (403). Adding an assignment that
+        already exists returns it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, role]
+              properties:
+                user_id: {type: string}
+                role: {type: string}
+                scope: {$ref: "#/components/schemas/Scope"}
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AssignmentView"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /assignments/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+    delete:
+      operationId: assignments.delete
+      tags: [roles]
+      summary: Remove an assignment
+      description: |
+        The caller must be able to grant the assignment (403). The last
+        assignment of an admin role on everything can't be removed (409).
+      responses:
+        "204": {description: Removed.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /access/check:
+    post:
+      operationId: access.check
+      tags: [roles]
+      summary: Can a user do something on a host or stack?
+      description: |
+        Names the action as an area level (`area` + `level`) or an extra.
+        Answers with the assignment that allows it, or the user's
+        assignments that reach the resource but don't allow it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: {type: string}
+                area: {type: string, example: stacks}
+                level: {type: string, example: deploy}
+                extra: {type: string, example: terminal}
+                host: {type: string, description: Host id. A deployed stack is checked on its deployment host.}
+                stack: {type: string}
+      responses:
+        "200":
+          description: Answer.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [allowed, closest, needed]
+                properties:
+                  allowed: {type: boolean}
+                  granted_by: {$ref: "#/components/schemas/Assignment"}
+                  closest:
+                    type: array
+                    items: {$ref: "#/components/schemas/Assignment"}
+                  needed: {type: string, example: "Stacks: Deploy or higher"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
 components:
   schemas:
-    CustomRole:
+    Role:
       type: object
-      required: [name, display, permissions]
+      required: [name, display, builtin, levels, extras, permissions]
       properties:
-        name: {type: string, example: operator}
-        display: {type: string, example: "Operator"}
-        description:
-          type: string
-          description: One-line human blurb shown under the role name in the Roles UI.
-          example: "Deploy and operate stacks. No editing of compose files, no user management."
+        name: {type: string, example: deployer}
+        display: {type: string, example: Deployer}
+        description: {type: string}
         builtin:
           type: boolean
-          description: "Built-in roles cannot be renamed or deleted (the five v2 roles: viewer, operator, deployer, host-admin, admin)."
+          description: Built-in roles (admin, host-admin, deployer, operator, viewer) can't be changed or deleted.
+        levels:
+          type: object
+          additionalProperties: {type: string}
+          description: Area key → level key; every area is present.
+          example: {stacks: deploy, containers: operate, proxy: none}
+        extras:
+          type: array
+          items: {type: string, enum: [terminal, files, env, backup_download, key_export]}
         permissions:
           type: array
+          description: The permissions the levels and extras grant, for clients that gate on them.
           items: {type: string}
-        scopes:
-          type: array
-          description: Per-role scope rows. Empty = unscoped (acts on everything its permissions allow). Each row narrows scope to a specific host, stack, or all hosts carrying a tag. Effective scope is the UNION of all rows for the role.
-          items: {$ref: "#/components/schemas/RoleScope"}
-    RoleScope:
-      type: object
-      required: [scope_type, scope_value]
-      properties:
-        scope_type:
-          type: string
-          enum: [host, stack, host_tag]
-        scope_value:
-          type: string
-          description: Host id, stack name, or host-tag string depending on scope_type.
+        assignments: {type: integer, description: How many assignments use the role.}
     RoleInput:
       type: object
-      required: [name, display, permissions]
+      required: [name, display]
       properties:
-        name: {type: string, example: deploy-bot}
+        name: {type: string, pattern: "^[a-z0-9_-]{1,64}$", example: backup-operator}
         display: {type: string}
-        description:
-          type: string
-          description: Optional one-line human blurb. Shown under the role name in the Roles UI.
-        permissions:
+        description: {type: string}
+        levels:
+          type: object
+          additionalProperties: {type: string}
+          description: Area key → level key; missing areas are `none`.
+        extras:
           type: array
           items: {type: string}
-        scopes:
-          type: array
-          items: {$ref: "#/components/schemas/RoleScope"}

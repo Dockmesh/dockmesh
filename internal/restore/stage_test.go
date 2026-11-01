@@ -22,7 +22,8 @@ func systemDB(t *testing.T, user string) string {
 	if err := db.Migrate(database); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`INSERT INTO users (id, username, password, role) VALUES (?, ?, 'x', 'admin')`, user, user); err != nil {
+	if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES (?, ?, 'x');
+		INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES (?, 'admin', 'global')`, user, user, user); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
@@ -44,7 +45,7 @@ func adminName(t *testing.T, path string) string {
 	}
 	defer database.Close()
 	var name string
-	if err := database.QueryRow(`SELECT username FROM users WHERE role = 'admin'`).Scan(&name); err != nil {
+	if err := database.QueryRow(`SELECT u.username FROM users u JOIN role_assignments a ON a.user_id = u.id WHERE a.role_name = 'admin'`).Scan(&name); err != nil {
 		t.Fatal(err)
 	}
 	return name

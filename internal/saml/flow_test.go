@@ -273,8 +273,11 @@ func TestRekey(t *testing.T) {
 				if role == "" {
 					role = "viewer"
 				}
-				if _, err := database.Exec(`INSERT INTO users (id, username, email, password, role, totp_verified, saml_provider, saml_subject, saml_rekey_until)
-					VALUES (?, ?, ?, 'x', ?, ?, ?, ?, `+marker+`)`, a.id, a.id, a.email, role, a.totp, a.provider, subject); err != nil {
+				if _, err := database.Exec(`INSERT INTO users (id, username, email, password, totp_verified, saml_provider, saml_subject, saml_rekey_until)
+					VALUES (?, ?, ?, 'x', ?, ?, ?, `+marker+`)`, a.id, a.id, a.email, a.totp, a.provider, subject); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := database.Exec(`INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES (?, ?, 'global')`, a.id, role); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -358,8 +361,9 @@ func TestRekeyNotice(t *testing.T) {
 		('u3', 'cid', 'cid@example.com', 'x', 'corp', 'G-3', datetime('now','-1 day'))`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`INSERT INTO users (id, username, email, password, role, saml_provider, saml_subject, saml_rekey_until)
-		VALUES ('u4', 'dora', 'dora@example.com', 'x', 'admin', 'corp', 'G-4', datetime('now','+30 days'))`); err != nil {
+	if _, err := database.Exec(`INSERT INTO users (id, username, email, password, saml_provider, saml_subject, saml_rekey_until)
+		VALUES ('u4', 'dora', 'dora@example.com', 'x', 'corp', 'G-4', datetime('now','+30 days'));
+		INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES ('u4', 'admin', 'global')`); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
