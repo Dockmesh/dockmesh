@@ -1383,6 +1383,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// For pages that need an endpoint without a binding below.
+export const apiRequest = request;
+
 export const api = {
   health: () => request<{ status: string; version: string; docker: boolean }>('/health'),
 
