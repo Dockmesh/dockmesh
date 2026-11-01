@@ -109,7 +109,7 @@ func sanitizeContainerPath(p string) (string, error) {
 // answer 404 for local and agent hosts alike.
 func statErr(err error) error {
 	if cerrdefs.IsNotFound(err) {
-		return fmt.Errorf("%w: %v", fs.ErrNotExist, err)
+		return fmt.Errorf("%w: %w", fs.ErrNotExist, err)
 	}
 	return err
 }
@@ -626,7 +626,7 @@ func DeleteContainerFile(ctx context.Context, cli client.ContainerAPIClient, id,
 	}
 	out, code, err := docker.RunExec(ctx, cli, id, []string{"rm", "--", path.Join(dir, name)}, 4<<10)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrContainerNoRm, err)
+		return fmt.Errorf("%w: %w", ErrContainerNoRm, err)
 	}
 	if code != 0 {
 		if code == 126 || code == 127 {
