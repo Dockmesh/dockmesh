@@ -18,7 +18,7 @@
   import SystemRestoreDialog from './_SystemRestoreDialog.svelte';
   import {
     fmtBytes, fmtAgo, fmtUntil, fmtDuration, cronHuman, targetTypeLabel,
-    jobSourceName, jobSourceKind, runTone, runLabel, isSystemRun,
+    jobSourceName, jobSourceKind, runTone, runLabel, isSystemRun, mayOnJob,
     hostLabel
   } from './_format';
   import { Plus, Lock, Play, AlertTriangle } from 'lucide-svelte';
@@ -264,12 +264,10 @@
     const last = lastRunOf(j);
     return [
       { label: 'Open', kbd: '↵', href: `/backups/jobs/${j.id}` },
-      { label: 'Run now', disabled: !j.enabled, onclick: () => runJob(j) },
-      { label: 'Edit…', onclick: () => openEdit(j) },
-      ...(last && runRestorable(last) ? [{ label: 'Restore last run…', onclick: () => openRestore(last) }] : []),
-      ...(pendingHostKey(j) ? [{ label: 'Accept new host key…', danger: true, onclick: () => acceptHostKey(j) }] : []),
-      { separator: true },
-      { label: 'Delete…', danger: true, onclick: () => deleteJob(j) }
+      ...(mayOnJob('backups.update', j) ? [{ label: 'Run now', disabled: !j.enabled, onclick: () => runJob(j) }, { label: 'Edit…', onclick: () => openEdit(j) }] : []),
+      ...(last && runRestorable(last) && mayOnJob('backups.restore', last) ? [{ label: 'Restore last run…', onclick: () => openRestore(last) }] : []),
+      ...(pendingHostKey(j) && mayOnJob('backups.update', j) ? [{ label: 'Accept new host key…', danger: true, onclick: () => acceptHostKey(j) }] : []),
+      ...(mayOnJob('backups.delete', j) ? [{ separator: true }, { label: 'Delete…', danger: true, onclick: () => deleteJob(j) }] : [])
     ];
   }
   function runMenu(r: BackupRun): MenuItem[] {
@@ -277,8 +275,8 @@
     return [
       { label: 'Open', kbd: '↵', href: `/backups/runs/${r.id}` },
       ...(operations.backupRun(r.id) ? [{ label: 'Steps and log', onclick: () => operations.open(operations.backupRun(r.id)!.id) }] : []),
-      ...(restorable ? [{ label: isSystemRun(r) ? 'Restore system…' : 'Restore…', onclick: () => openRestore(r) }] : []),
-      ...(restorable && allowed('backups.download') ? [{ label: 'Download archive', onclick: () => downloadRunArchive(r) }] : [])
+      ...(restorable && mayOnJob('backups.restore', r) ? [{ label: isSystemRun(r) ? 'Restore system…' : 'Restore…', onclick: () => openRestore(r) }] : []),
+      ...(restorable && mayOnJob('backups.download', r) ? [{ label: 'Download archive', onclick: () => downloadRunArchive(r) }] : [])
     ];
   }
   function targetMenu(t: BackupTarget): MenuItem[] {
@@ -556,6 +554,7 @@
   .lr { font-weight: 500 !important; }
   .lr.bad { color: var(--bad) !important; }
   .fail-cell { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+  .fail-cell > :global(:first-child) { flex: none; }
   .attn { border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); background: color-mix(in srgb, var(--warn) 6%, transparent); border-radius: var(--r); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
   .attn-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--fs-sm); }
   .attn-h :global(svg) { color: var(--warn); }

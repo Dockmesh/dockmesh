@@ -1,5 +1,6 @@
 import type { BackupJob, BackupRun } from '$lib/api';
 import { hosts } from '$lib/stores/host.svelte';
+import { allowed, isAdmin, type Perm } from '$lib/rbac.svelte';
 import { fmtAgo as baseAgo, fmtBytes as baseBytes } from '$lib/format';
 import type { Tone } from '$lib/components/ui/StatusChip.svelte';
 
@@ -82,6 +83,12 @@ export function runLabel(status: string): string {
 
 export function isSystemRun(r: Pick<BackupRun, 'sources'>): boolean {
   return r.sources?.some((s) => s.type === 'system') ?? false;
+}
+
+// The server allows changes to system jobs and access to their runs only
+// to admins; perm is the permission the action needs otherwise.
+export function mayOnJob(perm: Perm, j: Pick<BackupRun, 'sources'>): boolean {
+  return allowed(perm) && (!isSystemRun(j) || isAdmin());
 }
 
 // Name of the host a job runs on; jobs without a host run on the server.

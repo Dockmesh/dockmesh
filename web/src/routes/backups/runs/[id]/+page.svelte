@@ -1,7 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
   import { api, ApiError, runRestorable, type BackupRun, type BackupJob } from '$lib/api';
-  import { allowed, isAdmin } from '$lib/rbac.svelte';
+  import { allowed } from '$lib/rbac.svelte';
   import RestoreDialog from '../../_RestoreDialog.svelte';
   import SystemRestoreDialog from '../../_SystemRestoreDialog.svelte';
   import { Skeleton, EmptyState, StatBar, StatusChip } from '$lib/components/ui';
@@ -10,7 +10,7 @@
   import { copyWithToast } from '$lib/clipboard';
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import { operations, isActive, opRef, failedStep } from '$lib/stores/operations.svelte';
-  import { fmtBytes, fmtDuration, runTone, runLabel, isSystemRun, cronHuman, targetTypeLabel } from '../../_format';
+  import { fmtBytes, fmtDuration, runTone, runLabel, isSystemRun, mayOnJob, cronHuman, targetTypeLabel } from '../../_format';
   import { Copy, Lock, Undo2, Box, Play, Download } from 'lucide-svelte';
 
   const id = $derived(parseInt(page.params.id ?? '', 10));
@@ -95,8 +95,8 @@
 
   let restorePreset = $state<'in-place' | 'alongside' | null>(null);
   const systemRun = $derived(run ? isSystemRun(run) : false);
-  const canDownload = $derived(allowed('backups.download') && (!systemRun || isAdmin()));
-  const canRestore = $derived(run ? runRestorable(run) && (!systemRun || isAdmin()) : false);
+  const canDownload = $derived(run ? mayOnJob('backups.download', run) : false);
+  const canRestore = $derived(run ? runRestorable(run) && mayOnJob('backups.restore', run) : false);
 
   async function download() {
     if (!run) return;
@@ -172,7 +172,7 @@
       {#if runRestorable(run) && canDownload}
         <button type="button" class="dm-btn" onclick={download}><Download size={13} /> Download</button>
       {/if}
-      {#if canRestore && allowed('backups.restore')}
+      {#if canRestore}
         <button type="button" class="dm-btn dm-btn-primary" onclick={() => (restorePreset = 'alongside')}>
           <Undo2 size={13} /> {systemRun ? 'Restore system…' : 'Restore…'}
         </button>

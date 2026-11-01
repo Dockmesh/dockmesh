@@ -14,7 +14,7 @@
   import {
     fmtBytes, fmtAgo, fmtUntil, fmtDuration, cronHuman, targetTypeLabel,
     jobSourceName, jobSourceKind, runTone, runLabel,
-    hostLabel
+    hostLabel, mayOnJob
   } from '../../_format';
   import { Play, Pencil, Trash2, Lock, Box } from 'lucide-svelte';
 
@@ -113,13 +113,15 @@
         <div class="dm-sub">{jobSourceName(job)} on {hostName} → {target?.name ?? targetTypeLabel(job.target_type)}{job.enabled ? '' : ' · disabled'}</div>
       </div>
       <span class="dm-sp"></span>
-      {#if allowed('backups.delete')}
+      {#if mayOnJob('backups.delete', job)}
         <button type="button" class="dm-btn dm-btn-danger" onclick={deleteJob}><Trash2 size={13} /> Delete</button>
       {/if}
-      <a href="/backups?tab=jobs&edit={job.id}" class="dm-btn"><Pencil size={13} /> Edit</a>
-      <button type="button" class="dm-btn dm-btn-primary" disabled={!job.enabled || busy || !!(liveOp && isActive(liveOp))} onclick={runNow}>
-        <Play size={13} /> Run now
-      </button>
+      {#if mayOnJob('backups.update', job)}
+        <a href="/backups?tab=jobs&edit={job.id}" class="dm-btn"><Pencil size={13} /> Edit</a>
+        <button type="button" class="dm-btn dm-btn-primary" disabled={!job.enabled || busy || !!(liveOp && isActive(liveOp))} onclick={runNow}>
+          <Play size={13} /> Run now
+        </button>
+      {/if}
     </div>
 
     <StatBar

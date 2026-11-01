@@ -136,7 +136,7 @@
       keepN = 14;
       keepDays = 30;
       pickedHooks = new Set();
-      preTargetId = targets[0]?.id ?? -1;
+      selectPreTarget(targets[0]?.id ?? -1);
     }
     loadResources();
   });
