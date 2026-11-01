@@ -41,7 +41,7 @@ func (h *Handlers) ExecuteDrain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hostID := chi.URLParam(r, "id")
-	scopeReq := h.hostScopeReq(r.Context(), hostID)
+	scopeReq := h.hostScopeReq(hostID)
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+hostID)
 		return

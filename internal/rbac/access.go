@@ -345,7 +345,6 @@ func (a *Access) Restrict(perms map[Perm]bool, scope Scope) *Access {
 	return out
 }
 
-
 // GroupRule maps an identity provider group to a role on a scope.
 type GroupRule struct {
 	Group string

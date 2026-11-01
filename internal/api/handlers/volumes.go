@@ -107,7 +107,7 @@ func (h *Handlers) CreateVolume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), "local")
+	scopeReq := h.hostScopeReq("local")
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermVolumesCreate, scopeReq, "host local")
 		return
@@ -133,7 +133,7 @@ func (h *Handlers) RemoveVolume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), "local")
+	scopeReq := h.hostScopeReq("local")
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermVolumesDelete, scopeReq, "host local")
 		return
@@ -161,7 +161,7 @@ func (h *Handlers) BrowseVolume(w http.ResponseWriter, r *http.Request) {
 	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), target.ID())
+	scopeReq := h.hostScopeReq(target.ID())
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermVolumesBrowse, scopeReq, "host "+target.ID())
 		return
@@ -189,7 +189,7 @@ func (h *Handlers) ReadVolumeFile(w http.ResponseWriter, r *http.Request) {
 	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), target.ID())
+	scopeReq := h.hostScopeReq(target.ID())
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermVolumesBrowse, scopeReq, "host "+target.ID())
 		return
@@ -239,7 +239,7 @@ func (h *Handlers) PruneVolumes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), "local")
+	scopeReq := h.hostScopeReq("local")
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermVolumesDelete, scopeReq, "host local")
 		return

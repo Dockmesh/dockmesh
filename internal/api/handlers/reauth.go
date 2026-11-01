@@ -51,7 +51,7 @@ func (h *Handlers) imageUpdateDenied(r *http.Request, id string) string {
 	}
 	if h.Updater != nil {
 		if stack := h.Updater.ManagedStack(r.Context(), id); stack != "" &&
-			!middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, h.stackScopeReq(r.Context(), "local", stack)) {
+			!middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, h.stackScopeReq("local", stack)) {
 			return "updating a container of stack " + stack + " needs the stacks.deploy permission"
 		}
 	}

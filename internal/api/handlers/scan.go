@@ -25,7 +25,7 @@ func (h *Handlers) ScanImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), "local")
+	scopeReq := h.hostScopeReq("local")
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermImagesScan, scopeReq, "host local")
 		return

@@ -108,7 +108,7 @@ func (h *Handlers) PullImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), "local")
+	scopeReq := h.hostScopeReq("local")
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermImagesCreate, scopeReq, "host local")
 		return
@@ -185,7 +185,7 @@ func (h *Handlers) InspectImage(w http.ResponseWriter, r *http.Request) {
 	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), target.ID())
+	scopeReq := h.hostScopeReq(target.ID())
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermImagesView, scopeReq, "host "+target.ID())
 		return
@@ -205,7 +205,7 @@ func (h *Handlers) RemoveImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), target.ID())
+	scopeReq := h.hostScopeReq(target.ID())
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermImagesDelete, scopeReq, "host "+target.ID())
 		return
@@ -227,7 +227,7 @@ func (h *Handlers) PruneImages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), target.ID())
+	scopeReq := h.hostScopeReq(target.ID())
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermImagesDelete, scopeReq, "host "+target.ID())
 		return

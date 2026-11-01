@@ -37,7 +37,7 @@ func (h *Handlers) InitiateMigration(w http.ResponseWriter, r *http.Request) {
 	}
 	// The stack will run on the target, so moving it there needs deploy
 	// rights on it there.
-	if target := h.stackScopeReq(r.Context(), req.TargetHostID, name); !h.allowedOn(r, target, rbac.PermStacksDeploy) {
+	if target := h.stackScopeReq(req.TargetHostID, name); !h.allowedOn(r, target, rbac.PermStacksDeploy) {
 		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, target, "stack "+name+" on the target host")
 		return
 	}
@@ -98,8 +98,8 @@ func (h *Handlers) stackMigration(w http.ResponseWriter, r *http.Request) (*migr
 func (h *Handlers) visibleMigrations(r *http.Request, list []*migration.Migration) []*migration.Migration {
 	out := []*migration.Migration{}
 	for _, m := range list {
-		if middleware.AllowedOn(r.Context(), rbac.PermStacksView, h.stackScopeReq(r.Context(), m.SourceHostID, m.StackName)) ||
-			middleware.AllowedOn(r.Context(), rbac.PermStacksView, h.stackScopeReq(r.Context(), m.TargetHostID, m.StackName)) {
+		if middleware.AllowedOn(r.Context(), rbac.PermStacksView, h.stackScopeReq(m.SourceHostID, m.StackName)) ||
+			middleware.AllowedOn(r.Context(), rbac.PermStacksView, h.stackScopeReq(m.TargetHostID, m.StackName)) {
 			out = append(out, m)
 		}
 	}

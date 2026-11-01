@@ -699,7 +699,7 @@ func (h *Handlers) AdoptStack(w http.ResponseWriter, r *http.Request) {
 	if !h.requireHostAccess(w, r, req.HostID) {
 		return
 	}
-	scopeReq := h.stackScopeReq(r.Context(), req.HostID, req.Name)
+	scopeReq := h.stackScopeReq(req.HostID, req.Name)
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermStacksAdopt, scopeReq, "stack "+req.Name)
 		return
@@ -774,7 +774,7 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), target.ID(), name)
+	scopeReq := h.stackScopeReq(target.ID(), name)
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
 		return
@@ -824,7 +824,7 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusConflict, "dependency "+depName+" runs on another host; deploy it there first")
 				return
 			}
-			depScope := h.stackScopeReq(r.Context(), target.ID(), depName)
+			depScope := h.stackScopeReq(target.ID(), depName)
 			if !h.allowedOn(r, depScope) || !h.allowedOn(r, cur) {
 				h.writeScopeDenied(w, r, rbac.PermStacksDeploy, depScope, "dependency stack "+depName)
 				return
@@ -1055,7 +1055,7 @@ func (h *Handlers) StopStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), target.ID(), name)
+	scopeReq := h.stackScopeReq(target.ID(), name)
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
 		return

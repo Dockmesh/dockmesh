@@ -48,7 +48,7 @@ func (h *Handlers) requireJobAccess(w http.ResponseWriter, r *http.Request, prev
 		if !h.requireHostAccess(w, r, hostID) {
 			return false
 		}
-		scopeReq := h.hostScopeReq(r.Context(), hostID)
+		scopeReq := h.hostScopeReq(hostID)
 		if !h.allowedOn(r, scopeReq) {
 			h.writeScopeDenied(w, r, rbac.PermBackupsUpdate, scopeReq, "")
 			return false
@@ -108,7 +108,7 @@ func (h *Handlers) requireRunAccess(w http.ResponseWriter, r *http.Request, run 
 	if !h.requireHostAccess(w, r, hostID) {
 		return false
 	}
-	scopeReq := h.hostScopeReq(r.Context(), hostID)
+	scopeReq := h.hostScopeReq(hostID)
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, perm, scopeReq, "")
 		return false

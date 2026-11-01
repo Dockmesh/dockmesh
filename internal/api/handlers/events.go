@@ -98,7 +98,7 @@ func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
 				dockerMsgs = nil
 				continue
 			}
-			if !unscoped && !h.allowedOn(r, h.stackScopeReq(r.Context(), "local", ev.stack), rbac.PermContainersView) {
+			if !unscoped && !h.allowedOn(r, h.stackScopeReq("local", ev.stack), rbac.PermContainersView) {
 				continue
 			}
 			if b, err := json.Marshal(ev); err == nil {
@@ -168,7 +168,7 @@ func (h *Handlers) stackVisible(r *http.Request, name string) bool {
 		}
 	}
 	if hostID != "" {
-		return h.allowedOn(r, h.stackScopeReq(r.Context(), hostID, name), rbac.PermStacksView)
+		return h.allowedOn(r, h.stackScopeReq(hostID, name), rbac.PermStacksView)
 	}
 	return h.allowedOn(r, rbac.Resource{StackName: name}, rbac.PermStacksView)
 }

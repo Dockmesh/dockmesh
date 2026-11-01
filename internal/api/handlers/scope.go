@@ -181,7 +181,7 @@ func (h *Handlers) requireContainerScope(w http.ResponseWriter, r *http.Request,
 
 // requireStackScope is requireContainerScope for a stack on hostID.
 func (h *Handlers) requireStackScope(w http.ResponseWriter, r *http.Request, perm rbac.Perm, hostID, stackName string) bool {
-	scopeReq := h.stackScopeReq(r.Context(), hostID, stackName)
+	scopeReq := h.stackScopeReq(hostID, stackName)
 	if !h.allowedOn(r, scopeReq, perm) {
 		h.writeScopeDenied(w, r, perm, scopeReq, "")
 		return false
@@ -193,7 +193,7 @@ func (h *Handlers) requireStackScope(w http.ResponseWriter, r *http.Request, per
 // stack, is visible under the request's permissions. Host-level resources
 // pass stack == "", so a stack scope sees none of them.
 func (h *Handlers) inReadScope(r *http.Request, hostID, stack string) bool {
-	return h.allowedOn(r, h.stackScopeReq(r.Context(), hostID, stack))
+	return h.allowedOn(r, h.stackScopeReq(hostID, stack))
 }
 
 // hostsInReadScope keeps the hosts whose host-level data the caller sees.
@@ -215,12 +215,12 @@ func (h *Handlers) callerUnscoped(r *http.Request) bool {
 
 // stackScopeReq builds the resource of a stack on hostID ("" when it is not
 // deployed).
-func (h *Handlers) stackScopeReq(_ context.Context, hostID, stackName string) rbac.Resource {
+func (h *Handlers) stackScopeReq(hostID, stackName string) rbac.Resource {
 	return rbac.Resource{HostID: hostID, StackName: stackName, HostTags: h.hostTags(hostID)}
 }
 
 // hostScopeReq builds the resource of a host.
-func (h *Handlers) hostScopeReq(_ context.Context, hostID string) rbac.Resource {
+func (h *Handlers) hostScopeReq(hostID string) rbac.Resource {
 	return rbac.Resource{HostID: hostID, HostTags: h.hostTags(hostID)}
 }
 
@@ -253,7 +253,7 @@ func (h *Handlers) StackScope(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		res := h.stackScopeReq(r.Context(), hostID, name)
+		res := h.stackScopeReq(hostID, name)
 		if !middleware.AccessOf(r.Context()).Covers(res) {
 			h.writeScopeDenied(w, r, rbac.PermStacksView, res, "")
 			return
@@ -281,7 +281,7 @@ func (h *Handlers) filterStackListByScope(r *http.Request, in []stackListEntry) 
 		if e.Deployment != nil {
 			hostID = e.Deployment.HostID
 		}
-		if h.allowedOn(r, h.stackScopeReq(r.Context(), hostID, e.Name)) {
+		if h.allowedOn(r, h.stackScopeReq(hostID, e.Name)) {
 			out = append(out, e)
 		}
 	}
@@ -350,7 +350,7 @@ func (h *Handlers) filterContainerRowsByRoleScope(r *http.Request, in []containe
 // hostVisible reports whether the request's permissions hold on the host
 // itself, the rule /hosts filters by.
 func (h *Handlers) hostVisible(r *http.Request, id string) bool {
-	return h.allowedOn(r, h.hostScopeReq(r.Context(), id))
+	return h.allowedOn(r, h.hostScopeReq(id))
 }
 
 // stackRes is the resource of stack name: the one StackScope resolved for
@@ -365,5 +365,5 @@ func (h *Handlers) stackRes(r *http.Request, name string) rbac.Resource {
 			hostID = d.HostID
 		}
 	}
-	return h.stackScopeReq(r.Context(), hostID, name)
+	return h.stackScopeReq(hostID, name)
 }

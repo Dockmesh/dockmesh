@@ -180,7 +180,7 @@ func (h *Handlers) DeployTemplate(w http.ResponseWriter, r *http.Request) {
 	if !h.requireHostAccess(w, r, target.ID()) {
 		return
 	}
-	scopeReq := h.stackScopeReq(r.Context(), target.ID(), req.StackName)
+	scopeReq := h.stackScopeReq(target.ID(), req.StackName)
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+req.StackName)
 		return

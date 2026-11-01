@@ -178,7 +178,7 @@ func (h *Handlers) CreateNetwork(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), "local")
+	scopeReq := h.hostScopeReq("local")
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermNetworksCreate, scopeReq, "host local")
 		return
@@ -202,7 +202,7 @@ func (h *Handlers) RemoveNetwork(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), "local")
+	scopeReq := h.hostScopeReq("local")
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermNetworksDelete, scopeReq, "host local")
 		return
@@ -221,7 +221,7 @@ func (h *Handlers) PruneNetworks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "docker unavailable")
 		return
 	}
-	scopeReq := h.hostScopeReq(r.Context(), "local")
+	scopeReq := h.hostScopeReq("local")
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermNetworksDelete, scopeReq, "host local")
 		return

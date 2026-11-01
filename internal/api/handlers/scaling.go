@@ -35,7 +35,7 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), target.ID(), name)
+	scopeReq := h.stackScopeReq(target.ID(), name)
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
 		return
@@ -144,7 +144,7 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	name := chi.URLParam(r, "name")
-	scopeReq := h.stackScopeReq(r.Context(), target.ID(), name)
+	scopeReq := h.stackScopeReq(target.ID(), name)
 	if !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
 		return

@@ -445,7 +445,7 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 	if !h.requireHostAccess(w, r, opts.HostID) {
 		return
 	}
-	if scopeReq := h.hostScopeReq(r.Context(), opts.HostID); !h.allowedOn(r, scopeReq) {
+	if scopeReq := h.hostScopeReq(opts.HostID); !h.allowedOn(r, scopeReq) {
 		h.writeScopeDenied(w, r, rbac.PermBackupsRestore, scopeReq, "")
 		return
 	}
@@ -515,7 +515,7 @@ func (h *Handlers) requireStackRestoreTarget(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusForbidden, "restoring stack "+stack+" needs the "+string(perm)+" permission")
 		return false
 	}
-	if scopeReq := h.stackScopeReq(r.Context(), "", stack); !h.allowedOn(r, scopeReq, perm) {
+	if scopeReq := h.stackScopeReq("", stack); !h.allowedOn(r, scopeReq, perm) {
 		h.writeScopeDenied(w, r, perm, scopeReq, "stack "+stack)
 		return false
 	}
@@ -592,7 +592,7 @@ func (h *Handlers) hookScopeReq(r *http.Request, hostID, container string) (rbac
 	if err != nil {
 		return rbac.Resource{}, false
 	}
-	req := h.hostScopeReq(r.Context(), hostID)
+	req := h.hostScopeReq(hostID)
 	if info.Config != nil {
 		req.StackName = info.Config.Labels["com.docker.compose.project"]
 	}

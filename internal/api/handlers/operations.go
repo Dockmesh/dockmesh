@@ -203,7 +203,7 @@ func (h *Handlers) CancelOperation(w http.ResponseWriter, r *http.Request) {
 	if hostID == "" {
 		hostID = "local"
 	}
-	res := h.stackScopeReq(r.Context(), hostID, op.Stack)
+	res := h.stackScopeReq(hostID, op.Stack)
 	if perm == "" || !middleware.AllowedOn(r.Context(), perm, res) {
 		writeError(w, http.StatusForbidden, "cancelling this needs the "+string(perm)+" permission")
 		return

@@ -152,7 +152,7 @@ func trim(s string) string {
 // applies compose changes saved since the last deploy.
 func (h *Handlers) allowStackRebuild(w http.ResponseWriter, r *http.Request, containerID string) bool {
 	stack := h.Updater.ManagedStack(r.Context(), containerID)
-	if stack == "" || middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, h.stackScopeReq(r.Context(), "local", stack)) {
+	if stack == "" || middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, h.stackScopeReq("local", stack)) {
 		return true
 	}
 	writeError(w, http.StatusForbidden, "updating a container of stack "+stack+" needs the stacks.deploy permission")
