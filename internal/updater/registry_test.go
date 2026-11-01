@@ -4,10 +4,10 @@ import "testing"
 
 func TestParseDockerHubRef(t *testing.T) {
 	cases := []struct {
-		in        string
-		ns, repo  string
-		tag       string
-		ok        bool
+		in       string
+		ns, repo string
+		tag      string
+		ok       bool
 	}{
 		{"nginx", "library", "nginx", "latest", true},
 		{"nginx:alpine", "library", "nginx", "alpine", true},

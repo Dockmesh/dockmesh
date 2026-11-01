@@ -277,8 +277,8 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.audit(r, audit.ActionUserCreate, user.Username, map[string]any{
-		"via":       "invite",
-		"role":      inv.Role,
+		"via":        "invite",
+		"role":       inv.Role,
 		"scope_tags": inv.ScopeTags,
 	})
 

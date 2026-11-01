@@ -24,6 +24,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notices"
+	"github.com/dockmesh/dockmesh/internal/operations"
 )
 
 // Route is a single reverse-proxy entry. Host is matched against the
@@ -222,6 +223,9 @@ func (s *Service) CreateRoute(ctx context.Context, spec RouteSpec) (*Route, erro
 	if spec.Options != nil {
 		opts = *spec.Options
 	}
+	op := operations.FromContext(ctx)
+	// Before prepareOptions, which replaces basic-auth passwords by hashes.
+	op.AddSecrets(opts.SecretValues()...)
 	var prev *SiteOptions
 	if spec.hashed {
 		hashes := opts
@@ -231,18 +235,31 @@ func (s *Service) CreateRoute(ctx context.Context, spec RouteSpec) (*Route, erro
 	if err != nil {
 		return nil, err
 	}
+	op.AddSecrets(opts.SecretValues()...)
+	op.StepStart(StepSave, "")
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO proxy_routes (host, upstream, tls_mode, enabled, options) VALUES (?, ?, ?, ?, ?)`,
 		spec.Host, spec.Upstream, spec.TLSMode, boolToInt(!spec.Disabled), raw)
 	if err != nil {
 		// SQLite unique constraint code is vendor-specific; the string
 		// "UNIQUE constraint" is stable enough.
+		op.StepFail(StepSave, ErrDuplicateHost)
 		return nil, ErrDuplicateHost
 	}
 	id, _ := res.LastInsertId()
+	op.StepDone(StepSave, "")
 	route := &Route{ID: id, Host: spec.Host, Upstream: spec.Upstream, TLSMode: spec.TLSMode, Enabled: !spec.Disabled, Options: opts.Public()}
+	if !s.Enabled() {
+		op.StepSkip(StepApply, "the proxy is off")
+	} else {
+		op.StepStart(StepApply, "")
+	}
 	if err := s.SyncFromDB(ctx); err != nil {
+		op.StepFail(StepApply, err)
 		return route, err
+	}
+	if s.Enabled() {
+		op.StepDone(StepApply, "")
 	}
 	return route, nil
 }

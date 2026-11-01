@@ -7,6 +7,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/updater"
 	"github.com/go-chi/chi/v5"
@@ -28,7 +29,9 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	if !h.allowStackRebuild(w, r, id) {
 		return
 	}
-	res, err := h.Updater.Update(r.Context(), id, middleware.UserID(r.Context()))
+	op := h.startImageUpdateOp(r, id, "", false)
+	res, err := h.Updater.Update(operations.WithOp(r.Context(), op), id, middleware.UserID(r.Context()))
+	op.Finish(err)
 	if errors.Is(err, updater.ErrBusy) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -40,10 +43,10 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	if res.Updated {
 		h.UpdateWatcher.MarkUpdated(r.Context(), res.Image)
 		h.audit(r, audit.ActionContainerUpdate, res.ContainerName, map[string]string{
-			"image":     res.Image,
-			"from":      trim(res.OldDigest),
-			"to":        trim(res.NewDigest),
-			"rollback":  res.RollbackTag,
+			"image":    res.Image,
+			"from":     trim(res.OldDigest),
+			"to":       trim(res.NewDigest),
+			"rollback": res.RollbackTag,
 		})
 	}
 	writeJSON(w, http.StatusOK, res)

@@ -137,4 +137,3 @@ func (h *Handlers) SetActiveEnvironment(w http.ResponseWriter, r *http.Request) 
 		"active":     req.Active,
 	})
 }
-

@@ -35,6 +35,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/oauth2auth"
 	"github.com/dockmesh/dockmesh/internal/oidc"
+	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
 	"github.com/dockmesh/dockmesh/internal/rbac"
@@ -75,6 +76,7 @@ type Handlers struct {
 	ScanStore         *scanner.Store
 	Proxy             *proxy.Service
 	Updater           *updater.Service
+	Operations        *operations.Service
 	UpdateWatcher     *updater.Watcher
 	OIDC              *oidc.Service
 	SAML              *saml.Service
@@ -150,6 +152,7 @@ type Deps struct {
 	ScanStore      *scanner.Store
 	Proxy          *proxy.Service
 	Updater        *updater.Service
+	Operations     *operations.Service
 	UpdateWatcher  *updater.Watcher
 	OIDC           *oidc.Service
 	SAML           *saml.Service
@@ -208,6 +211,7 @@ func New(d Deps) *Handlers {
 		Scanner:        d.Scanner,
 		ScanStore:      d.ScanStore,
 		Proxy:          d.Proxy,
+		Operations:     d.Operations,
 		Updater:        d.Updater,
 		UpdateWatcher:  d.UpdateWatcher,
 		OIDC:           d.OIDC,

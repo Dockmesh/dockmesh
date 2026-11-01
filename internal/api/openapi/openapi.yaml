@@ -100,6 +100,8 @@ tags:
     description: age-encrypted secrets service state.
   - name: overview
     description: Aggregated views for the overview page.
+  - name: operations
+    description: Progress, steps and log of long-running work (image updates, backup runs, restores, new proxy sites).
 
 paths:
   # -----------------------------------------------------------------------
@@ -6976,6 +6978,146 @@ paths:
                 items: { $ref: "#/components/schemas/AttentionItem" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /operations:
+    get:
+      operationId: operations.list
+      tags: [operations]
+      summary: Long-running operations the caller may see
+      description: |
+        Image updates, backup runs, restores and new proxy sites, newest
+        first, without their logs. Live changes arrive on `/ws/events` as
+        `{"source":"operations","type":"update"|"log","op":{...},"line":{...}}`;
+        this endpoint is the polling fallback. An operation is listed only
+        when the caller has the view permission of what it works on
+        (`containers.view`, `backups.view`, `proxy.view`) and its host or
+        stack is in the caller's scope; system backups are listed for
+        unscoped admins only. Operations are kept for 7 days. Any
+        authenticated caller may call this.
+      parameters:
+        - in: query
+          name: kind
+          schema: { type: string }
+          description: Exact kind (`image.update`, `backup.run`, `backup.restore`, `proxy.site`), or a prefix ending in `.` (`backup.`).
+        - in: query
+          name: ref
+          schema: { type: string }
+          description: What the operation belongs to, e.g. `backup-run:42`, `container:<id>`, `proxy-site:<host>`.
+        - in: query
+          name: group
+          schema: { type: string }
+          description: Group id returned by a bulk update.
+        - in: query
+          name: active
+          schema: { type: string, enum: ["1", "true"] }
+          description: Only queued and running operations.
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        "200":
+          description: Operations, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Operation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /operations/{id}:
+    get:
+      operationId: operations.get
+      tags: [operations]
+      summary: One operation with its steps and log
+      description: |
+        The log holds the last 500 lines, each at most 1 KiB. Credentials
+        (target passwords and keys, registry auth, stack .env values, proxy
+        header values, tokens) are masked as `********` before anything is
+        stored or sent. Operations the caller may not see are reported as
+        missing.
+      parameters:
+        - $ref: "#/components/parameters/OperationIDPath"
+      responses:
+        "200":
+          description: The operation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /operations/{id}/cancel:
+    post:
+      operationId: operations.cancel
+      tags: [operations]
+      summary: Cancel a queued operation
+      description: |
+        Only queued work can be cancelled (the not yet started containers of
+        a bulk update); running work is never interrupted. Needs the
+        permission of the action that started it (`containers.update`, plus
+        `stacks.deploy` for a stack container).
+      parameters:
+        - $ref: "#/components/parameters/OperationIDPath"
+      responses:
+        "200":
+          description: The cancelled operation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The operation is not queued any more.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /containers/updates:
+    post:
+      operationId: containers.updateBulk
+      tags: [containers]
+      summary: Update the images of several containers in the background
+      description: |
+        Queues an image update (as `POST /containers/{id}/update`) for each
+        container and runs them one after another on the server, each as
+        its own operation in one group. Every container is checked like a
+        single update first (`containers.update`, its scope, and
+        `stacks.deploy` for stack containers); one denial rejects the whole
+        request and nothing is queued. At most 100 containers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [container_ids]
+              properties:
+                container_ids:
+                  type: array
+                  maxItems: 100
+                  items: { type: string }
+      responses:
+        "202":
+          description: Updates queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [group_id, operations]
+                properties:
+                  group_id: { type: string }
+                  operations:
+                    type: array
+                    items: { $ref: "#/components/schemas/Operation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: The updater is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /notices/{id}/dismiss:
     post:
       operationId: notices.dismiss
@@ -7821,6 +7963,49 @@ components:
         changed: { type: array, items: { type: string } }
         fixed: { type: array, items: { type: string } }
         security: { type: array, items: { type: string }, description: Security entries, advisories as "GHSA-… (severity): title". }
+    Operation:
+      type: object
+      required: [id, kind, target, status, steps, created_at]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [image.update, backup.run, backup.restore, proxy.site] }
+        target: { type: string, description: "Container, backup job, restored volume or stack, or site host." }
+        ref: { type: string, description: "What it belongs to: `container:<id>`, `backup-run:<id>`, `proxy-site:<host>`." }
+        group_id: { type: string, description: "Shared by the operations of one bulk update." }
+        host_id: { type: string }
+        stack: { type: string }
+        actor: { type: string, description: "User id; empty for scheduled work." }
+        actor_name: { type: string }
+        status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
+        error: { type: string }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/OperationStep" }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        log:
+          type: array
+          description: Only on `GET /operations/{id}`.
+          items: { $ref: "#/components/schemas/OperationLogLine" }
+    OperationStep:
+      type: object
+      required: [key, label, status]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        status: { type: string, enum: [pending, running, succeeded, failed, skipped, warning] }
+        detail: { type: string }
+        progress: { type: number, minimum: 0, maximum: 1, description: "Absent when the step cannot measure its progress." }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+    OperationLogLine:
+      type: object
+      required: [ts, level, text]
+      properties:
+        ts: { type: string, format: date-time }
+        level: { type: string, enum: [info, warn, error] }
+        text: { type: string, maxLength: 1024 }
     AttentionItem:
       type: object
       required: [id, kind, severity, title, link, object]
@@ -9605,6 +9790,11 @@ components:
           description: "Short-lived challenge token for the `/auth/mfa` completion."
 
   parameters:
+    OperationIDPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
     SetupHeader:
       name: X-Dockmesh-Setup
       in: header

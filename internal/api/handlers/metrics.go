@@ -40,9 +40,10 @@ func (h *Handlers) BatchContainerStats(w http.ResponseWriter, r *http.Request) {
 // the current id while the DB continues to key on name.
 //
 // Query params:
-//   from        unix seconds (default: now - 1h)
-//   to          unix seconds (default: now)
-//   resolution  raw | 1m | 1h (default: raw)
+//
+//	from        unix seconds (default: now - 1h)
+//	to          unix seconds (default: now)
+//	resolution  raw | 1m | 1h (default: raw)
 func (h *Handlers) GetMetrics(w http.ResponseWriter, r *http.Request) {
 	if h.Metrics == nil {
 		writeError(w, http.StatusServiceUnavailable, "metrics not configured")

@@ -20,7 +20,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"strings"
 	"sync"
@@ -35,6 +34,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/dockmesh/dockmesh/internal/compose"
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
@@ -45,6 +45,20 @@ var (
 	ErrRollbackImageGone = errors.New("rollback image no longer exists (pruned or removed)")
 	ErrBusy              = errors.New("an update of this container or stack is already running")
 )
+
+// Steps of an image update, in order, as reported to its operation.
+const (
+	StepPull        = "pull"
+	StepRollbackTag = "rollback_tag"
+	StepSwap        = "swap"
+)
+
+// UpdateSteps lists the steps Update reports.
+var UpdateSteps = []operations.StepSpec{
+	{Key: StepPull, Label: "Pull image"},
+	{Key: StepRollbackTag, Label: "Keep current image for rollback"},
+	{Key: StepSwap, Label: "Replace container and wait until it runs"},
+}
 
 // DefaultRollbackKeep is how many rollback tags per image ref survive
 // a successful update.
@@ -202,22 +216,32 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 	}
 	defer release()
 
+	op := operations.FromContext(ctx)
 	authBlob := s.resolveImageAuth(ctx, ref)
+	op.AddSecrets(authSecrets(authBlob)...)
+	op.StepStart(StepPull, "")
+	op.Logf("info", "pulling %s", ref)
 	rc, err := cli.ImagePull(ctx, ref, imagetypes.PullOptions{RegistryAuth: authBlob})
 	if err != nil {
-		return nil, fmt.Errorf("pull %s: %w", ref, err)
+		err = fmt.Errorf("pull %s: %w", ref, err)
+		op.StepFail(StepPull, err)
+		return nil, err
 	}
-	if _, err := io.Copy(io.Discard, rc); err != nil {
+	if err := drainPull(rc, op, StepPull); err != nil {
 		rc.Close()
+		op.StepFail(StepPull, err)
 		return nil, err
 	}
 	rc.Close()
 
 	newInfo, err := cli.ImageInspect(ctx, ref)
 	if err != nil {
-		return nil, fmt.Errorf("inspect new image: %w", err)
+		err = fmt.Errorf("inspect new image: %w", err)
+		op.StepFail(StepPull, err)
+		return nil, err
 	}
 	newImageID := newInfo.ID
+	op.StepDone(StepPull, shortID(newImageID))
 
 	res := &Result{
 		ContainerID:   containerID,
@@ -230,14 +254,22 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 		res.Stack = st.stack
 	}
 	if oldImageID == newImageID {
+		op.Logf("info", "%s is already up to date", containerName)
+		op.StepSkip(StepRollbackTag, "already up to date")
+		op.StepSkip(StepSwap, "already up to date")
 		return res, nil
 	}
 
 	// Tagged before the swap so it is also there when the swap fails.
 	rollbackTag := sanitizeTag(ref, time.Now().Unix())
+	op.StepStart(StepRollbackTag, "")
 	if err := cli.ImageTag(ctx, oldImageID, rollbackTag); err != nil {
-		return nil, fmt.Errorf("tag rollback image: %w", err)
+		err = fmt.Errorf("tag rollback image: %w", err)
+		op.StepFail(StepRollbackTag, err)
+		return nil, err
 	}
+	op.StepDone(StepRollbackTag, rollbackTag)
+	op.StepStart(StepSwap, "")
 
 	var newContainerID string
 	if st != nil {
@@ -250,8 +282,11 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 		newContainerID, err = swapContainer(ctx, cli, &info, standaloneSpec(&info, ref, health))
 	}
 	if err != nil {
-		return nil, fmt.Errorf("update %s: %w (previous image kept as %s)", containerName, err, rollbackTag)
+		err = fmt.Errorf("update %s: %w (previous image kept as %s)", containerName, err, rollbackTag)
+		op.StepFail(StepSwap, err)
+		return nil, err
 	}
+	op.StepDone(StepSwap, shortID(newContainerID))
 
 	exec, err := s.db.ExecContext(ctx, `
 		INSERT INTO update_history (container_name, image_ref, old_digest, new_digest, rollback_tag)
@@ -441,9 +476,13 @@ func (s *Service) swapService(ctx context.Context, cli *client.Client, st *stack
 		if strings.Contains(containerNameOf(c), "-dmold-") {
 			continue
 		}
+		op := operations.FromContext(ctx)
+		op.Logf("info", "replacing %s", containerNameOf(c))
 		id, err := s.swapReplica(ctx, cli, st, c.ID, image)
 		if err != nil {
+			op.Logf("error", "%s: %s", containerNameOf(c), err)
 			for _, d := range done {
+				op.Logf("warn", "putting %s back on the previous image", shortID(d))
 				if _, rerr := s.swapReplica(context.WithoutCancel(ctx), cli, st, d, fallback); rerr != nil {
 					slog.Error("updater: put replica back failed", "stack", st.stack, "container", d, "err", rerr)
 				}

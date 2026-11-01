@@ -137,9 +137,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			// Self-service routes (any authenticated user)
 			r.Get("/me", h.Me)
 			r.Put("/users/{id}/password", h.ChangeUserPassword) // self or admin (enforced inside)
-			r.Get("/users/{id}/avatar", h.GetAvatar)              // any authed user
-			r.Post("/users/{id}/avatar", h.UploadAvatar)          // self or admin (enforced inside)
-			r.Delete("/users/{id}/avatar", h.DeleteAvatar)        // self or admin (enforced inside)
+			r.Get("/users/{id}/avatar", h.GetAvatar)            // any authed user
+			r.Post("/users/{id}/avatar", h.UploadAvatar)        // self or admin (enforced inside)
+			r.Delete("/users/{id}/avatar", h.DeleteAvatar)      // self or admin (enforced inside)
 			r.Post("/ws/ticket", h.WSTicket)
 
 			// P.12.1 — session management (self). Any authenticated
@@ -172,6 +172,12 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			// Needs-attention feed; each source is gated on its own view
 			// permission and the caller's scope inside the handler.
 			r.Get("/attention", h.Attention)
+
+			// Long-running operations; each is shown only to callers who
+			// may view what it works on, checked inside the handler.
+			r.Get("/operations", h.ListOperations)
+			r.Get("/operations/{id}", h.GetOperation)
+			r.Post("/operations/{id}/cancel", h.CancelOperation)
 
 			// -------------------------- READ ROUTES --------------------------
 			// Per-resource *.view permissions (RBAC v2). Each group gates
@@ -469,6 +475,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Delete("/containers/{id}", h.RemoveContainer)
 				r.Get("/containers/{id}/update-info", h.PreviewUpdate)
 				r.Post("/containers/{id}/update", h.UpdateContainer)
+				r.Post("/containers/updates", h.BulkUpdateContainers)
 				r.Post("/containers/{id}/rollback", h.RollbackContainer)
 				r.Get("/containers/{id}/update-history", h.UpdateHistory)
 			})
@@ -609,8 +616,8 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Put("/oidc/providers/{id}", h.UpdateOIDCProvider)
 				r.Delete("/oidc/providers/{id}", h.DeleteOIDCProvider)
 				r.Post("/oidc/providers/reload", h.ReloadOIDCProviders)
-			r.Post("/oidc/providers/test-discovery", h.TestOIDCDiscovery)
-			r.Post("/oidc/providers/{id}/test", h.TestOIDCProvider)
+				r.Post("/oidc/providers/test-discovery", h.TestOIDCDiscovery)
+				r.Post("/oidc/providers/{id}/test", h.TestOIDCProvider)
 			})
 
 			// -------------------------- SAML ADMIN ---------------------------

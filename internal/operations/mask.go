@@ -90,3 +90,26 @@ func sortByLenDesc(list []string) {
 		}
 	}
 }
+
+// EnvValues returns the values of a .env file, to be masked like secrets:
+// an env file mixes harmless settings and credentials without marking
+// which is which.
+func EnvValues(env string) []string {
+	var out []string
+	for _, line := range strings.Split(env, "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		_, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		if len(v) >= 2 && (v[0] == '"' || v[0] == '\'') && v[len(v)-1] == v[0] {
+			v = v[1 : len(v)-1]
+		}
+		out = append(out, v)
+	}
+	return out
+}

@@ -93,13 +93,13 @@ func (h *Handlers) AgentBinary(w http.ResponseWriter, r *http.Request) {
 	// Whitelist exactly what we ship. Extended in P.12.9 to include the
 	// user-facing dmctl CLI for the platforms operators actually run it on.
 	allowed := map[string]bool{
-		"dockmesh-agent-linux-amd64":  true,
-		"dockmesh-agent-linux-arm64":  true,
-		"dmctl-linux-amd64":           true,
-		"dmctl-linux-arm64":           true,
-		"dmctl-darwin-amd64":          true,
-		"dmctl-darwin-arm64":          true,
-		"dmctl-windows-amd64.exe":     true,
+		"dockmesh-agent-linux-amd64": true,
+		"dockmesh-agent-linux-arm64": true,
+		"dmctl-linux-amd64":          true,
+		"dmctl-linux-arm64":          true,
+		"dmctl-darwin-amd64":         true,
+		"dmctl-darwin-arm64":         true,
+		"dmctl-windows-amd64.exe":    true,
 	}
 	if !allowed[name] {
 		http.NotFound(w, r)

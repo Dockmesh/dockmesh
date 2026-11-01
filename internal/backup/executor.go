@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -22,6 +23,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
+	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
@@ -40,6 +42,29 @@ type Executor struct {
 	paths   SystemPaths
 	notifs  *notifications.Service
 	notices *notices.Service
+	ops     *operations.Service
+
+	// runOps carries the operation of a run from begin to complete.
+	runOps sync.Map
+}
+
+// Steps of a backup run, in order, as reported to its operation.
+const (
+	StepPrepare   = "prepare"
+	StepPreHooks  = "pre_hooks"
+	StepArchive   = "archive"
+	StepVerify    = "verify"
+	StepPostHooks = "post_hooks"
+	StepRetention = "retention"
+)
+
+var runSteps = []operations.StepSpec{
+	{Key: StepPrepare, Label: "Connect to host and target"},
+	{Key: StepPreHooks, Label: "Run pre-backup hooks"},
+	{Key: StepArchive, Label: "Archive and upload"},
+	{Key: StepVerify, Label: "Read back and verify"},
+	{Key: StepPostHooks, Label: "Run post-backup hooks"},
+	{Key: StepRetention, Label: "Apply retention"},
 }
 
 // hostResolver lets the executor route to local vs remote hosts without
@@ -75,6 +100,14 @@ func (e *Executor) logf(ctx context.Context, runID int64, stream, format string,
 	if err := e.store.appendRunLog(ctx, runID, stream, line); err != nil {
 		slog.Debug("backup runlog append failed", "run", runID, "err", err)
 	}
+	level := stream
+	switch stream {
+	case "hook_stdout":
+		level = "info"
+	case "hook_stderr":
+		level = "warn"
+	}
+	operations.FromContext(ctx).Logf(level, "%s", line)
 }
 
 // Run executes one backup job, persisting a backup_runs row throughout.
@@ -93,6 +126,9 @@ func (e *Executor) begin(ctx context.Context, job *Job) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	op := e.startOp(ctx, job, runID)
+	e.runOps.Store(runID, op)
+	ctx = operations.WithOp(ctx, op)
 	e.logf(ctx, runID, "info", "start: job=%s host=%s sources=%d target=%s encrypt=%v",
 		job.Name, defaultStr(job.HostID, "local"), len(job.Sources), job.TargetType, job.Encrypt)
 	return runID, nil
@@ -100,6 +136,11 @@ func (e *Executor) begin(ctx context.Context, job *Job) (int64, error) {
 
 // complete executes a run started with begin and records its outcome.
 func (e *Executor) complete(ctx context.Context, job *Job, runID int64) (*Run, error) {
+	var op *operations.Op
+	if v, ok := e.runOps.LoadAndDelete(runID); ok {
+		op = v.(*operations.Op)
+	}
+	ctx = operations.WithOp(ctx, op)
 	out, target := e.execute(ctx, job, runID)
 	// The outcome is recorded even when the caller went away mid-run.
 	ctx = context.WithoutCancel(ctx)
@@ -107,14 +148,21 @@ func (e *Executor) complete(ctx context.Context, job *Job, runID int64) (*Run, e
 		slog.Warn("backup finish run", "run", runID, "err", err)
 	}
 	if target != nil {
+		op.StepStart(StepRetention, "")
 		rctx, cancel := context.WithTimeout(ctx, cleanupTimeout)
 		e.applyRetention(rctx, runID, job, target)
 		cancel()
+		op.StepDone(StepRetention, "")
 	}
 
 	now := time.Now()
 	_ = e.store.updateJobRunTimes(ctx, job.ID, &now, nil)
 	e.notifyRun(ctx, job, runID, out)
+	if out.status == StatusFailed {
+		op.Finish(out.err)
+	} else {
+		op.Finish(nil)
+	}
 	return e.store.getRun(ctx, runID)
 }
 
@@ -131,26 +179,39 @@ type runOutcome struct {
 // execute runs the phases of one backup. The target comes back only when
 // the run produced an archive, so retention never runs after a failure.
 func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runOutcome, kept targets.Target) {
+	op := operations.FromContext(ctx)
+	step := StepPrepare
 	fail := func(stage string, err error) runOutcome {
 		e.logf(ctx, runID, "error", "%s: %s", stage, err)
-		return runOutcome{status: StatusFailed, err: fmt.Errorf("%s: %w", stage, err)}
+		err = fmt.Errorf("%s: %w", stage, err)
+		op.StepFail(step, err)
+		return runOutcome{status: StatusFailed, err: err}
 	}
 
+	op.StepStart(StepPrepare, "")
 	hostTarget, err := e.resolveHost(job.HostID)
 	if err != nil {
 		return fail("resolve host", err), nil
 	}
 	if job.Encrypt && !canEncrypt(e.secrets) {
 		e.logf(ctx, runID, "error", "%s", ErrEncryptUnavailable)
+		op.StepFail(step, ErrEncryptUnavailable)
 		return runOutcome{status: StatusFailed, err: ErrEncryptUnavailable}, nil
 	}
 	target, err := jobTarget(ctx, e.store, e.notices, job)
 	if err != nil {
 		return fail("build target", err), nil
 	}
+	op.StepDone(StepPrepare, "")
 
 	// Pre-hooks typically stop or lock a service, so once one of them has
 	// run, the post-hooks run too, whatever happens afterwards.
+	step = StepPreHooks
+	if len(job.PreHooks) == 0 {
+		op.StepSkip(StepPreHooks, "none configured")
+	} else {
+		op.StepStart(StepPreHooks, "")
+	}
 	preRan, preErr := e.runHooks(ctx, runID, "pre", hostTarget, job.PreHooks)
 	if preErr == nil || preRan > 0 {
 		defer func() { out = e.runPostHooks(ctx, runID, hostTarget, job, out) }()
@@ -158,6 +219,11 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	if preErr != nil {
 		return fail("pre-hooks", preErr), nil
 	}
+	if len(job.PreHooks) > 0 {
+		op.StepDone(StepPreHooks, fmt.Sprintf("%d ran", preRan))
+	}
+	step = StepArchive
+	op.StepStart(StepArchive, "")
 
 	relPath := relativePath(job, runID)
 	// Recorded up front so the partial file of a crashed run stays
@@ -182,7 +248,7 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	}
 
 	e.logf(ctx, runID, "info", "streaming %d source(s) → %s", len(job.Sources), relPath)
-	if _, err := e.streamSources(ctx, job.Sources, hostTarget, encW); err != nil {
+	if _, err := e.streamSources(ctx, job.Sources, hostTarget, &progressWriter{w: encW, op: op, step: StepArchive}); err != nil {
 		_ = abortWriter(encW)
 		out = fail("stream sources", err)
 		out.path = e.removePartial(ctx, runID, target, w, relPath, false)
@@ -195,20 +261,37 @@ func (e *Executor) execute(ctx context.Context, job *Job, runID int64) (out runO
 	}
 	sum := hex.EncodeToString(hasher.Sum(nil))
 	e.logf(ctx, runID, "info", "wrote %d bytes, sha256=%s", stored.n, sum[:12])
+	op.StepDone(StepArchive, humanSize(stored.n)+" written")
+	op.StepStart(StepVerify, "")
 	if err := readBack(ctx, target, relPath, stored.n, sum); err != nil {
 		e.logf(ctx, runID, "error", "%s", err)
+		op.StepFail(StepVerify, err)
 		out = runOutcome{status: StatusFailed, size: stored.n, err: err}
 		out.path = e.removePartial(ctx, runID, target, w, relPath, true)
 		return out, nil
 	}
 	e.logf(ctx, runID, "info", "read back %d bytes, sha256 matches", stored.n)
+	op.StepDone(StepVerify, "checksum matches")
 	return runOutcome{status: StatusSuccess, size: stored.n, path: relPath, sum: sum}, target
 }
 
 // runPostHooks uses a context that survives cancellation of the run: a
 // service stopped by a pre-hook must come back up either way.
 func (e *Executor) runPostHooks(ctx context.Context, runID int64, hostTarget hostBackupTarget, job *Job, out runOutcome) runOutcome {
-	_, err := e.runHooks(context.WithoutCancel(ctx), runID, "post", hostTarget, job.PostHooks)
+	op := operations.FromContext(ctx)
+	if len(job.PostHooks) == 0 {
+		op.StepSkip(StepPostHooks, "none configured")
+	} else {
+		op.StepStart(StepPostHooks, "")
+	}
+	ran, err := e.runHooks(context.WithoutCancel(ctx), runID, "post", hostTarget, job.PostHooks)
+	switch {
+	case len(job.PostHooks) == 0:
+	case err != nil:
+		op.StepWarn(StepPostHooks, err.Error())
+	default:
+		op.StepDone(StepPostHooks, fmt.Sprintf("%d ran", ran))
+	}
 	if err == nil || out.status != StatusSuccess {
 		return out
 	}
@@ -573,4 +656,76 @@ func encryptionFor(job *Job, sec *secrets.Service) *secrets.Service {
 		return nil
 	}
 	return sec
+}
+
+// startOp records the operation of a run. Scheduled runs have no actor.
+func (e *Executor) startOp(ctx context.Context, job *Job, runID int64) *operations.Op {
+	if e.ops == nil {
+		return nil
+	}
+	spec := operations.Spec{
+		Kind:      "backup.run",
+		Target:    job.Name,
+		Ref:       "backup-run:" + strconv.FormatInt(runID, 10),
+		HostID:    defaultStr(job.HostID, "local"),
+		AdminOnly: HasSystemSource(job.Sources),
+		Actor:     operations.ActorFromContext(ctx),
+		Steps:     runSteps,
+	}
+	if len(job.Sources) == 1 && job.Sources[0].Type == "stack" {
+		spec.Stack = job.Sources[0].Name
+	}
+	spec.Secrets = e.sourceSecrets(job.Sources)
+	return e.ops.Start(ctx, spec)
+}
+
+// sourceSecrets returns the .env values of the stacks a job backs up;
+// hook output may print them.
+func (e *Executor) sourceSecrets(sources []Source) []string {
+	if e.stacks == nil {
+		return nil
+	}
+	var out []string
+	for _, src := range sources {
+		if src.Type != "stack" {
+			continue
+		}
+		if d, err := e.stacks.Get(src.Name); err == nil && d != nil {
+			out = append(out, operations.EnvValues(d.Env)...)
+		}
+	}
+	return out
+}
+
+// progressWriter reports the bytes archived so far to the operation; the
+// total is unknown until the sources are read to the end.
+type progressWriter struct {
+	w    io.Writer
+	op   *operations.Op
+	step string
+	n    int64
+	last time.Time
+}
+
+func (p *progressWriter) Write(b []byte) (int, error) {
+	n, err := p.w.Write(b)
+	p.n += int64(n)
+	if p.op != nil && time.Since(p.last) >= time.Second {
+		p.last = time.Now()
+		p.op.StepDetail(p.step, humanSize(p.n)+" archived")
+	}
+	return n, err
+}
+
+func humanSize(n int64) string {
+	const unit = 1000
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "kMGTPE"[exp])
 }

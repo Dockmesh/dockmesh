@@ -251,9 +251,9 @@ func (h *Handlers) DeployTemplate(w http.ResponseWriter, r *http.Request) {
 	h.audit(r, "template.deploy", req.StackName,
 		map[string]any{"template_id": id, "host": target.ID()})
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"stack":        req.StackName,
-		"compose":      composeYAML,
-		"values":       safe,
+		"stack":         req.StackName,
+		"compose":       composeYAML,
+		"values":        safe,
 		"deploy_result": deployRes,
 	})
 }
@@ -293,4 +293,3 @@ func (h *Handlers) resolveHost(id string) (host.Host, error) {
 	}
 	return h.Hosts.Pick(id)
 }
-

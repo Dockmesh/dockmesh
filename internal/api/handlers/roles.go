@@ -143,14 +143,14 @@ func (h *Handlers) DeleteRole(w http.ResponseWriter, r *http.Request) {
 //   - description  Plain-language explanation (? tooltip text)
 //   - category     UI matrix grouping ("Containers", "Stacks", ...)
 //   - verb         matrix column header within the category — view /
-//                  deploy / update / delete / + per-resource sensitive
-//                  verbs (exec / logs / browse / migrate / scan ...)
+//     deploy / update / delete / + per-resource sensitive
+//     verbs (exec / logs / browse / migrate / scan ...)
 //   - danger_level "low" | "medium" | "high" — drives UI tinting on
-//                  dangerous grants
+//     dangerous grants
 //   - sensitive    true if the permission belongs in the "Sensitive
-//                  operations" sub-section of its category (exec / logs
-//                  / browse / migrate / etc.) rather than the standard
-//                  view / deploy / update / delete row
+//     operations" sub-section of its category (exec / logs
+//     / browse / migrate / etc.) rather than the standard
+//     view / deploy / update / delete row
 //
 // Order in this slice = display order in the UI matrix.
 //

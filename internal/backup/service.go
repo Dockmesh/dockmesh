@@ -15,6 +15,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/notifications"
+	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/secrets"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/robfig/cron/v3"
@@ -49,6 +50,13 @@ type Service struct {
 	runs      sync.WaitGroup
 
 	notices *notices.Service
+	ops     *operations.Service
+}
+
+// SetOperations records every run and restore as an operation.
+func (s *Service) SetOperations(o *operations.Service) {
+	s.ops = o
+	s.exec.ops = o
 }
 
 // SetNotices wires action-required notices (SFTP host keys).

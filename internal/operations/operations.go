@@ -296,7 +296,9 @@ func (s *Service) Cancel(id string) error {
 	if !queued || cancel == nil {
 		return ErrNotCancellable
 	}
-	cancel()
+	if !cancel() {
+		return ErrNotCancellable
+	}
 	o.end(StatusCancelled, "cancelled before it started")
 	return nil
 }
@@ -421,7 +423,7 @@ type Op struct {
 	mu        sync.Mutex
 	op        Operation
 	secrets   []string
-	cancel    func()
+	cancel    func() bool
 	lastFlush time.Time
 	ended     bool
 }
@@ -450,7 +452,8 @@ func (o *Op) addSecrets(vals []string) {
 }
 
 // SetCancel registers how to stop the operation while it is queued.
-func (o *Op) SetCancel(cancel func()) {
+// cancel reports false when the work has started meanwhile.
+func (o *Op) SetCancel(cancel func() bool) {
 	if o == nil {
 		return
 	}
@@ -509,6 +512,28 @@ func (o *Op) StepProgress(key string, frac float64, detail string) {
 		if o.op.Steps[i].Key == key {
 			f := frac
 			o.op.Steps[i].Progress = &f
+			o.op.Steps[i].Detail = o.mask(detail)
+		}
+	}
+	snap := o.snapshotLocked(false)
+	o.mu.Unlock()
+	o.s.publish(Event{Type: "update", Op: snap})
+	o.maybeFlush()
+}
+
+// StepDetail updates the detail of a running step whose progress cannot
+// be measured, such as the bytes written so far.
+func (o *Op) StepDetail(key, detail string) {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	if o.ended {
+		o.mu.Unlock()
+		return
+	}
+	for i := range o.op.Steps {
+		if o.op.Steps[i].Key == key {
 			o.op.Steps[i].Detail = o.mask(detail)
 		}
 	}
@@ -754,6 +779,9 @@ func scanOp(sc scanner, withLog bool) (*Operation, error) {
 	}
 	return &op, nil
 }
+
+// NewGroupID returns an id that ties operations started together.
+func NewGroupID() string { return newID() }
 
 func newID() string {
 	var b [12]byte

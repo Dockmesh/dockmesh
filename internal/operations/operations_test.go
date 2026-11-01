@@ -192,9 +192,9 @@ func TestCancelOnlyQueued(t *testing.T) {
 	ctx := context.Background()
 	cancelled := false
 	q := s.Start(ctx, Spec{Kind: "image.update", Target: "a", Queued: true})
-	q.SetCancel(func() { cancelled = true })
+	q.SetCancel(func() bool { cancelled = true; return true })
 	r := s.Start(ctx, Spec{Kind: "image.update", Target: "b"})
-	r.SetCancel(func() {})
+	r.SetCancel(func() bool { return true })
 	if err := s.Cancel(r.ID()); !errors.Is(err, ErrNotCancellable) {
 		t.Fatalf("running op cancel: %v", err)
 	}
