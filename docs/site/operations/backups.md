@@ -28,7 +28,7 @@ Every job runs on one host (`host_id`, empty means the server host):
 - A **stack** job runs on the host the stack is deployed on. The wizard shows that host and doesn't let you change it. A stack that isn't deployed can't be backed up. Through the API, a stack job sent without `host_id` gets its deployment host.
 - A **system** job always runs on the server host.
 
-The wizard only offers hosts on which you may create (or, when editing, change) backup jobs. When a job is saved with a new host or source, the server checks that the host exists, that the volume exists on it, and that the stack is deployed there, and rejects the job otherwise. Jobs saved before hosts could be picked keep running on the server host.
+The wizard only offers hosts on which you may create (or, when editing, change) backup jobs. When a job is saved with a new host or source, the server checks that the host exists, that the volume exists on it, and that the stack is deployed there, and rejects the job otherwise.
 
 Remote volumes stream through the server. The agent stream can drop chunks under load, so archives of remote volumes may be silently incomplete; test-restore them. Volume backups use a small helper container (`alpine:3.24`), which Dockmesh pulls if it is missing.
 

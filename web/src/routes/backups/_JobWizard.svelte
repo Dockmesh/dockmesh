@@ -142,7 +142,6 @@
   }
 
   const pickedStack = $derived(sourceKind === 'stack' ? availableStacks.find((s) => s.name === sourceRef) : undefined);
-  // Undefined while the stack has no deployment.
   const stackHost = $derived(pickedStack?.deployment?.host_id || undefined);
 
   function stackUnavailable(s: StackListEntry): string {

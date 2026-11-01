@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -115,29 +116,25 @@ func TestBackupJobPlacement(t *testing.T) {
 	boss := e.login("boss").AccessToken
 	prod := e.login("prodadmin").AccessToken
 
-	job := func(name, hostID, kind, src string) map[string]any {
-		return map[string]any{"name": name, "host_id": hostID, "target_id": 1, "schedule": "0 3 * * *",
-			"retention_count": 3, "enabled": true, "sources": []map[string]string{{"type": kind, "name": src}}}
-	}
 	tests := []struct {
 		name, bearer string
 		body         map[string]any
 		want         int
 		wantHost     string
 	}{
-		{"server volume", boss, job("v1", "", "volume", "data"), http.StatusCreated, "local"},
-		{"agent volume", boss, job("v2", "agent-1", "volume", "pgdata"), http.StatusCreated, "agent-1"},
-		{"volume of another host", boss, job("v3", "agent-1", "volume", "data"), http.StatusBadRequest, ""},
-		{"unknown host", boss, job("v4", "nope", "volume", "data"), http.StatusBadRequest, ""},
-		{"stack takes its deployment host", boss, job("s1", "", "stack", "web"), http.StatusCreated, "agent-1"},
-		{"stack on the wrong host", boss, job("s2", "local", "stack", "web"), http.StatusBadRequest, ""},
-		{"undeployed stack", boss, job("s3", "", "stack", "idle"), http.StatusBadRequest, ""},
-		{"missing stack", boss, job("s4", "", "stack", "ghost"), http.StatusBadRequest, ""},
-		{"system job on an agent", boss, job("sys2", "agent-1", "system", "*"), http.StatusBadRequest, ""},
-		{"scoped volume in scope", prod, job("p1", "agent-1", "volume", "pgdata"), http.StatusCreated, "agent-1"},
-		{"scoped volume out of scope", prod, job("p2", "agent-2", "volume", "cache"), http.StatusForbidden, ""},
-		{"scoped missing volume out of scope", prod, job("p3", "agent-2", "volume", "nope"), http.StatusForbidden, ""},
-		{"scoped stack job on an out-of-scope host", prod, job("p4", "", "stack", "idle"), http.StatusForbidden, ""},
+		{"server volume", boss, backupJobBody("v1", "", "volume", "data"), http.StatusCreated, "local"},
+		{"agent volume", boss, backupJobBody("v2", "agent-1", "volume", "pgdata"), http.StatusCreated, "agent-1"},
+		{"volume of another host", boss, backupJobBody("v3", "agent-1", "volume", "data"), http.StatusBadRequest, ""},
+		{"unknown host", boss, backupJobBody("v4", "nope", "volume", "data"), http.StatusBadRequest, ""},
+		{"stack takes its deployment host", boss, backupJobBody("s1", "", "stack", "web"), http.StatusCreated, "agent-1"},
+		{"stack on the wrong host", boss, backupJobBody("s2", "local", "stack", "web"), http.StatusBadRequest, ""},
+		{"undeployed stack", boss, backupJobBody("s3", "", "stack", "idle"), http.StatusBadRequest, ""},
+		{"missing stack", boss, backupJobBody("s4", "", "stack", "ghost"), http.StatusBadRequest, ""},
+		{"system job on an agent", boss, backupJobBody("sys2", "agent-1", "system", "*"), http.StatusBadRequest, ""},
+		{"scoped volume in scope", prod, backupJobBody("p1", "agent-1", "volume", "pgdata"), http.StatusCreated, "agent-1"},
+		{"scoped volume out of scope", prod, backupJobBody("p2", "agent-2", "volume", "cache"), http.StatusForbidden, ""},
+		{"scoped missing volume out of scope", prod, backupJobBody("p3", "agent-2", "volume", "nope"), http.StatusForbidden, ""},
+		{"scoped stack job on an out-of-scope host", prod, backupJobBody("p4", "", "stack", "idle"), http.StatusForbidden, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -145,17 +142,8 @@ func TestBackupJobPlacement(t *testing.T) {
 			if rr.Code != tt.want {
 				t.Fatalf("%d, want %d: %s", rr.Code, tt.want, rr.Body)
 			}
-			if tt.wantHost == "" {
-				return
-			}
-			var got struct {
-				HostID string `json:"host_id"`
-			}
-			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
-				t.Fatal(err)
-			}
-			if jobHostID(got.HostID) != tt.wantHost {
-				t.Errorf("host %q, want %q", got.HostID, tt.wantHost)
+			if tt.wantHost != "" {
+				assertJobHost(t, rr, tt.wantHost)
 			}
 		})
 	}
@@ -176,21 +164,17 @@ func TestBackupJobUpdateKeepsPlacement(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	job := func(name, hostID, kind, src string) map[string]any {
-		return map[string]any{"name": name, "host_id": hostID, "target_id": 1, "schedule": "0 4 * * *",
-			"retention_count": 5, "enabled": true, "sources": []map[string]string{{"type": kind, "name": src}}}
-	}
 	tests := []struct {
 		name, path string
 		body       map[string]any
 		want       int
 		wantHost   string
 	}{
-		{"legacy job keeps the server host", "/backups/jobs/1", job("legacy", "", "stack", "web"), http.StatusOK, "local"},
-		{"legacy job moved to the stack's host", "/backups/jobs/1", job("legacy", "agent-1", "stack", "web"), http.StatusOK, "agent-1"},
-		{"gone volume, same placement", "/backups/jobs/2", job("old-vol", "agent-1", "volume", "removed"), http.StatusOK, "agent-1"},
-		{"new host without the volume", "/backups/jobs/3", job("moving", "agent-1", "volume", "data"), http.StatusBadRequest, ""},
-		{"new host and its volume", "/backups/jobs/3", job("moving", "agent-1", "volume", "pgdata"), http.StatusOK, "agent-1"},
+		{"legacy job keeps the server host", "/backups/jobs/1", backupJobBody("legacy", "", "stack", "web"), http.StatusOK, "local"},
+		{"legacy job moved to the stack's host", "/backups/jobs/1", backupJobBody("legacy", "agent-1", "stack", "web"), http.StatusOK, "agent-1"},
+		{"gone volume, same placement", "/backups/jobs/2", backupJobBody("old-vol", "agent-1", "volume", "removed"), http.StatusOK, "agent-1"},
+		{"new host without the volume", "/backups/jobs/3", backupJobBody("moving", "agent-1", "volume", "data"), http.StatusBadRequest, ""},
+		{"new host and its volume", "/backups/jobs/3", backupJobBody("moving", "agent-1", "volume", "pgdata"), http.StatusOK, "agent-1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -198,18 +182,27 @@ func TestBackupJobUpdateKeepsPlacement(t *testing.T) {
 			if rr.Code != tt.want {
 				t.Fatalf("%d, want %d: %s", rr.Code, tt.want, rr.Body)
 			}
-			if tt.wantHost == "" {
-				return
-			}
-			var got struct {
-				HostID string `json:"host_id"`
-			}
-			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
-				t.Fatal(err)
-			}
-			if jobHostID(got.HostID) != tt.wantHost {
-				t.Errorf("host %q, want %q", got.HostID, tt.wantHost)
+			if tt.wantHost != "" {
+				assertJobHost(t, rr, tt.wantHost)
 			}
 		})
+	}
+}
+
+func backupJobBody(name, hostID, kind, src string) map[string]any {
+	return map[string]any{"name": name, "host_id": hostID, "target_id": 1, "schedule": "0 3 * * *",
+		"retention_count": 3, "enabled": true, "sources": []map[string]string{{"type": kind, "name": src}}}
+}
+
+func assertJobHost(t *testing.T, rr *httptest.ResponseRecorder, want string) {
+	t.Helper()
+	var got struct {
+		HostID string `json:"host_id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if jobHostID(got.HostID) != want {
+		t.Errorf("host %q, want %q", got.HostID, want)
 	}
 }

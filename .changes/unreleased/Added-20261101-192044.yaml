@@ -1,3 +1,3 @@
 kind: Added
-body: 'The backup job wizard picks the host: volume jobs choose a host and then one of its volumes, stack jobs run on the host the stack is deployed on (undeployed stacks can''t be backed up), and the wizard only offers hosts where you may manage backups (`GET /api/v1/backups/hosts`). Saving a job with a new host or source checks that the host, volume or stack deployment exists. Existing jobs keep their host.'
+body: 'The backup job wizard picks the host: volume jobs choose a host and one of its volumes, stack jobs run where the stack is deployed, and only hosts where you may manage backups are offered. Saving checks that the host, volume or deployment exists.'
 time: 2026-11-01T19:20:44.1950962+01:00

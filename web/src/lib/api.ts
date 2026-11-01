@@ -975,8 +975,6 @@ export interface BackupJob {
   updated_at: string;
 }
 
-// A host the caller may create (can_create) or edit (can_update) backup
-// jobs on, from GET /backups/hosts.
 export interface BackupHost {
   id: string;
   name: string;
