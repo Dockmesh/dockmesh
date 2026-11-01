@@ -105,7 +105,8 @@ type Host interface {
 	// the JSON preview cap. Caller closes the returned ReadCloser.
 	ContainerDownloadFile(ctx context.Context, id, p string) (io.ReadCloser, string, int64, error)
 	// ContainerWriteFile uploads a file into the container at the
-	// given absolute path. Parent dir must exist; mode defaults to 0644.
+	// given absolute path. Parent dir must exist; a replaced file keeps its
+	// mode unless mode is set, a new one gets 0644.
 	ContainerWriteFile(ctx context.Context, id, p string, data []byte, mode int64) error
 	// ContainerDeleteFile removes a file or symbolic link.
 	ContainerDeleteFile(ctx context.Context, id, p string) error

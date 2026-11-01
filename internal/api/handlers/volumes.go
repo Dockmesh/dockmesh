@@ -225,7 +225,8 @@ func mapBrowseStatus(err error) int {
 		errors.Is(err, host.ErrContainerNotFile),
 		errors.Is(err, host.ErrContainerPathDenied),
 		errors.Is(err, host.ErrContainerSymlink),
-		errors.Is(err, host.ErrContainerDirTooLarge):
+		errors.Is(err, host.ErrContainerDirTooLarge),
+		errors.Is(err, host.ErrContainerModeInvalid):
 		return http.StatusBadRequest
 	case errors.Is(err, host.ErrContainerFileTooLarge):
 		return http.StatusRequestEntityTooLarge

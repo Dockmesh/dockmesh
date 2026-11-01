@@ -616,6 +616,7 @@ func agentBrowseError(err error) error {
 		ErrContainerFileTooLarge,
 		ErrContainerDirTooLarge,
 		ErrContainerNoRm,
+		ErrContainerModeInvalid,
 	} {
 		if strings.Contains(msg, kind.Error()) {
 			return &agentError{err: err, kind: kind}
@@ -705,7 +706,6 @@ func (h *RemoteHost) CleanupPreview(ctx context.Context, name string) (*compose.
 var ErrAgentNoContainerFiles = errors.New("the agent on this host is too old to access container files; update it from the Hosts page")
 
 // fileRequest sends a container file frame to an agent that serves them.
-// The agent runs the same containerfs functions against its own daemon.
 func (h *RemoteHost) fileRequest(ctx context.Context, frameType string, req agents.ContainerFileReq, out any) error {
 	ag, err := h.live()
 	if err != nil {

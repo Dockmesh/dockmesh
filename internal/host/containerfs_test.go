@@ -360,7 +360,7 @@ func TestContainerWriteAndDelete(t *testing.T) {
 		{name: "root", path: "/", wantErr: ErrContainerNotFile},
 		{name: "missing parent", path: "/nope/x", wantErr: fs.ErrNotExist},
 		{name: "relative", path: "app/x", wantErr: ErrContainerPathInvalid},
-		{name: "bad mode", path: "/app/x", mode: 0o10000, wantErr: errors.New("mode must be between")},
+		{name: "bad mode", path: "/app/x", mode: 0o10000, wantErr: ErrContainerModeInvalid},
 	}
 	for _, tt := range writes {
 		t.Run(tt.name, func(t *testing.T) {

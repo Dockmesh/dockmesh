@@ -24,9 +24,6 @@ import (
 // Container-file browsing reuses the VolumeEntry / VolumeFileResult
 // shapes from volumebrowse.go — listing one entry of a container
 // filesystem is structurally identical to one entry of a volume.
-//
-// The same functions serve the server's own daemon and, on the agent,
-// the agent host's daemon, so both enforce the same rules.
 
 var (
 	// ErrContainerPathInvalid is returned when the requested path is
@@ -40,8 +37,7 @@ var (
 	// files: /proc/<pid>/environ alone would hand out every environment
 	// secret, which needs a different permission.
 	ErrContainerPathDenied = errors.New("/proc, /sys, /dev and device files are not accessible")
-	// ErrContainerSymlink is returned for writes and deletes aimed at a
-	// symbolic link's target through the link.
+	// ErrContainerSymlink is returned for writes aimed at a symbolic link.
 	ErrContainerSymlink = errors.New("requested container path is a symbolic link")
 	// ErrContainerFileTooLarge is returned for uploads above
 	// MaxContainerUploadBytes.
@@ -51,7 +47,8 @@ var (
 	ErrContainerDirTooLarge = fmt.Errorf("directory has more than %d entries", maxContainerDirEntries)
 	// ErrContainerNoRm is returned when a delete can't run rm in the
 	// container (stopped, or an image without rm such as scratch).
-	ErrContainerNoRm = errors.New("deleting needs a running container with an rm command")
+	ErrContainerNoRm        = errors.New("deleting needs a running container with an rm command")
+	ErrContainerModeInvalid = errors.New("mode must be between 0 and 07777")
 )
 
 const (
@@ -109,13 +106,13 @@ func statErr(err error) error {
 	return err
 }
 
-// resolveContainerDir resolves every component of an absolute, clean
+// resolveContainerPath resolves every component of an absolute, clean
 // path inside the container, following symlinks. The daemon evaluates a
 // link in the scope of the container's root filesystem and reports the
 // result as LinkTarget, so the walk never leaves that root; each step is
 // also checked against the denied areas, so a link into /proc is refused
 // the same as the path itself.
-func resolveContainerDir(ctx context.Context, cli client.ContainerAPIClient, id, clean string) (string, container.PathStat, error) {
+func resolveContainerPath(ctx context.Context, cli client.ContainerAPIClient, id, clean string) (string, container.PathStat, error) {
 	cur := "/"
 	st, err := cli.ContainerStatPath(ctx, id, cur)
 	if err != nil {
@@ -176,7 +173,7 @@ func resolveContainerParent(ctx context.Context, cli client.ContainerAPIClient, 
 	if clean == "/" {
 		return "", "", st, false, ErrContainerNotFile
 	}
-	dir, dst, err := resolveContainerDir(ctx, cli, id, path.Dir(clean))
+	dir, dst, err := resolveContainerPath(ctx, cli, id, path.Dir(clean))
 	if err != nil {
 		return "", "", st, false, err
 	}
@@ -210,7 +207,7 @@ func BrowseContainerDir(ctx context.Context, cli client.ContainerAPIClient, id, 
 	if err != nil {
 		return nil, err
 	}
-	resolved, stat, err := resolveContainerDir(ctx, cli, id, clean)
+	resolved, stat, err := resolveContainerPath(ctx, cli, id, clean)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +282,7 @@ func openContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, p
 	if err != nil {
 		return nil, nil, err
 	}
-	resolved, stat, err := resolveContainerDir(ctx, cli, id, clean)
+	resolved, stat, err := resolveContainerPath(ctx, cli, id, clean)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -356,8 +353,7 @@ func StatContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, p
 		return nil, err
 	}
 	body.Close()
-	clean, _ := sanitizeContainerPath(p)
-	return &ContainerFileStat{Name: path.Base(clean), Size: hdr.Size}, nil
+	return &ContainerFileStat{Name: path.Base(path.Clean(p)), Size: hdr.Size}, nil
 }
 
 // DownloadContainerFile streams a file's raw bytes out of the container
@@ -386,7 +382,7 @@ func WriteContainerFile(ctx context.Context, cli client.ContainerAPIClient, id, 
 		return ErrContainerFileTooLarge
 	}
 	if mode < 0 || mode > 0o7777 {
-		return errors.New("mode must be between 0 and 07777")
+		return ErrContainerModeInvalid
 	}
 	clean, err := sanitizeContainerPath(p)
 	if err != nil {
@@ -453,11 +449,10 @@ func DeleteContainerFile(ctx context.Context, cli client.ContainerAPIClient, id,
 		return fmt.Errorf("%w: %v", ErrContainerNoRm, err)
 	}
 	if code != 0 {
-		msg := strings.TrimSpace(string(out))
 		if code == 126 || code == 127 {
 			return ErrContainerNoRm
 		}
-		return fmt.Errorf("rm exited with %d: %s", code, msg)
+		return fmt.Errorf("rm exited with %d: %s", code, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

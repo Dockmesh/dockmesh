@@ -151,10 +151,6 @@ func (h *Handlers) WriteContainerFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "path is required")
 		return
 	}
-	if req.Mode < 0 || req.Mode > 0o7777 {
-		writeError(w, http.StatusBadRequest, "mode must be between 0 and 07777")
-		return
-	}
 	data, decErr := base64.StdEncoding.DecodeString(req.Content)
 	if decErr != nil {
 		writeError(w, http.StatusBadRequest, "content must be base64-encoded")
@@ -228,4 +224,3 @@ func sanitizeFilename(name string) string {
 	}
 	return out
 }
-

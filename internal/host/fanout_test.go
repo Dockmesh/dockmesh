@@ -68,8 +68,9 @@ func (f *fakeHost) ContainerReadFile(context.Context, string, string, int64) (*V
 func (f *fakeHost) ContainerDownloadFile(context.Context, string, string) (io.ReadCloser, string, int64, error) {
 	panic("no")
 }
-func (f *fakeHost) ContainerDeleteFile(context.Context, string, string) error { return nil }
-
+func (f *fakeHost) ContainerDeleteFile(context.Context, string, string) error {
+	panic("no")
+}
 func (f *fakeHost) ContainerWriteFile(context.Context, string, string, []byte, int64) error {
 	panic("no")
 }

@@ -310,10 +310,9 @@ type ContainerExecRunReq struct {
 	MaxOutputBytes int64    `json:"max_output_bytes,omitempty"`
 }
 
-// ContainerFileReq is the payload of the req.container.files.* frames
-// and the params of the "container_file" stream. Path is absolute inside
-// the container; Data and Mode are only used by writes, MaxBytes only by
-// reads.
+// ContainerFileReq is the payload of the req.container.files.* frames.
+// Path is absolute inside the container; Data and Mode are only used by
+// writes, MaxBytes only by reads.
 type ContainerFileReq struct {
 	Container string `json:"container"`
 	Path      string `json:"path"`
