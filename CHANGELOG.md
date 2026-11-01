@@ -172,6 +172,18 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   It takes `--key` for encrypted archives; `--skip-sanity` is gone, the checks always run.
 
 ### Fixed
+- The setup wizard proposes `/var/lib/dockmesh` as data directory instead of `/data`, which a
+  native install cannot write; it shows the install log and the sign-in even when the install
+  finishes before the page connects to it, reports a synchronised clock as synced on current
+  systemd, and its last step says whether the install finished or failed.
+- Users limited to some hosts no longer get an error from the stack page while a newly created
+  stack is not deployed yet.
+- Upgrading an agent that already runs the server's build answers 409 with an explanation
+  instead of 500.
+- Proxy routes in the API list empty options as `[]` instead of `null`, and a newly created
+  route is returned with its real creation time.
+- The stack page offers switching overlays and editing dependencies only with `stacks.deploy`,
+  which the server requires.
 - Users limited to some hosts no longer see every enrolled agent, other users' audit entries or
   the server's image update checks, and can no longer rotate the token of, upgrade or revoke an
   agent outside their scope tags. Their overview no longer shows 0 of 0 hosts and their stacks
