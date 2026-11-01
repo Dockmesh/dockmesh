@@ -22,6 +22,14 @@
 
   const titleId = `drw-${Math.random().toString(36).slice(2, 9)}`;
 
+  // Toasts read this to stay clear of the drawer's footer buttons.
+  $effect(() => {
+    if (!open) return;
+    const root = document.documentElement.style;
+    root.setProperty('--drawer-w', `min(${width}px, 96vw)`);
+    return () => root.removeProperty('--drawer-w');
+  });
+
   function close() {
     open = false;
     onclose?.();

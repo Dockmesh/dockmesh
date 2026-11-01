@@ -28,7 +28,7 @@
 <style>
   .toasts {
     position: fixed;
-    right: 18px;
+    right: min(calc(18px + var(--drawer-w, 0px)), calc(100vw - min(380px, 100vw - 36px) - 18px));
     bottom: 18px;
     display: flex;
     flex-direction: column;
