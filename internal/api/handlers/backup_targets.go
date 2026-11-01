@@ -24,12 +24,21 @@ func (h *Handlers) ListBackupTargets(w http.ResponseWriter, r *http.Request) {
 	}
 	// Counts include jobs on hosts outside a scoped caller's view.
 	unscoped := h.callerUnscoped(r)
-	out := make([]*targets.StoredTarget, len(list))
+	out := make([]*targets.StoredTarget, 0, len(list))
 	for i := range list {
-		out[i] = redactTarget(&list[i])
-		if !unscoped {
-			out[i].JobCount = nil
+		visible, err := h.backupTargetVisible(r, list[i].ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
+		if !visible {
+			continue
+		}
+		t := redactTarget(&list[i])
+		if !unscoped {
+			t.JobCount = nil
+		}
+		out = append(out, t)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -116,6 +125,9 @@ func (h *Handlers) DeleteBackupTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if !h.requireTargetAccess(w, r, id) {
+		return
+	}
 	if err := h.BackupTargets.Delete(r.Context(), id); errors.Is(err, targets.ErrTargetInUse) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -140,6 +152,10 @@ func (h *Handlers) TestBackupTarget(w http.ResponseWriter, r *http.Request) {
 	stored, err := h.BackupTargets.Get(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "target not found")
+		return
+	}
+	// The test stores its result as the target's status.
+	if !h.requireTargetAccess(w, r, id) {
 		return
 	}
 

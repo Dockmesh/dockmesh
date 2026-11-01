@@ -137,7 +137,11 @@ func (h *Handlers) BackupStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.LastRunAt = &ts
 	resp.LastStatus = run.Status
-	resp.LastError = run.Error
+	// The error can name the target's server, share and paths; the state is
+	// enough for the sidebar of everyone else.
+	if h.callerIsAdmin(r) {
+		resp.LastError = run.Error
+	}
 	resp.LastSize = run.SizeBytes
 	age := time.Since(ts)
 	resp.AgeSeconds = int64(age.Seconds())
@@ -217,7 +221,7 @@ func (h *Handlers) SystemHealth(w http.ResponseWriter, r *http.Request) {
 	checks := make([]HealthCheck, 0, 6)
 
 	// ---- backup
-	checks = append(checks, h.healthBackup(r.Context()))
+	checks = append(checks, h.healthBackup(r.Context(), h.callerIsAdmin(r)))
 
 	// ---- proxy
 	if h.Proxy != nil {
@@ -343,8 +347,9 @@ func (h *Handlers) SystemHealth(w http.ResponseWriter, r *http.Request) {
 
 // healthBackup adapts the existing BackupStatus flow into a HealthCheck
 // so the aggregated /system/health endpoint doesn't need to duplicate
-// its decision table.
-func (h *Handlers) healthBackup(ctx context.Context) HealthCheck {
+// its decision table. Only admins get the run's error text, as in
+// BackupStatus.
+func (h *Handlers) healthBackup(ctx context.Context, admin bool) HealthCheck {
 	c := HealthCheck{Name: "backup", Label: "System backup", LinkTo: "/settings?tab=system"}
 	if h.Backups == nil {
 		c.Status = "off"
@@ -382,11 +387,15 @@ func (h *Handlers) healthBackup(ctx context.Context) HealthCheck {
 	case st.Run.Status == backup.StatusSuccessWithWarnings:
 		c.Status = "warn"
 		c.Detail = "last run finished with warnings"
-		c.Message = st.Run.Error
+		if admin {
+			c.Message = st.Run.Error
+		}
 	case st.Run.Status != backup.StatusSuccess:
 		c.Status = "fail"
 		c.Detail = "last run failed"
-		c.Message = st.Run.Error
+		if admin {
+			c.Message = st.Run.Error
+		}
 	case age > 36*time.Hour:
 		c.Status = "warn"
 		c.Detail = fmtAge(int64(age.Seconds())) + " ago (stale)"
