@@ -1116,6 +1116,9 @@ paths:
       operationId: agents.list
       tags: [agents]
       summary: List all registered remote agents
+      description: |
+        Only agents whose host is in the caller's scope (scope tags and role
+        scope), the same hosts `GET /hosts` returns.
       responses:
         "200":
           description: Agents.
@@ -1168,6 +1171,7 @@ paths:
       operationId: agents.get
       tags: [agents]
       summary: Inspect one agent
+      description: An agent outside the caller's scope answers 404.
       responses:
         "200":
           description: Agent.
@@ -2850,6 +2854,7 @@ paths:
         without a registry digest (built or loaded locally) report an
         `error` instead of an update. Map key is the normalized image ref
         (e.g. `nginx:1.27`).
+        Empty for callers whose scope does not include the server host.
       responses:
         "200":
           description: Update info per image ref.
@@ -4292,6 +4297,10 @@ paths:
       operationId: audit.list
       tags: [audit]
       summary: Audit log entries, newest first
+      description: |
+        Entries record no host, so a caller limited by scope tags or a
+        scoped role sees only its own entries; `user_id` is ignored for
+        such callers.
       parameters:
         - name: limit
           in: query
@@ -7083,7 +7092,11 @@ paths:
         its own operation in one group. Every container is checked like a
         single update first (`containers.update`, its scope, and
         `stacks.deploy` for stack containers); one denial rejects the whole
-        request and nothing is queued. At most 100 containers.
+        request and nothing is queued. At most 100 containers. Ids are
+        pinned to the full container id. Each item is authorised again
+        under the caller's current role, scope and session (or API token)
+        right before it runs; an item that is no longer allowed fails with
+        "not started".
       requestBody:
         required: true
         content:
@@ -7112,6 +7125,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "503":
           description: The updater is not configured.
           content:
