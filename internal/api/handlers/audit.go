@@ -54,6 +54,15 @@ func (h *Handlers) ListAudit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "category must be one of: "+strings.Join(audit.Categories, ", "))
 		return
 	}
+	// Entries record no host, so a caller limited to some hosts cannot be
+	// shown other people's actions without leaking out-of-scope work.
+	if len(middleware.ScopeTags(r.Context())) > 0 || !h.roleIsUnscoped(r) {
+		f.UserID = middleware.UserID(r.Context())
+		if f.UserID == "" {
+			writeJSON(w, http.StatusOK, []audit.Entry{})
+			return
+		}
+	}
 	entries, err := h.Audit.ListFiltered(r.Context(), f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

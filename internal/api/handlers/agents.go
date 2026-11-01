@@ -23,7 +23,19 @@ func (h *Handlers) ListAgents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	visible := make([]agents.Agent, 0, len(list))
+	for _, a := range list {
+		if h.agentInScope(r, a.ID) {
+			visible = append(visible, a)
+		}
+	}
+	writeJSON(w, http.StatusOK, visible)
+}
+
+// agentInScope applies both the user's scope tags and the role scope to
+// the host an agent stands for, the same rules /hosts filters by.
+func (h *Handlers) agentInScope(r *http.Request, id string) bool {
+	return h.canAccessHost(r, id) && h.checkRoleScope(r, h.hostScopeReq(r.Context(), id))
 }
 
 func (h *Handlers) GetAgent(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +43,12 @@ func (h *Handlers) GetAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "agents not configured")
 		return
 	}
-	a, err := h.Agents.Get(r.Context(), chi.URLParam(r, "id"))
+	id := chi.URLParam(r, "id")
+	if !h.agentInScope(r, id) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	a, err := h.Agents.Get(r.Context(), id)
 	if errors.Is(err, agents.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
@@ -81,6 +98,9 @@ func (h *Handlers) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 		h.writeRoleScopeDenied(w, r, rbac.PermHostsDelete, scopeReq, "host "+id)
 		return
 	}
+	if !h.requireHostAccess(w, r, id) {
+		return
+	}
 	if err := h.Agents.Delete(r.Context(), id); errors.Is(err, agents.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
@@ -120,6 +140,9 @@ func (h *Handlers) RotateAgentEnrollToken(w http.ResponseWriter, r *http.Request
 		h.writeRoleScopeDenied(w, r, rbac.PermHostsCreate, scopeReq, "host "+id)
 		return
 	}
+	if !h.requireHostAccess(w, r, id) {
+		return
+	}
 	res, err := h.Agents.RotateEnrollToken(r.Context(), id)
 	if errors.Is(err, agents.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
@@ -147,6 +170,9 @@ func (h *Handlers) UpgradeAgent(w http.ResponseWriter, r *http.Request) {
 	scopeReq := h.hostScopeReq(r.Context(), id)
 	if !h.checkRoleScope(r, scopeReq) {
 		h.writeRoleScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+id)
+		return
+	}
+	if !h.requireHostAccess(w, r, id) {
 		return
 	}
 	if h.AgentUpgrade == nil {
