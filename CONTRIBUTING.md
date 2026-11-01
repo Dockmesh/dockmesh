@@ -25,8 +25,10 @@ stacks: reject compose files without services
 ci: add pull request checks
 ```
 
-Keep the title to about 70 characters. In the description say what
-changed and why, and how you tested it.
+Keep the title to about 70 characters. The description becomes the squash
+commit on `main`: start with `Fixes #N: <short phrase>` (or `Part of #N`,
+`Refs #N`) when there is an issue, then short bullets under **What**,
+**Why** and **Tested**, as in the PR template.
 
 ### Required checks
 

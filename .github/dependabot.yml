@@ -1,12 +1,12 @@
 version: 2
 updates:
-  # Setting labels replaces Dependabot's defaults, so they are listed again
-  # next to no-changelog (which skips the changelog check).
+  # Setting labels replaces Dependabot's defaults; no-changelog skips the
+  # changelog check.
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: monthly
-    labels: [dependencies, go, no-changelog]
+    labels: [dependencies, no-changelog]
     groups:
       go-modules:
         patterns: ['*']
@@ -15,7 +15,11 @@ updates:
     directory: /web
     schedule:
       interval: monthly
-    labels: [dependencies, javascript, no-changelog]
+    labels: [dependencies, no-changelog]
+    # svelte-check 4 accepts TypeScript 5 and 6 only.
+    ignore:
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
     groups:
       npm:
         patterns: ['*']
@@ -24,7 +28,7 @@ updates:
     directory: /
     schedule:
       interval: monthly
-    labels: [dependencies, github_actions, no-changelog]
+    labels: [dependencies, no-changelog]
     groups:
       github-actions:
         patterns: ['*']
