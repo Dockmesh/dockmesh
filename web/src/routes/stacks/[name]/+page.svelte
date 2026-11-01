@@ -405,8 +405,10 @@
   // leaves Overview.
   type StatsSample = {
     cpu_percent: number;
+    cpu_percent_core?: number;
     mem_used: number;
     mem_limit: number;
+    mem_unlimited?: boolean;
     mem_percent: number;
     net_rx: number;
     net_tx: number;
@@ -513,17 +515,23 @@
 
   // Aggregated Overview-rail metrics derived from the live samples.
   const statsRollup = $derived.by(() => {
-    let cpu = 0, mem = 0, memLim = 0, count = 0;
+    let cpu = 0, cpuCores = 0, mem = 0, memLim = 0, count = 0;
+    let unlimited = false;
     for (const s of svcStats.values()) {
       cpu += s.cpu_percent;
+      cpuCores += (s.cpu_percent_core ?? 0) / 100;
       mem += s.mem_used;
       memLim += s.mem_limit;
+      unlimited ||= !!s.mem_unlimited;
       count += 1;
     }
+    // One container without a limit can use all host RAM, so the sum of
+    // the others' limits says nothing.
+    if (unlimited) memLim = 0;
     return {
       cpu,
       cpuLabel: count > 0 ? `${cpu.toFixed(1)}%` : '—',
-      cpuMeta: count > 0 ? `${(cpu / 100).toFixed(2)} cores · ${count} container${count === 1 ? '' : 's'}` : 'no live samples',
+      cpuMeta: count > 0 ? `of the host · ${cpuCores.toFixed(2)} cores · ${count} container${count === 1 ? '' : 's'}` : 'no live samples',
       mem,
       memLim,
       memPct: memLim > 0 ? (mem / memLim) * 100 : 0,

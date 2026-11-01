@@ -1,0 +1,3 @@
+kind: Upgrade notes
+body: On the first start the stored container metrics are moved to a layout keyed by host; every sample is kept. Alert and autoscaling thresholds on CPU keep their per-core meaning (100 per busy core).
+time: 2026-11-01T18:24:24.0428796+01:00
