@@ -1,0 +1,3 @@
+kind: Fixed
+body: Container history at the 1-minute and 1-hour resolutions (7 and 30 day ranges) no longer fails for containers whose average memory was not a whole number of bytes
+time: 2026-11-01T18:47:16.1161125+01:00

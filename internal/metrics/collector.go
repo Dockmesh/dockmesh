@@ -232,19 +232,21 @@ type series struct {
 }
 
 // Network and block I/O are monotonic counters: MAX keeps the latest
-// value of a bucket, which is what a reader subtracts for rates.
+// value of a bucket, which is what a reader subtracts for rates. Byte
+// averages are cast back to integers; the readers cast too, for rows
+// rolled up before that.
 var seriesTables = []series{
 	{
 		prefix: "metrics",
 		keys:   "host_id, container_name",
 		cols:   "cpu_percent, cpu_cores, mem_used, mem_limit, net_rx, net_tx, blk_read, blk_write",
-		aggs:   "AVG(cpu_percent), MAX(cpu_cores), AVG(mem_used), MAX(mem_limit), MAX(net_rx), MAX(net_tx), MAX(blk_read), MAX(blk_write)",
+		aggs:   "AVG(cpu_percent), MAX(cpu_cores), CAST(AVG(mem_used) AS INTEGER), MAX(mem_limit), MAX(net_rx), MAX(net_tx), MAX(blk_read), MAX(blk_write)",
 	},
 	{
 		prefix: "host_metrics",
 		keys:   "host_id",
 		cols:   "cpu_percent, cpu_cores, mem_used, mem_total, disk_used, disk_total",
-		aggs:   "AVG(cpu_percent), MAX(cpu_cores), AVG(mem_used), MAX(mem_total), AVG(disk_used), MAX(disk_total)",
+		aggs:   "AVG(cpu_percent), MAX(cpu_cores), CAST(AVG(mem_used) AS INTEGER), MAX(mem_total), CAST(AVG(disk_used) AS INTEGER), MAX(disk_total)",
 	},
 }
 
@@ -448,7 +450,7 @@ func (c *Collector) Query(ctx context.Context, q Query) ([]Sample, error) {
 	}
 	q.window(suffix)
 	rows, err := c.db.QueryContext(ctx, `
-		SELECT ts, cpu_percent, cpu_cores, mem_used, mem_limit, net_rx, net_tx, blk_read, blk_write
+		SELECT ts, cpu_percent, cpu_cores, CAST(mem_used AS INTEGER), mem_limit, net_rx, net_tx, blk_read, blk_write
 		FROM metrics`+suffix+`
 		WHERE host_id = ? AND container_name = ? AND ts BETWEEN ? AND ?
 		ORDER BY ts ASC`,
@@ -480,7 +482,7 @@ func (c *Collector) QueryHost(ctx context.Context, q Query) ([]HostSample, error
 	}
 	q.window(suffix)
 	rows, err := c.db.QueryContext(ctx, `
-		SELECT ts, cpu_percent, cpu_cores, mem_used, mem_total, disk_used, disk_total
+		SELECT ts, cpu_percent, cpu_cores, CAST(mem_used AS INTEGER), mem_total, CAST(disk_used AS INTEGER), disk_total
 		FROM host_metrics`+suffix+`
 		WHERE host_id = ? AND ts BETWEEN ? AND ?
 		ORDER BY ts ASC`,

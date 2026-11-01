@@ -104,6 +104,24 @@ func TestHostSeriesAndDownsample(t *testing.T) {
 	if len(cs) != 1 || cs[0].CPUPercent != 10 || cs[0].NetRx != 7 {
 		t.Errorf("container 1m = %+v, want one bucket with cpu 10 and net_rx 7", cs)
 	}
+	// A 1m row rolled up by an older version holds a fractional average.
+	if _, err := c.db.Exec(`INSERT INTO metrics_1m
+		(host_id, container_name, ts, cpu_percent, mem_used, mem_limit, net_rx, net_tx, blk_read, blk_write)
+		VALUES ('local', 'db', ?, 1, 22297258.67, 0, 0, 0, 0, 0)`, old); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := c.Query(ctx, Query{Name: "db", Resolution: "1m", From: time.Unix(old-60, 0), To: time.Now()}); err != nil || len(got) != 1 || got[0].MemUsed != 22297258 {
+		t.Errorf("fractional mem_used: %+v, %v", got, err)
+	}
+	for _, i := range []int64{0, 1} {
+		if err := c.InsertContainer(ctx, LocalHostID, "odd", old+i*30, docker.NormalizedStats{MemUsed: uint64(10 + i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.downsample(ctx)
+	if got, err := c.Query(ctx, Query{Name: "odd", Resolution: "1m", From: time.Unix(old-60, 0), To: time.Now()}); err != nil || len(got) != 1 {
+		t.Errorf("odd average: %+v, %v", got, err)
+	}
 	if _, err := c.QueryHost(ctx, Query{Resolution: "5m"}); err != ErrResolution {
 		t.Errorf("bad resolution: err = %v, want ErrResolution", err)
 	}
