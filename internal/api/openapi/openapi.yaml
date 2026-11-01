@@ -7974,7 +7974,7 @@ components:
         group_id: { type: string, description: "Shared by the operations of one bulk update." }
         host_id: { type: string }
         stack: { type: string }
-        actor: { type: string, description: "User id; empty for scheduled work." }
+        actor: { type: string, description: "User id (the owner for an owned API token), `api-token:<id>` for an unowned token, empty for scheduled work." }
         actor_name: { type: string }
         status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
         error: { type: string }

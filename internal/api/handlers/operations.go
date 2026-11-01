@@ -100,6 +100,21 @@ func (h *Handlers) restoreOriginVisible(r *http.Request, ref string) bool {
 	return h.inReadScope(r, origin, "")
 }
 
+// opActor names who started an operation: the user, the owner of the API
+// token, or the token itself when nobody owns it.
+func opActor(ctx context.Context) string {
+	if id := middleware.UserID(ctx); id != "" {
+		return id
+	}
+	if id := middleware.TokenOwnerID(ctx); id != "" {
+		return id
+	}
+	if id := middleware.APITokenID(ctx); id != 0 {
+		return "api-token:" + strconv.FormatInt(id, 10)
+	}
+	return ""
+}
+
 // operationView is an operation as the API returns it.
 type operationView struct {
 	operations.Operation
@@ -242,7 +257,7 @@ func (h *Handlers) startImageUpdateOp(r *http.Request, containerID, group string
 		GroupID: group,
 		HostID:  "local",
 		Stack:   stack,
-		Actor:   middleware.UserID(r.Context()),
+		Actor:   opActor(r.Context()),
 		Steps:   updater.UpdateSteps,
 		Queued:  queued,
 		Secrets: h.stackEnvValues(stack),

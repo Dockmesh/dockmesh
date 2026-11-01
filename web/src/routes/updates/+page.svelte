@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { api, ApiError, isFanOut, type Operation, type UpdateStatus } from '$lib/api';
   import { fmtAgo } from '$lib/format';
   import { StatusChip, StatBar, EmptyState, Skeleton, LiveIndicator } from '$lib/components/ui';
@@ -127,6 +128,9 @@
       refreshing = false;
     }
   }
+  $effect(() => {
+    untrack(load);
+  });
   $effect(() => autoRefresh(load, 60_000));
 
   // Reload once tracked updates end, so finished rows leave the list.

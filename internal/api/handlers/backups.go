@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/docker"
@@ -218,7 +217,7 @@ func (h *Handlers) RunBackupJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	run, err := h.Backups.StartRun(operations.WithActor(r.Context(), middleware.UserID(r.Context())), job.ID)
+	run, err := h.Backups.StartRun(operations.WithActor(r.Context(), opActor(r.Context())), job.ID)
 	switch {
 	case errors.Is(err, backup.ErrJobNotFound):
 		writeError(w, http.StatusNotFound, "not found")
@@ -439,7 +438,7 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 		Target: target,
 		Ref:    operations.BackupRunRef(id),
 		HostID: opts.HostID,
-		Actor:  middleware.UserID(r.Context()),
+		Actor:  opActor(r.Context()),
 		Steps:  backup.RestoreSteps,
 	})
 	if kind == "stack" {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { page } from '$app/state';
   import { setTabParam } from '$lib/tabs';
   import { fmtAgo } from '$lib/format';
@@ -84,6 +85,9 @@
       refreshing = false;
     }
   }
+  $effect(() => {
+    untrack(load);
+  });
   $effect(() => autoRefresh(load, 15_000));
 
   // A new site's operation ends with its certificate; reload then so the

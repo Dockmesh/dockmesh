@@ -102,7 +102,7 @@
     <div class="head">
       <StatusChip tone={statusTone[op.status] ?? 'off'} label={op.status} />
       <span class="dm-sub">
-        {op.actor_name ? `by ${op.actor_name}` : op.actor ? '' : 'scheduled'}
+        {op.actor_name ? `by ${op.actor_name}` : op.actor?.startsWith('api-token:') ? 'by an API token' : op.actor ? '' : 'scheduled'}
         {op.started_at ? ` · started ${when(op.started_at)}` : ` · queued ${when(op.created_at)}`}
         {elapsed(op.started_at, op.finished_at) ? ` · ${elapsed(op.started_at, op.finished_at)}` : ''}
       </span>

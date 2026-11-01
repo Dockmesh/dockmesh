@@ -189,7 +189,7 @@ func (h *Handlers) CreateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		Kind:   opProxySite,
 		Target: req.Host,
 		Ref:    "proxy-site:" + req.Host,
-		Actor:  middleware.UserID(r.Context()),
+		Actor:  opActor(r.Context()),
 		Steps:  proxy.NewSiteSteps,
 	})
 	route, err := h.Proxy.CreateRoute(operations.WithOp(r.Context(), op), proxy.RouteSpec{
