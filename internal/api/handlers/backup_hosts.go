@@ -113,12 +113,7 @@ func (h *Handlers) checkBackupJobPlacement(w http.ResponseWriter, r *http.Reques
 		}
 		return true
 	}
-	known, err := h.knownHost(r.Context(), hostID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return false
-	}
-	if !known {
+	if !h.knownHost(r.Context(), hostID) {
 		writeError(w, http.StatusBadRequest, "unknown host "+hostID)
 		return false
 	}
@@ -144,22 +139,6 @@ func (h *Handlers) checkBackupJobPlacement(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	return true
-}
-
-func (h *Handlers) knownHost(ctx context.Context, hostID string) (bool, error) {
-	if h.Hosts == nil {
-		return hostID == "local", nil
-	}
-	list, err := h.Hosts.List(ctx)
-	if err != nil {
-		return false, err
-	}
-	for _, hi := range list {
-		if hi.ID == hostID {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // stackJobProblem explains why a stack can't be backed up on hostID, or
