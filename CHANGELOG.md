@@ -97,6 +97,18 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   the ACME email with its local part hidden.
 
 ### Changed
+- Sizes follow Docker's units everywhere: images, files, disks, transfers and backups in kB, MB
+  and GB (base 1000), memory and memory limits in KiB, MiB and GiB (base 1024).
+- The overview lists the five most severe items that need attention; "+N more" opens the full
+  list with a severity filter.
+- The reverse proxy container Dockmesh runs for itself is marked System in the containers list
+  and its detail page shows it read-only, with a link to the Reverse proxy page.
+- Users with `alerts.view` can open the Alerts page and read rules, channels and history;
+  creating, editing and deleting follow `alerts.create`, `alerts.update` and `alerts.delete`.
+- A single image update keeps running when you close the page while it pulls or swaps the
+  container.
+- The Files tab of a container on an agent host says that browsing files is available for
+  containers on the server host only, instead of showing an internal error.
 - The overview, hosts, alerts, backups, stack detail, reverse proxy and setup pages follow the
   new design. The overview lists what needs attention and the recent changes from the audit log;
   alert rules are edited in a dialog that adapts to the rule type and says in a sentence when the
@@ -160,6 +172,13 @@ from this file by `scripts/relmanifest`, so it follows a strict format:
   It takes `--key` for encrypted archives; `--skip-sanity` is gone, the checks always run.
 
 ### Fixed
+- Users limited to some hosts no longer see every enrolled agent, other users' audit entries or
+  the server's image update checks, and can no longer rotate the token of, upgrade or revoke an
+  agent outside their scope tags. Their overview no longer shows 0 of 0 hosts and their stacks
+  as stopped when their scope leaves out the server host.
+- An image update whose pull fails inside Docker's progress stream (rate limit, missing
+  credentials, unknown tag) now fails instead of reporting the container as already up to date.
+- Backup hook output in the run log no longer starts every line with stray characters.
 - The last setup step showed a made-up password when the page was reloaded there; it now refers to
   the password you entered.
 - `dockmesh-agent --version` works for users other than root. The installer now puts a
