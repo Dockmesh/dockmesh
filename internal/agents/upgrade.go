@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -80,6 +81,12 @@ var (
 	// ErrAgentNotConnected is returned when an upgrade targets an agent
 	// without a live connection.
 	ErrAgentNotConnected = errors.New("agent not connected")
+	// ErrAgentCurrent is returned when the agent already runs the build
+	// the server would send.
+	ErrAgentCurrent = errors.New("the agent already runs the build this server offers")
+	// ErrAgentUpgrading is returned while the agent is still replacing
+	// itself after an earlier request.
+	ErrAgentUpgrading = errors.New("the agent is already upgrading")
 	// errUpgradeBackoff marks an automatic attempt skipped by the back-off.
 	errUpgradeBackoff = errors.New("automatic upgrade backed off")
 )
@@ -328,15 +335,34 @@ func (c *UpgradeController) upgradeOne(ctx context.Context, ag *ConnectedAgent, 
 	payload, _ := json.Marshal(req)
 	resp, err := ag.Request(ctx, Frame{Type: FrameReqAgentUpgrade, Payload: payload})
 	if err != nil {
+		// The agent answers refusals with a request error.
+		if r := upgradeRefusal(err.Error()); errors.Is(r, ErrAgentCurrent) || errors.Is(r, ErrAgentUpgrading) {
+			return req, r
+		}
 		slog.Warn("agent upgrade push failed", "agent", ag.ID, "err", err)
 		return req, err
 	}
 	if !resp.OK {
-		slog.Warn("agent upgrade rejected", "agent", ag.ID, "err", resp.Error)
-		return req, errors.New(resp.Error)
+		err := upgradeRefusal(resp.Error)
+		if !errors.Is(err, ErrAgentCurrent) && !errors.Is(err, ErrAgentUpgrading) {
+			slog.Warn("agent upgrade rejected", "agent", ag.ID, "err", resp.Error)
+		}
+		return req, err
 	}
 	slog.Info("agent upgrade dispatched", "agent", ag.ID, "version", version.Version)
 	return req, nil
+}
+
+// upgradeRefusal maps an agent's refusal to an error, by the texts of
+// errSameBinary and errUpgradeBusy in cmd/dockmesh-agent.
+func upgradeRefusal(msg string) error {
+	switch {
+	case strings.Contains(msg, "already running this agent build"):
+		return ErrAgentCurrent
+	case strings.Contains(msg, "an upgrade is already in progress"):
+		return ErrAgentUpgrading
+	}
+	return errors.New(msg)
 }
 
 func (c *UpgradeController) pendingAgents() []*ConnectedAgent {

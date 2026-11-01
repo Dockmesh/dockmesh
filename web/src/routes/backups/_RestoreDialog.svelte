@@ -3,10 +3,11 @@
   // the host the backup was taken on) and replace vs. merge. The server
   // verifies the whole archive before it writes anything.
   import { untrack } from 'svelte';
-  import { api, ApiError, type BackupRun, type HostInfo } from '$lib/api';
-  import { Button, Input, Modal } from '$lib/components/ui';
+  import { api, ApiError, type BackupRun, type HostInfo, type BackupRestoreReport } from '$lib/api';
+  import { Button, Modal } from '$lib/components/ui';
   import { toast } from '$lib/stores/toast.svelte';
-  import { Undo2 } from 'lucide-svelte';
+  import { operations, opRef } from '$lib/stores/operations.svelte';
+  import { Undo2, ShieldCheck } from 'lucide-svelte';
 
   interface Props {
     run: BackupRun | null;
@@ -45,73 +46,114 @@
   const inPlace = $derived(target.trim() === sourceName && hostId === (originHost || 'local'));
   const canSubmit = $derived(!!target.trim() && confirmText === target.trim() && !busy);
 
+  function reportLine(report: BackupRestoreReport): string {
+    return isStack
+      ? `${report.files_restored.length} file(s), ${report.volumes_restored.length} volume(s) into ${report.stack_name}`
+      : target.trim();
+  }
+
+  // The restore request stays open until the restore ends. Once its
+  // operation shows up, the dialog hands over to the progress drawer;
+  // a request refused before any work started never gets one and is
+  // reported here instead.
   async function submit() {
     if (!run || !canSubmit) return;
     busy = true;
-    try {
-      const report = isStack
-        ? await api.backups.restoreStack(run.id, { target_stack: target.trim(), host_id: hostId, mode })
-        : await api.backups.restore(run.id, { dest_volume: target.trim(), host_id: hostId, mode });
-      const what = isStack
-        ? `${report.files_restored.length} file(s), ${report.volumes_restored.length} volume(s) into ${report.stack_name}`
-        : target.trim();
-      toast.success('Restored', what);
+    const r = run;
+    const ref = opRef.backupRun(r.id);
+    const since = Date.now();
+    let report: BackupRestoreReport | undefined;
+    let error: unknown;
+    const req = (isStack
+      ? api.backups.restoreStack(r.id, { target_stack: target.trim(), host_id: hostId, mode })
+      : api.backups.restore(r.id, { dest_volume: target.trim(), host_id: hostId, mode })
+    ).then(
+      (rep) => (report = rep),
+      (e) => (error = e)
+    );
+    let op = await Promise.race([operations.find(ref, 'backup.restore', since, 6000), req.then(() => undefined)]);
+    if (!op) op = await operations.find(ref, 'backup.restore', since, 1000);
+    if (op) {
+      busy = false;
+      onclose();
+      void operations.open(op.id);
+      await req;
+      if (report) {
+        for (const w of report.warnings ?? []) toast.warning('Restore warning', w);
+      }
+      return;
+    }
+    await req;
+    busy = false;
+    if (report) {
+      toast.success('Restored', reportLine(report));
       for (const w of report.warnings ?? []) toast.warning('Restore warning', w);
       onclose();
-    } catch (err) {
-      toast.error('Restore failed', err instanceof ApiError ? err.message : undefined);
-    } finally {
-      busy = false;
+    } else {
+      toast.error('Restore failed', error instanceof ApiError ? error.message : undefined);
     }
   }
 </script>
 
-<Modal open={!!run} title={isStack ? 'Restore stack backup' : 'Restore volume backup'} maxWidth="max-w-lg" onclose={onclose}>
+<Modal open={!!run} title={run ? `Restore run #${run.id}` : 'Restore'} maxWidth="max-w-lg" onclose={onclose}>
   {#if run}
-    <div class="space-y-4">
-      <Input
-        label={isStack ? 'Stack name' : 'Volume name'}
-        bind:value={target}
-        hint={isStack
-          ? 'Files go to this stack; its volumes are restored on the host below.'
-          : "Created if it doesn't exist."}
-      />
-      <label class="block">
-        <span class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Host</span>
-        <select class="dm-input text-sm" bind:value={hostId}>
+    <div class="rs">
+      <div class="dm-field">
+        <label for="rs-target">{isStack ? 'Stack name' : 'Volume name'}</label>
+        <input id="rs-target" class="dm-filter dm-mono" bind:value={target} autocomplete="off" />
+        <small class="dm-sub">
+          {isStack ? 'Files go to this stack; its volumes are restored on the host below.' : "Created if it doesn't exist."}
+        </small>
+      </div>
+      <div class="dm-field">
+        <label for="rs-host">Host</label>
+        <select id="rs-host" class="dm-filter" bind:value={hostId}>
           {#if !hosts.some((h) => h.id === 'local')}<option value="local">local</option>{/if}
           {#if originHost && !hosts.some((h) => h.id === originHost)}<option value={originHost}>{originHost} (offline)</option>{/if}
           {#each hosts as h (h.id)}
             <option value={h.id}>{h.name}{h.id === (originHost || 'local') ? ' (backed up here)' : ''}</option>
           {/each}
         </select>
-      </label>
-      <fieldset class="space-y-2">
-        <legend class="text-xs font-medium text-[var(--fg-muted)] mb-1.5">Existing data</legend>
-        <label class="flex items-start gap-2 text-sm">
+      </div>
+      <fieldset class="dm-field">
+        <legend>Existing data</legend>
+        <label class="opt" class:on={mode === 'replace'}>
           <input type="radio" bind:group={mode} value="replace" />
-          <span><strong>Replace</strong> — empty the volume{isStack ? 's' : ''} first, so the result matches the backup. Containers using {isStack ? 'them' : 'it'} must be stopped.</span>
+          <span><b>Replace</b> <span class="dm-dim">empties the volume{isStack ? 's' : ''} first, so the result matches the backup. Containers using {isStack ? 'them' : 'it'} must be stopped.</span></span>
         </label>
-        <label class="flex items-start gap-2 text-sm">
+        <label class="opt" class:on={mode === 'merge'}>
           <input type="radio" bind:group={mode} value="merge" />
-          <span><strong>Merge</strong> — overwrite the files in the backup, keep everything else.</span>
+          <span><b>Merge</b> <span class="dm-dim">overwrites the files in the backup, keeps everything else.</span></span>
         </label>
       </fieldset>
       {#if inPlace}
-        <div class="p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-warning-500)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-warning-500)_30%,transparent)] text-xs text-[var(--color-warning-400)]">
-          This restores over the original {isStack ? 'stack' : 'volume'}. The archive is checked first; if it is damaged, nothing is changed.
-        </div>
+        <p class="warn" role="note">
+          This restores over the original {isStack ? 'stack' : 'volume'}. If the archive is damaged, nothing is changed.
+        </p>
       {/if}
-      <div>
-        <label for="restore-confirm" class="block text-xs font-medium text-[var(--fg-muted)] mb-1.5">Type <span class="font-mono">{target.trim()}</span> to confirm</label>
-        <input id="restore-confirm" type="text" class="dm-input text-sm font-mono" bind:value={confirmText} placeholder={target.trim()} />
+      <div class="dm-field">
+        <label for="rs-confirm">Type <span class="dm-mono">{target.trim()}</span> to confirm</label>
+        <input id="rs-confirm" type="text" class="dm-filter dm-mono" bind:value={confirmText} placeholder={target.trim()} autocomplete="off" />
       </div>
+      <p class="ok"><ShieldCheck size={14} /> The archive is checked against its checksum before anything is extracted.</p>
     </div>
   {/if}
   {#snippet footer()}
     <Button variant="secondary" onclick={onclose}>Cancel</Button>
-    <Button variant="danger" onclick={submit} disabled={!canSubmit}>
-      <Undo2 class="w-4 h-4" /> {busy ? 'Restoring…' : 'Restore'}
+    <Button variant="danger" onclick={submit} disabled={!canSubmit} loading={busy}>
+      <Undo2 size={14} /> {inPlace && mode === 'replace' ? 'Replace and restore' : 'Restore'}
     </Button>
   {/snippet}
 </Modal>
+
+<style>
+  .rs { display: flex; flex-direction: column; gap: 14px; }
+  fieldset { border: 0; padding: 0; margin: 0; gap: 6px; }
+  legend { font-size: 12px; color: var(--muted); font-weight: 500; margin-bottom: 4px; }
+  .opt { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r); cursor: pointer; font-size: var(--fs-sm); }
+  .opt.on { border-color: var(--accent); background: var(--accent-soft); }
+  .opt input { margin-top: 3px; }
+  .warn { margin: 0; padding: 8px 10px; border-radius: var(--r); font-size: var(--fs-sm); color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+  .ok { margin: 0; display: flex; gap: 6px; align-items: center; color: var(--subtle); font-size: var(--fs-sm); }
+  .ok :global(svg) { color: var(--ok); flex: none; }
+</style>

@@ -6,11 +6,11 @@
   // a `save` callback, the wizard packages the final BackupJobInput.
   import { api, ApiError, type BackupJob, type BackupJobInput, type BackupSource, type BackupHook, type BackupTarget } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
-  import { Eyebrow } from '$lib/components/editorial';
+  import { fmtBytes } from '$lib/format';
   import WizardShell from './_WizardShell.svelte';
   import {
-    LayoutDashboard, Layers, HardDrive, Lock, Clock, Database,
-    RefreshCw, Check
+    LayoutDashboard, Layers, HardDrive, Lock, Clock,
+    Check
   } from 'lucide-svelte';
 
   interface Props {
@@ -136,7 +136,7 @@
       keepN = 14;
       keepDays = 30;
       pickedHooks = new Set();
-      preTargetId = targets[0]?.id ?? -1;
+      selectPreTarget(targets[0]?.id ?? -1);
     }
     loadResources();
   });
@@ -274,7 +274,6 @@
 
 <WizardShell
   {open}
-  eyebrow={editing ? 'Backups · edit job' : 'Backups · new job'}
   title={editing ? 'Edit backup job' : 'Schedule a new backup.'}
   subtitle="A job picks one source, runs on a schedule, writes to one target."
   steps={STEPS}
@@ -449,7 +448,7 @@
                 <span class="wiz-target-pick-fill">
                   <span class="wiz-target-pick-bar"><span class="wiz-target-pick-bar-fill" style="width: {usedPct}%"></span></span>
                   <span class="font-mono wiz-target-pick-free">
-                    {(t.free_bytes / 1024 / 1024 / 1024).toFixed(1)} GB free
+                    {fmtBytes(t.free_bytes)} free
                   </span>
                 </span>
               {/if}

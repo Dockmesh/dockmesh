@@ -1,74 +1,76 @@
 <script lang="ts">
-  // Rules tab — alert rules as Editorial cards with severity-coded
-  // left border, sentence-style condition display, channels-used pills,
-  // and per-row actions (mute / unmute / duplicate / enable-toggle / delete).
   import { api, ApiError, type AlertRule, type NotificationChannel } from '$lib/api';
-  import { describeRule, fmtDuration, kindOf, ruleToInput } from './ruleKinds';
+  import { appliesTo, kindLabel, kindOf, ruleSentence, ruleToInput, sevTone } from './ruleKinds';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
-  import { Eyebrow } from '$lib/components/editorial';
-  import { Skeleton } from '$lib/components/ui';
-  import {
-    Plus, Trash2, Edit2, Copy, BellRing, BellOff, Power, PowerOff, BellRing as BellOn,
-  } from 'lucide-svelte';
+  import { EmptyState, Skeleton, StatusChip, Switch } from '$lib/components/ui';
+  import Menu from '$lib/components/ui/Menu.svelte';
+  import { allowed } from '$lib/rbac.svelte';
+  import { BellRing, Plus } from 'lucide-svelte';
 
   interface Props {
     rules: AlertRule[];
     channels: NotificationChannel[];
     loading: boolean;
+    hostName: (id: string) => string;
     onEdit: (r: AlertRule) => void;
     onCreate: () => void;
     onReload: () => Promise<void>;
   }
 
-  let { rules, channels, loading, onEdit, onCreate, onReload }: Props = $props();
+  let { rules, channels, loading, hostName, onEdit, onCreate, onReload }: Props = $props();
+  const canCreate = $derived(allowed('alerts.create'));
+  const canUpdate = $derived(allowed('alerts.update'));
+  const canDelete = $derived(allowed('alerts.delete'));
 
-  // Sort: firing first, then enabled, then by name.
+  const COLS = '14px 84px minmax(170px, 1.2fr) minmax(220px, 1.6fr) minmax(140px, 1fr) minmax(90px, 0.7fr) 96px 44px 36px';
+
+  let filter = $state('');
+
+  // Firing first, then enabled, then by name.
   const sortedRules = $derived(
-    [...rules].sort((a, b) => {
-      const aFiring = a.firing_since ? 0 : 1;
-      const bFiring = b.firing_since ? 0 : 1;
-      if (aFiring !== bFiring) return aFiring - bFiring;
-      const aEnabled = a.enabled ? 0 : 1;
-      const bEnabled = b.enabled ? 0 : 1;
-      if (aEnabled !== bEnabled) return aEnabled - bEnabled;
-      return a.name.localeCompare(b.name);
-    }),
+    [...rules]
+      .filter((r) => {
+        const q = filter.trim().toLowerCase();
+        if (!q) return true;
+        return r.name.toLowerCase().includes(q) || ruleSentence(r, hostName).toLowerCase().includes(q);
+      })
+      .sort((a, b) => {
+        const f = (a.firing_since ? 0 : 1) - (b.firing_since ? 0 : 1);
+        if (f) return f;
+        const e = (a.enabled ? 0 : 1) - (b.enabled ? 0 : 1);
+        if (e) return e;
+        return a.name.localeCompare(b.name);
+      })
   );
 
-  function channelName(id: number): string {
-    return channels.find((c) => c.id === id)?.name ?? `#${id}`;
+  function dotTone(r: AlertRule): string {
+    if (!r.enabled) return '';
+    if (r.firing_since) return 'bad';
+    return 'ok';
   }
-  function channelType(id: number): string {
-    return channels.find((c) => c.id === id)?.type ?? '';
-  }
-
   function isMuted(r: AlertRule): boolean {
     return !!r.muted_until && new Date(r.muted_until) > new Date();
   }
-
-  function metricLabel(m: string): string {
-    if (m === 'cpu_percent') return 'CPU %';
-    if (m === 'mem_percent') return 'Memory %';
-    return m;
+  function channelNames(r: AlertRule): string {
+    return (r.channel_ids ?? []).map((id) => channels.find((c) => c.id === id)?.name ?? `#${id}`).join(', ');
   }
-  function opLabel(op: string): string {
-    if (op === 'gt') return '>';
-    if (op === 'lt') return '<';
-    return op;
-  }
-  function fmtRelTime(ts?: string): string {
+  function fmtRel(ts?: string): string {
     if (!ts) return 'never';
     const secs = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
     if (secs < 60) return 'just now';
-    if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-    if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
-    return `${Math.floor(secs / 86400)}d ago`;
+    if (secs < 3600) return `${Math.floor(secs / 60)} min ago`;
+    if (secs < 86400) return `${Math.floor(secs / 3600)} h ago`;
+    return `${Math.floor(secs / 86400)} d ago`;
+  }
+  function capital(s: string): string {
+    return s ? s[0].toUpperCase() + s.slice(1) : s;
   }
 
-  async function toggleEnabled(r: AlertRule) {
+  async function update(r: AlertRule, patch: Partial<ReturnType<typeof ruleToInput>>, ok?: string) {
     try {
-      await api.alerts.updateRule(r.id, { ...ruleToInput(r), enabled: !r.enabled });
+      await api.alerts.updateRule(r.id, { ...ruleToInput(r), ...patch });
+      if (ok) toast.success(ok, r.name);
       await onReload();
     } catch (err) {
       toast.error('Failed', err instanceof ApiError ? err.message : undefined);
@@ -86,34 +88,17 @@
     }
   }
 
-  async function mute(r: AlertRule, hours: number) {
-    try {
-      const until = new Date(Date.now() + hours * 3600000).toISOString();
-      await api.alerts.updateRule(r.id, { ...ruleToInput(r), muted_until: until });
-      toast.success(`Muted for ${hours}h`, r.name);
-      await onReload();
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
-  async function unmute(r: AlertRule) {
-    try {
-      await api.alerts.updateRule(r.id, { ...ruleToInput(r), muted_until: '' });
-      toast.success('Unmuted', r.name);
-      await onReload();
-    } catch (err) {
-      toast.error('Failed', err instanceof ApiError ? err.message : undefined);
-    }
-  }
-
   async function deleteRule(r: AlertRule) {
-    if (!(await confirm.ask({
-      title: 'Delete alert rule',
-      message: `Delete rule "${r.name}"?`,
-      body: 'Cannot be undone. Already-fired notifications stay in history.',
-      confirmLabel: 'Delete', danger: true,
-    }))) return;
+    if (
+      !(await confirm.ask({
+        title: 'Delete alert rule',
+        message: `Delete rule "${r.name}"?`,
+        body: 'Cannot be undone. Alerts it already raised stay in the history.',
+        confirmLabel: 'Delete',
+        danger: true
+      }))
+    )
+      return;
     try {
       await api.alerts.deleteRule(r.id);
       toast.success('Deleted', r.name);
@@ -124,440 +109,99 @@
   }
 </script>
 
-<div class="rt">
-  <div class="rt-toolbar">
-    <span class="rt-meta">
-      {rules.length} rule{rules.length === 1 ? '' : 's'}
-    </span>
-    <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={onCreate}>
-      <Plus size={12} strokeWidth={1.5} /> New rule
-    </button>
+{#if loading && rules.length === 0}
+  <div class="dm-tbl">
+    {#each Array(4) as _, i (i)}
+      <div class="dm-tr" style="grid-template-columns: 1fr"><Skeleton width="50%" height="0.9rem" /></div>
+    {/each}
   </div>
-
-  {#if loading && rules.length === 0}
-    <Skeleton width="100%" height="6rem" />
-  {:else if rules.length === 0}
-    <div class="rt-empty">
-      <BellRing size={20} strokeWidth={1.4} />
-      <p class="rt-empty-title">No alert rules yet</p>
-      <p class="ed-subtitle rt-empty-blurb">
-        Create a rule to watch container metrics and events, hosts, disks, backups or certificates and notify a channel.
-      </p>
-      <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={onCreate}>
-        <Plus size={12} strokeWidth={1.5} /> First rule
-      </button>
+{:else if rules.length === 0}
+  <EmptyState
+    icon={BellRing}
+    title="No alert rules yet"
+    description="A rule watches container metrics and events, hosts, disks, backups or certificates and notifies a channel."
+  >
+    {#snippet action()}
+      {#if canCreate}<button type="button" class="dm-btn dm-btn-primary" onclick={onCreate}><Plus size={14} strokeWidth={2} /> New rule</button>{/if}
+    {/snippet}
+  </EmptyState>
+{:else}
+  <div class="dm-toolbar">
+    <input type="search" class="dm-filter rt-search" placeholder="Filter rules…" aria-label="Filter rules" bind:value={filter} />
+  </div>
+  <div class="dm-tbl" role="table" aria-label="Alert rules">
+    <div class="dm-tr dm-th" role="row" style="grid-template-columns: {COLS}">
+      <span role="columnheader"></span>
+      <span role="columnheader">Severity</span>
+      <span role="columnheader">Rule</span>
+      <span role="columnheader">Fires when</span>
+      <span role="columnheader">Applies to</span>
+      <span role="columnheader">Channels</span>
+      <span role="columnheader">Last fired</span>
+      <span role="columnheader">On</span>
+      <span role="columnheader"></span>
     </div>
-  {:else}
-    <div class="rt-list">
-      {#each sortedRules as r (r.id)}
-        {@const muted = isMuted(r)}
-        {@const firing = !!r.firing_since}
-        <article
-          class="rt-card"
-          data-severity={r.severity || 'warning'}
-          class:rt-card-firing={firing}
-          class:rt-card-disabled={!r.enabled}
-        >
-          <div class="rt-card-main">
-            <div class="rt-card-head">
-              <span class="rt-sev-badge" data-sev={r.severity || 'warning'}>
-                {r.severity || 'warning'}
-              </span>
-              <span class="rt-name">{r.name}</span>
-              {#if firing}
-                <span class="rt-pill rt-pill-fire">
-                  <span class="rt-pill-dot"></span>firing
-                </span>
-              {/if}
-              {#if !r.enabled}
-                <span class="rt-pill rt-pill-neutral">
-                  <span class="rt-pill-dot"></span>paused
-                </span>
-              {/if}
-              {#if muted}
-                <span class="rt-pill rt-pill-neutral">
-                  <span class="rt-pill-dot"></span>muted
-                </span>
-              {/if}
-              {#if r.builtin}
-                <span class="rt-pill rt-pill-neutral">
-                  <span class="rt-pill-dot"></span>built-in
-                </span>
-              {/if}
-            </div>
-
-            <div class="rt-card-condition">
-              <span class="rt-cond-word">fire when</span>
-              {#if kindOf(r) === 'metric'}
-                <span class="rt-cond-chip">{metricLabel(r.metric)}</span>
-                <span class="rt-cond-op">{opLabel(r.operator)}</span>
-                <span class="rt-cond-chip">{r.threshold}%</span>
-                {#if r.duration_seconds > 0}
-                  <span class="rt-cond-word">for</span>
-                  <span class="rt-cond-chip">{fmtDuration(r.duration_seconds)}</span>
-                {/if}
-              {:else}
-                <span class="rt-cond-word">{describeRule(r)}</span>
-              {/if}
-            </div>
-
-            <div class="rt-card-meta">
-              <span class="rt-meta-item">filter: <em>{r.container_filter}</em></span>
-              {#if r.cooldown_seconds}
-                <span class="rt-meta-item">cooldown: {fmtDuration(r.cooldown_seconds)}</span>
-              {/if}
-              <span class="rt-meta-item">last fired: {fmtRelTime(r.last_triggered_at)}</span>
-            </div>
-          </div>
-
-          <div class="rt-card-channels">
-            {#if (r.channel_ids ?? []).length === 0}
-              <span class="rt-no-channels">no channels</span>
-            {:else}
-              {#each (r.channel_ids ?? []).slice(0, 3) as cid}
-                <span class="rt-channel-pill">
-                  <span class="rt-channel-type">{channelType(cid)}</span>
-                  <span class="rt-channel-name">{channelName(cid)}</span>
-                </span>
-              {/each}
-              {#if (r.channel_ids ?? []).length > 3}
-                <span class="rt-channel-more">+{(r.channel_ids ?? []).length - 3}</span>
-              {/if}
-            {/if}
-          </div>
-
-          <div class="rt-card-actions">
-            <button
-              type="button"
-              class="rt-icon-btn"
-              onclick={() => toggleEnabled(r)}
-              title={r.enabled ? 'Pause' : 'Resume'}
-              aria-label={r.enabled ? 'Pause' : 'Resume'}
-            >
-              {#if r.enabled}
-                <PowerOff size={13} strokeWidth={1.7} />
-              {:else}
-                <Power size={13} strokeWidth={1.7} />
-              {/if}
-            </button>
-            {#if muted}
-              <button
-                type="button"
-                class="rt-icon-btn rt-icon-warn"
-                onclick={() => unmute(r)}
-                title="Unmute"
-                aria-label="Unmute"
-              >
-                <BellOn size={13} strokeWidth={1.7} />
-              </button>
-            {:else}
-              <button
-                type="button"
-                class="rt-icon-btn"
-                onclick={() => mute(r, 1)}
-                title="Mute 1h"
-                aria-label="Mute 1h"
-              >
-                <BellOff size={13} strokeWidth={1.7} />
-              </button>
-            {/if}
-            <button
-              type="button"
-              class="rt-icon-btn"
-              onclick={() => duplicate(r)}
-              title="Duplicate"
-              aria-label="Duplicate"
-            >
-              <Copy size={13} strokeWidth={1.7} />
-            </button>
-            <button
-              type="button"
-              class="rt-icon-btn"
-              onclick={() => onEdit(r)}
-              title="Edit"
-              aria-label="Edit"
-            >
-              <Edit2 size={13} strokeWidth={1.7} />
-            </button>
-            {#if !r.builtin}
-              <button
-                type="button"
-                class="rt-icon-btn rt-icon-danger"
-                onclick={() => deleteRule(r)}
-                title="Delete"
-                aria-label="Delete"
-              >
-                <Trash2 size={13} strokeWidth={1.7} />
-              </button>
-            {/if}
-          </div>
-        </article>
-      {/each}
-    </div>
-  {/if}
-</div>
+    {#each sortedRules as r (r.id)}
+      {@const muted = isMuted(r)}
+      {@const sentence = capital(ruleSentence(r, hostName))}
+      {@const scope = appliesTo(r, hostName)}
+      {@const chs = channelNames(r)}
+      <div class="dm-tr" class:rt-off={!r.enabled} role="row" style="grid-template-columns: {COLS}">
+        <span role="cell"><span class="dm-dot {dotTone(r)}" title={r.firing_since ? `Firing since ${new Date(r.firing_since).toLocaleString()}` : r.enabled ? 'Quiet' : 'Paused'}></span></span>
+        <span role="cell"><StatusChip tone={sevTone(r.severity || 'warning')} label={r.severity || 'warning'} /></span>
+        <span role="cell" class="dm-nm">
+          {#if canUpdate}<button type="button" class="rt-name dm-t" title={r.name} onclick={() => onEdit(r)}>{r.name}</button>{:else}<span class="dm-t" title={r.name}>{r.name}</span>{/if}
+          <small>
+            {r.builtin ? 'built-in' : 'custom'} · {kindLabel(kindOf(r))}{#if r.firing_since}<span class="rt-fire"> · firing</span>{/if}{#if muted} · muted until {new Date(r.muted_until!).toLocaleString()}{/if}
+          </small>
+        </span>
+        <span role="cell" class="dm-dim" title={sentence}>{sentence}</span>
+        <span role="cell" class="dm-dim" title={scope}>{scope}</span>
+        <span role="cell" class="dm-num" class:dm-dim={!chs} title={chs || 'No channel: fires are only recorded in the history'}>
+          {(r.channel_ids ?? []).length ? `${(r.channel_ids ?? []).length} · ${chs}` : 'none'}
+        </span>
+        <span role="cell" class="dm-num dm-dim" title={r.last_triggered_at ? new Date(r.last_triggered_at).toLocaleString() : ''}>{fmtRel(r.last_triggered_at)}</span>
+        <span role="cell" class="dm-tr-menu">
+          <Switch checked={r.enabled} disabled={!canUpdate} label={r.enabled ? `Pause ${r.name}` : `Resume ${r.name}`} hideLabel onchange={(v) => update(r, { enabled: v })} />
+        </span>
+        <span role="cell" class="dm-tr-menu">
+          {#if canUpdate || canCreate || (canDelete && !r.builtin)}
+            <Menu
+              label="Actions for {r.name}"
+              items={[
+                ...(canUpdate ? [{ label: 'Edit…', onclick: () => onEdit(r) }] : []),
+                ...(canCreate ? [{ label: 'Duplicate', onclick: () => duplicate(r) }] : []),
+                ...(!canUpdate
+                  ? []
+                  : muted
+                    ? [{ label: 'Unmute', onclick: () => update(r, { muted_until: '' }, 'Unmuted') }]
+                    : [{ label: 'Mute for 1 hour', onclick: () => update(r, { muted_until: new Date(Date.now() + 3600000).toISOString() }, 'Muted for 1 h') }]),
+                ...(r.builtin || !canDelete ? [] : [{ separator: true }, { label: 'Delete…', danger: true, onclick: () => deleteRule(r) }])
+              ]}
+            />
+          {/if}
+        </span>
+      </div>
+    {:else}
+      <div class="dm-empty">No rules match “{filter}”.</div>
+    {/each}
+  </div>
+  <p class="dm-sub">Where alerts are sent is set up once under Channels. A paused rule is not evaluated; a muted rule is evaluated and recorded but notifies nobody.</p>
+{/if}
 
 <style>
-  .rt {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
-
-  .rt-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-  .rt-meta {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg-subtle);
-  }
-
-  .rt-empty {
-    padding: 44px 24px;
-    text-align: center;
-    border: 1px dashed var(--border);
-    border-radius: 6px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    color: var(--fg-subtle);
-  }
-  .rt-empty-title {
-    margin: 8px 0 0;
-    font-size: 16px;
-    color: var(--fg);
-    font-weight: 500;
-  }
-  .rt-empty-blurb { margin: 4px 0 12px; max-width: 50ch; }
-
-  .rt-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  /* Cards */
-  .rt-card {
-    padding: 14px 16px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-left-width: 3px;
-    border-radius: 5px;
-    display: grid;
-    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.2fr) auto;
-    gap: 16px;
-    align-items: center;
-  }
-  .rt-card[data-severity="critical"] {
-    border-left-color: var(--color-danger-500);
-  }
-  .rt-card[data-severity="warning"] {
-    border-left-color: var(--color-warning-500);
-  }
-  .rt-card[data-severity="info"] {
-    border-left-color: var(--accent);
-  }
-  .rt-card-firing {
-    background: color-mix(in srgb, var(--color-danger-500) 5%, var(--surface));
-    border-color: color-mix(in srgb, var(--color-danger-500) 40%, var(--border));
-    border-left-color: var(--color-danger-500);
-  }
-  .rt-card-disabled { opacity: 0.6; }
-
-  .rt-card-main { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-
-  .rt-card-head {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    flex-wrap: wrap;
-  }
-  .rt-sev-badge {
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 1px 6px;
-    border-radius: 999px;
-    border: 1px solid var(--border-subtle);
-  }
-  .rt-sev-badge[data-sev="critical"] {
-    color: var(--color-danger-400);
-    border-color: color-mix(in srgb, var(--color-danger-500) 45%, var(--border));
-  }
-  .rt-sev-badge[data-sev="warning"] {
-    color: var(--color-warning-400);
-    border-color: color-mix(in srgb, var(--color-warning-500) 45%, var(--border));
-  }
-  .rt-sev-badge[data-sev="info"] {
-    color: var(--accent-fg);
-    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  }
+  .rt-search { width: 260px; }
   .rt-name {
-    font-size: 13.5px;
-    font-weight: 500;
-    color: var(--fg);
-  }
-
-  .rt-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 1px 6px;
-    border-radius: 999px;
-    border: 1px solid var(--border-subtle);
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    letter-spacing: 0.04em;
-    color: var(--fg-subtle);
-  }
-  .rt-pill-dot {
-    width: 4px;
-    height: 4px;
-    border-radius: 999px;
-    background: currentColor;
-  }
-  .rt-pill-fire {
-    color: var(--color-danger-400);
-    border-color: color-mix(in srgb, var(--color-danger-500) 45%, var(--border));
-  }
-  .rt-pill-fire .rt-pill-dot { animation: rt-blink 1.2s infinite; }
-  @keyframes rt-blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
-  }
-
-  /* Condition sentence */
-  .rt-card-condition {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--fg);
-  }
-  .rt-cond-word { color: var(--fg-subtle); }
-  .rt-cond-chip {
-    padding: 1px 6px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-subtle);
-    border-radius: 3px;
-    color: var(--fg);
-  }
-  .rt-cond-op { color: var(--fg-subtle); font-weight: 500; }
-
-  .rt-card-meta {
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-  }
-  .rt-meta-item em {
-    color: var(--fg-muted);
-    font-style: normal;
-  }
-
-  /* Channels column */
-  .rt-card-channels {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    align-items: center;
-    align-self: center;
-    min-width: 0;
-  }
-  .rt-no-channels {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-  }
-  .rt-channel-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 6px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-subtle);
-    border-radius: 3px;
-    font-size: 10.5px;
-    color: var(--fg-muted);
-  }
-  .rt-channel-type {
-    font-family: var(--font-mono);
-    font-size: 9px;
-    color: var(--fg-subtle);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .rt-channel-name {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
+    all: unset;
+    cursor: pointer;
+    display: block;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 110px;
   }
-  .rt-channel-more {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--fg-subtle);
-  }
-
-  /* Actions */
-  .rt-card-actions {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    align-self: center;
-  }
-  .rt-icon-btn {
-    width: 28px;
-    height: 28px;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    color: var(--fg-muted);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    transition: color 120ms, background 120ms, border-color 120ms;
-  }
-  .rt-icon-btn:hover {
-    color: var(--fg);
-    background: var(--surface-hover);
-    border-color: var(--border);
-  }
-  .rt-icon-warn {
-    color: var(--color-warning-400);
-    background: color-mix(in srgb, var(--color-warning-500) 8%, transparent);
-    border-color: color-mix(in srgb, var(--color-warning-500) 25%, transparent);
-  }
-  .rt-icon-warn:hover {
-    color: var(--color-warning-400);
-    background: color-mix(in srgb, var(--color-warning-500) 16%, transparent);
-    border-color: color-mix(in srgb, var(--color-warning-500) 40%, transparent);
-  }
-  .rt-icon-danger { color: var(--color-danger-400); }
-  .rt-icon-danger:hover {
-    color: var(--color-danger-400);
-    background: color-mix(in srgb, var(--color-danger-500) 12%, transparent);
-    border-color: color-mix(in srgb, var(--color-danger-500) 35%, transparent);
-  }
-
-  @media (max-width: 880px) {
-    .rt-card {
-      grid-template-columns: 1fr;
-      gap: 10px;
-    }
-  }
+  .rt-name:hover { text-decoration: underline; }
+  .rt-name:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .rt-fire { color: var(--bad); font-weight: 600; }
+  .rt-off .dm-nm .rt-name { color: var(--muted); }
+  p.dm-sub { margin: 0; }
 </style>

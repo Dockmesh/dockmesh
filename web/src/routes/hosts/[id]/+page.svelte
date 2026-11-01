@@ -1,12 +1,9 @@
 <script lang="ts">
-  // Host Detail — editorial rebuild based on `Dockmesh Wizard (6)/
-  // host-detail.jsx`. Header strip + 6 tabs (Overview / Containers /
-  // Stacks / Migrations / Tags / Maintenance) + drain modal preview.
-  // Local-host edge case: id === 'local' uses system.info instead of
-  // agents.get; many actions (drain/upgrade/revoke) are disabled.
-  // See project_hosts_open_punch_list.md for deferred features
-  // (per-container metrics, host-affinity panel).
   import { untrack } from 'svelte';
+  import { tagProblem } from '../_host';
+  import { urlTab } from '$lib/urlTab.svelte';
+  import { fmtAgo, fmtBytes, fmtMem } from '$lib/format';
+  const fmtAgoNever = (iso?: string) => fmtAgo(iso, 'never');
   import { latest } from '$lib/latest';
   import { fmtVersion } from '$lib/version';
   import { page } from '$app/state';
@@ -17,36 +14,27 @@
     type DrainPlan
   } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
-  import { Skeleton, EmptyState } from '$lib/components/ui';
-  import { Eyebrow, EditorialModal } from '$lib/components/editorial';
+  import { Skeleton, EmptyState, StatBar, StatusChip, Tabs, TagPill, Modal, LiveIndicator } from '$lib/components/ui';
+  import type { Tone } from '$lib/components/ui/StatusChip.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
+  import { hosts } from '$lib/stores/host.svelte';
   import MountTable from '$lib/components/MountTable.svelte';
-  import {
-    ChevronLeft, RefreshCw, ArrowDownToLine, Trash2, Terminal,
-    X, Check, AlertTriangle, Info
-  } from 'lucide-svelte';
+  import { ArrowDownToLine, RefreshCw, Trash2, X, AlertTriangle } from 'lucide-svelte';
 
-  const id = $derived(page.params.id);
+  const id = $derived(page.params.id ?? '');
   const isLocal = $derived(id === 'local');
-  const tabFromQuery = $derived((page.url.searchParams.get('tab') ?? 'overview') as TabId);
 
   type TabId = 'overview' | 'containers' | 'stacks' | 'migrations' | 'tags' | 'maintenance';
-  let tab = $state<TabId>('overview');
-  $effect(() => {
-    const t = tabFromQuery;
-    if (['overview', 'containers', 'stacks', 'migrations', 'tags', 'maintenance'].includes(t)) {
-      tab = t;
-    }
-  });
+  const TAB_IDS: TabId[] = ['overview', 'containers', 'stacks', 'migrations', 'tags', 'maintenance'];
+  const openTab = urlTab(TAB_IDS, 'overview');
+  const tab = $derived(openTab.current);
 
-  // Host data
   let agent = $state<Agent | null>(null);
   let localName = $state('local');
   let metrics = $state<SystemMetrics | null>(null);
-  let metricsHistory = $state<SystemMetrics[]>([]);
   let containers = $state<any[]>([]);
   let stacks = $state<StackListEntry[]>([]);
   let migrations = $state<Migration[]>([]);
@@ -54,32 +42,30 @@
   let allFleetTags = $state<string[]>([]);
   let upgradePolicyVersion = $state<string>('');
   let loading = $state(true);
+  let refreshing = $state(false);
+  let lastLoaded = $state<number | null>(null);
   let loadError = $state<string | null>(null);
 
-  // Tags tab state
   let tagsDraft = $state<string[]>([]);
   let tagInput = $state('');
   let tagsBusy = $state(false);
 
-  // Drain modal
   let showDrain = $state(false);
   let drainPlan = $state<DrainPlan | null>(null);
   let drainLoading = $state(false);
   let drainBusy = $state(false);
 
-  // Upgrade
   let upgradeBusy = $state(false);
   let revokeBusy = $state(false);
 
   const nextLoad = latest();
   async function loadAll() {
     const current = nextLoad();
-    loading = true;
+    refreshing = true;
     loadError = null;
     try {
       if (isLocal) {
-        const [info, m, ctrRes, stk, hostList, polRes] = await Promise.all([
-          api.system.info().catch(() => null),
+        const [m, ctrRes, stk, hostList, polRes] = await Promise.all([
           api.system.metrics('local').catch(() => null),
           api.containers.list(false, 'local').catch(() => []),
           api.stacks.list().catch(() => []),
@@ -87,10 +73,9 @@
           api.agents.getUpgradePolicy().catch(() => null)
         ]);
         if (!current()) return;
-        const local = hostList.find((h) => h.kind === 'local');
-        localName = local?.name ?? 'local';
+        localName = hostList.find((h) => h.kind === 'local')?.name ?? 'local';
         agent = null;
-        if (m && !('hosts' in m)) metrics = m;
+        if (m && !('hosts' in m)) metrics = m as SystemMetrics;
         containers = Array.isArray(ctrRes) ? ctrRes : [];
         stacks = stk;
         upgradePolicyVersion = polRes?.server_version ?? '';
@@ -104,30 +89,31 @@
         ]);
         if (!current()) return;
         agent = a;
-        if (m && !('hosts' in m)) metrics = m;
+        if (m && !('hosts' in m)) metrics = m as SystemMetrics;
         containers = Array.isArray(ctrRes) ? ctrRes : [];
         stacks = stk;
         upgradePolicyVersion = polRes?.server_version ?? '';
       }
-      // Tags + fleet tags + migrations regardless of local/remote.
       const [t, allT, migRes] = await Promise.all([
         api.hosts.listTags(id).catch(() => []),
         api.hosts.allTags().catch(() => []),
         api.migrations.list(50).catch(() => [])
       ]);
       if (!current()) return;
+      // A tag edit in progress survives the 10 s refresh.
+      const dirty = tagsDraft.join(',') !== tags.join(',');
       tags = t;
-      tagsDraft = [...t];
+      if (!dirty) tagsDraft = [...t];
       allFleetTags = allT;
       migrations = migRes.filter((m) => m.source_host_id === id || m.target_host_id === id);
-      // Track metric history for sparklines (rolling 16 samples).
-      if (metrics) {
-        metricsHistory = [...metricsHistory.slice(-15), metrics];
-      }
+      lastLoaded = Date.now();
     } catch (err) {
       if (current()) loadError = err instanceof ApiError ? err.message : 'Load failed';
     } finally {
-      if (current()) loading = false;
+      if (current()) {
+        loading = false;
+        refreshing = false;
+      }
     }
   }
 
@@ -136,11 +122,11 @@
     untrack(() => {
       agent = null;
       metrics = null;
-      metricsHistory = [];
       containers = [];
       migrations = [];
       tags = [];
       tagsDraft = [];
+      loading = true;
       loadAll();
     });
     const timer = setInterval(() => {
@@ -149,13 +135,11 @@
     return () => clearInterval(timer);
   });
 
-  // ─── Stacks deployed on this host ─────────────────────────────────────
-  // We don't have a "deployed-on" field on StackListEntry — Deployments
-  // store maps stack→host. Filter by name matching containers' compose
-  // labels as a proxy. For local, every stack is "deployed here".
+  // Stacks have no deployed-on field; remote hosts are matched through the
+  // compose project label of their containers.
   const stacksOnHost = $derived.by<StackListEntry[]>(() => {
-    if (isLocal) return stacks; // simple — local hosts everything by default
-    // Use container labels to find which stacks are running on this host.
+    // Stacks not deployed anywhere yet live in the server's stack folder.
+    if (isLocal) return stacks.filter((s) => !s.deployment || s.deployment.host_id === 'local' || s.deployment.host_id === '');
     const projects = new Set<string>();
     for (const c of containers) {
       const proj = c?.Labels?.['com.docker.compose.project'];
@@ -164,45 +148,24 @@
     return stacks.filter((s) => projects.has(s.name));
   });
 
-  // ─── Helpers ──────────────────────────────────────────────────────────
-  function fmtAgo(iso?: string): string {
-    if (!iso) return 'never';
-    const d = (Date.now() - new Date(iso).getTime()) / 1000;
-    if (d < 60) return `${Math.round(d)}s ago`;
-    if (d < 3600) return `${Math.round(d / 60)}m ago`;
-    if (d < 86400) return `${Math.round(d / 3600)}h ago`;
-    return `${Math.round(d / 86400)}d ago`;
+  function fmtDur(sec: number): string {
+    if (sec < 3600) return `${Math.max(1, Math.round(sec / 60))} min`;
+    if (sec < 86400) return `${Math.round(sec / 3600)} h`;
+    return `${Math.floor(sec / 86400)} d ${Math.floor((sec % 86400) / 3600)} h`;
   }
   function fmtUptime(iso?: string): string {
     if (!iso) return '—';
-    const d = (Date.now() - new Date(iso).getTime()) / 1000;
-    if (d < 60) return `${Math.round(d)}s`;
-    if (d < 3600) return `${Math.round(d / 60)}m`;
-    if (d < 86400) return `${Math.round(d / 3600)}h`;
-    return `${Math.round(d / 86400)}d`;
+    return fmtDur((Date.now() - new Date(iso).getTime()) / 1000);
   }
   function fmtDate(iso?: string): string {
-    if (!iso) return '—';
-    return iso.slice(0, 10);
+    return iso ? iso.slice(0, 10) : '—';
   }
-  function statusDot(s: string): string {
-    if (s === 'online') return 'ok-dot';
-    if (s === 'offline') return 'fail-dot';
-    if (s === 'pending') return 'warn-dot';
-    return 'neutral-dot';
-  }
-  function gb(bytes: number): string {
-    return (bytes / 1024 / 1024 / 1024).toFixed(1);
-  }
-  function selectTab(t: TabId) {
-    tab = t;
-    const u = new URL(window.location.href);
-    u.searchParams.set('tab', t);
-    window.history.replaceState({}, '', u.toString());
+  function selectTab(t: string) {
+    openTab.set(t);
   }
 
-  // Header derived
   const status = $derived(isLocal ? 'online' : (agent?.status ?? 'offline'));
+  const statusTone = $derived<Tone>(status === 'online' ? 'ok' : status === 'pending' ? 'warn' : status === 'offline' ? 'bad' : 'off');
   const hostname = $derived(isLocal ? 'localhost' : (agent?.hostname ?? ''));
   const hostKind = $derived(isLocal ? 'local' : 'agent');
   const hostName = $derived(isLocal ? localName : (agent?.name ?? id));
@@ -216,12 +179,51 @@
     !isLocal && !!agent?.version && !!upgradePolicyVersion && agent.version !== upgradePolicyVersion
   );
 
-  // ─── Tag actions ──────────────────────────────────────────────────────
+  const running = $derived(containers.filter((c) => c.State === 'running').length);
+  const memPct = $derived(metrics && metrics.mem_total > 0 ? Math.round(metrics.mem_percent) : null);
+  const cpuPct = $derived(metrics ? Math.round(metrics.cpu_percent) : null);
+  const diskPct = $derived(metrics && metrics.disk_total > 0 ? Math.round(metrics.disk_percent) : null);
+  function tone(p: number | null, warnAt = 70): '' | 'warn' | 'bad' {
+    if (p == null) return '';
+    return p >= 90 ? 'bad' : p >= warnAt ? 'warn' : '';
+  }
+  const snapshot = $derived([
+    {
+      label: metrics?.docker_limited ? 'CPU · Docker limit' : 'CPU',
+      value: cpuPct != null ? `${cpuPct} %` : '—',
+      note: metrics ? `${metrics.cpu_used_cores.toFixed(2)} of ${metrics.cpu_cores.toFixed(2)} cores` : '',
+      tone: tone(cpuPct)
+    },
+    {
+      label: metrics?.docker_limited ? 'Memory · Docker limit' : 'Memory',
+      value: memPct != null ? `${memPct} %` : '—',
+      note: metrics && metrics.mem_total > 0 ? `${fmtMem(metrics.mem_used)} of ${fmtMem(metrics.mem_total)}` : 'unavailable on this host',
+      tone: tone(memPct, 80)
+    },
+    {
+      label: 'Disk',
+      value: diskPct != null ? `${diskPct} %` : '—',
+      note: metrics && metrics.disk_total > 0 ? `${fmtBytes(metrics.disk_used)} of ${fmtBytes(metrics.disk_total)}` : 'unavailable on this host',
+      tone: tone(diskPct, 80)
+    },
+    { label: 'Containers', value: `${running} / ${containers.length}`, note: 'running' },
+    { label: 'Stacks', value: stacksOnHost.length }
+  ]);
+
+  const tabs = $derived([
+    { key: 'overview', label: 'Overview' },
+    { key: 'containers', label: 'Containers', count: containers.length },
+    { key: 'stacks', label: 'Stacks', count: stacksOnHost.length },
+    { key: 'migrations', label: 'Migrations', count: migrations.length },
+    { key: 'tags', label: 'Tags', count: tags.length },
+    { key: 'maintenance', label: 'Maintenance', dot: needsUpgrade }
+  ]);
+
   function addTagDraft(t: string) {
     const v = t.trim().toLowerCase();
     if (!v || tagsDraft.includes(v)) { tagInput = ''; return; }
-    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(v)) { toast.error('Invalid tag', 'lowercase letters, digits, hyphens, 1-32 chars'); return; }
-    if (tagsDraft.length >= 20) { toast.error('Max 20 tags'); return; }
+    const problem = tagProblem(v, tagsDraft);
+    if (problem) { toast.error(problem.title, problem.detail); return; }
     tagsDraft = [...tagsDraft, v];
     tagInput = '';
   }
@@ -235,9 +237,7 @@
       toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
     } finally { tagsBusy = false; }
   }
-  function revertTags() { tagsDraft = [...tags]; }
 
-  // ─── Maintenance actions ──────────────────────────────────────────────
   async function openDrain() {
     showDrain = true;
     drainPlan = null;
@@ -267,16 +267,10 @@
       toast.error('Upgrade failed', err instanceof ApiError ? err.message : undefined);
     } finally { upgradeBusy = false; }
   }
-  // Token-reissue modal state. Populated after a successful rotate so
-  // the operator can copy the new install command in the clear, and
-  // closed by clicking the X / "Done" button.
-  let tokenModal = $state<{
-    open: boolean;
-    token: string;
-    install: string;
-    expiresAt: string;
-  }>({ open: false, token: '', install: '', expiresAt: '' });
 
+  let tokenModal = $state<{ open: boolean; token: string; install: string; expiresAt: string }>({
+    open: false, token: '', install: '', expiresAt: ''
+  });
   async function rotateToken() {
     if (isLocal) return;
     if (!(await confirm.ask({
@@ -288,15 +282,9 @@
     try {
       const data = await api.agents.rotateToken(id);
       tokenModal = { open: true, token: data.token, install: data.install_hint, expiresAt: data.token_expires_at };
-      toast.success('Token re-issued', 'New install command is shown below — paste on the agent host');
     } catch (err) {
       toast.error('Re-issue failed', err instanceof ApiError ? err.message : undefined);
     }
-  }
-
-  async function copyTokenInstall() {
-    if (!tokenModal.install) return;
-    await copyWithToast(tokenModal.install, 'Install command copied to clipboard');
   }
   async function revokeHost() {
     if (isLocal) return;
@@ -304,7 +292,7 @@
       title: `Revoke ${hostName}`,
       message: `Revoke host "${hostName}"?`,
       body: 'The agent’s certificate is invalidated. Containers running there are forgotten by Dockmesh — they keep running on the host until you stop them manually.',
-      confirmLabel: 'Revoke', danger: true
+      confirmLabel: 'Revoke', danger: true, typeToConfirm: hostName
     }))) return;
     revokeBusy = true;
     try {
@@ -316,921 +304,364 @@
     } finally { revokeBusy = false; }
   }
 
-  // ─── Sparkline helper ─────────────────────────────────────────────────
-  function sparkPoints(values: number[], max: number, w: number, h: number): string {
-    if (values.length === 0) return '';
-    const m = Math.max(max, 1);
-    return values
-      .map((v, i) => `${(i / Math.max(1, values.length - 1) * w).toFixed(1)},${(h - (v / m) * (h - 2) - 1).toFixed(1)}`)
-      .join(' ');
-  }
-  const cpuHistory = $derived(metricsHistory.map((s) => s.cpu_percent));
-  const memHistory = $derived(metricsHistory.map((s) => s.mem_percent));
-
-  const memUsedGb = $derived(metrics ? (metrics.mem_used / 1024 / 1024 / 1024) : null);
-  const memTotalGb = $derived(metrics ? (metrics.mem_total / 1024 / 1024 / 1024) : null);
-  const memPct = $derived(metrics ? Math.round(metrics.mem_percent) : null);
-  const cpuPct = $derived(metrics ? Math.round(metrics.cpu_percent) : null);
-  const diskPct = $derived(metrics ? Math.round(metrics.disk_percent ?? 0) : null);
+  const lensIsThis = $derived(hosts.id === id);
+  const CT_COLS = '14px minmax(180px, 1.4fr) minmax(160px, 1.4fr) 110px 150px';
+  const ST_COLS = 'minmax(180px, 1.6fr) 110px 110px 120px';
+  const MG_COLS = 'minmax(160px, 1.4fr) minmax(140px, 1fr) 110px 110px 120px 110px';
 </script>
 
-<section class="ed-host-detail">
+<section class="dm-page">
   {#if loading && !agent && !isLocal}
-    <div class="dm-card" style="padding: 22px;"><Skeleton width="60%" height="2rem" /></div>
+    <Skeleton width="40%" height="1.6rem" />
+    <Skeleton width="100%" height="4rem" />
   {:else if loadError && !isLocal}
-    <div class="dm-card" style="padding: 32px;">
-      <EmptyState title="Failed to load" description={loadError} />
-    </div>
+    <EmptyState tone="error" title="Could not load this host" description={loadError}>
+      {#snippet action()}<a class="dm-btn" href="/hosts">Back to hosts</a>{/snippet}
+    </EmptyState>
   {:else}
-    <!-- Breadcrumb -->
-    <div class="ed-host-crumb">
-      <a href="/hosts" class="ed-host-crumb-link">
-        <ChevronLeft size={12} strokeWidth={1.5} /> Hosts
-      </a>
+    <div class="dm-ph">
+      <h1>{hostName}</h1>
+      <StatusChip tone={statusTone} label={status} />
+      <span class="dm-sub dm-trunc">
+        {hostKind}{hostname ? ` · ${hostname}` : ''}{!isLocal && agent?.os ? ` · ${agent.os}/${agent.arch}` : ''}{!isLocal && agent?.docker_version ? ` · Docker ${agent.docker_version}` : ''}{agent?.online_since ? ` · up ${fmtUptime(agent.online_since)}` : ''}
+      </span>
+      <span class="htags">
+        {#each tags as t (t)}<TagPill label={t} />{/each}
+        {#if allowed('hosts.tag')}
+          <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => selectTab('tags')}>{tags.length ? 'Edit' : '+ Tag'}</button>
+        {/if}
+      </span>
+      <span class="dm-sp"></span>
+      <LiveIndicator updatedAt={lastLoaded} onrefresh={loadAll} busy={refreshing} />
+      <button type="button" class="dm-btn" disabled={lensIsThis || status !== 'online'} onclick={() => hosts.set(id)} title="Filter every page by this host">
+        {lensIsThis ? 'Current lens' : 'Set as lens'}
+      </button>
+      {#if allowed('hosts.update')}
+        <button type="button" class="dm-btn" disabled={isLocal || status !== 'online'} onclick={openDrain} title={isLocal ? 'The local server runs Dockmesh itself and cannot be drained' : ''}>
+          <ArrowDownToLine size={13} strokeWidth={1.8} /> Drain…
+        </button>
+        {#if needsUpgrade}
+          <button type="button" class="dm-btn dm-btn-primary" disabled={upgradeBusy} onclick={upgradeAgent}>
+            <RefreshCw size={13} strokeWidth={1.8} /> {upgradeBusy ? 'Upgrading…' : `Upgrade to ${fmtVersion(upgradePolicyVersion)}`}
+          </button>
+        {/if}
+      {/if}
     </div>
 
-    <!-- Header -->
-    <header class="ed-host-header">
-      <div class="ed-host-header-text">
-        <div class="ed-host-name-line">
-          <span class={statusDot(status)}></span>
-          <h1 class="ed-title ed-host-title">{hostName}</h1>
-        </div>
-        <p class="ed-subtitle ed-host-subtitle">
-          {hostKind}{hostname ? ` · ${hostname}` : ''}{!isLocal && agent?.os ? ` · ${agent.os}/${agent.arch}` : ''}{!isLocal && agent?.docker_version ? ` · docker ${agent.docker_version}` : ''}{agent?.online_since ? ` · up ${fmtUptime(agent.online_since)}` : ''}
-        </p>
-        {#if tags.length > 0}
-          <div class="ed-host-tags-row">
-            {#each tags as t (t)}<span class="ed-hosts-tag-chip">{t}</span>{/each}
-          </div>
-        {/if}
-      </div>
+    <Tabs {tabs} active={tab} onchange={selectTab} label="Host sections" />
 
-      <div class="ed-host-header-actions">
-        <div class="ed-host-version-line font-mono">
-          {#if hostVersion}<span>{fmtVersion(hostVersion)}</span>{/if}
-          {#if needsUpgrade}<span class="dm-pill dm-pill-warning ed-host-version-pill">↑ {fmtVersion(upgradePolicyVersion)} avail.</span>{/if}
-        </div>
-        <div class="ed-actions">
-          <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={isLocal || status !== 'online'} onclick={openDrain} title={isLocal ? "Local server can't be drained" : ''}>
-            <ArrowDownToLine size={11} strokeWidth={1.5} /> Drain
-          </button>
-          {#if needsUpgrade}
-            <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" disabled={upgradeBusy} onclick={upgradeAgent}>
-              <RefreshCw size={11} strokeWidth={1.5} /> {upgradeBusy ? 'Upgrading…' : 'Upgrade agent'}
-            </button>
-          {/if}
-        </div>
-      </div>
-    </header>
-
-    <!-- Tab strip -->
-    <nav class="ed-host-tabs" role="tablist">
-      {#each [
-        ['overview', 'Overview', null],
-        ['containers', 'Containers', containers.length],
-        ['stacks', 'Stacks', stacksOnHost.length],
-        ['migrations', 'Migrations', migrations.length],
-        ['tags', 'Tags', tags.length],
-        ['maintenance', 'Maintenance', null]
-      ] as [tid, label, count] (tid)}
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === tid}
-          class="ed-host-tab"
-          class:active={tab === tid}
-          onclick={() => selectTab(tid as TabId)}
-        >
-          {label}
-          {#if count != null}<span class="ed-count">{count}</span>{/if}
-        </button>
-      {/each}
-    </nav>
-
-    <!-- ─── Overview ─── -->
     {#if tab === 'overview'}
-      <div class="ed-host-grid">
-        <!-- Identity card -->
-        <div class="ed-host-card ed-host-identity">
-          <div class="ed-host-card-title">Identity</div>
-          <dl class="ed-host-kv">
-            <dt>id</dt><dd class="font-mono">{id}</dd>
-            <dt>kind</dt><dd>{hostKind}</dd>
-            <dt>hostname</dt><dd class="font-mono">{hostname || '—'}</dd>
-            {#if !isLocal && agent}
-              <dt>os / arch</dt><dd class="font-mono">{agent.os ? `${agent.os}/${agent.arch}` : '—'}</dd>
-              <dt>docker</dt><dd class="font-mono">{agent.docker_version || '—'}</dd>
-              <dt>agent version</dt>
-              <dd class="font-mono">
-                {agent.version ? fmtVersion(agent.version) : '—'}
-                {#if needsUpgrade}<span class="ed-host-kv-warn">· server is on {fmtVersion(upgradePolicyVersion)}</span>
-                {:else if agent.update_recommended}<span class="ed-host-kv-warn">· agent update recommended</span>{/if}
-              </dd>
-              <dt>cert fingerprint</dt><dd class="font-mono ed-host-kv-fingerprint">{agent.cert_fingerprint || '—'}</dd>
-              <dt>cert expires</dt><dd class="font-mono">{agent.cert_expires_at ? fmtDate(agent.cert_expires_at) : '—'}</dd>
-              <dt>last seen</dt><dd class="font-mono">{fmtAgo(agent.last_seen_at)}</dd>
-              <dt>online since</dt><dd class="font-mono">{agent.online_since ? `${fmtAgo(agent.online_since)} (${fmtUptime(agent.online_since)} up)` : '—'}</dd>
-              <dt>enrolled</dt><dd class="font-mono">{fmtDate(agent.created_at)}</dd>
+      <StatBar items={snapshot} />
+      <div class="grid2">
+        <div class="col">
+          {#if metrics && (metrics.mounts?.length || metrics.mounts_unsupported)}
+            <div>
+              <h2 class="dm-h2">Disks</h2>
+              <MountTable mounts={metrics.mounts} unsupported={metrics.mounts_unsupported} />
+            </div>
+          {/if}
+          <div>
+            <h2 class="dm-h2">Stacks on this host <span class="dm-dim dm-num">{stacksOnHost.length}</span></h2>
+            {#if stacksOnHost.length === 0}
+              <div class="dm-tbl"><div class="dm-empty">{status === 'pending' ? 'The host has not connected yet.' : `No stacks run on ${hostName}.`}</div></div>
             {:else}
-              <dt>server version</dt><dd class="font-mono">{hostVersion || '—'}</dd>
-              <dt>uptime</dt><dd class="font-mono">{metrics?.uptime_seconds ? `${Math.floor(metrics.uptime_seconds / 86400)}d ${Math.floor((metrics.uptime_seconds % 86400) / 3600)}h` : '—'}</dd>
-            {/if}
-          </dl>
-        </div>
-
-        <!-- Live snapshot -->
-        <div class="ed-host-card ed-host-snapshot">
-          <div class="ed-host-card-title">Live snapshot</div>
-          <div class="ed-host-stat-row">
-            <span class="ed-host-stat-label font-mono">CPU</span>
-            <span class="ed-host-stat-value font-mono">{cpuPct ?? '—'}{cpuPct != null ? '%' : ''}</span>
-            {#if cpuHistory.length > 1}
-              <svg class="ed-host-spark" width="80" height="22" viewBox="0 0 80 22">
-                <polyline points={sparkPoints(cpuHistory, 100, 80, 22)} fill="none" stroke="var(--accent)" stroke-width="1.4" />
-              </svg>
-            {/if}
-          </div>
-          <div class="ed-host-stat-row">
-            <span class="ed-host-stat-label font-mono">Memory</span>
-            <span class="ed-host-stat-value font-mono">{memPct ?? '—'}{memPct != null ? '%' : ''}</span>
-            {#if memHistory.length > 1}
-              <svg class="ed-host-spark" width="80" height="22" viewBox="0 0 80 22">
-                <polyline points={sparkPoints(memHistory, 100, 80, 22)} fill="none" stroke="var(--accent)" stroke-width="1.4" />
-              </svg>
-            {/if}
-            {#if memUsedGb != null && memTotalGb != null && memTotalGb > 0}
-              <span class="ed-host-stat-hint font-mono">{memUsedGb.toFixed(1)} / {memTotalGb.toFixed(0)} GB</span>
-            {/if}
-          </div>
-          <div class="ed-host-stat-row">
-            <span class="ed-host-stat-label font-mono">Disk</span>
-            <span class="ed-host-stat-value font-mono">{diskPct ?? '—'}{diskPct != null ? '%' : ''}</span>
-            <div class="ed-hosts-bar" style="flex: 1; max-width: 80px;">
-              <span class="ed-hosts-bar-fill" style="width: {Math.min(100, diskPct ?? 0)}%"></span>
-            </div>
-          </div>
-          <div class="ed-host-snapshot-tiles">
-            <div class="ed-host-tile">
-              <span class="ed-host-tile-label font-mono">containers</span>
-              <span class="ed-host-tile-value">{containers.length}</span>
-            </div>
-            <div class="ed-host-tile">
-              <span class="ed-host-tile-label font-mono">stacks</span>
-              <span class="ed-host-tile-value">{stacksOnHost.length}</span>
-            </div>
-          </div>
-        </div>
-
-        {#if metrics && (metrics.mounts?.length || metrics.mounts_unsupported)}
-          <div class="ed-host-card ed-host-mounts">
-            <div class="ed-host-card-title">Disks</div>
-            <MountTable mounts={metrics.mounts} unsupported={metrics.mounts_unsupported} />
-          </div>
-        {/if}
-
-        <!-- Stacks deployed here (Overview block) -->
-        <div class="ed-host-card ed-host-stacks-block">
-          <div class="ed-host-card-title">Stacks deployed here</div>
-          {#if stacksOnHost.length === 0}
-            <p class="ed-host-empty">
-              No stacks deployed on <span class="ed-accent-mono">{hostName}</span>.
-              {status === 'pending' ? "Host hasn't connected yet." : "It's idle — fine target for a new deploy."}
-            </p>
-          {:else}
-            <div class="ed-host-stacks-list">
-              {#each stacksOnHost.slice(0, 8) as s (s.name)}
-                <a href="/stacks/{s.name}" class="ed-host-stacks-row">
-                  <span class="font-mono ed-host-stacks-name">{s.name}</span>
-                  <span class="font-mono ed-host-stacks-meta">
-                    {#if s.containers !== undefined}{s.containers} ctr{:else}—{/if}
-                  </span>
-                </a>
-              {/each}
+              <div class="dm-tbl">
+                {#each stacksOnHost.slice(0, 8) as s (s.name)}
+                  <a class="dm-tr dm-click lnk" style="grid-template-columns: minmax(0, 1fr) 90px" href="/stacks/{encodeURIComponent(s.name)}">
+                    <span class="dm-nm"><span class="dm-t">{s.name}</span></span>
+                    <span class="dm-num dm-dim" style="text-align: right">{s.containers ?? '—'} containers</span>
+                  </a>
+                {/each}
+              </div>
               {#if stacksOnHost.length > 8}
-                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => selectTab('stacks')}>+ {stacksOnHost.length - 8} more →</button>
+                <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm more" onclick={() => selectTab('stacks')}>All {stacksOnHost.length} stacks →</button>
               {/if}
-            </div>
-          {/if}
+            {/if}
+          </div>
         </div>
-
-        <!-- Recent migrations on Overview -->
-        <div class="ed-host-card ed-host-mig-block">
-          <div class="ed-host-card-title">Recent migrations</div>
-          {#if migrations.length === 0}
-            <p class="ed-host-empty">No migrations involving <span class="ed-accent-mono">{hostName}</span> yet.</p>
-          {:else}
-            <div class="ed-host-mig-list">
-              {#each migrations.slice(0, 5) as m (m.id)}
-                {@const dir = m.source_host_id === id ? 'out' : 'in'}
-                <div class="ed-host-mig-row">
-                  <span class="ed-host-mig-dir font-mono" class:out={dir === 'out'} class:in={dir === 'in'}>
-                    {dir === 'out' ? '↗' : '↙'} {dir}
-                  </span>
-                  <span class="font-mono ed-host-mig-stack">{m.stack_name}</span>
-                  <span class="font-mono ed-host-mig-status">{m.status}</span>
-                  <span class="font-mono ed-host-mig-when">{fmtAgo(m.completed_at ?? m.started_at)}</span>
-                </div>
-              {/each}
-              {#if migrations.length > 5}
-                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => selectTab('migrations')}>+ {migrations.length - 5} more →</button>
+        <div class="col">
+          <div>
+            <h2 class="dm-h2">Details</h2>
+            <dl class="dm-kv">
+              <dt>ID</dt><dd class="dm-mono">{id}</dd>
+              <dt>Hostname</dt><dd class="dm-mono">{hostname || '—'}</dd>
+              {#if !isLocal && agent}
+                <dt>OS</dt><dd>{agent.os ? `${agent.os}/${agent.arch}` : '—'}{metrics ? ` · ${metrics.cpu_cores} cores · ${fmtMem(metrics.mem_total)}` : ''}</dd>
+                <dt>Docker</dt><dd class="dm-mono">{agent.docker_version || '—'}</dd>
+                <dt>Agent</dt>
+                <dd class="dm-mono">
+                  {agent.version ? fmtVersion(agent.version) : '—'}
+                  {#if needsUpgrade}<span class="warn"> · server is on {fmtVersion(upgradePolicyVersion)}</span>
+                  {:else if agent.update_recommended}<span class="warn"> · agent update recommended</span>{/if}
+                </dd>
+                <dt>Last seen</dt><dd>{fmtAgoNever(agent.last_seen_at)}</dd>
+                <dt>Online since</dt><dd>{agent.online_since ? `${fmtAgoNever(agent.online_since)} (${fmtUptime(agent.online_since)})` : '—'}</dd>
+                <dt>Certificate</dt><dd class="dm-mono" title={agent.cert_fingerprint}>expires {fmtDate(agent.cert_expires_at)}{agent.cert_fingerprint ? ` · ${agent.cert_fingerprint.slice(0, 23)}…` : ''}</dd>
+                <dt>Enrolled</dt><dd>{fmtDate(agent.created_at)}</dd>
+              {:else}
+                <dt>Server</dt><dd class="dm-mono">{hostVersion ? fmtVersion(hostVersion) : '—'}</dd>
+                {#if metrics}<dt>Capacity</dt><dd>{metrics.cpu_cores} cores · {fmtMem(metrics.mem_total)}</dd>{/if}
+                <dt>Uptime</dt><dd>{metrics?.uptime_seconds ? fmtDur(metrics.uptime_seconds) : '—'}</dd>
               {/if}
-            </div>
-          {/if}
+              <dt>Containers</dt><dd>{running} of {containers.length} running</dd>
+            </dl>
+          </div>
+          <div>
+            <h2 class="dm-h2">Recent migrations</h2>
+            {#if migrations.length === 0}
+              <p class="dm-sub">No migrations involving {hostName} yet.</p>
+            {:else}
+              <div class="dm-tbl">
+                {#each migrations.slice(0, 5) as m (m.id)}
+                  {@const out = m.source_host_id === id}
+                  <div class="dm-tr" style="grid-template-columns: 40px minmax(0, 1fr) 100px 90px">
+                    <span class="dm-num dm-dim">{out ? '↗ out' : '↙ in'}</span>
+                    <a class="dm-trunc" href="/stacks/{encodeURIComponent(m.stack_name)}">{m.stack_name}</a>
+                    <StatusChip tone={m.status === 'completed' ? 'ok' : m.status === 'failed' ? 'bad' : 'warn'} label={m.status} />
+                    <span class="dm-num dm-dim" style="text-align: right">{fmtAgoNever(m.completed_at ?? m.started_at)}</span>
+                  </div>
+                {/each}
+              </div>
+              {#if migrations.length > 5}
+                <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm more" onclick={() => selectTab('migrations')}>All {migrations.length} migrations →</button>
+              {/if}
+            {/if}
+          </div>
         </div>
       </div>
 
-    <!-- ─── Containers ─── -->
     {:else if tab === 'containers'}
       {#if containers.length === 0}
-        <div class="dm-card" style="padding: 36px;">
-          <EmptyState title="No containers running" description={status === 'pending' ? "Host hasn't connected yet." : `No containers on ${hostName}.`} />
-        </div>
+        <EmptyState title="No containers" description={status === 'pending' ? 'The host has not connected yet.' : `No containers on ${hostName}.`} />
       {:else}
-        <div class="ed-host-table">
-          <div class="ed-host-tablerow head">
-            <span>name</span>
-            <span>image</span>
-            <span>state</span>
-            <span>uptime</span>
+        <div class="dm-tbl" role="table" aria-label="Containers on {hostName}">
+          <div class="dm-tr dm-th" role="row" style="grid-template-columns: {CT_COLS}">
+            <span role="columnheader"></span><span role="columnheader">Container</span><span role="columnheader">Image</span><span role="columnheader">State</span><span role="columnheader">Status</span>
           </div>
           {#each containers as c (c.Id)}
-            <a href="/containers/{c.Id}{isLocal ? '' : `?host=${id}`}" class="ed-host-tablerow">
-              <span class="font-mono ed-host-table-name">{c.Names?.[0]?.replace(/^\//, '') ?? c.Id.slice(0, 12)}</span>
-              <span class="font-mono ed-host-table-image">{c.Image}</span>
-              <span class="ed-host-table-state">
-                <span class={c.State === 'running' ? 'ok-dot' : 'fail-dot'}></span>
-                <span class="font-mono">{c.State}</span>
-              </span>
-              <span class="font-mono ed-host-table-uptime">{c.Status?.replace(/^Up\s+/, '') ?? '—'}</span>
+            {@const name = c.Names?.[0]?.replace(/^\//, '') ?? c.Id.slice(0, 12)}
+            {@const href = `/containers/${c.Id}${isLocal ? '' : `?host=${id}`}`}
+            {@const st = c.State === 'running' ? (String(c.Status).includes('unhealthy') ? 'warn' : 'ok') : c.State === 'exited' || c.State === 'dead' ? 'bad' : 'off'}
+            <a class="dm-tr dm-click lnk" role="row" style="grid-template-columns: {CT_COLS}" {href}>
+              <span role="cell"><span class="dm-dot {st === 'off' ? '' : st}"></span></span>
+              <span role="cell" class="dm-nm"><span class="dm-t">{name}</span><small>{c.Labels?.['com.docker.compose.project'] ?? 'standalone'}</small></span>
+              <span role="cell" class="dm-num dm-dim" title={c.Image}>{c.Image}</span>
+              <span role="cell"><StatusChip tone={st as Tone} label={c.State} /></span>
+              <span role="cell" class="dm-num dm-dim" title={c.Status}>{c.Status ?? '—'}</span>
             </a>
           {/each}
         </div>
-        <p class="font-mono ed-host-foot-note">
-          Live per-container CPU/Memory columns are deferred — see
-          <code>project_hosts_open_punch_list.md</code> in the repo. Click a row for live stats.
-        </p>
       {/if}
 
-    <!-- ─── Stacks ─── -->
     {:else if tab === 'stacks'}
       {#if stacksOnHost.length === 0}
-        <div class="dm-card" style="padding: 36px;">
-          <EmptyState title="No stacks here" description={`No stacks deployed on ${hostName}.`} />
-        </div>
+        <EmptyState title="No stacks here" description={`No stacks deployed on ${hostName}.`} />
       {:else}
-        <div class="ed-host-table">
-          <div class="ed-host-tablerow stacks head">
-            <span>stack</span>
-            <span>services</span>
-            <span>state</span>
-            <span></span>
+        <div class="dm-tbl" role="table" aria-label="Stacks on {hostName}">
+          <div class="dm-tr dm-th" role="row" style="grid-template-columns: {ST_COLS}">
+            <span role="columnheader">Stack</span><span role="columnheader">Containers</span><span role="columnheader">Volumes</span><span role="columnheader"></span>
           </div>
           {#each stacksOnHost as s (s.name)}
-            <div class="ed-host-tablerow stacks">
-              <a href="/stacks/{s.name}" class="font-mono ed-host-table-name">{s.name}</a>
-              <span class="font-mono ed-host-table-meta">{s.containers ?? '—'}</span>
-              <span class="ed-host-table-state">
-                <span class="ok-dot"></span>
-                <span class="font-mono">{s.has_volumes ? 'stateful' : 'running'}</span>
-              </span>
-              <span class="ed-host-table-actions">
-                <a href="/stacks/{s.name}?action=migrate" class="dm-btn dm-btn-ghost dm-btn-xs">Migrate…</a>
+            <div class="dm-tr" role="row" style="grid-template-columns: {ST_COLS}">
+              <span role="cell" class="dm-nm"><a href="/stacks/{encodeURIComponent(s.name)}">{s.name}</a></span>
+              <span role="cell" class="dm-num">{s.containers ?? '—'}</span>
+              <span role="cell" class="dm-dim">{s.has_volumes ? 'stateful' : '—'}</span>
+              <span role="cell" style="text-align: right">
+                {#if allowed('stacks.migrate')}<a href="/stacks/{encodeURIComponent(s.name)}?action=migrate" class="dm-btn dm-btn-ghost dm-btn-sm">Migrate…</a>{/if}
               </span>
             </div>
           {/each}
         </div>
       {/if}
 
-    <!-- ─── Migrations ─── -->
     {:else if tab === 'migrations'}
       {#if migrations.length === 0}
-        <div class="dm-card" style="padding: 36px;">
-          <EmptyState title="No migrations" description={`No stack migrations involving ${hostName} yet.`} />
-        </div>
+        <EmptyState title="No migrations" description={`No stack migrations involving ${hostName} yet.`} />
       {:else}
-        <div class="ed-host-table">
-          <div class="ed-host-tablerow migrations head">
-            <span>stack</span>
-            <span>direction</span>
-            <span>status</span>
-            <span>started</span>
-            <span>by</span>
-            <span>completed</span>
+        <div class="dm-tbl" role="table" aria-label="Migrations">
+          <div class="dm-tr dm-th" role="row" style="grid-template-columns: {MG_COLS}">
+            <span role="columnheader">Stack</span><span role="columnheader">Direction</span><span role="columnheader">Status</span><span role="columnheader">Started</span><span role="columnheader">By</span><span role="columnheader">Completed</span>
           </div>
           {#each migrations as m (m.id)}
-            {@const dir = m.source_host_id === id ? `→ ${m.target_host_id}` : `← ${m.source_host_id}`}
-            <div class="ed-host-tablerow migrations">
-              <a href="/stacks/{m.stack_name}" class="font-mono ed-host-table-name">{m.stack_name}</a>
-              <span class="font-mono ed-host-table-meta">{dir}</span>
-              <span class="ed-host-table-state">
-                <span class={m.status === 'completed' ? 'ok-dot' : m.status === 'failed' ? 'fail-dot' : 'warn-dot'}></span>
-                <span class="font-mono">{m.status}</span>
-              </span>
-              <span class="font-mono ed-host-table-meta">{fmtAgo(m.started_at)}</span>
-              <span class="font-mono ed-host-table-meta">{m.initiated_by}</span>
-              <span class="font-mono ed-host-table-meta">{m.completed_at ? fmtAgo(m.completed_at) : '—'}</span>
+            <div class="dm-tr" role="row" style="grid-template-columns: {MG_COLS}">
+              <span role="cell" class="dm-nm"><a href="/stacks/{encodeURIComponent(m.stack_name)}">{m.stack_name}</a></span>
+              <span role="cell" class="dm-num dm-dim">{m.source_host_id === id ? `→ ${m.target_host_id}` : `← ${m.source_host_id}`}</span>
+              <span role="cell"><StatusChip tone={m.status === 'completed' ? 'ok' : m.status === 'failed' ? 'bad' : 'warn'} label={m.status} /></span>
+              <span role="cell" class="dm-num dm-dim">{fmtAgoNever(m.started_at)}</span>
+              <span role="cell" class="dm-dim">{m.initiated_by}</span>
+              <span role="cell" class="dm-num dm-dim">{m.completed_at ? fmtAgoNever(m.completed_at) : '—'}</span>
             </div>
           {/each}
         </div>
       {/if}
 
-    <!-- ─── Tags ─── -->
     {:else if tab === 'tags'}
-      <div class="ed-host-grid">
-        <div class="ed-host-card" style="grid-column: span 7;">
-          <div class="ed-host-card-title">Tags on this host</div>
-          <p class="ed-host-empty" style="margin-top: 0;">
-            Tags group hosts for filtering and limit which hosts a user or role can see and manage (host scope).
-          </p>
-          <div class="ed-host-tags-edit">
+      <div class="dm-form-sec">
+        <div>
+          <h4>Tags on this host</h4>
+          <p>Tags group hosts for filtering and limit which hosts a user or role can see and manage (host scope).</p>
+        </div>
+        <div>
+          <div class="tagedit">
             {#each tagsDraft as t (t)}
-              <span class="ed-hosts-tag-chip">
-                {t}
-                <button type="button" class="ed-host-tags-remove" onclick={() => (tagsDraft = tagsDraft.filter((x) => x !== t))} aria-label="Remove">
-                  <X size={10} strokeWidth={1.5} />
-                </button>
-              </span>
+              <span class="tagx"><TagPill label={t} />{#if allowed('hosts.tag')}<button type="button" onclick={() => (tagsDraft = tagsDraft.filter((x) => x !== t))} aria-label="Remove {t}"><X size={11} /></button>{/if}</span>
             {/each}
-            <input
-              type="text"
-              class="ed-host-tags-input font-mono"
-              placeholder={tagsDraft.length === 0 ? 'add a tag…' : '+ add tag'}
-              bind:value={tagInput}
-              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTagDraft(tagInput); } }}
-            />
+            {#if allowed('hosts.tag')}
+              <input
+                type="text"
+                class="dm-filter"
+                placeholder={tagsDraft.length === 0 ? 'add a tag…' : 'add tag'}
+                aria-label="Add tag"
+                bind:value={tagInput}
+                onkeydown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTagDraft(tagInput); } }}
+              />
+            {/if}
           </div>
-          {#if allFleetTags.filter((t) => !tagsDraft.includes(t)).length > 0}
-            <div class="ed-host-tags-suggest">
-              <span class="font-mono ed-host-tags-suggest-label">fleet</span>
+          {#if allowed('hosts.tag') && allFleetTags.filter((t) => !tagsDraft.includes(t)).length > 0}
+            <div class="suggest">
+              <span class="dm-dim">In use:</span>
               {#each allFleetTags.filter((t) => !tagsDraft.includes(t)) as s (s)}
-                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => addTagDraft(s)}>+ {s}</button>
+                <TagPill label={s} onclick={addTagDraft} title="Add {s}" />
               {/each}
             </div>
           {/if}
-          <div class="ed-host-tags-actions">
-            <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" disabled={tagsBusy} onclick={saveTags}>
-              {tagsBusy ? 'Saving…' : 'Save changes'}
-            </button>
-            <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={revertTags}>Revert</button>
-          </div>
-        </div>
-
-        <div class="ed-host-card" style="grid-column: span 5;">
-          <div class="ed-host-card-title">Affected affinity</div>
-          <div class="ed-host-affinity-empty">
-            <Info size={14} strokeWidth={1.5} class="ed-host-affinity-icon" />
-            <p class="ed-host-empty" style="margin: 0;">
-              No host-affinity rules defined yet — coming with the stack-affinity feature. When stacks declare a host-selector this panel will list which selectors match this host's tags.
-            </p>
-          </div>
+          {#if allowed('hosts.tag')}
+            <div class="row">
+              <button type="button" class="dm-btn dm-btn-primary" disabled={tagsBusy || tagsDraft.join(',') === tags.join(',')} onclick={saveTags}>{tagsBusy ? 'Saving…' : 'Save tags'}</button>
+              <button type="button" class="dm-btn dm-btn-ghost" disabled={tagsDraft.join(',') === tags.join(',')} onclick={() => (tagsDraft = [...tags])}>Revert</button>
+            </div>
+          {/if}
         </div>
       </div>
 
-    <!-- ─── Maintenance ─── -->
     {:else if tab === 'maintenance'}
-      <div class="ed-host-grid">
-        <div class="ed-host-card" style="grid-column: span 6;">
-          <div class="ed-host-card-title">Drain</div>
-          <p class="ed-host-empty" style="margin-top: 0;">
-            Migrates every stack off <span class="ed-accent-mono">{hostName}</span> to other matching hosts. The host stays available for new deployments. Use before reboots, kernel upgrades, or pulling the plug.
-          </p>
-          <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={isLocal} onclick={openDrain}>
-            <ArrowDownToLine size={11} strokeWidth={1.5} /> Plan drain…
-          </button>
-          {#if isLocal}
-            <p class="font-mono ed-host-empty" style="margin-top: 8px;">
-              local server can't be drained — it runs Dockmesh itself.
-            </p>
-          {/if}
+      <div>
+        <div class="dm-form-sec">
+          <div>
+            <h4>Drain host</h4>
+            <p>Moves every stack off {hostName} to other matching hosts. The host stays available for new deploys. Use before reboots or kernel upgrades.</p>
+          </div>
+          <div>
+            <button type="button" class="dm-btn" disabled={isLocal || !allowed('hosts.update') || status !== 'online'} onclick={openDrain}>
+              <ArrowDownToLine size={13} strokeWidth={1.8} /> Plan drain…
+            </button>
+            {#if isLocal}<span class="dm-sub">The local server runs Dockmesh itself and cannot be drained.</span>{/if}
+          </div>
         </div>
-
-        <div class="ed-host-card" style="grid-column: span 6;">
-          <div class="ed-host-card-title">Upgrade agent</div>
-          <p class="ed-host-empty" style="margin-top: 0;">
-            {#if isLocal}
-              Server self-update lives in System settings — not a per-host concern.
-            {:else if !needsUpgrade}
-              {hostVersion ? `Already on ${fmtVersion(hostVersion)}.` : 'Version unknown.'} Nothing to do.
-            {:else}
-              This host is on <span class="ed-accent-mono">{fmtVersion(hostVersion)}</span>. Server is on {fmtVersion(upgradePolicyVersion)}. Upgrades are zero-downtime — agent reconnects within ~10s.
-            {/if}
-          </p>
-          <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" disabled={isLocal || !needsUpgrade || upgradeBusy} onclick={upgradeAgent}>
-            <RefreshCw size={11} strokeWidth={1.5} /> {upgradeBusy ? 'Upgrading…' : 'Upgrade now'}
-          </button>
-        </div>
-
-        {#if allowed('hosts.create')}
-          <div class="ed-host-card" style="grid-column: span 6;">
-            <div class="ed-host-card-title">Re-issue token</div>
-            <p class="ed-host-empty" style="margin-top: 0;">
-              If the agent's mTLS cert is suspect — leaked from CI logs, host wiped, etc. — generate a new enrollment token. The old cert is revoked the moment the new one is presented.
+        <div class="dm-form-sec">
+          <div>
+            <h4>Upgrade agent</h4>
+            <p>
+              {#if isLocal}The server updates itself under Settings → Updates.
+              {:else if !needsUpgrade}{hostVersion ? `Already on ${fmtVersion(hostVersion)}.` : 'Version unknown.'}
+              {:else}On {fmtVersion(hostVersion)}, the server is on {fmtVersion(upgradePolicyVersion)}. The agent reconnects within about 10 seconds; containers keep running.{/if}
             </p>
-            <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" disabled={isLocal} onclick={rotateToken}>
-              <RefreshCw size={11} strokeWidth={1.5} /> Re-issue
+          </div>
+          <div>
+            <button type="button" class="dm-btn dm-btn-primary" disabled={isLocal || !needsUpgrade || upgradeBusy || !allowed('hosts.update')} onclick={upgradeAgent}>
+              <RefreshCw size={13} strokeWidth={1.8} /> {upgradeBusy ? 'Upgrading…' : 'Upgrade now'}
             </button>
           </div>
-        {/if}
-
-        <div class="ed-host-card ed-host-card-danger" style="grid-column: span 6;">
-          <div class="ed-host-card-title ed-host-card-danger-title">Revoke</div>
-          <p class="ed-host-empty" style="margin-top: 0;">
-            Permanently removes <span class="ed-accent-mono">{hostName}</span> from the fleet. Cert is invalidated. Containers running there are forgotten by Dockmesh — they keep running on the host until you stop them manually.
-          </p>
-          <button type="button" class="dm-btn dm-btn-sm ed-host-danger-btn" disabled={isLocal || revokeBusy} onclick={revokeHost}>
-            <Trash2 size={11} strokeWidth={1.5} /> {revokeBusy ? 'Revoking…' : `Revoke ${hostName}…`}
-          </button>
         </div>
+        {#if allowed('hosts.create')}
+          <div class="dm-form-sec">
+            <div>
+              <h4>Re-issue enrollment token</h4>
+              <p>For a suspect certificate or a reinstalled host. The old certificate is revoked once the agent presents the new one.</p>
+            </div>
+            <div>
+              <button type="button" class="dm-btn" disabled={isLocal} onclick={rotateToken}><RefreshCw size={13} strokeWidth={1.8} /> Re-issue…</button>
+            </div>
+          </div>
+        {/if}
+        {#if allowed('hosts.delete')}
+          <div class="dm-form-sec">
+            <div>
+              <h4 class="danger">Revoke host</h4>
+              <p>Removes {hostName} from the fleet and invalidates its certificate. Containers keep running on the machine but are no longer managed.</p>
+            </div>
+            <div>
+              <button type="button" class="dm-btn dm-btn-danger" disabled={isLocal || revokeBusy} onclick={revokeHost}>
+                <Trash2 size={13} strokeWidth={1.8} /> {revokeBusy ? 'Revoking…' : 'Revoke…'}
+              </button>
+            </div>
+          </div>
+        {/if}
       </div>
     {/if}
   {/if}
 </section>
 
-<!-- ─── Drain modal ─── -->
-{#if showDrain}
-  <div class="ed-modal-backdrop" onmousedown={(e) => { if (e.target === e.currentTarget) showDrain = false; }}>
-    <div class="ed-modal" role="dialog" aria-modal="true" style="width: min(640px, 92vw);">
-      <header class="ed-modal-head">
-        <div>
-          <Eyebrow>Drain · {hostName}</Eyebrow>
-          <h2 class="ed-modal-title">Move every stack off {hostName}</h2>
+<Modal bind:open={showDrain} title="Drain {hostName}" maxWidth="max-w-xl">
+  {#if drainLoading}
+    <p class="dm-sub">Working out where each stack can go…</p>
+  {:else if drainPlan}
+    {#if drainPlan.entries.length === 0}
+      <p class="dm-sub">No stacks run here, so there is nothing to move.</p>
+    {:else}
+      {@const stuck = drainPlan.entries.filter((e) => !e.feasible)}
+      {#if stuck.length > 0}
+        <div class="warnbox" role="alert">
+          <AlertTriangle size={14} strokeWidth={1.8} />
+          <span><b>{stuck.length} stack{stuck.length === 1 ? '' : 's'} cannot be moved.</b> No other host carries a matching tag. Pin the stack here, drop the affinity, or add the tag to another host.</span>
         </div>
-        <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => (showDrain = false)} aria-label="Close">
-          <X size={13} strokeWidth={1.5} />
-        </button>
-      </header>
-      <div class="ed-modal-body">
-        {#if drainLoading}
-          <p class="ed-host-empty"><RefreshCw size={12} strokeWidth={1.5} class="ed-spin" /> Generating drain plan…</p>
-        {:else if drainPlan}
-          {#if drainPlan.entries.length === 0}
-            <p class="ed-host-empty">No stacks running here. Drain is a no-op — nothing to move.</p>
-          {:else}
-            {@const stuck = drainPlan.entries.filter((e) => !e.feasible)}
-            {#if stuck.length > 0}
-              <div class="ed-host-drain-warn">
-                <AlertTriangle size={14} strokeWidth={1.5} class="ed-host-drain-warn-icon" />
-                <div>
-                  <div class="ed-host-drain-warn-title">{stuck.length} stack{stuck.length === 1 ? '' : 's'} can't be moved.</div>
-                  <div class="font-mono ed-host-drain-warn-detail">No other host carries a matching tag. Pin the stack here, drop the affinity, or add the tag elsewhere.</div>
-                </div>
-              </div>
-            {/if}
-            <div class="ed-host-drain-list">
-              {#each drainPlan.entries as e (e.stack_name)}
-                <div class="ed-host-drain-row">
-                  <span class="font-mono">{e.stack_name}</span>
-                  <span class="ed-host-drain-arrow">→</span>
-                  <span class="font-mono" class:not-feasible={!e.feasible}>
-                    {e.feasible ? e.target_name : 'no candidate'}
-                  </span>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        {/if}
+      {/if}
+      <div class="dm-tbl">
+        {#each drainPlan.entries as e (e.stack_name)}
+          <div class="dm-tr" style="grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr)">
+            <span class="dm-mono">{e.stack_name}</span>
+            <span class="dm-dim">→</span>
+            <span class="dm-mono" class:bad={!e.feasible}>{e.feasible ? e.target_name : 'no candidate'}</span>
+          </div>
+        {/each}
       </div>
-      <footer class="ed-modal-foot">
-        <span class="font-mono ed-modal-foot-status">ESC to cancel</span>
-        <div class="ed-actions">
-          <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (showDrain = false)}>Cancel</button>
-          <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" disabled={drainBusy || !drainPlan?.feasible} onclick={executeDrain}>
-            <ArrowDownToLine size={11} strokeWidth={1.5} /> {drainBusy ? 'Starting…' : 'Begin drain'}
-          </button>
-        </div>
-      </footer>
-    </div>
-  </div>
-{/if}
-
-<EditorialModal
-  bind:open={tokenModal.open}
-  eyebrow="Enrollment token"
-  width={620}
->
-  {#snippet title()}
-    New token for <em class="ed-accent">{hostName}</em>
-  {/snippet}
-
-  <p class="ed-host-token-blurb">
-    The old certificate stays valid until the agent presents the new one. Run this
-    command on the agent host to complete the rotation:
-  </p>
-  <div class="ed-host-token-cmd">
-    <code>{tokenModal.install}</code>
-  </div>
-  <p class="ed-host-token-warn">
-    The raw token is shown only once — copy now if you need it for an
-    external installer. After closing this modal it will not be retrievable.
-    It expires {tokenModal.expiresAt ? new Date(tokenModal.expiresAt).toLocaleString() : '—'}.
-  </p>
-  <div class="ed-host-token-raw">
-    <span class="ed-host-token-label">token</span>
-    <code>{tokenModal.token}</code>
-  </div>
-
+    {/if}
+  {/if}
   {#snippet footer()}
-    <button type="button" class="dm-btn dm-btn-secondary" onclick={copyTokenInstall}>
-      Copy install command
-    </button>
-    <button type="button" class="dm-btn dm-btn-primary" onclick={() => (tokenModal.open = false)}>
-      Done
+    <button type="button" class="dm-btn" onclick={() => (showDrain = false)}>Cancel</button>
+    <button type="button" class="dm-btn dm-btn-primary" disabled={drainBusy || !drainPlan?.feasible} onclick={executeDrain}>
+      <ArrowDownToLine size={13} strokeWidth={1.8} /> {drainBusy ? 'Starting…' : 'Begin drain'}
     </button>
   {/snippet}
-</EditorialModal>
+</Modal>
+
+<Modal bind:open={tokenModal.open} title="New enrollment token for {hostName}" maxWidth="max-w-xl">
+  <div class="tok">
+    <p class="dm-sub">Run this command on the agent host. The old certificate stays valid until the agent presents the new one.</p>
+    <pre class="cmd dm-mono">{tokenModal.install}</pre>
+    <p class="dm-sub">The token is shown only once and expires {tokenModal.expiresAt ? new Date(tokenModal.expiresAt).toLocaleString() : '—'}.</p>
+    <dl class="dm-kv"><dt>Token</dt><dd class="dm-mono">{tokenModal.token}</dd></dl>
+  </div>
+  {#snippet footer()}
+    <button type="button" class="dm-btn" onclick={() => copyWithToast(tokenModal.install, 'Install command copied')}>Copy install command</button>
+    <button type="button" class="dm-btn dm-btn-primary" onclick={() => (tokenModal.open = false)}>Done</button>
+  {/snippet}
+</Modal>
 
 <style>
-  .ed-host-detail { display: flex; flex-direction: column; gap: 18px; }
-  .ed-host-crumb { font-family: var(--font-mono); font-size: 11px; color: var(--fg-subtle); }
-  .ed-host-token-blurb { margin: 0 0 12px; font-size: 13px; color: var(--fg-muted); line-height: 1.6; }
-  .ed-host-token-cmd {
-    padding: 12px 14px;
-    background: var(--terminal, #06090f);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: #cbd5e1;
+  .htags { display: inline-flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+  .grid2 { display: grid; grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr); gap: 28px; align-items: start; }
+  .col { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+  @media (max-width: 1100px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+  .lnk { color: var(--fg); text-decoration: none; }
+  .more { margin-top: 6px; }
+  .warn { color: var(--warn); }
+  .bad { color: var(--bad); }
+  .danger { color: var(--bad); }
+  .tagedit { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .tagedit input { min-width: 160px; }
+  .tagx { display: inline-flex; align-items: center; gap: 2px; }
+  .tagx button { all: unset; cursor: pointer; color: var(--subtle); display: inline-flex; }
+  .tagx button:hover { color: var(--bad); }
+  .suggest { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: var(--fs-sm); }
+  .row { display: flex; gap: 8px; }
+  .warnbox {
+    display: flex; gap: 8px; align-items: flex-start; margin-bottom: 12px;
+    border: 1px solid var(--warn-bd); background: var(--warn-bg); color: var(--warn);
+    border-radius: var(--r); padding: 8px 12px; font-size: var(--fs-sm);
   }
-  .ed-host-token-cmd code {
-    display: block;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    word-break: break-all;
-    white-space: pre-wrap;
-  }
-  .ed-host-token-warn {
-    margin: 14px 0 8px;
-    padding: 8px 12px;
-    background: color-mix(in srgb, var(--color-warning-500) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-warning-500) 30%, transparent);
-    border-radius: 4px;
-    color: var(--color-warning-400);
-    font-size: 12px;
-    line-height: 1.55;
-  }
-  .ed-host-token-raw {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    border: 1px dashed var(--border-strong);
-    border-radius: 4px;
-    background: var(--surface-hover);
-  }
-  .ed-host-token-label {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--fg-subtle);
-  }
-  .ed-host-token-raw code {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--fg);
-    word-break: break-all;
-  }
-  .ed-host-crumb-link {
-    display: inline-flex; align-items: center; gap: 4px;
-    color: var(--fg-subtle); text-decoration: none;
-  }
-  .ed-host-crumb-link:hover { color: var(--accent-fg); }
-
-  /* ─── Status dots (also defined on hosts list, kept here for isolation) ─── */
-  :global(.ok-dot) { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: var(--color-success-400); }
-  :global(.warn-dot) { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: var(--color-warning-400); }
-  :global(.fail-dot) { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: var(--color-danger-400); }
-  :global(.neutral-dot) { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: var(--fg-subtle); }
-  :global(.ed-spin) { animation: ed-spin 1s linear infinite; }
-  @keyframes ed-spin { to { transform: rotate(360deg); } }
-  .ed-accent-mono { color: var(--accent-fg); font-family: var(--font-mono); font-style: normal; font-weight: 500; }
-
-  /* ─── Header ─── */
-  .ed-host-header {
-    display: flex; align-items: flex-start; justify-content: space-between;
-    gap: 24px; flex-wrap: wrap;
-  }
-  .ed-host-header-text { min-width: 0; flex: 1; }
-  .ed-host-name-line { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
-  .ed-host-title { font-size: 26px; margin: 0; font-style: normal; }
-  .ed-host-meta-row {
-    margin-top: 8px; padding-left: 20px;
-    display: flex; flex-wrap: wrap; gap: 14px;
-    font-size: 11.5px; color: var(--fg-subtle);
-  }
-  .ed-host-tags-row {
-    display: flex; flex-wrap: wrap; gap: 4px;
-    margin-top: 10px; padding-left: 20px;
-  }
-  .ed-host-header-actions {
-    display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
-  }
-  .ed-host-version-line {
-    font-size: 11.5px; color: var(--fg);
-    display: flex; align-items: center; gap: 10px;
-  }
-  .ed-host-version-pill { font-size: 9.5px; padding: 1px 6px; }
-
-  /* ─── Tabs ─── */
-  .ed-host-tabs {
-    display: flex; gap: 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .ed-host-tab {
-    background: transparent; border: 0;
-    padding: 10px 14px;
-    border-bottom: 2px solid transparent;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-muted);
-    cursor: pointer;
-    display: inline-flex; align-items: center; gap: 6px;
-    margin-bottom: -1px;
-  }
-  .ed-host-tab:hover { color: var(--fg); }
-  .ed-host-tab.active { color: var(--accent-fg); border-bottom-color: var(--accent); }
-  /* ed-host-tab-count moved to global .ed-count in app.css */
-
-  /* ─── Grid layout for cards ─── */
-  .ed-host-grid {
-    display: grid;
-    grid-template-columns: repeat(12, 1fr);
-    gap: 18px;
-  }
-  .ed-host-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 16px 18px;
-  }
-  .ed-host-identity { grid-column: span 7; }
-  .ed-host-mounts { grid-column: 1 / -1; }
-  .ed-host-snapshot { grid-column: span 5; display: flex; flex-direction: column; gap: 12px; }
-  .ed-host-stacks-block { grid-column: span 7; }
-  .ed-host-mig-block { grid-column: span 5; }
-  @media (max-width: 980px) {
-    .ed-host-identity, .ed-host-snapshot, .ed-host-stacks-block, .ed-host-mig-block { grid-column: span 12; }
-  }
-  .ed-host-card-title {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    margin-bottom: 12px;
-  }
-
-  /* ─── Identity KV ─── */
-  .ed-host-kv {
-    display: grid;
-    grid-template-columns: 130px 1fr;
-    gap: 8px 14px;
-    font-size: 12px;
-    margin: 0;
-  }
-  .ed-host-kv dt {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-    letter-spacing: 0.04em;
-    text-transform: lowercase;
-  }
-  .ed-host-kv dd { margin: 0; color: var(--fg); word-break: break-word; }
-  .ed-host-kv-warn { color: var(--color-warning-400); margin-left: 8px; }
-  .ed-host-kv-fingerprint { font-size: 10.5px; color: var(--fg-muted); }
-
-  /* ─── Snapshot stats ─── */
-  .ed-host-stat-row {
-    display: flex; align-items: center; gap: 10px;
-  }
-  .ed-host-stat-label { width: 60px; font-size: 11px; color: var(--fg-subtle); }
-  .ed-host-stat-value { font-size: 14px; color: var(--fg); min-width: 50px; }
-  .ed-host-spark { flex-shrink: 0; }
-  .ed-host-stat-hint {
-    margin-left: auto; font-size: 10.5px; color: var(--fg-subtle);
-  }
-  .ed-hosts-bar { height: 2px; background: var(--border); border-radius: 1px; position: relative; overflow: hidden; }
-  .ed-hosts-bar-fill { position: absolute; inset: 0; right: auto; background: var(--accent); border-radius: 1px; }
-  .ed-host-snapshot-tiles {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px;
-  }
-  .ed-host-tile {
-    padding: 10px 12px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--surface);
-  }
-  .ed-host-tile-label {
-    font-size: 9.5px; color: var(--fg-subtle);
-    text-transform: uppercase; letter-spacing: 0.08em;
-  }
-  .ed-host-tile-value {
-    font-size: 22px; color: var(--fg); font-weight: 500;
-    margin-top: 4px; display: block;
-  }
-
-  /* ─── Stacks block ─── */
-  .ed-host-empty {
-    margin: 8px 0 0;
-    color: var(--fg-muted);
-    font-size: 12.5px;
-    line-height: 1.55;
-  }
-  .ed-host-stacks-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-  .ed-host-stacks-row {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 8px 10px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--surface);
-    text-decoration: none;
-    color: var(--fg);
-  }
-  .ed-host-stacks-row:hover { border-color: var(--border-strong); }
-  .ed-host-stacks-name { font-size: 12px; color: var(--fg); }
-  .ed-host-stacks-meta { font-size: 11px; color: var(--fg-subtle); }
-
-  /* ─── Migration block (overview) ─── */
-  .ed-host-mig-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-  .ed-host-mig-row {
-    display: grid;
-    grid-template-columns: 60px 1fr 70px 80px;
-    gap: 8px;
-    align-items: center;
-    padding: 6px 8px;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--surface);
-    font-size: 11px;
-  }
-  .ed-host-mig-dir { color: var(--fg-subtle); }
-  .ed-host-mig-dir.out { color: var(--color-warning-400); }
-  .ed-host-mig-dir.in { color: var(--accent-fg); }
-  .ed-host-mig-stack { color: var(--fg); }
-  .ed-host-mig-status { color: var(--fg-muted); }
-  .ed-host-mig-when { color: var(--fg-subtle); text-align: right; }
-
-  /* ─── Tabular layout for non-Overview tabs ─── */
-  .ed-host-table {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    overflow: hidden;
-  }
-  .ed-host-tablerow {
-    display: grid;
-    grid-template-columns: 2fr 2fr 1fr 1fr;
-    gap: 12px;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    align-items: center;
-    text-decoration: none;
-    color: var(--fg);
-  }
-  .ed-host-tablerow:hover { background: var(--surface-hover); }
-  .ed-host-tablerow:last-child { border-bottom: 0; }
-  .ed-host-tablerow.head {
-    background: var(--bg-elevated);
-    color: var(--fg-subtle);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    cursor: default;
-  }
-  .ed-host-tablerow.head:hover { background: var(--bg-elevated); }
-  .ed-host-tablerow.stacks { grid-template-columns: 2fr 0.7fr 1fr 1fr; }
-  .ed-host-tablerow.migrations { grid-template-columns: 1.6fr 1fr 0.8fr 0.9fr 0.9fr 0.9fr; }
-  .ed-host-table-name { font-size: 12px; color: var(--fg); text-decoration: none; }
-  .ed-host-table-name:hover { color: var(--accent-fg); }
-  .ed-host-table-image { font-size: 11px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ed-host-table-state { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--fg-muted); }
-  .ed-host-table-uptime { font-size: 11px; color: var(--fg-subtle); }
-  .ed-host-table-meta { font-size: 11px; color: var(--fg-subtle); }
-  .ed-host-table-actions { display: inline-flex; gap: 4px; justify-content: flex-end; }
-  .ed-host-foot-note {
-    font-size: 10.5px; color: var(--fg-subtle); margin: 12px 0 0;
-  }
-  .ed-host-foot-note code { color: var(--accent-fg); }
-
-  /* ─── Tags tab ─── */
-  .ed-host-tags-edit {
-    display: flex; flex-wrap: wrap; gap: 6px;
-    padding: 10px 12px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--surface);
-    margin-top: 14px;
-  }
-  .ed-hosts-tag-chip {
-    display: inline-flex; align-items: center; gap: 4px;
-    padding: 2px 6px;
-    border: 1px solid var(--border-strong);
-    border-radius: 3px;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg);
-    background: var(--surface);
-  }
-  .ed-host-tags-input {
-    flex: 1 1 140px; border: 0; background: transparent;
-    color: var(--fg); font-size: 11.5px; outline: none; min-width: 100px;
-  }
-  .ed-host-tags-input::placeholder { color: var(--fg-subtle); }
-  .ed-host-tags-remove {
-    background: transparent; border: 0; cursor: pointer;
-    color: var(--fg-subtle); padding: 0;
-    display: inline-flex;
-  }
-  .ed-host-tags-remove:hover { color: var(--color-danger-400); }
-  .ed-host-tags-suggest {
-    display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; align-items: center;
-  }
-  .ed-host-tags-suggest-label {
-    font-size: 9.5px; color: var(--fg-subtle); letter-spacing: 0.1em;
-    text-transform: uppercase; margin-right: 4px;
-  }
-  .ed-host-tags-actions { display: flex; gap: 8px; margin-top: 16px; }
-
-  .ed-host-affinity-empty {
-    display: flex; align-items: flex-start; gap: 10px;
-    padding: 14px;
-    border: 1px dashed var(--border);
-    border-radius: 5px;
-    background: var(--bg-elevated);
-    margin-top: 12px;
-  }
-  :global(.ed-host-affinity-icon) { color: var(--fg-subtle); flex-shrink: 0; margin-top: 2px; }
-
-  /* ─── Maintenance tab cards ─── */
-  .ed-host-card-danger { border-color: color-mix(in srgb, var(--color-danger-500) 30%, var(--border)); }
-  .ed-host-card-danger-title { color: var(--color-danger-400); }
-  .ed-host-danger-btn {
-    color: var(--color-danger-400);
-    border-color: color-mix(in srgb, var(--color-danger-500) 40%, var(--border));
-    background: transparent;
-  }
-  .ed-host-danger-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-danger-500) 8%, transparent);
-  }
-
-  /* ─── Modal chrome ─── */
-  .ed-modal-backdrop {
-    position: fixed; inset: 0;
-    background: color-mix(in srgb, var(--bg) 70%, transparent);
-    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-    z-index: 50;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .ed-modal {
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
-    max-height: 92vh;
-    display: flex; flex-direction: column;
-    overflow: hidden;
-  }
-  .ed-modal-head {
-    display: flex; align-items: flex-start; justify-content: space-between;
-    gap: 16px; padding: 18px 22px;
-    border-bottom: 1px solid var(--border);
-  }
-  .ed-modal-title {
-    margin: 4px 0 0;
-    font-size: 18px; font-weight: 600;
-    color: var(--fg); font-family: var(--font-sans);
-  }
-  .ed-modal-body { padding: 18px 22px; overflow-y: auto; }
-  .ed-modal-foot {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 12px; padding: 14px 22px;
-    border-top: 1px solid var(--border);
-    background: var(--bg-elevated);
-  }
-  .ed-modal-foot-status { font-size: 11px; color: var(--fg-subtle); }
-
-  /* Drain modal-specific */
-  .ed-host-drain-warn {
-    display: flex; align-items: flex-start; gap: 10px;
-    padding: 10px 14px;
-    border: 1px solid color-mix(in srgb, var(--color-warning-500) 50%, var(--border));
-    background: color-mix(in srgb, var(--color-warning-500) 6%, transparent);
-    border-radius: 5px;
-    margin-bottom: 14px;
-  }
-  :global(.ed-host-drain-warn-icon) { color: var(--color-warning-400); margin-top: 2px; flex-shrink: 0; }
-  .ed-host-drain-warn-title { font-size: 12.5px; color: var(--fg); font-weight: 500; }
-  .ed-host-drain-warn-detail { font-size: 11px; color: var(--fg-muted); margin-top: 3px; }
-  .ed-host-drain-list { display: flex; flex-direction: column; gap: 6px; }
-  .ed-host-drain-row {
-    display: grid;
-    grid-template-columns: 1.4fr auto 1.4fr;
-    align-items: center; gap: 10px;
-    padding: 10px 12px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--surface);
-    font-size: 12px;
-  }
-  .ed-host-drain-arrow { color: var(--fg-subtle); }
-  .ed-host-drain-row .not-feasible { color: var(--color-warning-400); }
+  .warnbox span { color: var(--fg); }
+  .tok { display: flex; flex-direction: column; gap: 12px; }
+  .tok p { margin: 0; }
+  .cmd { margin: 0; padding: 10px 12px; background: var(--field); border-radius: var(--r-sm); font-size: 12px; white-space: pre-wrap; word-break: break-all; }
 </style>

@@ -11,6 +11,7 @@
 </script>
 
 <script lang="ts">
+  import { fmtBytes, fmtMem } from '$lib/format';
   import { untrack } from 'svelte';
   import { api, type MetricsSample } from '$lib/api';
   import MetricsChart, { type ChartEvent, type ChartSeries } from './ui/MetricsChart.svelte';
@@ -122,17 +123,6 @@
     return (cur - prev) / dt;
   }
 
-  function fmtBytes(b: number): string {
-    if (!isFinite(b)) return '—';
-    const u = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let i = 0;
-    while (b >= 1024 && i < u.length - 1) {
-      b /= 1024;
-      i++;
-    }
-    return `${b < 10 && i > 0 ? b.toFixed(1) : Math.round(b)} ${u[i]}`;
-  }
-
   const series = $derived.by<ChartSeries[]>(() => {
     const c = cores || 1;
     const cpu = data.map((s) => (running || range !== 'live' ? s.cpu_percent / c : null));
@@ -152,7 +142,7 @@
         color: 'var(--violet)',
         values: mem,
         max: 100,
-        fmt: (v) => `${fmtBytes((memBase * v) / 100)} · ${v.toFixed(0)} %`
+        fmt: (v) => `${fmtMem((memBase * v) / 100)} · ${v.toFixed(0)} %`
       },
       { label: 'Network', color: 'var(--ok)', values: net, fmt: (v) => `${fmtBytes(v)}/s` },
       { label: 'Block I/O', color: 'var(--warn)', values: blk, fmt: (v) => `${fmtBytes(v)}/s` }
@@ -201,9 +191,9 @@
   <p class="dm-sub cm-hint">
     Measured for this container only.
     {#if limited}
-      Memory is relative to its limit of {fmtBytes(memLimit)}.
+      Memory is relative to its limit of {fmtMem(memLimit)}.
     {:else if memTotal}
-      No memory limit, so memory is relative to host RAM ({fmtBytes(memTotal)}).
+      No memory limit, so memory is relative to host RAM ({fmtMem(memTotal)}).
     {/if}
     {#if cores}
       CPU % is relative to all {cores} cores of {hostName}.

@@ -6,6 +6,7 @@
   // and file read is recorded server-side. Read-only on purpose; no
   // rename / write / delete in here. Operators who need that have a
   // shell-into-container path.
+  import { fmtBytes } from '$lib/format';
   import { untrack } from 'svelte';
   import { latest } from '$lib/latest';
   import { page } from '$app/state';
@@ -160,14 +161,6 @@
     loadDir('/' + segments.join('/'));
   }
 
-  function fmtBytes(n: number): string {
-    if (!n) return '0 B';
-    if (n < 1024) return `${n} B`;
-    const units = ['KB', 'MB', 'GB', 'TB'];
-    let v = n / 1024, i = 0;
-    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-    return `${v.toFixed(1)} ${units[i]}`;
-  }
   function fmtMtime(iso: string): string {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return iso;

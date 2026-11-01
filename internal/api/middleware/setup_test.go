@@ -31,3 +31,22 @@ func TestRequireSetupHeader(t *testing.T) {
 		})
 	}
 }
+
+func TestWizardOnlyPathAfterSetup(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"/setup", true},
+		{"/api/v1/setup/commit", true},
+		{"/api/v1/setup/server-info", true},
+		{"/api/v1/setup/status", false},
+		{"/api/v1/setup/stream/0b9f0c1e-1d2a-4f7e-9c3b-8a1d2e3f4a5b", false},
+		{"/api/v1/stacks", false},
+	}
+	for _, tt := range tests {
+		if got := isWizardOnlyPath(tt.path); got != tt.want {
+			t.Errorf("isWizardOnlyPath(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}

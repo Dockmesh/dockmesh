@@ -1,10 +1,15 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import { fmtAgo, fmtBytes, fmtMem } from '$lib/format';
   import { goto } from '$app/navigation';
   import { untrack } from 'svelte';
   import { api, ApiError, runRestorable, type ScaleCheck, type PreflightResult, type Migration, type DeployHistoryEntry, type StackDependencies, type StackEnvironments, type StackCleanupPlan } from '$lib/api';
-  import { Button, Card, Badge, Skeleton, Modal } from '$lib/components/ui';
-  import { Eyebrow, StatusPill, EdRow, EdMetric } from '$lib/components/editorial';
+  import { Button, Badge, Skeleton, Modal } from '$lib/components/ui';
+  import StatusChip, { type Tone } from '$lib/components/ui/StatusChip.svelte';
+  import Tabs, { type TabItem } from '$lib/components/ui/Tabs.svelte';
+  import Menu, { type MenuItem } from '$lib/components/ui/Menu.svelte';
+  import OpProgress from '$lib/components/operations/OpProgress.svelte';
+  import { operations, isActive, opRef } from '$lib/stores/operations.svelte';
   import { ArrowRight, ExternalLink } from 'lucide-svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
@@ -13,7 +18,7 @@
   import { hosts } from '$lib/stores/host.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import { EventStream } from '$lib/events';
-  import { ChevronLeft, Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Server, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2, GitBranch, Link as LinkIcon, Unlink, History, RotateCcw, FileText, User, Network, Plus, X, Layers, Repeat, Pencil, Eye, EyeOff } from 'lucide-svelte';
+  import { Play, Square, Save, Trash2, AlertTriangle, RefreshCw, Maximize2, ArrowRightLeft, CheckCircle2, XCircle, Loader2, GitBranch, Link as LinkIcon, Unlink, History, RotateCcw, User, Plus, X, Layers, Repeat, Pencil, Eye, EyeOff } from 'lucide-svelte';
   import type { StackGitSource, StackGitSourceInput } from '$lib/api';
 
   import { isAllHosts } from '$lib/stores/host.svelte';
@@ -135,19 +140,11 @@
   }
   let dirty = $state(false);
 
-  // Tab state. P.12.6 introduced overview+history; the editorial detail
-  // page splits the original "everything on overview" into 5 tabs that
-  // map directly to the design mockup: Overview (services + side rail),
-  // Compose (yaml + env + git source), Environment (overlays + deps),
-  // History (deploy timeline), Settings (delete + future config).
   type TabKey = 'overview' | 'compose' | 'environment' | 'logs' | 'history' | 'settings';
   let activeTab = $state<TabKey>('overview');
 
-  // ── Logs (live) — open one WebSocket per running service container,
-  // merge their stdout/stderr into a single stream tagged with the
-  // service name. The mockup renders one viewer with service-pills as
-  // toggles; we mirror that exactly. Cleanup on tab leave is critical
-  // so we don't leak sockets across navigation.
+  // Live logs: one WebSocket per running service container, merged into one
+  // stream. The sockets are closed when the tab is left so none leak.
   type LogLine = { service: string; line: string; ts: number };
   let logLines = $state<LogLine[]>([]);
   let logSockets = $state<Map<string, WebSocket>>(new Map());
@@ -174,16 +171,7 @@
       ws.onmessage = (ev) => {
         const raw = String(ev.data ?? '').replace(/\r$/, '');
         if (!raw) return;
-        // Docker prefixes every line with an RFC3339-nano timestamp
-        // when ContainerLogs is called with `Timestamps: true` (our
-        // default — useful for ordering but redundant in the UI which
-        // renders its own time column). Strip it from the displayed
-        // line and reuse the parsed ts so the log timeline matches
-        // what the container actually wrote (not when our WS received
-        // it). App-level timestamps inside the message (e.g.
-        // `1:M 27 May 2026 18:20:45.357 *…` from redis) we leave in
-        // place — those are app-specific log conventions the operator
-        // may want to see.
+        // Strip Docker's RFC3339 prefix; the UI renders its own time column.
         const tsMatch = raw.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s/);
         let line = raw;
         let ts = Date.now();
@@ -267,12 +255,8 @@
     return logLines.filter((l) => logServiceFilter.has(l.service));
   });
 
-  // Tab gate — open / close streams as the operator switches tabs.
-  // Only depend on `activeTab`. The stream helpers read `services` and
-  // mutate `logSockets` / `logLines`, but we wrap those calls in untrack
-  // so the effect doesn't re-fire on every 5s services poll (which would
-  // tear down + reopen the WS connections in a tight loop and trip
-  // svelte's effect-update-depth limiter).
+  // Depends on activeTab only: without untrack every services poll would
+  // reopen the sockets.
   $effect(() => {
     const tab = activeTab;
     if (tab === 'logs') untrack(() => { startLogStreaming(); });
@@ -395,9 +379,7 @@
     if (canDeploy) await deploy();
   }
 
-  // Tiny client-side YAML highlighter — same regex set as the wizard's
-  // mockup. Server-side yaml parsing remains the source of truth at
-  // deploy time; this is purely for read-only colour cues.
+  // Colour cues for the read-only compose view; the server parses the YAML.
   function escapeHtml(s: string): string {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
@@ -544,11 +526,11 @@
       mem,
       memLim,
       memPct: memLim > 0 ? (mem / memLim) * 100 : 0,
-      memLabel: count > 0 ? bytes(mem) : '—',
-      memMeta: count > 0 && memLim > 0 ? `of ${bytes(memLim)} limit` : count > 0 ? 'no limit set' : 'no live samples',
+      memLabel: count > 0 ? fmtMem(mem) : '—',
+      memMeta: count > 0 && memLim > 0 ? `of ${fmtMem(memLim)} limit` : count > 0 ? 'no limit set' : 'no live samples',
       net: netRate,
-      netLabel: count > 0 ? `${bytes(netRate.rx)}/s ↓` : '—',
-      netMeta: count > 0 ? `${bytes(netRate.tx)}/s ↑` : 'no live samples',
+      netLabel: count > 0 ? `${fmtBytes(netRate.rx)}/s ↓` : '—',
+      netMeta: count > 0 ? `${fmtBytes(netRate.tx)}/s ↑` : 'no live samples',
       count,
     };
   });
@@ -646,14 +628,7 @@
   }
   function envSaveEdit() { envEditingIdx = null; commitEnvRows(); }
 
-  function bytes(n: number): string {
-    if (!n || n < 1) return '0 B';
-    const u = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), u.length - 1);
-    return `${(n / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${u[i]}`;
-  }
-
-  // Deploy history (P.12.6)
+  // Deploy history
   let historyEntries = $state<DeployHistoryEntry[]>([]);
   let historyLoading = $state(false);
   let historyLoadedOnce = $state(false);
@@ -662,11 +637,7 @@
   // selected entry we fetch-with-YAML on demand (list rows omit YAML).
   let yamlEntry = $state<DeployHistoryEntry | null>(null);
   let showYaml = $state(false);
-  // Diff-mode for the deploy-snapshot drawer. Raw shows the compose.yaml
-  // verbatim; "diff" computes a unified line-diff against the immediately
-  // previous deploy (one step lower in version). yamlPrevCompose holds
-  // the lazily-fetched previous compose so the diff isn't recomputed
-  // every render. null = not loaded yet.
+  // "diff" compares against the previous deploy, fetched on demand.
   let yamlMode = $state<'raw' | 'diff'>('raw');
   let yamlPrevEntry = $state<DeployHistoryEntry | null>(null);
   let yamlDiffLoading = $state(false);
@@ -674,13 +645,12 @@
   let showRollbackConfirm = $state(false);
   let rollbackBusy = $state(false);
 
+  // Deploy history is served under stacks.deploy.
   async function loadHistory() {
+    if (!canDeploy) return;
     historyLoading = true;
     try {
       const raw = await api.stacks.listDeployments(name);
-      // Defense-in-depth: backend returns [] for empty, but treat null
-      // (older servers, proxy quirks) as empty too so the UI never
-      // crashes on a .length access.
       historyEntries = raw ?? [];
       historyLoadedOnce = true;
     } catch (err) {
@@ -788,26 +758,7 @@
     }
   }
 
-  function relTime(iso: string): string {
-    const d = new Date(iso).getTime();
-    const diff = Date.now() - d;
-    const m = Math.floor(diff / 60000);
-    if (m < 1) return 'just now';
-    if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h ago`;
-    const days = Math.floor(h / 24);
-    if (days < 30) return `${days}d ago`;
-    return new Date(iso).toLocaleDateString();
-  }
-
-  // deployNoteBadge classifies the free-text note on a history row into
-  // one of a few canonical badge variants. Returns null when there is
-  // genuinely nothing to show (the "current" pill plus the actor name
-  // already say enough for plain manual deploys without an env override).
-  // Below the top 10 history rows, the service list collapses to a
-  // single one-liner that the user can expand on demand. Avoids the
-  // wall-of-text effect when a stack has dozens of deploys captured.
+  // Older history rows show their services collapsed, so a long history stays scannable.
   let expandedRows = $state<Set<number>>(new Set());
   function expandRow(id: number) {
     const next = new Set(expandedRows);
@@ -900,7 +851,7 @@
   // Lazy-load history the first time the tab is opened, and refresh after
   // every deploy so a fresh row appears without a manual reload.
   $effect(() => {
-    if (activeTab === 'history' && !historyLoadedOnce) {
+    if ((activeTab === 'history' || activeTab === 'overview') && !historyLoadedOnce) {
       loadHistory();
     }
   });
@@ -914,7 +865,9 @@
   // All stack names, for the picker dropdown in the editor.
   let allStackNames = $state<string[]>([]);
 
+  // Dependencies and overlays are served under stacks.deploy.
   async function loadDeps() {
+    if (!canDeploy) return;
     try {
       deps = await api.stacks.getDependencies(name);
     } catch {
@@ -950,6 +903,7 @@
   let envBusy = $state(false);
 
   async function loadEnvs() {
+    if (!canDeploy) return;
     try {
       envs = await api.stacks.getEnvironments(name);
     } catch {
@@ -1034,6 +988,7 @@
   }
 
   async function loadReplicaCounts() {
+    if (!allowed('stacks.deploy')) return;
     try {
       const list = await api.stacks.listScale(name, stackHost);
       const m = new Map<string, number>();
@@ -1182,6 +1137,10 @@
   });
 
   async function loadGitSource() {
+    if (!allowed('stacks.update')) {
+      gitSource = null;
+      return;
+    }
     gitLoading = true;
     try {
       gitSource = await api.stacks.getGitSource(name);
@@ -1537,1194 +1496,694 @@
     }
     return stream.stop;
   });
+  // ── Page header, tabs and the header menu.
+  const stackState = $derived.by<{ tone: Tone; label: string }>(() => {
+    if (services.length === 0) return { tone: 'off', label: 'not running' };
+    const running = services.filter((s) => s.state === 'running');
+    if (running.length === 0) return { tone: 'off', label: 'stopped' };
+    const unhealthy = running.some((s) => (s.status ?? '').toLowerCase().includes('unhealthy'));
+    if (running.length < services.length || unhealthy) return { tone: 'warn', label: 'degraded' };
+    return { tone: 'ok', label: 'running' };
+  });
+  const lastDeploy = $derived(historyEntries[0]);
+
+  const tabItems = $derived<TabItem[]>([
+    { key: 'overview', label: 'Overview', count: services.length || null },
+    { key: 'compose', label: 'Compose', dot: dirty },
+    { key: 'environment', label: 'Environment', count: envRows.length || null },
+    { key: 'logs', label: 'Logs' },
+    ...(canDeploy ? [{ key: 'history', label: 'History', count: historyEntries.length || null }] : []),
+    { key: 'settings', label: 'Settings' }
+  ]);
+
+  const headerMenu = $derived.by<MenuItem[]>(() => {
+    const out: MenuItem[] = [];
+    if (canWrite) {
+      out.push({ label: gitSource ? 'Edit git source' : 'Connect a git repository', icon: GitBranch, onclick: openGitDialog });
+      if (gitSource) out.push({ label: 'Sync from git now', icon: RefreshCw, onclick: syncNow, disabled: gitBusy });
+      out.push({ label: 'Edit dependencies', icon: Layers, onclick: openDepsEditor });
+    }
+    out.push({ label: 'Reload from disk', icon: RefreshCw, onclick: load });
+    out.push({ separator: true });
+    out.push({ label: 'Delete stack…', icon: Trash2, danger: true, disabled: anyBusy, onclick: openDelete });
+    return out;
+  });
+
+  function serviceMenu(s: { service: string; container_id: string; image: string }): MenuItem[] {
+    const out: MenuItem[] = [{ label: 'Open container', href: `/containers/${s.container_id}?from=stack` }];
+    if (canDeploy) {
+      out.push({ label: 'Rolling update…', icon: Repeat, onclick: () => openRolling(s.service) });
+      out.push({ label: 'Scale…', icon: Maximize2, onclick: () => openScale(s.service) });
+    }
+    if (canUpdateImages) {
+      out.push({
+        label: hasImageUpdate(s.image) ? 'Update image…' : 'Pull and update image…',
+        icon: RefreshCw,
+        disabled: !!svcOp(s.service) && isActive(svcOp(s.service)!),
+        onclick: () => updateImage(s)
+      });
+    }
+    return out;
+  }
+
+  // ── Image updates of the stack's services. The updater only runs on the
+  // central server's daemon, so remote stacks don't offer it.
+  let imageUpdates = $state<Record<string, { update_available: boolean }>>({});
+  async function loadImageUpdates() {
+    if (!allowed('images.view')) return;
+    try {
+      imageUpdates = (await api.images.updates()) ?? {};
+    } catch {
+      /* no badge without the cache */
+    }
+  }
+  $effect(() => {
+    void name;
+    untrack(() => loadImageUpdates());
+  });
+  function hasImageUpdate(image: string): boolean {
+    return !!imageUpdates[image]?.update_available;
+  }
+  const canUpdateImages = $derived(
+    !isRemote && canDeploy && allowed('containers.update', { stack: name, host: stackHost })
+  );
+  // Operation per service: the container id changes with the update, the
+  // service name does not.
+  let svcOps = $state<Record<string, string>>({});
+  function svcOp(service: string) {
+    return operations.get(svcOps[service]);
+  }
+  async function updateImage(s: { service: string; container_id: string; image: string }) {
+    const ok = await confirm.ask({
+      title: `Update ${s.service}`,
+      message: `Pulls ${s.image} and, when it changed, recreates every replica of ${s.service} from compose.yaml.`,
+      body: 'The current image is kept for a rollback and volumes are carried over. Compose changes saved since the last deploy are applied too.',
+      confirmLabel: 'Update'
+    });
+    if (!ok) return;
+    const since = Date.now();
+    const req = api.containers.doUpdate(s.container_id);
+    const op = await operations.find(opRef.container(s.container_id), 'image.update', since);
+    if (op) {
+      svcOps = { ...svcOps, [s.service]: op.id };
+      void operations.open(op.id);
+    }
+    try {
+      const res = await req;
+      if (!op) {
+        if (res.updated) toast.success(`${s.service} updated`);
+        else toast.info(`${s.service} is already up to date`);
+      }
+    } catch (e) {
+      if (!op) toast.error(`Update of ${s.service} failed`, (e as Error).message);
+    }
+    await refreshStatus();
+    void loadImageUpdates();
+    if (historyLoadedOnce) loadHistory();
+  }
 </script>
 
-<section class="stack-detail-frame">
-  <!-- Editorial header: eyebrow + italic stack name + StatusPill + meta.
-       No narrative subtitle — the surface info is enough. The breadcrumb
-       in the topbar already shows "stacks / {name}" so we don't repeat
-       a manual back-link here. -->
-  <header class="stack-header">
-    <div class="stack-header-text">
-      <div class="stack-title-row">
-        <h1 class="ed-title stack-title">{name}</h1>
-        {#if services.length > 0}
-          {@const allRunning = services.every((s) => s.state === 'running')}
-          <StatusPill status={allRunning ? 'running' : 'degraded'} />
-        {/if}
-      </div>
-      {#if services.length > 0}
-        <p class="ed-subtitle stack-subtitle">
-          {services.filter((s) => s.state === 'running').length} / {services.length} running{#if isRemote && hosts.selected} · {hosts.selected.name}{/if}{#if anyBusy || deployProgress}
-            ·
-            <span
-              class:stack-deploy-status-failed={deployProgress?.phase === 'failed'}
-              class:stack-deploy-status-done={deployProgress?.phase === 'done'}
-            >
-              {deployStatusLabel(deployProgress, deployElapsed) || 'deploying…'}
-            </span>
-          {/if}
-        </p>
+<section class="dm-page stk">
+  <header class="dm-ph">
+    <h1 class="stk-name">{name}</h1>
+    <StatusChip tone={stackState.tone} label={stackState.label} />
+    <span class="dm-sub stk-sub">
+      {#if services.length > 0}{services.filter((s) => s.state === 'running').length} / {services.length} running · {/if}{isRemote && hosts.selected ? hosts.selected.name : 'local'}{#if lastDeploy} · deployed {fmtAgo(lastDeploy.deployed_at)}{#if lastDeploy.deployed_by_name} by {lastDeploy.deployed_by_name}{/if}{/if}
+      {#if anyBusy || deployProgress}
+        ·
+        <span
+          class:stk-deploy-failed={deployProgress?.phase === 'failed'}
+          class:stk-deploy-done={deployProgress?.phase === 'done'}
+        >{deployStatusLabel(deployProgress, deployElapsed) || 'deploying…'}</span>
       {/if}
-    </div>
-    <div class="ed-actions">
-      {#if stackStatus !== 'needs_recovery' && canDeploy}
-        <button
-          type="button"
-          class="dm-btn dm-btn-primary dm-btn-sm"
-          onclick={deploy}
-          disabled={anyBusy}
-        >
-          <Play size={13} strokeWidth={1.5} />
-          Deploy
-        </button>
-        {#if hosts.available.length > 1}
-          <button
-            type="button"
-            class="dm-btn dm-btn-secondary dm-btn-sm"
-            onclick={openMigrate}
-            disabled={anyBusy}
-          >
-            <ArrowRightLeft size={13} strokeWidth={1.5} />
-            Migrate
-          </button>
-        {/if}
-        <button
-          type="button"
-          class="dm-btn dm-btn-secondary dm-btn-sm"
-          onclick={stop}
-          disabled={anyBusy}
-        >
-          <Square size={13} strokeWidth={1.5} />
-          Stop
+    </span>
+    <span class="dm-sp"></span>
+    {#if stackStatus !== 'needs_recovery' && canDeploy}
+      <button type="button" class="dm-btn dm-btn-primary" onclick={deploy} disabled={anyBusy}>
+        <Play size={13} strokeWidth={1.8} /> Deploy
+      </button>
+      {#if hosts.available.length > 1}
+        <button type="button" class="dm-btn" onclick={openMigrate} disabled={anyBusy}>
+          <ArrowRightLeft size={13} strokeWidth={1.8} /> Migrate
         </button>
       {/if}
-    </div>
+      <button type="button" class="dm-btn" onclick={stop} disabled={anyBusy}>
+        <Square size={12} strokeWidth={1.8} /> Stop
+      </button>
+    {/if}
+    <Menu label="More stack actions" items={headerMenu} width={240} />
   </header>
 
   {#if stackStatus === 'needs_recovery'}
-    <!-- Stack record exists but compose.yaml is missing or empty.
-         Don't render the regular editor — it would let the operator
-         "save" an empty file over the running deployment. Offer the
-         three explicit recovery paths instead. -->
-    <div class="dm-card p-5 border-[color-mix(in_srgb,var(--color-warning-500)_50%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-500)_6%,transparent)]">
-      <div class="flex items-start gap-3 mb-4">
-        <AlertTriangle class="w-5 h-5 text-[var(--color-warning-400)] shrink-0 mt-0.5" />
-        <div>
-          <div class="font-semibold text-[var(--color-warning-400)]">Compose file is missing or empty</div>
-          <div class="text-sm text-[var(--fg-muted)] mt-1">
-            This stack still has a deployment record (and possibly running containers), but
-            <span class="font-mono">/stacks/{name}/compose.yaml</span> is gone or empty on disk.
-            Pick one of the recovery options below — the regular editor is hidden until the
-            stack is recovered or discarded so we can't accidentally overwrite a running
-            workload with an empty config.
-          </div>
-        </div>
+    <div class="stk-notice warn" role="alert">
+      <div class="stk-notice-h">
+        <AlertTriangle size={15} />
+        <b>Compose file is missing or empty</b>
       </div>
-      <div class="grid gap-3 md:grid-cols-3">
-        <div class="p-3 rounded-md border border-[var(--border)] bg-[var(--surface)] flex flex-col">
-          <div class="font-medium text-sm mb-1">Recover from running containers</div>
-          <div class="text-xs text-[var(--fg-muted)] flex-1 mb-3">
-            Inspect the live containers labelled <span class="font-mono">com.docker.compose.project={name}</span>
-            and write a best-effort <span class="font-mono">compose.yaml</span> back to disk. Review the
-            result before redeploying.
-          </div>
-          <Button variant="primary" onclick={recoverFromContainers} loading={recoverBusy} disabled={recoverBusy}>
-            <RotateCcw class="w-3.5 h-3.5" />
-            Recover
-          </Button>
+      <p>
+        This stack still has a deployment record and possibly running containers, but
+        <code>/stacks/{name}/compose.yaml</code> is gone or empty. The editor stays hidden until the stack is
+        recovered or discarded, so an empty file can't overwrite the running workload.
+      </p>
+      <div class="dm-tbl stk-recover">
+        <div class="dm-tr" style="grid-template-columns: minmax(0, 1fr) 150px">
+          <span class="dm-nm"><span class="dm-t">Recover from running containers</span><small>Writes a best-effort compose.yaml from the containers labelled com.docker.compose.project={name}. Review it before redeploying.</small></span>
+          <span><Button variant="primary" size="sm" onclick={recoverFromContainers} loading={recoverBusy} disabled={recoverBusy}><RotateCcw size={13} /> Recover</Button></span>
         </div>
-        <div class="p-3 rounded-md border border-[var(--border)] bg-[var(--surface)] flex flex-col">
-          <div class="font-medium text-sm mb-1">Restore from last backup</div>
-          <div class="text-xs text-[var(--fg-muted)] flex-1 mb-3">
-            {#if latestBackupRun === undefined}
-              Looking for a stack-typed backup of <span class="font-mono">{name}</span>…
-            {:else if latestBackupRun === null}
-              No successful backup of this stack found. Take a backup proactively (Backups → New job, source <span class="font-mono">stack:{name}</span>) so this option is available next time.
-            {:else}
-              Latest run: <span class="font-mono">{latestBackupRun.job_name}</span> on
-              {latestBackupRun.finished_at ? new Date(latestBackupRun.finished_at).toLocaleString() : 'unknown'} ({Math.round(latestBackupRun.size_bytes / 1024 / 1024)} MB).
-              Restores compose + named volumes; bind mounts are untouched. Existing volume data is replaced.
-            {/if}
-          </div>
-          <Button variant="secondary" onclick={restoreFromBackup} loading={restoreBusy} disabled={restoreBusy || !latestBackupRun}>
-            <History class="w-3.5 h-3.5" />
-            Restore
-          </Button>
+        <div class="dm-tr" style="grid-template-columns: minmax(0, 1fr) 150px">
+          <span class="dm-nm">
+            <span class="dm-t">Restore from last backup</span>
+            <small>
+              {#if latestBackupRun === undefined}
+                Looking for a stack backup of {name}…
+              {:else if latestBackupRun === null}
+                No successful stack backup of {name} found.
+              {:else}
+                {latestBackupRun.job_name} · {latestBackupRun.finished_at ? new Date(latestBackupRun.finished_at).toLocaleString() : 'unknown'} · {fmtBytes(latestBackupRun.size_bytes)}. Replaces compose and named volumes; bind mounts stay.
+              {/if}
+            </small>
+          </span>
+          <span><Button variant="secondary" size="sm" onclick={restoreFromBackup} loading={restoreBusy} disabled={restoreBusy || !latestBackupRun}><History size={13} /> Restore</Button></span>
         </div>
-        <div class="p-3 rounded-md border border-[color-mix(in_srgb,var(--color-danger-500)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-danger-500)_5%,transparent)] flex flex-col">
-          <div class="font-medium text-sm mb-1">Remove stack record</div>
-          <div class="text-xs text-[var(--fg-muted)] flex-1 mb-3">
-            Forget the stack in dockmesh. Running containers are <span class="font-medium">not touched</span> — clean them up via the Containers page or <span class="font-mono">docker</span> directly afterwards.
-          </div>
-          <Button variant="danger" onclick={discardGhost}>
-            <Trash2 class="w-3.5 h-3.5" />
-            Discard record
-          </Button>
+        <div class="dm-tr" style="grid-template-columns: minmax(0, 1fr) 150px">
+          <span class="dm-nm"><span class="dm-t">Remove stack record</span><small>Forgets the stack in Dockmesh. Running containers are not touched.</small></span>
+          <span><Button variant="danger" size="sm" onclick={discardGhost}><Trash2 size={13} /> Discard record</Button></span>
         </div>
       </div>
     </div>
   {/if}
 
   {#if recoverWarnings.length > 0}
-    <div class="dm-card p-4 border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)]">
-      <div class="font-medium text-[var(--color-warning-400)] mb-2 flex items-center gap-2">
-        <AlertTriangle class="w-4 h-4" />
-        Recovery warnings — review the compose before redeploying
-      </div>
-      <ul class="text-xs text-[var(--fg-muted)] space-y-1 list-disc pl-5">
-        {#each recoverWarnings as w}<li>{w}</li>{/each}
-      </ul>
+    <div class="stk-notice warn">
+      <div class="stk-notice-h"><AlertTriangle size={15} /><b>Review the recovered compose before redeploying</b></div>
+      <ul>{#each recoverWarnings as w}<li>{w}</li>{/each}</ul>
     </div>
   {/if}
 
   {#if externalChange}
-    <div class="dm-card p-4 border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] flex items-start gap-3">
-      <AlertTriangle class="w-5 h-5 text-[var(--color-warning-400)] shrink-0 mt-0.5" />
-      <div class="flex-1 text-sm">
-        <div class="font-medium text-[var(--color-warning-400)]">
-          {externalChange.file || 'Stack directory'} was {externalChange.type} outside Dockmesh
-        </div>
-        {#if dirty}
-          <div class="text-xs text-[var(--color-danger-400)] mt-1">
-            You have unsaved edits — reloading will discard them.
-          </div>
-        {:else}
-          <div class="text-xs text-[var(--fg-muted)] mt-1">
-            Reload to pick up the external change.
-          </div>
-        {/if}
+    <div class="stk-notice warn stk-notice-row">
+      <AlertTriangle size={15} />
+      <div class="stk-notice-t">
+        <b>{externalChange.file || 'Stack directory'} was {externalChange.type} outside Dockmesh</b>
+        <span class:stk-bad={dirty}>{dirty ? 'You have unsaved edits; reloading discards them.' : 'Reload to pick up the change.'}</span>
       </div>
-      <div class="flex gap-2 shrink-0">
-        <Button size="sm" variant="secondary" onclick={load}>
-          <RefreshCw class="w-3.5 h-3.5" />
-          Reload
-        </Button>
-        <Button size="sm" variant="ghost" onclick={() => (externalChange = null)}>Ignore</Button>
-      </div>
+      <Button size="sm" variant="secondary" onclick={load}><RefreshCw size={13} /> Reload</Button>
+      <Button size="sm" variant="ghost" onclick={() => (externalChange = null)}>Ignore</Button>
     </div>
   {/if}
 
   {#if modifiedOutside.length > 0}
-    <div class="dm-card p-4 border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] flex items-start gap-3">
-      <AlertTriangle class="w-5 h-5 text-[var(--color-warning-400)] shrink-0 mt-0.5" />
-      <div class="flex-1 text-sm">
-        <div class="font-medium text-[var(--color-warning-400)]">
-          Modified outside Dockmesh: {modifiedOutside.join(', ')}
-        </div>
-        <div class="text-xs text-[var(--fg-muted)] mt-1">
-          These files changed since Dockmesh last wrote them. Review them before deploying; the next deploy asks for confirmation.
-        </div>
+    <div class="stk-notice warn stk-notice-row">
+      <AlertTriangle size={15} />
+      <div class="stk-notice-t">
+        <b>Modified outside Dockmesh: {modifiedOutside.join(', ')}</b>
+        <span>Review these files before deploying; the next deploy asks for confirmation.</span>
       </div>
     </div>
   {/if}
 
   {#if mountsStackDir}
-    <div class="dm-card p-4 border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] flex items-start gap-3">
-      <AlertTriangle class="w-5 h-5 text-[var(--color-warning-400)] shrink-0 mt-0.5" />
-      <div class="flex-1 text-sm">
-        <div class="font-medium text-[var(--color-warning-400)]">A service mounts the stack directory</div>
-        <div class="text-xs text-[var(--fg-muted)] mt-1">
-          Its containers can change compose.yaml and .env. Dockmesh flags such changes and asks before the next deploy.
-          Mount a subdirectory (<code>./data:/app/data</code>) or add <code>:ro</code> to avoid this.
-        </div>
+    <div class="stk-notice warn stk-notice-row">
+      <AlertTriangle size={15} />
+      <div class="stk-notice-t">
+        <b>A service mounts the stack directory</b>
+        <span>Its containers can change compose.yaml and .env. Mount a subdirectory (<code>./data:/app/data</code>) or add <code>:ro</code>.</span>
       </div>
     </div>
   {/if}
 
-  <!-- Git source (P.11.11) — Editorial treatment -->
-  {#if !gitLoading}
-    <section class="gs-section">
-      <div class="gs-eyebrow">git source</div>
-      {#if gitSource}
-        <div class="gs-card gs-card-connected">
-          <div class="gs-card-main">
-            <div class="gs-card-icon">
-              <GitBranch size={16} strokeWidth={1.5} />
-            </div>
-            <div class="gs-card-body">
-              <div class="gs-card-title">
-                <span class="gs-repo">{gitSource.repo_url}</span>
-                <span class="dm-pill dm-pill-neutral gs-pill">
-                  <span class="dm-pill-dot"></span>{gitSource.branch}
-                </span>
-                {#if gitSource.auto_deploy}
-                  <span class="dm-pill dm-pill-success gs-pill">
-                    <span class="dm-pill-dot"></span>auto-deploy
-                  </span>
-                {/if}
-                {#if gitSource.has_webhook_secret}
-                  <span class="dm-pill dm-pill-info gs-pill">
-                    <span class="dm-pill-dot"></span>webhook
-                  </span>
-                {/if}
-              </div>
-              <div class="gs-card-sub">
-                {#if gitSource.last_sync_sha}
-                  <code class="gs-sha">{gitSource.last_sync_sha.slice(0, 7)}</code>
-                  {#if gitSource.last_sync_at}
-                    <span class="gs-meta">synced {new Date(gitSource.last_sync_at).toLocaleString()}</span>
-                  {/if}
-                {:else}
-                  <span class="gs-meta">never synced</span>
-                {/if}
-                {#if gitSource.path_in_repo && gitSource.path_in_repo !== '.'}
-                  <span class="gs-meta">· path: <code>{gitSource.path_in_repo}</code></span>
-                {/if}
-              </div>
-              {#if gitSource.last_sync_error}
-                <div class="gs-error">
-                  <AlertTriangle size={12} strokeWidth={1.5} />
-                  {gitSource.last_sync_error}
-                </div>
-              {/if}
-            </div>
-            {#if canWrite}
-              <div class="gs-actions">
-                <button
-                  type="button"
-                  class="dm-btn dm-btn-secondary dm-btn-sm"
-                  onclick={syncNow}
-                  disabled={gitBusy}
-                >
-                  <RefreshCw size={12} strokeWidth={1.5} class={gitBusy ? 'animate-spin' : ''} />
-                  Sync now
-                </button>
-                <button
-                  type="button"
-                  class="dm-btn dm-btn-ghost dm-btn-sm"
-                  onclick={openGitDialog}
-                  disabled={gitBusy}
-                >
-                  <Pencil size={12} strokeWidth={1.5} />
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  class="dm-btn dm-btn-ghost dm-btn-sm gs-disconnect"
-                  onclick={disconnectGit}
-                  disabled={gitBusy}
-                  aria-label="Disconnect"
-                >
-                  <Unlink size={12} strokeWidth={1.5} />
-                </button>
-              </div>
-            {/if}
-          </div>
-          {#if !gitSource.has_webhook_secret}
-            <div class="gs-drift">
-              <div class="gs-drift-title">
-                <AlertTriangle size={12} strokeWidth={1.5} />
-                Webhook disabled — set a secret
-              </div>
-              <div class="gs-drift-hint">
-                Pushes to the repository only reach this stack through polling or <em>Sync now</em>.
-                Set a webhook secret under <em>Edit</em> and enter the same secret in your git provider's webhook settings.
-              </div>
-            </div>
+  {#if activeMigration && !activeMigration.completed_at}
+    <div class="stk-notice stk-notice-row">
+      <Loader2 size={15} class="animate-spin" />
+      <div class="stk-notice-t">
+        <b>Migrating to {activeMigration.target_host_id}</b>
+        <span>
+          Phase: {activeMigration.phase ?? activeMigration.status}
+          {#if activeMigration.progress?.current_volume}
+            · volume {activeMigration.progress.volume_index}/{activeMigration.progress.volumes_total}: {activeMigration.progress.current_volume}
           {/if}
-          {#if gitSource.last_env_drift && ((gitSource.last_env_drift.new_from_repo?.length ?? 0) + (gitSource.last_env_drift.new_from_compose?.length ?? 0) > 0)}
-            <div class="gs-drift">
-              <div class="gs-drift-title">
-                <AlertTriangle size={12} strokeWidth={1.5} />
-                Env drift from last sync
-              </div>
-              {#if gitSource.last_env_drift.new_from_repo?.length}
-                <div class="gs-drift-row">
-                  <span class="gs-drift-label">new from repo:</span>
-                  <code>{gitSource.last_env_drift.new_from_repo.join(', ')}</code>
-                </div>
-              {/if}
-              {#if gitSource.last_env_drift.new_from_compose?.length}
-                <div class="gs-drift-row">
-                  <span class="gs-drift-label">needed by compose:</span>
-                  <code>{gitSource.last_env_drift.new_from_compose.join(', ')}</code>
-                </div>
-              {/if}
-              <div class="gs-drift-hint">
-                Fill in the values on the <em>Environment</em> tab. Existing values are untouched.
-              </div>
-            </div>
-          {/if}
-        </div>
-      {:else if canWrite}
-        <button
-          type="button"
-          class="gs-card gs-card-empty"
-          onclick={openGitDialog}
-        >
-          <div class="gs-card-main">
-            <div class="gs-card-icon gs-card-icon-empty">
-              <GitBranch size={16} strokeWidth={1.5} />
-            </div>
-            <div class="gs-card-body">
-              <div class="gs-empty-title">Connect a git repository</div>
-              <div class="gs-empty-blurb">
-                Sync <code>compose.yaml</code> and <code>.env</code> from a public or private repo. Auto-deploy on push, or pull on demand.
-              </div>
-            </div>
-            <div class="gs-empty-cta">
-              <span class="dm-btn dm-btn-primary dm-btn-sm">
-                <LinkIcon size={12} strokeWidth={1.5} />
-                Connect
-              </span>
-            </div>
-          </div>
-        </button>
-      {/if}
-    </section>
+        </span>
+      </div>
+      <StatusChip tone="acc" label={activeMigration.status} />
+    </div>
   {/if}
 
-  <!-- Active migration banner -->
-  {#if activeMigration && !activeMigration.completed_at}
-    <Card class="p-4 border-[var(--color-brand-500)]/30">
-      <div class="flex items-center gap-3">
-        <Loader2 class="w-5 h-5 text-[var(--color-brand-400)] animate-spin shrink-0" />
-        <div class="flex-1 min-w-0">
-          <div class="text-sm font-medium">
-            Migrating to {activeMigration.target_host_id}
-          </div>
-          <div class="text-xs text-[var(--fg-muted)]">
-            Phase: {activeMigration.phase ?? activeMigration.status}
-            {#if activeMigration.progress?.current_volume}
-              — Volume {activeMigration.progress.volume_index}/{activeMigration.progress.volumes_total}: {activeMigration.progress.current_volume}
-            {/if}
-          </div>
-        </div>
-        <Badge variant="info" dot>{activeMigration.status}</Badge>
+  {#if gitSource && (gitSource.last_sync_error || !gitSource.has_webhook_secret || ((gitSource.last_env_drift?.new_from_repo?.length ?? 0) + (gitSource.last_env_drift?.new_from_compose?.length ?? 0) > 0))}
+    <div class="stk-notice warn stk-notice-row">
+      <GitBranch size={15} />
+      <div class="stk-notice-t">
+        {#if gitSource.last_sync_error}
+          <b>Last git sync failed</b><span title={gitSource.last_sync_error}>{gitSource.last_sync_error}</span>
+        {:else if (gitSource.last_env_drift?.new_from_repo?.length ?? 0) + (gitSource.last_env_drift?.new_from_compose?.length ?? 0) > 0}
+          <b>Env drift from the last sync</b>
+          <span>
+            {#if gitSource.last_env_drift?.new_from_repo?.length}new from repo: <code>{gitSource.last_env_drift.new_from_repo.join(', ')}</code>{/if}
+            {#if gitSource.last_env_drift?.new_from_compose?.length} needed by compose: <code>{gitSource.last_env_drift.new_from_compose.join(', ')}</code>{/if}
+            · fill in the values on the Environment tab.
+          </span>
+        {:else}
+          <b>Git webhook disabled</b>
+          <span>Pushes only reach this stack through polling or Sync now. Set a webhook secret in the git source settings.</span>
+        {/if}
       </div>
-    </Card>
+      <Button size="sm" variant="ghost" onclick={() => (activeTab = 'settings')}>Git source</Button>
+    </div>
   {/if}
 
   {#if stackStatus !== 'needs_recovery'}
-  <!-- Editorial tab strip — Overview / Compose / Environment / History /
-       Settings. Hidden in recovery mode so the operator can't accidentally
-       land on inactive tabs while compose.yaml is gone. Counts on the
-       relevant tabs match the loaded entry counts. -->
-  <div class="ed-tabs stack-tabs" role="tablist" aria-label="Stack sections">
-    <button
-      role="tab"
-      type="button"
-      aria-selected={activeTab === 'overview'}
-      class="ed-tab"
-      class:active={activeTab === 'overview'}
-      onclick={() => (activeTab = 'overview')}
-    >
-      Overview
-      {#if services.length > 0}<span class="count">{services.length}</span>{/if}
-    </button>
-    <button
-      role="tab"
-      type="button"
-      aria-selected={activeTab === 'compose'}
-      class="ed-tab"
-      class:active={activeTab === 'compose'}
-      onclick={() => (activeTab = 'compose')}
-    >
-      Compose
-      {#if dirty}<span class="count" style="color: var(--color-warning-400); border-color: color-mix(in srgb, var(--color-warning-500) 40%, var(--border));">unsaved</span>{/if}
-    </button>
-    <button
-      role="tab"
-      type="button"
-      aria-selected={activeTab === 'environment'}
-      class="ed-tab"
-      class:active={activeTab === 'environment'}
-      onclick={() => (activeTab = 'environment')}
-    >
-      Environment
-      {#if envs && envs.available.length > 0}<span class="count">{envs.available.length}</span>{/if}
-    </button>
-    <button
-      role="tab"
-      type="button"
-      aria-selected={activeTab === 'logs'}
-      class="ed-tab"
-      class:active={activeTab === 'logs'}
-      onclick={() => (activeTab = 'logs')}
-    >
-      Logs
-      <span class="count" style:color={activeTab === 'logs' && logTailing ? 'var(--color-success-400)' : undefined}>
-        {activeTab === 'logs' && logTailing ? 'live' : 'stream'}
-      </span>
-    </button>
-    <button
-      role="tab"
-      type="button"
-      aria-selected={activeTab === 'history'}
-      class="ed-tab"
-      class:active={activeTab === 'history'}
-      onclick={() => (activeTab = 'history')}
-    >
-      History
-      {#if historyEntries.length > 0}<span class="count">{historyEntries.length}</span>{/if}
-    </button>
-    <button
-      role="tab"
-      type="button"
-      aria-selected={activeTab === 'settings'}
-      class="ed-tab"
-      class:active={activeTab === 'settings'}
-      onclick={() => (activeTab = 'settings')}
-    >
-      Settings
-    </button>
-  </div>
+    <Tabs label="Stack sections" tabs={tabItems} active={activeTab} onchange={(k) => (activeTab = k as TabKey)} />
 
-  <!-- ─────────────────────────── Overview ─────────────────────────── -->
-  {#if activeTab === 'overview'}
-    <div class="stack-overview">
-      <!-- LEFT: services list -->
-      <div class="stack-overview-main">
-        <section class="stack-block">
-          <Eyebrow>Services · {services.length}</Eyebrow>
+    <!-- Overview -->
+    {#if activeTab === 'overview'}
+      <div class="stk-grid">
+        <div class="stk-col">
           {#if loading}
-            <div class="stack-skeleton">
+            <div class="stk-skel">
               <Skeleton width="30%" height="1rem" />
               <Skeleton width="100%" height="3rem" />
             </div>
           {:else if services.length > 0}
-            <div class="stack-services">
+            {@const cols = '14px minmax(140px, 1.3fr) minmax(140px, 1.5fr) 104px 64px 84px 34px'}
+            <div class="dm-tbl">
+              <div class="dm-tr dm-th" style="grid-template-columns: {cols}">
+                <span></span><span>Service</span><span>Image</span><span>State</span><span class="r">CPU</span><span class="r">Memory</span><span></span>
+              </div>
               {#each services as s (s.service + s.container_id)}
                 {@const count = replicaCounts.get(s.service) ?? 0}
-                <EdRow
-                  status={s.state === 'running' ? 'running' : 'stopped'}
-                  href={`/containers/${s.container_id}?from=stack`}
-                  columns="6px minmax(0, 1.4fr) minmax(0, 1.4fr) auto auto"
+                {@const st = svcStats.get(s.service)}
+                {@const unhealthy = (s.status ?? '').toLowerCase().includes('unhealthy')}
+                {@const op = svcOp(s.service)}
+                <div
+                  class="dm-tr dm-click"
+                  style="grid-template-columns: {cols}"
+                  role="link"
+                  tabindex="0"
+                  onclick={() => goto(`/containers/${s.container_id}?from=stack`)}
+                  onkeydown={(e) => e.key === 'Enter' && goto(`/containers/${s.container_id}?from=stack`)}
                 >
-                  <span class="stack-svc-name">
-                    <span class="stack-svc-id">
-                      {s.service}{#if count > 1}<span class="stack-svc-replicas">×{count}</span>{/if}
-                    </span>
-                    <span class="stack-svc-meta">{s.status}</span>
+                  <span class="dm-dot {s.state !== 'running' ? '' : unhealthy ? 'warn' : 'ok'}"></span>
+                  <span class="dm-nm">
+                    <a href={`/containers/${s.container_id}?from=stack`} onclick={(e) => e.stopPropagation()}>{s.service}{#if count > 1}<span class="stk-rep"> ×{count}</span>{/if}</a>
+                    <small title={s.status}>{s.status || s.state}</small>
                   </span>
-                  <span class="stack-svc-image" title={s.image}>{s.image}</span>
-                  <StatusPill status={s.state === 'running' ? 'running' : 'stopped'} label={s.state} />
-                  <span class="stack-svc-actions" onclick={(e) => e.stopPropagation()} role="presentation">
-                    {#if canDeploy}
-                      <button
-                        type="button"
-                        class="stack-svc-btn"
-                        title="Rolling update {s.service}"
-                        aria-label="Rolling update {s.service}"
-                        onclick={(e) => { e.preventDefault(); openRolling(s.service); }}
-                      >
-                        <Repeat size={12} strokeWidth={1.5} />
-                      </button>
-                      <button
-                        type="button"
-                        class="stack-svc-btn"
-                        title="Scale {s.service}"
-                        aria-label="Scale {s.service}"
-                        onclick={(e) => { e.preventDefault(); openScale(s.service); }}
-                      >
-                        <Maximize2 size={12} strokeWidth={1.5} />
-                      </button>
+                  <span class="dm-num dm-dim stk-img" title={s.image}>
+                    {s.image.split('/').pop()}
+                    {#if hasImageUpdate(s.image)}<StatusChip tone="acc" label="update" title="A newer image is available" />{/if}
+                  </span>
+                  <span>
+                    {#if op && (isActive(op) || Date.now() - Date.parse(op.finished_at ?? op.created_at) < 60_000)}
+                      <OpProgress {op} compact />
+                    {:else}
+                      <StatusChip tone={s.state !== 'running' ? 'off' : unhealthy ? 'warn' : 'ok'} label={unhealthy ? 'unhealthy' : s.state} />
                     {/if}
                   </span>
-                </EdRow>
+                  <span class="dm-num r" class:warn={(st?.cpu_percent ?? 0) >= 80}>{st ? `${st.cpu_percent.toFixed(1)}%` : '—'}</span>
+                  <span class="dm-num r" class:warn={(st?.mem_percent ?? 0) >= 85}>{st ? fmtMem(st.mem_used) : '—'}</span>
+                  <span class="dm-tr-menu" role="presentation" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+                    <Menu label={`Actions for ${s.service}`} items={serviceMenu(s)} width={220} />
+                  </span>
+                </div>
               {/each}
             </div>
           {:else}
-            <div class="stack-empty">
-              <p>No containers running for this stack.</p>
-            </div>
+            <div class="dm-tbl"><div class="dm-empty">No containers run for this stack. Deploy it to start them.</div></div>
           {/if}
-        </section>
 
-        <!-- Heads-up — surfaces the most-actionable per-deploy notes -->
-        {#if services.some((s) => s.state !== 'running' || (s.status ?? '').toLowerCase().includes('unhealthy'))}
-          <section class="stack-block">
-            <Eyebrow>Heads-up</Eyebrow>
-            <div class="stack-headsup">
-              <AlertTriangle size={14} strokeWidth={1.5} class="stack-headsup-icon" />
-              <p>
-                {#each services.filter((s) => s.state !== 'running') as s, i (s.service)}
-                  {#if i > 0}<span class="stack-headsup-sep"> · </span>{/if}
-                  <em class="ed-accent">{s.service}</em> is <strong>{s.state}</strong>
-                {/each}
-                {#if services.some((s) => s.state === 'running' && (s.status ?? '').toLowerCase().includes('unhealthy'))}
-                  <span class="stack-headsup-sep"> · </span>
-                  one or more containers report <strong>unhealthy</strong> via Docker healthcheck
-                {/if}
-              </p>
+          {#if canDeploy}
+          <section>
+            <div class="stk-sec-h">
+              <h2 class="dm-h2">Recent deploys</h2>
+              <span class="dm-sp"></span>
+              <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (activeTab = 'history')}>History <ArrowRight size={12} /></button>
             </div>
+            {#if historyEntries.length === 0}
+              <p class="stk-line">{historyLoading ? 'Loading…' : 'No deploys recorded yet.'}</p>
+            {:else}
+              <div class="dm-tbl">
+                {#each historyEntries.slice(0, 3) as entry, i (entry.id)}
+                  {@const badge = deployTriggerBadge(entry.note)}
+                  <div class="dm-tr" style="grid-template-columns: 44px minmax(0, 1fr) 110px 100px">
+                    <span class="dm-num dm-dim">#{entry.version}</span>
+                    <span class="dm-trunc" title={entry.note || badge.label}>{entry.note || badge.label}<span class="dm-dim">{entry.deployed_by_name ? ` · ${entry.deployed_by_name}` : ''}</span></span>
+                    <span class="dm-num dm-dim" title={new Date(entry.deployed_at).toLocaleString()}>{fmtAgo(entry.deployed_at)}</span>
+                    <span>
+                      {#if entry.success === false}<StatusChip tone="bad" label="failed" title={entry.error_message} />
+                      {:else if i === 0}<StatusChip tone="ok" label="current" />
+                      {:else}<StatusChip tone="off" label="success" />{/if}
+                    </span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
           </section>
+          {/if}
+        </div>
+
+        <aside class="stk-col">
+          <section>
+            <h2 class="dm-h2">Resources · rolled up</h2>
+            <dl class="dm-kv">
+              <dt>CPU</dt><dd class="dm-num">{statsRollup.cpuLabel} <span class="dm-dim">{statsRollup.cpuMeta}</span></dd>
+              <dt>Memory</dt><dd class="dm-num">{statsRollup.memLabel} <span class="dm-dim">{statsRollup.memMeta}</span></dd>
+              <dt>Network</dt><dd class="dm-num">{statsRollup.netLabel} <span class="dm-dim">{statsRollup.netMeta}</span></dd>
+              <dt>Host</dt><dd>{#if isRemote}<a href={`/hosts/${stackHost}`}>{hosts.selected?.name ?? stackHost}</a>{:else}<a href="/hosts/local">local</a>{/if}</dd>
+              <dt>Source</dt>
+              <dd>
+                {#if gitSource}
+                  <span class="stk-src"><GitBranch size={12} /> <span class="dm-trunc" title={gitSource.repo_url}>{gitSource.repo_url}</span></span>
+                  <span class="dm-dim">{gitSource.branch}{gitSource.auto_deploy ? ' · auto-deploy on push' : ''}</span>
+                {:else}
+                  compose editor
+                {/if}
+              </dd>
+              <dt>Endpoints</dt>
+              <dd class="dm-num">
+                {#if composeEndpoints.length === 0}
+                  <span class="dm-dim">no ports declared</span>
+                {:else}
+                  {#each composeEndpoints as ep, i (ep.service + i)}
+                    <div>{ep.service} :{ep.port}{#if ep.mode === 'host'} <ExternalLink size={10} />{:else} <span class="dm-dim">internal</span>{/if}</div>
+                  {/each}
+                {/if}
+              </dd>
+            </dl>
+          </section>
+
+          <section>
+            <h2 class="dm-h2">Networks · volumes</h2>
+            {#if composeNetworks.length === 0 && composeVolumes.length === 0}
+              <p class="stk-line">No top-level networks or volumes declared.</p>
+            {:else}
+              <div class="stk-tags">
+                {#each composeNetworks as n (n)}<span class="stk-tag" title="network">{n}</span>{/each}
+                {#each composeVolumes as v (v)}<span class="stk-tag" title="volume">{v}</span>{/each}
+              </div>
+            {/if}
+          </section>
+
+          {#if deps && (deps.depends_on.length > 0 || deps.dependents.length > 0)}
+            <section>
+              <h2 class="dm-h2">Dependencies</h2>
+              <dl class="dm-kv">
+                {#if deps.depends_on.length > 0}
+                  <dt>Needs</dt><dd>{#each deps.depends_on as d, i (d)}{i > 0 ? ', ' : ''}<a href={`/stacks/${encodeURIComponent(d)}`}>{d}</a>{/each}</dd>
+                {/if}
+                {#if deps.dependents.length > 0}
+                  <dt>Needed by</dt><dd>{#each deps.dependents as d, i (d)}{i > 0 ? ', ' : ''}<a href={`/stacks/${encodeURIComponent(d)}`}>{d}</a>{/each}</dd>
+                {/if}
+              </dl>
+            </section>
+          {/if}
+
+          {#if !gitLoading && !gitSource && canWrite}
+            <button type="button" class="stk-connect" onclick={openGitDialog}>
+              <GitBranch size={16} />
+              <span><b>Connect a git repository</b><small>Sync compose.yaml and .env from a repo, deploy on push or on demand.</small></span>
+              <span class="dm-btn dm-btn-sm">Connect</span>
+            </button>
+          {/if}
+        </aside>
+      </div>
+    {/if}
+
+    <!-- Compose: read-only until Edit, so a stray keystroke can't change a deployed file. -->
+    {#if activeTab === 'compose'}
+      <div class="stk-toolbar">
+        <span class="dm-mono stk-file">compose.yaml{#if dirty}<span class="stk-unsaved"> · unsaved</span>{/if}</span>
+        <span class="dm-sp"></span>
+        {#if !composeEditing}
+          {#if canWrite}<button type="button" class="dm-btn" onclick={startComposeEdit}><Pencil size={13} /> Edit</button>{/if}
+        {:else}
+          <button type="button" class="dm-btn dm-btn-ghost" onclick={() => { composeEditing = false; }} disabled={anyBusy}>Cancel</button>
+          <button type="button" class="dm-btn" onclick={saveCompose} disabled={anyBusy || !dirty}><Save size={13} /> Save</button>
+          {#if canDeploy}
+            <button type="button" class="dm-btn dm-btn-primary" onclick={saveAndRedeploy} disabled={anyBusy || !dirty}><Play size={13} /> Save &amp; deploy</button>
+          {/if}
         {/if}
       </div>
+      {#if !composeEditing}
+        <pre class="stk-yaml-view">{#each composeLines as line, i (i)}<div class="stk-yaml-line">{@html highlightYamlLine(line) || '&nbsp;'}</div>{/each}</pre>
+      {:else}
+        <textarea class="dm-editor stk-yaml" bind:value={compose} oninput={() => (dirty = true)} spellcheck="false" aria-label="compose.yaml"></textarea>
+      {/if}
+    {/if}
 
-      <!-- RIGHT: rolled-up live resources + endpoints + networks/volumes.
-           Stats arrive on the per-container WS stream; the metrics
-           silently update every poll (~1s on the backend). -->
-      <aside class="stack-overview-rail">
-        <section class="stack-block">
-          <Eyebrow>Resources · rolled up</Eyebrow>
-          <EdMetric
-            label="CPU · stack"
-            value={statsRollup.cpuLabel}
-            meta={statsRollup.cpuMeta}
-          />
-          <EdMetric
-            label="Memory"
-            value={statsRollup.memLabel}
-            meta={statsRollup.memMeta}
-          />
-          <EdMetric
-            label="Network · in"
-            value={statsRollup.netLabel}
-            meta={statsRollup.netMeta}
-          />
-        </section>
+    <!-- Environment -->
+    {#if activeTab === 'environment'}
+      <div class="stk-toolbar">
+        <span class="dm-sub">{envRows.length} variable{envRows.length === 1 ? '' : 's'} in .env{#if dirty}<span class="stk-unsaved"> · unsaved</span>{/if}</span>
+        <span class="dm-sp"></span>
+        <button type="button" class="dm-btn dm-btn-ghost" onclick={() => (envShowSecrets = !envShowSecrets)}>
+          {#if envShowSecrets}<EyeOff size={13} /> Hide secrets{:else}<Eye size={13} /> Show secrets{/if}
+        </button>
+        {#if canWrite}<button type="button" class="dm-btn" onclick={envAddRow}><Plus size={13} /> Add variable</button>{/if}
+        {#if dirty}<button type="button" class="dm-btn dm-btn-primary" onclick={save} disabled={anyBusy}><Save size={13} /> Save</button>{/if}
+      </div>
 
-        <section class="stack-block">
-          <Eyebrow>Endpoints</Eyebrow>
-          {#if composeEndpoints.length === 0}
-            <p class="stack-empty-line">No <code>ports:</code> declared in compose.</p>
-          {:else}
-            <ul class="stack-endpoints">
-              {#each composeEndpoints as ep, i (ep.service + i)}
-                <li>
-                  <span class="stack-endpoint-svc">{ep.service}</span>
-                  <span class="stack-endpoint-port">{ep.port}</span>
-                  {#if ep.mode === 'host'}
-                    <ExternalLink size={11} strokeWidth={1.5} class="stack-endpoint-icon" />
+      {#if envRows.length === 0}
+        <div class="dm-tbl"><div class="dm-empty">No .env variables yet. Values referenced as <code>${'{KEY}'}</code> in compose are resolved at deploy time.</div></div>
+      {:else}
+        {@const ecols = 'minmax(160px, 0.9fr) minmax(200px, 1.6fr) minmax(120px, 0.8fr) 64px'}
+        <div class="dm-tbl">
+          <div class="dm-tr dm-th" style="grid-template-columns: {ecols}"><span>Key</span><span>Value</span><span>Used by</span><span></span></div>
+          {#each envRows as row, i (i)}
+            {@const isSec = isSecretKey(row.key)}
+            {@const scopes = envScopeFor(compose, row.key)}
+            {@const editing = envEditingIdx === i}
+            <div class="dm-tr" style="grid-template-columns: {ecols}">
+              <span class="dm-mono">
+                {#if editing}
+                  <input class="dm-input stk-cell-input" aria-label="Key" bind:value={envRows[i].key} oninput={commitEnvRows} onkeydown={(e) => e.key === 'Enter' && envSaveEdit()} />
+                {:else}{row.key}{/if}
+              </span>
+              <span class="dm-mono stk-val">
+                {#if editing}
+                  <input class="dm-input stk-cell-input" aria-label="Value" bind:value={envRows[i].value} oninput={commitEnvRows} onkeydown={(e) => e.key === 'Enter' && envSaveEdit()} />
+                {:else if isSec && !envShowSecrets}
+                  ••••••••••
+                {:else if row.value}
+                  <span title={row.value}>{row.value}</span>
+                {:else}
+                  <span class="dm-dim">(empty)</span>
+                {/if}
+                {#if isSec && !editing}<span class="stk-tag">secret</span>{/if}
+              </span>
+              <span class="dm-trunc" title={scopes.join(', ')}>{#if scopes.length === 0}<span class="dm-dim">unused</span>{:else}{scopes.join(', ')}{/if}</span>
+              <span class="dm-tr-menu stk-row-btns">
+                {#if canWrite}
+                  {#if editing}
+                    <button type="button" class="stk-ibtn" onclick={envSaveEdit} title="Done" aria-label="Done editing"><CheckCircle2 size={13} /></button>
                   {:else}
-                    <span class="stack-endpoint-tag">internal</span>
+                    <button type="button" class="stk-ibtn" onclick={() => (envEditingIdx = i)} title="Edit {row.key}" aria-label="Edit {row.key}"><Pencil size={12} /></button>
                   {/if}
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </section>
-
-        <section class="stack-block">
-          <Eyebrow>Networks · volumes</Eyebrow>
-          {#if composeNetworks.length === 0 && composeVolumes.length === 0}
-            <p class="stack-empty-line">No top-level networks or volumes declared.</p>
-          {:else}
-            <p class="stack-netvol">
-              {#each composeNetworks as n, i (n)}
-                {#if i > 0}<br/>{/if}<span class="stack-netvol-prefix">net:</span>
-                <span class="stack-netvol-name">{n}</span>
-              {/each}
-              {#if composeNetworks.length > 0 && composeVolumes.length > 0}<br/>{/if}
-              {#each composeVolumes as v, i (v)}
-                {#if i > 0}<br/>{/if}<span class="stack-netvol-prefix">vol:</span>
-                <span class="stack-netvol-name">{v}</span>
-              {/each}
-            </p>
-          {/if}
-        </section>
-      </aside>
-    </div>
-  {/if}
-
-  <!-- ─────────────────────────── Compose ───────────────────────────
-       Read-only by default — edit-and-redeploy is a deliberate two-step
-       so an accidental keystroke can't change a deployed compose. The
-       textarea only mounts when the operator clicks "Edit". -->
-  {#if activeTab === 'compose'}
-    <div class="stack-pane">
-      <section class="stack-block">
-        <div class="stack-block-head">
-          <Eyebrow>
-            compose.yaml
-            {#if dirty}<span class="stack-dirty"> · unsaved</span>{/if}
-          </Eyebrow>
-          <div class="ed-actions">
-            {#if !composeEditing}
-              {#if canWrite}
-                <button
-                  type="button"
-                  class="dm-btn dm-btn-secondary dm-btn-sm"
-                  onclick={startComposeEdit}
-                >
-                  <Save size={13} strokeWidth={1.5} />
-                  Edit
-                </button>
-              {/if}
-            {:else}
-              <button
-                type="button"
-                class="dm-btn dm-btn-ghost dm-btn-sm"
-                onclick={() => { composeEditing = false; }}
-                disabled={anyBusy}
-              >Cancel</button>
-              <button
-                type="button"
-                class="dm-btn dm-btn-secondary dm-btn-sm"
-                onclick={saveCompose}
-                disabled={anyBusy || !dirty}
-              >
-                <Save size={13} strokeWidth={1.5} />
-                Save
-              </button>
-              {#if canDeploy}
-                <button
-                  type="button"
-                  class="dm-btn dm-btn-primary dm-btn-sm"
-                  onclick={saveAndRedeploy}
-                  disabled={anyBusy || !dirty}
-                >
-                  <Play size={13} strokeWidth={1.5} />
-                  Save &amp; deploy
-                </button>
-              {/if}
-            {/if}
-          </div>
+                  <button type="button" class="stk-ibtn danger" onclick={() => envDeleteRow(i)} title="Delete {row.key}" aria-label="Delete {row.key}"><Trash2 size={12} /></button>
+                {/if}
+              </span>
+            </div>
+          {/each}
         </div>
-        {#if !composeEditing}
-          <pre class="stack-yaml-view yaml">{#each composeLines as line, i (i)}<div class="stack-yaml-line">{@html highlightYamlLine(line) || '&nbsp;'}</div>{/each}</pre>
-        {:else}
-          <textarea
-            class="stack-yaml"
-            bind:value={compose}
-            oninput={() => (dirty = true)}
-            spellcheck="false"
-          ></textarea>
-        {/if}
-      </section>
-    </div>
-  {/if}
+      {/if}
 
-  <!-- ─────────────────────────── Environment ─────────────────────────── -->
-  {#if activeTab === 'environment'}
-    <div class="stack-pane">
-      <section class="stack-block">
-        <div class="stack-block-head">
-          <Eyebrow>
-            Environment · {envRows.length} key{envRows.length === 1 ? '' : 's'}
-            {#if dirty}<span class="stack-dirty"> · unsaved</span>{/if}
-          </Eyebrow>
-          <div class="ed-actions">
-            <button
-              type="button"
-              class="dm-btn dm-btn-ghost dm-btn-sm"
-              onclick={() => (envShowSecrets = !envShowSecrets)}
-            >
-              {#if envShowSecrets}
-                <EyeOff size={13} strokeWidth={1.5} /> Hide secrets
-              {:else}
-                <Eye size={13} strokeWidth={1.5} /> Show secrets
-              {/if}
-            </button>
-            {#if canWrite}
-              <button
-                type="button"
-                class="dm-btn dm-btn-secondary dm-btn-sm"
-                onclick={envAddRow}
-              >
-                <Plus size={13} strokeWidth={1.5} /> Add variable
-              </button>
-            {/if}
-            {#if dirty}
-              <button
-                type="button"
-                class="dm-btn dm-btn-primary dm-btn-sm"
-                onclick={save}
-                disabled={anyBusy}
-              >
-                <Save size={13} strokeWidth={1.5} /> Save
-              </button>
-            {/if}
-          </div>
-        </div>
-
-        {#if envRows.length === 0}
-          <div class="env-empty">
-            <p>
-              No <code>.env</code> variables yet. Click
-              <em class="ed-accent">Add variable</em> above to define one — values
-              referenced as <code>${'{KEY}'}</code> in compose are resolved at deploy time.
-            </p>
-          </div>
-        {:else}
-          <table class="ed-table env-table">
-            <thead>
-              <tr>
-                <th>Key</th>
-                <th>Value</th>
-                <th>Scope</th>
-                <th class="env-th-actions"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each envRows as row, i (i)}
-                {@const isSec = isSecretKey(row.key)}
-                {@const scopes = envScopeFor(compose, row.key)}
-                {@const editing = envEditingIdx === i}
-                <tr>
-                  <td class="env-cell-key">
-                    {#if editing}
-                      <input
-                        class="ed-input ed-input-mono env-cell-input"
-                        bind:value={envRows[i].key}
-                        oninput={commitEnvRows}
-                        onkeydown={(e) => e.key === 'Enter' && envSaveEdit()}
-                      />
-                    {:else}
-                      <span class="font-mono">{row.key}</span>
-                    {/if}
-                  </td>
-                  <td class="env-cell-value">
-                    {#if editing}
-                      <input
-                        class="ed-input ed-input-mono env-cell-input"
-                        bind:value={envRows[i].value}
-                        oninput={commitEnvRows}
-                        onkeydown={(e) => e.key === 'Enter' && envSaveEdit()}
-                      />
-                    {:else}
-                      <span class="font-mono">
-                        {#if isSec && !envShowSecrets}
-                          ••••••••••••
-                        {:else if row.value}
-                          {row.value}
-                        {:else}
-                          <span class="env-value-empty">(empty)</span>
-                        {/if}
-                      </span>
-                      {#if isSec}
-                        <span class="dm-pill dm-pill-neutral env-secret-pill">secret</span>
-                      {/if}
-                    {/if}
-                  </td>
-                  <td class="env-cell-scope">
-                    {#if scopes.length === 0}
-                      <span class="env-scope-unused">unused</span>
-                    {:else}
-                      <span class="env-scope-list">
-                        {#each scopes as svc, j (svc)}
-                          {#if j > 0}<span class="env-scope-sep">,</span>{/if}<span class="env-scope-svc">{svc}</span>
-                        {/each}
-                      </span>
-                    {/if}
-                  </td>
-                  <td class="env-cell-actions">
-                    {#if canWrite}
-                      {#if editing}
-                        <button
-                          type="button"
-                          class="stack-svc-btn"
-                          onclick={envSaveEdit}
-                          title="Done"
-                          aria-label="Done editing"
-                        >
-                          <CheckCircle2 size={13} strokeWidth={1.5} />
-                        </button>
-                      {:else}
-                        <button
-                          type="button"
-                          class="stack-svc-btn"
-                          onclick={() => (envEditingIdx = i)}
-                          title="Edit {row.key}"
-                          aria-label="Edit {row.key}"
-                        >
-                          <Pencil size={12} strokeWidth={1.5} />
-                        </button>
-                      {/if}
-                      <button
-                        type="button"
-                        class="stack-svc-btn env-cell-delete"
-                        onclick={() => envDeleteRow(i)}
-                        title="Delete {row.key}"
-                        aria-label="Delete {row.key}"
-                      >
-                        <Trash2 size={12} strokeWidth={1.5} />
-                      </button>
-                    {/if}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        {/if}
-      </section>
-
-      <section class="stack-block">
-        <Eyebrow>Overlays · {envs?.available.length ?? 0}</Eyebrow>
+      <section>
+        <h2 class="dm-h2">Overlays</h2>
         {#if !envs || envs.available.length === 0}
-          <p class="stack-empty-line">
-            No overlays. Drop <code>compose.{`<env>`}.yaml</code> next to <code>compose.yaml</code> and
-            an overlay shows up here.
-          </p>
+          <p class="stk-line">No overlays. A <code>compose.&lt;env&gt;.yaml</code> next to compose.yaml shows up here.</p>
         {:else}
-          <p class="stack-explainer">
-            This stack has <em class="ed-accent">{envs.available.length}</em> overlay{envs.available.length > 1 ? 's' : ''}.
-            {#if envs.active}
-              Deploys merge <code>compose.{envs.active}.yaml</code> on top of the base.
-            {:else}
-              Deploys use the base <code>compose.yaml</code> as-is.
-            {/if}
+          <p class="stk-line">
+            {#if envs.active}Deploys merge <code>compose.{envs.active}.yaml</code> on top of the base.{:else}Deploys use the base compose.yaml as it is.{/if}
           </p>
-          {#if canWrite}
-            <div class="stack-env-pills">
-              <button
-                type="button"
-                class="stack-env-pill"
-                class:active={envs.active === ''}
-                onclick={() => setActiveEnv('')}
-                disabled={envBusy}
-              >base</button>
+          {#if canDeploy}
+            <div class="stk-tags">
+              <button type="button" class="stk-tag stk-pick" class:on={envs.active === ''} onclick={() => setActiveEnv('')} disabled={envBusy}>base</button>
               {#each envs.available as e (e)}
-                <button
-                  type="button"
-                  class="stack-env-pill"
-                  class:active={envs.active === e}
-                  onclick={() => setActiveEnv(e)}
-                  disabled={envBusy}
-                >{e}</button>
+                <button type="button" class="stk-tag stk-pick" class:on={envs.active === e} onclick={() => setActiveEnv(e)} disabled={envBusy}>{e}</button>
               {/each}
             </div>
           {/if}
         {/if}
       </section>
+    {/if}
 
-      <section class="stack-block">
-        <div class="stack-block-head">
-          <Eyebrow>Dependencies</Eyebrow>
-          {#if canWrite}
-            <button class="stack-inline-link" onclick={openDepsEditor}>Edit</button>
-          {/if}
-        </div>
-        {#if !deps || (deps.depends_on.length === 0 && deps.dependents.length === 0)}
-          <p class="stack-empty-line">No prerequisites or dependents.</p>
-        {:else}
-          <div class="stack-deps">
-            {#if deps.depends_on.length > 0}
-              <div>
-                <span class="stack-deps-label">needs</span>
-                {#each deps.depends_on as d (d)}
-                  <a href={`/stacks/${encodeURIComponent(d)}`} class="stack-dep-pill">{d}</a>
-                {/each}
-              </div>
-            {/if}
-            {#if deps.dependents.length > 0}
-              <div>
-                <span class="stack-deps-label">needed by</span>
-                {#each deps.dependents as d (d)}
-                  <a href={`/stacks/${encodeURIComponent(d)}`} class="stack-dep-pill">{d}</a>
-                {/each}
-              </div>
-            {/if}
-          </div>
-        {/if}
-      </section>
-    </div>
-  {/if}
-
-  <!-- ─────────────────────────── Logs (live) ─────────────────────────── -->
-  {#if activeTab === 'logs'}
-    <div class="stack-pane">
-      <div class="stack-logs-bar">
-        <div class="stack-logs-services">
+    <!-- Logs (live) -->
+    {#if activeTab === 'logs'}
+      <div class="stk-toolbar">
+        <div class="stk-tags">
           {#each services as s (s.service)}
-            {@const isActiveFilter = logServiceFilter.size === 0 || logServiceFilter.has(s.service)}
-            {@const hasStream = logSockets.has(s.service)}
-            <button
-              type="button"
-              class="stack-log-svc"
-              class:active={isActiveFilter}
-              onclick={() => toggleLogService(s.service)}
-              style:--svc-color={svcColor(s.service)}
-            >
-              <span class="stack-log-svc-dot" class:live={hasStream}></span>
-              {s.service}
+            {@const on = logServiceFilter.size === 0 || logServiceFilter.has(s.service)}
+            <button type="button" class="stk-tag stk-pick" class:on onclick={() => toggleLogService(s.service)} style:--svc-color={svcColor(s.service)}>
+              <span class="stk-logdot" class:live={logSockets.has(s.service)}></span>{s.service}
             </button>
           {/each}
           {#if logServiceFilter.size > 0}
-            <button
-              type="button"
-              class="stack-inline-link"
-              onclick={() => { logServiceFilter = new Set(); }}
-            >clear filter</button>
+            <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => { logServiceFilter = new Set(); }}>Show all</button>
           {/if}
         </div>
-        <div class="stack-logs-actions">
-          <button
-            type="button"
-            class="dm-btn dm-btn-{logTailing ? 'primary' : 'secondary'} dm-btn-xs"
-            onclick={toggleLogTailing}
-          >
-            {#if logTailing}
-              <Square class="w-3 h-3" />
-              tailing
-            {:else}
-              <Play class="w-3 h-3" />
-              paused
-            {/if}
-          </button>
-          <button
-            type="button"
-            class="dm-btn dm-btn-ghost dm-btn-xs"
-            onclick={() => { logLines = []; }}
-            title="Clear buffer"
-          >clear</button>
-        </div>
+        <span class="dm-sp"></span>
+        <button type="button" class="dm-btn dm-btn-sm" onclick={toggleLogTailing}>
+          {#if logTailing}<Square size={11} /> Pause{:else}<Play size={11} /> Follow{/if}
+        </button>
+        <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => { logLines = []; }}>Clear</button>
       </div>
-
-      <div class="log-viewer stack-log-viewer" bind:this={logEl}>
+      <div class="stk-logs dm-mono" bind:this={logEl}>
         {#if visibleLogLines.length === 0}
-          <div class="stack-log-empty">
-            {#if logSockets.size === 0}
-              <em>not streaming — toggle "tailing" to start.</em>
-            {:else}
-              <em>waiting for the first line…</em>
-            {/if}
-          </div>
+          <div class="dm-dim">{logSockets.size === 0 ? 'Not streaming. Press Follow to start.' : 'Waiting for the first line…'}</div>
         {:else}
           {#each visibleLogLines as l, i (i)}
             {@const kind = logLevelKind(l.line)}
-            <div class="log-line">
-              <span class="log-time" title={new Date(l.ts).toISOString()}>
-                {new Date(l.ts).toLocaleTimeString()}
-              </span>
-              <span class="log-svc" style:color={svcColor(l.service)}>{l.service}</span>
-              <span
-                class="log-msg"
-                class:log-msg--warn={kind === 'warn'}
-                class:log-msg--err={kind === 'err'}
-                class:log-msg--ok={kind === 'ok'}
-              >{l.line}</span>
+            <div class="stk-ln">
+              <span class="dm-dim" title={new Date(l.ts).toISOString()}>{new Date(l.ts).toLocaleTimeString()}</span>
+              <span class="stk-ln-svc" style:color={svcColor(l.service)}>{l.service}</span>
+              <span class:warn={kind === 'warn'} class:bad={kind === 'err'} class:ok={kind === 'ok'}>{l.line}</span>
             </div>
           {/each}
         {/if}
       </div>
+      <p class="stk-line">Last {visibleLogLines.length} lines from {logSockets.size} container{logSockets.size === 1 ? '' : 's'} · keeps up to {LOG_BUFFER_MAX}.</p>
+    {/if}
 
-      <p class="stack-log-foot">
-        showing last <em class="ed-accent">{visibleLogLines.length}</em> lines · merged from
-        {logSockets.size} container{logSockets.size === 1 ? '' : 's'} · buffer cap {LOG_BUFFER_MAX}
-      </p>
-    </div>
-  {/if}
-
-  <!-- ─────────────────────────── History ─────────────────────────── -->
-  {#if activeTab === 'history'}
-    <div class="stack-pane">
-      <section class="stack-block">
-        <div class="stack-block-head">
-          <Eyebrow>Deploys · {historyEntries.length}</Eyebrow>
-          <button
-            class="stack-inline-link"
-            onclick={loadHistory}
-            disabled={historyLoading}
-            title="Refresh history"
-          >
-            <RefreshCw class="w-3 h-3 {historyLoading ? 'animate-spin' : ''}" />
-            refresh
-          </button>
-        </div>
-
-        {#if historyLoading && historyEntries.length === 0}
-          <div class="stack-skeleton">
-            <Skeleton width="40%" height="1rem" />
-            <Skeleton width="100%" height="2.5rem" />
-            <Skeleton width="100%" height="2.5rem" />
+    <!-- History -->
+    {#if activeTab === 'history'}
+      <div class="stk-toolbar">
+        <span class="dm-sub">{historyEntries.length} deploy{historyEntries.length === 1 ? '' : 's'}</span>
+        <span class="dm-sp"></span>
+        <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={loadHistory} disabled={historyLoading}>
+          <RefreshCw size={12} class={historyLoading ? 'animate-spin' : ''} /> Refresh
+        </button>
+      </div>
+      {#if historyLoading && historyEntries.length === 0}
+        <div class="stk-skel"><Skeleton width="100%" height="2.5rem" /><Skeleton width="100%" height="2.5rem" /></div>
+      {:else if historyEntries.length === 0}
+        <div class="dm-tbl"><div class="dm-empty">No deploy history yet. The next successful deploy lands here and you can roll back to it.</div></div>
+      {:else}
+        {@const hcols = '52px minmax(180px, 1.6fr) 110px 110px 70px 96px 150px'}
+        <div class="dm-tbl">
+          <div class="dm-tr dm-th" style="grid-template-columns: {hcols}">
+            <span>#</span><span>Change</span><span>By</span><span>When</span><span class="r">Took</span><span>Result</span><span></span>
           </div>
-        {:else if historyEntries.length === 0}
-          <div class="stack-empty">
-            <p>No deploy history yet. The next successful deploy lands here and you can roll back to it.</p>
-          </div>
-        {:else}
-          <ol class="stack-history">
-            <span class="stack-history-rule" aria-hidden="true"></span>
-            {#each historyEntries as entry, i (entry.id)}
-              <li class="stack-history-row">
-                <span
-                  class="stack-history-dot"
-                  class:current={i === 0}
-                  aria-hidden="true"
-                ></span>
-                <div class="stack-history-body">
-                  <div class="stack-history-head">
-                    <span class="stack-history-version">#{entry.version}</span>
-                    {#if entry.success === false}
-                      <span class="stack-history-status stack-history-status-fail" title={entry.error_message ?? 'Deploy failed'}>
-                        <XCircle size={12} strokeWidth={1.5} />
-                      </span>
-                    {:else if entry.success === true}
-                      <span class="stack-history-status stack-history-status-ok" title="Deploy succeeded">
-                        <CheckCircle2 size={12} strokeWidth={1.5} />
-                      </span>
-                    {/if}
-                    {#if i === 0 && entry.success !== false}
-                      <span class="dm-pill dm-pill-success">
-                        <span class="dm-pill-dot"></span>current
-                      </span>
-                    {/if}
-                    {#if entry}
-                      {@const badge = deployTriggerBadge(entry.note)}
-                      <span class="dm-pill dm-pill-{badge.variant}" title={entry.note || 'manual deploy'}>
-                        <span class="dm-pill-dot"></span>{badge.label}
-                      </span>
-                    {/if}
-                    <span class="stack-history-time" title={new Date(entry.deployed_at).toLocaleString()}>
-                      {relTime(entry.deployed_at)}
-                    </span>
-                    {#if entry.duration_ms != null && entry.duration_ms > 0}
-                      <span class="stack-history-duration" title="Deploy took {(entry.duration_ms / 1000).toFixed(1)} s">
-                        {formatDuration(entry.duration_ms)}
-                      </span>
-                    {/if}
-                    {#if entry.deployed_by_name}
-                      <span class="stack-history-actor">
-                        <User class="w-3 h-3" />
-                        {entry.deployed_by_name}
-                      </span>
-                    {/if}
-                    {#if entry.git_commit_sha}
-                      {@const sha = entry.git_commit_sha.slice(0, 7)}
-                      {@const url = buildGitCommitURL(gitSource?.repo_url ?? '', entry.git_commit_sha)}
-                      {#if url}
-                        <a href={url} target="_blank" rel="noopener" class="stack-history-sha" title="View commit on remote">
-                          {sha}
-                        </a>
-                      {:else}
-                        <code class="stack-history-sha" title={entry.git_commit_sha}>{sha}</code>
-                      {/if}
-                    {/if}
-                    <span class="stack-history-spacer"></span>
-                    <button
-                      type="button"
-                      class="stack-svc-btn"
-                      title="View compose.yaml"
-                      aria-label="View compose.yaml"
-                      onclick={() => openYaml(entry.id)}
-                    >
-                      <FileText size={12} strokeWidth={1.5} />
-                    </button>
-                    {#if canDeploy && i !== 0}
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onclick={() => openRollbackConfirm(entry.id)}
-                      >
-                        <RotateCcw class="w-3 h-3" />
-                        Roll back
-                      </Button>
-                    {/if}
+          {#each historyEntries as entry, i (entry.id)}
+            {@const badge = deployTriggerBadge(entry.note)}
+            {@const prev = historyEntries[i + 1]?.services ?? []}
+            {@const changed = (entry.services ?? []).filter((svc) => {
+              const p = prev.find((x) => x.service === svc.service)?.image;
+              return p !== undefined && p !== svc.image;
+            })}
+            {@const open = expandedRows.has(entry.id)}
+            <div class="dm-tr" style="grid-template-columns: {hcols}">
+              <span class="dm-num dm-dim">#{entry.version}</span>
+              <span class="dm-trunc" title={entry.note || badge.label}>
+                {badge.label}{#if entry.note && entry.note !== badge.label}<span class="dm-dim"> · {entry.note}</span>{/if}
+                {#if entry.git_commit_sha}
+                  {@const url = buildGitCommitURL(gitSource?.repo_url ?? '', entry.git_commit_sha)}
+                  {#if url}<a class="dm-mono stk-sha" href={url} target="_blank" rel="noopener">{entry.git_commit_sha.slice(0, 7)}</a>{:else}<code class="stk-sha">{entry.git_commit_sha.slice(0, 7)}</code>{/if}
+                {/if}
+              </span>
+              <span class="dm-trunc">{entry.deployed_by_name ?? '—'}</span>
+              <span class="dm-num dm-dim" title={new Date(entry.deployed_at).toLocaleString()}>{fmtAgo(entry.deployed_at)}</span>
+              <span class="dm-num dm-dim r">{entry.duration_ms ? formatDuration(entry.duration_ms) : '—'}</span>
+              <span>
+                {#if entry.success === false}<StatusChip tone="bad" label="failed" title={entry.error_message} />
+                {:else if i === 0}<StatusChip tone="ok" label="current" />
+                {:else}<StatusChip tone="off" label="success" />{/if}
+              </span>
+              <span class="dm-tr-menu stk-row-btns">
+                {#if entry.services && entry.services.length > 0}
+                  <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" aria-expanded={open} onclick={() => (open ? collapseRow(entry.id) : expandRow(entry.id))} title="Images per service">
+                    {entry.services.length}{changed.length ? ` · ${changed.length}Δ` : ''}
+                  </button>
+                {/if}
+                <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => openYaml(entry.id)}>Compose</button>
+                {#if canDeploy && i !== 0}
+                  <button type="button" class="dm-btn dm-btn-sm" onclick={() => openRollbackConfirm(entry.id)}>Roll back</button>
+                {/if}
+              </span>
+            </div>
+            {#if open && entry.services}
+              <div class="stk-hsvc">
+                {#each entry.services as svc (svc.service)}
+                  {@const parts = splitImageRef(svc.image)}
+                  {@const isChanged = changed.some((c) => c.service === svc.service)}
+                  <div class:stk-changed={isChanged}>
+                    <span>{svc.service}</span>
+                    <code title={svc.image}>{parts.host ? parts.host + '/' : ''}{parts.repo}:<b>{parts.tag}</b></code>
+                    {#if isChanged}<span class="stk-delta" title="Changed vs #{historyEntries[i + 1]?.version}">changed</span>{/if}
                   </div>
-                  {#if entry.services && entry.services.length > 0}
-                    {@const prev = historyEntries[i + 1]?.services ?? []}
-                    {@const isExpanded = i < 10 || expandedRows.has(entry.id)}
-                    {@const changedCount = entry.services.filter((svc) => {
-                      const prevImg = prev.find((p) => p.service === svc.service)?.image;
-                      return prevImg !== undefined && prevImg !== svc.image;
-                    }).length}
-                    {#if isExpanded}
-                      <ul class="stack-history-svc-list">
-                        {#each entry.services as svc (svc.service)}
-                          {@const parts = splitImageRef(svc.image)}
-                          {@const prevImage = prev.find((p) => p.service === svc.service)?.image}
-                          {@const changed = prevImage !== undefined && prevImage !== svc.image}
-                          <li class="stack-history-svc-row" class:stack-history-svc-changed={changed}>
-                            <span class="stack-history-svc-name">{svc.service}</span>
-                            <code class="stack-history-svc-image" title={svc.image}>{parts.host ? parts.host + '/' : ''}{parts.repo}:<span class="stack-history-svc-tag">{parts.tag}</span></code>
-                            {#if changed}
-                              <span class="stack-history-svc-delta" title="Changed vs #{historyEntries[i + 1]?.version}">Δ</span>
-                            {/if}
-                          </li>
-                        {/each}
-                      </ul>
-                      {#if i >= 10}
-                        <button
-                          type="button"
-                          class="stack-history-collapse"
-                          onclick={() => collapseRow(entry.id)}
-                        >
-                          collapse
-                        </button>
-                      {/if}
-                    {:else}
-                      <button
-                        type="button"
-                        class="stack-history-expand"
-                        onclick={() => expandRow(entry.id)}
-                        title="Show services"
-                      >
-                        {entry.services.length} service{entry.services.length === 1 ? '' : 's'}
-                        {#if changedCount > 0}
-                          · <span class="stack-history-expand-delta">{changedCount} changed</span>
-                        {/if}
-                        · click to expand
-                      </button>
-                    {/if}
-                  {/if}
+                {/each}
+              </div>
+            {/if}
+          {/each}
+        </div>
+      {/if}
+    {/if}
+
+    <!-- Settings -->
+    {#if activeTab === 'settings'}
+      <div class="stk-settings">
+        <div class="dm-form-sec">
+          <div>
+            <h4>Git source</h4>
+            <p>Sync compose.yaml and .env from a repository, deploy on push or on demand.</p>
+          </div>
+          <div>
+            {#if gitLoading}
+              <span class="dm-dim">Loading…</span>
+            {:else if gitSource}
+              <dl class="dm-kv stk-git">
+                <dt>Repository</dt><dd class="dm-mono">{gitSource.repo_url}</dd>
+                <dt>Branch</dt><dd class="dm-mono">{gitSource.branch}{gitSource.path_in_repo && gitSource.path_in_repo !== '.' ? ` · ${gitSource.path_in_repo}` : ''}</dd>
+                <dt>Deploy</dt><dd>{gitSource.auto_deploy ? 'automatically after each sync' : 'manually'} · webhook {gitSource.has_webhook_secret ? 'on' : 'off (no secret set)'}</dd>
+                <dt>Last sync</dt>
+                <dd>
+                  {#if gitSource.last_sync_sha}<code>{gitSource.last_sync_sha.slice(0, 7)}</code>{#if gitSource.last_sync_at} · {new Date(gitSource.last_sync_at).toLocaleString()}{/if}{:else}never{/if}
+                  {#if gitSource.last_sync_error}<div class="stk-bad">{gitSource.last_sync_error}</div>{/if}
+                </dd>
+              </dl>
+              {#if canWrite}
+                <div class="stk-btns">
+                  <button type="button" class="dm-btn" onclick={syncNow} disabled={gitBusy}><RefreshCw size={12} class={gitBusy ? 'animate-spin' : ''} /> Sync now</button>
+                  <button type="button" class="dm-btn" onclick={openGitDialog} disabled={gitBusy}><Pencil size={12} /> Edit</button>
+                  <button type="button" class="dm-btn dm-btn-ghost" onclick={disconnectGit} disabled={gitBusy}><Unlink size={12} /> Disconnect</button>
                 </div>
-              </li>
-            {/each}
-          </ol>
-        {/if}
-      </section>
-    </div>
-  {/if}
+              {/if}
+            {:else if canWrite}
+              <button type="button" class="dm-btn" onclick={openGitDialog}><LinkIcon size={12} /> Connect a repository</button>
+            {:else}
+              <span class="dm-dim">Not connected.</span>
+            {/if}
+          </div>
+        </div>
 
-  <!-- ─────────────────────────── Settings ─────────────────────────── -->
-  {#if activeTab === 'settings'}
-    <div class="stack-pane stack-settings">
-      <section class="stack-setting-row">
-        <div>
-          <h3>Auto-update images</h3>
-          <p>Watchtower-style polling that pulls new image tags and redeploys the stack when an upstream version is published.</p>
+        <div class="dm-form-sec">
+          <div>
+            <h4>Dependencies</h4>
+            <p>The stacks this one needs and the stacks that need it.</p>
+          </div>
+          <div>
+            {#if !deps || (deps.depends_on.length === 0 && deps.dependents.length === 0)}
+              <span class="dm-dim">No prerequisites or dependents.</span>
+            {:else}
+              <dl class="dm-kv">
+                {#if deps.depends_on.length > 0}<dt>Needs</dt><dd>{#each deps.depends_on as d, i (d)}{i > 0 ? ', ' : ''}<a href={`/stacks/${encodeURIComponent(d)}`}>{d}</a>{/each}</dd>{/if}
+                {#if deps.dependents.length > 0}<dt>Needed by</dt><dd>{#each deps.dependents as d, i (d)}{i > 0 ? ', ' : ''}<a href={`/stacks/${encodeURIComponent(d)}`}>{d}</a>{/each}</dd>{/if}
+              </dl>
+            {/if}
+            {#if canDeploy}<button type="button" class="dm-btn" onclick={openDepsEditor}>Edit dependencies</button>{/if}
+          </div>
         </div>
-        <div class="stack-setting-control">
-          <select class="ed-input ed-input-mono">
-            <option>off</option>
-            <option>patch only (~major.minor)</option>
-            <option>minor (^major)</option>
-            <option>always latest</option>
-          </select>
-        </div>
-      </section>
 
-      <section class="stack-setting-row">
-        <div>
-          <h3>Webhook on deploy</h3>
-          <p>POST to a URL whenever a redeploy succeeds or fails — useful for chat notifications or downstream pipelines.</p>
+        <div class="dm-form-sec">
+          <div>
+            <h4 class="stk-bad">Delete this stack</h4>
+            <p>
+              Stops {services.length} service{services.length === 1 ? '' : 's'}, removes the containers, deletes
+              <code>stacks/{name}/</code> and its deploy history. Networks, volumes and images are only removed if you choose so next.
+            </p>
+          </div>
+          <div>
+            <button type="button" class="dm-btn dm-btn-danger" onclick={openDelete} disabled={anyBusy}><Trash2 size={13} /> Delete stack…</button>
+          </div>
         </div>
-        <div class="stack-setting-control">
-          <input class="ed-input ed-input-mono" placeholder="https://hooks.example.com/dockmesh" />
-        </div>
-      </section>
-
-      <section class="stack-setting-row">
-        <div>
-          <h3>Restart policy</h3>
-          <p>Default restart policy applied to services that don't specify one in compose.</p>
-        </div>
-        <div class="stack-setting-control">
-          <select class="ed-input ed-input-mono">
-            <option>no</option>
-            <option>on-failure</option>
-            <option selected>unless-stopped</option>
-            <option>always</option>
-          </select>
-        </div>
-      </section>
-
-      <section class="stack-setting-row stack-setting-danger">
-        <div>
-          <h3>Delete this stack</h3>
-          <p>
-            Stops all <strong>{services.length}</strong> service{services.length === 1 ? '' : 's'},
-            removes its containers, deletes <code>stacks/{name}/</code> on disk and forgets
-            compose history. Networks, volumes and images are only removed if you choose so in the next step. <strong>Cannot be undone.</strong>
-          </p>
-        </div>
-        <div class="stack-setting-control">
-          <button
-            type="button"
-            class="dm-btn dm-btn-danger dm-btn-sm"
-            onclick={openDelete}
-            disabled={anyBusy}
-          >
-            <Trash2 size={13} strokeWidth={1.5} />
-            Delete {name}
-          </button>
-        </div>
-      </section>
-    </div>
-  {/if}
+      </div>
+    {/if}
   {/if}
 </section>
 
@@ -3292,815 +2751,175 @@
 </Modal>
 
 <style>
-  .stack-detail-frame {
-    display: flex;
-    flex-direction: column;
-    gap: 22px;
-    max-width: 1480px;
-    padding-bottom: 48px;
-  }
+  .stk { gap: 18px; }
+  .stk-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40ch; }
+  .stk-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+  .stk-deploy-done { color: var(--ok); }
+  .stk-deploy-failed { color: var(--bad); }
+  .stk-bad { color: var(--bad); }
 
-  /* Header — eyebrow, italic title, status pill + meta inline,
-     action cluster on the right. Matches the mockup's stack-detail
-     header pattern (no narrative subtitle). */
-  .stack-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 24px;
-    flex-wrap: wrap;
+  /* Notices are the only boxes on the page: they must stand out. */
+  .stk-notice {
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 10px 12px;
+    background: var(--band);
+    font-size: var(--fs-sm);
   }
-  .stack-header-text {
-    min-width: 0;
-    max-width: 80ch;
-    flex: 1 1 40ch;
+  .stk-notice.warn {
+    border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+    background: color-mix(in srgb, var(--warn) 7%, transparent);
   }
-  .stack-title-row {
-    display: flex;
-    align-items: baseline;
-    gap: 14px;
-    flex-wrap: wrap;
-    margin-top: 10px;
-  }
-  .stack-title {
-    font-size: 26px;
-    line-height: 1.2;
-    letter-spacing: -0.02em;
-  }
-  /* Override the global .ed-title em italic-serif treatment for the stack
-     name. Stack identifiers are programmatic — they read better in a
-     bold sans (consistent with container names) than in italic Newsreader. */
-  .stack-title :global(em) {
-    font-family: var(--font-sans);
-    font-style: normal;
-    font-weight: 700;
-    color: var(--fg);
-  }
-  .stack-meta {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-subtle);
-    letter-spacing: 0.04em;
-    display: inline-flex;
-    align-items: baseline;
-    gap: 8px;
-  }
-  .stack-meta-sep { color: var(--border-strong); }
-  :global(.stack-meta-spin) {
-    color: var(--accent-fg);
-    animation: stack-spin 0.9s linear infinite;
-    display: inline-block;
-  }
-  @keyframes stack-spin { to { transform: rotate(360deg); } }
+  .stk-notice.warn > :global(svg), .stk-notice-h :global(svg) { color: var(--warn); flex-shrink: 0; }
+  .stk-notice-h { display: flex; align-items: center; gap: 8px; }
+  .stk-notice p { margin: 6px 0 10px; color: var(--muted); }
+  .stk-notice ul { margin: 6px 0 0; padding-left: 20px; color: var(--muted); }
+  .stk-notice code, .stk-line code { font-family: var(--font-mono); font-size: 12px; }
+  .stk-notice-row { display: flex; align-items: center; gap: 10px; }
+  .stk-notice-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .stk-notice-t > span { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+  .stk-recover { border-bottom: 0; }
+  .stk-recover .dm-tr { height: auto; min-height: 56px; padding: 6px 0; }
+  .stk-recover .dm-nm small { white-space: normal; }
 
-  /* Tab strip. Inherit the global .ed-tabs / .ed-tab styles, just nudge
-     the bottom margin so it sits cleanly above the content cards. */
-  .stack-tabs { margin-top: 6px; }
-
-  /* ─────────────────── Overview layout ─────────────────── */
-  .stack-overview {
+  .stk-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.55fr) minmax(280px, 1fr);
+    grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr);
     gap: 32px;
-    margin-top: 14px;
+    align-items: start;
   }
-  @media (max-width: 1100px) {
-    .stack-overview { grid-template-columns: 1fr; gap: 24px; }
-  }
-  .stack-overview-main { display: flex; flex-direction: column; gap: 28px; min-width: 0; }
-  .stack-overview-rail { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+  @media (max-width: 1100px) { .stk-grid { grid-template-columns: minmax(0, 1fr); } }
+  .stk-col { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+  .stk-skel { display: flex; flex-direction: column; gap: 10px; }
+  .stk-sec-h { display: flex; align-items: center; gap: 8px; }
+  .stk-sec-h .dm-h2 { margin: 0; }
+  .stk-line { margin: 0; color: var(--subtle); font-size: var(--fs-sm); }
+  .r { text-align: right; }
+  .stk-rep { color: var(--subtle); font-weight: 400; }
+  .stk-img { display: flex; align-items: center; gap: 6px; }
+  .stk-src { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
 
-  .stack-block { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-  .stack-block-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
-  .stack-skeleton { display: flex; flex-direction: column; gap: 8px; }
-  .stack-empty {
-    padding: 18px 0;
-    color: var(--fg-muted);
-    font-size: 13px;
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border-subtle);
-  }
-  .stack-empty p { margin: 0; }
-  .stack-empty-line {
-    margin: 0;
-    color: var(--fg-subtle);
-    font-size: 12.5px;
-  }
-  .stack-explainer {
-    margin: 0;
-    color: var(--fg-muted);
-    font-size: 13px;
-    line-height: 1.6;
-  }
-  .stack-explainer code { font-size: 11.5px; }
-
-  /* Services list — transparent rows, hairline dividers */
-  .stack-services {
-    border-top: 1px solid var(--border);
-  }
-  .stack-svc-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .stack-svc-id {
-    font-size: 13.5px;
-    color: var(--fg);
-    font-weight: 500;
+  .stk-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .stk-tag {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-  }
-  .stack-svc-replicas {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    padding: 1px 5px;
-    border-radius: 3px;
-    background: color-mix(in srgb, var(--color-brand-500) 15%, transparent);
-    color: var(--color-brand-300);
-  }
-  .stack-svc-meta {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-  }
-  .stack-svc-image {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .stack-svc-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .stack-svc-btn {
-    background: transparent;
-    border: 0;
-    color: var(--fg-subtle);
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: color 0.12s, background 0.12s;
-  }
-  .stack-svc-btn:hover { color: var(--fg); background: var(--surface-hover); }
-
-  /* Heads-up panel — single-line warning surface */
-  .stack-headsup {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 12px;
-    padding: 12px 14px;
-    border: 1px dashed color-mix(in srgb, var(--color-warning-500) 50%, var(--border));
-    border-radius: 5px;
-    background: color-mix(in srgb, var(--color-warning-500) 5%, transparent);
-  }
-  :global(.stack-headsup-icon) { color: var(--color-warning-400); margin-top: 4px; flex-shrink: 0; }
-  .stack-headsup p {
-    margin: 0;
-    font-size: 13px;
-    color: var(--fg-muted);
-    line-height: 1.6;
-  }
-  .stack-headsup-sep { color: var(--border-strong); }
-
-  /* Right-rail blocks */
-  /* Resources rollup — vertical stack of 3 EdMetrics so the Network
-     line and the Memory line aren't squashed in a 3-column grid. */
-  .stack-overview-rail .stack-block:first-child { gap: 8px; }
-  .stack-overview-rail .stack-block:first-child :global(.ed-metric) { padding: 12px 14px; }
-
-  /* Endpoints — compact list, no card chrome, hairline rows. Service
-     left, port spec mid, link/internal hint right. Matches the mockup's
-     <li> per-row pattern with subtle border-bottom dividers. */
-  .stack-endpoints {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-  }
-  .stack-endpoints li {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 8px 0;
-    border-bottom: 1px solid var(--border-subtle);
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-  }
-  .stack-endpoints li:last-child { border-bottom: 0; }
-  .stack-endpoint-svc { color: var(--fg); white-space: nowrap; flex-shrink: 0; }
-  .stack-endpoint-port { color: var(--fg-muted); flex: 1; text-align: right; }
-  .stack-endpoint-tag {
-    font-size: 9.5px;
-    color: var(--fg-subtle);
-    letter-spacing: 0.04em;
-    text-transform: lowercase;
-  }
-  :global(.stack-endpoint-icon) { color: var(--fg-subtle); flex-shrink: 0; }
-
-  /* Networks · volumes — single mono paragraph, label-prefix muted +
-     name in body color. Compact, no per-line border or card. */
-  .stack-netvol {
-    margin: 0;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-muted);
-    line-height: 1.7;
-  }
-  .stack-netvol-prefix { color: var(--fg-subtle); margin-right: 6px; }
-  .stack-netvol-name { color: var(--accent-fg); }
-
-  /* ─────────────────── Compose / Environment / Logs / History panes ─────────────────── */
-  .stack-pane {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-    margin-top: 14px;
-  }
-  .stack-yaml {
-    width: 100%;
-    min-height: 360px;
-    padding: 14px 16px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-elevated);
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: 12.5px;
-    line-height: 1.65;
-    resize: vertical;
-    transition: border-color 0.15s;
-  }
-  .stack-yaml:focus { outline: none; border-color: var(--color-brand-500); }
-  .stack-yaml-short { min-height: 100px; }
-  .stack-dirty { color: var(--color-warning-400); font-weight: 500; }
-
-  /* Read-only YAML viewer — same chrome as the textarea so the toggle
-     is visually seamless. Rendered as a stack of <div> lines so we can
-     run the highlighter per line. */
-  .stack-yaml-view {
-    margin: 0;
-    width: 100%;
-    min-height: 360px;
-    padding: 14px 16px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-elevated);
-    font-family: var(--font-mono);
-    font-size: 12.5px;
-    line-height: 1.65;
-    color: var(--fg);
-    overflow: auto;
-    white-space: pre;
-  }
-  .stack-yaml-line { min-height: 1.65em; }
-  .stack-yaml-view :global(.y-key) { color: var(--accent-fg); }
-  .stack-yaml-view :global(.y-str) { color: var(--color-warning-400); }
-  .stack-yaml-view :global(.y-num) { color: var(--color-success-400); }
-  .stack-yaml-view :global(.y-com) { color: var(--fg-subtle); font-style: normal; }
-  .stack-inline-link {
-    background: transparent;
-    border: 0;
-    cursor: pointer;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--accent-fg);
-    letter-spacing: 0.04em;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .stack-inline-link:hover { color: var(--fg); }
-  .stack-inline-link:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  /* Env-vars table */
-  .env-table { width: 100%; }
-  .env-table th, .env-table td { padding: 10px 12px; }
-  .env-cell-key { width: 26%; }
-  .env-cell-value { width: 38%; }
-  .env-cell-scope { width: auto; }
-  .env-cell-actions { width: 64px; text-align: right; }
-  .env-th-actions { width: 64px; }
-  .env-cell-input {
-    border-bottom: 1px solid var(--border-strong);
-    padding: 4px 0;
-    font-size: 12.5px;
-  }
-  .env-secret-pill { margin-left: 8px; }
-  .env-value-empty { color: var(--fg-subtle); font-style: normal; }
-  .env-scope-list {
-    display: inline-flex;
-    flex-wrap: wrap;
-    gap: 0 4px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-muted);
-  }
-  .env-scope-svc { color: var(--accent-fg); }
-  .env-scope-sep { color: var(--border-strong); margin-right: 4px; }
-  .env-scope-unused {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg-subtle);
-    font-style: normal;
-  }
-  .env-cell-actions { display: flex; gap: 2px; justify-content: flex-end; }
-  .env-cell-delete { color: var(--fg-subtle); }
-  .env-cell-delete:hover { color: var(--color-danger-400); }
-  .env-empty {
-    padding: 18px 0;
-    color: var(--fg-muted);
-    font-size: 13px;
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border-subtle);
-  }
-  .env-empty p { margin: 0; line-height: 1.6; }
-  .env-empty code { font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-muted); }
-
-  .stack-env-pills { display: flex; flex-wrap: wrap; gap: 6px; }
-  .stack-env-pill {
-    padding: 4px 10px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: transparent;
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    cursor: pointer;
-    transition: border-color 0.12s, background 0.12s, color 0.12s;
-  }
-  .stack-env-pill:hover { background: var(--surface-hover); color: var(--fg); }
-  .stack-env-pill.active {
-    border-color: var(--color-brand-500);
-    background: color-mix(in srgb, var(--color-brand-500) 12%, transparent);
-    color: var(--accent-fg);
-  }
-  .stack-env-pill:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  .stack-deps { display: flex; flex-direction: column; gap: 10px; font-size: 12.5px; }
-  .stack-deps > div {
-    display: inline-flex;
-    align-items: center;
-    flex-wrap: wrap;
     gap: 6px;
-  }
-  .stack-deps-label {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--fg-subtle);
-    margin-right: 4px;
-  }
-  .stack-dep-pill {
-    display: inline-flex;
-    align-items: center;
     padding: 2px 8px;
-    border: 1px solid var(--border);
-    border-radius: 3px;
+    border-radius: 999px;
+    background: var(--field);
+    color: var(--muted);
+    font-size: var(--fs-xs);
     font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg);
-    text-decoration: none;
+    border: 0;
+    white-space: nowrap;
   }
-  .stack-dep-pill:hover { background: var(--surface-hover); border-color: var(--border-strong); }
+  .stk-pick { cursor: pointer; font-family: inherit; font-size: var(--fs-sm); padding: 3px 10px; }
+  .stk-pick:hover { color: var(--fg); }
+  .stk-pick.on { background: var(--accent-soft); color: var(--fg); }
+  .stk-pick:disabled { opacity: 0.5; cursor: default; }
+  .stk-logdot { width: 6px; height: 6px; background: var(--svc-color, var(--subtle)); opacity: 0.45; }
+  .stk-logdot.live { opacity: 1; }
 
-  /* ─────────────────── Logs viewer ─────────────────── */
-  .stack-logs-bar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-  .stack-logs-services {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    align-items: center;
-  }
-  .stack-log-svc {
-    --svc-color: var(--accent-fg);
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 9px;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: transparent;
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
-    font-size: 11px;
+  .stk-connect {
+    all: unset;
+    box-sizing: border-box;
     cursor: pointer;
-    transition: color 0.12s, border-color 0.12s, background 0.12s;
-  }
-  .stack-log-svc:hover { color: var(--fg); background: var(--surface-hover); }
-  .stack-log-svc.active {
-    color: var(--svc-color);
-    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
-  }
-  .stack-log-svc-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 999px;
-    background: var(--border-strong);
-  }
-  .stack-log-svc-dot.live {
-    background: var(--svc-color);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--svc-color) 30%, transparent);
-  }
-  .stack-logs-actions { margin-left: auto; display: inline-flex; gap: 8px; }
-  .stack-log-viewer {
-    max-height: 480px;
-    min-height: 280px;
-  }
-  .stack-log-empty {
-    padding: 22px;
-    text-align: center;
-    color: var(--fg-subtle);
-    font-size: 12.5px;
-  }
-  .stack-log-foot {
-    margin: 0;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-    letter-spacing: 0.04em;
-  }
-
-  /* ─────────────────── History timeline ─────────────────── */
-  .stack-history {
-    list-style: none;
-    margin: 0;
-    padding: 8px 0 0;
-    position: relative;
-  }
-  .stack-history-rule {
-    position: absolute;
-    left: 7px;
-    top: 14px;
-    bottom: 14px;
-    width: 1px;
-    background: var(--border);
-  }
-  .stack-history-row {
-    position: relative;
-    display: grid;
-    grid-template-columns: 22px 1fr;
-    gap: 12px;
-    padding: 10px 0 18px;
-  }
-  .stack-history-dot {
-    width: 11px;
-    height: 11px;
-    border-radius: 999px;
-    background: var(--bg-elevated);
-    border: 2px solid var(--border-strong);
-    margin-top: 6px;
-    margin-left: 2px;
-    z-index: 1;
-  }
-  .stack-history-dot.current { border-color: var(--color-success-500); }
-  .stack-history-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-  .stack-history-head {
     display: flex;
     align-items: center;
     gap: 10px;
-    flex-wrap: wrap;
+    padding: 10px 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
   }
-  .stack-history-version {
+  .stk-connect > span:nth-child(2) { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .stk-connect small { color: var(--subtle); font-size: var(--fs-xs); }
+  .stk-connect:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .stk-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+  .stk-file { font-size: var(--fs-sm); color: var(--muted); }
+  .stk-unsaved { color: var(--warn); }
+
+  .stk-yaml-view, .stk-yaml {
+    margin: 0;
+    min-height: 420px;
     font-family: var(--font-mono);
-    font-size: 13px;
-    color: var(--fg);
-    font-weight: 500;
+    font-size: 12.5px;
+    line-height: 1.65;
   }
-  .stack-history-time {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-subtle);
+  .stk-yaml-view {
+    background: var(--band);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 12px 14px;
+    overflow: auto;
+    max-height: 70vh;
   }
-  .stack-history-actor {
+  .stk-yaml { width: 100%; min-height: 60vh; resize: vertical; }
+  .stk-yaml-line { min-height: 1.65em; white-space: pre; }
+  .stk-yaml-view :global(.y-key) { color: var(--accent); }
+  .stk-yaml-view :global(.y-str) { color: var(--warn); }
+  .stk-yaml-view :global(.y-num) { color: var(--ok); }
+  .stk-yaml-view :global(.y-com) { color: var(--subtle); }
+
+  .stk-val { display: flex; align-items: center; gap: 8px; }
+  .stk-val > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+  .stk-cell-input { width: 100%; min-height: 28px; font-family: var(--font-mono); font-size: 12px; }
+  .stk-row-btns { display: flex; justify-content: flex-end; gap: 4px; align-items: center; }
+  .stk-ibtn {
+    width: 26px;
+    height: 26px;
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg-muted);
+    justify-content: center;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--r-sm);
+    color: var(--muted);
+    cursor: pointer;
   }
-  .stack-history-spacer { flex: 1; }
-  .stack-history-note {
-    margin: 0;
-    font-size: 13px;
-    color: var(--fg);
+  .stk-ibtn:hover { border-color: var(--border); color: var(--fg); }
+  .stk-ibtn.danger:hover { color: var(--bad); }
+
+  .stk-logs {
+    height: 60vh;
+    overflow: auto;
+    background: var(--band);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 8px 12px;
+    font-size: 12px;
     line-height: 1.55;
   }
-  .stack-history-services {
-    margin: 0;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg-subtle);
-    letter-spacing: 0.02em;
-  }
-  .stack-history-images { color: var(--fg-muted); }
+  .stk-ln { display: grid; grid-template-columns: 76px 110px minmax(0, 1fr); gap: 10px; }
+  .stk-ln > span:last-child { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .stk-ln-svc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stk-ln .warn { color: var(--warn); }
+  .stk-ln .bad { color: var(--bad); }
+  .stk-ln .ok { color: var(--ok); }
 
-  /* Service list — one flex row per service, name fixed-width on the
-     left, image truncates with ellipsis to keep rows aligned. No more
-     CSS grid + display:contents (was wrapping on narrow widths). */
-  .stack-history-svc-list {
-    margin: 4px 0 0;
-    padding: 0;
-    list-style: none;
+  .stk-sha { margin-left: 8px; font-size: 11.5px; color: var(--accent); }
+  .stk-hsvc {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    font-family: var(--font-mono);
-    font-size: 11px;
+    padding: 6px 6px 10px 64px;
+    border-bottom: 1px solid var(--border);
+    font-size: var(--fs-sm);
   }
-  .stack-history-svc-row {
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
-    min-width: 0;
-  }
-  .stack-history-svc-name {
-    color: var(--fg);
-    font-weight: 500;
-    flex-shrink: 0;
-    min-width: 80px;
-  }
-  .stack-history-svc-image {
-    color: var(--fg-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-    flex: 1;
-    font-family: var(--font-mono);
-    background: none;
-    padding: 0;
-  }
-  .stack-history-svc-tag { color: var(--fg); }
-  .stack-history-svc-changed .stack-history-svc-tag {
-    color: var(--color-warning-400, #d97706);
-    font-weight: 500;
-  }
-  .stack-history-svc-delta {
-    color: var(--color-warning-400, #d97706);
-    font-weight: 600;
-    text-align: right;
-    font-size: 11px;
-    align-self: center;
-  }
+  .stk-hsvc > div { display: grid; grid-template-columns: 160px minmax(0, 1fr) auto; gap: 12px; }
+  .stk-hsvc code { font-family: var(--font-mono); font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stk-hsvc .stk-changed code { color: var(--fg); }
+  .stk-delta { color: var(--warn); font-size: var(--fs-xs); }
 
-  /* Compact mode for history rows beyond the top 10 — single one-liner
-     summary instead of the full service list. */
-  .stack-history-expand,
-  .stack-history-collapse {
-    margin-top: 4px;
-    padding: 4px 8px;
-    background: transparent;
-    border: 1px dashed var(--border);
-    border-radius: 4px;
-    color: var(--fg-muted);
-    font-size: 11.5px;
-    font-family: var(--font-mono);
-    cursor: pointer;
-    align-self: flex-start;
-    transition: background 0.12s, border-color 0.12s, color 0.12s;
-  }
-  .stack-history-expand:hover,
-  .stack-history-collapse:hover {
-    background: color-mix(in srgb, var(--fg) 4%, transparent);
-    border-color: var(--fg-muted);
-    color: var(--fg);
-  }
-  .stack-history-expand-delta {
-    color: var(--color-warning-400, #d97706);
-    font-weight: 500;
-  }
+  .stk-settings { display: flex; flex-direction: column; }
+  .stk-git { margin-bottom: 8px; }
+  .stk-btns { display: flex; gap: 8px; flex-wrap: wrap; }
 
-  /* Compose-yaml diff in the snapshot drawer */
-  .diff-context { color: var(--fg-muted); }
-  .diff-add {
-    background: color-mix(in srgb, var(--color-success-400, #16a34a) 12%, transparent);
-    color: var(--fg);
-  }
-  .diff-del {
-    background: color-mix(in srgb, var(--color-danger-400, #dc2626) 12%, transparent);
-    color: var(--fg);
-  }
-  .diff-marker {
-    display: inline-block;
-    width: 12px;
-    color: var(--fg-subtle);
-    user-select: none;
-  }
-  .diff-add .diff-marker { color: var(--color-success-400, #16a34a); }
-  .diff-del .diff-marker { color: var(--color-danger-400, #dc2626); }
-
-  /* Live deploy-progress status text colors */
-  .stack-deploy-status-done   { color: var(--color-success-400, #16a34a); }
-  .stack-deploy-status-failed { color: var(--color-danger-400, #dc2626); }
-
-  /* History-MED status icons + meta */
-  .stack-history-status {
-    display: inline-flex;
-    align-items: center;
-  }
-  .stack-history-status-ok   { color: var(--color-success-400, #16a34a); }
-  .stack-history-status-fail { color: var(--color-danger-400, #dc2626); }
-  .stack-history-duration {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg-subtle);
-    letter-spacing: 0.02em;
-  }
-  .stack-history-sha {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg-muted);
-    text-decoration: none;
-    padding: 1px 4px;
-    border-radius: 3px;
-    background: color-mix(in srgb, var(--fg) 4%, transparent);
-  }
-  a.stack-history-sha:hover {
-    color: var(--color-brand-400, #2563eb);
-    text-decoration: underline;
-  }
-
-  /* ─────────────────── Settings ─────────────────── */
-  .stack-settings { gap: 0; }
-  .stack-setting-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
-    gap: 36px;
-    align-items: start;
-    padding: 22px 0;
-    border-top: 1px solid var(--border);
-  }
-  .stack-setting-row:first-child { border-top: 0; padding-top: 16px; }
-  .stack-setting-row h3 {
-    margin: 0;
-    font-size: 14px;
-    color: var(--fg);
-    font-weight: 500;
-  }
-  .stack-setting-row p {
-    margin: 6px 0 0;
-    font-size: 13px;
-    color: var(--fg-muted);
-    line-height: 1.55;
-    max-width: 60ch;
-  }
-  .stack-setting-row p code { font-size: 11.5px; }
-  .stack-setting-control { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-  .stack-setting-note {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-    letter-spacing: 0.02em;
-  }
-  .stack-setting-danger { border-top-color: color-mix(in srgb, var(--color-danger-500) 30%, var(--border)); }
-
-  /* ───────────── Git source widget (P.11.11 editorial) ───────────── */
-  .gs-section {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .gs-eyebrow {
-    font-size: 10.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--fg-subtle);
-    font-weight: 500;
-  }
-  .gs-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .gs-card-main {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 14px 16px;
-  }
-  .gs-card-icon {
-    flex-shrink: 0;
-    width: 32px;
-    height: 32px;
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--color-brand-500) 12%, transparent);
-    color: var(--color-brand-400);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .gs-card-icon-empty {
-    background: color-mix(in srgb, var(--fg-muted) 8%, transparent);
-    color: var(--fg-muted);
-  }
-  .gs-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-  .gs-card-title {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-  }
-  .gs-repo {
-    font-family: var(--font-mono);
-    font-size: 13px;
-    font-weight: 500;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 100%;
-  }
-  .gs-pill {
-    font-size: 10.5px;
-  }
-  .gs-card-sub {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    font-size: 11.5px;
-    color: var(--fg-muted);
-  }
-  .gs-sha { font-family: var(--font-mono); font-size: 11px; }
-  .gs-meta { font-size: 11px; }
-  .gs-error {
-    margin-top: 4px;
-    color: var(--color-danger-400);
-    font-size: 11.5px;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .gs-actions {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .gs-disconnect { color: var(--color-danger-400); }
-  .gs-drift {
-    background: color-mix(in srgb, var(--color-warning-500) 8%, transparent);
-    border-top: 1px solid color-mix(in srgb, var(--color-warning-500) 25%, var(--border));
-    padding: 10px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    font-size: 11.5px;
-  }
-  .gs-drift-title {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--color-warning-400);
-    font-weight: 500;
-  }
-  .gs-drift-row { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
-  .gs-drift-label { color: var(--fg-muted); }
-  .gs-drift-row code {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    background: color-mix(in srgb, var(--fg) 4%, transparent);
-    padding: 1px 4px;
-    border-radius: 3px;
-  }
-  .gs-drift-hint {
-    color: var(--fg-muted);
-    font-size: 11px;
-    margin-top: 2px;
-  }
-  .gs-card-empty {
-    text-align: left;
-    cursor: pointer;
-    width: 100%;
-    background: var(--surface);
-  }
-  .gs-card-empty:hover {
-    border-color: color-mix(in srgb, var(--color-brand-500) 40%, var(--border));
-    background: color-mix(in srgb, var(--color-brand-500) 3%, var(--bg));
-  }
-  .gs-empty-title { font-size: 13px; font-weight: 500; }
-  .gs-empty-blurb { font-size: 11.5px; color: var(--fg-muted); }
-  .gs-empty-blurb code { font-family: var(--font-mono); font-size: 10.5px; }
-  .gs-empty-cta { flex-shrink: 0; align-self: center; }
+  /* Compose diff in the deploy snapshot dialog */
+  .diff-context { color: var(--muted); }
+  .diff-add { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--fg); }
+  .diff-del { background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--fg); }
+  .diff-marker { display: inline-block; width: 12px; color: var(--subtle); user-select: none; }
+  .diff-add .diff-marker { color: var(--ok); }
+  .diff-del .diff-marker { color: var(--bad); }
 </style>

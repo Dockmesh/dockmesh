@@ -173,6 +173,12 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			// permission and the caller's scope inside the handler.
 			r.Get("/attention", h.Attention)
 
+			// Long-running operations; each is shown only to callers who
+			// may view what it works on, checked inside the handler.
+			r.Get("/operations", h.ListOperations)
+			r.Get("/operations/{id}", h.GetOperation)
+			r.Post("/operations/{id}/cancel", h.CancelOperation)
+
 			// -------------------------- READ ROUTES --------------------------
 			// Per-resource *.view permissions (RBAC v2). Each group gates
 			// its own listing + inspect endpoints. Built-in viewer role
@@ -469,6 +475,7 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 				r.Delete("/containers/{id}", h.RemoveContainer)
 				r.Get("/containers/{id}/update-info", h.PreviewUpdate)
 				r.Post("/containers/{id}/update", h.UpdateContainer)
+				r.Post("/containers/updates", h.BulkUpdateContainers)
 				r.Post("/containers/{id}/rollback", h.RollbackContainer)
 				r.Get("/containers/{id}/update-history", h.UpdateHistory)
 			})

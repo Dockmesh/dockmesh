@@ -5,6 +5,7 @@
   //
   // Two sections: Active (live runs with progress) + Recent (terminal).
   // Polls every 5s while open, stops on close.
+  import { fmtBytes } from '$lib/format';
   import { api, type Migration } from '$lib/api';
   import { goto } from '$app/navigation';
   import { X, ArrowRightLeft } from 'lucide-svelte';
@@ -85,13 +86,6 @@
     if (secs < 60) return `${secs}s`;
     if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
     return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
-  }
-
-  function fmtBytes(n: number): string {
-    if (n < 1024) return `${n} B`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
   }
 
   function progressPercent(m: Migration): number {

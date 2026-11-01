@@ -3,7 +3,7 @@
   // fields based on the selected channel type (9 supported types).
   import { api, ApiError, type NotificationChannel } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
-  import { EditorialModal, Eyebrow, Field } from '$lib/components/editorial';
+  import { Modal, Switch } from '$lib/components/ui';
 
   interface Props {
     open: boolean;
@@ -136,24 +136,14 @@
   }
 </script>
 
-<EditorialModal
-  bind:open
-  eyebrow={editing ? 'Edit channel' : 'New channel'}
-  width={580}
->
-  {#snippet title()}
-    {#if editing}
-      Edit <em class="ed-accent">{editing.name}</em>
-    {:else}
-      Add a <em>notification</em> channel
-    {/if}
-  {/snippet}
-
-  <form id="ch-form" class="cm-form" onsubmit={save}>
-    <div class="cm-grid-2">
-      <Field label="Type">
+<Modal bind:open title={editing ? `Edit ${editing.name}` : 'New notification channel'} maxWidth="max-w-xl" {footer}>
+  <form id="ch-form" class="cm" onsubmit={save}>
+    <div class="cm-2">
+      <div class="dm-field">
+        <label for="cm-type">Type</label>
         <select
-          class="dm-input cm-input"
+          id="cm-type"
+          class="dm-input"
           value={formType}
           onchange={(e) => { formType = (e.target as HTMLSelectElement).value; onTypeChange(); }}
           disabled={editing !== null}
@@ -162,108 +152,47 @@
             <option value={t.id}>{t.label}</option>
           {/each}
         </select>
-      </Field>
-      <Field label="Name" hint="Free-form, shown in the channel list.">
-        <input class="dm-input cm-input" bind:value={formName} placeholder="My alerts channel" />
-      </Field>
+      </div>
+      <div class="dm-field">
+        <label for="cm-name">Name</label>
+        <input id="cm-name" class="dm-input" bind:value={formName} placeholder="Ops on-call" maxlength="200" />
+      </div>
     </div>
 
-    <div class="cm-fieldset">{activeType.label} configuration</div>
-    <div class="cm-fields">
-      {#each activeType.fields as f (f.key)}
-        <Field label={f.label}>
-          <input
-            class="dm-input cm-input"
-            type={f.secret ? 'password' : 'text'}
-            placeholder={f.placeholder ?? ''}
-            value={formFields[f.key] ?? ''}
-            oninput={(e) => (formFields = { ...formFields, [f.key]: (e.target as HTMLInputElement).value })}
-          />
-        </Field>
-      {/each}
-    </div>
+    {#each activeType.fields as f (f.key)}
+      <div class="dm-field">
+        <label for="cm-{f.key}">{f.label}</label>
+        <input
+          id="cm-{f.key}"
+          class="dm-input"
+          class:dm-mono={!f.secret}
+          type={f.secret ? 'password' : 'text'}
+          autocomplete="off"
+          placeholder={f.placeholder ?? ''}
+          value={formFields[f.key] ?? ''}
+          oninput={(e) => (formFields = { ...formFields, [f.key]: (e.target as HTMLInputElement).value })}
+        />
+      </div>
+    {/each}
 
-    <label class="cm-enabled">
-      <input type="checkbox" bind:checked={formEnabled} />
-      <span>Enabled — accept notifications</span>
-    </label>
+    <Switch bind:checked={formEnabled} label="Enabled — send notifications to this channel" />
 
-    {#if err}
-      <div class="cm-error" role="alert">{err}</div>
-    {/if}
+    {#if err}<div class="cm-err" role="alert">{err}</div>{/if}
   </form>
+</Modal>
 
-  {#snippet footer()}
-    <span></span>
-    <div class="cm-actions">
-      <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (open = false)}>
-        Cancel
-      </button>
-      <button
-        type="submit"
-        form="ch-form"
-        class="dm-btn dm-btn-primary dm-btn-sm"
-        disabled={saving || !formName.trim()}
-      >
-        {saving ? 'Saving…' : editing ? 'Save' : 'Create channel'}
-      </button>
-    </div>
-  {/snippet}
-</EditorialModal>
+{#snippet footer()}
+  <button type="button" class="dm-btn" onclick={() => (open = false)}>Cancel</button>
+  <button type="submit" form="ch-form" class="dm-btn dm-btn-primary" disabled={saving || !formName.trim()}>
+    {saving ? 'Saving…' : editing ? 'Save channel' : 'Create channel'}
+  </button>
+{/snippet}
 
 <style>
-  .cm-form {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
-  .cm-form :global(.dm-input) {
-    font-size: 12.5px;
-    padding: 6px 10px;
-    line-height: 1.4;
-  }
-  .cm-input { font-family: var(--font-mono); }
-  .cm-grid-2 {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
-  .cm-fieldset {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--fg-subtle);
-    margin-top: 4px;
-  }
-  .cm-fields {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .cm-enabled {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12.5px;
-    color: var(--fg);
-    cursor: pointer;
-  }
-  .cm-enabled input { accent-color: var(--color-brand-500); }
-  .cm-error {
-    padding: 8px 10px;
-    border: 1px solid color-mix(in srgb, var(--color-danger-500) 45%, var(--border));
-    background: color-mix(in srgb, var(--color-danger-500) 6%, var(--surface));
-    border-radius: 4px;
-    color: var(--color-danger-400);
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-  }
-  .cm-actions {
-    display: flex;
-    gap: 8px;
-  }
+  .cm { display: flex; flex-direction: column; gap: 14px; }
+  .cm-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  .cm-err { color: var(--bad); font-size: var(--fs-sm); }
   @media (max-width: 640px) {
-    .cm-grid-2 { grid-template-columns: 1fr; }
+    .cm-2 { grid-template-columns: 1fr; }
   }
 </style>

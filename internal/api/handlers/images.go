@@ -251,7 +251,8 @@ func (h *Handlers) PruneImages(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /api/v1/images/updates
 func (h *Handlers) ListImageUpdates(w http.ResponseWriter, r *http.Request) {
-	if h.UpdateWatcher == nil {
+	// The watcher checks the server's own containers only.
+	if h.UpdateWatcher == nil || !h.hostVisible(r, "local") {
 		writeJSON(w, http.StatusOK, map[string]any{})
 		return
 	}

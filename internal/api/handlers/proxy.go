@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
@@ -183,9 +184,26 @@ func (h *Handlers) CreateProxyRoute(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	route, err := h.Proxy.CreateRoute(r.Context(), proxy.RouteSpec{
+	started := time.Now()
+	op := h.Operations.Start(r.Context(), operations.Spec{
+		Kind:   opProxySite,
+		Target: req.Host,
+		Ref:    "proxy-site:" + req.Host,
+		Actor:  opActor(r.Context()),
+		Steps:  proxy.NewSiteSteps,
+	})
+	route, err := h.Proxy.CreateRoute(operations.WithOp(r.Context(), op), proxy.RouteSpec{
 		Host: req.Host, Upstream: req.Upstream, TLSMode: req.TLSMode, Options: opts,
 	})
+	switch {
+	case err != nil && route != nil:
+		slog.Warn("proxy: new site saved but not applied", "host", route.Host, "err", err)
+		op.Finish(proxy.ErrConfigRejected)
+	case err != nil:
+		op.Finish(err)
+	default:
+		go h.Proxy.WatchCertificate(context.WithoutCancel(r.Context()), op, route.Host, route.TLSMode, started)
+	}
 	if writeProxyRouteError(w, err) {
 		return
 	}

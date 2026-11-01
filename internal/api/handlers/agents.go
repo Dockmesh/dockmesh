@@ -23,7 +23,13 @@ func (h *Handlers) ListAgents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	visible := make([]agents.Agent, 0, len(list))
+	for _, a := range list {
+		if h.hostVisible(r, a.ID) {
+			visible = append(visible, a)
+		}
+	}
+	writeJSON(w, http.StatusOK, visible)
 }
 
 func (h *Handlers) GetAgent(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +37,12 @@ func (h *Handlers) GetAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "agents not configured")
 		return
 	}
-	a, err := h.Agents.Get(r.Context(), chi.URLParam(r, "id"))
+	id := chi.URLParam(r, "id")
+	if !h.hostVisible(r, id) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	a, err := h.Agents.Get(r.Context(), id)
 	if errors.Is(err, agents.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
@@ -81,6 +92,9 @@ func (h *Handlers) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 		h.writeRoleScopeDenied(w, r, rbac.PermHostsDelete, scopeReq, "host "+id)
 		return
 	}
+	if !h.requireHostAccess(w, r, id) {
+		return
+	}
 	if err := h.Agents.Delete(r.Context(), id); errors.Is(err, agents.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
@@ -120,6 +134,9 @@ func (h *Handlers) RotateAgentEnrollToken(w http.ResponseWriter, r *http.Request
 		h.writeRoleScopeDenied(w, r, rbac.PermHostsCreate, scopeReq, "host "+id)
 		return
 	}
+	if !h.requireHostAccess(w, r, id) {
+		return
+	}
 	res, err := h.Agents.RotateEnrollToken(r.Context(), id)
 	if errors.Is(err, agents.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
@@ -149,6 +166,9 @@ func (h *Handlers) UpgradeAgent(w http.ResponseWriter, r *http.Request) {
 		h.writeRoleScopeDenied(w, r, rbac.PermHostsUpdate, scopeReq, "host "+id)
 		return
 	}
+	if !h.requireHostAccess(w, r, id) {
+		return
+	}
 	if h.AgentUpgrade == nil {
 		writeError(w, http.StatusServiceUnavailable, "agent upgrade controller not configured")
 		return
@@ -156,6 +176,14 @@ func (h *Handlers) UpgradeAgent(w http.ResponseWriter, r *http.Request) {
 	req, err := h.AgentUpgrade.UpgradeOne(r.Context(), id)
 	if errors.Is(err, agents.ErrAgentNotConnected) {
 		writeError(w, http.StatusServiceUnavailable, "agent not connected")
+		return
+	}
+	if errors.Is(err, agents.ErrAgentCurrent) {
+		writeError(w, http.StatusConflict, "this host's agent already runs the same build as the server; there is nothing to upgrade")
+		return
+	}
+	if errors.Is(err, agents.ErrAgentUpgrading) {
+		writeError(w, http.StatusConflict, "this host's agent is still installing an earlier upgrade; try again once it has reconnected")
 		return
 	}
 	if errors.Is(err, agents.ErrNoAgentBinary) {

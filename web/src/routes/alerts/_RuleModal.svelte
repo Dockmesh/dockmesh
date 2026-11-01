@@ -1,27 +1,23 @@
 <script lang="ts">
-  // Sentence-style alert-rule builder. Renders the rule as a natural-
-  // language sentence ("fire when [CPU %] is [greater than] [80] for
-  // at least [60s]") with inline select/input controls. Same fields
-  // underneath as the legacy form, just better wired for reading.
   import { api, ApiError, type AlertRule, type AlertRuleInput, type HostInfo, type NotificationChannel } from '$lib/api';
-  import { KINDS, describeRule, isContainerKind, isHostBoundKind, ruleToInput, type RuleKind } from './ruleKinds';
+  import {
+    KINDS, KIND_GROUPS, appliesTo, isContainerKind, isHostBoundKind, kindLabel, ruleSentence, ruleToInput, type RuleKind
+  } from './ruleKinds';
+  import { allowed } from '$lib/rbac.svelte';
   import { toast } from '$lib/stores/toast.svelte';
-  import { EditorialModal, Eyebrow, Field } from '$lib/components/editorial';
-  import { Check, Plus } from 'lucide-svelte';
+  import { Modal, Segmented, Switch } from '$lib/components/ui';
+  import { BellRing } from 'lucide-svelte';
 
   interface Props {
     open: boolean;
     editing: AlertRule | null;
     channels: NotificationChannel[];
+    hosts: HostInfo[];
+    hostName: (id: string) => string;
     onSaved: () => void;
   }
 
-  let {
-    open = $bindable(false),
-    editing,
-    channels,
-    onSaved,
-  }: Props = $props();
+  let { open = $bindable(false), editing, channels, hosts, hostName, onSaved }: Props = $props();
 
   const DEFAULT: AlertRuleInput = {
     name: '',
@@ -39,28 +35,52 @@
     severity: 'warning',
     cooldown_seconds: 300,
     muted_until: '',
-    mute_schedule: '',
+    mute_schedule: ''
   };
 
-  // Defaults applied when switching kind on a new rule.
+  // Defaults applied when the kind of a new rule changes.
   const KIND_DEFAULTS: Partial<Record<RuleKind, Partial<AlertRuleInput>>> = {
     metric: { metric: 'cpu_percent', operator: 'gt', threshold: 80, duration_seconds: 60 },
     restart_loop: { threshold: 3, duration_seconds: 600 },
-    host_offline: { duration_seconds: 300 },
+    host_offline: { duration_seconds: 300, severity: 'critical' },
     disk_usage: { threshold: 90 },
-    cert_expiry: { threshold: 14 },
+    backup_failed: { severity: 'critical' },
+    cert_expiry: { threshold: 14 }
   };
 
   let form = $state<AlertRuleInput>({ ...DEFAULT });
-  let hosts = $state<HostInfo[]>([]);
+  let stacks = $state<string[]>([]);
+  let jobs = $state<string[]>([]);
+  let sites = $state<string[]>([]);
+  let saving = $state(false);
+  let err = $state<string | null>(null);
+
   const kind = $derived((form.kind || 'metric') as RuleKind);
   const kindMeta = $derived(KINDS.find((k) => k.id === kind) ?? KINDS[0]);
+  const tags = $derived([...new Set(hosts.flatMap((h) => h.tags ?? []))].sort());
 
-  function setDuration(e: Event) {
-    form.duration_seconds = parseInt((e.target as HTMLSelectElement).value, 10) || 0;
+  let lastOpen = false;
+  let lastEditingId: number | null = null;
+  $effect(() => {
+    if (open && (!lastOpen || lastEditingId !== (editing?.id ?? null))) {
+      form = editing ? ruleToInput(editing) : { ...DEFAULT, channel_ids: [] };
+      err = null;
+      lastEditingId = editing?.id ?? null;
+      loadChoices();
+    }
+    lastOpen = open;
+  });
+
+  // Picker contents; each source is optional and only loaded when the
+  // caller may read it.
+  function loadChoices() {
+    if (allowed('stacks.view')) api.stacks.list().then((l) => (stacks = l.map((s) => s.name).sort())).catch(() => (stacks = []));
+    if (allowed('backups.view')) api.backups.listJobs().then((l) => (jobs = l.map((j) => j.name).sort())).catch(() => (jobs = []));
+    if (allowed('proxy.view')) api.proxy.listRoutes().then((l) => (sites = l.map((r) => r.host).sort())).catch(() => (sites = []));
   }
 
   function setKind(k: RuleKind) {
+    const keepScope = isHostBoundKind(k) && isHostBoundKind(kind);
     form = {
       ...form,
       kind: k,
@@ -68,560 +88,306 @@
       operator: '',
       threshold: 0,
       duration_seconds: 0,
-      ...(KIND_DEFAULTS[k] ?? {}),
+      container_filter: '*',
+      scope_host: keepScope ? form.scope_host : '',
+      scope_tag: keepScope ? form.scope_tag : '',
+      scope_stack: isContainerKind(k) && isContainerKind(kind) ? form.scope_stack : '',
+      severity: 'warning',
+      ...(KIND_DEFAULTS[k] ?? {})
     };
   }
-  let saving = $state(false);
-  let err = $state<string | null>(null);
 
-  // Hydrate when modal opens.
-  let lastOpen = false;
-  let lastEditingId: number | null = null;
-  $effect(() => {
-    if (open && (!lastOpen || lastEditingId !== (editing?.id ?? null))) {
-      if (editing) {
-        form = ruleToInput(editing);
-      } else {
-        form = { ...DEFAULT };
-      }
-      err = null;
-      lastEditingId = editing?.id ?? null;
-      api.hosts.list().then((h) => (hosts = h)).catch(() => (hosts = []));
-    }
-    lastOpen = open;
+  // "Applies to" is one picker; its value encodes which scope field is
+  // set. A stored rule that combines several scopes keeps them under
+  // "current".
+  interface ScopeOpt { value: string; label: string }
+  const scopeValue = $derived.by(() => {
+    if (kind === 'backup_failed' || kind === 'backup_missed' || kind === 'cert_expiry') return 'f:' + (form.container_filter || '*');
+    const set = [form.scope_host && 'h', form.scope_tag && 't', isContainerKind(kind) && form.scope_stack && 's'].filter(Boolean);
+    if (set.length > 1) return 'current';
+    if (form.scope_host) return 'h:' + form.scope_host;
+    if (form.scope_tag) return 't:' + form.scope_tag;
+    if (isContainerKind(kind) && form.scope_stack) return 's:' + form.scope_stack;
+    return 'all';
   });
-
-  function toggleChannel(id: number) {
-    if (form.channel_ids.includes(id)) {
-      form.channel_ids = form.channel_ids.filter((c) => c !== id);
-    } else {
-      form.channel_ids = [...form.channel_ids, id];
+  const scopeOpts = $derived.by<ScopeOpt[]>(() => {
+    const out: ScopeOpt[] = [];
+    const filterList = (all: string, names: string[], noun: string) => {
+      out.push({ value: 'f:*', label: all });
+      for (const n of names) out.push({ value: 'f:' + n, label: `${noun} ${n}` });
+      const cur = form.container_filter;
+      if (cur && cur !== '*' && !names.includes(cur)) out.push({ value: 'f:' + cur, label: `${noun} ${cur}` });
+    };
+    if (kind === 'backup_failed' || kind === 'backup_missed') filterList('All backup jobs', jobs, 'Job');
+    else if (kind === 'cert_expiry') filterList('All proxy sites', sites, 'Site');
+    else {
+      if (scopeValue === 'current') out.push({ value: 'current', label: `Current: ${appliesTo(form, hostName)}` });
+      out.push({ value: 'all', label: isContainerKind(kind) ? 'All containers' : kind === 'host_offline' ? 'All agents' : 'All hosts' });
+      if (isContainerKind(kind)) for (const s of stacks) out.push({ value: 's:' + s, label: `Stack ${s}` });
+      for (const h of hosts.filter((h) => h.kind !== 'all')) out.push({ value: 'h:' + h.id, label: isContainerKind(kind) ? `Containers on ${h.name}` : h.name });
+      for (const t of tags) out.push({ value: 't:' + t, label: `Hosts with tag ${t}` });
+      if (isContainerKind(kind) && form.scope_stack && !stacks.includes(form.scope_stack) && scopeValue !== 'current')
+        out.push({ value: 's:' + form.scope_stack, label: `Stack ${form.scope_stack}` });
     }
+    return out;
+  });
+  function setScope(v: string) {
+    if (v === 'current') return;
+    const [k, ...rest] = v.split(':');
+    const val = rest.join(':');
+    if (k === 'f') {
+      form.container_filter = val || '*';
+      return;
+    }
+    form.scope_host = k === 'h' ? val : '';
+    form.scope_tag = k === 't' ? val : '';
+    form.scope_stack = k === 's' ? val : '';
+  }
+  const hasNameFilter = $derived(kind !== 'backup_failed' && kind !== 'backup_missed' && kind !== 'cert_expiry');
+
+  const durations = [
+    { value: 0, label: 'immediately' },
+    { value: 30, label: '30 s' },
+    { value: 60, label: '1 min' },
+    { value: 120, label: '2 min' },
+    { value: 300, label: '5 min' },
+    { value: 600, label: '10 min' },
+    { value: 1800, label: '30 min' },
+    { value: 3600, label: '1 h' }
+  ];
+  const cooldowns = [
+    { value: 60, label: '1 min' },
+    { value: 300, label: '5 min' },
+    { value: 900, label: '15 min' },
+    { value: 1800, label: '30 min' },
+    { value: 3600, label: '1 h' },
+    { value: 21600, label: '6 h' },
+    { value: 86400, label: '24 h' }
+  ];
+  function withCurrent(list: { value: number; label: string }[], cur: number) {
+    return list.some((d) => d.value === cur) ? list : [...list, { value: cur, label: `${cur} s` }].sort((a, b) => a.value - b.value);
+  }
+  function num(e: Event): number {
+    return parseInt((e.target as HTMLSelectElement).value, 10) || 0;
   }
 
-  function setSeverity(s: 'critical' | 'warning' | 'info') {
-    form.severity = s;
+  const sentence = $derived(ruleSentence(form, hostName));
+  const defaultName = $derived(`${kindLabel(kind)} · ${appliesTo(form, hostName)}`);
+
+  function toggleChannel(id: number) {
+    form.channel_ids = form.channel_ids.includes(id) ? form.channel_ids.filter((c) => c !== id) : [...form.channel_ids, id];
   }
 
   async function save(e: Event) {
     e.preventDefault();
-    if (!form.name.trim()) return;
     saving = true;
     err = null;
+    const input = { ...form, name: form.name.trim() || defaultName.slice(0, 200) };
     try {
       if (editing) {
-        await api.alerts.updateRule(editing.id, form);
-        toast.success('Updated', form.name);
+        await api.alerts.updateRule(editing.id, input);
+        toast.success('Rule saved', input.name);
       } else {
-        await api.alerts.createRule(form);
-        toast.success('Created', form.name);
+        await api.alerts.createRule(input);
+        toast.success('Rule created', input.name);
       }
       open = false;
       onSaved();
     } catch (e2) {
-      err = e2 instanceof ApiError ? e2.message : 'save failed';
+      err = e2 instanceof ApiError ? e2.message : 'Saving failed';
     } finally {
       saving = false;
     }
   }
-
-  // Severity tone helper — matches the Rules tab card styling.
-  const severityTone = $derived.by(() => {
-    const map = {
-      critical: { fg: 'var(--color-danger-400)', border: 'var(--color-danger-500)',  bg: 'color-mix(in srgb, var(--color-danger-500) 8%, var(--surface))' },
-      warning:  { fg: 'var(--color-warning-400)', border: 'var(--color-warning-500)', bg: 'color-mix(in srgb, var(--color-warning-500) 8%, var(--surface))' },
-      info:     { fg: 'var(--accent-fg)',         border: 'var(--accent)',             bg: 'color-mix(in srgb, var(--accent) 8%, var(--surface))' },
-    } as const;
-    return map[form.severity];
-  });
-
-  // Operator labels for the sentence.
-  const opLabels: Record<string, string> = {
-    gt: 'is greater than',
-    lt: 'is less than',
-  };
-
-  const metricLabels: Record<string, string> = {
-    cpu_percent: 'CPU %',
-    mem_percent: 'Memory %',
-  };
-
-  const durationOptions = [
-    { value: 0,    label: '0s — immediately' },
-    { value: 30,   label: '30s' },
-    { value: 60,   label: '1m' },
-    { value: 120,  label: '2m' },
-    { value: 300,  label: '5m' },
-    { value: 600,  label: '10m' },
-    { value: 1800, label: '30m' },
-    { value: 3600, label: '1h' },
-  ];
-
-  const cooldownOptions = [
-    { value: 60,    label: '1m' },
-    { value: 300,   label: '5m' },
-    { value: 900,   label: '15m' },
-    { value: 1800,  label: '30m' },
-    { value: 3600,  label: '1h' },
-    { value: 21600, label: '6h' },
-    { value: 86400, label: '24h' },
-  ];
 </script>
 
-<EditorialModal
-  bind:open
-  eyebrow={editing ? 'Edit rule' : 'New rule'}
-  width={680}
->
-  {#snippet title()}
-    {#if editing}
-      Edit <em class="ed-accent">{editing.name}</em>
-    {:else}
-      Build a new <em>alert</em> rule
-    {/if}
-  {/snippet}
-
-  <form id="rule-form" class="rm-form" onsubmit={save}>
-    <Field label="Rule name">
-      <input
-        class="dm-input rm-input"
-        bind:value={form.name}
-        placeholder="High CPU on web stack"
-      />
-    </Field>
-
-    <Field label="Type" hint={editing ? 'The type of an existing rule cannot be changed.' : undefined}>
-      <select
-        class="dm-input rm-input"
-        value={kind}
-        disabled={!!editing}
-        onchange={(e) => setKind((e.target as HTMLSelectElement).value as RuleKind)}
-      >
-        {#each KINDS as k (k.id)}
-          <option value={k.id}>{k.label}</option>
-        {/each}
-      </select>
-    </Field>
-
-    <Field label="Severity">
-      <div class="rm-severity">
-        {#each [
-          { id: 'info'     as const, label: 'info',     color: 'var(--accent-fg)' },
-          { id: 'warning'  as const, label: 'warning',  color: 'var(--color-warning-400)' },
-          { id: 'critical' as const, label: 'critical', color: 'var(--color-danger-400)' },
-        ] as opt}
-          <button
-            type="button"
-            class="rm-sev"
-            class:rm-sev-active={form.severity === opt.id}
-            data-sev={opt.id}
-            onclick={() => setSeverity(opt.id)}
-          >
-            {opt.label}
-          </button>
-        {/each}
+<Modal bind:open title={editing ? `Edit ${editing.name}` : 'New alert rule'} maxWidth="max-w-2xl" {footer}>
+  <form id="rule-form" class="rm" onsubmit={save}>
+    <div class="rm-2">
+      <div class="dm-field">
+        <label for="rm-kind">Watch</label>
+        <select id="rm-kind" class="dm-input" value={kind} disabled={!!editing} onchange={(e) => setKind((e.target as HTMLSelectElement).value as RuleKind)}>
+          {#each KIND_GROUPS as g (g.group)}
+            <optgroup label={g.group}>
+              {#each g.kinds as k (k)}<option value={k}>{g.group} · {kindLabel(k)}</option>{/each}
+            </optgroup>
+          {/each}
+        </select>
+        {#if editing}<span class="rm-hint">The type of an existing rule cannot be changed.</span>{/if}
       </div>
-    </Field>
-
-    <!-- Sentence-style condition builder -->
-    <div
-      class="rm-condition"
-      style="border-color: {severityTone.border}; background: {severityTone.bg};"
-    >
-      <div class="rm-condition-eyebrow" style="color: {severityTone.fg};">
-        condition
-      </div>
-      <div class="rm-condition-sentence">
-        <span class="rm-cond-word">fire when</span>
+      <div class="dm-field">
+        <label for="rm-scope">Applies to</label>
         {#if kind === 'metric'}
-          <select class="rm-cond-select" bind:value={form.metric}>
-            <option value="cpu_percent">CPU %</option>
-            <option value="mem_percent">Memory %</option>
-          </select>
-          <select class="rm-cond-select rm-cond-op" bind:value={form.operator}>
-            <option value="gt">is greater than</option>
-            <option value="lt">is less than</option>
-          </select>
-          <input
-            type="number"
-            class="rm-cond-num"
-            min="0"
-            max="100"
-            bind:value={form.threshold}
-          />
-          <span class="rm-cond-unit">%</span>
-          <span class="rm-cond-word">for at least</span>
-          <select
-            class="rm-cond-select rm-cond-duration"
-            value={form.duration_seconds}
-            onchange={setDuration}
-          >
-            {#each durationOptions as d (d.value)}
-              <option value={d.value}>{d.label}</option>
-            {/each}
-          </select>
-        {:else if kind === 'restart_loop'}
-          <span class="rm-cond-word">a container restarts</span>
-          <input type="number" class="rm-cond-num" min="2" bind:value={form.threshold} />
-          <span class="rm-cond-word">times within</span>
-          <select
-            class="rm-cond-select rm-cond-duration"
-            value={form.duration_seconds}
-            onchange={setDuration}
-          >
-            {#each durationOptions.filter((d) => d.value >= 60) as d (d.value)}
-              <option value={d.value}>{d.label}</option>
-            {/each}
-          </select>
-        {:else if kind === 'host_offline'}
-          <span class="rm-cond-word">an agent is offline for</span>
-          <select
-            class="rm-cond-select rm-cond-duration"
-            value={form.duration_seconds}
-            onchange={setDuration}
-          >
-            {#each durationOptions as d (d.value)}
-              <option value={d.value}>{d.label}</option>
-            {/each}
-          </select>
-        {:else if kind === 'disk_usage'}
-          <span class="rm-cond-word">a disk is at least</span>
-          <input type="number" class="rm-cond-num" min="1" max="100" bind:value={form.threshold} />
-          <span class="rm-cond-unit">% full</span>
-        {:else if kind === 'cert_expiry'}
-          <span class="rm-cond-word">a proxy certificate expires within</span>
-          <input type="number" class="rm-cond-num" min="1" bind:value={form.threshold} />
-          <span class="rm-cond-word">days</span>
+          <input id="rm-scope" class="dm-input" bind:value={form.container_filter} placeholder="*" />
+          <span class="rm-hint">Containers on this server. {kindMeta.targetHint}</span>
         {:else}
-          <span class="rm-cond-word">{describeRule(form as AlertRule)}</span>
+          <select id="rm-scope" class="dm-input" value={scopeValue} onchange={(e) => setScope((e.target as HTMLSelectElement).value)}>
+            {#each scopeOpts as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
+          </select>
         {/if}
       </div>
     </div>
 
-    <div class="rm-grid-2">
-      <Field label={kindMeta.target} hint={kindMeta.targetHint}>
-        <input
-          class="dm-input rm-input"
-          bind:value={form.container_filter}
-          placeholder="*"
-        />
-      </Field>
-      <Field label="Cooldown" hint="Suppress re-notify for this long after firing.">
-        <select
-          class="dm-input rm-input"
-          value={form.cooldown_seconds}
-          onchange={(e) => (form.cooldown_seconds = parseInt((e.target as HTMLSelectElement).value, 10) || 0)}
-        >
-          {#each cooldownOptions as c (c.value)}
-            <option value={c.value}>{c.label}</option>
-          {/each}
-        </select>
-      </Field>
+    <div class="dm-field">
+      <span class="rm-label">Condition</span>
+      <div class="rm-cond">
+        {#if kind === 'metric'}
+          <select class="dm-input rm-w" aria-label="Metric" bind:value={form.metric}>
+            <option value="cpu_percent">CPU</option>
+            <option value="mem_percent">Memory</option>
+          </select>
+          <select class="dm-input rm-w" aria-label="Comparison" bind:value={form.operator}>
+            <option value="gt">above</option>
+            <option value="lt">below</option>
+          </select>
+          <input type="number" class="dm-input rm-n" aria-label="Threshold in percent" min="1" max="100" bind:value={form.threshold} />
+          <span>% for at least</span>
+          <select class="dm-input rm-w" aria-label="Duration" value={form.duration_seconds} onchange={(e) => (form.duration_seconds = num(e))}>
+            {#each withCurrent(durations, form.duration_seconds) as d (d.value)}<option value={d.value}>{d.label}</option>{/each}
+          </select>
+        {:else if kind === 'restart_loop'}
+          <span>More than</span>
+          <input type="number" class="dm-input rm-n" aria-label="Restarts" min="2" bind:value={form.threshold} />
+          <span>restarts within</span>
+          <select class="dm-input rm-w" aria-label="Window" value={form.duration_seconds} onchange={(e) => (form.duration_seconds = num(e))}>
+            {#each withCurrent(durations.filter((d) => d.value >= 60), form.duration_seconds) as d (d.value)}<option value={d.value}>{d.label}</option>{/each}
+          </select>
+        {:else if kind === 'host_offline'}
+          <span>Offline for at least</span>
+          <select class="dm-input rm-w" aria-label="Duration" value={form.duration_seconds} onchange={(e) => (form.duration_seconds = num(e))}>
+            {#each withCurrent(durations, form.duration_seconds) as d (d.value)}<option value={d.value}>{d.label}</option>{/each}
+          </select>
+        {:else if kind === 'disk_usage'}
+          <span>At least</span>
+          <input type="number" class="dm-input rm-n" aria-label="Percent full" min="1" max="100" bind:value={form.threshold} />
+          <span>% full</span>
+        {:else if kind === 'cert_expiry'}
+          <span>Expires in less than</span>
+          <input type="number" class="dm-input rm-n" aria-label="Days" min="1" bind:value={form.threshold} />
+          <span>days</span>
+          <span class="rm-hint">Caddy renews 30 days ahead, so this only fires when renewal keeps failing.</span>
+        {:else if kind === 'container_stopped'}
+          <span class="rm-hint">Fires on exit codes other than 0. Stops through Dockmesh or docker stop are ignored.</span>
+        {:else if kind === 'backup_missed'}
+          <span class="rm-hint">Fires when a job has no successful run within its schedule.</span>
+        {:else}
+          <span class="rm-hint">Fires on every such event; there is nothing to set.</span>
+        {/if}
+      </div>
     </div>
 
-    {#if isHostBoundKind(kind)}
-      <div class="rm-grid-2">
-        <Field label="Host" hint="Limit the rule to one host.">
-          <select class="dm-input rm-input" bind:value={form.scope_host}>
-            <option value="">All hosts</option>
-            {#each hosts as h (h.id)}
-              <option value={h.id}>{h.name}</option>
-            {/each}
-          </select>
-        </Field>
-        <Field label="Host tag" hint="Only hosts carrying this tag.">
-          <input class="dm-input rm-input" bind:value={form.scope_tag} placeholder="any" />
-        </Field>
+    {#if hasNameFilter && kind !== 'metric'}
+      <div class="dm-field">
+        <label for="rm-filter">{kindMeta.target}</label>
+        <input id="rm-filter" class="dm-input dm-mono" bind:value={form.container_filter} placeholder="*" />
+        <span class="rm-hint">{kindMeta.targetHint}</span>
       </div>
-      {#if isContainerKind(kind)}
-        <Field label="Stack" hint="Only containers of this compose stack.">
-          <input class="dm-input rm-input" bind:value={form.scope_stack} placeholder="any" />
-        </Field>
-      {/if}
     {/if}
 
-    <Field label="Notify these channels" hint={channels.length === 0 ? 'No channels yet — create one in the Channels tab.' : 'Pick one or more channels — every matching channel gets the alert.'}>
+    <div class="rm-result" aria-live="polite">
+      <BellRing size={14} strokeWidth={1.8} />
+      <span>Fires when {sentence}.</span>
+    </div>
+
+    <div class="rm-2">
+      <div class="dm-field">
+        <span class="rm-label">Severity</span>
+        <Segmented
+          label="Severity"
+          value={form.severity}
+          onchange={(k) => (form.severity = k as AlertRuleInput['severity'])}
+          options={[
+            { key: 'info', label: 'Info' },
+            { key: 'warning', label: 'Warning' },
+            { key: 'critical', label: 'Critical' }
+          ]}
+        />
+      </div>
+      <div class="dm-field">
+        <label for="rm-name">Name <span class="rm-opt">optional</span></label>
+        <input id="rm-name" class="dm-input" bind:value={form.name} placeholder={defaultName} maxlength="200" />
+      </div>
+    </div>
+
+    <div class="dm-field">
+      <span class="rm-label">Notify</span>
       {#if channels.length === 0}
-        <div class="rm-no-channels">
-          <Plus size={11} strokeWidth={1.5} />
-          Create a channel first
-        </div>
+        <span class="rm-hint">No channels yet. Create one under Channels; until then a firing rule is only recorded in the history.</span>
       {:else}
-        <div class="rm-channel-grid">
+        <div class="rm-opts">
           {#each channels as c (c.id)}
-            {@const active = form.channel_ids.includes(c.id)}
-            <button
-              type="button"
-              class="rm-channel-card"
-              class:rm-channel-active={active}
-              onclick={() => toggleChannel(c.id)}
-              disabled={!c.enabled}
-              title={!c.enabled ? 'Channel is disabled' : undefined}
-            >
-              <span class="rm-channel-type">{c.type}</span>
-              <span class="rm-channel-name">{c.name}</span>
-              {#if active}
-                <Check size={11} strokeWidth={1.8} class="rm-channel-check" />
-              {/if}
-              {#if !c.enabled}
-                <span class="rm-channel-disabled">disabled</span>
-              {/if}
-            </button>
+            <label class="rm-opt-row" class:rm-dis={!c.enabled} title={!c.enabled ? 'Channel is disabled' : undefined}>
+              <input type="checkbox" checked={form.channel_ids.includes(c.id)} disabled={!c.enabled} onchange={() => toggleChannel(c.id)} />
+              <span>{c.name}</span>
+              <span class="dm-dim">{c.type}{c.enabled ? '' : ' · disabled'}</span>
+            </label>
           {/each}
         </div>
       {/if}
-    </Field>
+      <span class="rm-hint rm-inline">
+        Repeats at most every
+        <select class="dm-input rm-sm" aria-label="Repeat interval" value={form.cooldown_seconds} onchange={(e) => (form.cooldown_seconds = num(e))}>
+          {#each withCurrent(cooldowns, form.cooldown_seconds) as c (c.value)}<option value={c.value}>{c.label}</option>{/each}
+        </select>
+        while it keeps firing, and sends “resolved” when it stops.
+      </span>
+    </div>
 
     {#if editing}
-      <Field label="Mute until (optional)" hint="Rule still evaluates, notifications suppressed.">
+      <div class="dm-field">
+        <label for="rm-mute">Mute until <span class="rm-opt">optional</span></label>
         <input
+          id="rm-mute"
           type="datetime-local"
-          class="dm-input rm-input"
+          class="dm-input rm-mute"
           value={form.muted_until ? form.muted_until.slice(0, 16) : ''}
           oninput={(e) => {
             const v = (e.target as HTMLInputElement).value;
             form.muted_until = v ? new Date(v).toISOString() : '';
           }}
         />
-      </Field>
+        <span class="rm-hint">The rule keeps evaluating and recording; channels are not notified.</span>
+      </div>
     {/if}
 
-    <label class="rm-enabled">
-      <input type="checkbox" bind:checked={form.enabled} />
-      <span>Enabled — evaluate this rule and notify channels</span>
-    </label>
+    <Switch bind:checked={form.enabled} label="Enabled — evaluate this rule and notify its channels" />
 
-    {#if err}
-      <div class="rm-error" role="alert">{err}</div>
-    {/if}
+    {#if err}<div class="rm-err" role="alert">{err}</div>{/if}
   </form>
+</Modal>
 
-  {#snippet footer()}
-    <span></span>
-    <div class="rm-actions">
-      <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (open = false)}>
-        Cancel
-      </button>
-      <button
-        type="submit"
-        form="rule-form"
-        class="dm-btn dm-btn-primary dm-btn-sm"
-        disabled={saving || !form.name.trim()}
-      >
-        {saving ? 'Saving…' : editing ? 'Save' : 'Create rule'}
-      </button>
-    </div>
-  {/snippet}
-</EditorialModal>
+{#snippet footer()}
+  <button type="button" class="dm-btn" onclick={() => (open = false)}>Cancel</button>
+  <button type="submit" form="rule-form" class="dm-btn dm-btn-primary" disabled={saving}>
+    {saving ? 'Saving…' : editing ? 'Save rule' : 'Create rule'}
+  </button>
+{/snippet}
 
 <style>
-  .rm-form {
+  .rm { display: flex; flex-direction: column; gap: 14px; }
+  .rm-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  .rm-label { font-size: 12px; color: var(--muted); font-weight: 500; }
+  .rm-opt { color: var(--subtle); font-weight: 400; }
+  .rm-hint { font-size: var(--fs-xs); color: var(--subtle); }
+  .rm-cond { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 34px; }
+  .rm-w { width: auto; min-width: 96px; }
+  .rm-n { width: 76px; }
+  .rm-sm { width: auto; min-height: 26px; height: 26px; padding: 0 6px; display: inline-block; }
+  .rm-inline { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .rm-mute { max-width: 240px; }
+  .rm-result {
     display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
-  .rm-form :global(.dm-input) {
-    font-size: 12.5px;
-    padding: 6px 10px;
-    line-height: 1.4;
-  }
-  .rm-input {
-    font-family: var(--font-mono);
-  }
-  .rm-grid-2 {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
-
-  /* Severity picker */
-  .rm-severity {
-    display: flex;
-    gap: 6px;
-  }
-  .rm-sev {
-    flex: 1;
-    padding: 8px 10px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    cursor: pointer;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--fg-muted);
-    transition: border-color 120ms, background 120ms, color 120ms;
-  }
-  .rm-sev[data-sev="info"].rm-sev-active {
-    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-    background: color-mix(in srgb, var(--accent) 8%, var(--surface));
-    color: var(--accent-fg);
-  }
-  .rm-sev[data-sev="warning"].rm-sev-active {
-    border-color: color-mix(in srgb, var(--color-warning-500) 45%, var(--border));
-    background: color-mix(in srgb, var(--color-warning-500) 8%, var(--surface));
-    color: var(--color-warning-400);
-  }
-  .rm-sev[data-sev="critical"].rm-sev-active {
-    border-color: color-mix(in srgb, var(--color-danger-500) 45%, var(--border));
-    background: color-mix(in srgb, var(--color-danger-500) 8%, var(--surface));
-    color: var(--color-danger-400);
-  }
-  .rm-sev:hover { color: var(--fg); }
-
-  /* Sentence builder */
-  .rm-condition {
-    padding: 14px 16px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    transition: border-color 200ms, background 200ms;
-  }
-  .rm-condition-eyebrow {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    margin-bottom: 10px;
-  }
-  .rm-condition-sentence {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-    font-family: var(--font-mono);
-    font-size: 13px;
-    color: var(--fg);
-    line-height: 1.7;
-  }
-  .rm-cond-word { color: var(--fg-subtle); }
-  .rm-cond-select {
-    padding: 4px 8px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-subtle);
-    border-radius: 3px;
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    cursor: pointer;
-  }
-  .rm-cond-select:focus {
-    outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent);
-    outline-offset: 1px;
-  }
-  .rm-cond-op { min-width: 120px; }
-  .rm-cond-duration { min-width: 90px; }
-  .rm-cond-num {
-    width: 80px;
-    padding: 4px 8px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-subtle);
-    border-radius: 3px;
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: 12px;
-  }
-  .rm-cond-unit { color: var(--fg-subtle); }
-
-  /* Channels picker */
-  .rm-no-channels {
+    align-items: flex-start;
+    gap: 8px;
     padding: 10px 12px;
-    border: 1px dashed var(--border);
-    border-radius: 4px;
-    font-size: 11.5px;
-    color: var(--fg-subtle);
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .rm-channel-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px;
-  }
-  .rm-channel-card {
-    padding: 8px 10px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    text-align: left;
-    color: var(--fg-muted);
-    transition: border-color 120ms, background 120ms;
-  }
-  .rm-channel-card:hover:not(:disabled) {
-    border-color: var(--border-strong);
-  }
-  .rm-channel-card:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .rm-channel-active {
-    background: var(--accent-bg);
-    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+    border-radius: var(--r);
+    background: var(--accent-soft);
     color: var(--fg);
   }
-  .rm-channel-type {
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    padding: 1px 5px;
-    border-radius: 3px;
-    color: var(--fg-subtle);
-    border: 1px solid var(--border-subtle);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    flex-shrink: 0;
-  }
-  .rm-channel-name {
-    flex: 1;
-    min-width: 0;
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .rm-channel-card :global(.rm-channel-check) {
-    color: var(--accent-fg);
-    flex-shrink: 0;
-  }
-  .rm-channel-disabled {
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    color: var(--fg-subtle);
-    margin-left: auto;
-  }
-
-  .rm-enabled {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12.5px;
-    color: var(--fg);
-    cursor: pointer;
-    padding-top: 4px;
-  }
-  .rm-enabled input { accent-color: var(--color-brand-500); }
-
-  .rm-error {
-    padding: 8px 10px;
-    border: 1px solid color-mix(in srgb, var(--color-danger-500) 45%, var(--border));
-    background: color-mix(in srgb, var(--color-danger-500) 6%, var(--surface));
-    border-radius: 4px;
-    color: var(--color-danger-400);
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-  }
-
-  .rm-actions {
-    display: flex;
-    gap: 8px;
-  }
-
-  @media (max-width: 720px) {
-    .rm-grid-2,
-    .rm-channel-grid { grid-template-columns: 1fr; }
-  }
+  .rm-result :global(svg) { color: var(--accent); flex: none; margin-top: 2px; }
+  .rm-opts { display: flex; flex-direction: column; gap: 2px; }
+  .rm-opt-row { display: flex; align-items: center; gap: 8px; min-height: 28px; cursor: pointer; }
+  .rm-opt-row.rm-dis { cursor: not-allowed; color: var(--subtle); }
+  .rm-err { color: var(--bad); font-size: var(--fs-sm); }
+  @media (max-width: 640px) { .rm-2 { grid-template-columns: minmax(0, 1fr); } }
 </style>

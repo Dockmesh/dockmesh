@@ -148,3 +148,20 @@ func parseCertForTest(certPEM []byte) (*x509.Certificate, error) {
 	}
 	return x509.ParseCertificate(block.Bytes)
 }
+
+func TestUpgradeRefusal(t *testing.T) {
+	tests := []struct {
+		msg  string
+		want error
+	}{
+		{"agent: already running this agent build", ErrAgentCurrent},
+		{"agent: an upgrade is already in progress", ErrAgentUpgrading},
+		{"checksum mismatch", nil},
+	}
+	for _, tt := range tests {
+		err := upgradeRefusal(tt.msg)
+		if tt.want != nil && !errors.Is(err, tt.want) || tt.want == nil && (errors.Is(err, ErrAgentCurrent) || errors.Is(err, ErrAgentUpgrading)) {
+			t.Errorf("%q: %v, want %v", tt.msg, err, tt.want)
+		}
+	}
+}

@@ -905,29 +905,12 @@ func handleRequest(ctx context.Context, conn *websocket.Conn, cli *client.Client
 		if maxOut <= 0 {
 			maxOut = 1 << 20
 		}
-		exec, err := cli.ContainerExecCreate(ctx, req.Container, container.ExecOptions{
-			Cmd:          req.Cmd,
-			AttachStdout: true,
-			AttachStderr: true,
-		})
+		out, exitCode, err := dockerwrap.RunExec(ctx, cli, req.Container, req.Cmd, maxOut)
 		if err != nil {
 			respond(conn, f.ID, nil, err)
 			break
 		}
-		attach, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecStartOptions{})
-		if err != nil {
-			respond(conn, f.ID, nil, err)
-			break
-		}
-		var out bytes.Buffer
-		_, _ = io.CopyN(&out, attach.Reader, maxOut)
-		attach.Close()
-		insp, inspErr := cli.ContainerExecInspect(ctx, exec.ID)
-		exitCode := -1
-		if inspErr == nil {
-			exitCode = insp.ExitCode
-		}
-		respond(conn, f.ID, agents.ContainerExecRunRes{Stdout: out.Bytes(), ExitCode: exitCode}, nil)
+		respond(conn, f.ID, agents.ContainerExecRunRes{Stdout: out, ExitCode: exitCode}, nil)
 
 	case agents.FrameReqContainerPause:
 		var req agents.ContainerIDReq

@@ -1,20 +1,14 @@
 <script lang="ts">
-  // Dockmesh install wizard — editorial 7-step flow.
-  //
-  // P.14.3 ships this with mock data only — every "Continue" advances
-  // local state, every form input lives in a $state variable, the
-  // terminal in step 7 prints a hard-coded canned sequence on a timer.
-  // P.14.4 wires this up to the real /api/v1/setup/* endpoints.
-  //
-  // The visual language is a 1:1 port of the claude.ai mockup — dot
-  // mesh, watermark step number, eyebrow with typed text + cursor,
-  // subway-rail on the left edge, italic accent words in titles, and a
-  // terminal-output triumph for step 7. CSS lives in a scoped style
-  // block at the bottom so this file is fully self-contained.
+  // Install wizard: one question per step, a review of every answer before
+  // anything is written, then the live install log and the credentials.
   import { onMount, onDestroy } from 'svelte';
+  import { Check, X, TriangleAlert, Copy, Eye, EyeOff, ArrowRight, RotateCcw } from 'lucide-svelte';
   import { copyToClipboard as clipboardCopy } from '$lib/clipboard';
   import { uploadSystemBackup } from '$lib/api';
   import { waitForRestart } from '$lib/restart';
+  import { fmtVersion } from '$lib/version';
+  import Button from '$lib/components/ui/Button.svelte';
+  import StatusChip from '$lib/components/ui/StatusChip.svelte';
 
   type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
@@ -28,43 +22,34 @@
     { n: 7, short: 'Done' }
   ];
 
-  // Editorial-layout headers — eyebrow + italic-accent title + subtitle per step.
-  // Italic accent uses a span class, applied via {@html} below for the title.
-  const ED_HEADERS: Record<Step, { eyebrow: string; title: string; sub: string }> = {
+  const HEADERS: Record<Step, { title: string; sub: string }> = {
     1: {
-      eyebrow: 'Welcome',
-      title: `Let's get <span class="ed-title-accent">Dockmesh</span><br/>up and running.`,
-      sub: `Seven small steps. About a minute. We'll check this server, set a couple of things up, and hand you the keys.`
+      title: 'Set up Dockmesh',
+      sub: 'Seven short steps, about a minute. Nothing is written until you confirm on the review step.'
     },
     2: {
-      eyebrow: 'Storage',
-      title: `Where should <span class="ed-title-accent">data</span> live?`,
-      sub: `Pick a directory for the database, secrets, and stack definitions. It should be on a volume you can grow.`
+      title: 'Where should Dockmesh keep its data?',
+      sub: 'The database, secrets, CA certificates and stack files live in this directory. Pick a volume you can grow.'
     },
     3: {
-      eyebrow: 'Identity',
-      title: `Run as which <span class="ed-title-accent">user</span>?`,
-      sub: `The OS account Dockmesh runs under. We recommend a dedicated user with access to the Docker socket.`
+      title: 'Which user should Dockmesh run as?',
+      sub: 'The system account of the Dockmesh service. It needs access to the Docker socket.'
     },
     4: {
-      eyebrow: 'Authentication',
-      title: `Your <span class="ed-title-accent">first key</span> in.`,
-      sub: `An admin login for the dashboard. You can wire up OIDC and rotate this later.`
+      title: 'Create the first admin',
+      sub: 'The login for the dashboard. You can add single sign-on and more users later.'
     },
     5: {
-      eyebrow: 'Networking',
-      title: `How do agents <span class="ed-title-accent">find home</span>?`,
-      sub: `Remote agents dial back to this URL. Embedded in OIDC redirects and notification emails too.`
+      title: 'Under which address is this server reachable?',
+      sub: 'Agents on other hosts connect back to this URL. Sign-in redirects and notification links use it too.'
     },
     6: {
-      eyebrow: 'Confirm',
-      title: `Ready to <span class="ed-title-accent">commit</span>?`,
-      sub: `Nothing has been written yet. Review and we'll create the user, write the env file, and start the service.`
+      title: 'Review and install',
+      sub: 'Nothing has been written yet. Install creates the user if needed, writes the env file, seeds the database and starts the service.'
     },
     7: {
-      eyebrow: 'Installed',
-      title: `Dockmesh is <span class="ed-title-accent">live</span>.`,
-      sub: `Service is running. Below are your credentials — copy them somewhere safe before you close this tab.`
+      title: 'Installing Dockmesh',
+      sub: 'Keep this tab open until the credentials appear and copy them somewhere safe.'
     }
   };
 
@@ -104,31 +89,25 @@
     }
   }
 
-  // Wizard-wide state machine.
   let step = $state<Step>(1);
-  let direction = $state<'forward' | 'back'>('forward');
+  const head = $derived.by(() => {
+    if (step !== 7) return HEADERS[step];
+    if (installFailed) return { title: 'The install stopped', sub: 'The log shows the step that failed. Fix the cause and run the installer again.' };
+    if (credsRevealed) return { title: 'Dockmesh is installed', sub: 'Copy the sign-in below somewhere safe, then open Dockmesh.' };
+    return HEADERS[7];
+  });
   let completed = $state<Set<Step>>(new Set());
 
-  // Per-step form state.
-  let dataDir = $state('/data');
-  // Three modes so the recommended path doesn't conflict with the
-  // "I want to pick my own user" paths:
-  //   - recommended: use the `dockmesh` user that install.sh has
-  //     already set up (no input field — informational).
-  //   - existing: a different system user the operator chose
-  //     (e.g. "ops" / "deploy") — text input, validates against
-  //     /etc/passwd via /api/v1/setup/validate-user.
-  //   - new: create a fresh system user under a different name
-  //     (e.g. "dockermaster") — text input, validates that the
-  //     name is free.
-  // Defaults: recommended, since install.sh runs before the wizard
-  // and the dockmesh user is the cleanest happy path.
+  // Where install.sh puts the env file and the systemd unit points.
+  let dataDir = $state('/var/lib/dockmesh');
+  // recommended: the `dockmesh` user install.sh created (no input);
+  // existing: another system user, checked against /etc/passwd;
+  // new: a user the commit creates under a free name.
   let svcMode = $state<'recommended' | 'existing' | 'new'>('recommended');
   let svcExistingUser = $state('');
   let svcNewUser = $state('');
   let svcAddToDocker = $state(true);
-  // Recommended path uses the install-script-created user verbatim.
-  // Hardcoded so the operator can't typo it into mismatching install.sh.
+  // Fixed so it always matches the user install.sh created.
   const RECOMMENDED_USER = 'dockmesh';
 
   let adminUsername = $state('admin');
@@ -136,21 +115,14 @@
   let adminEmail = $state('');
   let adminShowPassword = $state(false);
 
-  // Default URL prefilled from window.location.origin on mount —
-  // that's the URL the operator typed into their browser to reach the
-  // wizard, so testing it always succeeds (server is by definition
-  // reachable from itself). The hardcoded fallback only matters during
-  // SSR where window doesn't exist.
+  // Replaced on mount by the origin the browser used to reach the wizard,
+  // which the connection test can always reach.
   let publicUrl = $state('http://localhost:8080');
 
-  // P3 mock: clicking Install on step 6 fires runInstall() which
-  // walks through canned phase messages then jumps to step 7. P4
-  // replaces this with a real /setup/commit + SSE stream.
   let installing = $state(false);
   let installMsg = $state('');
-  let meshAfterglow = $state(false);
 
-  // ----- Step 1 — preflight (live from backend) ----------------------------
+  // ----- Step 1: preflight --------------------------------------------------
   type PreflightCheck = {
     key: string;
     label: string;
@@ -180,7 +152,7 @@
     }
   }
 
-  // ----- Top-bar live server info -----------------------------------------
+  // ----- Header: live server info -------------------------------------------
   let serverInfo = $state<{ version: string; os: string; ip: string; docker_version: string; uptime_secs: number } | null>(null);
   let serverInfoTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -189,10 +161,10 @@
       const r = await fetch('/api/v1/setup/server-info');
       if (!r.ok) return;
       serverInfo = await r.json();
-    } catch { /* network blip — keep last value */ }
+    } catch { /* keep the last value */ }
   }
 
-  // ----- Step 2 — data dir live-validate (debounced 250ms) -----------------
+  // ----- Step 2: data dir, validated 250 ms after typing stops -------------
   let dataDirStatus = $state<{ kind: 'ok' | 'warn' | 'fail'; text: string }>({
     kind: 'fail',
     text: 'path required'
@@ -230,7 +202,7 @@
     dataDirDebounce = setTimeout(() => validateDataDirRemote(path), 250);
   });
 
-  // ----- Step 3 — service user live-validate (debounced 250ms) -------------
+  // ----- Step 3: service user, validated 250 ms after typing stops ---------
   let svcCheck = $state<{ kind: 'ok' | 'warn' | 'fail' | 'idle'; text: string }>({
     kind: 'idle',
     text: ''
@@ -283,7 +255,7 @@
     return svcNewUser.trim().length === 0 || svcCheck.kind === 'fail' || svcCheck.kind === 'idle';
   });
 
-  // Step 4 — password strength meter.
+  // ----- Step 4: admin --------------------------------------------------------
   function scorePassword(pw: string): { score: number; label: string } {
     if (!pw) return { score: 0, label: '—' };
     let s = 0;
@@ -307,7 +279,7 @@
     adminShowPassword = true;
   }
 
-  // Step 5 — URL validity + connection-test mock.
+  // ----- Step 5: public URL ---------------------------------------------------
   let urlTest = $state<{ state: 'idle' | 'loading' | 'ok' | 'fail'; ms?: number; reason?: string }>({ state: 'idle' });
   const urlBlockNext = $derived.by(() => {
     try { new URL(publicUrl); return false; } catch { return true; }
@@ -333,34 +305,30 @@
   }
   $effect(() => { if (publicUrl) urlTest = { state: 'idle' }; });
 
-  // ----- Navigation --------------------------------------------------------
-
+  // ----- Navigation -----------------------------------------------------------
   function goNext() {
     if (!completed.has(step)) completed = new Set([...completed, step]);
-    direction = 'forward';
     if (step < 7) step = (step + 1) as Step;
     window.scrollTo({ top: 0, behavior: 'instant' });
   }
   function goBack() {
-    direction = 'back';
     if (step > 1) step = (step - 1) as Step;
     window.scrollTo({ top: 0, behavior: 'instant' });
   }
   function jumpTo(n: Step) {
-    direction = n < step ? 'back' : 'forward';
     step = n;
     completed = new Set(Array.from(completed).filter((x) => x < n));
     window.scrollTo({ top: 0, behavior: 'instant' });
   }
 
-  // Sync ?step=N into URL so refresh keeps the operator at the same place.
+  // ?step=N keeps the operator on the same step across a reload.
   $effect(() => {
     const u = new URL(window.location.href);
     u.searchParams.set('step', String(step));
     history.replaceState(null, '', u.toString());
   });
 
-  // ----- Step 6 → install runner (real backend, SSE-streamed) --------------
+  // ----- Step 6 → install, streamed over SSE ---------------------------------
   type StreamEvent = { ts: string; step: string; message: string; status: string };
   let streamLines = $state<StreamEvent[]>([]);
   let installFailed = $state<string | null>(null);
@@ -401,10 +369,11 @@
         return;
       }
       const { run_id, stream_url } = await r.json();
-      // Move to Step 7 immediately so the operator watches the stream.
+      // Setup ends with the install, and the wizard endpoints with it.
+      if (serverInfoTimer) clearInterval(serverInfoTimer);
+      serverInfoTimer = null;
       completed = new Set([1, 2, 3, 4, 5, 6]);
       step = 7;
-      meshAfterglow = true;
       window.scrollTo({ top: 0, behavior: 'instant' });
       subscribeToStream(stream_url || `/api/v1/setup/stream/${run_id}`);
     } catch (e) {
@@ -429,9 +398,7 @@
       eventSource = null;
       installing = false;
       installMsg = '';
-      meshAfterglow = false;
-      // Reveal credentials only on a clean run — failed installs show
-      // the error banner instead.
+      // A failed install shows its error instead of the credentials.
       if (!installFailed) credsRevealed = true;
     });
     eventSource.onerror = () => {
@@ -446,27 +413,8 @@
   }
   onDestroy(() => { if (eventSource) eventSource.close(); });
 
-  // ----- Step 7 — terminal lines (live SSE) --------------------------------
-  // streamLines is appended to as `event: line` SSE frames arrive from
-  // /api/v1/setup/stream/{run_id}. credsRevealed gets flipped by the
-  // SSE `end` handler when the install finishes without a fail event.
-  // Mapping from server status strings to the kind the renderer uses:
-  //   "info" → grey bullet, "ok" → green check, "warn" → amber !,
-  //   "fail" → red ✗, "done" → blue arrow (final).
-  function statusToMark(status: string): string {
-    if (status === 'ok') return '✓';
-    if (status === 'warn') return '!';
-    if (status === 'fail') return '✗';
-    if (status === 'done') return '→';
-    return '•'; // info, start, anything else
-  }
+  // ----- Step 7: credentials --------------------------------------------------
   let credsRevealed = $state(false);
-
-  // ----- Step 7 — credentials display + copy -------------------------------
-  // Mock password — P4 replaces this with the real one returned by /commit
-  // (or the one the operator typed). Here we render whatever's in admin.password
-  // or fall back to a fake one so the credentials block always has content.
-  const finalPassword = $derived(adminPassword || 'ZNb7-pq4Kx-2VwLm');
   let copiedKey = $state<string | null>(null);
   let credShowPw = $state(false);
   function copyToClipboard(key: string, value: string) {
@@ -475,58 +423,17 @@
     setTimeout(() => { if (copiedKey === key) copiedKey = null; }, 1400);
   }
 
-  // ----- Eyebrow typed-text effect -----------------------------------------
-  let eyebrowShown = $state('');
-  let eyebrowTimer: ReturnType<typeof setInterval> | null = null;
-  let prevEyebrowText = '';
-  $effect(() => {
-    const target = ED_HEADERS[step].eyebrow;
-    if (target === prevEyebrowText) return;
-    const old = prevEyebrowText;
-    prevEyebrowText = target;
-    if (eyebrowTimer) clearInterval(eyebrowTimer);
-    if (direction === 'back' && old) {
-      let i = old.length;
-      eyebrowShown = old;
-      eyebrowTimer = setInterval(() => {
-        i -= 1;
-        if (i <= 0) {
-          if (eyebrowTimer) clearInterval(eyebrowTimer);
-          let j = 0;
-          eyebrowTimer = setInterval(() => {
-            j += 1;
-            eyebrowShown = target.slice(0, j);
-            if (j >= target.length && eyebrowTimer) {
-              clearInterval(eyebrowTimer);
-              eyebrowTimer = null;
-            }
-          }, 55);
-        } else {
-          eyebrowShown = old.slice(0, i);
-        }
-      }, 32);
-    } else {
-      let i = 0;
-      eyebrowShown = '';
-      eyebrowTimer = setInterval(() => {
-        i += 1;
-        eyebrowShown = target.slice(0, i);
-        if (i >= target.length && eyebrowTimer) {
-          clearInterval(eyebrowTimer);
-          eyebrowTimer = null;
-        }
-      }, 55);
-    }
-  });
-  onDestroy(() => { if (eyebrowTimer) clearInterval(eyebrowTimer); });
+  const svcSummary = $derived(
+    svcMode === 'recommended'
+      ? `${RECOMMENDED_USER} (recommended)`
+      : svcMode === 'new'
+        ? `${svcNewUser} (new${svcAddToDocker ? ', in docker group' : ''})`
+        : svcExistingUser || '—'
+  );
 
-  // Restore step from URL on mount + kick off live data fetches.
   onMount(async () => {
-    // Defense-in-depth — if setup is already complete (server restart,
-    // bookmark hit, etc.) bounce back to the dashboard instead of
-    // letting the operator re-fill a wizard whose commit will 410.
-    // The middleware already returns a 303 for /setup post-install, but
-    // a SvelteKit client-router navigation may have skipped it.
+    // Setup may have finished meanwhile (restart, bookmark); a commit
+    // would only return 410, so go to the dashboard instead.
     try {
       const r = await fetch('/api/v1/setup/status', { headers: { Accept: 'application/json' } });
       if (r.ok) {
@@ -537,8 +444,7 @@
         }
       }
     } catch {
-      // network blip — fall through and let the wizard render; the
-      // commit endpoint will reject if state actually changed.
+      // The commit endpoint rejects if setup really ended.
     }
     const param = new URLSearchParams(window.location.search).get('step');
     const n = parseInt(param || '1', 10);
@@ -548,19 +454,11 @@
       for (let i = 1; i < n; i++) arr.push(i as Step);
       completed = new Set(arr);
     }
-    // Default the public URL field to the URL the operator is currently
-    // browsing — the wizard reaches itself, so the test-connect button
-    // succeeds out of the box. Operator can still change it.
     if (typeof window !== 'undefined' && window.location?.origin) {
       publicUrl = window.location.origin;
     }
-    // Live server info for the top bar — updates uptime + IP every 10s.
     loadServerInfo();
     serverInfoTimer = setInterval(loadServerInfo, 10_000);
-    // Preflight loads once on mount; the operator can revisit step 1
-    // after fixing something on the host but the values are stale until
-    // they hit "Continue" again. A future polish slice could add a
-    // refresh button.
     loadPreflight();
   });
   onDestroy(() => {
@@ -569,1027 +467,603 @@
 </script>
 
 <svelte:head>
-  <title>Dockmesh — Install Wizard</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
-  <link
-    rel="stylesheet"
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
-  />
+  <title>Set up Dockmesh</title>
 </svelte:head>
 
-<div class="ed-shell" data-screen-label={`Step ${step}`}>
-  <div class="ed-mesh" class:ed-mesh--live={meshAfterglow || installing} aria-hidden="true"></div>
+{#snippet mark(kind: string)}
+  <span class="mk {kind}" aria-hidden="true">
+    {#if kind === 'ok'}<Check size={13} strokeWidth={2.4} />
+    {:else if kind === 'warn'}<TriangleAlert size={13} strokeWidth={2.2} />
+    {:else if kind === 'fail'}<X size={13} strokeWidth={2.4} />
+    {:else if kind === 'done'}<ArrowRight size={13} strokeWidth={2.2} />
+    {:else}<span class="bullet"></span>{/if}
+  </span>
+{/snippet}
 
-  <div class="ed-watermark" aria-hidden="true">
-    <svg width="520" height="520" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="0.6">
-      <rect x="3.5" y="3.5" width="11" height="11" rx="0.4" />
-      <rect x="9.5" y="9.5" width="11" height="11" rx="0.4" />
-    </svg>
-  </div>
+{#snippet checkLine(kind: string, text: string)}
+  <div class="check {kind}" role="status">{@render mark(kind)}<span>{text}</span></div>
+{/snippet}
 
-  <!-- Vertical step rail (subway-line, left edge) -->
-  <nav class="ed-rail" aria-label="Setup progress">
-    {#each STEPS as s (s.n)}
-      {@const done = completed.has(s.n)}
-      {@const cur = step === s.n}
-      {@const reachable = done || cur}
-      <button
-        type="button"
-        class="ed-rail-item"
-        class:ed-rail-item--current={cur}
-        class:ed-rail-item--done={done && !cur}
-        aria-disabled={!reachable}
-        aria-current={cur ? 'step' : undefined}
-        onclick={() => reachable && jumpTo(s.n)}
-      >
-        <span class="ed-rail-num">{String(s.n).padStart(2, '0')}</span>
-        <span class="ed-rail-label">{s.short}</span>
-      </button>
-    {/each}
-  </nav>
-
-  <!-- Top bar: dockmesh / install · v · ip · online -->
-  <header class="ed-topbar">
-    <div class="ed-brand">
-      <img src="/logo-mark.svg" alt="Dockmesh" class="ed-brand-logo" />
-      dockmesh
-      <span style="color: var(--border-strong); margin: 0 4px;">/</span>
-      <span style="color: var(--fg-muted); font-weight: 400;">install</span>
+<div class="sw">
+  <header class="top">
+    <div class="brand">
+      <img src="/logo-mark.svg" alt="" width="22" height="22" />
+      <b>Dockmesh</b>
+      <span class="dim">/ setup</span>
     </div>
-    <div class="ed-meta">
-      <span>v<b>{serverInfo?.version ?? '—'}</b></span>
-      <span style="color: var(--border-strong);">·</span>
-      <span><b>{serverInfo?.ip ?? '—'}</b></span>
-      <span style="color: var(--border-strong);">·</span>
-      <span><b>docker {serverInfo?.docker_version ?? '—'}</b></span>
-      <span style="color: var(--border-strong);">·</span>
-      <span style="display: inline-flex; align-items: center; gap: 6px;">
-        <span style="width: 6px; height: 6px; border-radius: 9999px; background: var(--color-success-400); box-shadow: 0 0 8px var(--color-success-400);"></span>
-        <b>online</b>
-      </span>
+    <div class="meta dm-num" aria-label="This server">
+      <span>{serverInfo ? fmtVersion(serverInfo.version) : '—'}</span>
+      <span class="sep">·</span>
+      <span>{serverInfo?.ip ?? '—'}</span>
+      <span class="sep">·</span>
+      <span>docker {serverInfo?.docker_version ?? '—'}</span>
     </div>
   </header>
 
-  <main class="ed-stage" class:ed-hero={step === 1}>
-    <div class="ed-canvas">
-      <div style="position: relative; z-index: 1;">
-        <div class="ed-eyebrow">
-          <span style="min-width: {Math.max(eyebrowShown.length, ED_HEADERS[step].eyebrow.length)}ch; display: inline-block;">{eyebrowShown}</span>
-          <span class="ed-cursor"></span>
-        </div>
-        <h1 class="ed-title">{@html ED_HEADERS[step].title}</h1>
-        <p class="ed-subtitle">{ED_HEADERS[step].sub}</p>
-      </div>
-
-      <div class="ed-content" class:ed-content--open={step === 1 || step === 7}>
-        {#if step === 1}
-          <!-- Step 1 — preflight manifest (live from /setup/preflight) -->
-          <div class="ed-hero-body">
-            {#if preflightLoading}
-              <div class="ed-manifest-note" style="padding-left: 0; margin-top: 0;">
-                Probing the host…
-              </div>
-            {:else if preflightError}
-              <div class="ed-manifest-note" style="padding-left: 0; margin-top: 0; color: var(--color-danger-400);">
-                Preflight failed: {preflightError}
-                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" style="margin-left: 8px;" onclick={loadPreflight}>Retry</button>
-              </div>
-            {:else}
-              <ul class="ed-manifest">
-                {#each preflightChecks as c (c.key)}
-                  <li class="ed-manifest-row ed-manifest-row--{c.status}">
-                    <span class="ed-manifest-marker" aria-hidden="true">
-                      {c.status === 'ok' ? '✓' : c.status === 'warn' ? '!' : '✗'}
-                    </span>
-                    <span class="ed-manifest-label">{c.label}</span>
-                    <span class="ed-manifest-value">{c.value}</span>
-                  </li>
-                {/each}
-              </ul>
-              {#each preflightWarnings as w}
-                {#if w.message || w.hint}
-                  <div class="ed-manifest-note">
-                    <span style="color: var(--color-warning-400); margin-right: 4px;">{w.label}:</span>
-                    {w.message ?? ''}
-                    {#if w.hint}
-                      <a href={w.hint} style="color: var(--color-brand-300);" class="underline-offset-2 hover:underline" target="_blank" rel="noopener">{w.hint}</a>
-                    {/if}
-                  </div>
-                {/if}
-              {/each}
-            {/if}
-            <div class="ed-hero-cta">
-              <button type="button" class="dm-btn dm-btn-primary dm-btn-lg" onclick={goNext} disabled={preflightHasFail || preflightLoading}>
-                Begin setup
-                <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M8 5l5 5-5 5" /><path d="M13 10H4" />
-                </svg>
-              </button>
-              <span class="ed-hero-cta-meta">7 steps · about 60 seconds · no internet required</span>
-              <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (restoreOpen = !restoreOpen)}>
-                Restore from a backup instead
-              </button>
-            </div>
-            {#if restoreOpen}
-              <div class="ed-restore">
-                <p class="ed-restore-lead">
-                  Bring back a Dockmesh system backup: users, settings, keys and stacks. Volumes are
-                  restored separately afterwards, from the Backups page.
-                </p>
-                <label class="ed-restore-field">
-                  <span>System backup (.tar.gz or .tar.gz.age)</span>
-                  <input type="file" accept=".gz,.age,.tar" onchange={(e) => (restoreFile = (e.currentTarget as HTMLInputElement).files?.[0] ?? null)} />
-                </label>
-                <label class="ed-restore-field">
-                  <span>Backup key file, if the backup is encrypted (Settings → Encryption key → Export key on the old server)</span>
-                  <input type="file" accept=".txt,.key" onchange={(e) => (restoreKey = (e.currentTarget as HTMLInputElement).files?.[0] ?? null)} />
-                </label>
-                {#if restoreError}
-                  <p class="ed-restore-error">{restoreError}</p>
-                  {#each restoreChecks.filter((c) => c.status === 'fail') as c (c.name)}
-                    <p class="ed-restore-error">{c.name}: {c.message ?? ''}</p>
-                  {/each}
-                {/if}
-                {#if restorePhase === 'restarting'}
-                  <p class="ed-restore-lead">Restoring and restarting Dockmesh… You'll be sent to the login page; sign in with an account of the restored install.</p>
-                {:else if restorePhase === 'stuck'}
-                  <p class="ed-restore-error">Dockmesh hasn't come back yet. If it isn't run by systemd or Docker, start it again by hand; the restore finishes on the next start.</p>
-                {:else}
-                  <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={restoreFromBackup} disabled={!restoreFile || restorePhase === 'uploading'}>
-                    {restorePhase === 'uploading' ? 'Checking the backup…' : 'Restore'}
-                  </button>
-                {/if}
-              </div>
-            {/if}
-          </div>
-
-        {:else if step === 2}
-          <!-- Step 2 — data dir input + live status -->
-          <label for="data-dir" class="block text-xs font-medium mb-2" style="color: var(--fg-muted);">Data directory</label>
-          <input
-            id="data-dir"
-            class="dm-input dm-input-mono"
-            bind:value={dataDir}
-            spellcheck="false"
-            autocomplete="off"
-          />
-          <div class="mt-2.5 flex items-center gap-2 text-xs"
-            style:color={dataDirStatus.kind === 'ok' ? 'var(--color-success-400)' : dataDirStatus.kind === 'warn' ? 'var(--color-warning-400)' : 'var(--color-danger-400)'}>
-            <span aria-hidden="true">
-              {dataDirStatus.kind === 'ok' ? '✓' : dataDirStatus.kind === 'warn' ? '!' : '✗'}
-            </span>
-            <span style:color={dataDirStatus.kind === 'ok' ? 'var(--fg)' : 'inherit'}>{dataDirStatus.text}</span>
-          </div>
-          <p class="text-xs mt-5 leading-relaxed" style="color: var(--fg-muted);">
-            Dockmesh stores its database, secrets, CA certificates, and stack compose files here.
-            About 50 MB on a fresh install; grows with deploy history and stack count.
-          </p>
-          <div class="mt-5 pt-4 text-xs" style="border-top: 1px solid var(--border-subtle); color: var(--fg-subtle);">
-            <div class="mb-2">Platform defaults</div>
-            <div class="grid gap-2" style="grid-template-columns: 1fr 1fr;">
-              <button type="button" class="text-left font-mono" style="color: var(--fg-muted);" onclick={() => (dataDir = '/var/lib/dockmesh')}>
-                <div style="color: var(--fg);">/var/lib/dockmesh</div>
-                <div style="color: var(--fg-subtle); font-size: 10.5px; margin-top: 2px;"># Linux · follows FHS · used by postgresql, mysql</div>
-              </button>
-              <button type="button" class="text-left font-mono" style="color: var(--fg-muted);" onclick={() => (dataDir = '/usr/local/var/dockmesh')}>
-                <div style="color: var(--fg);">/usr/local/var/dockmesh</div>
-                <div style="color: var(--fg-subtle); font-size: 10.5px; margin-top: 2px;"># macOS · homebrew convention</div>
-              </button>
-            </div>
-          </div>
-          <div class="dm-divider mt-8 mb-5"></div>
-          <div class="flex items-center justify-between">
-            <button type="button" class="dm-btn dm-btn-ghost" onclick={goBack}>← Back</button>
-            <button type="button" class="dm-btn dm-btn-primary" onclick={goNext} disabled={dataDirStatus.kind === 'fail'}>Continue →</button>
-          </div>
-
-        {:else if step === 3}
-          <!-- Step 3 — service user. Three modes:
-                 1. recommended (default): use the dockmesh user the
-                    install script already created. No input needed.
-                 2. existing: pick a different existing system user.
-                 3. new: create a new user under a custom name. -->
-          <div class="flex flex-col gap-3">
-
-            <!-- Recommended: use dockmesh -->
-            <label class="flex items-start gap-3 p-4 rounded-lg cursor-pointer"
-              style:border={'1px solid'}
-              style:border-color={svcMode === 'recommended' ? 'var(--color-brand-500)' : 'var(--border)'}
-              style:background={svcMode === 'recommended' ? 'var(--accent-bg)' : 'transparent'}>
-              <input type="radio" name="svc-mode" class="dm-radio mt-1" checked={svcMode === 'recommended'} onchange={() => (svcMode = 'recommended')} />
-              <div class="flex-1 min-w-0">
-                <div class="flex items-baseline gap-2">
-                  <div class="text-sm font-medium" style="color: var(--fg);">Use the dockmesh service user</div>
-                  <span class="text-[10px] uppercase tracking-[0.1em]" style="color: var(--accent-fg);">Recommended</span>
-                </div>
-                <div class="text-xs mt-1" style="color: var(--fg-muted);">
-                  Created automatically by the install script. Already in the <span class="font-mono">docker</span> group, dedicated to dockmesh, no shell login.
-                </div>
-                {#if svcMode === 'recommended' && svcCheck.kind !== 'idle' && svcCheck.text}
-                  <div class="mt-3 text-xs flex items-center gap-1.5"
-                    style:color={svcCheck.kind === 'ok' ? 'var(--color-success-400)' : svcCheck.kind === 'warn' ? 'var(--color-warning-400)' : 'var(--color-danger-400)'}>
-                    {svcCheck.kind === 'ok' ? '✓' : svcCheck.kind === 'warn' ? '!' : '✗'}
-                    {svcCheck.text}
-                  </div>
-                {/if}
-              </div>
-            </label>
-
-            <!-- Use a different existing user -->
-            <label class="flex items-start gap-3 p-4 rounded-lg cursor-pointer"
-              style:border={'1px solid'}
-              style:border-color={svcMode === 'existing' ? 'var(--color-brand-500)' : 'var(--border)'}
-              style:background={svcMode === 'existing' ? 'var(--accent-bg)' : 'transparent'}>
-              <input type="radio" name="svc-mode" class="dm-radio mt-1" checked={svcMode === 'existing'} onchange={() => (svcMode = 'existing')} />
-              <div class="flex-1 min-w-0">
-                <div class="text-sm font-medium" style="color: var(--fg);">Use a different existing user</div>
-                <div class="text-xs mt-1" style="color: var(--fg-muted);">
-                  For ops who already have a service account they prefer (e.g. <span class="font-mono">ops</span>, <span class="font-mono">deploy</span>).
-                </div>
-                {#if svcMode === 'existing'}
-                  <div class="mt-3">
-                    <label for="existing-user" class="block text-xs mb-1.5" style="color: var(--fg-muted);">Username</label>
-                    <input id="existing-user" class="dm-input dm-input-mono" placeholder="ops" bind:value={svcExistingUser} aria-invalid={svcCheck.kind === 'fail'} spellcheck="false" autocomplete="off" />
-                    {#if svcCheck.kind !== 'idle' && svcCheck.text}
-                      <div class="mt-2 text-xs flex items-center gap-1.5"
-                        style:color={svcCheck.kind === 'ok' ? 'var(--color-success-400)' : svcCheck.kind === 'warn' ? 'var(--color-warning-400)' : 'var(--color-danger-400)'}>
-                        {svcCheck.kind === 'ok' ? '✓' : svcCheck.kind === 'warn' ? '!' : '✗'}
-                        {svcCheck.text}
-                      </div>
-                    {/if}
-                    <div class="mt-3 text-xs" style="color: var(--fg-muted);">
-                      The wizard doesn't change the groups of an existing account. If it isn't in the
-                      <span class="font-mono">docker</span> group yet, add it yourself with
-                      <span class="font-mono">sudo usermod -aG docker {svcExistingUser.trim() || '<user>'}</span>.
-                    </div>
-                  </div>
-                {/if}
-              </div>
-            </label>
-
-            <!-- Create a new custom-named user -->
-            <label class="flex items-start gap-3 p-4 rounded-lg cursor-pointer"
-              style:border={'1px solid'}
-              style:border-color={svcMode === 'new' ? 'var(--color-brand-500)' : 'var(--border)'}
-              style:background={svcMode === 'new' ? 'var(--accent-bg)' : 'transparent'}>
-              <input type="radio" name="svc-mode" class="dm-radio mt-1" checked={svcMode === 'new'} onchange={() => (svcMode = 'new')} />
-              <div class="flex-1 min-w-0">
-                <div class="text-sm font-medium" style="color: var(--fg);">Create a new user under a different name</div>
-                <div class="text-xs mt-1" style="color: var(--fg-muted);">
-                  Pick your own name (e.g. <span class="font-mono">dockermaster</span>) — the wizard creates it on commit.
-                </div>
-                {#if svcMode === 'new'}
-                  <div class="mt-3 flex flex-col gap-3">
-                    <div>
-                      <label for="new-user" class="block text-xs mb-1.5" style="color: var(--fg-muted);">Username</label>
-                      <input id="new-user" class="dm-input dm-input-mono" placeholder="dockermaster" bind:value={svcNewUser} aria-invalid={svcCheck.kind === 'fail'} spellcheck="false" autocomplete="off" />
-                      {#if svcCheck.kind !== 'idle' && svcCheck.text}
-                        <div class="mt-2 text-xs flex items-center gap-1.5"
-                          style:color={svcCheck.kind === 'ok' ? 'var(--color-success-400)' : svcCheck.kind === 'warn' ? 'var(--color-warning-400)' : 'var(--color-danger-400)'}>
-                          {svcCheck.kind === 'ok' ? '✓' : svcCheck.kind === 'warn' ? '!' : '✗'}
-                          {svcCheck.text}
-                        </div>
-                      {/if}
-                      <div class="mt-1.5 font-mono text-[10.5px]" style="color: var(--fg-subtle);">
-                        # uid auto-assigned · /usr/sbin/nologin · won't replace the dockmesh user that already exists
-                      </div>
-                    </div>
-                    <label class="flex items-start gap-2.5 cursor-pointer">
-                      <input type="checkbox" class="dm-check mt-0.5" bind:checked={svcAddToDocker} />
-                      <span class="text-xs" style="color: var(--fg);">
-                        Add to <span class="font-mono">docker</span> group
-                        <span class="block text-[11px] mt-0.5" style="color: var(--fg-subtle);">
-                          Required so the new user can talk to the Docker daemon.
-                        </span>
-                      </span>
-                    </label>
-                  </div>
-                {/if}
-              </div>
-            </label>
-          </div>
-          <div class="dm-divider mt-8 mb-5"></div>
-          <div class="flex items-center justify-between">
-            <button type="button" class="dm-btn dm-btn-ghost" onclick={goBack}>← Back</button>
-            <button type="button" class="dm-btn dm-btn-primary" onclick={goNext} disabled={svcBlockNext}>Continue →</button>
-          </div>
-
-        {:else if step === 4}
-          <!-- Step 4 — admin -->
-          <div class="flex flex-col gap-5">
-            <div>
-              <label for="admin-user" class="block text-xs font-medium mb-2" style="color: var(--fg-muted);">Username</label>
-              <input id="admin-user" class="dm-input dm-input-mono" bind:value={adminUsername} spellcheck="false" autocomplete="off" />
-              <div class="mt-1.5 font-mono text-[10.5px]" style="color: var(--fg-subtle);">
-                # role=superadmin · auth=local · can be disabled later if you wire OIDC
-              </div>
-            </div>
-            <div>
-              <div class="flex items-baseline justify-between mb-2">
-                <label for="admin-pw" class="block text-xs font-medium" style="color: var(--fg-muted);">Password</label>
-                <button type="button" class="text-xs" style="color: var(--accent-fg);" onclick={generatePassword}>
-                  Generate strong password
-                </button>
-              </div>
-              <div class="relative">
-                {#if adminShowPassword}
-                  <input id="admin-pw" type="text" class="dm-input dm-input-mono pr-20" bind:value={adminPassword} autocomplete="new-password" />
-                {:else}
-                  <input id="admin-pw" type="password" class="dm-input dm-input-mono pr-20" bind:value={adminPassword} autocomplete="new-password" />
-                {/if}
-                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs absolute right-1.5 top-1/2 -translate-y-1/2" onclick={() => (adminShowPassword = !adminShowPassword)}>
-                  {adminShowPassword ? 'Hide' : 'Show'}
-                </button>
-              </div>
-              <div class="mt-2.5 flex items-center gap-2">
-                <div class="flex gap-1 flex-1">
-                  {#each [0, 1, 2, 3] as i}
-                    <div class="dm-strength-seg" style:background={
-                      strength.score > i
-                        ? (strength.score === 1 ? 'var(--color-danger-400)'
-                          : strength.score === 2 ? 'var(--color-warning-400)'
-                          : strength.score === 3 ? 'var(--color-success-400)'
-                          : 'var(--color-success-500)')
-                        : 'var(--border)'
-                    }></div>
-                  {/each}
-                </div>
-                <span class="text-[11px] tabular-nums w-12 text-right" style="color: var(--fg-subtle);">{strength.label}</span>
-              </div>
-            </div>
-            <div>
-              <label for="admin-email" class="block text-xs font-medium mb-2" style="color: var(--fg-muted);">
-                Email <span style="color: var(--fg-subtle);">(optional)</span>
-              </label>
-              <input id="admin-email" type="email" class="dm-input" placeholder="admin@example.com" bind:value={adminEmail} spellcheck="false" autocomplete="off" />
-            </div>
-          </div>
-          <div class="dm-divider mt-8 mb-5"></div>
-          <div class="flex items-center justify-between">
-            <button type="button" class="dm-btn dm-btn-ghost" onclick={goBack}>← Back</button>
-            <button type="button" class="dm-btn dm-btn-primary" onclick={goNext} disabled={adminBlockNext}>Continue →</button>
-          </div>
-
-        {:else if step === 5}
-          <!-- Step 5 — public URL -->
-          <label for="pub-url" class="block text-xs font-medium mb-2" style="color: var(--fg-muted);">Public URL</label>
-          <div class="flex items-stretch gap-2">
-            <input id="pub-url" class="dm-input dm-input-mono flex-1" bind:value={publicUrl} spellcheck="false" autocomplete="off" />
-            <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm whitespace-nowrap" onclick={runUrlTest} disabled={urlTest.state === 'loading'}>
-              {urlTest.state === 'loading' ? 'Testing…' : 'Test connection'}
+  <main class="col">
+    <nav aria-label="Setup steps">
+      <ol class="stepper">
+        {#each STEPS as s (s.n)}
+          {@const done = completed.has(s.n) && step !== s.n}
+          {@const cur = step === s.n}
+          {@const reachable = (done || cur) && step !== 7 && !installing}
+          <li class:done class:on={cur}>
+            <button type="button" disabled={!reachable} aria-current={cur ? 'step' : undefined} onclick={() => reachable && jumpTo(s.n)}>
+              <span class="n">{#if done}<Check size={11} strokeWidth={3} />{:else}{s.n}{/if}</span>
+              <span class="l">{s.short}</span>
             </button>
-          </div>
-          <div class="mt-1.5 font-mono text-[10.5px]" style="color: var(--fg-subtle);">
-            # written to DOCKMESH_BASE_URL · embedded in agent registration & OIDC redirect_uri
-          </div>
-          {#if urlTest.state === 'ok'}
-            <div class="mt-2.5 flex items-center gap-2 text-xs" style="color: var(--color-success-400);">
-              ✓ reached this server in <span class="font-mono">{urlTest.ms}ms</span>
-            </div>
-          {:else if urlTest.state === 'fail'}
-            <div class="mt-2.5 flex items-center gap-2 text-xs" style="color: var(--color-danger-400);">
-              ✗ couldn't reach ({urlTest.reason})
-            </div>
-          {/if}
-          <p class="text-xs mt-5 leading-relaxed" style="color: var(--fg-muted);">
-            For now, the LAN IP works fine. Once you've set up a domain + reverse proxy or DNS,
-            change this in <span style="color: var(--fg);">Settings → System</span> without restarting the server.
-          </p>
-          <div class="dm-divider mt-8 mb-5"></div>
-          <div class="flex items-center justify-between">
-            <button type="button" class="dm-btn dm-btn-ghost" onclick={goBack}>← Back</button>
-            <button type="button" class="dm-btn dm-btn-primary" onclick={goNext} disabled={urlBlockNext}>Continue →</button>
-          </div>
+          </li>
+        {/each}
+      </ol>
+    </nav>
 
-        {:else if step === 6}
-          <!-- Step 6 — review -->
-          <ul class="flex flex-col" style="border-top: 1px solid var(--border-subtle);">
-            {#each [
-              { label: 'Data directory', value: dataDir, jumpTo: 2 as Step, dim: false },
-              { label: 'Service user', value: svcMode === 'recommended' ? `${RECOMMENDED_USER} (recommended)` : svcMode === 'new' ? `${svcNewUser} (new${svcAddToDocker ? ', in docker group' : ''})` : (svcExistingUser || '—'), jumpTo: 3 as Step, dim: false },
-              { label: 'Admin user', value: `${adminUsername} / ${'•'.repeat(Math.max(8, adminPassword.length || 8))}`, jumpTo: 4 as Step, dim: false },
-              { label: 'Admin email', value: adminEmail || '—', jumpTo: 4 as Step, dim: !adminEmail },
-              { label: 'Public URL', value: publicUrl, jumpTo: 5 as Step, dim: false }
-            ] as r}
-              <li class="grid items-baseline py-3 gap-3" style="grid-template-columns: 9.5rem 1fr auto; border-bottom: 1px solid var(--border-subtle);">
-                <span class="text-xs" style="color: var(--fg-muted);">{r.label}</span>
-                <span class="text-sm font-mono truncate" style:color={r.dim ? 'var(--fg-subtle)' : 'var(--fg)'} title={r.value}>{r.value}</span>
-                <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => jumpTo(r.jumpTo)} disabled={installing}>Edit</button>
-              </li>
-            {/each}
-          </ul>
-          <p class="text-xs mt-5 leading-relaxed" style="color: var(--fg-muted);">
-            On confirm, Dockmesh writes the env file, creates the user (if needed), seeds the
-            database, and restarts the service. About 3 seconds.
-          </p>
-          <div class="dm-divider mt-8 mb-5"></div>
-          <div class="flex items-center justify-between">
-            <button type="button" class="dm-btn dm-btn-ghost" onclick={goBack} disabled={installing}>← Back</button>
-            <div class="flex items-center gap-3">
-              {#if installing}
-                <span class="text-xs flex items-center gap-2" style="color: var(--fg-muted);">{installMsg}</span>
-              {/if}
-              <button type="button" class="dm-btn dm-btn-primary" onclick={runInstall} disabled={installing}>
-                {installing ? 'Installing…' : 'Install'}
-              </button>
-            </div>
-          </div>
+    <div class="head">
+      <h1>{head.title}</h1>
+      <p>{head.sub}</p>
+    </div>
 
-        {:else if step === 7}
-          <!-- Step 7 — terminal triumph -->
-          <div class="ed-term">
-            <div class="ed-term-chrome">
-              <div class="ed-term-dots" aria-hidden="true">
-                <span></span><span></span><span></span>
+    <section class="panel">
+      {#if step === 1}
+        <h2 class="dm-h2">This server</h2>
+        {#if preflightLoading}
+          <div class="dm-empty">Checking this server…</div>
+        {:else if preflightError}
+          <div class="callout bad">
+            <span>The server check failed: {preflightError}</span>
+            <Button size="sm" variant="secondary" onclick={loadPreflight}><RotateCcw size={13} /> Check again</Button>
+          </div>
+        {:else}
+          <div class="dm-tbl">
+            {#each preflightChecks as c (c.key)}
+              <div class="dm-tr pf">
+                {@render mark(c.status)}
+                <span>{c.label}</span>
+                <span class="dm-num" class:warn={c.status === 'warn'} class:bad={c.status === 'fail'} title={c.value}>{c.value}</span>
               </div>
-              <div class="ed-term-title">dockmesh@host · ~</div>
-              <div class="ed-term-spacer"></div>
-            </div>
-            <div class="ed-term-body" role="log" aria-live="polite">
-              {#each streamLines as l (l.ts + l.step)}
-                <div class="ed-term-line ed-term-line--{l.status}">
-                  <span class="ed-term-mark ed-term-mark--{l.status}" aria-hidden="true">{statusToMark(l.status)}</span>
-                  <span class="ed-term-text">{l.message}</span>
-                </div>
-              {/each}
-              {#if installing}
-                <div class="ed-term-line ed-term-line--cursor">
-                  <span class="ed-cursor"></span>
-                </div>
-              {/if}
-              {#if installFailed}
-                <div class="ed-term-line ed-term-line--fail" style="margin-top: 8px;">
-                  <span class="ed-term-mark ed-term-mark--fail" aria-hidden="true">✗</span>
-                  <span class="ed-term-text">install failed: {installFailed}</span>
-                </div>
-              {/if}
-              {#if credsRevealed}
-                <div class="ed-term-creds">
-                  <div class="ed-term-creds-label">credentials</div>
-                  <div class="ed-term-creds-grid">
-                    <span class="ed-term-creds-key">login_url</span>
-                    <span class="ed-term-creds-eq">=</span>
-                    <span class="ed-term-creds-val">{publicUrl}</span>
-                    <button type="button" class="ed-term-creds-copy" onclick={() => copyToClipboard('url', publicUrl)}>
-                      {copiedKey === 'url' ? '✓ copied' : 'copy'}
-                    </button>
+            {/each}
+          </div>
+          {#each preflightWarnings as w (w.key)}
+            {#if w.message || w.hint}
+              <p class="note">
+                <b class="warn-t">{w.label}:</b>
+                {w.message ?? ''}
+                {#if w.hint}<a href={w.hint} target="_blank" rel="noopener">{w.hint}</a>{/if}
+              </p>
+            {/if}
+          {/each}
+          {#if preflightHasFail}
+            <p class="note bad-t">Fix the failed checks on this server, then check again.</p>
+          {/if}
+        {/if}
 
-                    <span class="ed-term-creds-key">username</span>
-                    <span class="ed-term-creds-eq">=</span>
-                    <span class="ed-term-creds-val">{adminUsername}</span>
-                    <button type="button" class="ed-term-creds-copy" onclick={() => copyToClipboard('user', adminUsername)}>
-                      {copiedKey === 'user' ? '✓ copied' : 'copy'}
-                    </button>
+        <div class="foot">
+          <Button variant="ghost" size="sm" onclick={() => (restoreOpen = !restoreOpen)} aria-expanded={restoreOpen}>
+            Restore from a backup instead
+          </Button>
+          <span class="dm-sp"></span>
+          {#if !preflightLoading && !preflightError}
+            <Button variant="ghost" size="sm" onclick={loadPreflight}><RotateCcw size={13} /> Check again</Button>
+          {/if}
+          <Button variant="primary" onclick={goNext} disabled={preflightHasFail || preflightLoading}>
+            Begin setup <ArrowRight size={14} />
+          </Button>
+        </div>
 
-                    <span class="ed-term-creds-key">password</span>
-                    <span class="ed-term-creds-eq">=</span>
-                    <span class="ed-term-creds-val" style="display: inline-flex; align-items: center; gap: 8px;">
-                      <span>{credShowPw ? finalPassword : '•'.repeat(Math.max(10, finalPassword.length))}</span>
-                      <button type="button" onclick={() => (credShowPw = !credShowPw)}
-                        style="background: none; border: 0; cursor: pointer; color: var(--fg-subtle); padding: 0; font-size: 11px; font-family: var(--font-mono);">
-                        {credShowPw ? '[hide]' : '[show]'}
-                      </button>
-                    </span>
-                    <button type="button" class="ed-term-creds-copy" onclick={() => copyToClipboard('pw', finalPassword)}>
-                      {copiedKey === 'pw' ? '✓ copied' : 'copy'}
-                    </button>
-                  </div>
-                </div>
-              {/if}
+        {#if restoreOpen}
+          <div class="restore">
+            <h2 class="dm-h2">Restore from a backup</h2>
+            <p class="hint">
+              Brings back a Dockmesh system backup: users, settings, keys and stacks. Volumes are restored
+              afterwards, from the Backups page.
+            </p>
+            <div class="dm-field">
+              <label for="rs-file">System backup (.tar.gz or .tar.gz.age)</label>
+              <input id="rs-file" class="file" type="file" accept=".gz,.age,.tar" onchange={(e) => (restoreFile = (e.currentTarget as HTMLInputElement).files?.[0] ?? null)} />
             </div>
-            {#if credsRevealed}
-              <div class="ed-term-cta">
-                <a href="/" data-sveltekit-reload class="dm-btn dm-btn-primary dm-btn-lg">
-                  Open dashboard
-                  <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M8 5l5 5-5 5" /><path d="M13 10H4" />
-                  </svg>
-                </a>
-                <span class="ed-term-cta-meta">
-                  forgot the password? run
-                  <code class="font-mono px-1.5 py-0.5 rounded" style="background: var(--bg-elevated); color: var(--fg-muted); border: 1px solid var(--border);">
-                    sudo dockmesh admin reset-password
-                  </code>
-                </span>
+            <div class="dm-field">
+              <label for="rs-key">Backup key file, if the backup is encrypted</label>
+              <input id="rs-key" class="file" type="file" accept=".txt,.key" onchange={(e) => (restoreKey = (e.currentTarget as HTMLInputElement).files?.[0] ?? null)} />
+              <span class="hint">On the old server: Settings → Encryption key → Export key.</span>
+            </div>
+            {#if restoreError}
+              <div class="callout bad" role="alert">
+                <div>
+                  <div>{restoreError}</div>
+                  {#each restoreChecks.filter((c) => c.status === 'fail') as c (c.name)}
+                    <div>{c.name}: {c.message ?? ''}</div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+            {#if restorePhase === 'restarting'}
+              <p class="note">Restoring and restarting Dockmesh… You'll be sent to the login page; sign in with an account of the restored install.</p>
+            {:else if restorePhase === 'stuck'}
+              <div class="callout bad" role="alert">Dockmesh hasn't come back yet. If it isn't run by systemd or Docker, start it again by hand; the restore finishes on the next start.</div>
+            {:else}
+              <div>
+                <Button variant="primary" size="sm" onclick={restoreFromBackup} disabled={!restoreFile} loading={restorePhase === 'uploading'}>
+                  {restorePhase === 'uploading' ? 'Checking the backup…' : 'Restore'}
+                </Button>
               </div>
             {/if}
           </div>
         {/if}
-      </div>
-    </div>
+
+      {:else if step === 2}
+        <div class="dm-field">
+          <label for="data-dir">Data directory</label>
+          <input id="data-dir" class="dm-input dm-mono" bind:value={dataDir} spellcheck="false" autocomplete="off" aria-invalid={dataDirStatus.kind === 'fail'} />
+          {@render checkLine(dataDirStatus.kind, dataDirStatus.text)}
+          <span class="hint">About 50 MB on a fresh install; grows with deploy history and the number of stacks.</span>
+        </div>
+        <div class="dm-field">
+          <span class="lbl">Common locations</span>
+          <div class="presets">
+            <button type="button" class="preset" class:on={dataDir === '/var/lib/dockmesh'} onclick={() => (dataDir = '/var/lib/dockmesh')}>
+              <span class="dm-mono">/var/lib/dockmesh</span><small>Linux, where services keep state</small>
+            </button>
+            <button type="button" class="preset" class:on={dataDir === '/usr/local/var/dockmesh'} onclick={() => (dataDir = '/usr/local/var/dockmesh')}>
+              <span class="dm-mono">/usr/local/var/dockmesh</span><small>macOS, Homebrew layout</small>
+            </button>
+          </div>
+        </div>
+        <div class="foot">
+          <Button variant="ghost" onclick={goBack}>Back</Button>
+          <span class="dm-sp"></span>
+          <Button variant="primary" onclick={goNext} disabled={dataDirStatus.kind === 'fail'}>Continue</Button>
+        </div>
+
+      {:else if step === 3}
+        <div class="choices" role="radiogroup" aria-label="Service user">
+          <label class="radio-card" class:on={svcMode === 'recommended'}>
+            <input type="radio" name="svc-mode" checked={svcMode === 'recommended'} onchange={() => (svcMode = 'recommended')} />
+            <div class="rc-b">
+              <div class="rc-t">Use the <span class="dm-mono">dockmesh</span> service user <StatusChip tone="acc" label="recommended" /></div>
+              <div class="hint">Created by the install script, already in the <span class="dm-mono">docker</span> group, no shell login.</div>
+              {#if svcMode === 'recommended' && svcCheck.kind !== 'idle' && svcCheck.text}
+                {@render checkLine(svcCheck.kind, svcCheck.text)}
+              {/if}
+            </div>
+          </label>
+
+          <label class="radio-card" class:on={svcMode === 'existing'}>
+            <input type="radio" name="svc-mode" checked={svcMode === 'existing'} onchange={() => (svcMode = 'existing')} />
+            <div class="rc-b">
+              <div class="rc-t">Use another existing user</div>
+              <div class="hint">For a service account you already have, such as <span class="dm-mono">ops</span> or <span class="dm-mono">deploy</span>.</div>
+              {#if svcMode === 'existing'}
+                <div class="dm-field sub">
+                  <label for="existing-user">Username</label>
+                  <input id="existing-user" class="dm-input dm-mono" placeholder="ops" bind:value={svcExistingUser} aria-invalid={svcCheck.kind === 'fail'} spellcheck="false" autocomplete="off" />
+                  {#if svcCheck.kind !== 'idle' && svcCheck.text}{@render checkLine(svcCheck.kind, svcCheck.text)}{/if}
+                  <span class="hint">
+                    Setup does not change the groups of an existing account. If it is not in the
+                    <span class="dm-mono">docker</span> group yet, run
+                    <span class="dm-mono">sudo usermod -aG docker {svcExistingUser.trim() || '<user>'}</span>.
+                  </span>
+                </div>
+              {/if}
+            </div>
+          </label>
+
+          <label class="radio-card" class:on={svcMode === 'new'}>
+            <input type="radio" name="svc-mode" checked={svcMode === 'new'} onchange={() => (svcMode = 'new')} />
+            <div class="rc-b">
+              <div class="rc-t">Create a new user</div>
+              <div class="hint">Under a name you choose, created when you install. The <span class="dm-mono">dockmesh</span> user stays as it is.</div>
+              {#if svcMode === 'new'}
+                <div class="dm-field sub">
+                  <label for="new-user">Username</label>
+                  <input id="new-user" class="dm-input dm-mono" placeholder="dockermaster" bind:value={svcNewUser} aria-invalid={svcCheck.kind === 'fail'} spellcheck="false" autocomplete="off" />
+                  {#if svcCheck.kind !== 'idle' && svcCheck.text}{@render checkLine(svcCheck.kind, svcCheck.text)}{/if}
+                  <span class="hint">Gets the next free uid and no login shell.</span>
+                </div>
+                <label class="cb">
+                  <input type="checkbox" bind:checked={svcAddToDocker} />
+                  <span>Add to the <span class="dm-mono">docker</span> group <span class="hint">needed to talk to the Docker daemon</span></span>
+                </label>
+              {/if}
+            </div>
+          </label>
+        </div>
+        <div class="foot">
+          <Button variant="ghost" onclick={goBack}>Back</Button>
+          <span class="dm-sp"></span>
+          <Button variant="primary" onclick={goNext} disabled={svcBlockNext}>Continue</Button>
+        </div>
+
+      {:else if step === 4}
+        <div class="dm-field">
+          <label for="admin-user">Username</label>
+          <input id="admin-user" class="dm-input dm-mono" bind:value={adminUsername} spellcheck="false" autocomplete="off" />
+          <span class="hint">A local admin with full rights. You can disable it later once single sign-on works.</span>
+        </div>
+        <div class="dm-field">
+          <div class="lbl-row">
+            <label for="admin-pw">Password</label>
+            <button type="button" class="link" onclick={generatePassword}>Generate a strong password</button>
+          </div>
+          <div class="pw">
+            <input id="admin-pw" type={adminShowPassword ? 'text' : 'password'} class="dm-input dm-mono" bind:value={adminPassword} autocomplete="new-password" aria-describedby="pw-strength" />
+            <button type="button" class="eye" onclick={() => (adminShowPassword = !adminShowPassword)} aria-label={adminShowPassword ? 'Hide password' : 'Show password'}>
+              {#if adminShowPassword}<EyeOff size={14} />{:else}<Eye size={14} />{/if}
+            </button>
+          </div>
+          <div class="strength" id="pw-strength">
+            {#each [0, 1, 2, 3] as i (i)}
+              <i class:on={strength.score > i} class="s{strength.score}"></i>
+            {/each}
+            <span class="dm-num dm-dim">{strength.label}</span>
+          </div>
+          <span class="hint">At least 8 characters.</span>
+        </div>
+        <div class="dm-field">
+          <label for="admin-email">Email <span class="dm-dim">(optional)</span></label>
+          <input id="admin-email" type="email" class="dm-input" placeholder="admin@example.com" bind:value={adminEmail} spellcheck="false" autocomplete="off" />
+        </div>
+        <div class="foot">
+          <Button variant="ghost" onclick={goBack}>Back</Button>
+          <span class="dm-sp"></span>
+          <Button variant="primary" onclick={goNext} disabled={adminBlockNext}>Continue</Button>
+        </div>
+
+      {:else if step === 5}
+        <div class="dm-field">
+          <label for="pub-url">Public URL</label>
+          <div class="row">
+            <input id="pub-url" class="dm-input dm-mono" bind:value={publicUrl} spellcheck="false" autocomplete="off" aria-invalid={urlBlockNext} />
+            <Button variant="secondary" onclick={runUrlTest} loading={urlTest.state === 'loading'} disabled={urlBlockNext}>
+              {urlTest.state === 'loading' ? 'Testing…' : 'Test connection'}
+            </Button>
+          </div>
+          {#if urlTest.state === 'ok'}
+            {@render checkLine('ok', `Reached this server in ${urlTest.ms} ms`)}
+          {:else if urlTest.state === 'fail'}
+            {@render checkLine('fail', `Could not reach it (${urlTest.reason})`)}
+          {:else if urlBlockNext}
+            {@render checkLine('fail', 'Not a valid URL')}
+          {/if}
+          <span class="hint">
+            Saved as <span class="dm-mono">DOCKMESH_BASE_URL</span>. The LAN address is fine for now; once you have a
+            domain, change it under Settings without restarting the server.
+          </span>
+        </div>
+        <div class="foot">
+          <Button variant="ghost" onclick={goBack}>Back</Button>
+          <span class="dm-sp"></span>
+          <Button variant="primary" onclick={goNext} disabled={urlBlockNext}>Continue</Button>
+        </div>
+
+      {:else if step === 6}
+        <div class="dm-tbl">
+          {#each [
+            { label: 'Data directory', value: dataDir, to: 2 as Step, dim: false },
+            { label: 'Service user', value: svcSummary, to: 3 as Step, dim: false },
+            { label: 'Admin user', value: `${adminUsername} / ${'•'.repeat(Math.max(8, adminPassword.length || 8))}`, to: 4 as Step, dim: false },
+            { label: 'Admin email', value: adminEmail || '—', to: 4 as Step, dim: !adminEmail },
+            { label: 'Public URL', value: publicUrl, to: 5 as Step, dim: false }
+          ] as r (r.label)}
+            <div class="dm-tr rv">
+              <span class="dm-dim">{r.label}</span>
+              <span class="dm-mono" class:dm-dim={r.dim} title={r.value}>{r.value}</span>
+              <span class="dm-tr-menu"><Button variant="ghost" size="xs" onclick={() => jumpTo(r.to)} disabled={installing}>Edit</Button></span>
+            </div>
+          {/each}
+        </div>
+        {#if installFailed}
+          <div class="callout bad" role="alert">Install failed: {installFailed}</div>
+        {/if}
+        <div class="foot">
+          <Button variant="ghost" onclick={goBack} disabled={installing}>Back</Button>
+          <span class="dm-sp"></span>
+          {#if installing}<span class="dm-sub">{installMsg}</span>{/if}
+          <Button variant="primary" onclick={runInstall} loading={installing}>
+            {installing ? 'Installing…' : 'Install'}
+          </Button>
+        </div>
+
+      {:else if step === 7}
+        <div class="status">
+          {#if installFailed}
+            <StatusChip tone="bad" label="failed" /><span>The install stopped. The log shows the step that failed.</span>
+          {:else if credsRevealed}
+            <StatusChip tone="ok" label="installed" /><span>Dockmesh is running.</span>
+          {:else}
+            <StatusChip tone="acc" label="installing" /><span>{installMsg || 'Working through the install steps…'}</span>
+          {/if}
+        </div>
+        <h2 class="dm-h2">Log</h2>
+        <div class="log dm-mono" role="log" aria-live="polite">
+          {#each streamLines as l (l.ts + l.step)}
+            <div class="ln {l.status}">{@render mark(l.status)}<span>{l.message}</span></div>
+          {:else}
+            <div class="dm-dim">Waiting for output…</div>
+          {/each}
+          {#if installFailed}
+            <div class="ln fail">{@render mark('fail')}<span>install failed: {installFailed}</span></div>
+          {/if}
+        </div>
+
+        {#if credsRevealed}
+          <h2 class="dm-h2 creds-h">Your sign-in</h2>
+          <dl class="dm-kv creds">
+            <dt>Login URL</dt>
+            <dd>
+              <span class="dm-mono">{publicUrl}</span>
+              <button type="button" class="copy" onclick={() => copyToClipboard('url', publicUrl)} aria-label="Copy login URL">
+                {#if copiedKey === 'url'}<Check size={13} /> copied{:else}<Copy size={13} /> copy{/if}
+              </button>
+            </dd>
+            <dt>Username</dt>
+            <dd>
+              <span class="dm-mono">{adminUsername}</span>
+              <button type="button" class="copy" onclick={() => copyToClipboard('user', adminUsername)} aria-label="Copy username">
+                {#if copiedKey === 'user'}<Check size={13} /> copied{:else}<Copy size={13} /> copy{/if}
+              </button>
+            </dd>
+            <dt>Password</dt>
+            <dd>
+              {#if adminPassword}
+                <span class="dm-mono">{credShowPw ? adminPassword : '•'.repeat(Math.max(10, adminPassword.length))}</span>
+                <button type="button" class="copy" onclick={() => (credShowPw = !credShowPw)} aria-label={credShowPw ? 'Hide password' : 'Show password'}>
+                  {#if credShowPw}<EyeOff size={13} /> hide{:else}<Eye size={13} /> show{/if}
+                </button>
+                <button type="button" class="copy" onclick={() => copyToClipboard('pw', adminPassword)} aria-label="Copy password">
+                  {#if copiedKey === 'pw'}<Check size={13} /> copied{:else}<Copy size={13} /> copy{/if}
+                </button>
+              {:else}
+                <span class="dm-dim">the password you entered</span>
+              {/if}
+            </dd>
+          </dl>
+          <div class="foot">
+            <span class="dm-sub">Forgot the password? Run <span class="dm-mono">sudo dockmesh admin reset-password</span> on the server.</span>
+            <span class="dm-sp"></span>
+            <a href="/" data-sveltekit-reload class="dm-btn dm-btn-primary">Open Dockmesh <ArrowRight size={14} /></a>
+          </div>
+        {/if}
+      {/if}
+    </section>
   </main>
 </div>
 
 <style>
-  /* Editorial layout. Self-contained — pulls only the CSS variables
-     defined in app.css's @theme block. No deps on Tailwind utility
-     classes outside what app.css already defines (.dm-btn, .dm-input). */
+  :global(body) { background: var(--bg); color: var(--fg); }
 
-  :global(body) {
-    background: var(--bg-elevated);
-    color: var(--fg);
-  }
-
-  /* Mono-input variant */
-  :global(.dm-input-mono) {
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
-  }
-  :global(.dm-btn-lg) { padding: 0.75rem 1.4rem; font-size: 0.95rem; border-radius: 10px; }
-
-  /* Radio / check (mockup style — minimal, monochrome) */
-  :global(.dm-radio), :global(.dm-check) {
-    appearance: none;
-    width: 1rem; height: 1rem;
-    border: 1px solid var(--border-strong);
-    background: var(--bg-elevated);
-    flex-shrink: 0;
-    cursor: pointer;
-    transition: border-color 0.15s ease, background-color 0.15s ease;
-  }
-  :global(.dm-radio) { border-radius: 9999px; }
-  :global(.dm-check) { border-radius: 4px; }
-  :global(.dm-radio:checked), :global(.dm-check:checked) {
-    border-color: var(--color-brand-500);
-    background: var(--color-brand-500);
-  }
-  :global(.dm-radio:checked) { box-shadow: inset 0 0 0 3px var(--surface); }
-  :global(.dm-check:checked) {
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 12 12' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2.5 6.2L4.8 8.5L9.5 3.8' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-    background-size: 100% 100%;
-  }
-
-  /* Strength bar */
-  :global(.dm-strength-seg) {
-    height: 4px; flex: 1;
-    background: var(--border);
-    border-radius: 2px;
-    transition: background-color 0.15s ease;
-  }
-
-  /* Divider */
-  :global(.dm-divider) { height: 1px; background: var(--border); }
-
-  /* ───── Editorial shell ───── */
-  .ed-shell {
-    min-height: 100vh;
-    background: var(--surface);
-    color: var(--fg);
-    position: relative;
-    overflow: hidden;
-    isolation: isolate;
-    font-family: 'Inter', system-ui, sans-serif;
-  }
-
-  .ed-mesh {
-    position: absolute; inset: 0; z-index: 0;
-    background-image: radial-gradient(circle at 1px 1px, rgba(148, 163, 184, 0.10) 1px, transparent 0);
-    background-size: 24px 24px;
-    mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000 30%, transparent 80%);
-    -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000 30%, transparent 80%);
-    pointer-events: none;
-  }
-  .ed-mesh--live {
-    background-image:
-      radial-gradient(circle at 1px 1px, rgba(56, 189, 248, 0.55) 1.5px, transparent 0),
-      radial-gradient(circle at 13px 13px, rgba(56, 189, 248, 0.18) 1px, transparent 0);
-    background-size: 24px 24px, 24px 24px;
-  }
-
-  .ed-watermark {
-    position: absolute;
-    right: -120px; top: 50%; transform: translateY(-50%);
-    z-index: 0;
-    color: var(--color-brand-500);
-    opacity: 0.025;
-    pointer-events: none;
-  }
-
-  /* Vertical step rail */
-  .ed-rail {
-    position: fixed;
-    left: 32px; top: 50%; transform: translateY(-50%);
-    z-index: 5;
-    display: flex; flex-direction: column;
-    padding: 8px 0;
-  }
-  .ed-rail::before {
-    content: "";
-    position: absolute;
-    left: 11px;
-    top: 22px; bottom: 22px;
-    width: 1px;
-    background: var(--border);
-  }
-  .ed-rail-item {
-    position: relative;
-    display: flex; align-items: center; gap: 14px;
-    padding: 8px 0 8px 32px;
-    color: var(--fg-subtle);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    cursor: pointer;
-    transition: color 0.18s ease, transform 0.18s ease;
-    background: none; border: 0;
-    text-align: left;
-  }
-  .ed-rail-item::before {
-    content: "";
-    position: absolute;
-    left: 7px; top: 50%; transform: translateY(-50%);
-    width: 9px; height: 9px;
-    border-radius: 9999px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-strong);
-    transition: all 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
-    z-index: 1;
-  }
-  .ed-rail-item[aria-disabled="true"] { cursor: not-allowed; }
-  .ed-rail-item:hover:not([aria-disabled="true"]) { color: var(--fg); }
-  .ed-rail-item:hover:not([aria-disabled="true"])::before { border-color: var(--fg-muted); }
-  .ed-rail-item .ed-rail-num { width: 18px; }
-  .ed-rail-item .ed-rail-label {
-    opacity: 0; transform: translateX(-4px);
-    transition: opacity 0.18s ease, transform 0.18s ease;
-    text-transform: none;
-    font-family: 'Inter', system-ui, sans-serif;
-    font-size: 12px;
-    letter-spacing: 0;
-    color: var(--fg-muted);
-    white-space: nowrap;
-  }
-  .ed-rail:hover .ed-rail-label { opacity: 1; transform: translateX(0); }
-  .ed-rail-item--current {
-    color: var(--color-brand-300);
-    padding-top: 14px; padding-bottom: 14px;
-  }
-  .ed-rail-item--current::before {
-    width: 13px; height: 13px;
-    left: 5px;
-    background: var(--color-brand-400);
-    border-color: var(--color-brand-300);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-brand-500) 18%, transparent),
-                0 0 12px color-mix(in srgb, var(--color-brand-400) 50%, transparent);
-  }
-  .ed-rail-item--current .ed-rail-label { color: var(--fg); opacity: 1; transform: translateX(0); font-weight: 500; }
-  .ed-rail-item--done { color: var(--fg-muted); }
-  .ed-rail-item--done .ed-rail-num { color: var(--color-brand-700); }
-  .ed-rail-item--done::before {
-    background: color-mix(in srgb, var(--color-brand-500) 65%, transparent);
-    border-color: color-mix(in srgb, var(--color-brand-400) 70%, transparent);
-  }
-
-  /* Top bar */
-  .ed-topbar {
-    position: relative; z-index: 4;
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 22px 32px 22px 92px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg-subtle);
-    letter-spacing: 0.05em;
-  }
-  .ed-brand {
-    display: flex; align-items: center; gap: 10px;
-    color: var(--fg);
-    font-family: 'Inter', system-ui, sans-serif;
-    font-size: 13px; font-weight: 500;
-    letter-spacing: -0.01em;
-  }
-  .ed-brand-mark { color: var(--color-brand-400); }
-  .ed-brand-logo { width: 32px; height: 32px; display: block; flex-shrink: 0; }
-  .ed-meta { display: flex; align-items: center; gap: 14px; }
-  .ed-meta b { color: var(--fg-muted); font-weight: 500; }
-
-  /* Stage + canvas */
-  .ed-stage {
-    position: relative; z-index: 2;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    padding: 24px 60px 60px 92px;
-  }
-  .ed-canvas {
-    max-width: 880px;
-    margin: 0 auto;
-    width: 100%;
-    position: relative;
-  }
-  .ed-hero { margin-top: 16px; }
-  .ed-hero :global(.ed-title) { font-size: 64px; }
-  .ed-hero .ed-content { padding: 40px 44px 44px; }
-
-  /* Eyebrow */
-  .ed-eyebrow {
-    display: inline-flex; align-items: center; gap: 10px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--color-brand-300);
-    margin-bottom: 22px;
-  }
-  .ed-eyebrow::before {
-    content: "";
-    width: 24px; height: 1px;
-    background: currentColor;
-  }
-  .ed-cursor {
-    display: inline-block;
-    width: 8px; height: 1.05em;
-    background: var(--color-brand-400);
-    margin-left: 4px;
-    transform: translateY(2px);
-    animation: ed-blink 1.05s steps(2) infinite;
-  }
-  @keyframes ed-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
-
-  /* Editorial title */
-  .ed-title {
-    font-size: 48px;
-    line-height: 1.02;
-    letter-spacing: -0.025em;
-    font-weight: 600;
-    color: var(--fg);
-    text-wrap: balance;
-    max-width: 18ch;
-  }
-  :global(.ed-title-accent) {
-    color: var(--color-brand-300);
-    font-style: normal;
-    font-weight: inherit;
-  }
-  .ed-subtitle {
-    font-size: 16px;
-    line-height: 1.55;
-    color: var(--fg-muted);
-    margin-top: 20px;
-    max-width: 56ch;
-    text-wrap: pretty;
-  }
-
-  /* Content frame */
-  .ed-content {
-    position: relative;
-    margin-top: 48px;
-    padding: 36px 40px 40px;
-    background: linear-gradient(
-      to bottom,
-      color-mix(in srgb, var(--surface) 85%, transparent) 0%,
-      var(--surface) 100%);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    box-shadow:
-      inset 0 1px 0 rgba(255,255,255,0.025),
-      0 30px 60px -30px rgba(0, 0, 0, 0.6);
-  }
-  .ed-content::before {
-    content: "";
-    position: absolute;
-    top: -1px; left: 24px; right: 24px;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, var(--color-brand-500), transparent);
-    opacity: 0.5;
-  }
-  .ed-content--open {
-    background: none !important;
-    border: 0 !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-    margin-top: 56px;
-  }
-  .ed-content--open::before { display: none !important; }
-
-  /* Step 1 hero body */
-  .ed-hero-body {
+  .sw { min-height: 100vh; display: flex; flex-direction: column; }
+  .top {
     display: flex;
-    flex-direction: column;
-    gap: 28px;
-  }
-  .ed-manifest {
-    display: flex;
-    flex-direction: column;
-    border-top: 1px solid var(--border-subtle);
-    padding-left: 0;
-    list-style: none;
-  }
-  .ed-manifest-row {
-    display: grid;
-    grid-template-columns: 28px 1fr auto;
-    align-items: baseline;
+    align-items: center;
     gap: 16px;
-    padding: 14px 0;
-    border-bottom: 1px solid var(--border-subtle);
-    font-size: 14px;
+    padding: 14px 28px;
+    border-bottom: 1px solid var(--border);
   }
-  .ed-manifest-marker {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--color-success-400);
-    text-align: center;
-    font-weight: 600;
-  }
-  .ed-manifest-row--warn .ed-manifest-marker { color: var(--color-warning-400); }
-  .ed-manifest-row--fail .ed-manifest-marker { color: var(--color-danger-400); }
-  .ed-manifest-label { color: var(--fg); }
-  .ed-manifest-value {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--fg-muted);
-    text-align: right;
-  }
-  .ed-manifest-note {
-    font-size: 12px;
-    color: var(--fg-muted);
-    padding-left: 44px;
-    margin-top: -16px;
-  }
-  .ed-hero-cta {
-    display: flex;
-    align-items: center;
-    gap: 20px;
-    margin-top: 8px;
-    flex-wrap: wrap;
-  }
-  .ed-restore {
-    margin-top: 20px;
-    padding: 16px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    display: grid;
-    gap: 12px;
-    max-width: 60ch;
-  }
-  .ed-restore-lead { font-size: 13px; color: var(--fg-muted); }
-  .ed-restore-field { display: grid; gap: 6px; font-size: 12px; color: var(--fg-muted); }
-  .ed-restore-error { font-size: 13px; color: var(--color-danger-400); }
-  .ed-hero-cta-meta {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg-subtle);
-    letter-spacing: 0.04em;
-  }
+  .brand { display: flex; align-items: center; gap: 8px; font-size: var(--fs-md); }
+  .brand .dim { color: var(--subtle); }
+  .meta { margin-left: auto; color: var(--subtle); display: flex; gap: 6px; flex-wrap: wrap; }
+  .meta .sep { color: var(--border); }
 
-  /* Step 7 terminal. Chrome + body must hug (no gap) so the window
-     reads as one panel with three traffic-light dots above the
-     content. Spacing under the panel is added via margin on the CTA
-     row below, not via flex-gap on this parent. */
-  .ed-term {
+  .col { width: min(720px, 100% - 32px); margin: 0 auto; padding: 28px 0 56px; display: flex; flex-direction: column; gap: 22px; }
+
+  .stepper { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 6px; }
+  .stepper li { display: flex; align-items: center; }
+  .stepper li + li::before { content: ''; width: 14px; height: 1px; background: var(--border); margin-right: 6px; }
+  .stepper button {
+    all: unset;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--fs-sm);
+    color: var(--subtle);
+    cursor: default;
+    border-radius: var(--r-sm);
+    padding: 2px 4px;
+  }
+  .stepper button:not(:disabled) { cursor: pointer; }
+  .stepper button:not(:disabled):hover .l { color: var(--fg); text-decoration: underline; }
+  .stepper button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .stepper .n {
+    width: 20px;
+    height: 20px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-family: var(--font-mono);
+  }
+  .stepper .on button { color: var(--fg); font-weight: 600; }
+  .stepper .on .n { border-color: var(--accent); color: var(--accent); }
+  .stepper .done .n { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
+  .head h1 { margin: 0; font-size: var(--fs-xl); font-weight: 700; letter-spacing: -0.02em; line-height: 1.25; }
+  .head p { margin: 6px 0 0; color: var(--muted); max-width: 62ch; }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px 24px;
     display: flex;
     flex-direction: column;
-    max-width: 720px;
-    margin: 0 auto;
+    gap: 18px;
   }
-  .ed-term-chrome {
+  .panel :global(.dm-h2) { margin: 0; }
+  .foot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+    margin-top: 4px;
+  }
+
+  .dm-field .lbl { font-size: 12px; color: var(--muted); font-weight: 500; }
+  .dm-field.sub { margin-top: 10px; }
+  .hint { color: var(--subtle); font-size: var(--fs-xs); }
+  .note { margin: 0; font-size: var(--fs-sm); color: var(--muted); }
+  .note a { color: var(--accent); }
+  .warn-t { color: var(--warn); font-weight: 600; }
+  .bad-t { color: var(--bad); }
+  .row { display: flex; gap: 8px; align-items: stretch; }
+  .row input { flex: 1; min-width: 0; }
+  .lbl-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .lbl-row label { font-size: 12px; color: var(--muted); font-weight: 500; }
+  .link { all: unset; cursor: pointer; color: var(--accent); font-size: var(--fs-xs); }
+  .link:hover { text-decoration: underline; }
+  .link:focus-visible { outline: 2px solid var(--accent); }
+
+  .mk { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; flex: none; color: var(--subtle); }
+  .mk.ok { color: var(--ok); }
+  .mk.warn { color: var(--warn); }
+  .mk.fail { color: var(--bad); }
+  .mk.done { color: var(--accent); }
+  .mk .bullet { width: 5px; height: 5px; background: currentColor; }
+  .check { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
+  .check.ok { color: var(--fg); }
+  .check.warn { color: var(--warn); }
+  .check.fail { color: var(--bad); }
+
+  .pf { grid-template-columns: 16px minmax(140px, 1fr) minmax(0, 1.4fr); }
+  .rv { grid-template-columns: 9.5rem minmax(0, 1fr) auto; }
+
+  .callout {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 10px 14px;
-    background: #0b0d10;
-    border: 1px solid #1f242b;
-    border-bottom: 0;
-    border-radius: 8px 8px 0 0;
+    border-radius: var(--r);
+    padding: 10px 12px;
+    font-size: var(--fs-sm);
   }
-  .ed-term-dots {
-    display: inline-flex; gap: 6px;
-  }
-  .ed-term-dots span {
-    width: 11px; height: 11px;
-    border-radius: 999px;
-    background: #2a3038;
-  }
-  .ed-term-dots span:nth-child(1) { background: #ff5f56; opacity: 0.6; }
-  .ed-term-dots span:nth-child(2) { background: #ffbd2e; opacity: 0.5; }
-  .ed-term-dots span:nth-child(3) { background: #27c93f; opacity: 0.55; }
-  .ed-term-title {
-    flex: 1;
-    text-align: center;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: #6b7280;
-    letter-spacing: 0.04em;
-  }
-  .ed-term-spacer { width: 33px; }
-  .ed-term-body {
-    background: #0b0d10;
-    border: 1px solid #1f242b;
-    border-radius: 0 0 8px 8px;
-    padding: 18px 20px 22px;
-    font-family: var(--font-mono);
-    font-size: 12.5px;
-    line-height: 1.7;
-    color: #c9d1d9;
-    min-height: 280px;
-  }
-  /* Marker + content layout. The marker is absolutely positioned in
-     a 22px gutter so the text is a normal block — wraps cleanly on
-     long messages, copies as a single line per row. Previous flex
-     layout broke when long warn lines wrapped (mark stayed at top
-     while text wrapped under it) and copied as alternating
-     mark/text fragments. */
-  .ed-term-line {
-    position: relative;
-    padding-left: 22px;
-    line-height: 1.7;
-    animation: ed-term-line-in 0.2s cubic-bezier(0.2, 0.7, 0.2, 1);
-    word-break: break-word;
-  }
-  @keyframes ed-term-line-in {
-    from { opacity: 0; transform: translateY(-2px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-  .ed-term-mark {
-    position: absolute;
-    left: 0;
-    top: 0;
-    color: var(--color-success-400);
-    font-weight: 600;
-    width: 14px;
-    text-align: center;
-  }
-  .ed-term-mark--info { color: #6b7280; }
-  .ed-term-mark--done { color: var(--color-brand-400); }
-  .ed-term-mark--warn { color: var(--color-warning-400); }
-  .ed-term-mark--fail { color: var(--color-danger-400); }
-  .ed-term-mark--start { color: #6b7280; }
-  .ed-term-line--cmd .ed-term-text { color: #f0f6fc; }
-  .ed-term-line--ok .ed-term-text { color: #c9d1d9; }
-  .ed-term-line--info .ed-term-text { color: #8b949e; }
-  .ed-term-line--start .ed-term-text { color: #8b949e; }
-  .ed-term-line--warn .ed-term-text { color: var(--color-warning-400); }
-  .ed-term-line--fail .ed-term-text { color: var(--color-danger-400); }
-  .ed-term-line--done .ed-term-text { color: var(--color-brand-400); font-weight: 600; }
-  .ed-term-line--cursor { padding-left: 22px; }
+  .callout.bad { border: 1px solid color-mix(in srgb, var(--bad) 45%, transparent); background: color-mix(in srgb, var(--bad) 8%, transparent); color: var(--fg); }
 
-  .ed-term-creds {
-    margin-top: 22px;
-    padding-top: 20px;
-    border-top: 1px dashed #2a3038;
-    animation: ed-term-creds-in 0.5s cubic-bezier(0.2, 0.7, 0.2, 1);
-  }
-  @keyframes ed-term-creds-in {
-    from { opacity: 0; transform: translateY(4px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-  .ed-term-creds-label {
-    font-size: 10.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: #6b7280;
-    margin-bottom: 10px;
-  }
-  .ed-term-creds-grid {
-    display: grid;
-    grid-template-columns: max-content max-content 1fr max-content;
-    gap: 8px 14px;
-    align-items: center;
-  }
-  .ed-term-creds-key { color: var(--color-brand-400); font-size: 12.5px; }
-  .ed-term-creds-eq { color: #6b7280; }
-  .ed-term-creds-val { color: #f0f6fc; font-size: 12.5px; word-break: break-all; }
-  .ed-term-creds-copy {
-    background: transparent;
-    border: 1px solid #2a3038;
-    color: #8b949e;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    padding: 3px 9px;
-    border-radius: 4px;
+  .restore { border-top: 1px solid var(--border); padding-top: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .restore .hint { margin: -8px 0 0; font-size: var(--fs-sm); }
+  .file { font: inherit; font-size: var(--fs-sm); color: var(--muted); }
+
+  .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .preset {
+    all: unset;
     cursor: pointer;
-    transition: all 0.15s ease;
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: var(--fs-sm);
   }
-  .ed-term-creds-copy:hover {
-    border-color: var(--color-brand-400);
-    color: var(--color-brand-400);
+  .preset small { color: var(--subtle); font-size: var(--fs-xs); }
+  .preset:hover { border-color: var(--subtle); }
+  .preset.on { border-color: var(--accent); background: var(--accent-soft); }
+  .preset:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .choices { display: flex; flex-direction: column; gap: 8px; }
+  .radio-card {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    cursor: pointer;
+    background: var(--surface);
   }
-  .ed-term-cta {
-    display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
-    margin-top: 24px;
-    animation: ed-term-creds-in 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) 0.2s both;
+  .radio-card.on { border-color: var(--accent); background: var(--accent-soft); }
+  .radio-card input[type='radio'] { margin-top: 3px; accent-color: var(--accent); }
+  .rc-b { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .rc-t { font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .cb { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: var(--fs-sm); cursor: pointer; }
+  .cb input { margin-top: 3px; accent-color: var(--accent); }
+  .cb .hint { display: block; }
+
+  .pw { position: relative; }
+  .pw input { padding-right: 40px; }
+  .eye {
+    all: unset;
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 28px;
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    cursor: pointer;
+    border-radius: var(--r-sm);
   }
-  .ed-term-cta-meta {
+  .eye:hover { color: var(--fg); }
+  .eye:focus-visible { outline: 2px solid var(--accent); }
+  .strength { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
+  .strength i { flex: 1; height: 4px; background: var(--field); }
+  .strength i.on.s1 { background: var(--bad); }
+  .strength i.on.s2 { background: var(--warn); }
+  .strength i.on.s3, .strength i.on.s4 { background: var(--ok); }
+  .strength span { width: 48px; text-align: right; }
+
+  .status { display: flex; align-items: center; gap: 10px; font-size: var(--fs-sm); }
+  .log {
+    background: var(--code, var(--field));
+    border-radius: var(--r-sm);
+    padding: 10px 12px;
     font-size: 12px;
-    color: var(--fg-subtle);
-    text-wrap: pretty;
-    max-width: 38ch;
+    line-height: 1.6;
+    max-height: 340px;
+    overflow: auto;
+    margin-top: -8px;
   }
+  .ln { display: flex; gap: 8px; align-items: flex-start; }
+  .ln > span:last-child { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .ln.warn > span:last-child { color: var(--warn); }
+  .ln.fail > span:last-child { color: var(--bad); }
+  .ln .mk { margin-top: 2px; }
 
-  /* Mobile */
-  @media (max-width: 800px) {
-    .ed-rail { display: none; }
-    .ed-topbar { padding-left: 24px; }
-    .ed-stage { padding: 16px 24px 60px; }
-    .ed-title { font-size: 32px; }
-    .ed-hero :global(.ed-title) { font-size: 38px; }
-    .ed-content { padding: 24px; }
+  .creds-h { margin-top: 4px !important; }
+  .creds { margin-top: -8px; }
+  .creds dd { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .copy {
+    all: unset;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--fs-xs);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 1px 6px;
   }
+  .copy:hover { color: var(--fg); border-color: var(--subtle); }
+  .copy:focus-visible { outline: 2px solid var(--accent); }
 
-  /* Reduced motion */
-  @media (prefers-reduced-motion: reduce) {
-    .ed-cursor { animation: none; }
-    .ed-term-line { animation: none; }
-    .ed-term-creds, .ed-term-cta { animation: none; }
+  @media (max-width: 640px) {
+    .top { padding: 12px 16px; }
+    .panel { padding: 18px 16px; }
+    .presets { grid-template-columns: 1fr; }
+    .rv { grid-template-columns: 7rem minmax(0, 1fr) auto; }
   }
 </style>

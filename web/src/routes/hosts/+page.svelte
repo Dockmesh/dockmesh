@@ -1,61 +1,50 @@
 <script lang="ts">
-  // Hosts list — editorial rebuild based on `Dockmesh Wizard (6)/hosts.jsx`.
-  // Sticky upgrade-policy strip when connected_pending > 0; filter pills
-  // (All/Online/Offline/Pending/Agents) + name/hostname/tag search; table
-  // with status dot, kind pill, tags, live cpu/mem/disk bars, container
-  // count, version + upgrade-hint, last-seen, ellipsis menu. Bulk action
-  // bar when rows are selected. AddHostModal is a 3-step inline flow.
-  // See project_hosts_open_punch_list.md memory for deferred features.
   import { onMount, onDestroy } from 'svelte';
+  import { tagProblem } from './_host';
+  import { fmtAgo, fmtMem, pctTone } from '$lib/format';
+  const fmtAgoNever = (iso?: string) => fmtAgo(iso, 'never');
   import { goto } from '$app/navigation';
   import {
     api, ApiError, isFanOut,
-    type Agent, type AgentCreateResult, type AgentUpgradePolicy,
-    type HostInfo
+    type Agent, type AgentUpgradePolicy, type HostInfo
   } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { fmtVersion } from '$lib/version';
-  import { Skeleton, EmptyState } from '$lib/components/ui';
-  import { Eyebrow } from '$lib/components/editorial';
+  import { Skeleton, EmptyState, StatBar, Segmented, ChipList, TagPill, Menu, Modal, LiveIndicator } from '$lib/components/ui';
+  import type { MenuItem } from '$lib/components/ui/Menu.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
-  import {
-    Server, Plus, RefreshCw, Search, MoreVertical,
-    ArrowDownToLine, ArrowUpCircle, Trash2, Check, Copy, X,
-    AlertTriangle, ChevronRight
-  } from 'lucide-svelte';
+  import { Server, Plus, RefreshCw, X } from 'lucide-svelte';
 
   let remoteAgents = $state<Agent[]>([]);
   let localHostInfo = $state<HostInfo | null>(null);
   let loading = $state(true);
+  let refreshing = $state(false);
+  let lastLoaded = $state<number | null>(null);
   let containerCounts = $state<Record<string, number>>({});
-  let metricsByHost = $state<Record<string, { cpu: number; memUsed: number; memTotal: number; disk: number } | null>>({});
+  let metricsByHost = $state<Record<string, { cpu: number; cores: number; memUsed: number; memTotal: number; disk: number } | null>>({});
   let upgradePolicy = $state<AgentUpgradePolicy | null>(null);
 
-  // Filter + search
   let filter = $state<'all' | 'online' | 'offline' | 'pending' | 'agents'>('all');
   let search = $state('');
+  let tagFilter = $state<string | null>(null);
 
-  // Selection + open menu
   let selected = $state<Set<string>>(new Set());
-  let openMenu = $state<string | null>(null);
   let bulkBusy = $state(false);
 
-  // Add-host modal
   let showAdd = $state(false);
 
-  // Edit-tags modal (re-used from old legacy implementation)
   let tagsHostId = $state<string | null>(null);
+  let tagsOpen = $state(false);
   let tagsDraft = $state<string[]>([]);
   let tagInput = $state('');
   let tagSuggestions = $state<string[]>([]);
   let tagsBusy = $state(false);
   let hostTags = $state<Record<string, string[]>>({});
 
-  // Treat the local host as a synthetic Agent-shape row pinned at top
-  // of the list. Many actions are N/A on local (no drain, no revoke,
-  // no upgrade). We use kind === 'local' to gate them in the row UI.
+  // The local host is pinned at the top as an Agent-shaped row; drain,
+  // revoke and upgrade do not apply to it.
   type Row = Agent & { kind: 'local' | 'agent' };
   const rows = $derived.by<Row[]>(() => {
     const out: Row[] = [];
@@ -70,9 +59,7 @@
         updated_at: ''
       } as Row);
     }
-    for (const a of remoteAgents) {
-      out.push({ ...a, kind: 'agent' });
-    }
+    for (const a of remoteAgents) out.push({ ...a, kind: 'agent' });
     return out;
   });
 
@@ -82,9 +69,10 @@
       if (filter === 'offline' && r.status !== 'offline') return false;
       if (filter === 'pending' && r.status !== 'pending') return false;
       if (filter === 'agents' && r.kind !== 'agent') return false;
+      const tags = hostTags[r.id] ?? [];
+      if (tagFilter && !tags.includes(tagFilter)) return false;
       if (search) {
         const q = search.toLowerCase();
-        const tags = hostTags[r.id] ?? [];
         if (
           !r.name.toLowerCase().includes(q) &&
           !(r.hostname ?? '').toLowerCase().includes(q) &&
@@ -103,10 +91,42 @@
     agents: rows.filter((r) => r.kind === 'agent').length
   });
 
-  // ─── Loaders ──────────────────────────────────────────────────────────
+  function needsUpgrade(r: Row): boolean {
+    return r.kind === 'agent' && !!r.version && !!upgradePolicy && r.version !== upgradePolicy.server_version;
+  }
+
+  const stats = $derived.by(() => {
+    const outdated = rows.filter(needsUpgrade);
+    const offline = rows.filter((r) => r.status === 'offline');
+    let cores = 0;
+    let mem = 0;
+    for (const m of Object.values(metricsByHost)) {
+      if (!m) continue;
+      cores += m.cores;
+      mem += m.memTotal;
+    }
+    const containers = Object.values(containerCounts).reduce((a, n) => a + n, 0);
+    return [
+      {
+        label: 'Online',
+        value: `${counts.online} of ${counts.all}`,
+        note: offline.length ? offline.map((r) => r.name).join(', ') + ' offline' : counts.pending ? `${counts.pending} pending` : '',
+        tone: offline.length ? ('bad' as const) : ('' as const)
+      },
+      {
+        label: 'Agents outdated',
+        value: outdated.length,
+        note: upgradePolicy ? `upgrade policy: ${upgradePolicy.mode}` : '',
+        tone: outdated.length ? ('warn' as const) : ('' as const)
+      },
+      { label: 'Containers', value: containers },
+      { label: 'Total capacity', value: cores ? `${Math.round(cores)} cores · ${fmtMem(mem)}` : '—' }
+    ];
+  });
+
   async function loadAll() {
     if (!allowed('hosts.update') && !allowed('hosts.view')) return;
-    loading = true;
+    refreshing = true;
     try {
       const [agents, hostList, policy] = await Promise.all([
         api.agents.list(),
@@ -116,40 +136,27 @@
       remoteAgents = agents;
       localHostInfo = hostList.find((h) => h.kind === 'local') ?? null;
       upgradePolicy = policy;
-      // Tags + per-host metrics in parallel for every row.
-      const tasks: Promise<void>[] = [];
-      const allRows: { id: string }[] = [
-        ...(localHostInfo ? [{ id: 'local' }] : []),
-        ...agents.map((a) => ({ id: a.id }))
-      ];
-      for (const r of allRows) {
-        tasks.push((async () => {
-          try { hostTags[r.id] = await api.hosts.listTags(r.id); }
-          catch { hostTags[r.id] = []; }
-        })());
-        tasks.push((async () => {
-          try {
-            const m = await api.system.metrics(r.id);
-            if (!isFanOut(m)) {
-              metricsByHost[r.id] = {
-                cpu: m.cpu_percent, memUsed: m.mem_used, memTotal: m.mem_total,
-                disk: m.disk_percent ?? 0
-              };
-            }
-          } catch { metricsByHost[r.id] = null; }
-        })());
-        tasks.push((async () => {
-          try {
-            const s = await api.containers.summary(r.id);
-            containerCounts[r.id] = s.total;
-          } catch { containerCounts[r.id] = 0; }
-        })());
-      }
-      await Promise.all(tasks);
+      const ids = [...(localHostInfo ? ['local'] : []), ...agents.map((a) => a.id)];
+      await Promise.all(
+        ids.flatMap((id) => [
+          api.hosts.listTags(id).then((t) => (hostTags[id] = t)).catch(() => (hostTags[id] = [])),
+          api.system
+            .metrics(id)
+            .then((m) => {
+              if (!isFanOut(m)) {
+                metricsByHost[id] = { cpu: m.cpu_percent, cores: m.cpu_cores, memUsed: m.mem_used, memTotal: m.mem_total, disk: m.disk_percent ?? 0 };
+              }
+            })
+            .catch(() => (metricsByHost[id] = null)),
+          api.containers.summary(id).then((s) => (containerCounts[id] = s.total)).catch(() => (containerCounts[id] = 0))
+        ])
+      );
+      lastLoaded = Date.now();
     } catch (err) {
       toast.error('Failed to load hosts', err instanceof ApiError ? err.message : undefined);
     } finally {
       loading = false;
+      refreshing = false;
     }
   }
 
@@ -162,18 +169,14 @@
   });
   onDestroy(() => { if (refreshTimer) clearInterval(refreshTimer); });
 
-  // ─── Row actions ──────────────────────────────────────────────────────
   function toggleSelect(id: string) {
     const next = new Set(selected);
     if (next.has(id)) next.delete(id); else next.add(id);
     selected = next;
   }
+  const selectable = $derived(filteredRows.filter((r) => r.kind !== 'local'));
   function toggleAll() {
-    if (selected.size === filteredRows.length && filteredRows.length > 0) {
-      selected = new Set();
-    } else {
-      selected = new Set(filteredRows.filter((r) => r.kind !== 'local').map((r) => r.id));
-    }
+    selected = selected.size === selectable.length && selectable.length > 0 ? new Set() : new Set(selectable.map((r) => r.id));
   }
 
   let upgradingId = $state<string | null>(null);
@@ -188,7 +191,6 @@
     } finally {
       upgradingId = null;
     }
-    openMenu = null;
   }
 
   async function revokeHost(r: Row) {
@@ -197,7 +199,7 @@
       title: `Revoke ${r.name}`,
       message: `Revoke host "${r.name}"?`,
       body: 'The host’s agent certificate is invalidated. Containers running there are forgotten by Dockmesh — they keep running on the host until you stop them manually. You can re-enroll later by running the install script again.',
-      confirmLabel: 'Revoke', danger: true
+      confirmLabel: 'Revoke', danger: true, typeToConfirm: r.name
     }))) return;
     try {
       await api.agents.delete(r.id);
@@ -206,19 +208,24 @@
     } catch (err) {
       toast.error('Revoke failed', err instanceof ApiError ? err.message : undefined);
     }
-    openMenu = null;
   }
 
-  async function copyEnrollURL(_r: Row) {
-    // The original install URL isn't stored after creation; provide a
-    // best-effort URL pointing at the agent endpoint. For a real reissue,
-    // use the rotate-token action.
-    const url = `${window.location.origin}/api/v1/agents/enroll`;
-    await copyWithToast(url, 'Enrollment URL copied');
-    openMenu = null;
+  async function copyEnrollURL() {
+    // The install URL is not stored after creation; a fresh token comes
+    // from the host's Maintenance tab.
+    await copyWithToast(`${window.location.origin}/api/v1/agents/enroll`, 'Enrollment URL copied');
   }
 
-  // Bulk
+  async function runPolicy() {
+    try {
+      upgradePolicy = await api.agents.runUpgradePolicy();
+      toast.success('Evaluation triggered');
+      await loadAll();
+    } catch (e) {
+      toast.error('Failed', e instanceof ApiError ? e.message : undefined);
+    }
+  }
+
   async function bulkUpgrade() {
     bulkBusy = true;
     let ok = 0, fail = 0;
@@ -236,7 +243,7 @@
   async function bulkRevoke() {
     if (!(await confirm.ask({
       title: 'Revoke selected hosts', message: `Revoke ${selected.size} host${selected.size === 1 ? '' : 's'}?`,
-      body: 'Each host’s agent certificate is invalidated.', confirmLabel: 'Revoke', danger: true
+      body: 'Each host’s agent certificate is invalidated. Their containers keep running but are no longer managed.', confirmLabel: 'Revoke', danger: true
     }))) return;
     bulkBusy = true;
     let ok = 0, fail = 0;
@@ -250,19 +257,18 @@
     await loadAll();
   }
 
-  // Tags modal helpers (reused, simplified)
   async function openTagsModal(id: string) {
     tagsHostId = id;
     tagsDraft = [...(hostTags[id] ?? [])];
     tagInput = '';
+    tagsOpen = true;
     try { tagSuggestions = await api.hosts.allTags(); } catch { tagSuggestions = []; }
-    openMenu = null;
   }
   function addTagDraft(t: string) {
     const v = t.trim().toLowerCase();
     if (!v || tagsDraft.includes(v)) { tagInput = ''; return; }
-    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(v)) { toast.error('Invalid tag', 'lowercase letters, digits, hyphens, 1-32 chars'); return; }
-    if (tagsDraft.length >= 20) { toast.error('Max 20 tags'); return; }
+    const problem = tagProblem(v, tagsDraft);
+    if (problem) { toast.error(problem.title, problem.detail); return; }
     tagsDraft = [...tagsDraft, v];
     tagInput = '';
   }
@@ -270,301 +276,209 @@
     if (!tagsHostId) return;
     tagsBusy = true;
     try {
-      const saved = await api.hosts.setTags(tagsHostId, tagsDraft);
-      hostTags[tagsHostId] = saved;
+      hostTags[tagsHostId] = await api.hosts.setTags(tagsHostId, tagsDraft);
       toast.success('Tags saved');
-      tagsHostId = null;
+      tagsOpen = false;
     } catch (err) {
       toast.error('Save failed', err instanceof ApiError ? err.message : undefined);
     } finally { tagsBusy = false; }
   }
 
-  // Helpers
-  function fmtAgo(iso?: string): string {
-    if (!iso) return 'never';
-    const d = (Date.now() - new Date(iso).getTime()) / 1000;
-    if (d < 60) return `${Math.round(d)}s ago`;
-    if (d < 3600) return `${Math.round(d / 60)}m ago`;
-    if (d < 86400) return `${Math.round(d / 3600)}h ago`;
-    return `${Math.round(d / 86400)}d ago`;
-  }
   function fmtUptime(iso?: string): string {
     if (!iso) return '';
     const d = (Date.now() - new Date(iso).getTime()) / 1000;
-    if (d < 60) return `up ${Math.round(d)}s`;
-    if (d < 3600) return `up ${Math.round(d / 60)}m`;
-    if (d < 86400) return `up ${Math.round(d / 3600)}h`;
-    return `up ${Math.round(d / 86400)}d`;
+    if (d < 3600) return `up ${Math.max(1, Math.round(d / 60))} min`;
+    if (d < 86400) return `up ${Math.round(d / 3600)} h`;
+    return `up ${Math.round(d / 86400)} d`;
+  }
+  function dotTone(s: string): string {
+    if (s === 'online') return 'ok';
+    if (s === 'offline') return 'bad';
+    if (s === 'pending') return 'warn';
+    return '';
   }
 
-  function statusDot(s: string): string {
-    if (s === 'online') return 'ok-dot';
-    if (s === 'offline') return 'fail-dot';
-    if (s === 'pending') return 'warn-dot';
-    return 'neutral-dot';
+  function rowMenu(r: Row): MenuItem[] {
+    const items: MenuItem[] = [
+      { label: 'Open', kbd: '↵', href: `/hosts/${r.id}` },
+      { separator: true },
+      { label: 'Edit tags', onclick: () => openTagsModal(r.id) }
+    ];
+    if (r.kind === 'agent') {
+      if (needsUpgrade(r)) {
+        items.push({ label: upgradingId === r.id ? 'Upgrading…' : 'Upgrade agent', disabled: upgradingId === r.id, onclick: () => upgradeHost(r.id, r.name) });
+      }
+      items.push({ label: 'Copy enrollment URL', onclick: copyEnrollURL });
+      items.push({ separator: true }, { label: 'Revoke…', danger: true, onclick: () => revokeHost(r) });
+    }
+    return items;
   }
+
+  const COLS = '22px 14px minmax(200px, 1.6fr) 64px 130px 130px 130px 110px 150px 40px';
 </script>
 
-<section class="ed-hosts">
+<section class="dm-page">
   {#if !allowed('hosts.update') && !allowed('hosts.view')}
-    <div class="dm-card" style="padding: 32px;">
-      <EmptyState icon={Server} title="Admin-only" description="Host management requires hosts.view permission." />
-    </div>
+    <EmptyState icon={Server} title="No access" description="Host management needs the hosts.view permission." />
   {:else}
-    <!-- Header -->
-    <header class="ed-hosts-header">
-      <div class="ed-hosts-header-text">
-        <h1 class="ed-title ed-hosts-title">Hosts</h1>
-        <p class="ed-hosts-subtitle">
-          {counts.all} host{counts.all === 1 ? '' : 's'} ·
-          {counts.online} online{counts.offline > 0 ? ` · ${counts.offline} offline` : ''}{counts.pending > 0 ? ` · ${counts.pending} pending` : ''}
-        </p>
-      </div>
-      <div class="ed-actions">
-        <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={loadAll} title="Refresh">
-          <RefreshCw size={12} strokeWidth={1.5} class={loading ? 'ed-spin' : ''} /> Refresh
+    <div class="dm-ph">
+      <h1>Hosts</h1>
+      <span class="dm-sub dm-num">{counts.all}</span>
+      {#if tagFilter}
+        <span class="tagf">tag: {tagFilter}<button type="button" onclick={() => (tagFilter = null)} aria-label="Clear tag filter"><X size={11} /></button></span>
+      {/if}
+      <span class="dm-sp"></span>
+      <LiveIndicator updatedAt={lastLoaded} onrefresh={loadAll} busy={refreshing} />
+      {#if allowed('hosts.create')}
+        <button type="button" class="dm-btn dm-btn-primary" onclick={() => (showAdd = true)}>
+          <Plus size={14} strokeWidth={2} /> Add host
         </button>
-        <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => (showAdd = true)}>
-          <Plus size={12} strokeWidth={1.5} /> Add host
-        </button>
-      </div>
-    </header>
+      {/if}
+    </div>
 
-    <!-- Upgrade-policy strip (only when relevant) -->
-    {#if upgradePolicy && (upgradePolicy.connected_pending > 0 || upgradePolicy.connected_total > 0)}
-      <div class="ed-hosts-policy" class:alert={upgradePolicy.connected_pending > 0}>
-        <div class="ed-hosts-policy-mark">
-          <RefreshCw size={14} strokeWidth={1.5} />
-        </div>
-        <div class="ed-hosts-policy-text">
-          <div class="ed-hosts-policy-head">
-            <Eyebrow>Agent upgrade policy</Eyebrow>
-            <span class="font-mono ed-hosts-policy-meta">
-              mode <span class="ed-hosts-policy-mode">{upgradePolicy.mode}</span>
-              {#if upgradePolicy.mode === 'staged' && upgradePolicy.stage_percent}
-                · stage {upgradePolicy.stage_percent}%
-              {/if}
-            </span>
-          </div>
-          <div class="ed-hosts-policy-body">
-            {#if upgradePolicy.connected_pending > 0}
-              <span class="ed-accent-mono">{upgradePolicy.connected_pending}</span>
-              {upgradePolicy.connected_pending === 1 ? 'host is' : 'hosts are'}
-              behind server {fmtVersion(upgradePolicy.server_version)}.
-              <span class="ed-hosts-policy-detail">
-                {upgradePolicy.connected_up_to_date} of {upgradePolicy.connected_total} up-to-date.
-              </span>
-            {:else}
-              All <span class="ed-accent-mono">{upgradePolicy.connected_total}</span> connected agents on {fmtVersion(upgradePolicy.server_version)}.
-            {/if}
-          </div>
-          {#if upgradePolicy.last_run_at}
-            <div class="ed-hosts-policy-footnote font-mono">
-              last run {fmtAgo(upgradePolicy.last_run_at)} · server {fmtVersion(upgradePolicy.server_version)}
-            </div>
-          {/if}
-        </div>
-        <div class="ed-actions">
-          {#if upgradePolicy.connected_pending > 0 && upgradePolicy.mode !== 'manual'}
-            <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={async () => { try { upgradePolicy = await api.agents.runUpgradePolicy(); toast.success('Evaluation triggered'); await loadAll(); } catch (e) { toast.error('Failed', e instanceof ApiError ? e.message : undefined); } }}>
-              <RefreshCw size={11} strokeWidth={1.5} /> Run policy now
-            </button>
-          {/if}
-        </div>
+    {#if !loading}
+      <StatBar items={stats} />
+    {/if}
+
+    {#if upgradePolicy && upgradePolicy.connected_pending > 0}
+      <div class="policy" role="status">
+        <RefreshCw size={14} strokeWidth={1.8} />
+        <span class="dm-trunc">
+          <b>{upgradePolicy.connected_pending} {upgradePolicy.connected_pending === 1 ? 'agent is' : 'agents are'} behind the server ({fmtVersion(upgradePolicy.server_version)}).</b>
+          <span class="dm-dim">
+            {upgradePolicy.connected_up_to_date} of {upgradePolicy.connected_total} up to date · policy {upgradePolicy.mode}{upgradePolicy.mode === 'staged' && upgradePolicy.stage_percent ? ` ${upgradePolicy.stage_percent} %` : ''}{upgradePolicy.last_run_at ? ` · last run ${fmtAgoNever(upgradePolicy.last_run_at)}` : ''}
+          </span>
+        </span>
+        <span class="dm-sp"></span>
+        {#if upgradePolicy.mode !== 'manual'}
+          <button type="button" class="dm-btn dm-btn-sm" onclick={runPolicy}>Run policy now</button>
+        {/if}
       </div>
     {/if}
 
-    <!-- Filter + search bar -->
-    <div class="ed-hosts-filterbar">
-      <div class="ed-hosts-pills">
-        {#each [
-          ['all', 'All', counts.all],
-          ['online', 'Online', counts.online],
-          ['offline', 'Offline', counts.offline],
-          ['pending', 'Pending', counts.pending],
-          ['agents', 'Agents', counts.agents]
-        ] as [id, label, count] (id)}
-          <button
-            type="button"
-            class="ed-pill"
-            class:active={filter === id}
-            onclick={() => (filter = id as typeof filter)}
-          >{label}<span class="ed-count">{count}</span></button>
+    {#if !loading && rows.length > 0}
+      <div class="dm-toolbar">
+        <Segmented
+          label="Filter hosts"
+          bind:value={filter}
+          options={[
+            { key: 'all', label: 'All', count: counts.all },
+            { key: 'online', label: 'Online', count: counts.online },
+            { key: 'offline', label: 'Offline', count: counts.offline },
+            { key: 'pending', label: 'Pending', count: counts.pending },
+            { key: 'agents', label: 'Agents', count: counts.agents }
+          ]}
+        />
+        {#if selected.size > 0}
+          <span class="bulk">
+            <span class="dm-num">{selected.size} selected</span>
+            <button type="button" class="dm-btn dm-btn-sm" disabled={bulkBusy} onclick={bulkUpgrade}>Upgrade</button>
+            <button type="button" class="dm-btn dm-btn-sm dm-btn-danger" disabled={bulkBusy} onclick={bulkRevoke}>Revoke…</button>
+            <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (selected = new Set())}>Clear</button>
+          </span>
+        {/if}
+        <span class="dm-sp"></span>
+        <input type="search" class="dm-filter" placeholder="Filter by name, hostname or tag…" aria-label="Filter hosts" bind:value={search} style="width: 260px" />
+      </div>
+    {/if}
+
+    {#if loading && rows.length === 0}
+      <div class="dm-tbl">
+        {#each Array(4) as _, i (i)}
+          <div class="dm-tr" style="grid-template-columns: 1fr"><Skeleton width="60%" height="0.9rem" /></div>
         {/each}
       </div>
-      <div class="ed-hosts-search">
-        <Search size={12} strokeWidth={1.5} class="ed-hosts-search-icon" />
-        <input
-          type="text"
-          class="ed-underline-input"
-          placeholder="name, hostname, tag…"
-          bind:value={search}
-        />
-      </div>
-    </div>
-
-    <!-- Bulk-action bar -->
-    {#if selected.size > 0}
-      <div class="ed-hosts-bulkbar">
-        <span class="font-mono ed-hosts-bulk-count">
-          <span class="ed-accent-mono">{selected.size}</span> selected
-        </span>
-        <span style="flex: 1"></span>
-        <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" disabled={bulkBusy} onclick={bulkUpgrade}>
-          <ArrowUpCircle size={11} strokeWidth={1.5} /> Bulk upgrade
-        </button>
-        <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs ed-hosts-bulk-danger" disabled={bulkBusy} onclick={bulkRevoke}>
-          <Trash2 size={11} strokeWidth={1.5} /> Revoke
-        </button>
-        <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => (selected = new Set())}>Clear</button>
-      </div>
-    {/if}
-
-    <!-- Hosts table -->
-    {#if loading && rows.length === 0}
-      <div class="dm-card" style="padding: 22px;">
-        <Skeleton width="80%" height="6rem" />
-      </div>
     {:else if filteredRows.length === 0}
-      <div class="dm-card" style="padding: 36px;">
-        <EmptyState icon={Server} title="No hosts match" description={search || filter !== 'all' ? 'Adjust filters or search.' : 'Add your first remote host to spread workload.'}>
-          {#snippet action()}
-            <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => (showAdd = true)}>
-              <Plus size={12} strokeWidth={1.5} /> Add host
-            </button>
-          {/snippet}
-        </EmptyState>
-      </div>
+      <EmptyState icon={Server} title="No hosts match" description={search || filter !== 'all' || tagFilter ? 'Change the filter or search.' : 'Add a remote host to spread workload.'}>
+        {#snippet action()}
+          {#if allowed('hosts.create')}
+            <button type="button" class="dm-btn dm-btn-primary" onclick={() => (showAdd = true)}><Plus size={14} strokeWidth={2} /> Add host</button>
+          {/if}
+        {/snippet}
+      </EmptyState>
     {:else}
-      <div class="ed-hosts-table">
-        <div class="ed-hosts-row ed-hosts-row-head">
-          <input type="checkbox" checked={selected.size > 0 && selected.size === filteredRows.filter((r) => r.kind !== 'local').length} onchange={toggleAll} />
-          <span>host</span>
-          <span>tags</span>
-          <span class="right">cpu</span>
-          <span class="right">mem</span>
-          <span class="right">disk</span>
-          <span class="right">cont.</span>
-          <span>version</span>
-          <span>last seen</span>
-          <span></span>
+      <div class="dm-tbl" role="table" aria-label="Hosts">
+        <div class="dm-tr dm-th" role="row" style="grid-template-columns: {COLS}">
+          <span role="columnheader"><input type="checkbox" aria-label="Select all" checked={selected.size > 0 && selected.size === selectable.length} onchange={toggleAll} /></span>
+          <span role="columnheader"></span>
+          <span role="columnheader">Host</span>
+          <span role="columnheader">Kind</span>
+          <span role="columnheader">CPU</span>
+          <span role="columnheader">Memory</span>
+          <span role="columnheader">Disk</span>
+          <span role="columnheader">Agent</span>
+          <span role="columnheader">Tags</span>
+          <span role="columnheader"></span>
         </div>
         {#each filteredRows as r (r.id)}
           {@const m = metricsByHost[r.id]}
           {@const memPct = m && m.memTotal > 0 ? Math.round((m.memUsed / m.memTotal) * 100) : null}
           {@const cpuPct = m ? Math.round(m.cpu) : null}
           {@const diskPct = m ? Math.round(m.disk) : null}
-          {@const ctrCount = containerCounts[r.id]}
           {@const tags = hostTags[r.id] ?? []}
-          {@const needsUpgrade = r.version && upgradePolicy && r.version !== upgradePolicy.server_version && r.kind === 'agent'}
+          {@const online = r.status === 'online'}
           <div
-            class="ed-hosts-row"
-            class:pending={r.status === 'pending'}
-            class:offline={r.status === 'offline'}
+            class="dm-tr dm-click"
+            class:dm-sel={selected.has(r.id)}
+            role="row"
+            tabindex="0"
+            style="grid-template-columns: {COLS}"
+            onclick={() => goto(`/hosts/${r.id}`)}
+            onkeydown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) goto(`/hosts/${r.id}`); }}
           >
-            <input
-              type="checkbox"
-              disabled={r.kind === 'local'}
-              checked={selected.has(r.id)}
-              onchange={() => toggleSelect(r.id)}
-            />
-            <div class="ed-hosts-row-host">
-              <div class="ed-hosts-row-name-line">
-                <span class={statusDot(r.status)}></span>
-                <a href="/hosts/{r.id}" class="ed-hosts-row-name">{r.name}</a>
-                {#if r.kind === 'local'}
-                  <span class="dm-pill ed-hosts-row-pill ed-hosts-row-pill-local">local</span>
-                {:else}
-                  <span class="dm-pill dm-pill-neutral ed-hosts-row-pill">agent</span>
-                {/if}
-                {#if r.status === 'pending'}<span class="dm-pill dm-pill-warning ed-hosts-row-pill">pending</span>{/if}
-                {#if r.status === 'offline'}<span class="dm-pill dm-pill-danger ed-hosts-row-pill">offline</span>{/if}
-              </div>
-              <div class="ed-hosts-row-sub font-mono">
-                {#if r.hostname}{r.hostname}{:else if r.kind === 'local'}localhost{:else}<em class="ed-hosts-row-sub-empty">no hostname yet</em>{/if}
-                {#if r.os}· {r.os}/{r.arch}{/if}
-                {#if r.online_since}· {fmtUptime(r.online_since)}{/if}
-              </div>
-            </div>
-            <div class="ed-hosts-row-tags">
-              {#if tags.length === 0}<span class="ed-hosts-row-tags-empty font-mono">—</span>{/if}
-              {#each tags.slice(0, 3) as t (t)}
-                <span class="ed-hosts-tag-chip">{t}</span>
-              {/each}
-              {#if tags.length > 3}<span class="ed-hosts-tag-extra font-mono">+{tags.length - 3}</span>{/if}
-            </div>
-            <div class="ed-hosts-bar-cell" class:warn={cpuPct != null && cpuPct > 80}>
-              {#if cpuPct == null}<span class="font-mono ed-hosts-bar-empty">—</span>
-              {:else}
-                <span class="font-mono">{cpuPct}%</span>
-                <div class="ed-hosts-bar"><span class="ed-hosts-bar-fill" style="width: {Math.min(100, cpuPct)}%"></span></div>
-              {/if}
-              <!-- Reserved hint slot: keeps CPU vertically aligned with
-                   MEM (which has a GB hint). Empty placeholder so all
-                   bar cells have identical height. -->
-              <div class="ed-hosts-bar-hint font-mono">&nbsp;</div>
-            </div>
-            <div class="ed-hosts-bar-cell">
-              {#if memPct == null}<span class="font-mono ed-hosts-bar-empty">—</span>
-              {:else}
-                <span class="font-mono">{memPct}%</span>
-                <div class="ed-hosts-bar"><span class="ed-hosts-bar-fill" style="width: {Math.min(100, memPct)}%"></span></div>
-              {/if}
-              <div class="ed-hosts-bar-hint font-mono">
-                {#if m && m.memTotal > 0}{(m.memUsed / 1024 / 1024 / 1024).toFixed(1)}/{(m.memTotal / 1024 / 1024 / 1024).toFixed(0)} GB{:else}&nbsp;{/if}
-              </div>
-            </div>
-            <div class="ed-hosts-bar-cell" class:warn={diskPct != null && diskPct > 80}>
-              {#if diskPct == null}<span class="font-mono ed-hosts-bar-empty">—</span>
-              {:else}
-                <span class="font-mono">{diskPct}%</span>
-                <div class="ed-hosts-bar"><span class="ed-hosts-bar-fill" style="width: {Math.min(100, diskPct)}%"></span></div>
-              {/if}
-              <div class="ed-hosts-bar-hint font-mono">&nbsp;</div>
-            </div>
-            <span class="ed-hosts-row-num font-mono">{ctrCount ?? '—'}</span>
-            <div class="ed-hosts-row-version">
-              <span class="font-mono">{r.version ? fmtVersion(r.version) : '—'}</span>
-              {#if needsUpgrade}
-                <span class="ed-hosts-row-upgrade font-mono">↑ {fmtVersion(upgradePolicy?.server_version)}</span>
-              {:else if r.update_recommended}
-                <span class="ed-hosts-row-upgrade font-mono" title="This agent speaks an older protocol; some features are unavailable until it is upgraded">update recommended</span>
-              {/if}
-            </div>
-            <span class="font-mono ed-hosts-row-seen">
-              {#if r.kind === 'local'}—{:else}{fmtAgo(r.last_seen_at)}{/if}
+            <span role="cell">
+              <input type="checkbox" aria-label="Select {r.name}" disabled={r.kind === 'local'} checked={selected.has(r.id)}
+                onclick={(e) => e.stopPropagation()} onchange={() => toggleSelect(r.id)} />
             </span>
-            <div class="ed-hosts-row-actions">
-              <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={(e) => { e.stopPropagation(); openMenu = openMenu === r.id ? null : r.id; }} aria-label="Actions">
-                <MoreVertical size={13} strokeWidth={1.5} />
-              </button>
-              {#if openMenu === r.id}
-                <div class="ed-hosts-row-menu">
-                  <a href="/hosts/{r.id}" class="ed-hosts-menu-item">Open detail <ChevronRight size={11} strokeWidth={1.5} /></a>
-                  <div class="ed-hosts-menu-sep"></div>
-                  <button type="button" class="ed-hosts-menu-item" onclick={() => openTagsModal(r.id)}>Edit tags</button>
-                  {#if r.kind === 'agent'}
-                    {#if needsUpgrade}
-                      <button type="button" class="ed-hosts-menu-item" disabled={upgradingId === r.id} onclick={() => upgradeHost(r.id, r.name)}>
-                        {upgradingId === r.id ? 'Upgrading…' : 'Upgrade agent'}
-                      </button>
-                    {/if}
-                    <button type="button" class="ed-hosts-menu-item" onclick={() => copyEnrollURL(r)}>Copy enrollment URL</button>
-                    <div class="ed-hosts-menu-sep"></div>
-                    <button type="button" class="ed-hosts-menu-item ed-hosts-menu-danger" onclick={() => revokeHost(r)}>Revoke…</button>
-                  {/if}
-                </div>
+            <span role="cell"><span class="dm-dot {dotTone(r.status)}" title={r.status}></span></span>
+            <span role="cell" class="dm-nm">
+              <a href="/hosts/{r.id}" onclick={(e) => e.stopPropagation()}>{r.name}</a>
+              <small>
+                {#if r.status === 'offline'}
+                  <span class="off">offline · last seen {fmtAgoNever(r.last_seen_at)}</span>
+                {:else if r.status === 'pending'}
+                  waiting for the agent to connect
+                {:else}
+                  {r.hostname || (r.kind === 'local' ? 'localhost' : '—')}{r.os ? ` · ${r.os}/${r.arch}` : ''} · {containerCounts[r.id] ?? '—'} containers{r.online_since ? ` · ${fmtUptime(r.online_since)}` : ''}
+                {/if}
+              </small>
+            </span>
+            <span role="cell" class="dm-dim">{r.kind}</span>
+            {#if online && m}
+              <span role="cell" class="mbar"><i><b class={pctTone(cpuPct ?? 0)} style="width:{Math.min(100, cpuPct ?? 0)}%"></b></i><span class="dm-num">{cpuPct}%</span></span>
+              <span role="cell" class="mbar" title={memPct != null ? `${fmtMem(m.memUsed)} of ${fmtMem(m.memTotal)}` : 'unavailable'}>
+                {#if memPct != null}<i><b class={pctTone(memPct, 80)} style="width:{Math.min(100, memPct)}%"></b></i><span class="dm-num">{memPct}%</span>{:else}<span class="dm-num dm-dim">—</span>{/if}
+              </span>
+              <span role="cell" class="mbar"><i><b class={pctTone(diskPct ?? 0, 80)} style="width:{Math.min(100, diskPct ?? 0)}%"></b></i><span class="dm-num">{diskPct}%</span></span>
+            {:else}
+              <span role="cell" class="dm-num dm-dim">—</span>
+              <span role="cell" class="dm-num dm-dim">—</span>
+              <span role="cell" class="dm-num dm-dim">—</span>
+            {/if}
+            <span role="cell" class="dm-num" class:warn={needsUpgrade(r) || r.update_recommended} title={needsUpgrade(r) ? `Server is on ${fmtVersion(upgradePolicy?.server_version)}` : r.update_recommended ? 'This agent speaks an older protocol; some features are unavailable until it is upgraded' : ''}>
+              {r.version ? fmtVersion(r.version) : '—'}{needsUpgrade(r) || r.update_recommended ? ' ↑' : ''}
+            </span>
+            <span role="cell" class="tagcell">
+              {#if tags.length}
+                <span role="presentation" onclick={(e) => e.stopPropagation()}>
+                  <ChipList items={tags} max={2} active={tagFilter} onpick={(t) => (tagFilter = tagFilter === t ? null : t)} />
+                </span>
+              {:else}
+                <span class="dm-dim">—</span>
               {/if}
-            </div>
+            </span>
+            <span role="cell" class="dm-tr-menu">
+              <span role="presentation" onclick={(e) => e.stopPropagation()}>
+                <Menu label="Actions for {r.name}" items={rowMenu(r)} />
+              </span>
+            </span>
           </div>
         {/each}
       </div>
-      <p class="font-mono ed-hosts-foot">auto-refresh every 10s</p>
     {/if}
   {/if}
 </section>
 
-<!-- ─── Add Host Modal (3-step inline flow) ─── -->
 {#if showAdd}
   {#await import('./_AddHostModal.svelte') then mod}
     <mod.default
@@ -575,400 +489,66 @@
   {/await}
 {/if}
 
-<!-- ─── Edit Tags Modal ─── -->
-{#if tagsHostId}
-  <div class="ed-modal-backdrop" onmousedown={(e) => { if (e.target === e.currentTarget) tagsHostId = null; }}>
-    <div class="ed-modal" role="dialog" aria-modal="true" style="width: min(480px, 92vw);">
-      <header class="ed-modal-head">
-        <div>
-          <Eyebrow>Tags · {rows.find((r) => r.id === tagsHostId)?.name}</Eyebrow>
-          <h2 class="ed-modal-title">Manage tags</h2>
-        </div>
-        <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => (tagsHostId = null)} aria-label="Close">
-          <X size={13} strokeWidth={1.5} />
-        </button>
-      </header>
-      <div class="ed-modal-body">
-        <p class="ed-modal-hint">
-          Tags drive host-affinity rules. Lowercase letters, digits, hyphens. Max 20.
-        </p>
-        <div class="ed-host-tags-edit">
-          {#each tagsDraft as t (t)}
-            <span class="ed-hosts-tag-chip">
-              {t}
-              <button type="button" class="ed-host-tags-remove" onclick={() => (tagsDraft = tagsDraft.filter((x) => x !== t))} aria-label="Remove">
-                <X size={10} strokeWidth={1.5} />
-              </button>
-            </span>
-          {/each}
-          <input
-            type="text"
-            class="ed-host-tags-input font-mono"
-            placeholder={tagsDraft.length === 0 ? 'edge, production…' : '+ add'}
-            bind:value={tagInput}
-            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTagDraft(tagInput); } }}
-          />
-        </div>
-        {#if tagSuggestions.filter((s) => !tagsDraft.includes(s)).length > 0}
-          <div class="ed-host-tags-suggest">
-            <span class="font-mono ed-host-tags-suggest-label">fleet</span>
-            {#each tagSuggestions.filter((s) => !tagsDraft.includes(s)) as s (s)}
-              <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={() => addTagDraft(s)}>+ {s}</button>
-            {/each}
-          </div>
-        {/if}
-      </div>
-      <footer class="ed-modal-foot">
-        <span class="ed-modal-foot-status font-mono">{tagsDraft.length} tag{tagsDraft.length === 1 ? '' : 's'}</span>
-        <div class="ed-actions">
-          <button type="button" class="dm-btn dm-btn-ghost dm-btn-sm" onclick={() => (tagsHostId = null)}>Cancel</button>
-          <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" disabled={tagsBusy} onclick={saveTags}>
-            {tagsBusy ? 'Saving…' : 'Save tags'}
-          </button>
-        </div>
-      </footer>
+<Modal bind:open={tagsOpen} title="Tags · {rows.find((r) => r.id === tagsHostId)?.name ?? ''}" maxWidth="max-w-lg">
+  <div class="tagsdlg">
+    <p class="dm-sub">Tags group hosts for filtering and limit which hosts a user or role can see (host scope). Lowercase letters, digits and hyphens, at most 20.</p>
+    <div class="tagedit">
+      {#each tagsDraft as t (t)}
+        <span class="tagx"><TagPill label={t} /><button type="button" onclick={() => (tagsDraft = tagsDraft.filter((x) => x !== t))} aria-label="Remove {t}"><X size={11} /></button></span>
+      {/each}
+      <input
+        type="text"
+        class="dm-filter"
+        placeholder={tagsDraft.length === 0 ? 'edge, production…' : 'add tag'}
+        aria-label="Add tag"
+        bind:value={tagInput}
+        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTagDraft(tagInput); } }}
+      />
     </div>
+    {#if tagSuggestions.filter((s) => !tagsDraft.includes(s)).length > 0}
+      <div class="suggest">
+        <span class="dm-dim">In use:</span>
+        {#each tagSuggestions.filter((s) => !tagsDraft.includes(s)) as s (s)}
+          <TagPill label={s} onclick={addTagDraft} title="Add {s}" />
+        {/each}
+      </div>
+    {/if}
   </div>
-{/if}
+  {#snippet footer()}
+    <button type="button" class="dm-btn" onclick={() => (tagsOpen = false)}>Cancel</button>
+    <button type="button" class="dm-btn dm-btn-primary" disabled={tagsBusy} onclick={saveTags}>{tagsBusy ? 'Saving…' : 'Save tags'}</button>
+  {/snippet}
+</Modal>
 
 <style>
-  .ed-hosts { display: flex; flex-direction: column; gap: 22px; }
-  .ed-hosts-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
-  .ed-hosts-header-text { min-width: 0; max-width: 70ch; flex: 1; }
-  .ed-hosts-title { font-size: 26px; }
-  .ed-hosts-subtitle { font-size: 13px; color: var(--fg-muted); margin: 8px 0 0; line-height: 1.55; max-width: 70ch; }
-
-  /* ─── Status dots (mockup standard) ─── */
-  :global(.ok-dot) { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: var(--color-success-400); }
-  :global(.warn-dot) { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: var(--color-warning-400); }
-  :global(.fail-dot) { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: var(--color-danger-400); }
-  :global(.neutral-dot) { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: var(--fg-subtle); }
-  :global(.ed-spin) { animation: ed-spin 1s linear infinite; }
-  @keyframes ed-spin { to { transform: rotate(360deg); } }
-  .ed-accent-mono { color: var(--accent-fg); font-family: var(--font-mono); font-style: normal; font-weight: 500; }
-
-  /* ─── Upgrade-policy strip ─── */
-  .ed-hosts-policy {
-    display: flex;
-    align-items: flex-start;
-    gap: 14px;
-    padding: 14px 18px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-elevated);
-  }
-  .ed-hosts-policy.alert {
-    border-color: color-mix(in srgb, var(--color-warning-500) 50%, var(--border));
-    background: color-mix(in srgb, var(--color-warning-500) 5%, var(--bg-elevated));
-  }
-  .ed-hosts-policy-mark {
-    width: 28px; height: 28px;
-    border-radius: 5px;
-    border: 1px solid var(--border);
-    display: inline-flex; align-items: center; justify-content: center;
-    color: var(--fg-muted);
-    flex-shrink: 0;
-  }
-  .ed-hosts-policy.alert .ed-hosts-policy-mark { color: var(--color-warning-400); border-color: color-mix(in srgb, var(--color-warning-500) 30%, var(--border)); }
-  .ed-hosts-policy-text { flex: 1; min-width: 0; }
-  .ed-hosts-policy-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-  .ed-hosts-policy-meta { font-size: 10.5px; color: var(--fg-subtle); text-transform: uppercase; letter-spacing: 0.06em; }
-  .ed-hosts-policy-mode { color: var(--accent-fg); font-style: normal; }
-  .ed-hosts-policy-body { margin-top: 6px; font-size: 13.5px; color: var(--fg); }
-  .ed-hosts-policy-detail { color: var(--fg-muted); }
-  .ed-hosts-policy-footnote { margin-top: 4px; font-size: 11px; color: var(--fg-subtle); }
-
-  /* ─── Filter bar ─── */
-  .ed-hosts-filterbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .ed-hosts-pills { display: inline-flex; flex-wrap: wrap; gap: 4px; }
-  .ed-pill {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 5px 10px;
-    border: 1px solid var(--border);
-    background: transparent;
-    border-radius: 4px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-muted);
-    cursor: pointer;
-  }
-  .ed-pill:hover { background: var(--surface-hover); color: var(--fg); }
-  .ed-pill.active {
-    background: var(--bg-elevated);
-    border-color: var(--border-strong);
-    color: var(--fg);
-  }
-  /* ed-pill-count moved to global .ed-count in app.css */
-
-  .ed-hosts-search { position: relative; flex: 0 1 280px; min-width: 200px; margin-left: auto; }
-  :global(.ed-hosts-search-icon) { position: absolute; left: 0; top: 50%; transform: translateY(-50%); color: var(--fg-subtle); }
-  .ed-hosts-search .ed-underline-input { padding-left: 22px; font-size: 12px; }
-
-  .ed-underline-input {
-    width: 100%;
-    background: transparent;
-    border: 0;
-    border-bottom: 1px solid var(--border);
-    padding: 6px 2px;
-    font-size: 13px;
-    color: var(--fg);
-    font-family: var(--font-mono);
-    outline: none;
-    transition: border-color 0.1s;
-  }
-  .ed-underline-input::placeholder { color: var(--fg-subtle); }
-  .ed-underline-input:focus { border-bottom-color: var(--accent); }
-
-  /* ─── Bulk-action bar ─── */
-  .ed-hosts-bulkbar {
-    display: flex; align-items: center; gap: 8px;
-    padding: 10px 14px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-  }
-  .ed-hosts-bulk-count { font-size: 11.5px; color: var(--fg); }
-  .ed-hosts-bulk-danger { color: var(--color-danger-400); }
-
-  /* ─── Hosts table ─── */
-  .ed-hosts-table {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    overflow: visible;
-  }
-  /* All data columns get fixed widths; host column is capped so it
-     doesn't grab leftover space. Tags column is the ONLY flex column
-     (1fr) — extra width on wide viewports goes there. Version column
-     gets ellipsis truncation since dev-build version strings can be
-     long ("dev-design-h1c-square-counts"). */
-  .ed-hosts-row {
-    display: grid;
-    grid-template-columns:
-      22px                  /* checkbox        */
-      minmax(240px, 320px)  /* host name + sub */
-      minmax(120px, 1fr)    /* tags — flex     */
-      90px                  /* cpu             */
-      130px                 /* mem (+GB hint)  */
-      90px                  /* disk            */
-      60px                  /* container count */
-      120px                 /* version         */
-      90px                  /* last seen       */
-      32px;                 /* more menu       */
-    align-items: center;
-    gap: 14px;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-  }
-  .ed-hosts-row:last-child { border-bottom: 0; }
-  .ed-hosts-row-head {
-    background: var(--bg-elevated);
-    color: var(--fg-subtle);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .ed-hosts-row.pending { background: color-mix(in srgb, var(--color-warning-500) 4%, transparent); }
-  .ed-hosts-row.offline { opacity: 0.65; }
-  .ed-hosts-row .right { text-align: right; }
-  .ed-hosts-row-host { min-width: 0; }
-  .ed-hosts-row-name-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .ed-hosts-row-name {
-    font-family: var(--font-mono);
-    font-size: 13px;
-    color: var(--fg);
-    text-decoration: none;
-    font-weight: 500;
-  }
-  .ed-hosts-row-name:hover { color: var(--accent-fg); }
-  .ed-hosts-row-pill { font-size: 9.5px; padding: 1px 6px; }
-  :global(.ed-hosts-row-pill-local) {
-    color: var(--accent-fg);
-    border-color: color-mix(in srgb, var(--color-brand-500) 40%, var(--border));
-  }
-  .ed-hosts-row-sub {
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-    padding-left: 16px;
-    margin-top: 3px;
-  }
-  .ed-hosts-row-sub-empty { font-style: normal; color: var(--fg-subtle); }
-
-  .ed-hosts-row-tags { display: flex; flex-wrap: wrap; gap: 4px; align-content: center; }
-  .ed-hosts-row-tags-empty { font-size: 11px; color: var(--fg-subtle); }
-  .ed-hosts-tag-chip {
+  .tagf {
     display: inline-flex; align-items: center; gap: 4px;
-    padding: 2px 6px;
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-muted);
-    background: var(--surface);
+    font-size: 12px; line-height: 20px; padding: 0 4px 0 8px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--fg);
   }
-  .ed-hosts-tag-extra { font-size: 10px; color: var(--fg-subtle); align-self: center; }
-
-  .ed-hosts-bar-cell {
-    text-align: right;
-    min-width: 0;
-    font-size: 11.5px;
-    color: var(--fg);
+  .tagf button { all: unset; cursor: pointer; display: inline-flex; padding: 2px; color: var(--muted); }
+  .tagf button:hover { color: var(--fg); }
+  .policy {
+    display: flex; align-items: center; gap: 10px;
+    border: 1px solid var(--warn-bd); background: var(--warn-bg); color: var(--warn);
+    border-radius: var(--r); padding: 8px 14px; font-size: var(--fs-sm); min-width: 0;
   }
-  .ed-hosts-bar-cell.warn { color: var(--color-warning-400); }
-  .ed-hosts-bar { height: 2px; background: var(--border); border-radius: 1px; margin-top: 3px; position: relative; overflow: hidden; }
-  .ed-hosts-bar-fill { position: absolute; inset: 0; right: auto; background: var(--accent); border-radius: 1px; }
-  .ed-hosts-bar-cell.warn .ed-hosts-bar-fill { background: var(--color-warning-400); }
-  .ed-hosts-bar-empty { color: var(--fg-subtle); }
-  .ed-hosts-bar-hint { font-size: 9.5px; color: var(--fg-subtle); margin-top: 2px; }
-
-  .ed-hosts-row-num {
-    text-align: right;
-    font-size: 11.5px;
-    color: var(--fg);
-  }
-  .ed-hosts-row-version {
-    display: flex; flex-direction: column; gap: 2px;
-    min-width: 0; font-size: 11.5px; color: var(--fg);
-    overflow: hidden;
-  }
-  .ed-hosts-row-version > span:first-child {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .ed-hosts-row-upgrade { font-size: 9.5px; color: var(--color-warning-400); letter-spacing: 0.04em; }
-  .ed-hosts-row-seen { font-size: 11px; color: var(--fg-subtle); }
-
-  .ed-hosts-row-actions { position: relative; }
-  .ed-hosts-row-menu {
-    position: absolute;
-    right: 0;
-    top: 28px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-strong);
-    border-radius: 5px;
-    padding: 4px;
-    z-index: 5;
-    min-width: 200px;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-  }
-  .ed-hosts-menu-item {
-    text-align: left;
-    background: transparent;
-    border: 0;
-    padding: 7px 10px;
-    font-size: 12px;
-    color: var(--fg);
-    cursor: pointer;
-    border-radius: 4px;
-    text-decoration: none;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-  }
-  .ed-hosts-menu-item:hover:not(:disabled) { background: var(--surface-hover); }
-  .ed-hosts-menu-item:disabled { color: var(--fg-subtle); cursor: not-allowed; }
-  .ed-hosts-menu-sep { height: 1px; background: var(--border); margin: 2px 0; }
-  .ed-hosts-menu-danger { color: var(--color-danger-400); }
-
-  .ed-hosts-foot { font-size: 10.5px; color: var(--fg-subtle); margin: 14px 0 0; letter-spacing: 0.02em; }
-
-  /* ─── Modal chrome (shared with users page; duplicated here so both
-         pages can be edited independently). ─── */
-  .ed-modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: color-mix(in srgb, var(--bg) 70%, transparent);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-    z-index: 50;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .ed-modal {
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
-    width: min(620px, 92vw);
-    max-height: 92vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .ed-modal-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 18px 22px;
-    border-bottom: 1px solid var(--border);
-  }
-  .ed-modal-title {
-    margin: 4px 0 0;
-    font-size: 18px;
-    font-weight: 600;
-    color: var(--fg);
-    font-family: var(--font-sans);
-  }
-  .ed-modal-body {
-    padding: 18px 22px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
-  .ed-modal-hint {
-    margin: 0 0 4px;
-    font-size: 13px;
-    color: var(--fg-muted);
-    line-height: 1.55;
-  }
-  .ed-modal-foot {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 14px 22px;
-    border-top: 1px solid var(--border);
-    background: var(--bg-elevated);
-  }
-  .ed-modal-foot-status { font-size: 11px; color: var(--fg-subtle); }
-
-  /* ─── Tags modal-specific ─── */
-  .ed-host-tags-edit {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding: 10px 12px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--surface);
-  }
-  .ed-host-tags-input {
-    flex: 1 1 140px;
-    border: 0;
-    background: transparent;
-    color: var(--fg);
-    font-size: 11.5px;
-    outline: none;
-    min-width: 100px;
-  }
-  .ed-host-tags-input::placeholder { color: var(--fg-subtle); }
-  .ed-host-tags-remove {
-    background: transparent; border: 0; cursor: pointer;
-    color: var(--fg-subtle); padding: 0;
-    display: inline-flex;
-  }
-  .ed-host-tags-remove:hover { color: var(--color-danger-400); }
-  .ed-host-tags-suggest {
-    display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; align-items: center;
-  }
-  .ed-host-tags-suggest-label {
-    font-size: 9.5px; color: var(--fg-subtle); letter-spacing: 0.1em;
-    text-transform: uppercase; margin-right: 4px;
-  }
+  .policy b { color: var(--fg); font-weight: 600; }
+  .bulk { display: inline-flex; align-items: center; gap: 8px; margin-left: 8px; }
+  .mbar { display: flex; align-items: center; gap: 8px; }
+  .mbar i { flex: 1; height: 5px; border-radius: 3px; background: var(--field); overflow: hidden; min-width: 30px; }
+  .mbar i b { display: block; height: 100%; background: var(--accent); }
+  .mbar i b.warn { background: var(--warn); }
+  .mbar i b.bad { background: var(--bad); }
+  .mbar .dm-num { width: 34px; text-align: right; }
+  .off { color: var(--bad); }
+  .tagcell { display: flex; gap: 4px; align-items: center; }
+  .tagsdlg { display: flex; flex-direction: column; gap: 12px; }
+  .tagsdlg p { margin: 0; }
+  .tagedit { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .tagedit input { min-width: 140px; flex: 1; }
+  .tagx { display: inline-flex; align-items: center; gap: 2px; }
+  .tagx button { all: unset; cursor: pointer; color: var(--subtle); display: inline-flex; }
+  .tagx button:hover { color: var(--bad); }
+  .suggest { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: var(--fs-sm); }
 </style>

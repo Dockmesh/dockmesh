@@ -467,3 +467,9 @@ func (h *Handlers) filterContainerRowsByRoleScope(r *http.Request, in []containe
 	}
 	return out
 }
+
+// hostVisible applies both the user's scope tags and the role scope to a
+// host, the same rules /hosts filters by.
+func (h *Handlers) hostVisible(r *http.Request, id string) bool {
+	return h.canAccessHost(r, id) && h.checkRoleScope(r, h.hostScopeReq(r.Context(), id))
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/redact"
 	"github.com/go-chi/chi/v5"
@@ -216,7 +217,7 @@ func (h *Handlers) RunBackupJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	run, err := h.Backups.StartRun(r.Context(), job.ID)
+	run, err := h.Backups.StartRun(operations.WithActor(r.Context(), opActor(r.Context())), job.ID)
 	switch {
 	case errors.Is(err, backup.ErrJobNotFound):
 		writeError(w, http.StatusNotFound, "not found")
@@ -428,9 +429,25 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 		}
 	}
 
+	target := opts.Target
+	if target == "" && len(run.Sources) > 0 {
+		target = run.Sources[0].Name
+	}
+	op := h.Operations.Start(r.Context(), operations.Spec{
+		Kind:   opBackupRestore,
+		Target: target,
+		Ref:    operations.BackupRunRef(id),
+		HostID: opts.HostID,
+		Actor:  opActor(r.Context()),
+		Steps:  backup.RestoreSteps,
+	})
+	if kind == "stack" {
+		op.AddSecrets(h.stackEnvValues(opts.Target)...)
+	}
 	// A restore stopped halfway leaves a half-written volume, so it runs to
 	// the end even if the client disconnects.
-	report, err := h.Backups.Restore(context.WithoutCancel(r.Context()), id, opts)
+	report, err := h.Backups.Restore(operations.WithOp(context.WithoutCancel(r.Context()), op), id, opts)
+	op.Finish(err)
 	var inUse *backup.VolumeInUseError
 	switch {
 	case errors.Is(err, docker.ErrInvalidVolumeName):
@@ -589,4 +606,17 @@ func blankedSecrets(cfg any) []string {
 		}
 	}
 	return out
+}
+
+// stackEnvValues returns the .env values of a stack, masked in the output
+// of operations that touch it.
+func (h *Handlers) stackEnvValues(name string) []string {
+	if h.Stacks == nil || name == "" {
+		return nil
+	}
+	d, err := h.Stacks.Get(name)
+	if err != nil || d == nil {
+		return nil
+	}
+	return operations.EnvValues(d.Env)
 }

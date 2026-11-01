@@ -51,14 +51,21 @@ func (s *Service) EnrichWithCertInfo(ctx context.Context, routes []Route) []Rout
 // 4-second timeout — enough for a remote LE cert hop but tight enough
 // that a wedged DNS doesn't stall the list endpoint.
 func probeCert(ctx context.Context, host string) (*x509.Certificate, error) {
-	dialer := &net.Dialer{Timeout: 4 * time.Second}
-	conn, err := tls.DialWithDialer(dialer, "tcp", host+":443", &tls.Config{
-		ServerName:         host,
-		InsecureSkipVerify: true,
-	})
+	return probeCertAt(ctx, net.JoinHostPort(host, "443"), host)
+}
+
+// probeCertAt reads the certificate served at addr for the name host.
+func probeCertAt(ctx context.Context, addr, host string) (*x509.Certificate, error) {
+	d := &tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: 4 * time.Second},
+		// #nosec G402 -- the certificate is only read, never trusted.
+		Config: &tls.Config{ServerName: host, InsecureSkipVerify: true},
+	}
+	raw, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
+	conn := raw.(*tls.Conn)
 	defer conn.Close()
 	chain := conn.ConnectionState().PeerCertificates
 	if len(chain) == 0 {

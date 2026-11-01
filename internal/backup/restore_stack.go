@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/docker"
+	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 )
 
@@ -27,6 +28,22 @@ const stackRestoreFileSizeCap = 32 * 1024 * 1024
 // stackRestoreMaxEntries caps the number of tar entries we'll process,
 // guarding against zip-bomb-style inflation.
 const stackRestoreMaxEntries = 50_000
+
+// Steps of a restore, in order, as reported to its operation.
+const (
+	StepRestoreDownload = "download"
+	StepRestoreVerify   = "verify"
+	StepRestoreCheck    = "check_free"
+	StepRestoreWrite    = "restore"
+)
+
+// RestoreSteps lists the steps Restore reports.
+var RestoreSteps = []operations.StepSpec{
+	{Key: StepRestoreDownload, Label: "Download archive"},
+	{Key: StepRestoreVerify, Label: "Verify archive"},
+	{Key: StepRestoreCheck, Label: "Check the volumes are not in use"},
+	{Key: StepRestoreWrite, Label: "Restore files and volumes"},
+}
 
 // RestoreOptions picks where and how a run is restored.
 type RestoreOptions struct {
@@ -130,6 +147,8 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 	if err != nil {
 		return nil, fmt.Errorf("restore host: %w", err)
 	}
+	op := operations.FromContext(ctx)
+	op.StepStart(StepRestoreDownload, "")
 	target, err := jobTarget(ctx, s.store, s.notices, job)
 	if err != nil {
 		return nil, err
@@ -139,7 +158,9 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 		return nil, err
 	}
 	defer stored.Close()
+	op.StepDone(StepRestoreDownload, "")
 
+	op.StepStart(StepRestoreVerify, "")
 	check := &VerifyResult{RunID: runID, Type: kind, Passed: true}
 	plain, err := s.plaintext(stored, run)
 	if err != nil {
@@ -153,6 +174,7 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 	if !check.Passed {
 		return nil, fmt.Errorf("%w: %s", ErrArchiveInvalid, failedChecks(check))
 	}
+	op.StepDone(StepRestoreVerify, "")
 
 	report := &RestoreReport{Kind: kind, HostID: opts.HostID, Mode: "merge", FilesRestored: []string{}, VolumesRestored: []string{}}
 	if opts.Replace {
@@ -184,12 +206,17 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 	}
 	defer release()
 	if opts.Replace {
+		op.StepStart(StepRestoreCheck, "")
 		for _, dest := range plan {
 			if err := checkVolumeFree(ctx, host, dest); err != nil {
 				return nil, err
 			}
 		}
+		op.StepDone(StepRestoreCheck, "")
+	} else {
+		op.StepSkip(StepRestoreCheck, "merge keeps existing data")
 	}
+	op.StepStart(StepRestoreWrite, "")
 
 	if _, err := stored.(io.Seeker).Seek(0, io.SeekStart); err != nil {
 		return nil, err
@@ -358,6 +385,7 @@ func (s *Service) restoreStackInto(ctx context.Context, stackName string, src io
 					return err
 				}
 			}
+			operations.FromContext(ctx).Logf("info", "restoring volume %s", dest)
 			if err := host.VolumeImport(ctx, dest, io.LimitReader(tr, hdr.Size), replace); err != nil {
 				return fmt.Errorf("restore volume %s: %w", dest, err)
 			}

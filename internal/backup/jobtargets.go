@@ -12,6 +12,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 	"github.com/dockmesh/dockmesh/internal/notices"
+	"github.com/dockmesh/dockmesh/internal/operations"
 )
 
 // attachTarget makes the input reference a saved target. An inline target
@@ -266,12 +267,34 @@ func jobTarget(ctx context.Context, st *store, n *notices.Service, job *Job) (ta
 		if err != nil {
 			return nil, err
 		}
+		operations.FromContext(ctx).AddSecrets(targetSecretValues(t.Type, t.Config)...)
 		return ts.BuildChecked(ctx, t, n)
 	}
+	operations.FromContext(ctx).AddSecrets(targetSecretValues(job.TargetType, job.TargetConfig)...)
 	t, err := buildTarget(job.TargetType, job.TargetConfig)
 	if err != nil {
 		return nil, err
 	}
 	jobTOFU(st, n, job).Attach(ctx, t)
 	return t, nil
+}
+
+// targetSecretValues returns the credentials in a target config, which
+// must never show up in an operation's output.
+func targetSecretValues(typ string, cfg any) []string {
+	m, ok := cfg.(map[string]any)
+	if !ok {
+		raw, err := json.Marshal(cfg)
+		if err != nil || json.Unmarshal(raw, &m) != nil {
+			return nil
+		}
+	}
+	keys := append([]string{"passphrase"}, targetSecrets[typ]...)
+	var out []string
+	for _, k := range keys {
+		if v, ok := m[k].(string); ok && v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }

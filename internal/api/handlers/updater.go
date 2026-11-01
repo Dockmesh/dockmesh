@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/audit"
+	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/updater"
 	"github.com/go-chi/chi/v5"
@@ -28,7 +30,13 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	if !h.allowStackRebuild(w, r, id) {
 		return
 	}
-	res, err := h.Updater.Update(r.Context(), id, middleware.UserID(r.Context()))
+	// Detached from the request: closing the tab mid-update must not cancel
+	// the pull or interrupt the container swap.
+	ctx := context.WithoutCancel(r.Context())
+	dr := r.WithContext(ctx)
+	op := h.startImageUpdateOp(dr, id, "", false)
+	res, err := h.Updater.Update(operations.WithOp(ctx, op), id, middleware.UserID(ctx))
+	op.Finish(err)
 	if errors.Is(err, updater.ErrBusy) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -38,12 +46,12 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if res.Updated {
-		h.UpdateWatcher.MarkUpdated(r.Context(), res.Image)
-		h.audit(r, audit.ActionContainerUpdate, res.ContainerName, map[string]string{
-			"image":     res.Image,
-			"from":      trim(res.OldDigest),
-			"to":        trim(res.NewDigest),
-			"rollback":  res.RollbackTag,
+		h.UpdateWatcher.MarkUpdated(ctx, res.Image)
+		h.audit(dr, audit.ActionContainerUpdate, res.ContainerName, map[string]string{
+			"image":    res.Image,
+			"from":     trim(res.OldDigest),
+			"to":       trim(res.NewDigest),
+			"rollback": res.RollbackTag,
 		})
 	}
 	writeJSON(w, http.StatusOK, res)

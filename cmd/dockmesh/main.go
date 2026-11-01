@@ -50,6 +50,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/oauth2auth"
 	"github.com/dockmesh/dockmesh/internal/oidc"
+	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/pki"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/rbac"
@@ -478,6 +479,16 @@ func main() {
 	// Proxy service is created with `enabled=false`; the real boot
 	// decision is made below once the settings store is loaded so the
 	// DB-backed `proxy_enabled` setting outranks the env var default.
+	// Operations left running by the previous process are failed before
+	// anything can start a new one.
+	opsSvc := operations.New(database)
+	if n, err := opsSvc.MarkInterrupted(ctx); err != nil {
+		slog.Warn("operations: mark interrupted", "err", err)
+	} else if n > 0 {
+		slog.Info("operations: marked interrupted after restart", "count", n)
+	}
+	opsSvc.StartPruner(ctx)
+
 	proxySvc := proxy.NewService(database, dockerCli, false)
 	proxySvc.SetImage(cfg.ProxyImage)
 	updaterSvc := updater.NewService(dockerCli, database)
@@ -530,6 +541,7 @@ func main() {
 		DataDir:    filepath.Dir(cfg.DBPath),
 	}
 	backupSvc := backup.NewService(database, dockerCli, stacksMgr, secretsSvc, backupPaths)
+	backupSvc.SetOperations(opsSvc)
 	if err := backupSvc.Start(ctx); err != nil {
 		slog.Warn("backup scheduler start", "err", err)
 	}
@@ -1075,6 +1087,7 @@ func main() {
 		ScanStore:      scanStore,
 		Proxy:          proxySvc,
 		Updater:        updaterSvc,
+		Operations:     opsSvc,
 		UpdateWatcher:  updateWatcher,
 		OIDC:           oidcSvc,
 		SAML:           samlSvc,

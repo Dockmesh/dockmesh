@@ -4,6 +4,7 @@
   // /images/{id} returns the full Docker ImageInspect; on remote agents
   // it currently 501s (agent protocol gap) and we fall back to data
   // already on hand from the list payload + a banner.
+  import { fmtBytes } from '$lib/format';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api, ApiError, isFanOut, type ScanReport, type Severity } from '$lib/api';
@@ -134,14 +135,6 @@
     if (tab === 'containers' && inspect) loadUsing();
   });
 
-  function fmtBytes(n: number): string {
-    if (!n) return '0 B';
-    if (n < 1024) return `${n} B`;
-    const units = ['KB', 'MB', 'GB', 'TB'];
-    let v = n / 1024, i = 0;
-    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-    return `${v.toFixed(1)} ${units[i]}`;
-  }
   function fmtDate(iso?: string | number): string {
     if (!iso) return '—';
     const d = typeof iso === 'number' ? new Date(iso * 1000) : new Date(iso);

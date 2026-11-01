@@ -1,26 +1,20 @@
 <script lang="ts">
-  // Standalone detail page for one backup run. Same data + restore-flow
-  // as _RunDrawer but full-page chrome. Backend doesn't currently
-  // expose a single-run getter; we pull listRuns(500) and pluck the
-  // match. Cheap enough for a homelab and avoids a backend slice
-  // before this UI lands.
+  import { untrack } from 'svelte';
   import { page } from '$app/state';
-  import { goto } from '$app/navigation';
-  import { api, ApiError, runRestorable, type BackupRun, type BackupJob, type BackupTarget } from '$lib/api';
-  import { Eyebrow } from '$lib/components/editorial';
-  import { allowed, isAdmin } from '$lib/rbac.svelte';
+  import { api, ApiError, runRestorable, type BackupRun, type BackupJob } from '$lib/api';
+  import { allowed } from '$lib/rbac.svelte';
   import RestoreDialog from '../../_RestoreDialog.svelte';
   import SystemRestoreDialog from '../../_SystemRestoreDialog.svelte';
-  import { Skeleton, EmptyState } from '$lib/components/ui';
+  import { Skeleton, EmptyState, StatBar, StatusChip } from '$lib/components/ui';
+  import OperationSteps from '$lib/components/operations/OperationSteps.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyWithToast } from '$lib/clipboard';
-  import { confirm } from '$lib/stores/confirm.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
-  import {
-    ChevronLeft, Copy, RefreshCw, ArrowRight, AlertTriangle, Lock, Undo2, Box
-  } from 'lucide-svelte';
+  import { operations, isActive, opRef, failedStep } from '$lib/stores/operations.svelte';
+  import { fmtBytes, fmtDuration, runTone, runLabel, isSystemRun, mayOnJob, cronHuman, targetTypeLabel } from '../../_format';
+  import { Copy, Lock, Undo2, Box, Play, Download } from 'lucide-svelte';
 
-  const id = $derived(parseInt(page.params.id, 10));
+  const id = $derived(parseInt(page.params.id ?? '', 10));
 
   $effect(() => {
     pageContext.set(`Run #${id}`);
@@ -33,21 +27,16 @@
   let notFound = $state(false);
   let logEntries = $state<Array<{ id: number; ts: string; stream: string; line: string }>>([]);
   let logLoaded = $state(false);
-  let logTimer: ReturnType<typeof setTimeout> | null = null;
 
   async function load() {
-    loading = true;
     try {
-      const [allRuns, jobs] = await Promise.all([
-        api.backups.listRuns(500),
-        api.backups.listJobs()
-      ]);
-      const r = allRuns.find((x) => x.id === id);
-      if (!r) { notFound = true; run = null; return; }
+      const r = await api.backups.getRun(id);
       run = r;
-      job = jobs.find((j) => j.name === r.job_name) ?? null;
+      notFound = false;
+      if (!job || job.id !== r.job_id) job = await api.backups.getJob(r.job_id).catch(() => null);
     } catch (err) {
-      toast.error('Failed to load run', err instanceof ApiError ? err.message : undefined);
+      if (err instanceof ApiError && err.status === 404) notFound = true;
+      else toast.error('Failed to load run', err instanceof ApiError ? err.message : undefined);
     } finally {
       loading = false;
     }
@@ -56,71 +45,83 @@
   async function loadLog() {
     try {
       logEntries = await api.backups.runLog(id);
-      logLoaded = true;
     } catch {
-      // Log endpoint failures are silent — empty log is fine.
+      logEntries = [];
     }
-    // While the run is still running, poll every 2s so new lines stream in.
-    // For terminal runs (success/failed/error) the log is final, no need to poll.
-    if (run?.status === 'running') {
-      logTimer = setTimeout(loadLog, 2000);
-    }
+    logLoaded = true;
   }
 
+  // The operation of this run, when it is newer than the 7-day retention:
+  // its steps and log come live from the operations store.
+  const op = $derived(operations.backupRun(id));
+  const opLog = $derived(op ? operations.logOf(op.id) : []);
+  let opLoaded = $state('');
   $effect(() => {
-    id;
-    load().then(() => loadLog());
-    return () => { if (logTimer) clearTimeout(logTimer); };
+    void id;
+    loading = true;
+    logLoaded = false;
+    opLoaded = '';
+    untrack(load).then(async () => {
+      const found = await operations.find(opRef.backupRun(id), 'backup.run', 0, 1500);
+      if (found) {
+        await operations.load(found.id);
+        opLoaded = found.id;
+      } else {
+        await loadLog();
+      }
+    });
+  });
+
+  // Reload the run row when its operation ends, so size, checksum and
+  // status match what the operation reported.
+  let lastStatus = '';
+  $effect(() => {
+    const s = op?.status ?? '';
+    if (lastStatus && lastStatus !== s && op && !isActive(op)) void untrack(load);
+    lastStatus = s;
+  });
+  // Without an operation a running run is followed by polling its log.
+  $effect(() => {
+    if (op || run?.status !== 'running') return;
+    const t = setInterval(() => { void load(); void loadLog(); }, 2000);
+    return () => clearInterval(t);
+  });
+
+  let logEl = $state<HTMLElement | null>(null);
+  $effect(() => {
+    void opLog.length;
+    void logEntries.length;
+    if (logEl && (op ? isActive(op) : run?.status === 'running')) logEl.scrollTop = logEl.scrollHeight;
   });
 
   let restorePreset = $state<'in-place' | 'alongside' | null>(null);
+  const systemRun = $derived(run ? isSystemRun(run) : false);
+  const canDownload = $derived(run ? mayOnJob('backups.download', run) : false);
+  const canRestore = $derived(run ? runRestorable(run) && mayOnJob('backups.restore', run) : false);
 
-  async function doRestore(mode: 'in-place' | 'alongside' | 'download' | 'system') {
+  async function download() {
     if (!run) return;
-    if (mode === 'download') {
-      try {
-        await api.backups.downloadArchive(run.id);
-        toast.success('Download started', `backup-run-${run.id}.tar.gz`);
-      } catch (err) {
-        toast.error('Download failed', err instanceof ApiError ? err.message : undefined);
-      }
-      return;
+    try {
+      await api.backups.downloadArchive(run.id);
+      toast.success('Download started', `backup-run-${run.id}.tar.gz`);
+    } catch (err) {
+      toast.error('Download failed', err instanceof ApiError ? err.message : undefined);
     }
-    restorePreset = mode === 'system' ? 'in-place' : mode;
   }
 
-  function fmtBytes(n: number): string {
-    if (!n) return '—';
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
-  }
-  function fmtDuration(start: string, end?: string): string {
-    if (!end) return 'running…';
-    const secs = Math.floor((new Date(end).getTime() - new Date(start).getTime()) / 1000);
-    if (secs < 60) return `${secs}s`;
-    if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
-    return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
-  }
-  function fmtTime(ts: string): string {
-    return new Date(ts).toLocaleString();
-  }
-  function fmtDay(ts: string): string {
-    const d = new Date(ts);
-    const today = new Date();
-    if (d.toDateString() === today.toDateString()) return 'Today';
-    const y = new Date(today); y.setDate(y.getDate() - 1);
-    if (d.toDateString() === y.toDateString()) return 'Yesterday';
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  }
-  function fmtTimeOnly(ts: string): string {
-    return new Date(ts).toTimeString().slice(0, 5);
-  }
-  function statusPill(s: string): { cls: string; label: string } {
-    if (s === 'success') return { cls: 'dm-pill-success', label: 'success' };
-    if (s === 'failed') return { cls: 'dm-pill-danger', label: 'failed' };
-    if (s === 'running') return { cls: 'dm-pill', label: 'running' };
-    return { cls: 'dm-pill-neutral', label: s };
+  let starting = $state(false);
+  async function runAgain() {
+    if (!job) return;
+    starting = true;
+    try {
+      const next = await (await operations.startBackup(job.id)).op;
+      if (next) void operations.open(next.id);
+      else toast.success('Backup started', job.name);
+    } catch (err) {
+      toast.error('Could not start the job', err instanceof ApiError ? err.message : undefined);
+    } finally {
+      starting = false;
+    }
   }
 
   function copyDetails() {
@@ -141,226 +142,128 @@
     void copyWithToast(lines, 'Copied');
   }
 
-  const allRestoreModes: { id: 'in-place' | 'alongside' | 'download' | 'system'; title: string; blurb: string; danger?: boolean }[] = [
-    { id: 'in-place', title: 'Restore in place', blurb: 'Replace current data on this dockmesh. Stops affected stacks first.', danger: true },
-    { id: 'alongside', title: 'Restore alongside', blurb: 'Mount as new stacks with a -restored suffix. Original keeps running.' },
-    { id: 'download', title: 'Download archive', blurb: 'Download the decrypted .tar.gz for offline inspection.' },
-    { id: 'system', title: 'Restore the whole system', blurb: "Replace this server's database, users and stack files with the backup's, then restart.", danger: true }
-  ];
-  // A system run replaces the whole install, so only an admin restores or downloads it.
-  const systemRun = $derived(run?.sources?.some((s) => s.type === 'system') ?? false);
-  const restoreModes = $derived(allRestoreModes.filter((m) => {
-    if (m.id === 'download') return allowed('backups.download') && (!systemRun || isAdmin());
-    if (m.id === 'system') return systemRun && isAdmin();
-    return !systemRun;
-  }));
+  const failedStepOf = $derived(op ? failedStep(op) : undefined);
 </script>
 
 {#if loading && !run}
-  <section class="bk-detail-page">
-    <div class="bk-detail-back-row">
-      <a href="/backups?tab=runs" class="bk-detail-back">
-        <ChevronLeft size={14} strokeWidth={1.5} /> backups / runs
-      </a>
-    </div>
-    <div class="dm-card bk-detail-loading"><Skeleton width="60%" height="6rem" /></div>
-  </section>
+  <section class="dm-page"><div class="dm-tbl"><div class="dm-tr" style="grid-template-columns: 1fr"><Skeleton width="50%" height="0.9rem" /></div></div></section>
 {:else if notFound || !run}
-  <section class="bk-detail-page">
-    <div class="bk-detail-back-row">
-      <a href="/backups?tab=runs" class="bk-detail-back">
-        <ChevronLeft size={14} strokeWidth={1.5} /> backups / runs
-      </a>
-    </div>
-    <div class="dm-card bk-detail-loading">
-      <EmptyState icon={Box} title="Run not found" description="This run has been pruned or you don't have access." />
-    </div>
+  <section class="dm-page">
+    <EmptyState icon={Box} title="Run not found" description="It was removed, or you do not have access to it.">
+      {#snippet action()}<a class="dm-btn" href="/backups?tab=runs">All runs</a>{/snippet}
+    </EmptyState>
   </section>
 {:else}
-  {@const sp = statusPill(run.status)}
-  <section class="bk-detail-page">
-    <div class="bk-detail-back-row">
-      <a href="/backups?tab=runs" class="bk-detail-back">
-        <ChevronLeft size={14} strokeWidth={1.5} /> backups / runs
-      </a>
-    </div>
-
-    <header class="bk-detail-header">
-      <div class="bk-detail-header-text">
-        <h1 class="ed-title bk-detail-title">Run #{run.id}</h1>
-        <p class="ed-subtitle bk-detail-subtitle">
-          <a href="/backups/jobs/{job?.id ?? ''}" class="bk-detail-title-job">{run.job_name}</a> ·
-          {fmtDay(run.started_at)} {fmtTimeOnly(run.started_at)} ·
-          {#if run.status === 'failed'}
-            <span class="bk-detail-fail">failed in {fmtDuration(run.started_at, run.finished_at)}</span>
-          {:else if run.status === 'running'}
-            running…
-          {:else if run.status === 'success' || run.status === 'success_with_warnings'}
-            {fmtBytes(run.size_bytes)} in {fmtDuration(run.started_at, run.finished_at)}
-          {:else}
-            {run.status}
-          {/if}
-        </p>
+  <section class="dm-page">
+    <div class="dm-ph">
+      <div class="title">
+        <h1>Run #{run.id}</h1>
+        <div class="dm-sub">
+          {#if job}<a href="/backups/jobs/{job.id}">{run.job_name}</a>{:else}{run.job_name}{/if}
+          · {new Date(run.started_at).toLocaleString()}
+        </div>
       </div>
-      <div class="ed-actions">
-        <button type="button" class="dm-btn dm-btn-secondary dm-btn-sm" onclick={copyDetails}>
-          <Copy size={11} strokeWidth={1.5} /> Copy details
+      <StatusChip tone={runTone(op && isActive(op) ? 'running' : run.status)} label={op && isActive(op) ? 'running' : runLabel(run.status)} />
+      {#if run.encrypted}<span class="dm-sub enc"><Lock size={12} /> encrypted</span>{/if}
+      <span class="dm-sp"></span>
+      <button type="button" class="dm-btn" onclick={copyDetails}><Copy size={13} /> Copy details</button>
+      {#if run.status === 'failed' && job && allowed('backups.update')}
+        <button type="button" class="dm-btn dm-btn-primary" disabled={starting} onclick={runAgain}><Play size={13} /> Run again</button>
+      {/if}
+      {#if runRestorable(run) && canDownload}
+        <button type="button" class="dm-btn" onclick={download}><Download size={13} /> Download</button>
+      {/if}
+      {#if canRestore}
+        <button type="button" class="dm-btn dm-btn-primary" onclick={() => (restorePreset = 'alongside')}>
+          <Undo2 size={13} /> {systemRun ? 'Restore system…' : 'Restore…'}
         </button>
-        {#if runRestorable(run) && !systemRun}
-          <button type="button" class="dm-btn dm-btn-primary dm-btn-sm" onclick={() => doRestore('alongside')}>
-            <Undo2 size={11} strokeWidth={1.5} /> Restore
-          </button>
-        {/if}
-      </div>
-    </header>
-
-    <!-- Stat row -->
-    <div class="bk-detail-stat-row">
-      <div class="bk-detail-stat">
-        <span class="bk-detail-stat-label">Status</span>
-        <span class="dm-pill {sp.cls} bk-detail-pill"><span class="dm-pill-dot"></span> {sp.label}</span>
-        {#if run.encrypted}
-          <span class="bk-detail-stat-mono"><Lock size={9} strokeWidth={1.5} /> encrypted</span>
-        {/if}
-      </div>
-      <div class="bk-detail-stat">
-        <span class="bk-detail-stat-label">Size</span>
-        <span class="bk-detail-stat-value">{run.size_bytes ? fmtBytes(run.size_bytes) : '—'}</span>
-      </div>
-      <div class="bk-detail-stat">
-        <span class="bk-detail-stat-label">Duration</span>
-        <span class="bk-detail-stat-value">{fmtDuration(run.started_at, run.finished_at)}</span>
-      </div>
-      <div class="bk-detail-stat">
-        <span class="bk-detail-stat-label">Started</span>
-        <span class="bk-detail-stat-value">{fmtDay(run.started_at)}, {fmtTimeOnly(run.started_at)}</span>
-        <span class="bk-detail-stat-mono">{fmtTime(run.started_at)}</span>
-      </div>
+      {/if}
     </div>
 
-    {#if run.error}
-      <div class="bk-detail-error">
-        <AlertTriangle size={14} strokeWidth={1.5} class="bk-detail-error-icon" />
-        <div class="bk-detail-error-text font-mono">{run.error}</div>
+    <StatBar
+      items={[
+        { label: 'Size', value: run.status === 'failed' || !run.size_bytes ? '—' : fmtBytes(run.size_bytes) },
+        { label: 'Duration', value: fmtDuration(run.started_at, run.finished_at) },
+        { label: 'Target', value: job ? targetTypeLabel(job.target_type) : '—', note: run.target_path?.split('/').pop() ?? '' },
+        {
+          label: 'Checksum',
+          value: run.sha256 ? 'verified' : '—',
+          note: run.sha256 ? 'read back after upload' : run.status === 'failed' ? 'nothing kept' : ''
+        }
+      ]}
+    />
+
+    {#if run.error && !op}
+      <div class="fail" role="alert"><b>{run.status === 'failed' ? 'Failed' : 'Warning'}</b><p class="dm-mono">{run.error}</p></div>
+    {:else if op?.status === 'failed'}
+      <div class="fail" role="alert">
+        <b>{failedStepOf ? `Failed at “${failedStepOf.label}”` : 'Failed'}</b>
+        {#if op.error}<p class="dm-mono">{op.error}</p>{/if}
       </div>
     {/if}
 
-    <div class="bk-detail-grid">
-      <!-- Left column — metadata + log -->
-      <div class="bk-detail-col">
-        <section class="bk-detail-section dm-card">
-          <Eyebrow>Run metadata</Eyebrow>
-          <dl class="bk-detail-kv">
-            <dt>started</dt>
-            <dd class="font-mono">{fmtTime(run.started_at)}</dd>
-            {#if run.finished_at}
-              <dt>finished</dt>
-              <dd class="font-mono">{fmtTime(run.finished_at)}</dd>
-            {/if}
-            {#if run.target_path}
-              <dt>target path</dt>
-              <dd class="font-mono bk-detail-kv-break">{run.target_path}</dd>
-            {/if}
-            {#if run.sha256}
-              <dt>sha-256</dt>
-              <dd class="font-mono bk-detail-kv-hash">{run.sha256}</dd>
-            {/if}
-            <dt>encrypted</dt>
-            <dd class="font-mono">{run.encrypted ? 'yes (age)' : 'no'}</dd>
-            {#if run.sources?.length}
-              <dt>sources</dt>
-              <dd>
-                <div class="bk-detail-source-chips">
-                  {#each run.sources as s, i (i)}
-                    <span class="dm-pill dm-pill-neutral bk-detail-pill">{s.type}: <span class="font-mono">{s.name}</span></span>
-                  {/each}
+    <div class="grid">
+      <div class="col">
+        {#if op}
+          <section>
+            <h2 class="dm-h2">Steps</h2>
+            <OperationSteps {op} />
+          </section>
+        {/if}
+        <section>
+          <h2 class="dm-h2">Log {#if op && isActive(op)}<span class="dm-sub">· live</span>{:else if !op && run.status === 'running'}<span class="dm-sub">· refreshing every 2 s</span>{/if}</h2>
+          <div class="log dm-mono" bind:this={logEl}>
+            {#if op}
+              {#each opLog as l, i (i)}
+                <div class="ln {l.level}"><span class="t">{new Date(l.ts).toLocaleTimeString()}</span><span class="x">{l.text}</span></div>
+              {:else}
+                <div class="dm-dim">{opLoaded ? (isActive(op) ? 'Waiting for output…' : 'No log lines.') : 'Loading…'}</div>
+              {/each}
+            {:else if !logLoaded}
+              <div class="dm-dim">Loading…</div>
+            {:else}
+              {#each logEntries as e (e.id)}
+                <div class="ln {e.stream === 'error' || e.stream === 'hook_stderr' ? 'error' : e.stream === 'warn' ? 'warn' : ''}">
+                  <span class="t">{new Date(e.ts).toLocaleTimeString()}</span><span class="x">{e.line}</span>
                 </div>
-              </dd>
+              {:else}
+                <div class="dm-dim">No log lines recorded for this run.</div>
+              {/each}
+            {/if}
+          </div>
+        </section>
+      </div>
+      <div class="col">
+        <section>
+          <h2 class="dm-h2">Details</h2>
+          <dl class="dm-kv">
+            <dt>Started</dt><dd class="dm-num">{new Date(run.started_at).toLocaleString()}</dd>
+            {#if run.finished_at}<dt>Finished</dt><dd class="dm-num">{new Date(run.finished_at).toLocaleString()}</dd>{/if}
+            {#if run.sources?.length}
+              <dt>What</dt>
+              <dd>{#each run.sources as s, i (i)}{i ? ', ' : ''}{s.type === 'system' ? 'Dockmesh server' : s.name} <span class="dm-dim">({s.type})</span>{/each}</dd>
+            {/if}
+            {#if run.target_path}<dt>Archive</dt><dd class="dm-mono small">{run.target_path}</dd>{/if}
+            {#if run.pruned_at}<dt>Removed</dt><dd>by retention, {new Date(run.pruned_at).toLocaleString()}</dd>{/if}
+            {#if run.sha256}<dt>SHA-256</dt><dd class="dm-mono small">{run.sha256}</dd>{/if}
+            <dt>Encryption</dt><dd>{run.encrypted ? 'age, key in Settings › Encryption key' : 'off'}</dd>
+            {#if job}
+              <dt>Job</dt><dd><a href="/backups/jobs/{job.id}">{job.name}</a> <span class="dm-dim">· {cronHuman(job.schedule)}</span></dd>
             {/if}
           </dl>
         </section>
-
-        <section class="bk-detail-section dm-card">
-          <Eyebrow>Log</Eyebrow>
-          {#if !logLoaded}
-            <p class="bk-detail-empty">Loading…</p>
-          {:else if logEntries.length === 0}
-            <p class="bk-detail-empty">
-              No log lines recorded for this run.
-              {#if run.status === 'running'}
-                Streaming will start once the executor emits its first phase.
-              {/if}
-            </p>
-          {:else}
-            <pre class="bk-detail-log">{#each logEntries as e (e.id)}<span class="bk-detail-log-line" data-stream={e.stream}><span class="bk-detail-log-ts">{new Date(e.ts).toLocaleTimeString()}</span> <span class="bk-detail-log-stream">{e.stream}</span> {e.line}
-</span>{/each}</pre>
-            {#if run.status === 'running'}
-              <p class="bk-detail-empty">live · refreshing every 2s</p>
-            {/if}
-          {/if}
-        </section>
-
-      </div>
-
-      <!-- Right column — restore flow -->
-      <div class="bk-detail-col">
-        {#if runRestorable(run)}
-          <section class="bk-detail-section dm-card">
-            <Eyebrow>Restore</Eyebrow>
-            <p class="bk-detail-block-body">
-              {#if systemRun}
-                Restoring a system backup replaces this server's database, users and stack files, then
-                restarts Dockmesh.
-              {:else}
-                Pick how to restore this run. <strong>In-place</strong> replaces the current data;
-                <strong>alongside</strong> mounts as a copy with a <code>-restored</code> suffix;
-                <strong>download</strong> streams the archive for offline inspection.
-              {/if}
-            </p>
-            {#if restoreModes.length > 0}
-              <div class="bk-detail-restore-list">
-                {#each restoreModes as m (m.id)}
-                  <button type="button" class="bk-detail-restore-row" class:danger={m.danger} onclick={() => doRestore(m.id)}>
-                    <div class="bk-detail-restore-text">
-                      <span class="bk-detail-restore-title">{m.title}</span>
-                      <span class="bk-detail-restore-blurb">{m.blurb}</span>
-                    </div>
-                    <ArrowRight size={12} strokeWidth={1.5} class="bk-detail-restore-arrow" />
-                  </button>
-                {/each}
-              </div>
-            {/if}
-          </section>
-        {:else if run.status === 'failed'}
-          <section class="bk-detail-section dm-card">
-            <Eyebrow>Restore</Eyebrow>
-            <p class="bk-detail-empty">No data was written — restore is unavailable for failed runs.</p>
-          </section>
-        {/if}
-
-        {#if job}
-          <section class="bk-detail-section dm-card">
-            <Eyebrow>Job</Eyebrow>
-            <a href="/backups/jobs/{job.id}" class="bk-detail-job-link">
-              <span class="font-mono bk-detail-job-link-name">{job.name}</span>
-              <ArrowRight size={11} strokeWidth={1.5} class="bk-detail-job-link-arrow" />
-            </a>
-            <p class="bk-detail-block-body bk-detail-block-meta font-mono">
-              schedule {job.schedule} · target {job.target_type}
-            </p>
-          </section>
+        {#if run.status === 'failed'}
+          <p class="dm-sub">No archive was kept, so this run cannot be restored.</p>
+        {:else if systemRun && runRestorable(run)}
+          <p class="dm-sub">Restoring a system backup replaces this server's database, users and stack files, then restarts Dockmesh.</p>
         {/if}
       </div>
     </div>
   </section>
 
-  <SystemRestoreDialog
-    open={!!restorePreset && !!run?.sources.some((s) => s.type === 'system')}
-    {run}
-    onclose={() => (restorePreset = null)}
-  />
+  <SystemRestoreDialog open={!!restorePreset && systemRun} {run} onclose={() => (restorePreset = null)} />
   <RestoreDialog
-    run={restorePreset && !run?.sources.some((s) => s.type === 'system') ? run : null}
+    run={restorePreset && !systemRun ? run : null}
     preset={restorePreset ?? 'alongside'}
     originHost={job?.host_id ?? ''}
     onclose={() => (restorePreset = null)}
@@ -368,295 +271,20 @@
 {/if}
 
 <style>
-  .bk-detail-page { display: block; }
-  .bk-detail-back-row { margin-bottom: 12px; }
-  .bk-detail-back {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--fg-subtle);
-    text-decoration: none;
-    letter-spacing: 0.04em;
-  }
-  .bk-detail-back:hover { color: var(--fg); }
-
-  .bk-detail-header {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 24px;
-    flex-wrap: wrap;
-    margin-bottom: 22px;
-  }
-  .bk-detail-header-text { min-width: 0; max-width: 70ch; }
-  .bk-detail-title {
-    font-size: 24px;
-    margin-top: 8px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .bk-detail-title-job {
-    color: var(--fg);
-    text-decoration: none;
-  }
-  .bk-detail-title-job:hover { color: var(--accent-fg); }
-  .bk-detail-title-meta { color: var(--fg-subtle); font-weight: 400; font-size: 16px; }
-  .bk-detail-subtitle {
-    margin-top: 6px;
-    font-size: 13.5px;
-    color: var(--fg-muted);
-    line-height: 1.55;
-  }
-  .bk-detail-fail { color: var(--color-danger-400); }
-
-  /* Connected hairline grid (mockup pattern) — same look as the
-     drawer stat-rows. Cells separated by 1px gap with parent-bg
-     bleeding through, no per-cell borders. */
-  .bk-detail-stat-row {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 1px;
-    background: var(--border-subtle);
-    border: 1px solid var(--border-subtle);
-    border-radius: 4px;
-    overflow: hidden;
-    margin-bottom: 22px;
-  }
-  .bk-detail-stat {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 14px 16px;
-    background: var(--bg-elevated);
-  }
-  .bk-detail-stat-label {
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    color: var(--fg-subtle);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-  .bk-detail-stat-value {
-    font-size: 14px;
-    color: var(--fg);
-    margin-top: 2px;
-  }
-  .bk-detail-stat-mono {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-    margin-top: 2px;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .bk-detail-pill { font-size: 9.5px; padding: 1px 6px; }
-
-  .bk-detail-error {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 12px 14px;
-    margin-bottom: 22px;
-    border: 1px solid color-mix(in srgb, var(--color-danger-500) 35%, var(--border));
-    background: color-mix(in srgb, var(--color-danger-500) 8%, transparent);
-    border-radius: 5px;
-    color: var(--color-danger-400);
-  }
-  :global(.bk-detail-error-icon) { color: var(--color-danger-400); flex-shrink: 0; margin-top: 2px; }
-  .bk-detail-error-text {
-    font-size: 12px;
-    line-height: 1.55;
-    word-break: break-all;
-    flex: 1;
-  }
-
-  .bk-detail-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
-    gap: 16px;
-  }
-  @media (max-width: 1000px) {
-    .bk-detail-grid { grid-template-columns: 1fr; }
-  }
-  .bk-detail-col {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  .bk-detail-section { padding: 18px 20px 20px; }
-  .bk-detail-loading { padding: 28px; margin-bottom: 24px; }
-  .bk-detail-empty {
-    margin: 8px 0 0;
-    font-size: 12.5px;
-    color: var(--fg-subtle);
-    line-height: 1.55;
-  }
-  .bk-detail-log {
-    margin: 8px 0 0;
-    padding: 12px 14px;
-    background: var(--terminal, #06090f);
-    border: 1px solid var(--border-subtle);
-    border-radius: 4px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    line-height: 1.55;
-    color: #cbd5e1;
-    max-height: 420px;
-    overflow: auto;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .bk-detail-log-line { display: block; }
-  .bk-detail-log-ts { color: #64748b; }
-  .bk-detail-log-stream {
-    display: inline-block;
-    width: 10ch;
-    margin-right: 4px;
-    color: #64748b;
-  }
-  .bk-detail-log-line[data-stream="error"] { color: var(--color-danger-400); }
-  .bk-detail-log-line[data-stream="warn"] { color: var(--color-warning-400); }
-  .bk-detail-log-line[data-stream="hook_stdout"] { color: #e2e8f0; }
-  .bk-detail-log-line[data-stream="hook_stderr"] { color: #fca5a5; }
-  .bk-detail-block-body {
-    margin: 8px 0 0;
-    font-size: 13px;
-    color: var(--fg-muted);
-    line-height: 1.55;
-  }
-  .bk-detail-block-body strong { color: var(--fg); font-weight: 500; }
-  .bk-detail-block-body code {
-    font-family: var(--font-mono);
-    color: var(--accent-fg);
-    background: var(--bg-elevated);
-    padding: 0 4px;
-    border-radius: 3px;
-  }
-  .bk-detail-block-meta { color: var(--fg-subtle); font-size: 11px; }
-
-  .bk-detail-link {
-    color: var(--accent-fg);
-    background: transparent;
-    border: 0;
-    padding: 0;
-    cursor: pointer;
-    font-size: inherit;
-    text-decoration: underline;
-  }
-
-  .bk-detail-kv {
-    display: grid;
-    grid-template-columns: 110px 1fr;
-    row-gap: 6px;
-    column-gap: 12px;
-    margin: 8px 0 0;
-    font-size: 12px;
-  }
-  .bk-detail-kv dt {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--fg-subtle);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .bk-detail-kv dd {
-    margin: 0;
-    color: var(--fg);
-    word-break: break-all;
-  }
-  .bk-detail-kv-break { word-break: break-all; }
-  .bk-detail-kv-hash {
-    font-size: 10.5px;
-    color: var(--fg-subtle);
-    word-break: break-all;
-  }
-
-  .bk-detail-log-empty {
-    padding: 18px 16px;
-    margin-top: 8px;
-    text-align: center;
-    border: 1px dashed var(--border);
-    border-radius: 5px;
-    background: var(--bg-elevated);
-  }
-
-  .bk-detail-source-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-
-  /* Restore flow */
-  .bk-detail-restore-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-top: 14px;
-  }
-  .bk-detail-restore-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 14px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--surface);
-    cursor: pointer;
-    text-align: left;
-    width: 100%;
-    transition: border-color 120ms, background 120ms;
-  }
-  .bk-detail-restore-row:hover { border-color: var(--border-strong); background: var(--surface-hover); }
-  .bk-detail-restore-row.danger {
-    border-color: color-mix(in srgb, var(--color-danger-500) 30%, var(--border));
-  }
-  .bk-detail-restore-row.danger:hover {
-    border-color: var(--color-danger-500);
-    background: color-mix(in srgb, var(--color-danger-500) 6%, transparent);
-  }
-  .bk-detail-restore-text {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    flex: 1;
-    min-width: 0;
-  }
-  .bk-detail-restore-title {
-    font-size: 13px;
-    color: var(--fg);
-    font-weight: 500;
-  }
-  .bk-detail-restore-row.danger .bk-detail-restore-title { color: var(--color-danger-400); }
-  .bk-detail-restore-blurb {
-    font-size: 11.5px;
-    color: var(--fg-subtle);
-    line-height: 1.5;
-  }
-  :global(.bk-detail-restore-arrow) { color: var(--fg-subtle); flex-shrink: 0; }
-
-  .bk-detail-job-link {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 12px;
-    margin-top: 8px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--bg-elevated);
-    text-decoration: none;
-    color: var(--fg);
-    transition: border-color 120ms, background 120ms;
-  }
-  .bk-detail-job-link:hover { border-color: var(--border-strong); background: var(--surface-hover); }
-  .bk-detail-job-link-name {
-    font-size: 12.5px;
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  :global(.bk-detail-job-link-arrow) { color: var(--fg-subtle); }
+  .title { min-width: 0; }
+  .title .dm-sub a { color: var(--accent); text-decoration: none; }
+  .enc { display: inline-flex; align-items: center; gap: 4px; }
+  .grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr); gap: 28px; align-items: start; }
+  .col { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+  .fail { border: 1px solid color-mix(in srgb, var(--bad) 45%, transparent); background: color-mix(in srgb, var(--bad) 8%, transparent); border-radius: var(--r); padding: 10px 12px; }
+  .fail b { color: var(--bad); }
+  .fail p { margin: 4px 0 0; font-size: 12.5px; overflow-wrap: anywhere; }
+  .small { font-size: 12px; overflow-wrap: anywhere; }
+  .log { max-height: 460px; min-height: 120px; overflow: auto; background: var(--code, var(--field)); border-radius: var(--r-sm); padding: 8px 10px; font-size: 11.5px; line-height: 1.55; }
+  .ln { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; }
+  .ln .t { color: var(--subtle); }
+  .ln .x { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .ln.warn .x { color: var(--warn); }
+  .ln.error .x { color: var(--bad); }
+  @media (max-width: 1100px) { .grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

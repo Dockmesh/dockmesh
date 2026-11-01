@@ -8,6 +8,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
@@ -15,8 +16,10 @@ import (
 // over a WebSocket. Auth via ?ticket= query parameter.
 //
 // Message shape:
-//   Docker:  {"source":"docker", "type":"container", "action":"start", "id":"...", "name":"..."}
-//   Stacks:  {"source":"stacks", "type":"modified|created|removed", "name":"...", "file":"compose.yaml"}
+//
+//	Docker:  {"source":"docker", "type":"container", "action":"start", "id":"...", "name":"..."}
+//	Stacks:  {"source":"stacks", "type":"modified|created|removed", "name":"...", "file":"compose.yaml"}
+//	Ops:     {"source":"operations", "type":"update|log", "op":{...}, "line":{...}}
 func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
 	r, ok := h.wsAuth(w, r, rbac.PermSystemView)
 	if !ok {
@@ -48,6 +51,13 @@ func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
 	// Stack filesystem events (always available).
 	stackCh, stackUnsub := h.Stacks.Subscribe()
 	defer stackUnsub()
+
+	var opCh <-chan operations.Event
+	if h.Operations != nil {
+		ch, unsub := h.Operations.Subscribe()
+		defer unsub()
+		opCh = ch
+	}
 
 	// Docker events (optional — only if docker is reachable).
 	var dockerMsgs <-chan dockerEventLike
@@ -92,6 +102,23 @@ func (h *Handlers) WSEvents(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if b, err := json.Marshal(ev); err == nil {
+				if err := conn.WriteMessage(websocket.TextMessage, b); err != nil {
+					return
+				}
+			}
+		case ev, ok := <-opCh:
+			if !ok {
+				opCh = nil
+				continue
+			}
+			if !h.operationVisible(r, &ev.Op) {
+				continue
+			}
+			payload := map[string]any{"source": "operations", "type": ev.Type, "op": ev.Op}
+			if ev.Line != nil {
+				payload["line"] = ev.Line
+			}
+			if b, err := json.Marshal(payload); err == nil {
 				if err := conn.WriteMessage(websocket.TextMessage, b); err != nil {
 					return
 				}

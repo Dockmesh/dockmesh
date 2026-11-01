@@ -7,6 +7,7 @@ import {
   Boxes,
   Waypoints,
   Archive,
+  RefreshCw,
   Globe,
   Bell,
   Users,
@@ -64,6 +65,7 @@ export const NAV: NavGroup[] = [
   {
     title: 'Operations',
     items: [
+      { key: 'updates', href: '/updates', label: 'Updates', icon: RefreshCw, show: () => allowed('containers.view') },
       { key: 'backups', href: '/backups', label: 'Backups', icon: Archive, show: () => allowed('backups.view'), also: ['/migrations'] },
       { key: 'proxy', href: '/proxy', label: 'Reverse proxy', icon: Globe, show: () => allowed('proxy.view') },
       { key: 'alerts', href: '/alerts', label: 'Alerts', icon: Bell, show: () => allowed('alerts.view') }

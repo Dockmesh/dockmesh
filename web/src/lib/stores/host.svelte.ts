@@ -34,7 +34,7 @@ function loadInitial(): string {
   return window.localStorage.getItem(STORAGE_KEY) || 'local';
 }
 
-function createHostStore() {
+export function createHostStore() {
   let selectedId = $state<string>(loadInitial());
   // `available` is the list pulled from /api/v1/hosts. The ALL_HOSTS
   // entry is NOT stored here — it's injected at read time via the
@@ -50,12 +50,14 @@ function createHostStore() {
 
   function setAvailable(list: HostInfo[]) {
     available = list;
-    // If the previously selected host has gone offline / been removed,
-    // fall back to local. "all" is always valid as long as local exists.
+    // A caller limited to some hosts may not see local at all, so the
+    // fallback is the first host the list actually offers.
     if (selectedId === ALL_HOSTS_ID) return;
-    if (selectedId !== 'local' && !list.some((h) => h.id === selectedId && h.status === 'online')) {
-      set('local');
-    }
+    const usable = (h: HostInfo) => h.id === 'local' || h.status === 'online';
+    if (list.some((h) => h.id === selectedId && usable(h))) return;
+    if (list.length === 0) return;
+    const local = list.find((h) => h.id === 'local');
+    set((local ?? list.find(usable) ?? list[0]).id);
   }
 
   return {
@@ -78,6 +80,12 @@ function createHostStore() {
     },
     get isAll(): boolean {
       return selectedId === ALL_HOSTS_ID;
+    },
+    // Whether the selection is a host the caller can read. Until the list
+    // arrives it may still be a scoped user's stale 'local'; callers
+    // without hosts.view never get a list and use the selection as it is.
+    usable(canListHosts: boolean): boolean {
+      return selectedId === ALL_HOSTS_ID || !canListHosts || available.some((h) => h.id === selectedId);
     },
     set,
     setAvailable

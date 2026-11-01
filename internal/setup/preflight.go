@@ -177,21 +177,15 @@ func checkNTP() PreflightCheck {
 		c.Value = "skipped (non-linux)"
 		return c
 	}
-	out, err := exec.Command("timedatectl", "show", "--property=NTPSynchronized,NTP", "--value").Output()
+	// One property per -p: systemd 255+ prints nothing for a comma list.
+	out, err := exec.Command("timedatectl", "show", "-p", "NTPSynchronized", "--value").Output()
 	if err != nil {
 		c.Status = "warn"
 		c.Value = "unknown"
 		c.Message = "timedatectl unavailable; mTLS handshakes are sensitive to clock skew."
 		return c
 	}
-	lines := strings.Fields(strings.TrimSpace(string(out)))
-	synced := false
-	for _, l := range lines {
-		if strings.EqualFold(l, "yes") {
-			synced = true
-		}
-	}
-	if synced {
+	if ntpSynced(string(out)) {
 		c.Value = "synced"
 	} else {
 		c.Status = "warn"
@@ -199,6 +193,11 @@ func checkNTP() PreflightCheck {
 		c.Message = "Clock not synced. Agent mTLS handshakes will fail until the host's time matches the server's."
 	}
 	return c
+}
+
+// ntpSynced reads `timedatectl show -p NTPSynchronized --value`.
+func ntpSynced(out string) bool {
+	return strings.EqualFold(strings.TrimSpace(out), "yes")
 }
 
 // ---------------------------------------------------------------------------
