@@ -68,9 +68,14 @@ type BasicAuthUser struct {
 	Hash     string `json:"hash,omitempty"`
 }
 
+// ForwardAuth's URL query can carry a token, so it is write-only: API
+// responses leave it out and set QuerySet, and a URL sent without a
+// query keeps the stored one unless ClearQuery is set.
 type ForwardAuth struct {
 	URL         string   `json:"url"`
 	CopyHeaders []string `json:"copy_headers"`
+	QuerySet    bool     `json:"query_set,omitempty"`
+	ClearQuery  bool     `json:"clear_query,omitempty"`
 }
 
 type HeaderOptions struct {
@@ -81,9 +86,14 @@ type HeaderOptions struct {
 	ResponseRemove []string `json:"response_remove"`
 }
 
+// Header values marked Secret are write-only: API responses carry an
+// empty Value and set ValueSet, and a secret header sent with an empty
+// value keeps the stored one.
 type Header struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
+	Name     string `json:"name"`
+	Value    string `json:"value"`
+	Secret   bool   `json:"secret,omitempty"`
+	ValueSet bool   `json:"value_set,omitempty"`
 }
 
 type LogOptions struct {
@@ -116,8 +126,9 @@ func ParseOptions(raw []byte) (*SiteOptions, error) {
 	return &o, nil
 }
 
-// Public returns a copy without password hashes and with every list
-// present (empty rather than null), for API responses.
+// Public returns a copy without password hashes, secret header values
+// and the forward-auth query, and with every list present (empty rather
+// than null), for API responses.
 func (o SiteOptions) Public() SiteOptions {
 	users := make([]BasicAuthUser, len(o.Access.BasicAuth))
 	for i, u := range o.Access.BasicAuth {
@@ -129,12 +140,65 @@ func (o SiteOptions) Public() SiteOptions {
 	if f := o.Access.ForwardAuth; f != nil {
 		fa := *f
 		fa.CopyHeaders = orEmpty(fa.CopyHeaders)
+		fa.URL, fa.QuerySet = splitQuery(f.URL)
+		fa.ClearQuery = false
 		o.Access.ForwardAuth = &fa
 	}
-	o.Headers.RequestSet = orEmpty(o.Headers.RequestSet)
+	o.Headers.RequestSet = publicHeaders(o.Headers.RequestSet)
 	o.Headers.RequestRemove = orEmpty(o.Headers.RequestRemove)
-	o.Headers.ResponseSet = orEmpty(o.Headers.ResponseSet)
+	o.Headers.ResponseSet = publicHeaders(o.Headers.ResponseSet)
 	o.Headers.ResponseRemove = orEmpty(o.Headers.ResponseRemove)
+	return o
+}
+
+func publicHeaders(in []Header) []Header {
+	out := make([]Header, len(in))
+	for i, h := range in {
+		out[i] = Header{Name: h.Name, Value: h.Value, Secret: h.Secret}
+		if h.Secret {
+			out[i].Value, out[i].ValueSet = "", h.Value != ""
+		}
+	}
+	return out
+}
+
+// splitQuery returns raw without its query and whether it had one. A URL
+// that doesn't parse comes back empty, so nothing of it can leak.
+func splitQuery(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", false
+	}
+	had := u.RawQuery != "" || u.ForceQuery
+	u.RawQuery, u.ForceQuery = "", false
+	return u.String(), had
+}
+
+// withoutSecrets returns a copy for the config preview: secret header
+// values and the forward-auth query are replaced by maskedValue, so the
+// preview shows where they go without showing them.
+func (o SiteOptions) withoutSecrets() SiteOptions {
+	hide := func(in []Header) []Header {
+		out := make([]Header, len(in))
+		for i, h := range in {
+			out[i] = h
+			if h.Secret {
+				out[i].Value = maskedValue
+			}
+		}
+		return out
+	}
+	o.Headers.RequestSet = hide(o.Headers.RequestSet)
+	o.Headers.ResponseSet = hide(o.Headers.ResponseSet)
+	if f := o.Access.ForwardAuth; f != nil {
+		fa := *f
+		base, had := splitQuery(f.URL)
+		fa.URL = base
+		if had {
+			fa.URL += "?" + maskedValue
+		}
+		o.Access.ForwardAuth = &fa
+	}
 	return o
 }
 
@@ -169,7 +233,7 @@ func (o SiteOptions) Masked() SiteOptions {
 func maskHeaders(in []Header) []Header {
 	out := make([]Header, len(in))
 	for i, h := range in {
-		out[i] = Header{Name: h.Name, Value: maskedValue}
+		out[i] = Header{Name: h.Name, Value: maskedValue, Secret: h.Secret}
 	}
 	return out
 }
@@ -459,6 +523,109 @@ func (o *SiteOptions) applyPasswords(prev *SiteOptions) error {
 		u.Password = ""
 	}
 	return nil
+}
+
+// applySecrets fills write-only values the client left empty from prev:
+// secret header values by list and name, and the forward-auth query as
+// long as the URL still points at the same server, since the query would
+// otherwise go to a host the stored token was never meant for.
+func (o *SiteOptions) applySecrets(prev *SiteOptions) error {
+	var prevOpts SiteOptions
+	if prev != nil {
+		prevOpts = *prev
+	}
+	for _, l := range []struct {
+		field     string
+		set, prev []Header
+	}{
+		{"headers.request_set", o.Headers.RequestSet, prevOpts.Headers.RequestSet},
+		{"headers.response_set", o.Headers.ResponseSet, prevOpts.Headers.ResponseSet},
+	} {
+		for i := range l.set {
+			h := &l.set[i]
+			h.ValueSet = false
+			if !h.Secret || h.Value != "" {
+				continue
+			}
+			for _, p := range l.prev {
+				if strings.EqualFold(p.Name, h.Name) {
+					h.Value = p.Value
+					break
+				}
+			}
+			if h.Value == "" {
+				return optErr(l.field, "secret header %s needs a value", h.Name)
+			}
+		}
+	}
+	f := o.Access.ForwardAuth
+	if f == nil {
+		return nil
+	}
+	clear := f.ClearQuery
+	f.QuerySet, f.ClearQuery = false, false
+	pf := prevOpts.Access.ForwardAuth
+	if clear || pf == nil {
+		return nil
+	}
+	u, err := url.Parse(f.URL)
+	if err != nil || u.RawQuery != "" || u.ForceQuery {
+		return nil
+	}
+	old, err := url.Parse(pf.URL)
+	if err != nil || old.RawQuery == "" {
+		return nil
+	}
+	if !strings.EqualFold(u.Scheme, old.Scheme) || !strings.EqualFold(u.Host, old.Host) {
+		return optErr("access.forward_auth.url", "the stored query is only kept for the same server; enter it again or clear it")
+	}
+	u.RawQuery = old.RawQuery
+	f.URL = u.String()
+	return nil
+}
+
+// ChangedGroups names the option groups that differ between a and b, as
+// "options.<group>", for audit entries. Secrets count: a new password or
+// header value changes its group.
+func ChangedGroups(a, b SiteOptions) []string {
+	a, b = a.canonical(), b.canonical()
+	var out []string
+	for _, g := range []struct {
+		name string
+		a, b any
+	}{
+		{"routing", a.Routing, b.Routing},
+		{"https", a.HTTPS, b.HTTPS},
+		{"performance", a.Performance, b.Performance},
+		{"access", a.Access, b.Access},
+		{"headers", a.Headers, b.Headers},
+		{"logs", a.Logs, b.Logs},
+	} {
+		ja, _ := json.Marshal(g.a)
+		jb, _ := json.Marshal(g.b)
+		if string(ja) != string(jb) {
+			out = append(out, "options."+g.name)
+		}
+	}
+	return out
+}
+
+// canonical turns absent lists into empty ones, so stored and submitted
+// options compare equal when only that differs.
+func (o SiteOptions) canonical() SiteOptions {
+	o.Routing.ExtraUpstreams = orEmpty(o.Routing.ExtraUpstreams)
+	o.Access.BasicAuth = orEmpty(o.Access.BasicAuth)
+	o.Access.IPRanges = orEmpty(o.Access.IPRanges)
+	if f := o.Access.ForwardAuth; f != nil {
+		fa := *f
+		fa.CopyHeaders = orEmpty(fa.CopyHeaders)
+		o.Access.ForwardAuth = &fa
+	}
+	o.Headers.RequestSet = orEmpty(o.Headers.RequestSet)
+	o.Headers.RequestRemove = orEmpty(o.Headers.RequestRemove)
+	o.Headers.ResponseSet = orEmpty(o.Headers.ResponseSet)
+	o.Headers.ResponseRemove = orEmpty(o.Headers.ResponseRemove)
+	return o
 }
 
 // normalize stores IP ranges in canonical CIDR form.
