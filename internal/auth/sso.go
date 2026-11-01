@@ -5,8 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/dockmesh/dockmesh/internal/rbac"
 	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/rbac"
 
 	"github.com/google/uuid"
 )
@@ -160,8 +161,9 @@ func (s *Service) ProvisionSSOUser(ctx context.Context, id SSOIdentity) (*User, 
 	}
 	if userID == "" && id.Email != "" {
 		// Only plain local accounts can be linked: one already bound to an
-		// IdP would be taken from it, and an account with 2FA or the admin
-		// role would be entered without its own factors.
+		// IdP would be taken from it, and an account with 2FA or a role
+		// that manages users or settings would be entered without its own
+		// factors.
 		emailUser, err := s.lookupUserID(ctx, `SELECT id FROM users WHERE email = ? COLLATE NOCASE LIMIT 1`, id.Email)
 		if err != nil {
 			return nil, err
@@ -169,7 +171,7 @@ func (s *Service) ProvisionSSOUser(ctx context.Context, id SSOIdentity) (*User, 
 		if emailUser != "" {
 			linkable, err := s.lookupUserID(ctx, `
 				SELECT id FROM users WHERE id = ? AND totp_verified = 0
-				   AND NOT EXISTS (SELECT 1 FROM role_assignments a WHERE a.user_id = users.id AND a.role_name = 'admin')
+				   AND NOT EXISTS (SELECT 1 FROM role_assignments a JOIN role_levels l ON l.role_name = a.role_name WHERE a.user_id = users.id AND l.area IN ('users', 'settings') AND l.level = 'manage')
 				   AND oidc_provider IS NULL AND saml_provider IS NULL
 				   AND oauth2_provider IS NULL AND ldap_provider IS NULL`, emailUser)
 			if err != nil {

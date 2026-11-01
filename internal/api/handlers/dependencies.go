@@ -4,6 +4,9 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/rbac"
+
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/stacks"
 	"github.com/go-chi/chi/v5"
@@ -33,9 +36,9 @@ func (h *Handlers) GetStackDependencies(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"stack_name":  name,
-		"depends_on":  deps,
-		"dependents":  dependents,
+		"stack_name": name,
+		"depends_on": deps,
+		"dependents": dependents,
 	})
 }
 
@@ -64,6 +67,12 @@ func (h *Handlers) SetStackDependencies(w http.ResponseWriter, r *http.Request) 
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
+	}
+	for _, dep := range req.DependsOn {
+		if res := h.stackRes(r, dep); !middleware.AllowedOn(r.Context(), rbac.PermStacksDeploy, res) {
+			h.writeScopeDenied(w, r, rbac.PermStacksDeploy, res, "dependency stack "+dep)
+			return
+		}
 	}
 	if err := h.Dependencies.Set(r.Context(), name, req.DependsOn); err != nil {
 		if errors.Is(err, stacks.ErrDependencyCycle) {

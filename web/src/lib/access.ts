@@ -1,7 +1,5 @@
 import type { Assignment, CustomRole, RoleCatalog, Scope } from './api';
 
-export const GLOBAL: Scope = { type: 'global' };
-
 export type HostNames = Record<string, string>;
 
 export function scopeLabel(s: Scope | undefined, hosts: HostNames = {}): string {
@@ -22,10 +20,6 @@ export function isGlobal(s: Scope | undefined): boolean {
   return !s || s.type === 'global';
 }
 
-export function sameScope(a: Scope, b: Scope): boolean {
-  return a.type === b.type && (a.host ?? '') === (b.host ?? '') && (a.value ?? '') === (b.value ?? '');
-}
-
 export function roleDisplay(roles: CustomRole[], name: string): string {
   return roles.find((r) => r.name === name)?.display ?? name;
 }
@@ -34,7 +28,7 @@ export function assignmentLabel(a: Assignment, roles: CustomRole[], hosts: HostN
   return `${roleDisplay(roles, a.role)} on ${scopeLabel(a.scope, hosts)}`;
 }
 
-function levelIndex(cat: RoleCatalog, area: string, level: string | undefined): number {
+export function levelIndex(cat: RoleCatalog, area: string, level: string | undefined): number {
   const a = cat.areas.find((x) => x.key === area);
   if (!a) return 0;
   const i = a.levels.findIndex((l) => l.key === (level || 'none'));

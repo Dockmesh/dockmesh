@@ -22,10 +22,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/dockmesh/dockmesh/internal/rbac"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/rbac"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
 )

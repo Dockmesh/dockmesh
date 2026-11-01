@@ -57,7 +57,7 @@ var exitCodeRe = regexp.MustCompile(`^Exited \((-?\d+)\)`)
 
 // Attention aggregates what needs someone to act across the caller's
 // scope. Each source is only consulted when the caller holds its view
-// permission, and every item is filtered by host and role scope, so the
+// permission, and every item is filtered by scope, so the
 // route itself needs no permission beyond authentication.
 //
 //	GET /api/v1/attention

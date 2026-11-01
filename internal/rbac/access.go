@@ -3,7 +3,6 @@ package rbac
 import (
 	"fmt"
 	"slices"
-	"strings"
 )
 
 // Scope types of an assignment.
@@ -16,10 +15,10 @@ const (
 
 // Scope is where an assignment applies. Host is the host id for host and
 // stack scopes; Value is the tag or the stack name. Stack names are
-// unique across the instance (one deployment host per stack), so a stack
-// scope matches the stack while it is deployed on Host and while it is
-// not deployed anywhere. An empty Host on a stack scope matches the
-// stack on any host.
+// unique across the instance (one deployment host per stack). A stack
+// scope with a Host matches the stack while it is deployed there; without
+// a Host it matches the stack wherever it runs and while it is not
+// deployed.
 type Scope struct {
 	Type  string `json:"type"`
 	Host  string `json:"host,omitempty"`
@@ -91,7 +90,7 @@ func (s Scope) matches(res Resource) bool {
 	case ScopeHostTag:
 		return res.HostID != "" && slices.Contains(res.HostTags, s.Value)
 	case ScopeStack:
-		return res.StackName != "" && res.StackName == s.Value && (s.Host == "" || res.HostID == "" || res.HostID == s.Host)
+		return res.StackName != "" && res.StackName == s.Value && (s.Host == "" || res.HostID == s.Host)
 	}
 	return false
 }
@@ -141,7 +140,8 @@ func (g Grant) has(p Perm) bool {
 	return !IsGlobalOnly(p) || g.global()
 }
 
-func (g Grant) covers(res Resource) bool {
+// Covers reports whether g reaches res, whatever it permits.
+func (g Grant) Covers(res Resource) bool {
 	for _, s := range g.Scopes {
 		if !s.matches(res) {
 			return false
@@ -206,7 +206,7 @@ func (a *Access) GrantFor(p Perm, res Resource) (Grant, bool) {
 		return Grant{}, true
 	}
 	for _, g := range a.Grants {
-		if g.has(p) && g.covers(res) {
+		if g.has(p) && g.Covers(res) {
 			return g, true
 		}
 	}
@@ -219,7 +219,7 @@ func (a *Access) Covers(res Resource) bool {
 		return false
 	}
 	for _, g := range a.Grants {
-		if g.covers(res) {
+		if g.Covers(res) {
 			return true
 		}
 	}
@@ -276,7 +276,7 @@ func (g Grant) near(hostID string, hostTags []string) bool {
 // Unscoped reports whether every permission the caller holds is held
 // globally, so list handlers can skip per-item filtering.
 func (a *Access) Unscoped() bool {
-	if a == nil {
+	if a == nil || len(a.Grants) == 0 {
 		return false
 	}
 	global := map[Perm]bool{}
@@ -345,19 +345,6 @@ func (a *Access) Restrict(perms map[Perm]bool, scope Scope) *Access {
 	return out
 }
 
-// ScopeLabel renders the scopes of a grant for explanations.
-func (g Grant) ScopeLabel() string {
-	var parts []string
-	for _, s := range g.Scopes {
-		if !s.IsGlobal() {
-			parts = append(parts, s.String())
-		}
-	}
-	if len(parts) == 0 {
-		return "everything"
-	}
-	return strings.Join(parts, " and ")
-}
 
 // GroupRule maps an identity provider group to a role on a scope.
 type GroupRule struct {
@@ -397,9 +384,7 @@ func IdPAssignments(provider string, groups []string, rules []GroupRule, default
 }
 
 // ScopeContains reports whether scope c reaches everything s reaches.
-func ScopeContains(c, s Scope, tags func(hostID string) []string) bool { return contains(c, s, tags) }
-
-func contains(c, s Scope, tags func(hostID string) []string) bool {
+func ScopeContains(c, s Scope, tags func(hostID string) []string) bool {
 	switch c.Type {
 	case ScopeGlobal, "":
 		return true
@@ -433,7 +418,7 @@ func (a *Access) HoldsOn(p Perm, s Scope, tags func(hostID string) []string) boo
 		}
 		ok := true
 		for _, c := range g.Scopes {
-			ok = ok && contains(c, s, tags)
+			ok = ok && ScopeContains(c, s, tags)
 		}
 		if ok {
 			return true
@@ -441,6 +426,3 @@ func (a *Access) HoldsOn(p Perm, s Scope, tags func(hostID string) []string) boo
 	}
 	return false
 }
-
-// CoversGrant reports whether g reaches res, whatever it permits.
-func (a *Access) CoversGrant(g Grant, res Resource) bool { return g.covers(res) }

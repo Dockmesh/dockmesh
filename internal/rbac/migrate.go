@@ -84,10 +84,9 @@ type MigrationChange struct {
 }
 
 type legacyRole struct {
-	name    string
-	builtin bool
-	perms   map[Perm]bool
-	scopes  []legacyScope
+	name   string
+	perms  map[Perm]bool
+	scopes []legacyScope
 }
 
 type legacyScope struct{ typ, value string }
@@ -415,18 +414,16 @@ func loadLegacyWorld(ctx context.Context, tx *sql.Tx) (*legacyWorld, error) {
 		w.stackHost[s] = h
 	}
 	rows.Close()
-	rows, err = tx.QueryContext(ctx, `SELECT name, builtin FROM roles ORDER BY builtin DESC, name`)
+	rows, err = tx.QueryContext(ctx, `SELECT name FROM roles ORDER BY builtin DESC, name`)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var lr legacyRole
-		var b int
-		if err := rows.Scan(&lr.name, &b); err != nil {
+		if err := rows.Scan(&lr.name); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		lr.builtin = b == 1
 		lr.perms = map[Perm]bool{}
 		w.roles[lr.name] = &lr
 		w.roleOrder = append(w.roleOrder, lr.name)
@@ -643,12 +640,17 @@ func migrateInvites(ctx context.Context, tx *sql.Tx, w *legacyWorld) error {
 			roleScopes = lr.scopes
 		}
 		scopes, _ := w.scopesFor(roleScopes, i.tags)
+		if len(scopes) == 0 {
+			// Nothing matched both the role's scope and the invite's tags:
+			// the invite gave no access and can't be expressed.
+			if _, err := tx.ExecContext(ctx, `UPDATE invite_tokens SET scopes_json = '[]', expires_at = CURRENT_TIMESTAMP WHERE id = ?`, i.id); err != nil {
+				return err
+			}
+			continue
+		}
 		b, err := json.Marshal(scopes)
 		if err != nil {
 			return err
-		}
-		if len(scopes) == 0 {
-			b = []byte("[]")
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE invite_tokens SET scopes_json = ? WHERE id = ?`, string(b), i.id); err != nil {
 			return err
@@ -691,20 +693,11 @@ func noticeOrder(subject string) int {
 	}
 }
 
-// migrateOIDCGroups folds the old admin/operator group fields into the
-// group mappings. OIDC sign-in only ever read those two fields, so
-// mappings saved in the provider form start to apply now; admins are told.
+// migrateOIDCGroups keeps OIDC sign-in giving what it gave before: it only
+// ever read the admin and operator group fields, so those become the
+// provider's group mappings and other saved mappings, which never applied,
+// are removed and listed for admins to add back on purpose.
 func migrateOIDCGroups(ctx context.Context, tx *sql.Tx) ([]MigrationChange, error) {
-	for _, stmt := range []string{
-		`INSERT OR IGNORE INTO oidc_provider_group_mappings (provider_id, group_value, role_name)
-		 SELECT id, admin_group, 'admin' FROM oidc_providers WHERE COALESCE(admin_group, '') <> ''`,
-		`INSERT OR IGNORE INTO oidc_provider_group_mappings (provider_id, group_value, role_name)
-		 SELECT id, operator_group, 'operator' FROM oidc_providers WHERE COALESCE(operator_group, '') <> ''`,
-	} {
-		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			return nil, err
-		}
-	}
 	rows, err := tx.QueryContext(ctx, `
 		SELECT p.display_name, group_concat(m.group_value || ' → ' || m.role_name, ', ')
 		  FROM oidc_providers p JOIN oidc_provider_group_mappings m ON m.provider_id = p.id
@@ -714,15 +707,30 @@ func migrateOIDCGroups(ctx context.Context, tx *sql.Tx) ([]MigrationChange, erro
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []MigrationChange
 	for rows.Next() {
 		var name, list string
 		if err := rows.Scan(&name, &list); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		out = append(out, MigrationChange{Subject: "OIDC provider " + name,
-			Text: "its group mappings (" + list + ") now apply at sign-in; before, only the admin and operator group fields did"})
+			Text: "its saved group mappings (" + list + ") were never applied at sign-in and were removed; add the ones you want again"})
 	}
-	return out, rows.Err()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, stmt := range []string{
+		`DELETE FROM oidc_provider_group_mappings`,
+		`INSERT OR IGNORE INTO oidc_provider_group_mappings (provider_id, group_value, role_name)
+		 SELECT id, admin_group, 'admin' FROM oidc_providers WHERE COALESCE(admin_group, '') <> ''`,
+		`INSERT OR IGNORE INTO oidc_provider_group_mappings (provider_id, group_value, role_name)
+		 SELECT id, operator_group, 'operator' FROM oidc_providers WHERE COALESCE(operator_group, '') <> ''`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }

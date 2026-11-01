@@ -70,16 +70,10 @@ func NewFromDB(ctx context.Context, db *sql.DB) (*State, error) {
 	return &State{active: !ok, startedAt: time.Now()}, nil
 }
 
-// adminPerms are the permissions that make an account able to run the
-// install: change system settings and manage users.
-var adminPerms = []rbac.Perm{
-	rbac.PermSystemUpdate,
-	rbac.PermUsersView, rbac.PermUsersCreate, rbac.PermUsersUpdate, rbac.PermUsersDelete,
-}
-
-// AdminExists reports whether some account holds, on everything, a role
-// granting every adminPerms permission, so a custom admin-equivalent role
-// keeps setup closed just like the built-in admin role.
+// AdminExists reports whether some account holds an admin role
+// (rbac.IsAdminPermSet). Any scope counts: an upgraded install whose
+// admins ended up on narrower scopes must not reopen the unauthenticated
+// wizard; `dockmesh admin create` recovers it.
 func AdminExists(ctx context.Context, db *sql.DB) (bool, error) {
 	roles, err := rbac.LoadRoles(ctx, db)
 	if err != nil {
@@ -87,14 +81,9 @@ func AdminExists(ctx context.Context, db *sql.DB) (bool, error) {
 	}
 	admin := map[string]bool{}
 	for _, r := range roles {
-		perms := rbac.PermsFor(r.Levels, r.Extras)
-		ok := true
-		for _, p := range adminPerms {
-			ok = ok && perms[p]
-		}
-		admin[r.Name] = ok
+		admin[r.Name] = rbac.IsAdminPermSet(rbac.PermsFor(r.Levels, r.Extras))
 	}
-	rows, err := db.QueryContext(ctx, `SELECT DISTINCT role_name FROM role_assignments WHERE scope_type = 'global'`)
+	rows, err := db.QueryContext(ctx, `SELECT DISTINCT role_name FROM role_assignments`)
 	if err != nil {
 		return false, err
 	}

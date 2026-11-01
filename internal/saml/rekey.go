@@ -26,7 +26,7 @@ func (s *Service) PendingRekeys(ctx context.Context) (*PendingRekey, error) {
 	if _, err := s.db.ExecContext(ctx, `
 		UPDATE users SET saml_rekey_until = NULL
 		 WHERE saml_rekey_until <= CURRENT_TIMESTAMP OR totp_verified <> 0
-		    OR EXISTS (SELECT 1 FROM role_assignments a WHERE a.user_id = users.id AND a.role_name = 'admin')`); err != nil {
+		    OR EXISTS (SELECT 1 FROM role_assignments a JOIN role_levels l ON l.role_name = a.role_name WHERE a.user_id = users.id AND l.area IN ('users', 'settings') AND l.level = 'manage')`); err != nil {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx,

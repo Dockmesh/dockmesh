@@ -21,10 +21,13 @@ import (
 // a handler that touches a concrete host or stack.
 
 // scopePerms are the permissions a scope check in this request tests.
+// Base rights hold everywhere, so they say nothing about a resource and
+// are left out: a route gated only by one needs an assignment that
+// reaches the resource.
 func scopePerms(r *http.Request, extra ...rbac.Perm) []rbac.Perm {
-	out := append([]rbac.Perm(nil), middleware.RoutePerms(r.Context())...)
-	for _, p := range extra {
-		if p != "" && !containsPerm(out, p) {
+	var out []rbac.Perm
+	for _, p := range append(append([]rbac.Perm(nil), middleware.RoutePerms(r.Context())...), extra...) {
+		if p != "" && !rbac.IsBase(p) && !containsPerm(out, p) {
 			out = append(out, p)
 		}
 	}
@@ -118,20 +121,8 @@ func (h *Handlers) filterHostsByScope(r *http.Request, hosts []host.Host) []host
 	return out
 }
 
-// checkRoleScope reports whether the request's permissions hold on req.
-func (h *Handlers) checkRoleScope(r *http.Request, req rbac.Resource) bool {
-	return h.allowedOn(r, req)
-}
-
-// inRoleScope is checkRoleScope.
-func (h *Handlers) inRoleScope(r *http.Request, req rbac.Resource) bool {
-	return h.allowedOn(r, req)
-}
-
-// writeRoleScopeDenied writes a 403 + emits an auth.scope_denied audit
-// entry. Callers pass the perm being checked + the Resource +
-// optional human-readable resourceLabel (defaults derived from req).
-func (h *Handlers) writeRoleScopeDenied(w http.ResponseWriter, r *http.Request, perm rbac.Perm, req rbac.Resource, resourceLabel string) {
+// writeScopeDenied audits an auth.scope_denied entry and writes 403.
+func (h *Handlers) writeScopeDenied(w http.ResponseWriter, r *http.Request, perm rbac.Perm, req rbac.Resource, resourceLabel string) {
 	target := resourceLabel
 	if target == "" {
 		switch {
@@ -182,7 +173,7 @@ func (h *Handlers) hostByID(hostID string) (host.Host, error) {
 func (h *Handlers) requireContainerScope(w http.ResponseWriter, r *http.Request, perm rbac.Perm, hostID, containerID string) bool {
 	scopeReq := h.containerScopeReq(r.Context(), hostID, containerID)
 	if !h.allowedOn(r, scopeReq, perm) {
-		h.writeRoleScopeDenied(w, r, perm, scopeReq, "container "+containerID)
+		h.writeScopeDenied(w, r, perm, scopeReq, "container "+containerID)
 		return false
 	}
 	return true
@@ -192,7 +183,7 @@ func (h *Handlers) requireContainerScope(w http.ResponseWriter, r *http.Request,
 func (h *Handlers) requireStackScope(w http.ResponseWriter, r *http.Request, perm rbac.Perm, hostID, stackName string) bool {
 	scopeReq := h.stackScopeReq(r.Context(), hostID, stackName)
 	if !h.allowedOn(r, scopeReq, perm) {
-		h.writeRoleScopeDenied(w, r, perm, scopeReq, "")
+		h.writeScopeDenied(w, r, perm, scopeReq, "")
 		return false
 	}
 	return true
@@ -222,9 +213,6 @@ func (h *Handlers) callerUnscoped(r *http.Request) bool {
 	return middleware.AccessOf(r.Context()).Unscoped()
 }
 
-// roleIsUnscoped is callerUnscoped.
-func (h *Handlers) roleIsUnscoped(r *http.Request) bool { return h.callerUnscoped(r) }
-
 // stackScopeReq builds the resource of a stack on hostID ("" when it is not
 // deployed).
 func (h *Handlers) stackScopeReq(_ context.Context, hostID, stackName string) rbac.Resource {
@@ -239,11 +227,11 @@ func (h *Handlers) hostScopeReq(_ context.Context, hostID string) rbac.Resource 
 // StackScope resolves the stack of /stacks/{name}/... requests: deployed
 // stacks are checked on their deployment host. A stack that is not
 // deployed has no host, which only assignments on everything or on that
-// stack reach; writes on it are checked on the host the request targets
-// instead, so a host-scoped deployer can deploy a stack it just created
-// there, and the two status probes (which expose no files) only need the
-// route's permission somewhere. RequirePerm then tests the route's
-// permission on the resolved resource.
+// stack without a host reach, for reads and writes alike: a host scope
+// must not let anyone rewrite or deploy a stack staged for another host.
+// The two status probes expose no files and only need the route's
+// permission somewhere. RequirePerm then tests the route's permission on
+// the resolved resource.
 func (h *Handlers) StackScope(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
@@ -265,20 +253,13 @@ func (h *Handlers) StackScope(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if hostID == "" && !isReadMethod(r) {
-			hostID = hostIDFromRequest(r)
-		}
 		res := h.stackScopeReq(r.Context(), hostID, name)
 		if !middleware.AccessOf(r.Context()).Covers(res) {
-			h.writeRoleScopeDenied(w, r, rbac.PermStacksView, res, "")
+			h.writeScopeDenied(w, r, rbac.PermStacksView, res, "")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(middleware.WithResource(r.Context(), res)))
 	})
-}
-
-func isReadMethod(r *http.Request) bool {
-	return r.Method == http.MethodGet || r.Method == http.MethodHead
 }
 
 // undeployedProbe matches the two read routes that expose no stack files,
@@ -300,7 +281,7 @@ func (h *Handlers) filterStackListByScope(r *http.Request, in []stackListEntry) 
 		if e.Deployment != nil {
 			hostID = e.Deployment.HostID
 		}
-		if h.allowedOn(r, h.stackScopeReq(r.Context(), hostID, e.Stack.Name)) {
+		if h.allowedOn(r, h.stackScopeReq(r.Context(), hostID, e.Name)) {
 			out = append(out, e)
 		}
 	}

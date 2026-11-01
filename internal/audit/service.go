@@ -76,11 +76,8 @@ const (
 	ActionBackupKeyExport    = "backup.key_export"
 	ActionBackupJobRepaired  = "backup.job_repaired"
 
-	// ActionScopeDenied is fired by the RBAC v2 scope-check helper when
-	// a request is rejected because the caller's role-scope doesn't
-	// cover the requested resource. Distinct from ActionLoginFailed
-	// (auth) and from a 403 perm denial (which isn't separately logged
-	// today). Compliance teams want to spot these in the audit log.
+	// ActionScopeDenied is logged when none of the caller's assignments
+	// allows the request on the resource it acts on.
 	ActionScopeDenied = "auth.scope_denied"
 )
 

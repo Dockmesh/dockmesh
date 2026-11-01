@@ -30,29 +30,19 @@ export type Perm =
 // Every signed-in user holds these, whatever their assignments.
 const BASE: Perm[] = ['tokens.view', 'tokens.create', 'tokens.delete', 'system.view'];
 
-export interface AllowOpts {
-  stack?: string;
-  host?: string;
-  hostTags?: string[];
-}
-
 function userPerms(): string[] {
   const u = auth.user;
   if (!u) return [];
   return [...BASE, ...(u.permissions ?? [])];
 }
 
-// opts are accepted for call sites that name the resource; whether the
-// permission holds on that exact host or stack is decided by the backend.
-export function allowed(perm: Perm, _opts?: AllowOpts): boolean {
+// Whether perm holds on a particular host or stack is decided by the
+// backend; this only hides what the caller holds nowhere.
+export function allowed(perm: Perm): boolean {
   return userPerms().includes(perm);
 }
 
 /** system.update is only granted by an assignment on everything. */
 export function isAdmin(): boolean {
   return userPerms().includes('system.update');
-}
-
-export function can(perm: Perm, opts?: AllowOpts): boolean {
-  return allowed(perm, opts);
 }

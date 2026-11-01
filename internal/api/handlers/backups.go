@@ -445,8 +445,8 @@ func (h *Handlers) restoreRun(w http.ResponseWriter, r *http.Request, stackOnly 
 	if !h.requireHostAccess(w, r, opts.HostID) {
 		return
 	}
-	if scopeReq := h.hostScopeReq(r.Context(), opts.HostID); !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermBackupsRestore, scopeReq, "")
+	if scopeReq := h.hostScopeReq(r.Context(), opts.HostID); !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermBackupsRestore, scopeReq, "")
 		return
 	}
 	if kind == "stack" {
@@ -516,7 +516,7 @@ func (h *Handlers) requireStackRestoreTarget(w http.ResponseWriter, r *http.Requ
 		return false
 	}
 	if scopeReq := h.stackScopeReq(r.Context(), "", stack); !h.allowedOn(r, scopeReq, perm) {
-		h.writeRoleScopeDenied(w, r, perm, scopeReq, "stack "+stack)
+		h.writeScopeDenied(w, r, perm, scopeReq, "stack "+stack)
 		return false
 	}
 	if !h.requireStackScope(w, r, perm, hostID, stack) {
@@ -543,7 +543,7 @@ func (h *Handlers) syncBackupNameNotice(r *http.Request) {
 
 // checkBackupJobScope requires the job's host to be in the caller's scope.
 // Hooks run commands inside containers, so they also need containers.exec
-// and every hook container must be in the caller's host and role scope.
+// and the caller needs containers.exec on every hook container.
 func (h *Handlers) checkBackupJobScope(w http.ResponseWriter, r *http.Request, in backup.JobInput) bool {
 	hostID := in.HostID
 	if hostID == "" {
@@ -573,7 +573,7 @@ func (h *Handlers) checkBackupJobScope(w http.ResponseWriter, r *http.Request, i
 			return false
 		}
 		if !h.allowedOn(r, req, rbac.PermContainersExec) {
-			h.writeRoleScopeDenied(w, r, rbac.PermContainersExec, req, "container "+hk.Container)
+			h.writeScopeDenied(w, r, rbac.PermContainersExec, req, "container "+hk.Container)
 			return false
 		}
 	}

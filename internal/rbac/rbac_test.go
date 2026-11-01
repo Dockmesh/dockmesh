@@ -95,7 +95,7 @@ func TestAccess(t *testing.T) {
 		{"restart in the stack", PermContainersUpdate, web, true},
 		{"restart elsewhere on the host", PermContainersUpdate, Resource{HostID: "h1"}, false},
 		{"restart the stack moved to another host", PermContainersUpdate, Resource{HostID: "h2", StackName: "web"}, false},
-		{"restart the undeployed stack", PermContainersUpdate, Resource{StackName: "web"}, true},
+		{"restart the undeployed stack from a host-bound scope", PermContainersUpdate, Resource{StackName: "web"}, false},
 		{"global-only perm from a scoped grant", PermProxyView, prod, false},
 		{"base right", PermTokensCreate, dev, true},
 	}

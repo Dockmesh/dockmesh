@@ -43,18 +43,15 @@
     else if (type === 'host_tag') set({ type, value: tags[0] ?? '' });
     else {
       const s = stacks[0];
-      set({ type, value: s?.name ?? '', host: s?.deployment?.host_id ?? 'local' });
+      set({ type, value: s?.name ?? '', host: s?.deployment?.host_id ?? '' });
     }
   }
 
   function pickStack(name: string) {
     const s = stacks.find((x) => x.name === name);
-    set({ type: 'stack', value: name, host: s?.deployment?.host_id || value.host || 'local' });
+    set({ type: 'stack', value: name, host: s?.deployment?.host_id || '' });
   }
 
-  const stackDeployed = $derived(
-    value.type === 'stack' ? !!stacks.find((x) => x.name === value.value)?.deployment?.host_id : false
-  );
 </script>
 
 <div class="dm-field">
@@ -73,12 +70,13 @@
       <select class="dm-input" aria-label="Stack" value={value.value} onchange={(e) => pickStack(e.currentTarget.value)}>
         {#each stacks as s (s.name)}<option value={s.name}>{s.name}</option>{/each}
       </select>
-      <select class="dm-input" aria-label="Host of the stack" value={value.host} disabled={stackDeployed}
+      <select class="dm-input" aria-label="Host of the stack" value={value.host}
         onchange={(e) => set({ ...value, host: e.currentTarget.value })}>
+        <option value="">Any host</option>
         {#each hosts as h (h.id)}<option value={h.id}>{h.name}</option>{/each}
       </select>
     </div>
-    <span class="dm-sub">{stackDeployed ? 'The host the stack is deployed on.' : 'Not deployed yet: the host it will run on.'}</span>
+    <span class="dm-sub">{value.host ? 'Covers the stack while it runs on this host.' : 'Covers the stack on any host, also before it is deployed.'}</span>
   {/if}
 </div>
 

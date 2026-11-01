@@ -120,8 +120,8 @@ func (h *Handlers) UpdateHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	id := chi.URLParam(r, "id")
 	scopeReq := h.containerScopeReq(r.Context(), "local", id)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermContainersUpdate, scopeReq, "container "+id)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermContainersUpdate, scopeReq, "container "+id)
 		return
 	}
 	info, err := h.Docker.InspectContainer(r.Context(), id)

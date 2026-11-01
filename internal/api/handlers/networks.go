@@ -179,8 +179,8 @@ func (h *Handlers) CreateNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scopeReq := h.hostScopeReq(r.Context(), "local")
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermNetworksCreate, scopeReq, "host local")
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermNetworksCreate, scopeReq, "host local")
 		return
 	}
 	var req networkRequest
@@ -203,8 +203,8 @@ func (h *Handlers) RemoveNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scopeReq := h.hostScopeReq(r.Context(), "local")
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermNetworksDelete, scopeReq, "host local")
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermNetworksDelete, scopeReq, "host local")
 		return
 	}
 	id := chi.URLParam(r, "id")
@@ -222,8 +222,8 @@ func (h *Handlers) PruneNetworks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scopeReq := h.hostScopeReq(r.Context(), "local")
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermNetworksDelete, scopeReq, "host local")
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermNetworksDelete, scopeReq, "host local")
 		return
 	}
 	report, err := h.Docker.PruneNetworks(r.Context())

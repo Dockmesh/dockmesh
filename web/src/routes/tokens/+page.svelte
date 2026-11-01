@@ -11,15 +11,9 @@
   //     charts — needs an aggregate table or per-request logging that
   //     isn't worth the engineering for this slice.
   //   - No TabStrip across settings cluster — those are separate routes.
-  //
-  // Permission-gating uses v1 RBAC string `user.manage` for now;
-  // migration to v2.1 (`tokens.view` / `tokens.create` / `tokens.delete`)
-  // happens in the consolidated backend slice at the end of the
-  // frontend-rebuild phase.
-  import { api, ApiError, type ApiToken, type CustomRole, type Scope } from '$lib/api';
+  import { api, ApiError, type ApiToken, type CustomRole, type RoleCatalog, type Scope } from '$lib/api';
   import { scopeLabel, roleOneLine } from '$lib/access';
   import ScopePicker from '$lib/components/access/ScopePicker.svelte';
-  import type { RoleCatalog } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { Skeleton } from '$lib/components/ui';
   import { EditorialPage, Eyebrow, Field, EditorialModal } from '$lib/components/editorial';

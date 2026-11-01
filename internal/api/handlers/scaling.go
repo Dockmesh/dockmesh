@@ -36,8 +36,8 @@ func (h *Handlers) ScaleService(w http.ResponseWriter, r *http.Request) {
 	}
 	name := chi.URLParam(r, "name")
 	scopeReq := h.stackScopeReq(r.Context(), target.ID(), name)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
 		return
 	}
 	service := chi.URLParam(r, "service")
@@ -145,8 +145,8 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 	}
 	name := chi.URLParam(r, "name")
 	scopeReq := h.stackScopeReq(r.Context(), target.ID(), name)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+name)
 		return
 	}
 	service := chi.URLParam(r, "service")
@@ -216,12 +216,12 @@ func (h *Handlers) RollingUpdateService(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.audit(r, audit.ActionStackDeploy, name, map[string]any{
-		"action":     "rolling-update",
-		"service":    service,
-		"updated":    res.Updated,
-		"failed":     res.Failed,
+		"action":      "rolling-update",
+		"service":     service,
+		"updated":     res.Updated,
+		"failed":      res.Failed,
 		"rolled_back": res.RolledBack,
-		"host":       target.ID(),
+		"host":        target.ID(),
 	})
 	slog.Info("rolling update",
 		"stack", name, "service", service,
@@ -349,9 +349,9 @@ func (h *Handlers) SetScalingRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, audit.ActionStackUpdate, name, map[string]any{
-		"action":     "scaling-rules",
-		"rules":      len(cfg.Rules),
-		"enabled":    cfg.Enabled,
+		"action":  "scaling-rules",
+		"rules":   len(cfg.Rules),
+		"enabled": cfg.Enabled,
 	})
 	writeJSON(w, http.StatusOK, cfg)
 }

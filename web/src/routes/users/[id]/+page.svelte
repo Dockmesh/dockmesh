@@ -15,7 +15,7 @@
   import { toast } from '$lib/stores/toast.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
-  import { assignmentLabel, isGlobal, roleDisplay, scopeLabel, type HostNames } from '$lib/access';
+  import { assignmentLabel, isGlobal, levelIndex, roleDisplay, scopeLabel, type HostNames } from '$lib/access';
   import AssignmentDialog from '$lib/components/access/AssignmentDialog.svelte';
   import { Plus, Trash2, Check, X } from 'lucide-svelte';
 
@@ -117,9 +117,7 @@
   }
 
   function levelIdx(area: string, level: string | undefined): number {
-    const a = catalog?.areas.find((x) => x.key === area);
-    if (!a) return 0;
-    return Math.max(0, a.levels.findIndex((l) => l.key === (level || 'none')));
+    return catalog ? Math.max(0, levelIndex(catalog, area, level)) : 0;
   }
   function roleOf(name: string) { return roles.find((r) => r.name === name); }
 

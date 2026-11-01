@@ -490,7 +490,7 @@ func TestReviewFollowUps(t *testing.T) {
 
 	// An invite stops working once its creator may no longer grant it.
 	inviter := e.user("inviter", "admin")
-	inv, err := e.h.Invites.Create(ctx, invites.CreateInput{Role: "admin", TTL: time.Hour, CreatedBy: inviter.ID})
+	inv, err := e.h.Invites.Create(ctx, invites.CreateInput{Role: "admin", Scopes: []rbac.Scope{rbac.Global}, TTL: time.Hour, CreatedBy: inviter.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

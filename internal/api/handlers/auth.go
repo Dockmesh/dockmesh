@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"net"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/auth"

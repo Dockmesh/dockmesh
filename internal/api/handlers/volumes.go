@@ -108,8 +108,8 @@ func (h *Handlers) CreateVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scopeReq := h.hostScopeReq(r.Context(), "local")
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermVolumesCreate, scopeReq, "host local")
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermVolumesCreate, scopeReq, "host local")
 		return
 	}
 	var req volumeRequest
@@ -134,8 +134,8 @@ func (h *Handlers) RemoveVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scopeReq := h.hostScopeReq(r.Context(), "local")
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermVolumesDelete, scopeReq, "host local")
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermVolumesDelete, scopeReq, "host local")
 		return
 	}
 	name := chi.URLParam(r, "name")
@@ -162,8 +162,8 @@ func (h *Handlers) BrowseVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scopeReq := h.hostScopeReq(r.Context(), target.ID())
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermVolumesBrowse, scopeReq, "host "+target.ID())
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermVolumesBrowse, scopeReq, "host "+target.ID())
 		return
 	}
 	name := chi.URLParam(r, "name")
@@ -190,8 +190,8 @@ func (h *Handlers) ReadVolumeFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scopeReq := h.hostScopeReq(r.Context(), target.ID())
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermVolumesBrowse, scopeReq, "host "+target.ID())
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermVolumesBrowse, scopeReq, "host "+target.ID())
 		return
 	}
 	name := chi.URLParam(r, "name")
@@ -240,8 +240,8 @@ func (h *Handlers) PruneVolumes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scopeReq := h.hostScopeReq(r.Context(), "local")
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermVolumesDelete, scopeReq, "host local")
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermVolumesDelete, scopeReq, "host local")
 		return
 	}
 	report, err := h.Docker.PruneVolumes(r.Context())

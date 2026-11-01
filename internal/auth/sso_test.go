@@ -3,9 +3,10 @@ package auth
 import (
 	"context"
 	"errors"
-	"github.com/dockmesh/dockmesh/internal/rbac"
 	"strings"
 	"testing"
+
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 type mapSettings map[string]string

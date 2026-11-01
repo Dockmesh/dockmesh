@@ -217,7 +217,7 @@ func (h *Handlers) CheckAccess(w http.ResponseWriter, r *http.Request) {
 	}
 	if !out.Allowed {
 		for _, g := range access.Grants {
-			if access.CoversGrant(g, res) {
+			if g.Covers(res) {
 				out.Closest = append(out.Closest, g.Assignment)
 			}
 		}

@@ -2,12 +2,13 @@ package handlers
 
 import (
 	"context"
-	"github.com/dockmesh/dockmesh/internal/rbac"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dockmesh/dockmesh/internal/rbac"
 
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/config"

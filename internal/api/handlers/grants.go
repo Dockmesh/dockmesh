@@ -79,26 +79,25 @@ func (h *Handlers) requireManageRole(w http.ResponseWriter, r *http.Request, nam
 // requireManageUser checks that the caller may manage every current
 // assignment of the target user. Writes the error and returns false
 // otherwise.
-func (h *Handlers) requireManageUser(w http.ResponseWriter, r *http.Request, id string) ([]rbac.Assignment, bool) {
+func (h *Handlers) requireManageUser(w http.ResponseWriter, r *http.Request, id string) bool {
 	if _, err := h.Auth.GetUser(r.Context(), id); err != nil {
 		writeError(w, http.StatusNotFound, "user not found")
-		return nil, false
+		return false
 	}
 	if h.Roles == nil {
 		writeError(w, http.StatusServiceUnavailable, "roles store unavailable")
-		return nil, false
+		return false
 	}
-	as := h.Roles.UserAssignments(id)
-	for _, a := range as {
+	for _, a := range h.Roles.UserAssignments(id) {
 		if _, known := h.Roles.Role(a.Role); !known {
 			continue
 		}
 		if err := h.checkGrant(r, a.Role, a.Scope); err != nil {
 			writeError(w, http.StatusForbidden, "you can't manage this user: "+err.Error())
-			return nil, false
+			return false
 		}
 	}
-	return as, true
+	return true
 }
 
 // globalAdminAssignments counts the assignments of an admin role on
@@ -204,4 +203,27 @@ func writeGrantError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeError(w, http.StatusBadRequest, err.Error())
+}
+
+// requireIdPGrants checks an identity provider's default role and group
+// mappings like assignments: sign-in hands them out without another check,
+// so whoever configures them must be able to grant them.
+func (h *Handlers) requireIdPGrants(w http.ResponseWriter, r *http.Request, defaultRole string, rules []rbac.GroupRule) bool {
+	if defaultRole != "" {
+		if err := h.checkGrant(r, defaultRole, rbac.Global); err != nil {
+			writeGrantError(w, fmt.Errorf("default role: %w", err))
+			return false
+		}
+	}
+	for _, rule := range rules {
+		scope := rule.Scope
+		if scope.Type == "" {
+			scope = rbac.Global
+		}
+		if err := h.checkGrant(r, rule.Role, scope); err != nil {
+			writeGrantError(w, fmt.Errorf("group %s: %w", rule.Group, err))
+			return false
+		}
+	}
+	return true
 }

@@ -300,3 +300,18 @@ func ActionPerms(area, level, extra string) ([]Perm, string, error) {
 	}
 	return a.Levels[i].Perms, a.Label + ": " + a.Levels[i].Label + " or higher", nil
 }
+
+// adminPerms make a role able to administer the instance: change its
+// settings and manage users. Setup stays closed and the last-admin guard
+// holds while some account has such a role on everything.
+var adminPerms = []Perm{PermSystemUpdate, PermUsersView, PermUsersCreate, PermUsersUpdate, PermUsersDelete}
+
+// IsAdminPermSet reports whether perms include every admin permission.
+func IsAdminPermSet(perms map[Perm]bool) bool {
+	for _, p := range adminPerms {
+		if !perms[p] {
+			return false
+		}
+	}
+	return true
+}

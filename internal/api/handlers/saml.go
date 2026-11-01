@@ -174,6 +174,9 @@ func (h *Handlers) CreateSAMLProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !h.requireIdPGrants(w, r, in.DefaultRole, saml.GroupRules(in.GroupMappings)) {
+		return
+	}
 	p, err := h.SAML.CreateProvider(r.Context(), in)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -197,6 +200,9 @@ func (h *Handlers) UpdateSAMLProvider(w http.ResponseWriter, r *http.Request) {
 	var in saml.ProviderInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if !h.requireIdPGrants(w, r, in.DefaultRole, saml.GroupRules(in.GroupMappings)) {
 		return
 	}
 	p, err := h.SAML.UpdateProvider(r.Context(), id, in)

@@ -573,10 +573,10 @@ paths:
         permission the ticket should grant (one of `containers.view`,
         `containers.logs`, `containers.exec`, `system.view`). The server
         verifies the caller holds that permission and issues a 30s ticket
-        bound to it and to the caller's identity (user, role, host scope,
+        bound to it and to the caller's identity (user or
         API token). Each WS endpoint accepts a ticket once, asserts the
         bound permission matches its own, re-checks it, and applies the
-        caller's host and role scope. Mint a new ticket for every connect
+        caller's assignments. Mint a new ticket for every connect
         and reconnect.
       parameters:
         - name: for

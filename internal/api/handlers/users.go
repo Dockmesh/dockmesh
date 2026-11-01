@@ -157,7 +157,7 @@ func (h *Handlers) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if _, ok := h.requireManageUser(w, r, id); !ok {
+	if !h.requireManageUser(w, r, id) {
 		return
 	}
 	switch req.Source {
@@ -190,7 +190,7 @@ func (h *Handlers) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "cannot delete yourself")
 		return
 	}
-	if _, ok := h.requireManageUser(w, r, id); !ok {
+	if !h.requireManageUser(w, r, id) {
 		return
 	}
 	if err := h.checkKeepsAdmin(func(a rbac.Assignment) bool { return a.UserID == id }); err != nil {
@@ -220,7 +220,7 @@ func (h *Handlers) ChangeUserPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !isSelf {
-		if _, ok := h.requireManageUser(w, r, id); !ok {
+		if !h.requireManageUser(w, r, id) {
 			return
 		}
 	}

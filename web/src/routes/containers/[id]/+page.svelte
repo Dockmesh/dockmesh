@@ -75,11 +75,11 @@
   // from their own page; changing them here would be undone or break it.
   const isSystem = $derived(!!info?.Config?.Labels?.['dockmesh.component']);
   const systemComponent = $derived(info?.Config?.Labels?.['dockmesh.component'] as string | undefined);
-  const canControl = $derived(!isSystem && allowed('containers.update', { stack: ctxStack, host: ctxHost }));
-  const canExec = $derived(!isSystem && allowed('containers.exec', { stack: ctxStack, host: ctxHost }));
-  const canFiles = $derived(!isSystem && (allowed('containers.files', { stack: ctxStack, host: ctxHost }) || canExec));
-  const canRemove = $derived(!isSystem && allowed('containers.delete', { stack: ctxStack, host: ctxHost }));
-  const canUpgrade = $derived(!isSystem && allowed('containers.upgrade', { stack: ctxStack, host: ctxHost }));
+  const canControl = $derived(!isSystem && allowed('containers.update'));
+  const canExec = $derived(!isSystem && allowed('containers.exec'));
+  const canFiles = $derived(!isSystem && (allowed('containers.files') || canExec));
+  const canRemove = $derived(!isSystem && allowed('containers.delete'));
+  const canUpgrade = $derived(!isSystem && allowed('containers.upgrade'));
   let loading = $state(true);
   type TabKey = 'overview' | 'logs' | 'exec' | 'updates' | 'inspect' | 'network' | 'files';
   const TAB_KEYS: TabKey[] = ['overview', 'logs', 'exec', 'updates', 'inspect', 'network', 'files'];

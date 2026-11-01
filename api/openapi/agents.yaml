@@ -5,8 +5,8 @@ paths:
       tags: [agents]
       summary: List all registered remote agents
       description: |
-        Only agents whose host is in the caller's scope (scope tags and role
-        scope), the same hosts `GET /hosts` returns.
+        Only agents of hosts an assignment with Hosts: View covers, the
+        same hosts `GET /hosts` returns.
       responses:
         "200":
           description: Agents.
@@ -136,7 +136,7 @@ paths:
         re-enrolls the host under the same ID: stacks, tags and backup jobs
         stay attached; when the new enrollment completes the old client
         cert stops working and its live session is closed. Requires
-        `hosts.create` and host scope for the host, for pending and enrolled
+        `hosts.create` (an assignment on everything), for pending and enrolled
         hosts alike. Revoked hosts return 404.
       parameters:
         - name: id

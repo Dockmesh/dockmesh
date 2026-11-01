@@ -1,11 +1,12 @@
 package handlers
 
 import (
-	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 
 	"github.com/dockmesh/dockmesh/internal/audit"
 	"github.com/dockmesh/dockmesh/internal/backup"

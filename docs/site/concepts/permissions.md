@@ -50,11 +50,11 @@ Built-in roles can't be changed. **Duplicate** one to start a custom role.
 | Everything | every host and stack, and the instance-wide areas |
 | Host | one host, its containers, images, volumes, networks and stacks |
 | Host tag | every host carrying the tag, now and later |
-| Stack | one stack on one host. Stack names are unique; the scope covers the stack while it runs on that host or isn't deployed |
+| Stack | one stack. Stack names are unique; a stack scope with a host covers the stack while it runs there, one without a host covers it anywhere, also before it is deployed |
 
 Proxy, alert rules and notification channels, users and roles, settings and the audit log are instance-wide. Only an assignment on **everything** grants them; a narrower assignment of the same role does not. Host tags, enrolling new hosts, registry credentials, templates and the backup key are instance-wide for the same reason.
 
-A stack that exists only as files and was never deployed has no host yet. Only assignments on everything or on that stack see it.
+A stack that exists only as files and was never deployed has no host yet. Only assignments on everything or on that stack without a host see it, change it or deploy it.
 
 Every signed-in user can always see their own profile, sessions, 2FA and API tokens, server health and version, and receive live updates.
 

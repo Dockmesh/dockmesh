@@ -26,8 +26,9 @@ func (f fakeUsers) AccessFor(id string) *rbac.Access {
 	return &rbac.Access{}
 }
 
-func grant(perm rbac.Perm, scopes ...rbac.Scope) *rbac.Access {
-	return &rbac.Access{Authenticated: true, Grants: []rbac.Grant{{Perms: map[rbac.Perm]bool{perm: true}, Scopes: scopes}}}
+// viewStacks holds stacks.view on scopes (none: everything).
+func viewStacks(scopes ...rbac.Scope) *rbac.Access {
+	return &rbac.Access{Authenticated: true, Grants: []rbac.Grant{{Perms: map[rbac.Perm]bool{rbac.PermStacksView: true}, Scopes: scopes}}}
 }
 
 type fakeTags map[string][]string
@@ -49,12 +50,12 @@ func TestEmitFanOutHonoursPermissionAndScope(t *testing.T) {
 		}
 	}
 	users := fakeUsers{
-		"admin":  grant(rbac.PermStacksView),
-		"viewer": grant(rbac.PermStacksView),
+		"admin":  viewStacks(),
+		"viewer": viewStacks(),
 		"noperm": {Authenticated: true},
-		"hostA":  grant(rbac.PermStacksView, rbac.Scope{Type: rbac.ScopeHost, Host: "a"}),
-		"stackY": grant(rbac.PermStacksView, rbac.Scope{Type: rbac.ScopeStack, Value: "y"}),
-		"tagged": grant(rbac.PermStacksView, rbac.Scope{Type: rbac.ScopeHostTag, Value: "dev"}),
+		"hostA":  viewStacks(rbac.Scope{Type: rbac.ScopeHost, Host: "a"}),
+		"stackY": viewStacks(rbac.Scope{Type: rbac.ScopeStack, Value: "y"}),
+		"tagged": viewStacks(rbac.Scope{Type: rbac.ScopeHostTag, Value: "dev"}),
 	}
 	svc := NewService(database)
 	svc.SetUserDirectory(users)

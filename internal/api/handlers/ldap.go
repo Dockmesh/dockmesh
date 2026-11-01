@@ -123,6 +123,9 @@ func (h *Handlers) CreateLDAPProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !h.requireIdPGrants(w, r, in.DefaultRole, ldapauth.GroupRules(in.GroupMappings)) {
+		return
+	}
 	p, err := h.LDAP.CreateProvider(r.Context(), in)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -146,6 +149,9 @@ func (h *Handlers) UpdateLDAPProvider(w http.ResponseWriter, r *http.Request) {
 	var in ldapauth.ProviderInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if !h.requireIdPGrants(w, r, in.DefaultRole, ldapauth.GroupRules(in.GroupMappings)) {
 		return
 	}
 	p, err := h.LDAP.UpdateProvider(r.Context(), id, in)

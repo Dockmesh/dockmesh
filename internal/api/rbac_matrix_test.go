@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -361,7 +360,7 @@ var routeGates = []struct {
 	{"DELETE", "/api/v1/settings/api-tokens/{id}", rbac.PermTokensDelete},
 }
 
-func newMatrixEnv(t *testing.T) (*sql.DB, *auth.Service, *rbac.Store, *handlers.Handlers) {
+func newMatrixEnv(t *testing.T) (*auth.Service, *rbac.Store, *handlers.Handlers) {
 	t.Helper()
 	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -390,11 +389,11 @@ func newMatrixEnv(t *testing.T) (*sql.DB, *auth.Service, *rbac.Store, *handlers.
 		t.Fatal(err)
 	}
 	h := handlers.New(handlers.Deps{Auth: authSvc, Roles: roles, Stacks: mgr, Deployments: stacks.NewDeploymentStore(database)})
-	return database, authSvc, roles, h
+	return authSvc, roles, h
 }
 
 func TestRouteGatesCoverEveryRoute(t *testing.T) {
-	_, authSvc, _, h := newMatrixEnv(t)
+	authSvc, _, h := newMatrixEnv(t)
 	router := NewRouter(h, authSvc, nil, true, nil)
 	want := map[string]bool{}
 	for _, g := range routeGates {
@@ -480,7 +479,7 @@ func signIn(t *testing.T, authSvc *auth.Service, roles *rbac.Store, name, role s
 // permissions, the assignment is on everything. The stack routes act on
 // a stack deployed on the local host. Unauthenticated calls get 401.
 func TestRouteGateMatrix(t *testing.T) {
-	_, authSvc, roles, h := newMatrixEnv(t)
+	authSvc, roles, h := newMatrixEnv(t)
 	router := NewRouter(h, authSvc, nil, true, nil)
 	var callers []matrixCaller
 	for _, b := range rbac.BuiltinRoles {
@@ -542,7 +541,7 @@ func TestRouteGateMatrix(t *testing.T) {
 // exists only as files reaches nobody but assignments on everything or
 // on that stack.
 func TestStackListFollowsScope(t *testing.T) {
-	_, authSvc, roles, h := newMatrixEnv(t)
+	authSvc, roles, h := newMatrixEnv(t)
 	ctx := context.Background()
 	for _, name := range []string{"onlocal", "onagent", "filesonly"} {
 		if _, err := h.Stacks.Create(name, "services:\n  app:\n    image: nginx\n", ""); err != nil {
@@ -564,7 +563,8 @@ func TestStackListFollowsScope(t *testing.T) {
 		{"everything", rbac.Global, "filesonly,onagent,onlocal"},
 		{"agent", rbac.Scope{Type: rbac.ScopeHost, Host: "agent-1"}, "onagent"},
 		{"stack", rbac.Scope{Type: rbac.ScopeStack, Host: "local", Value: "onlocal"}, "onlocal"},
-		{"draft", rbac.Scope{Type: rbac.ScopeStack, Host: "local", Value: "filesonly"}, "filesonly"},
+		{"draft", rbac.Scope{Type: rbac.ScopeStack, Value: "filesonly"}, "filesonly"},
+		{"draft-on-host", rbac.Scope{Type: rbac.ScopeStack, Host: "local", Value: "filesonly"}, ""},
 		{"tag", rbac.Scope{Type: rbac.ScopeHostTag, Value: "prod"}, ""},
 	}
 	for _, tt := range tests {

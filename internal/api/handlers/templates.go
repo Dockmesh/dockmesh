@@ -181,8 +181,8 @@ func (h *Handlers) DeployTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scopeReq := h.stackScopeReq(r.Context(), target.ID(), req.StackName)
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+req.StackName)
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, scopeReq, "stack "+req.StackName)
 		return
 	}
 	composeYAML, envContent, resolved, err := h.Templates.Materialize(r.Context(), id, req.Values)
@@ -251,9 +251,9 @@ func (h *Handlers) DeployTemplate(w http.ResponseWriter, r *http.Request) {
 	h.audit(r, "template.deploy", req.StackName,
 		map[string]any{"template_id": id, "host": target.ID()})
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"stack":        req.StackName,
-		"compose":      composeYAML,
-		"values":       safe,
+		"stack":         req.StackName,
+		"compose":       composeYAML,
+		"values":        safe,
 		"deploy_result": deployRes,
 	})
 }
@@ -293,4 +293,3 @@ func (h *Handlers) resolveHost(id string) (host.Host, error) {
 	}
 	return h.Hosts.Pick(id)
 }
-

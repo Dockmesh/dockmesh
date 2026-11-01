@@ -35,8 +35,8 @@
   // Scope-aware: stack-update / .deploy also require role-scope to cover
   // this stack's name (and host if known). Unscoped roles short-circuit
   // to "matches everything" in the scopeOK() helper.
-  const canWrite = $derived(allowed('stacks.update', { stack: name, host: stackHost }));
-  const canDeploy = $derived(allowed('stacks.deploy', { stack: name, host: stackHost }));
+  const canWrite = $derived(allowed('stacks.update'));
+  const canDeploy = $derived(allowed('stacks.deploy'));
 
   $effect(() => {
     pageContext.set(name);
@@ -1571,7 +1571,7 @@
     return !!imageUpdates[image]?.update_available;
   }
   const canUpdateImages = $derived(
-    !isRemote && canDeploy && allowed('containers.upgrade', { stack: name, host: stackHost })
+    !isRemote && canDeploy && allowed('containers.upgrade')
   );
   // Operation per service: the container id changes with the update, the
   // service name does not.
@@ -1634,7 +1634,7 @@
         </button>
       {/if}
     {/if}
-    {#if stackStatus !== 'needs_recovery' && allowed('stacks.operate', { stack: name, host: stackHost })}
+    {#if stackStatus !== 'needs_recovery' && allowed('stacks.operate')}
       <button type="button" class="dm-btn" onclick={stop} disabled={anyBusy}>
         <Square size={12} strokeWidth={1.8} /> Stop
       </button>

@@ -17,7 +17,8 @@ import (
 //
 //	GET /api/v1/system/backup-key/export
 //
-// Admin-only. Every call is audited so a stolen key leaves a trail.
+// Needs the key export extra on everything. Every call is audited so a
+// stolen key leaves a trail.
 func (h *Handlers) ExportBackupKey(w http.ResponseWriter, r *http.Request) {
 	if !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermBackupsKeyExport) {
 		writeError(w, http.StatusForbidden, "exporting the backup key needs the key export extra on everything")

@@ -6,8 +6,8 @@ paths:
       summary: List all hosts visible to the caller
       description: |
         Returns the local docker daemon plus every registered agent (online
-        or offline), decorated with host tags. Scoped users (P.11.3) see
-        only hosts whose tags match their scope.
+        or offline), decorated with host tags. Callers see
+        only hosts their assignments with Hosts: View cover.
       responses:
         "200":
           description: Host list.

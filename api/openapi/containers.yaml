@@ -77,7 +77,7 @@ paths:
       operationId: containers.inspect
       tags: [containers]
       summary: Inspect one container
-      description: The container must be within the caller's host scope and role scope (403 otherwise).
+      description: The container must be within one of the caller's assignments that allows the action (403 otherwise).
       responses:
         "200":
           description: Full container inspect response from the Docker daemon.
@@ -415,7 +415,7 @@ paths:
         "401":
           description: Missing, invalid or already used ticket.
         "403":
-          description: Ticket not minted for exec, permission lost, or container outside the caller's host or role scope.
+          description: Ticket not minted for exec, permission lost, or container outside the caller's assignments.
         "404": {$ref: "#/components/responses/NotFound"}
   /ws/events:
     get:

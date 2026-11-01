@@ -2,8 +2,8 @@
 //
 // Endpoints are gated on fine-grained permissions (Perm). Roles do not
 // list permissions directly: a role picks a level per area (stacks,
-// containers, …) plus a few explicit extras, and the catalog in this
-// file turns that into a permission set. Users get access through
+// containers, …) plus a few explicit extras, and the catalog in
+// catalog.go turns that into a permission set. Users get access through
 // assignments of a role on a scope (everything, a host, a host tag or a
 // stack); see Access for how assignments are evaluated.
 package rbac
@@ -68,7 +68,7 @@ const (
 	PermTokensView         Perm = "tokens.view"
 	PermTokensCreate       Perm = "tokens.create"
 	PermTokensDelete       Perm = "tokens.delete"
-	PermTokensManageOthers Perm = "tokens.manage_others"
+	PermTokensManageOthers Perm = "tokens.manage_others" //nolint:gosec // a permission name, not a credential
 
 	PermBackupsView      Perm = "backups.view"
 	PermBackupsRun       Perm = "backups.run"

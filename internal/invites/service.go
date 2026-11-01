@@ -23,9 +23,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/dockmesh/dockmesh/internal/rbac"
 	"log/slog"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/rbac"
 )
 
 const (
@@ -126,9 +127,6 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Invite, error) {
 	}
 	expiresAt := time.Now().Add(ttl)
 
-	if len(in.Scopes) == 0 {
-		in.Scopes = []rbac.Scope{rbac.Global}
-	}
 	tagsJSON, err := json.Marshal(in.Scopes)
 	if err != nil {
 		return nil, err

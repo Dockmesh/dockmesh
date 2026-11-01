@@ -111,8 +111,8 @@ paths:
       tags: [agents]
       summary: List all registered remote agents
       description: |
-        Only agents whose host is in the caller's scope (scope tags and role
-        scope), the same hosts `GET /hosts` returns.
+        Only agents of hosts an assignment with Hosts: View covers, the
+        same hosts `GET /hosts` returns.
       responses:
         "200":
           description: Agents.
@@ -242,7 +242,7 @@ paths:
         re-enrolls the host under the same ID: stacks, tags and backup jobs
         stay attached; when the new enrollment completes the old client
         cert stops working and its live session is closed. Requires
-        `hosts.create` and host scope for the host, for pending and enrolled
+        `hosts.create` (an assignment on everything), for pending and enrolled
         hosts alike. Revoked hosts return 404.
       parameters:
         - name: id
@@ -607,9 +607,8 @@ paths:
       tags: [audit]
       summary: Audit log entries, newest first
       description: |
-        Entries record no host, so a caller limited by scope tags or a
-        scoped role sees only its own entries; `user_id` is ignored for
-        such callers.
+        Needs Settings & audit: View on an assignment on everything; such
+        callers see every entry.
       parameters:
         - name: limit
           in: query
@@ -1362,10 +1361,10 @@ paths:
         permission the ticket should grant (one of `containers.view`,
         `containers.logs`, `containers.exec`, `system.view`). The server
         verifies the caller holds that permission and issues a 30s ticket
-        bound to it and to the caller's identity (user, role, host scope,
+        bound to it and to the caller's identity (user or
         API token). Each WS endpoint accepts a ticket once, asserts the
         bound permission matches its own, re-checks it, and applies the
-        caller's host and role scope. Mint a new ticket for every connect
+        caller's assignments. Mint a new ticket for every connect
         and reconnect.
       parameters:
         - name: for
@@ -1619,7 +1618,7 @@ paths:
       tags: [backups]
       summary: Create a new backup job
       description: >-
-        Jobs with a `system` source are admin-only (`system.update` with no host or role scope); other jobs need their host, before and after the change, in the caller's scope (403).
+        Jobs with a `system` source are admin-only (Settings & audit: Manage on everything); other jobs need their host, before and after the change, in the caller's scope (403).
       requestBody:
         required: true
         content:
@@ -1676,7 +1675,7 @@ paths:
       tags: [backups]
       summary: Delete a backup job (does not delete existing runs)
       description: >-
-        Jobs with a `system` source are admin-only (`system.update` with no host or role scope); other jobs need their host in the caller's scope (403).
+        Jobs with a `system` source are admin-only (Settings & audit: Manage on everything); other jobs need their host in the caller's scope (403).
       responses:
         "204": {description: Deleted.}
         "401": {$ref: "#/components/responses/Unauthorized"}
@@ -1719,8 +1718,7 @@ paths:
         and fail when it later changes; the new key is kept as
         `target_config.host_key_pending`. This moves it to `host_key`.
 
-        Jobs with a `system` source are admin-only (`system.update` with no
-        host or role scope); other jobs need their host in the caller's
+        Jobs with a `system` source are admin-only (Settings & audit: Manage on everything); other jobs need their host in the caller's
         scope (403).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
@@ -1740,7 +1738,7 @@ paths:
       tags: [backups]
       summary: Trigger a job to run immediately
       description: >-
-        Jobs with a `system` source are admin-only (`system.update` with no host or role scope); other jobs need their host in the caller's scope (403).
+        Jobs with a `system` source are admin-only (Settings & audit: Manage on everything); other jobs need their host in the caller's scope (403).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       responses:
@@ -1821,9 +1819,9 @@ paths:
         Requires the job's host and the destination host within the
         caller's scope (403). Stack runs write the target stack's files, so
         they also need `stacks.update` (`stacks.create` for a new name), the
-        stack in the caller's role scope, and the host the stack is deployed
+        stack in the caller's assignments, and the host the stack is deployed
         on in scope (403). Runs whose job was deleted are admin-only
-        (`system.update` with no host or role scope). System runs are never
+        (Settings & audit: Manage on everything). System runs are never
         restored here (409); they are restored with `POST /restore/system`,
         the setup wizard or `dockmesh restore`.
       parameters:
@@ -1867,9 +1865,9 @@ paths:
         Requires the job's host and the destination host within the
         caller's scope (403). Stack runs write the target stack's files, so
         they also need `stacks.update` (`stacks.create` for a new name), the
-        stack in the caller's role scope, and the host the stack is deployed
+        stack in the caller's assignments, and the host the stack is deployed
         on in scope (403). Runs whose job was deleted are admin-only
-        (`system.update` with no host or role scope). System runs are never
+        (Settings & audit: Manage on everything). System runs are never
         restored here (409); they are restored with `POST /restore/system`,
         the setup wizard or `dockmesh restore`.
       parameters:
@@ -1912,7 +1910,7 @@ paths:
 
         Requires the job's host within the caller's scope (403). System
         runs, and runs whose job was deleted, are admin-only
-        (`system.update` with no host or role scope).
+        (Settings & audit: Manage on everything).
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       responses:
@@ -2064,7 +2062,7 @@ paths:
         self-verify. Uploads are limited to 1 GiB. Symlink and hardlink
         entries are never extracted (Dockmesh backups contain none).
 
-        Admin-only (`system.update` with no host or role scope; 403).
+        Admin-only (Settings & audit: Manage on everything; 403).
       requestBody:
         required: true
         content:
@@ -2306,7 +2304,7 @@ paths:
       tags: [backups]
       summary: Enable / disable the default daily system backup
       description: >-
-        Admin-only (`system.update` with no host or role scope; 403).
+        Admin-only (Settings & audit: Manage on everything; 403).
       requestBody:
         required: true
         content:
@@ -2356,7 +2354,7 @@ paths:
 
         Requires the job's host within the caller's scope (403). System
         runs, and runs whose job was deleted, are admin-only
-        (`system.update` with no host or role scope).
+        (Settings & audit: Manage on everything).
       parameters:
         - in: path
           name: id
@@ -2390,7 +2388,7 @@ paths:
       description: |
         Requires `backups.download` and the job's host within the caller's
         scope. System archives, and runs whose job was deleted, are
-        admin-only (`system.update` with no host or role scope). Every
+        admin-only (Settings & audit: Manage on everything). Every
         download is audited as `backup.download`.
       parameters:
         - in: path
@@ -2486,7 +2484,7 @@ paths:
       operationId: containers.inspect
       tags: [containers]
       summary: Inspect one container
-      description: The container must be within the caller's host scope and role scope (403 otherwise).
+      description: The container must be within one of the caller's assignments that allows the action (403 otherwise).
       responses:
         "200":
           description: Full container inspect response from the Docker daemon.
@@ -2824,7 +2822,7 @@ paths:
         "401":
           description: Missing, invalid or already used ticket.
         "403":
-          description: Ticket not minted for exec, permission lost, or container outside the caller's host or role scope.
+          description: Ticket not minted for exec, permission lost, or container outside the caller's assignments.
         "404": {$ref: "#/components/responses/NotFound"}
   /ws/events:
     get:
@@ -3297,8 +3295,8 @@ paths:
       summary: List all hosts visible to the caller
       description: |
         Returns the local docker daemon plus every registered agent (online
-        or offline), decorated with host tags. Scoped users (P.11.3) see
-        only hosts whose tags match their scope.
+        or offline), decorated with host tags. Callers see
+        only hosts their assignments with Hosts: View cover.
       responses:
         "200":
           description: Host list.
@@ -3730,8 +3728,7 @@ paths:
         Returns the age private key used to encrypt system backups, so the
         admin can store it offline for disaster recovery. Without this
         key, an encrypted system backup cannot be restored on a fresh
-        host. Requires `backups.restore` plus admin (`system.update` with
-        no host or role scope); every export is audited.
+        host. Requires the key export extra on an assignment on everything; every export is audited.
       responses:
         "200":
           description: age key file (text/plain).
@@ -7201,8 +7198,7 @@ paths:
         `docker compose up -d` against the chosen host. The response
         echoes the rendered compose + the resolved values with secrets
         redacted as `<generated>`.
-        The caller needs access to the target host and a role scope that covers
-        the new stack; the deployment is recorded in the stack's deploy history.
+        The caller needs Stacks: Deploy on the new stack on the target host; the deployment is recorded in the stack's deploy history.
       parameters:
         - $ref: "#/components/parameters/IntIDPath"
       requestBody:
@@ -8311,7 +8307,7 @@ components:
         total_bytes: {type: integer, format: int64}
         used_bytes: {type: integer, format: int64}
         last_checked_at: {type: string, format: date-time}
-        job_count: {type: integer, description: "Backup jobs (not deleted ones) that write to this target. Only for callers without a host or role scope."}
+        job_count: {type: integer, description: "Backup jobs (not deleted ones) that write to this target. Only for callers whose access is all on everything."}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     BackupTargetInput:
@@ -8390,8 +8386,8 @@ components:
         Where an assignment applies. `host` and `stack` carry the host id in
         `host`; `host_tag` and `stack` carry the tag or stack name in
         `value`. Stack names are unique across the instance; a stack scope
-        matches the stack while it is deployed on `host` or not deployed at
-        all, and a stack scope without `host` matches the stack anywhere.
+        matches the stack while it is deployed on `host`; without `host` it
+        matches the stack anywhere and while it is not deployed.
       properties:
         type: {type: string, enum: [global, host, host_tag, stack]}
         host: {type: string, example: local}

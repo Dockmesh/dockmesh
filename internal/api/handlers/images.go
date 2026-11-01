@@ -109,8 +109,8 @@ func (h *Handlers) PullImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scopeReq := h.hostScopeReq(r.Context(), "local")
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermImagesCreate, scopeReq, "host local")
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermImagesCreate, scopeReq, "host local")
 		return
 	}
 	var req pullRequest
@@ -186,8 +186,8 @@ func (h *Handlers) InspectImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scopeReq := h.hostScopeReq(r.Context(), target.ID())
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermImagesView, scopeReq, "host "+target.ID())
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermImagesView, scopeReq, "host "+target.ID())
 		return
 	}
 	id, _ := url.PathUnescape(chi.URLParam(r, "id"))
@@ -206,8 +206,8 @@ func (h *Handlers) RemoveImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scopeReq := h.hostScopeReq(r.Context(), target.ID())
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermImagesDelete, scopeReq, "host "+target.ID())
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermImagesDelete, scopeReq, "host "+target.ID())
 		return
 	}
 	id, _ := url.PathUnescape(chi.URLParam(r, "id"))
@@ -228,8 +228,8 @@ func (h *Handlers) PruneImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scopeReq := h.hostScopeReq(r.Context(), target.ID())
-	if !h.checkRoleScope(r, scopeReq) {
-		h.writeRoleScopeDenied(w, r, rbac.PermImagesDelete, scopeReq, "host "+target.ID())
+	if !h.allowedOn(r, scopeReq) {
+		h.writeScopeDenied(w, r, rbac.PermImagesDelete, scopeReq, "host "+target.ID())
 		return
 	}
 	report, err := target.PruneImages(r.Context())

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-
 )
 
 // ListHosts returns the local docker daemon plus every registered agent

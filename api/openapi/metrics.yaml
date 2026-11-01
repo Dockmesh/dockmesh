@@ -199,8 +199,7 @@ paths:
         Returns the age private key used to encrypt system backups, so the
         admin can store it offline for disaster recovery. Without this
         key, an encrypted system backup cannot be restored on a fresh
-        host. Requires `backups.restore` plus admin (`system.update` with
-        no host or role scope); every export is audited.
+        host. Requires the key export extra on an assignment on everything; every export is audited.
       responses:
         "200":
           description: age key file (text/plain).

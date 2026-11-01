@@ -13,11 +13,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/dockmesh/dockmesh/internal/rbac"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/rbac"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/secrets"
@@ -37,7 +38,8 @@ type GroupMapping struct {
 	Scope      rbac.Scope `json:"scope"`
 }
 
-func groupRules(ms []GroupMapping) []rbac.GroupRule {
+// GroupRules converts the mappings for rbac.IdPAssignments and grant checks.
+func GroupRules(ms []GroupMapping) []rbac.GroupRule {
 	out := make([]rbac.GroupRule, 0, len(ms))
 	for _, m := range ms {
 		out = append(out, rbac.GroupRule{Group: m.GroupValue, Role: m.RoleName, Scope: m.Scope})
@@ -472,7 +474,7 @@ func (s *Service) HandleCallback(ctx context.Context, pending *Pending, code, st
 	}
 
 	groups := stringSliceClaim(claims, p.GroupsField)
-	assignments := rbac.IdPAssignments("OAuth2 "+p.DisplayName, groups, groupRules(p.GroupMappings), p.DefaultRole, nil)
+	assignments := rbac.IdPAssignments("OAuth2 "+p.DisplayName, groups, GroupRules(p.GroupMappings), p.DefaultRole, nil)
 
 	// email_verified only speaks for the standard email field.
 	user, err := s.jitProvision(ctx, p, subject, name, email, assignments, p.EmailField == "email" && auth.ClaimTrue(claims, "email_verified"))

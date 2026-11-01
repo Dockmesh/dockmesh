@@ -3,10 +3,11 @@ package handlers
 import (
 	"context"
 	"errors"
-	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/dockmesh/dockmesh/internal/api/middleware"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/dockmesh/dockmesh/internal/audit"

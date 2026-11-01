@@ -36,7 +36,7 @@ func TestNewFromDBUsesPermissions(t *testing.T) {
 		{name: "built-in admin", role: "admin", wantActive: false},
 		{name: "only viewer", role: "viewer", wantActive: true},
 		{name: "host-admin", role: "host-admin", wantActive: true},
-		{name: "admin on one host only", role: "admin", scope: "host", wantActive: true},
+		{name: "admin on one host only", role: "admin", scope: "host", wantActive: false},
 		{name: "custom admin-equivalent role", role: "superops", levels: adminEquivalent, wantActive: false},
 		{name: "custom role without user management", role: "settings-only", levels: map[string]string{"settings": "manage"}, wantActive: true},
 		{name: "custom role named like admin", role: "Admin2", levels: map[string]string{"users": "view"}, wantActive: true},

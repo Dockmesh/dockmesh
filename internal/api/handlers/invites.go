@@ -2,12 +2,13 @@ package handlers
 
 import (
 	"errors"
-	"github.com/dockmesh/dockmesh/internal/rbac"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/rbac"
 
 	"github.com/go-chi/chi/v5"
 
@@ -247,7 +248,8 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		UserID: creator.ID, Access: middleware.UserAccess(creator.ID),
 	}))
 	if len(inv.Scopes) == 0 {
-		inv.Scopes = []rbac.Scope{rbac.Global}
+		writeError(w, http.StatusGone, "this invite grants no access any more")
+		return
 	}
 	for _, sc := range inv.Scopes {
 		if err := h.checkGrant(asCreator, inv.Role, sc); err != nil {

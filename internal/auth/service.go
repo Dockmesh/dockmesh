@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/internal/ratelimit"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
@@ -31,14 +31,14 @@ var (
 )
 
 type User struct {
-	ID         string   `json:"id"`
-	Username   string   `json:"username"`
-	DisplayName string  `json:"display_name,omitempty"`
-	Email      string   `json:"email,omitempty"`
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name,omitempty"`
+	Email       string `json:"email,omitempty"`
 	// Source is "sso" when sign-in replaces the account's identity
 	// provider assignments from its groups, "manual" otherwise.
-	Source     string   `json:"source"`
-	MFAEnabled bool     `json:"mfa_enabled"`
+	Source     string `json:"source"`
+	MFAEnabled bool   `json:"mfa_enabled"`
 	// Profile timestamps surfaced in the Account page.
 	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
 	PasswordChangedAt *time.Time `json:"password_changed_at,omitempty"`
@@ -201,7 +201,7 @@ func (s *Service) CreateUser(ctx context.Context, username, email, password, rol
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO users (id, username, email, password, password_changed_at)
 		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
@@ -420,6 +420,8 @@ func (s *Service) DeleteUser(ctx context.Context, id string) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	// The user's assignments went with it.
+	s.accessChanged(ctx)
 	return nil
 }
 

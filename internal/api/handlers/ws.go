@@ -75,8 +75,8 @@ func (h *Handlers) WSTicket(w http.ResponseWriter, r *http.Request) {
 
 // wsAuth consumes the ?ticket= query parameter, checks that it was minted
 // for want and that the caller still holds want, and returns r with the
-// ticket's identity in its context so the usual user- and role-scope
-// checks apply. Writes 401/403 and returns ok=false on failure.
+// ticket's identity in its context so the usual scope checks
+// apply. Writes 401/403 and returns ok=false on failure.
 func (h *Handlers) wsAuth(w http.ResponseWriter, r *http.Request, want rbac.Perm) (*http.Request, bool) {
 	ticket := r.URL.Query().Get("ticket")
 	if ticket == "" {
@@ -177,7 +177,7 @@ func (h *Handlers) wsWatch(r *http.Request, conn *websocket.Conn, perm rbac.Perm
 func (h *Handlers) wsContainerAccess(w http.ResponseWriter, r *http.Request, perm rbac.Perm, hostID, containerID string) (rbac.Resource, bool) {
 	scopeReq := h.containerScopeReq(r.Context(), hostID, containerID)
 	if !h.allowedOn(r, scopeReq, perm) {
-		h.writeRoleScopeDenied(w, r, perm, scopeReq, "container "+containerID)
+		h.writeScopeDenied(w, r, perm, scopeReq, "container "+containerID)
 		return scopeReq, false
 	}
 	return scopeReq, true

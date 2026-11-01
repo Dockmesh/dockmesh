@@ -94,13 +94,14 @@ func seedLegacy(t *testing.T, database *sql.DB, f legacyFixture) {
 		('dmt_bbbbbbbb', 'h2', 'two-scopes', 'scoped-hosts', 'u-admin'),
 		('dmt_cccccccc', 'h3', 'one-scope', 'one-host', 'u-admin')`)
 	exec(`INSERT INTO invite_tokens (token_hash, role, scope_tags_json, expires_at, created_by) VALUES
-		('i1', 'viewer', '["prod"]', datetime('now', '+1 day'), 'u-admin')`)
+		('i1', 'viewer', '["prod"]', datetime('now', '+1 day'), 'u-admin'),
+		('i2', 'one-host', '["prod"]', datetime('now', '+1 day'), 'u-admin')`)
 }
 
 // oldAllows evaluates the old model: role permissions, within the role's
 // scope rows (any) and the user's tags (any).
 func oldAllows(f legacyFixture, u legacyUser, builtin map[string]map[rbac.Perm]bool, p rbac.Perm, res rbac.Resource) bool {
-	perms := map[rbac.Perm]bool{}
+	var perms map[rbac.Perm]bool
 	if b, ok := builtin[u.role]; ok {
 		perms = b
 	} else {
@@ -252,11 +253,16 @@ func TestRBACAssignmentsMigration(t *testing.T) {
 		t.Errorf("token with two role scopes not revoked: %q %v", two, err)
 	}
 	var inviteScopes string
-	if err := database.QueryRow(`SELECT scopes_json FROM invite_tokens`).Scan(&inviteScopes); err != nil || inviteScopes != `[{"type":"host_tag","value":"prod"}]` {
+	if err := database.QueryRow(`SELECT scopes_json FROM invite_tokens WHERE token_hash = 'i1'`).Scan(&inviteScopes); err != nil || inviteScopes != `[{"type":"host_tag","value":"prod"}]` {
 		t.Errorf("invite scopes %s %v", inviteScopes, err)
 	}
+	// one-host is limited to agent-2, which isn't tagged prod: no access.
+	var live int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM invite_tokens WHERE token_hash = 'i2' AND scopes_json = '[]' AND expires_at <= CURRENT_TIMESTAMP`).Scan(&live); err != nil || live != 1 {
+		t.Errorf("invite without access not expired: %d %v", live, err)
+	}
 	var mappings string
-	if err := database.QueryRow(`SELECT group_concat(group_value || '=' || role_name, ',') FROM (SELECT * FROM oidc_provider_group_mappings ORDER BY group_value)`).Scan(&mappings); err != nil || mappings != "admins=admin,devs=deployer" {
+	if err := database.QueryRow(`SELECT group_concat(group_value || '=' || role_name, ',') FROM (SELECT * FROM oidc_provider_group_mappings ORDER BY group_value)`).Scan(&mappings); err != nil || mappings != "admins=admin" {
 		t.Errorf("oidc mappings %q %v", mappings, err)
 	}
 
@@ -281,7 +287,7 @@ func TestRBACAssignmentsMigration(t *testing.T) {
 		"- user u-stack: stack-role on stack draft or stack web became stack-role on stack draft, stack web on edge1",
 		"- user u-sso-tags: viewer on everything, limited to hosts tagged dev became viewer on host tag dev; sign-in no longer updates",
 		"- API token two-scopes: was revoked",
-		"- OIDC provider Corp: its group mappings (devs → deployer) now apply at sign-in",
+		"- OIDC provider Corp: its saved group mappings (devs → deployer) were never applied at sign-in and were removed",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("notice lacks %q:\n%s", want, body)

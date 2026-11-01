@@ -21,11 +21,12 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"github.com/dockmesh/dockmesh/internal/rbac"
 	"math/big"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/rbac"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
 	"github.com/dockmesh/dockmesh/internal/secrets"
@@ -65,7 +66,8 @@ type GroupMapping struct {
 	Scope      rbac.Scope `json:"scope"`
 }
 
-func groupRules(ms []GroupMapping) []rbac.GroupRule {
+// GroupRules converts the mappings for rbac.IdPAssignments and grant checks.
+func GroupRules(ms []GroupMapping) []rbac.GroupRule {
 	out := make([]rbac.GroupRule, 0, len(ms))
 	for _, m := range ms {
 		out = append(out, rbac.GroupRule{Group: m.GroupValue, Role: m.RoleName, Scope: m.Scope})

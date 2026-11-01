@@ -60,7 +60,7 @@ func (s *Store) SeedBuiltins(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := SeedBuiltinsTx(ctx, tx); err != nil {
 		return err
 	}
@@ -108,7 +108,7 @@ func writeLevels(ctx context.Context, tx *sql.Tx, name string, levels Levels, ex
 
 // Load refreshes the cache from the database.
 func (s *Store) Load(ctx context.Context) error {
-	roles, err := loadRoles(ctx, s.db)
+	roles, err := LoadRoles(ctx, s.db)
 	if err != nil {
 		return err
 	}
@@ -140,9 +140,7 @@ type querier interface {
 }
 
 // LoadRoles reads every role definition straight from the database.
-func LoadRoles(ctx context.Context, q querier) ([]Role, error) { return loadRoles(ctx, q) }
-
-func loadRoles(ctx context.Context, q querier) ([]Role, error) {
+func LoadRoles(ctx context.Context, q querier) ([]Role, error) {
 	rows, err := q.QueryContext(ctx, `SELECT name, display, COALESCE(description, ''), builtin FROM roles`)
 	if err != nil {
 		return nil, err
@@ -286,7 +284,7 @@ func (s *Store) CreateRole(ctx context.Context, in RoleInput) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO roles (name, display, description, builtin) VALUES (?, ?, ?, 0)`,
 		in.Name, in.Display, in.Description); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -319,7 +317,7 @@ func (s *Store) UpdateRole(ctx context.Context, name string, in RoleInput) error
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `UPDATE roles SET display = ?, description = ? WHERE name = ? AND builtin = 0`,
 		in.Display, in.Description, name); err != nil {
 		return err
@@ -460,7 +458,7 @@ func (s *Store) ReplaceIdPAssignments(ctx context.Context, userID string, want [
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `DELETE FROM role_assignments WHERE user_id = ? AND source = ?`, userID, SourceIdP); err != nil {
 		return err
 	}
@@ -483,8 +481,7 @@ func (s *Store) AccessFor(userID string) *Access {
 	return s.AccessForAssignments(s.UserAssignments(userID))
 }
 
-// AccessForAssignments evaluates a hypothetical assignment list, e.g. to
-// check a change before it is stored.
+// AccessForAssignments evaluates a list of assignments.
 func (s *Store) AccessForAssignments(as []Assignment) *Access {
 	acc := &Access{Authenticated: true}
 	for _, a := range as {
@@ -507,18 +504,11 @@ func (s *Store) RoleAccess(role string) *Access {
 	return s.AccessForAssignments([]Assignment{{Role: role, Scope: Global}})
 }
 
-// IsAdminRole reports whether a role holds every permission.
+// IsAdminRole reports whether a role can administer the instance (see
+// IsAdminPermSet).
 func (s *Store) IsAdminRole(name string) bool {
 	perms, ok := s.RolePerms(name)
-	if !ok {
-		return false
-	}
-	for _, p := range AllPerms() {
-		if !IsBase(p) && !perms[p] {
-			return false
-		}
-	}
-	return true
+	return ok && IsAdminPermSet(perms)
 }
 
 // IsGlobalAdmin reports whether a is an admin role on everything.

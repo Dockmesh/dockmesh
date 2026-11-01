@@ -75,7 +75,7 @@ func validRoleName(n string) bool {
 		return false
 	}
 	for _, c := range n {
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' && c != '_' {
 			return false
 		}
 	}
@@ -131,7 +131,7 @@ func (h *Handlers) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		writeGrantError(w, err)
 		return
 	}
-	if err := h.checkRoleKeepsAdmin(name, isAdminPermSet(rbac.PermsFor(in.Levels, in.Extras))); err != nil {
+	if err := h.checkRoleKeepsAdmin(name, rbac.IsAdminPermSet(rbac.PermsFor(in.Levels, in.Extras))); err != nil {
 		writeLastAdminError(w, err)
 		return
 	}
@@ -145,15 +145,6 @@ func (h *Handlers) UpdateRole(w http.ResponseWriter, r *http.Request) {
 	})
 	rd, _ := h.Roles.Role(name)
 	writeJSON(w, http.StatusOK, roleView{Role: rd, Assignments: len(h.Roles.RoleAssignments(name))})
-}
-
-func isAdminPermSet(perms map[rbac.Perm]bool) bool {
-	for _, p := range rbac.AllPerms() {
-		if !rbac.IsBase(p) && !perms[p] {
-			return false
-		}
-	}
-	return true
 }
 
 func (h *Handlers) DeleteRole(w http.ResponseWriter, r *http.Request) {

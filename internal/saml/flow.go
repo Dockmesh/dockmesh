@@ -7,11 +7,12 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"github.com/dockmesh/dockmesh/internal/rbac"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/rbac"
 
 	"github.com/dockmesh/dockmesh/internal/auth"
 
@@ -260,7 +261,7 @@ func (s *Service) HandleACS(ctx context.Context, pending *Pending, r *http.Reque
 	if groupsRaw := attrs[p.GroupsAttribute]; groupsRaw != "" {
 		groups = splitGroups(groupsRaw)
 	}
-	assignments := rbac.IdPAssignments("SAML "+p.DisplayName, groups, groupRules(p.GroupMappings), p.DefaultRole, nil)
+	assignments := rbac.IdPAssignments("SAML "+p.DisplayName, groups, GroupRules(p.GroupMappings), p.DefaultRole, nil)
 
 	rekeyed, err := s.rekey(ctx, p.Slug, subject, email)
 	if err != nil {
@@ -327,7 +328,7 @@ func (s *Service) rekey(ctx context.Context, slug, subject, email string) (strin
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id FROM users
 		 WHERE saml_provider = ? AND email = ? COLLATE NOCASE AND saml_rekey_until > CURRENT_TIMESTAMP
-		   AND NOT EXISTS (SELECT 1 FROM role_assignments a WHERE a.user_id = users.id AND a.role_name = 'admin')
+		   AND NOT EXISTS (SELECT 1 FROM role_assignments a JOIN role_levels l ON l.role_name = a.role_name WHERE a.user_id = users.id AND l.area IN ('users', 'settings') AND l.level = 'manage')
 		   AND totp_verified = 0`, slug, email)
 	if err != nil {
 		return "", err
