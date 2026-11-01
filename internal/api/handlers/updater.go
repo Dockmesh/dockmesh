@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -29,6 +30,9 @@ func (h *Handlers) UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	if !h.allowStackRebuild(w, r, id) {
 		return
 	}
+	// Detached from the request: closing the tab mid-update must not cancel
+	// the pull or interrupt the container swap.
+	r = r.WithContext(context.WithoutCancel(r.Context()))
 	op := h.startImageUpdateOp(r, id, "", false)
 	res, err := h.Updater.Update(operations.WithOp(r.Context(), op), id, middleware.UserID(r.Context()))
 	op.Finish(err)
