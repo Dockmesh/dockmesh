@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -310,7 +311,17 @@ func (h *Handlers) BulkUpdateContainers(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "at most "+strconv.Itoa(maxBulkUpdates)+" containers per request")
 		return
 	}
-	for _, id := range ids {
+	for i, id := range ids {
+		// Pin the full id, so a name reused before the item runs cannot
+		// redirect the update to another container.
+		if h.Docker != nil {
+			info, err := h.Docker.InspectContainer(r.Context(), id)
+			if err != nil {
+				writeError(w, http.StatusNotFound, "container "+id+" not found")
+				return
+			}
+			id, ids[i] = info.ID, info.ID
+		}
 		if !h.requireContainerScope(w, r, rbac.PermContainersUpdate, "local", id) {
 			return
 		}
@@ -338,18 +349,31 @@ func (h *Handlers) BulkUpdateContainers(w http.ResponseWriter, r *http.Request) 
 	}
 
 	ctx := context.WithoutCancel(r.Context())
-	rr := r.WithContext(ctx)
 	uid := middleware.UserID(ctx)
 	go func() {
 		for _, q := range list {
 			if !q.state.CompareAndSwap(0, 1) {
 				continue
 			}
+			// Each item is authorised again when it starts: the queue can
+			// run long after the request, and the caller may have been
+			// signed out or lost the permission or scope in between.
+			ictx, err := h.refreshIdentity(ctx)
+			rr := r.WithContext(ictx)
+			if err == nil {
+				if why := h.imageUpdateDenied(rr, q.id); why != "" {
+					err = errors.New(why)
+				}
+			}
+			if err != nil {
+				q.op.Finish(fmt.Errorf("not started: %w", err))
+				continue
+			}
 			q.op.Begin()
-			res, err := h.Updater.Update(operations.WithOp(ctx, q.op), q.id, uid)
+			res, err := h.Updater.Update(operations.WithOp(ictx, q.op), q.id, uid)
 			q.op.Finish(err)
 			if err == nil && res.Updated {
-				h.UpdateWatcher.MarkUpdated(ctx, res.Image)
+				h.UpdateWatcher.MarkUpdated(ictx, res.Image)
 				h.audit(rr, audit.ActionContainerUpdate, res.ContainerName, map[string]string{
 					"image":    res.Image,
 					"from":     trim(res.OldDigest),
