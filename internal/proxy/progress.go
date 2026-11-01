@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"net/url"
 	"strings"
@@ -101,7 +102,7 @@ func (s *Service) WatchCertificate(ctx context.Context, op *operations.Op, host,
 				return
 			}
 		}
-		if cert, err := probeCert(ctx, host); err == nil && cert.NotBefore.After(since.Add(-2*time.Hour)) {
+		if cert := s.servedCert(ctx, host); cert != nil && cert.NotBefore.After(since.Add(-2*time.Hour)) {
 			op.StepDone(StepCertificate, "served, issued by "+certIssuer(cert))
 			return
 		}
@@ -126,4 +127,20 @@ func certDetail(got, fallback string) string {
 		return "issued by " + got
 	}
 	return "issued by " + fallback
+}
+
+// servedCert reads the certificate the managed proxy serves for host. The
+// proxy publishes 443 on this machine, so it is asked directly with the
+// site's name; that works before DNS points at it. Caddy logs nothing
+// when its internal CA issues a certificate, so this is the only signal
+// for tls internal. Falls back to host:443 for setups where the proxy is
+// not reachable on loopback.
+func (s *Service) servedCert(ctx context.Context, host string) *x509.Certificate {
+	if c, err := probeCertAt(ctx, "127.0.0.1:443", host); err == nil {
+		return c
+	}
+	if c, err := probeCert(ctx, host); err == nil {
+		return c
+	}
+	return nil
 }
