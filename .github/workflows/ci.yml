@@ -24,12 +24,13 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+    # The PR files API lists at most 3000 files; larger PRs run everything.
     outputs:
-      go: ${{ github.event_name != 'pull_request' || steps.filter.outputs.go == 'true' }}
-      web: ${{ github.event_name != 'pull_request' || steps.filter.outputs.web == 'true' }}
-      docs: ${{ github.event_name != 'pull_request' || steps.filter.outputs.docs == 'true' }}
-      scripts: ${{ github.event_name != 'pull_request' || steps.filter.outputs.scripts == 'true' }}
-      deps: ${{ github.event_name != 'pull_request' || steps.filter.outputs.deps == 'true' }}
+      go: ${{ github.event_name != 'pull_request' || github.event.pull_request.changed_files >= 3000 || steps.filter.outputs.go == 'true' }}
+      web: ${{ github.event_name != 'pull_request' || github.event.pull_request.changed_files >= 3000 || steps.filter.outputs.web == 'true' }}
+      docs: ${{ github.event_name != 'pull_request' || github.event.pull_request.changed_files >= 3000 || steps.filter.outputs.docs == 'true' }}
+      scripts: ${{ github.event_name != 'pull_request' || github.event.pull_request.changed_files >= 3000 || steps.filter.outputs.scripts == 'true' }}
+      deps: ${{ github.event_name != 'pull_request' || github.event.pull_request.changed_files >= 3000 || steps.filter.outputs.deps == 'true' }}
     steps:
       - if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -43,7 +44,10 @@ jobs:
               - '**/*.go'
               - go.mod
               - go.sum
+              - go.work
+              - go.work.sum
               - .golangci.yml
+              - Makefile
               - api/openapi/**
               - internal/**
               - cmd/**
@@ -62,6 +66,8 @@ jobs:
               - *ci
               - go.mod
               - go.sum
+              - go.work
+              - go.work.sum
               - web/package.json
               - web/package-lock.json
 
@@ -71,6 +77,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -120,6 +128,8 @@ jobs:
         github.com/dockmesh/dockmesh/internal/saml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -155,6 +165,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -176,6 +188,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -196,6 +209,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -227,6 +242,8 @@ jobs:
         working-directory: web
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
@@ -247,6 +264,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -267,6 +286,8 @@ jobs:
           - {goos: darwin, goarch: amd64, runner: ubuntu-latest,    smoke: false}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
@@ -322,6 +343,8 @@ jobs:
       ALLOWED: MIT;MIT-0;BSD-2-Clause;BSD-3-Clause;Apache-2.0;ISC;MPL-2.0;0BSD;Unlicense;CC0-1.0;BlueOak-1.0.0;Python-2.0;OFL-1.1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
