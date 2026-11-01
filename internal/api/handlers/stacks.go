@@ -1080,6 +1080,15 @@ func (h *Handlers) StackStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	// A stack that was never deployed runs nowhere. StackScope lets this
+	// probe through for it, so a caller limited to other hosts gets the
+	// empty status instead of a 403 for the default host.
+	if h.Deployments != nil && !h.hostVisible(r, target.ID()) {
+		if d, err := h.Deployments.Get(r.Context(), name); err == nil && (d == nil || d.HostID == "") {
+			writeJSON(w, http.StatusOK, []any{})
+			return
+		}
+	}
 	if !h.requireStackScope(w, r, rbac.PermStacksView, target.ID(), name) {
 		return
 	}

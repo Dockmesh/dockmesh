@@ -2285,6 +2285,9 @@ paths:
       operationId: stacks.status
       tags: [stacks]
       summary: Current per-service status on the deployed host
+      description: |
+        A stack that was never deployed returns an empty list to callers
+        whose scope does not include the requested host.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
         - $ref: "#/components/parameters/HostQuery"
