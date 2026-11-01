@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Logo from '$lib/components/shell/Logo.svelte';
   // Public invite redeem page. The token in the URL is shown by the
   // backend without auth and consumed by submitting username + password.
   // No SMTP — admin shared this link manually.
@@ -99,7 +100,7 @@
 
   <div class="login-stack">
     <div class="login-brand">
-      <img src="/logo-mark.svg" alt="" width="28" height="28" />
+      <span class="mark"><Logo width={66} height={27} /></span>
       <span>Dockmesh</span>
     </div>
 
@@ -209,6 +210,7 @@
     font-weight: 600;
     letter-spacing: -0.005em;
   }
+  .login-brand .mark { color: var(--accent); display: inline-flex; }
   .login-card {
     width: 100%;
     background: var(--surface);

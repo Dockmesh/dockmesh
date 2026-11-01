@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Logo from '$lib/components/shell/Logo.svelte';
   // Install wizard: one question per step, a review of every answer before
   // anything is written, then the live install log and the credentials.
   import { onMount, onDestroy } from 'svelte';
@@ -487,7 +488,7 @@
 <div class="sw">
   <header class="top">
     <div class="brand">
-      <img src="/logo-mark.svg" alt="" width="22" height="22" />
+      <span class="mark"><Logo width={54} height={22} /></span>
       <b>Dockmesh</b>
       <span class="dim">/ setup</span>
     </div>
@@ -879,6 +880,7 @@
     border-radius: var(--r-sm);
     padding: 2px 4px;
   }
+  .brand .mark { color: var(--accent); display: inline-flex; }
   .stepper button:not(:disabled) { cursor: pointer; }
   .stepper button:not(:disabled):hover .l { color: var(--fg); text-decoration: underline; }
   .stepper button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
