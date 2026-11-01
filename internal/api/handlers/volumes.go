@@ -233,7 +233,7 @@ func mapBrowseStatus(err error) int {
 		errors.Is(err, host.ErrContainerNoRm),
 		errors.Is(err, host.ErrAgentNoContainerFiles):
 		return http.StatusConflict
-	case errors.Is(err, host.ErrAgentOffline):
+	case errors.Is(err, host.ErrAgentOffline), errors.Is(err, host.ErrNoDocker):
 		return http.StatusServiceUnavailable
 	default:
 		if errors.Is(err, fs.ErrNotExist) {
