@@ -172,7 +172,7 @@ var routeGates = []struct {
 	{"GET", "/api/v1/global-env/groups", rbac.PermSystemUpdate},
 	{"GET", "/api/v1/global-env/{id}/refs", rbac.PermSystemUpdate},
 	{"GET", "/api/v1/roles", rbac.PermRolesView},
-	{"GET", "/api/v1/roles/catalog", rbac.PermRolesView},
+	{"GET", "/api/v1/roles/catalog", gateSignedIn},
 	{"GET", "/api/v1/roles/{name}", rbac.PermRolesView},
 	{"POST", "/api/v1/roles", rbac.PermRolesCreate},
 	{"PUT", "/api/v1/roles/{name}", rbac.PermRolesUpdate},

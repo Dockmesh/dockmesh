@@ -80,7 +80,14 @@
   }
 
   async function loadRoles() {
-    try { roles = await api.roles.list(); } catch { /* the picker then offers no restriction only */ }
+    // Without Users & roles: View, offer the roles the caller holds itself.
+    if (allowed('roles.view')) {
+      try { roles = await api.roles.list(); } catch { /* the picker then offers no restriction only */ }
+    } else {
+      const me = await api.users.me().catch(() => null);
+      const own = [...new Set((me?.assignments ?? []).map((a) => a.role))];
+      roles = own.map((name) => ({ name, display: name, description: '', builtin: false, levels: {}, extras: [], permissions: [] }) as CustomRole);
+    }
     catalog = await api.roles.catalog().catch(() => null);
   }
 

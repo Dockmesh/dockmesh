@@ -21,6 +21,7 @@
   //   - No .txt download for codes; clipboard copy is enough.
   import { api, ApiError, type Session, type PasswordPolicy, type Assignment, type CustomRole } from '$lib/api';
   import { assignmentLabel } from '$lib/access';
+  import { allowed } from '$lib/rbac.svelte';
   import { Skeleton } from '$lib/components/ui';
   import {
     EditorialPage, Eyebrow, Field, EditorialModal,
@@ -105,7 +106,9 @@
   }
 
   async function loadPolicy() {
-    try { policy = await api.auth.getPolicy(); } catch { /* policy is informational */ }
+    if (allowed('system.update')) {
+      try { policy = await api.auth.getPolicy(); } catch { /* policy is informational */ }
+    }
   }
 
   async function loadSessions() {

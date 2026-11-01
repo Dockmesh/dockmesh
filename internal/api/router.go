@@ -173,6 +173,9 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			// permission and the caller's scope inside the handler.
 			r.Get("/attention", h.Attention)
 
+			// The level catalog is static; the token page shows it to everyone.
+			r.Get("/roles/catalog", h.RoleCatalog)
+
 			// Long-running operations; each is shown only to callers who
 			// may view what it works on, checked inside the handler.
 			r.Get("/operations", h.ListOperations)
@@ -398,7 +401,6 @@ func NewRouter(h *handlers.Handlers, authSvc *auth.Service, webFS fs.FS, metrics
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequirePerm(rbac.PermRolesView))
 				r.Get("/roles", h.ListRoles)
-				r.Get("/roles/catalog", h.RoleCatalog)
 				r.Get("/roles/{name}", h.GetRole)
 			})
 			r.Group(func(r chi.Router) {
