@@ -20,6 +20,10 @@ import (
 const (
 	historyInterval = 30 * time.Second
 	historyFlush    = time.Minute
+	// historyCatchUp is the wait between batches while a backlog drains;
+	// the server refuses batches closer than agents.MetricsMinGap.
+	historyCatchUp = 15 * time.Second
+	historyAckWait = 45 * time.Second
 	// historyKeep is how long samples wait for a server that takes them,
 	// so a short disconnect or server restart leaves no gap.
 	historyKeep = 30 * time.Minute
@@ -49,12 +53,22 @@ func (b *historyBuffer) trim(now time.Time) {
 	for i < len(b.host) && b.host[i].TS < cutoff {
 		i++
 	}
-	b.host = b.host[i:]
 	j := 0
 	for j < len(b.ctrs) && b.ctrs[j].TS < cutoff {
 		j++
 	}
+	if i > 0 || j > 0 {
+		slog.Warn("history: dropped samples the server did not take in time", "host", i, "containers", j)
+	}
+	b.host = b.host[i:]
 	b.ctrs = b.ctrs[j:]
+}
+
+// pending reports whether samples are waiting.
+func (b *historyBuffer) pending() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.host) > 0 || len(b.ctrs) > 0
 }
 
 // take removes up to one batch worth of the oldest samples.
@@ -151,29 +165,35 @@ func sampleContainers(ctx context.Context, cli *client.Client, ts int64) []agent
 	return out
 }
 
-// flushHistory ships the buffer every historyFlush while the session
-// lasts. A failed write puts the batch back and closes the connection.
+// flushHistory ships the buffer while the session lasts: every
+// historyFlush, or every historyCatchUp while a backlog drains. A batch
+// the server did not acknowledge goes back into the buffer.
 func flushHistory(ctx context.Context, conn *websocket.Conn) {
-	t := time.NewTicker(historyFlush)
-	defer t.Stop()
+	wait := historyFlush
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
-			batch := history.take()
-			if len(batch.Host) == 0 && len(batch.Containers) == 0 {
-				continue
-			}
-			payload, err := json.Marshal(batch)
-			if err != nil {
-				continue
-			}
-			if err := writeFrame(conn, agents.Frame{Type: agents.FrameAgentMetrics, Payload: payload}); err != nil {
-				history.putBack(batch)
-				_ = conn.Close()
-				return
-			}
+		case <-time.After(wait):
+		}
+		wait = historyFlush
+		batch := history.take()
+		if len(batch.Host) == 0 && len(batch.Containers) == 0 {
+			continue
+		}
+		batch.SentAt = time.Now().Unix()
+		actx, cancel := context.WithTimeout(ctx, historyAckWait)
+		var ack json.RawMessage
+		err := askServer(actx, conn, agents.FrameAgentMetrics, batch, &ack)
+		cancel()
+		if err != nil {
+			history.putBack(batch)
+			slog.Debug("history: batch not stored, keeping it", "err", err)
+			wait = historyCatchUp
+			continue
+		}
+		if history.pending() {
+			wait = historyCatchUp
 		}
 	}
 }

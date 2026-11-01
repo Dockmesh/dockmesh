@@ -118,9 +118,11 @@ type ConnectedAgent struct {
 	certNotAfter time.Time
 	// renewing allows one renewal in flight, renewed one per session.
 	renewing atomic.Bool
-	// ingesting allows one metrics batch in flight.
-	ingesting atomic.Bool
-	renewed   atomic.Bool
+	// ingesting allows one metrics batch in flight; lastMetrics is when
+	// the last one was accepted (unix nanoseconds).
+	ingesting   atomic.Bool
+	lastMetrics atomic.Int64
+	renewed     atomic.Bool
 
 	pendingMu sync.Mutex
 	pending   map[string]chan Frame
@@ -536,6 +538,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	s.disconnect(id)
+	s.deleteHistory(ctx, id)
 	return nil
 }
 
