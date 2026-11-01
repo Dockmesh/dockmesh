@@ -7,6 +7,7 @@
   // on connection. Description + scope-radio + compose-alt link are
   // intentionally absent — see project_hosts_open_punch_list.md memory.
   import { onMount, onDestroy } from 'svelte';
+  import { trapFocus } from '$lib/a11y';
   import { api, ApiError, type AgentCreateResult } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
   import { copyToClipboard } from '$lib/clipboard';
@@ -117,10 +118,10 @@
 </script>
 
 <div class="ed-modal-backdrop" onmousedown={(e) => { if (e.target === e.currentTarget && !connected) onclose(); }}>
-  <div class="ed-modal ed-add-host-modal" role="dialog" aria-modal="true">
+  <div class="ed-modal ed-add-host-modal" role="dialog" aria-modal="true" aria-labelledby="add-host-title" use:trapFocus>
     <header class="ed-modal-head">
       <div class="ed-add-host-head-text">
-        <h2 class="ed-add-host-title">Add a host</h2>
+        <h2 class="ed-add-host-title" id="add-host-title">Add a host</h2>
         <p class="ed-add-host-blurb">Run one command on the new host. It appears here as soon as it connects.</p>
       </div>
       <button type="button" class="dm-btn dm-btn-ghost dm-btn-xs" onclick={onclose} aria-label="Close" disabled={connected}>

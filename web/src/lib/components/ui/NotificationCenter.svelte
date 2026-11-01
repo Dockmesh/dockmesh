@@ -48,10 +48,16 @@
     }
   }
 
+  let pop = $state<HTMLElement | null>(null);
+
   function toggle() {
     open = !open;
     if (open) loadList();
   }
+
+  $effect(() => {
+    if (open && pop) pop.focus();
+  });
   function close(refocus = false) {
     open = false;
     if (refocus) trigger?.focus();
@@ -94,7 +100,17 @@
   const TONE: Record<string, string> = { success: 'ok', warning: 'warn', error: 'bad', critical: 'bad' };
 </script>
 
-<div class="nc" bind:this={root}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="nc"
+  bind:this={root}
+  onkeydown={(e) => {
+    if (e.key === 'Escape' && open) {
+      e.stopPropagation();
+      close(true);
+    }
+  }}
+>
   <button
     type="button"
     class="tb-btn tb-icon bell"
@@ -115,12 +131,7 @@
       role="dialog"
       aria-label="Latest notifications"
       tabindex="-1"
-      onkeydown={(e) => {
-        if (e.key === 'Escape') {
-          e.stopPropagation();
-          close(true);
-        }
-      }}
+      bind:this={pop}
     >
       <div class="h">
         <b>Notifications</b>

@@ -14,6 +14,7 @@
   import { withoutBanner } from '$lib/notices';
   import { sortAttention } from '$lib/attention';
   import { inAppLink } from '$lib/links';
+  import { stackInLens } from '$lib/lens';
   import type { Stat } from '$lib/components/ui/StatBar.svelte';
   import StackHealth from '$lib/components/ui/StackHealth.svelte';
   import MountTable from '$lib/components/MountTable.svelte';
@@ -76,7 +77,7 @@
         sysMetrics = sysRaw as SystemMetrics | null;
       }
       summary = sum;
-      stackRows = stacksList.map((s: any): StackRow => {
+      stackRows = stacksList.filter((s: any) => stackInLens(s, hosts.id, !!sum?.by_stack[s.name])).map((s: any): StackRow => {
         if (!sum) return { name: s.name, state: 'unknown', total: 0, running: 0, unhealthy: 0, hosts: [] };
         const r = sum.by_stack[s.name];
         if (!r) return { name: s.name, state: 'stopped', total: 0, running: 0, unhealthy: 0, hosts: [] };

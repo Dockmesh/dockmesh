@@ -5,6 +5,7 @@
     type StackDeployment, type DiscoveredStack, type StackGitSourceInput, type EnvDrift,
   } from '$lib/api';
   import { goto } from '$app/navigation';
+  import { stackInLens } from '$lib/lens';
   import { Button, Modal, Input, Skeleton, Segmented, StatBar, LiveIndicator, Menu, EmptyState } from '$lib/components/ui';
   import StackHealth from '$lib/components/ui/StackHealth.svelte';
   import { confirm } from '$lib/stores/confirm.svelte';
@@ -115,7 +116,7 @@
         byStack.get(proj)!.push(c);
       }
 
-      stackCards = stackList.map((s) => {
+      stackCards = stackList.filter((s) => stackInLens(s, hosts.id, byStack.has(s.name))).map((s) => {
         const cs = byStack.get(s.name) ?? [];
         const running = cs.filter((c) => c.State === 'running').length;
         const unhealthy = cs.filter((c) =>
@@ -432,7 +433,8 @@
   const subtitleLine = $derived.by(() => {
     const totalHosts = hosts.available.filter((h) => h.kind !== 'all').length;
     const base = `${counts.all} stack${counts.all === 1 ? '' : 's'}`;
-    return totalHosts > 1 ? `${base} on ${totalHosts} hosts` : base;
+    if (totalHosts <= 1) return base;
+    return hosts.isAll ? `${base} on ${totalHosts} hosts` : `${base} on ${hosts.selected?.name ?? 'this host'}`;
   });
 </script>
 
