@@ -41,6 +41,7 @@ current `main`.
 | Job | What it runs |
 |---|---|
 | `changelog` | validates the changelog fragments and that `CHANGELOG.md` matches them |
+| `migrations` | merged migrations stay unchanged and new ones are timestamped |
 | `go test` | `go test -race ./...` in five shards (includes the OpenAPI drift and bundle tests) |
 | `integration` | backup targets against real SMB, SFTP, WebDAV and S3 servers |
 | `lint` | golangci-lint (including govet), reporting only issues your change introduces |
@@ -67,6 +68,27 @@ with your change. Don't edit `CHANGELOG.md`, it is generated at release
 time (see `RELEASING.md`). The `changelog` check fails without a fragment.
 Changes users won't notice (CI, refactoring, tests) get the `no-changelog`
 label instead.
+
+### Database migrations
+
+Migrations live in `internal/db/migrations/` and are embedded in the
+binary. Name a new one with the current UTC time and a lower-case slug:
+
+```bash
+make migration name=add_widget_table
+# creates internal/db/migrations/20261101093000_add_widget_table.sql
+```
+
+The numbered files (`001_…` to `085_…`) are frozen. CI fails on a new
+numbered name, a duplicate version, an empty migration, or an edited,
+renamed or removed merged one. On start the
+server applies every migration it has not applied yet, in version order,
+even when one with an older timestamp arrives after a newer one was
+applied (two PRs merged in a different order than they were written).
+So migrations in one release must not depend on each other's order. If
+one needs another, merge them into one file. Each migration runs in its
+own transaction; if it fails, nothing of it is kept and the next start
+tries again. Never edit or rename a migration that has been merged.
 
 ### Running the checks locally
 

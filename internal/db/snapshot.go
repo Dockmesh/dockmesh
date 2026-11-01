@@ -48,11 +48,11 @@ func isFinishedSnapshot(dbBase, name string) bool {
 
 // snapshotBeforeMigrate writes <db>.pre-migrate-<UTC timestamp>.bak next to
 // the database file and prunes older snapshots of the same database.
-// In-memory databases have no file and are skipped. latest is the newest
-// applied migration; if the newest snapshot is already at that version it
+// In-memory databases have no file and are skipped. state is the
+// migrationState of db; if the newest snapshot is already in that state it
 // is reused, so a migration that fails on every start does not rotate the
 // pre-upgrade copy out.
-func snapshotBeforeMigrate(db *sql.DB, latest string) error {
+func snapshotBeforeMigrate(db *sql.DB, state string) error {
 	if v := os.Getenv(SkipSnapshotEnv); v == "1" || v == "true" {
 		slog.Warn("skipping pre-migration database snapshot", "env", SkipSnapshotEnv)
 		return nil
@@ -68,7 +68,7 @@ func snapshotBeforeMigrate(db *sql.DB, latest string) error {
 	if err != nil {
 		return snapshotError(err)
 	}
-	if n := len(existing); n > 0 && snapshotVersion(existing[n-1]) == latest {
+	if n := len(existing); n > 0 && snapshotState(existing[n-1]) == state {
 		slog.Info("reusing existing database snapshot from before migration", "path", existing[n-1])
 		return nil
 	}
@@ -126,19 +126,19 @@ func listSnapshots(dbPath string) ([]string, error) {
 	return snaps, nil
 }
 
-// snapshotVersion returns the newest migration recorded in the snapshot at
-// path, or "" when it cannot be read.
-func snapshotVersion(path string) string {
+// snapshotState returns the migrationState of the snapshot at path, or ""
+// when it cannot be read.
+func snapshotState(path string) string {
 	snap, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
 	if err != nil {
 		return ""
 	}
 	defer snap.Close()
-	var v sql.NullString
-	if err := snap.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&v); err != nil {
+	state, err := migrationState(snap)
+	if err != nil {
 		return ""
 	}
-	return v.String
+	return state
 }
 
 // writeSnapshot fills <target>.tmp and renames it into place, so a crash
