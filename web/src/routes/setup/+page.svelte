@@ -6,6 +6,7 @@
   import { copyToClipboard as clipboardCopy } from '$lib/clipboard';
   import { uploadSystemBackup } from '$lib/api';
   import { waitForRestart } from '$lib/restart';
+  import { fmtVersion } from '$lib/version';
   import Button from '$lib/components/ui/Button.svelte';
   import StatusChip from '$lib/components/ui/StatusChip.svelte';
 
@@ -89,9 +90,16 @@
   }
 
   let step = $state<Step>(1);
+  const head = $derived.by(() => {
+    if (step !== 7) return HEADERS[step];
+    if (installFailed) return { title: 'The install stopped', sub: 'The log shows the step that failed. Fix the cause and run the installer again.' };
+    if (credsRevealed) return { title: 'Dockmesh is installed', sub: 'Copy the sign-in below somewhere safe, then open Dockmesh.' };
+    return HEADERS[7];
+  });
   let completed = $state<Set<Step>>(new Set());
 
-  let dataDir = $state('/data');
+  // Where install.sh puts the env file and the systemd unit points.
+  let dataDir = $state('/var/lib/dockmesh');
   // recommended: the `dockmesh` user install.sh created (no input);
   // existing: another system user, checked against /etc/passwd;
   // new: a user the commit creates under a free name.
@@ -481,7 +489,7 @@
       <span class="dim">/ setup</span>
     </div>
     <div class="meta dm-num" aria-label="This server">
-      <span>{serverInfo ? `v${serverInfo.version}` : '—'}</span>
+      <span>{serverInfo ? fmtVersion(serverInfo.version) : '—'}</span>
       <span class="sep">·</span>
       <span>{serverInfo?.ip ?? '—'}</span>
       <span class="sep">·</span>
@@ -507,8 +515,8 @@
     </nav>
 
     <div class="head">
-      <h1>{HEADERS[step].title}</h1>
-      <p>{HEADERS[step].sub}</p>
+      <h1>{head.title}</h1>
+      <p>{head.sub}</p>
     </div>
 
     <section class="panel">
