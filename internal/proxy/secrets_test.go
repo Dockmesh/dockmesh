@@ -82,6 +82,29 @@ func TestSecretHeaderWriteOnly(t *testing.T) {
 	}
 }
 
+// An update without options keeps them, but not a secret header for a
+// new destination.
+func TestSecretHeaderNotKeptForNewUpstreamWithoutOptions(t *testing.T) {
+	ctx := context.Background()
+	s := newServiceDB(t)
+	opts := SiteOptions{Headers: HeaderOptions{RequestSet: []Header{{Name: "Authorization", Value: "Bearer tok-1", Secret: true}}}}
+	r, err := s.CreateRoute(ctx, RouteSpec{Host: "app.example.com", Upstream: "10.0.0.2:80", TLSMode: "auto", Options: &opts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateRoute(ctx, r.ID, "10.0.0.2:80", "internal", nil, nil); err != nil {
+		t.Fatalf("same upstream: %v", err)
+	}
+	var oe *OptionError
+	if _, err := s.UpdateRoute(ctx, r.ID, "attacker.example:80", "auto", nil, nil); !errors.As(err, &oe) || oe.Field != "headers.request_set" {
+		t.Fatalf("new upstream without options: err = %v", err)
+	}
+	got, _ := s.getRoute(ctx, r.ID)
+	if got.Upstream != "10.0.0.2:80" || got.Options.Headers.RequestSet[0].Value != "Bearer tok-1" {
+		t.Fatalf("stored route changed: %+v", got)
+	}
+}
+
 func TestForwardAuthQueryWriteOnly(t *testing.T) {
 	ctx := context.Background()
 	s := newServiceDB(t)

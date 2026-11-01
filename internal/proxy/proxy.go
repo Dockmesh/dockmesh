@@ -285,6 +285,15 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, upstream, tlsMode s
 		return nil, err
 	}
 	next := cur.Options
+	// Kept options go through the same refill as sent ones, so secret
+	// request headers are checked against a changed upstream too.
+	next.Headers.RequestSet = make([]Header, len(cur.Options.Headers.RequestSet))
+	for i, h := range cur.Options.Headers.RequestSet {
+		next.Headers.RequestSet[i] = h
+		if h.Secret {
+			next.Headers.RequestSet[i].Value = ""
+		}
+	}
 	prev := &cur.Options
 	if opts != nil {
 		next = *opts

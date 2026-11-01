@@ -556,7 +556,7 @@ func (o *SiteOptions) applySecrets(prev *SiteOptions, newUpstream bool) error {
 			return optErr("headers.request_set", "secret header %s needs a value", h.Name)
 		}
 		if newUpstream {
-			return optErr("headers.request_set", "enter the value of secret header %s again; the site now sends it to another upstream", h.Name)
+			return optErr("headers.request_set", "enter the value of secret header %s again on the Options tab; the site now sends it to another upstream", h.Name)
 		}
 	}
 	f := o.Access.ForwardAuth
