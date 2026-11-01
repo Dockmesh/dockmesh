@@ -1,0 +1,3 @@
+kind: Added
+body: 'The backup job wizard picks the host: volume jobs choose a host and one of its volumes, stack jobs run where the stack is deployed, and only hosts where you may manage backups are offered. Saving checks that the host, volume or deployment exists.'
+time: 2026-11-01T19:20:44.1950962+01:00

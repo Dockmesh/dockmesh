@@ -1024,6 +1024,15 @@ export interface BackupJob {
   updated_at: string;
 }
 
+export interface BackupHost {
+  id: string;
+  name: string;
+  kind: 'local' | 'agent';
+  status: string;
+  can_create: boolean;
+  can_update: boolean;
+}
+
 export interface BackupJobInput {
   name: string;
   host_id?: string;
@@ -2174,6 +2183,7 @@ export const api = {
     updateTarget: (id: number, input: { name: string; type: string; config: any }) =>
       request<BackupTarget>(`/backups/targets/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
     localPath: () => request<{ path: string }>('/backups/local-path').then((r) => r.path).catch(() => ''),
+    hosts: () => request<BackupHost[]>('/backups/hosts'),
     deleteTarget: (id: number) => request<void>(`/backups/targets/${id}`, { method: 'DELETE' }),
     testTarget: (id: number) => request<{ status: string; total_bytes: number; used_bytes: number; free_bytes: number; error?: string }>(`/backups/targets/${id}/test`, { method: 'POST' }),
     testTargetConfig: (type: string, config: any, targetId?: number) =>

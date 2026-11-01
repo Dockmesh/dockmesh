@@ -4,7 +4,7 @@
   // `Dockmesh Wizard (6)/backup-wizards.jsx::JobWizard`. Owns its
   // form state internally — the parent passes `editing` (or null) and
   // a `save` callback, the wizard packages the final BackupJobInput.
-  import { api, ApiError, type BackupJob, type BackupJobInput, type BackupSource, type BackupHook, type BackupTarget } from '$lib/api';
+  import { api, ApiError, type BackupJob, type BackupJobInput, type BackupSource, type BackupHook, type BackupTarget, type BackupHost, type StackListEntry } from '$lib/api';
   import { toast } from '$lib/stores/toast.svelte';
   import { fmtBytes } from '$lib/format';
   import WizardShell from './_WizardShell.svelte';
@@ -30,6 +30,9 @@
   let name = $state('new-backup-job');
   let sourceKind = $state<'system' | 'stack' | 'volume'>('system');
   let sourceRef = $state('');
+  // Host of a volume job. Stack jobs run on the stack's deployment host,
+  // system jobs on the server.
+  let hostId = $state('local');
 
   // Schedule
   type Freq = 'hourly' | 'every-6h' | 'daily' | 'weekly' | 'cron';
@@ -69,24 +72,86 @@
   // ─── Available resources for the source picker (loaded lazily on
   // step 0 so the wizard opens fast even on a fleet with thousands of
   // resources).
-  let availableStacks = $state<string[]>([]);
-  let availableVolumes = $state<string[]>([]);
+  let availableStacks = $state<StackListEntry[]>([]);
+  let backupHosts = $state<BackupHost[]>([]);
   let resourcesLoaded = $state(false);
   let timezone = $state('');
 
   async function loadResources() {
     if (resourcesLoaded) return;
     api.backups.schedule().then((s) => (timezone = s.timezone)).catch(() => {});
-    try {
-      const [stks, vols] = await Promise.all([
-        api.stacks.list().catch(() => []),
-        api.volumes.list('local').catch(() => [])
-      ]);
-      availableStacks = (Array.isArray(stks) ? stks : []).map((s: any) => s.name).filter(Boolean).sort();
-      availableVolumes = (Array.isArray(vols) ? vols : []).map((v: any) => v.Name).filter(Boolean).sort();
-      resourcesLoaded = true;
-    } catch { /* ignore */ }
+    const [stks, hs] = await Promise.all([
+      api.stacks.list().catch(() => [] as StackListEntry[]),
+      api.backups.hosts().catch(() => [] as BackupHost[])
+    ]);
+    availableStacks = (Array.isArray(stks) ? stks : []).filter((s) => s.name).sort((a, b) => a.name.localeCompare(b.name));
+    backupHosts = Array.isArray(hs) ? hs : [];
+    resourcesLoaded = true;
+    if (!editing && !hostId && hostChoices.length === 1) hostId = hostChoices[0].id;
   }
+
+  // Hosts the caller may put this job on. An edited job keeps its host in
+  // the list even when it isn't offered (e.g. after an agent was removed).
+  const hostChoices = $derived.by(() => {
+    const list = backupHosts.filter((h) => (editing ? h.can_update : h.can_create));
+    const cur = editing?.host_id || 'local';
+    if (editing && !list.some((h) => h.id === cur)) {
+      list.unshift({ id: cur, name: cur, kind: cur === 'local' ? 'local' : 'agent', status: 'unknown', can_create: false, can_update: false });
+    }
+    return list;
+  });
+
+  function hostName(id: string): string {
+    return backupHosts.find((h) => h.id === id)?.name ?? (id === 'local' ? 'Local' : id);
+  }
+
+  function hostOffered(id: string): boolean {
+    return hostChoices.some((h) => h.id === id);
+  }
+
+  // Volumes of the picked host, loaded when a volume job picks a host.
+  let availableVolumes = $state<string[]>([]);
+  let volumesFor = $state('');
+  let volumesError = $state('');
+  let volumesLoading = $state(false);
+  $effect(() => {
+    if (!open || sourceKind !== 'volume' || !hostId || volumesFor === hostId) return;
+    const h = hostId;
+    volumesFor = h;
+    volumesLoading = true;
+    volumesError = '';
+    availableVolumes = [];
+    api.volumes.list(h)
+      .then((vols) => {
+        if (volumesFor !== h) return;
+        availableVolumes = (Array.isArray(vols) ? vols : []).map((v: any) => v.Name).filter(Boolean).sort();
+      })
+      .catch((err) => {
+        if (volumesFor !== h) return;
+        volumesError = err instanceof ApiError ? err.message : (err as Error).message;
+      })
+      .finally(() => {
+        if (volumesFor === h) volumesLoading = false;
+      });
+  });
+
+  function pickHost(id: string) {
+    if (id === hostId) return;
+    hostId = id;
+    sourceRef = '';
+  }
+
+  const pickedStack = $derived(sourceKind === 'stack' ? availableStacks.find((s) => s.name === sourceRef) : undefined);
+  const stackHost = $derived(pickedStack?.deployment?.host_id || undefined);
+
+  function stackUnavailable(s: StackListEntry): string {
+    const h = s.deployment?.host_id;
+    if (!h) return 'not deployed';
+    if (!hostOffered(h) && !(editing && editing.sources[0]?.name === s.name)) return `no backup access on ${hostName(h)}`;
+    return '';
+  }
+
+  const jobHost = $derived(sourceKind === 'system' ? 'local' : sourceKind === 'stack' ? (stackHost ?? '') : hostId);
 
   // ─── Initialise from `editing` whenever the wizard is opened. We use
   // an explicit "did-init" guard so toggling the open prop while a draft
@@ -97,8 +162,10 @@
     if (initialised) return;
     initialised = true;
     step = 0;
+    volumesFor = '';
     if (editing) {
       name = editing.name;
+      hostId = editing.host_id || 'local';
       const src = editing.sources[0];
       if (!src) { sourceKind = 'system'; sourceRef = ''; }
       else if ((src.type as string) === 'system') { sourceKind = 'system'; sourceRef = ''; }
@@ -125,6 +192,7 @@
       name = 'new-backup-job';
       sourceKind = 'system';
       sourceRef = '';
+      hostId = '';
       freq = 'daily';
       hour = 3;
       minute = 0;
@@ -170,7 +238,8 @@
   const step0Valid = $derived.by(() => {
     if (!name.trim()) return false;
     if (sourceKind === 'system') return true;
-    return sourceRef.trim().length > 0;
+    if (sourceKind === 'stack') return !!sourceRef && !!stackHost;
+    return !!hostId && sourceRef.trim().length > 0;
   });
   const step1Valid = $derived(cronExpr.trim().length > 0);
   const step2Valid = $derived(true); // Target step always passes; defaults are fine
@@ -225,7 +294,7 @@
       }
       const payload: BackupJobInput = {
         name: name.trim(),
-        host_id: editing?.host_id,
+        host_id: jobHost || undefined,
         target_id: preTargetId !== -1 ? preTargetId : undefined,
         target_type: targetType,
         target_config: targetConfig,
@@ -249,7 +318,7 @@
   // Derived helpers for the summary line on step 3.
   const sourceSummary = $derived.by(() => {
     if (sourceKind === 'system') return 'whole dockmesh (DB + stacks + data)';
-    return `${sourceKind} · ${sourceRef || '—'}`;
+    return `${sourceKind} · ${sourceRef || '—'} on ${jobHost ? hostName(jobHost) : '—'}`;
   });
   const scheduleSummary = $derived.by(() => {
     if (freq === 'cron') return cronExpr;
@@ -308,7 +377,7 @@
             { id: 'volume', label: 'Single volume',  meta: 'tar of volume mount',  icon: HardDrive }
           ] as opt (opt.id)}
             {@const Icn = opt.icon}
-            <button type="button" class="wiz-radio-card" class:active={sourceKind === opt.id} onclick={() => (sourceKind = opt.id as typeof sourceKind)}>
+            <button type="button" class="wiz-radio-card" class:active={sourceKind === opt.id} onclick={() => { if (sourceKind !== opt.id) { sourceKind = opt.id as typeof sourceKind; sourceRef = ''; } }}>
               <Icn size={14} strokeWidth={1.5} />
               <span class="wiz-radio-card-label">{opt.label}</span>
               <span class="wiz-radio-card-meta font-mono">{opt.meta}</span>
@@ -317,26 +386,69 @@
         </div>
       </div>
 
-      {#if sourceKind === 'stack'}
+      {#if sourceKind === 'system'}
+        <div class="wiz-info-box">
+          <HardDrive size={12} strokeWidth={1.5} class="wiz-info-icon" />
+          <span>Runs on the server host: the Dockmesh database, stacks and data directory live there.</span>
+        </div>
+      {:else if sourceKind === 'stack'}
         <div class="wiz-field">
           <label class="wiz-field-label" for="src-stack">Pick a stack</label>
           <select id="src-stack" class="wiz-input wiz-input-mono" bind:value={sourceRef}>
             <option value="" disabled>— pick one —</option>
-            {#each availableStacks as s (s)}
-              <option value={s}>{s}</option>
+            {#each availableStacks as s (s.name)}
+              {@const why = stackUnavailable(s)}
+              <option value={s.name} disabled={!!why}>{s.name}{why ? ` (${why})` : ''}</option>
             {/each}
           </select>
         </div>
+        {#if sourceRef}
+          {#if stackHost}
+            <div class="wiz-field">
+              <span class="wiz-field-label">Host</span>
+              <span class="wiz-static font-mono" data-testid="stack-host">{hostName(stackHost)}</span>
+              <span class="wiz-field-hint">A stack is backed up on the host it is deployed on.</span>
+            </div>
+          {:else}
+            <div class="wiz-info-box wiz-info-warn">
+              <Layers size={12} strokeWidth={1.5} class="wiz-info-icon" />
+              <span>Stack <em>{sourceRef}</em> is not deployed, so there is nothing to back up. Deploy it first.</span>
+            </div>
+          {/if}
+        {/if}
       {:else if sourceKind === 'volume'}
         <div class="wiz-field">
-          <label class="wiz-field-label" for="src-vol">Pick a volume</label>
-          <select id="src-vol" class="wiz-input wiz-input-mono" bind:value={sourceRef}>
-            <option value="" disabled>— pick one —</option>
-            {#each availableVolumes as v (v)}
-              <option value={v}>{v}</option>
+          <label class="wiz-field-label" for="src-host">Host</label>
+          <span class="wiz-field-hint">The host whose Docker volume is backed up.</span>
+          <select id="src-host" class="wiz-input wiz-input-mono" value={hostId} onchange={(e) => pickHost((e.currentTarget as HTMLSelectElement).value)}>
+            <option value="" disabled>— pick a host —</option>
+            {#each hostChoices as h (h.id)}
+              <option value={h.id}>{h.name}{h.status !== 'online' ? ` (${h.status})` : ''}</option>
             {/each}
           </select>
+          {#if resourcesLoaded && hostChoices.length === 0}
+            <span class="wiz-field-hint">You can't manage backups on any host.</span>
+          {/if}
         </div>
+        {#if hostId}
+          <div class="wiz-field">
+            <label class="wiz-field-label" for="src-vol">Pick a volume</label>
+            {#if volumesError}
+              <span class="wiz-field-hint">Can't list the volumes of {hostName(hostId)} ({volumesError}). Type the volume name; it is checked on save.</span>
+              <input id="src-vol" class="wiz-input wiz-input-mono" bind:value={sourceRef} placeholder="volume name" />
+            {:else}
+              <select id="src-vol" class="wiz-input wiz-input-mono" bind:value={sourceRef} disabled={volumesLoading}>
+                <option value="" disabled>{volumesLoading ? 'loading…' : availableVolumes.length ? '— pick one —' : 'no volumes on this host'}</option>
+                {#if sourceRef && !volumesLoading && !availableVolumes.includes(sourceRef)}
+                  <option value={sourceRef}>{sourceRef} (not found)</option>
+                {/if}
+                {#each availableVolumes as v (v)}
+                  <option value={v}>{v}</option>
+                {/each}
+              </select>
+            {/if}
+          </div>
+        {/if}
       {/if}
     </div>
   {/if}
@@ -770,6 +882,12 @@
     background: color-mix(in srgb, var(--color-success-500) 8%, transparent);
   }
   .wiz-info-success :global(.wiz-info-icon) { color: var(--color-success-400); }
+  .wiz-info-warn {
+    border-color: color-mix(in srgb, var(--color-warning-500) 35%, var(--border));
+    background: color-mix(in srgb, var(--color-warning-500) 8%, transparent);
+  }
+  .wiz-info-warn :global(.wiz-info-icon) { color: var(--color-warning-400); }
+  .wiz-static { font-size: 13px; color: var(--fg); padding: 6px 0; }
 
   /* Target picker */
   .wiz-target-pick {

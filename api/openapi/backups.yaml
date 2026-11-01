@@ -21,6 +21,9 @@ paths:
       summary: Create a new backup job
       description: >-
         Jobs with a `system` source are admin-only (Settings & audit: Manage on everything); other jobs need their host, before and after the change, in the caller's scope (403).
+        When the host or source changes, the host must be known, a system job must run on the server host,
+        a stack job on the host the stack is deployed on (an undeployed stack can't be backed up) and a volume
+        must exist on the job's host (400). A stack job sent without `host_id` gets its stack's deployment host.
       requestBody:
         required: true
         content:
@@ -496,6 +499,23 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/BackupVerifyResult"}
+  /backups/hosts:
+    get:
+      operationId: backups.list_hosts
+      tags: [backups]
+      summary: Hosts the caller may create or edit backup jobs on
+      description: >-
+        Every known host where the caller holds backups.create or backups.update on the host itself; the job wizard offers these.
+      responses:
+        "200":
+          description: Hosts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/BackupHost"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
   /backups/local-path:
     get:
       operationId: backups.local_path
@@ -858,11 +878,22 @@ components:
         next_run_at: {type: string, format: date-time}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    BackupHost:
+      type: object
+      required: [id, name, kind, status, can_create, can_update]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        kind: {type: string, enum: [local, agent]}
+        status: {type: string}
+        can_create: {type: boolean}
+        can_update: {type: boolean}
     BackupJobInput:
       type: object
       required: [name, sources, schedule]
       properties:
         name: {type: string}
+        host_id: {type: string, description: "Host the job runs on; empty means the server host (`local`). Stack jobs without it use the stack's deployment host."}
         target_id: {type: integer, format: int64, description: "Saved target to write to. When set, target_type and target_config are ignored."}
         target_type: {type: string, enum: [local, sftp, smb, webdav, s3], description: "Without target_id, the inline target is saved as a new target named after the job."}
         target_config: {type: object}

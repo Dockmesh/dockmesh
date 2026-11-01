@@ -127,6 +127,8 @@ type Handlers struct {
 	attentionRows func(ctx context.Context) []containerRow
 	// attentionCertRoutes replaces the proxy certificate probe of GET /attention in tests.
 	attentionCertRoutes func(ctx context.Context) ([]proxy.Route, error)
+	// backupVolumeCheck replaces the volume lookup of backup job writes in tests.
+	backupVolumeCheck func(ctx context.Context, hostID, name string) error
 	// gitWebhookTrigger replaces GitSource.TriggerSync in tests.
 	gitWebhookTrigger func(ctx context.Context, stackName string)
 }
