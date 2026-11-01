@@ -47,8 +47,8 @@ func (s Scope) Validate() error {
 			return fmt.Errorf("a host tag scope needs a tag")
 		}
 	case ScopeStack:
-		if s.Host == "" || s.Value == "" {
-			return fmt.Errorf("a stack scope needs a host and a stack name")
+		if s.Value == "" {
+			return fmt.Errorf("a stack scope needs a stack name")
 		}
 	default:
 		return fmt.Errorf("unknown scope type %q", s.Type)

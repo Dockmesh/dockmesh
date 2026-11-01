@@ -36,6 +36,8 @@ type authzEnv struct {
 	router chi.Router
 	// wsEnded receives when the /ws/test handler returns.
 	wsEnded chan struct{}
+	// roleScopes are the scopes e.user assigns a test role on.
+	roleScopes map[string][]rbac.Scope
 }
 
 // newAuthzEnv wires the real auth middleware, RBAC store, API tokens and
@@ -64,12 +66,11 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	t.Cleanup(func() { middleware.RBACStore, middleware.APITokensStore = prevRBAC, prevTokens })
 
 	h := &Handlers{
-		Auth:          authSvc,
-		Roles:         roles,
-		APITokens:     tokens,
-		Notices:       notices.NewService(database),
-		Hosts:         host.NewRegistry(nil, nil),
-		RBACv2Enforce: true,
+		Auth:      authSvc,
+		Roles:     roles,
+		APITokens: tokens,
+		Notices:   notices.NewService(database),
+		Hosts:     host.NewRegistry(nil, nil),
 
 		mfaDisableLimiter: ratelimit.New(5, time.Minute, time.Minute),
 	}
@@ -106,23 +107,57 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 			return
 		}
 		defer conn.Close()
-		h.wsWatch(r, conn, rbac.PermContainersExec, "local")
+		h.wsWatch(r, conn, rbac.PermContainersExec, &rbac.Resource{HostID: "local"})
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
 				return
 			}
 		}
 	})
-	return &authzEnv{t: t, db: database, h: h, router: r, wsEnded: wsEnded}
+	authSvc.SetAccessHooks(func(ctx context.Context) {
+		if err := roles.Load(ctx); err != nil {
+			t.Error(err)
+		}
+	}, h.SyncIdPAssignments)
+	return &authzEnv{t: t, db: database, h: h, router: r, wsEnded: wsEnded, roleScopes: map[string][]rbac.Scope{}}
 }
 
+// user creates an account holding role on the scopes e.role gave it, or
+// on everything.
 func (e *authzEnv) user(name, role string) *auth.User {
 	e.t.Helper()
-	u, err := e.h.Auth.CreateUser(context.Background(), name, "", testPassword, role)
+	ctx := context.Background()
+	u, err := e.h.Auth.CreateUser(ctx, name, "", testPassword, "")
 	if err != nil {
 		e.t.Fatal(err)
 	}
+	if role == "" {
+		return u
+	}
+	scopes := e.roleScopes[role]
+	if len(scopes) == 0 {
+		scopes = []rbac.Scope{rbac.Global}
+	}
+	for _, s := range scopes {
+		if _, err := e.h.Roles.AddAssignment(ctx, rbac.Assignment{UserID: u.ID, Role: role, Scope: s}); err != nil {
+			e.t.Fatal(err)
+		}
+	}
 	return u
+}
+
+// setRole replaces every assignment of the user with role on everything.
+func (e *authzEnv) setRole(id, role string) {
+	e.t.Helper()
+	ctx := context.Background()
+	for _, a := range e.h.Roles.UserAssignments(id) {
+		if err := e.h.Roles.RemoveAssignment(ctx, a.ID); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+	if _, err := e.h.Roles.AddAssignment(ctx, rbac.Assignment{UserID: id, Role: role, Scope: rbac.Global}); err != nil {
+		e.t.Fatal(err)
+	}
 }
 
 func (e *authzEnv) login(name string) *auth.LoginResult {
@@ -225,19 +260,16 @@ func TestMFADisableBypassIsClosed(t *testing.T) {
 func TestWSHandlersEnforceScope(t *testing.T) {
 	e := newAuthzEnv(t)
 	ctx := context.Background()
-	if err := e.h.Roles.Create(ctx, rbac.RoleInput{
-		Name:        "remote-ops",
-		Display:     "Remote ops",
-		Permissions: []rbac.Perm{rbac.PermContainersView, rbac.PermContainersLogs, rbac.PermContainersExec, rbac.PermSystemView},
-		Scopes:      []rbac.Scope{{ScopeType: "host", ScopeValue: "agent-elsewhere"}},
+	if err := e.h.Roles.CreateRole(ctx, rbac.RoleInput{
+		Name: "remote-ops", Display: "Remote ops",
+		Levels: rbac.Levels{"containers": "view"}, Extras: []string{"terminal"},
 	}); err != nil {
 		t.Fatal(err)
 	}
+	e.roleScopes["remote-ops"] = []rbac.Scope{{Type: "host", Host: "agent-elsewhere"}}
 	e.user("free", "operator")
 	tagged := e.user("tagged", "operator")
-	if _, err := e.h.Auth.UpdateUserScope(ctx, tagged.ID, []string{"prod"}); err != nil {
-		t.Fatal(err)
-	}
+	e.scopeUser(tagged.ID, "prod")
 	e.user("rolescoped", "remote-ops")
 
 	endpoints := []struct{ perm, path string }{
@@ -304,16 +336,14 @@ func TestWSTicketsAreSingleUseAndBound(t *testing.T) {
 func TestAPITokenFollowsOwner(t *testing.T) {
 	e := newAuthzEnv(t)
 	ctx := context.Background()
-	owner := e.user("owner", "operator")
-	token := e.apiToken(e.login("owner").AccessToken, "operator")
+	owner := e.user("owner", "host-admin")
+	token := e.apiToken(e.login("owner").AccessToken, "host-admin")
 
 	if rr := e.do(http.MethodGet, "/needs-deploy", token, nil); rr.Code != http.StatusNoContent {
-		t.Fatalf("owned token, owner is operator: %d", rr.Code)
+		t.Fatalf("owned token, owner is host admin: %d", rr.Code)
 	}
 
-	if _, err := e.h.Auth.UpdateUser(ctx, owner.ID, "", "viewer", ""); err != nil {
-		t.Fatal(err)
-	}
+	e.setRole(owner.ID, "viewer")
 	if rr := e.do(http.MethodGet, "/needs-deploy", token, nil); rr.Code != http.StatusForbidden {
 		t.Errorf("owner demoted to viewer: %d, want 403", rr.Code)
 	}
@@ -321,12 +351,8 @@ func TestAPITokenFollowsOwner(t *testing.T) {
 		t.Errorf("exec ticket after demotion: %d, want 403", rr.Code)
 	}
 
-	if _, err := e.h.Auth.UpdateUser(ctx, owner.ID, "", "operator", ""); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.h.Auth.UpdateUserScope(ctx, owner.ID, []string{"prod"}); err != nil {
-		t.Fatal(err)
-	}
+	e.setRole(owner.ID, "host-admin")
+	e.scopeUser(owner.ID, "prod")
 	tk := e.ticket(token, "containers.exec")
 	if rr := e.do(http.MethodGet, "/ws/exec/c1?ticket="+tk, "", nil); rr.Code != http.StatusForbidden {
 		t.Errorf("owner scoped away from host: %d, want 403", rr.Code)
@@ -345,14 +371,14 @@ func TestLegacyTokenKeepsWorkingAndRaisesNotice(t *testing.T) {
 	ctx := context.Background()
 	e.user("admin", "admin")
 	adminAccess := e.login("admin").AccessToken
-	token := e.apiToken(adminAccess, "operator")
+	token := e.apiToken(adminAccess, "deployer")
 
 	// What the migration does to a token whose creator wasn't recorded.
 	if _, err := e.db.Exec(`UPDATE api_tokens SET legacy = 1, created_by_user_id = NULL`); err != nil {
 		t.Fatal(err)
 	}
 	if rr := e.do(http.MethodGet, "/needs-deploy", token, nil); rr.Code != http.StatusNoContent {
-		t.Errorf("legacy operator token: %d, want 204", rr.Code)
+		t.Errorf("legacy deployer token: %d, want 204", rr.Code)
 	}
 	if rr := e.do(http.MethodPost, "/settings/api-tokens", token, map[string]any{"name": "x", "role": "viewer"}); rr.Code != http.StatusForbidden {
 		t.Errorf("legacy token minting a token: %d, want 403", rr.Code)
@@ -424,11 +450,8 @@ func (e *authzEnv) apiTokenWith(bearer string, body map[string]any) (string, int
 
 func TestManageOthersTokenCantMintPastItsRole(t *testing.T) {
 	e := newAuthzEnv(t)
-	if err := e.h.Roles.Create(context.Background(), rbac.RoleInput{
-		Name:    "token-rotator",
-		Display: "Token rotator",
-		Permissions: []rbac.Perm{rbac.PermTokensView, rbac.PermTokensCreate,
-			rbac.PermTokensDelete, rbac.PermTokensManageOthers},
+	if err := e.h.Roles.CreateRole(context.Background(), rbac.RoleInput{
+		Name: "token-rotator", Display: "Token rotator", Levels: rbac.Levels{"users": "manage"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +505,7 @@ func TestTokenMintedByTokenIsCapped(t *testing.T) {
 	e.user("owner", "operator")
 	access := e.login("owner").AccessToken
 	parent, parentID := e.apiTokenWith(access, map[string]any{"name": "p", "role": "operator", "expires_in_days": 1})
-	_, childID := e.apiTokenWith(parent, map[string]any{"name": "c", "role": "viewer", "expires_in_days": 0})
+	_, childID := e.apiTokenWith(parent, map[string]any{"name": "c", "expires_in_days": 0})
 	p, err := e.h.APITokens.Get(ctx, parentID)
 	if err != nil {
 		t.Fatal(err)
@@ -508,9 +531,7 @@ func TestMeShowsEffectiveTokenPermissions(t *testing.T) {
 	e := newAuthzEnv(t)
 	owner := e.user("owner", "operator")
 	token := e.apiToken(e.login("owner").AccessToken, "operator")
-	if _, err := e.h.Auth.UpdateUser(context.Background(), owner.ID, "", "viewer", ""); err != nil {
-		t.Fatal(err)
-	}
+	e.setRole(owner.ID, "viewer")
 	rr := e.do(http.MethodGet, "/me", token, nil)
 	var me struct{ Permissions []string }
 	if err := json.Unmarshal(rr.Body.Bytes(), &me); err != nil {
@@ -543,9 +564,7 @@ func TestOpenWebSocketEndsWithItsSession(t *testing.T) {
 			}
 		}},
 		{"demoted to viewer", func(e *authzEnv, u *auth.User) {
-			if _, err := e.h.Auth.UpdateUser(context.Background(), u.ID, "", "viewer", ""); err != nil {
-				e.t.Fatal(err)
-			}
+			e.setRole(u.ID, "viewer")
 		}},
 	}
 	for _, tt := range tests {

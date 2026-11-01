@@ -32,13 +32,8 @@ func TestRotateEnrollTokenRequiresHostsCreate(t *testing.T) {
 	if err := roles.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
-	for _, in := range []rbac.RoleInput{
-		{Name: "host-updater", Display: "Host updater", Permissions: []rbac.Perm{rbac.PermHostsView, rbac.PermHostsUpdate}},
-		{Name: "host-creator", Display: "Host creator", Permissions: []rbac.Perm{rbac.PermHostsCreate}},
-	} {
-		if err := roles.Create(ctx, in); err != nil {
-			t.Fatal(err)
-		}
+	if err := roles.CreateRole(ctx, rbac.RoleInput{Name: "host-viewer", Display: "Host viewer", Levels: rbac.Levels{"hosts": "view"}}); err != nil {
+		t.Fatal(err)
 	}
 	prev := middleware.RBACStore
 	middleware.RBACStore = roles
@@ -46,7 +41,7 @@ func TestRotateEnrollTokenRequiresHostsCreate(t *testing.T) {
 
 	authSvc := auth.NewService(database, []byte("0123456789abcdef0123456789abcdef"))
 	tokens := map[string]string{}
-	for _, role := range []string{"host-updater", "host-creator"} {
+	for _, role := range []string{"host-viewer", "host-admin"} {
 		if _, err := authSvc.CreateUser(ctx, role, "", "correct horse battery", role); err != nil {
 			t.Fatal(err)
 		}
@@ -55,6 +50,9 @@ func TestRotateEnrollTokenRequiresHostsCreate(t *testing.T) {
 			t.Fatal(err)
 		}
 		tokens[role] = res.AccessToken
+	}
+	if err := roles.Load(ctx); err != nil {
+		t.Fatal(err)
 	}
 
 	mgr, err := pki.New(dir, nil)
@@ -74,17 +72,17 @@ func TestRotateEnrollTokenRequiresHostsCreate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := handlers.New(handlers.Deps{Auth: authSvc, Agents: svc, Roles: roles, RBACv2Enforce: true})
+	h := handlers.New(handlers.Deps{Auth: authSvc, Agents: svc, Roles: roles})
 	router := NewRouter(h, authSvc, nil, false, nil)
 
 	cases := []struct {
 		name, role, id string
 		want           int
 	}{
-		{"hosts.update on pending host", "host-updater", pending.Agent.ID, http.StatusForbidden},
-		{"hosts.update on enrolled host", "host-updater", enrolled.Agent.ID, http.StatusForbidden},
-		{"hosts.create on pending host", "host-creator", pending.Agent.ID, http.StatusOK},
-		{"hosts.create on enrolled host", "host-creator", enrolled.Agent.ID, http.StatusOK},
+		{"hosts view on pending host", "host-viewer", pending.Agent.ID, http.StatusForbidden},
+		{"hosts view on enrolled host", "host-viewer", enrolled.Agent.ID, http.StatusForbidden},
+		{"hosts manage on pending host", "host-admin", pending.Agent.ID, http.StatusOK},
+		{"hosts manage on enrolled host", "host-admin", enrolled.Agent.ID, http.StatusOK},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -36,9 +36,7 @@ func TestAlertRulesRespectHostScope(t *testing.T) {
 
 	e.user("global", "admin")
 	scoped := e.user("scoped", "admin")
-	if _, err := e.h.Auth.UpdateUserScope(ctx, scoped.ID, []string{"prod"}); err != nil {
-		t.Fatal(err)
-	}
+	e.scopeUser(scoped.ID, "prod")
 	globalTok := e.login("global").AccessToken
 	scopedTok := e.login("scoped").AccessToken
 

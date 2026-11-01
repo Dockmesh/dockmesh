@@ -20,15 +20,15 @@ func TestQueuedUpdatesUseTheCallersCurrentRights(t *testing.T) {
 	}
 	e.h.HostTags = tags
 
-	u := e.user("ops", "operator")
+	u := e.user("ops", "host-admin")
 	claims, err := e.h.Auth.Validate(ctx, e.login("ops").AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	userCtx := middleware.WithIdentity(ctx, middleware.Identity{UserID: u.ID, Role: "operator", SessionID: claims.SessionID})
+	userCtx := middleware.WithIdentity(ctx, middleware.Identity{UserID: u.ID, Access: e.h.Roles.AccessFor(u.ID), SessionID: claims.SessionID})
 
 	e.user("boss", "admin")
-	plain := e.apiToken(e.login("boss").AccessToken, "operator")
+	plain := e.apiToken(e.login("boss").AccessToken, "host-admin")
 	tok, err := e.h.APITokens.Validate(ctx, plain)
 	if err != nil {
 		t.Fatal(err)
@@ -54,14 +54,10 @@ func TestQueuedUpdatesUseTheCallersCurrentRights(t *testing.T) {
 		start  context.Context
 		want   string
 	}{
-		{"operator may update", func() {}, userCtx, ""},
+		{"host admin may update", func() {}, userCtx, ""},
 		{"scope that leaves out the server", func() { e.scopeUser(u.ID, "prod") }, userCtx, "the container is outside your scope"},
 		{"scope removed again", func() { e.scopeUser(u.ID) }, userCtx, ""},
-		{"demoted to viewer", func() {
-			if _, err := e.db.ExecContext(ctx, `UPDATE users SET role = 'viewer' WHERE id = ?`, u.ID); err != nil {
-				t.Fatal(err)
-			}
-		}, userCtx, "needs the containers.update permission"},
+		{"demoted to viewer", func() { e.setRole(u.ID, "viewer") }, userCtx, "needs the containers.upgrade permission"},
 		{"signed out", func() {
 			if _, err := e.h.Auth.RevokeUserSessions(ctx, u.ID, ""); err != nil {
 				t.Fatal(err)

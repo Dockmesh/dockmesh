@@ -32,14 +32,14 @@ func newTestService(t *testing.T) (*Service, *sql.DB) {
 }
 
 var (
-	admin = Viewer{UserID: "u-admin", Role: "admin", Allowed: func(string) bool { return true }}
-	op    = Viewer{UserID: "u-op", Role: "operator", Allowed: func(p string) bool { return p == "stacks.deploy" }}
+	admin = Viewer{UserID: "u-admin", Allowed: func(string) bool { return true }}
+	op    = Viewer{UserID: "u-op", Allowed: func(p string) bool { return p == "stacks.deploy" }}
 	// Custom role that holds system.update without being called "admin".
-	opsLead = Viewer{UserID: "u-op", Role: "ops-lead", Allowed: func(p string) bool { return p == "system.update" }}
+	opsLead = Viewer{UserID: "u-op", Allowed: func(p string) bool { return p == "system.update" }}
 	// A custom role reusing the name "admin" but stripped of system.update.
-	fakeAdmin = Viewer{UserID: "u-op", Role: "admin", Allowed: func(string) bool { return false }}
-	viewer    = Viewer{UserID: "u-view", Role: "viewer", Allowed: func(string) bool { return false }}
-	token     = Viewer{Role: "admin", Allowed: func(string) bool { return true }}
+	fakeAdmin = Viewer{UserID: "u-op", Allowed: func(string) bool { return false }}
+	viewer    = Viewer{UserID: "u-view", Allowed: func(string) bool { return false }}
+	token     = Viewer{Allowed: func(string) bool { return true }}
 )
 
 func keys(ns []Notice) []string {

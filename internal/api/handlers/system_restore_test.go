@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"github.com/dockmesh/dockmesh/internal/rbac"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -39,7 +40,7 @@ func TestSetupRestoreRefusedOnceTaken(t *testing.T) {
 				t.Fatalf("setup not active on an empty database: %v", err)
 			}
 			if tt.admin {
-				if _, err := database.Exec(`INSERT INTO users (id, username, password, role) VALUES ('u1', 'cli-admin', 'x', 'admin')`); err != nil {
+				if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES ('u1', 'cli-admin', 'x'); INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES ('u1', 'admin', 'global')`); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -78,15 +79,19 @@ func TestSystemRestoreIsAdminOnly(t *testing.T) {
 		{http.MethodPost, h.ApplySystemRestore},
 		{http.MethodDelete, h.DiscardSystemRestore},
 	} {
+		hostAdmin, _ := rbac.BuiltinRole(rbac.RoleHostAdmin)
+		admin, _ := rbac.BuiltinRole(rbac.RoleAdmin)
 		for _, id := range []middleware.Identity{
-			{UserID: "u", Role: "host-admin"},
-			{UserID: "u", Role: "admin", ScopeTags: []string{"prod"}},
+			{UserID: "host-admin", Access: &rbac.Access{Authenticated: true, Grants: []rbac.Grant{{Perms: rbac.PermsFor(hostAdmin.Levels, hostAdmin.Extras)}}}},
+			{UserID: "tagged-admin", Access: &rbac.Access{Authenticated: true, Grants: []rbac.Grant{{
+				Perms: rbac.PermsFor(admin.Levels, admin.Extras), Scopes: []rbac.Scope{{Type: rbac.ScopeHostTag, Value: "prod"}},
+			}}}},
 		} {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(ep.method, "/api/v1/restore/system", strings.NewReader(`{"run_id":1}`))
 			ep.fn(rec, req.WithContext(middleware.WithIdentity(req.Context(), id)))
 			if rec.Code != http.StatusForbidden {
-				t.Errorf("%s as %s %v: got %d, want 403", ep.method, id.Role, id.ScopeTags, rec.Code)
+				t.Errorf("%s as %s: got %d, want 403", ep.method, id.UserID, rec.Code)
 			}
 		}
 	}

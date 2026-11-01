@@ -246,6 +246,9 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 	asCreator := r.WithContext(middleware.WithIdentity(r.Context(), middleware.Identity{
 		UserID: creator.ID, Access: middleware.UserAccess(creator.ID),
 	}))
+	if len(inv.Scopes) == 0 {
+		inv.Scopes = []rbac.Scope{rbac.Global}
+	}
 	for _, sc := range inv.Scopes {
 		if err := h.checkGrant(asCreator, inv.Role, sc); err != nil {
 			writeError(w, http.StatusGone, "the user who created this invite can no longer grant it")

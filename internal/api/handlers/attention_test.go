@@ -123,7 +123,7 @@ func newAttentionEnv(t *testing.T) *authzEnv {
 func TestAttentionScope(t *testing.T) {
 	e := newAttentionEnv(t)
 	views := []rbac.Perm{rbac.PermContainersView, rbac.PermBackupsView, rbac.PermAlertsView, rbac.PermHostsView, rbac.PermProxyView}
-	e.role("web-team", views, rbac.Scope{ScopeType: "stack", ScopeValue: "web"})
+	e.role("web-team", views, rbac.Scope{Type: "stack", Value: "web"})
 	e.role("containers-only", []rbac.Perm{rbac.PermContainersView})
 	e.user("boss", "admin")
 	e.user("web", "web-team")
@@ -154,7 +154,6 @@ func TestAttentionScope(t *testing.T) {
 			"alert_firing:901:web-migrate",
 			"alert_firing:901:agent1/worker2",
 			"container_restarting:a1:c6",
-			"cert_expiring:1",
 			"backup_failed:2",
 			"container_exited:local:c3",
 			"container_unhealthy:local:c1",

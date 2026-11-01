@@ -327,7 +327,8 @@ func (s *Service) rekey(ctx context.Context, slug, subject, email string) (strin
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id FROM users
 		 WHERE saml_provider = ? AND email = ? COLLATE NOCASE AND saml_rekey_until > CURRENT_TIMESTAMP
-		   AND role <> 'admin' AND totp_verified = 0`, slug, email)
+		   AND NOT EXISTS (SELECT 1 FROM role_assignments a WHERE a.user_id = users.id AND a.role_name = 'admin')
+		   AND totp_verified = 0`, slug, email)
 	if err != nil {
 		return "", err
 	}

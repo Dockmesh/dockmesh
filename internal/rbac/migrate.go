@@ -25,11 +25,11 @@ var legacyEquivalents = map[Perm][]Perm{
 	"volumes.read_file":  {PermVolumesBrowse},
 }
 
-// legacyEffective expands an old permission set into today's permissions.
+// LegacyEffective expands an old permission set into today's permissions.
 // The template catalog was readable by every signed-in user, and the
 // backup key could be exported by unscoped callers holding both
 // system.update and backups.restore.
-func legacyEffective(old map[Perm]bool) map[Perm]bool {
+func LegacyEffective(old map[Perm]bool) map[Perm]bool {
 	out := map[Perm]bool{PermTemplatesView: true}
 	for p := range old {
 		if eq, ok := legacyEquivalents[p]; ok {
@@ -218,36 +218,41 @@ func legacyScopeText(w *legacyWorld, roleScopes []legacyScope, userTags []string
 	return s
 }
 
-// lostText describes in plain words what a role no longer grants.
+// lostText lists what a role no longer grants, grouped by area.
 func lostText(lost map[Perm]bool) string {
-	var items []string
-	for _, a := range Areas {
-		for _, l := range a.Levels {
-			for _, p := range l.Perms {
-				if lost[p] {
-					items = append(items, a.Label+": "+strings.ToLower(l.Items[0]))
-					delete(lost, p)
-					break
-				}
+	var parts []string
+	seen := map[Perm]bool{}
+	group := func(label string, perms []Perm) {
+		var names []string
+		for _, p := range perms {
+			if lost[p] && !seen[p] {
+				seen[p] = true
+				names = append(names, string(p))
 			}
 		}
+		if len(names) > 0 {
+			parts = append(parts, label+" ("+strings.Join(names, ", ")+")")
+		}
+	}
+	for _, a := range Areas {
+		var perms []Perm
+		for _, l := range a.Levels {
+			perms = append(perms, l.Perms...)
+		}
+		group(a.Label, perms)
 	}
 	for _, e := range Extras {
-		for _, p := range e.Perms {
-			if lost[p] {
-				items = append(items, strings.ToLower(e.Label[:1])+e.Label[1:])
-				delete(lost, p)
-				break
-			}
-		}
+		group("extra "+e.Key, e.Perms)
 	}
-	return strings.Join(slices.Compact(items), "; ")
+	return strings.Join(parts, "; ")
 }
 
+// diffPerms is before minus after, without the base rights and the
+// template catalog every account could read.
 func diffPerms(before, after map[Perm]bool) map[Perm]bool {
 	out := map[Perm]bool{}
 	for p := range before {
-		if !after[p] && !IsBase(p) {
+		if !after[p] && !IsBase(p) && p != PermTemplatesView {
 			out[p] = true
 		}
 	}
@@ -297,7 +302,7 @@ func MigrateLegacy(ctx context.Context, tx *sql.Tx) error {
 	}
 	for _, name := range w.roleOrder {
 		lr := w.roles[name]
-		before := legacyEffective(lr.perms)
+		before := LegacyEffective(lr.perms)
 		if _, isBuiltin := BuiltinRole(name); isBuiltin {
 			if builtinUsers[name] == 0 {
 				continue

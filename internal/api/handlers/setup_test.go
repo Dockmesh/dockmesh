@@ -102,7 +102,7 @@ func TestSetupCommitRefusedOnceAdminExists(t *testing.T) {
 				t.Fatalf("setup not active on an empty database: %v", err)
 			}
 			if tt.admin {
-				if _, err := database.Exec(`INSERT INTO users (id, username, password, role) VALUES ('u1', 'cli-admin', 'x', 'admin')`); err != nil {
+				if _, err := database.Exec(`INSERT INTO users (id, username, password) VALUES ('u1', 'cli-admin', 'x'); INSERT INTO role_assignments (user_id, role_name, scope_type) VALUES ('u1', 'admin', 'global')`); err != nil {
 					t.Fatal(err)
 				}
 			}

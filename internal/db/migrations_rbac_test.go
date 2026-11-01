@@ -7,6 +7,10 @@ import (
 	"testing"
 )
 
+// lastLegacyRBAC is the last migration before roles moved to levels and
+// assignments; tests of earlier role migrations stop there.
+const lastLegacyRBAC = "085_operations.sql"
+
 func hasPerm(t *testing.T, database *sql.DB, role, perm string) bool {
 	t.Helper()
 	var n int
@@ -44,7 +48,7 @@ func TestBackupDownloadPermissionMigration(t *testing.T) {
 		t.Fatal("precondition: host-admin holds system.update before the upgrade")
 	}
 
-	if err := Migrate(database); err != nil {
+	if err := migrateUpTo(database, lastLegacyRBAC); err != nil {
 		t.Fatal(err)
 	}
 
@@ -191,7 +195,7 @@ func TestRBACSeedDriftMigration(t *testing.T) {
 		t.Fatal("precondition: operator lacks tokens.create before the migration")
 	}
 
-	if err := Migrate(database); err != nil {
+	if err := migrateUpTo(database, lastLegacyRBAC); err != nil {
 		t.Fatal(err)
 	}
 

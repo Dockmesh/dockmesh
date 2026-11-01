@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"errors"
+	"github.com/dockmesh/dockmesh/internal/rbac"
+	"strings"
 	"testing"
 )
 
@@ -29,6 +31,22 @@ func TestProvisionSSOUser(t *testing.T) {
 		VALUES (1, 'idp', 'IdP', 'https://idp.test', 'c', 's', 'viewer')`); err != nil {
 		t.Fatal(err)
 	}
+	store := rbac.NewStore(database)
+	s.SetAccessHooks(func(ctx context.Context) {
+		if err := store.Load(ctx); err != nil {
+			t.Error(err)
+		}
+	}, store.ReplaceIdPAssignments)
+	if err := store.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	roleOf := func(u *User) string {
+		var out []string
+		for _, a := range store.UserAssignments(u.ID) {
+			out = append(out, a.Role)
+		}
+		return strings.Join(out, ",")
+	}
 	local, err := s.CreateUser(ctx, "alice", "alice@example.com", "correct horse battery", "operator")
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +56,8 @@ func TestProvisionSSOUser(t *testing.T) {
 	}
 	login := func(subject, email string, verified bool, role string) (*User, error) {
 		return s.ProvisionSSOUser(ctx, SSOIdentity{Kind: "oidc", Provider: "idp", Subject: subject,
-			Email: email, EmailVerified: verified, Username: "x", Role: role})
+			Email: email, EmailVerified: verified, Username: "x",
+			Assignments: []rbac.Assignment{{Role: role, Scope: rbac.Global, Source: rbac.SourceIdP, Via: "OIDC IdP group g"}}})
 	}
 
 	// An attacker's IdP account with someone's email doesn't take it over.
@@ -50,7 +69,7 @@ func TestProvisionSSOUser(t *testing.T) {
 	}
 
 	// With linking enabled and a verified email the identity links, and the
-	// manually set role stays.
+	// manually set access stays.
 	if err := s.SetEmailLinking(ctx, "oidc", 1, true); err != nil {
 		t.Fatal(err)
 	}
@@ -58,11 +77,11 @@ func TestProvisionSSOUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.ID != local.ID || u.Role != "operator" {
-		t.Fatalf("linked user = %s/%s, want %s/operator", u.ID, u.Role, local.ID)
+	if u.ID != local.ID || roleOf(u) != "operator" {
+		t.Fatalf("linked user = %s/%s, want %s/operator", u.ID, roleOf(u), local.ID)
 	}
-	if u, err = login("alice-sub", "", false, "viewer"); err != nil || u.Role != "operator" {
-		t.Fatalf("later login: %v role %v", err, u)
+	if u, err = login("alice-sub", "", false, "viewer"); err != nil || roleOf(u) != "operator" {
+		t.Fatalf("later login: %v roles %v", err, roleOf(u))
 	}
 	// A second identity can't take over the now-linked account, and admin
 	// accounts are never linked by email.
@@ -73,19 +92,19 @@ func TestProvisionSSOUser(t *testing.T) {
 		t.Fatalf("link into admin: %v", err)
 	}
 
-	// New SSO accounts follow the IdP role until an admin sets one.
+	// New SSO accounts follow the IdP groups until an admin stops it.
 	if _, err := login("bob-sub", "bob@example.com", false, "viewer"); err != nil {
 		t.Fatal(err)
 	}
 	b, err := login("bob-sub", "bob@example.com", false, "operator")
-	if err != nil || b.Role != "operator" {
-		t.Fatalf("sso role update: %v %v", err, b)
+	if err != nil || roleOf(b) != "operator" {
+		t.Fatalf("sso role update: %v %v", err, roleOf(b))
 	}
-	if _, err := s.UpdateUser(ctx, b.ID, "bob@example.com", "deployer", ""); err != nil {
+	if err := s.SetSource(ctx, b.ID, RoleSourceManual); err != nil {
 		t.Fatal(err)
 	}
-	if b, err = login("bob-sub", "bob@example.com", false, "viewer"); err != nil || b.Role != "deployer" {
-		t.Fatalf("manual role overwritten: %v %v", err, b)
+	if b, err = login("bob-sub", "bob@example.com", false, "viewer"); err != nil || roleOf(b) != "operator" {
+		t.Fatalf("access changed by sign-in after it was set to manual: %v %v", err, roleOf(b))
 	}
 
 	// Auto-create off: unknown identities are refused, known ones still sign in.

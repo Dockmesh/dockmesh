@@ -223,7 +223,7 @@ func Sanity(cfg *config.Config) (*SanityResult, error) {
 
 	// 2. Admin user present.
 	var adminCount int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM users WHERE role = 'admin'`).Scan(&adminCount); err != nil {
+	if err := database.QueryRow(`SELECT COUNT(DISTINCT user_id) FROM role_assignments WHERE role_name = 'admin' AND scope_type = 'global'`).Scan(&adminCount); err != nil {
 		r.Passed = false
 		r.Checks = append(r.Checks, SanityCheck{Name: "users.admin", Status: "fail", Message: err.Error()})
 		r.Summary = "failed to query users"

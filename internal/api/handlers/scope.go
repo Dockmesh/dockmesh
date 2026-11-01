@@ -239,10 +239,11 @@ func (h *Handlers) hostScopeReq(_ context.Context, hostID string) rbac.Resource 
 // StackScope resolves the stack of /stacks/{name}/... requests: deployed
 // stacks are checked on their deployment host. A stack that is not
 // deployed has no host, which only assignments on everything or on that
-// stack reach; writes and status probes on it are checked on the host the
-// request targets instead, so a host-scoped deployer can deploy a stack it
-// just created there. RequirePerm then tests the route's permission on
-// that resource.
+// stack reach; writes on it are checked on the host the request targets
+// instead, so a host-scoped deployer can deploy a stack it just created
+// there, and the two status probes (which expose no files) only need the
+// route's permission somewhere. RequirePerm then tests the route's
+// permission on the resolved resource.
 func (h *Handlers) StackScope(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
@@ -260,7 +261,11 @@ func (h *Handlers) StackScope(next http.Handler) http.Handler {
 		if d != nil {
 			hostID = d.HostID
 		}
-		if hostID == "" && (!isReadMethod(r) || undeployedProbe(rctx.RoutePattern())) {
+		if hostID == "" && undeployedProbe(rctx.RoutePattern()) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if hostID == "" && !isReadMethod(r) {
 			hostID = hostIDFromRequest(r)
 		}
 		res := h.stackScopeReq(r.Context(), hostID, name)

@@ -43,10 +43,10 @@ func TestAgentsAndAuditFollowScope(t *testing.T) {
 		r.Get("/agents/{id}", e.h.GetAgent)
 		r.Delete("/agents/{id}", e.h.DeleteAgent)
 		r.Post("/agents/{id}/rotate-token", e.h.RotateAgentEnrollToken)
-		r.Get("/audit", e.h.ListAudit)
+		r.With(middleware.RequirePerm(rbac.PermAuditView)).Get("/audit", e.h.ListAudit)
 	})
 
-	e.role("prod-team", []rbac.Perm{rbac.PermHostsView, rbac.PermAuditView}, rbac.Scope{ScopeType: "host_tag", ScopeValue: "prod"})
+	e.role("prod-team", []rbac.Perm{rbac.PermHostsView, rbac.PermAuditView}, rbac.Scope{Type: "host_tag", Value: "prod"})
 	boss := e.user("boss", "admin")
 	tagged := e.user("prodadmin", "admin")
 	e.scopeUser(tagged.ID, "prod")
@@ -78,15 +78,21 @@ func TestAgentsAndAuditFollowScope(t *testing.T) {
 		user, agents, audit string
 	}{
 		{"boss", "agent-dev,agent-prod", "prod-api,prod-web,someone"},
-		{"prodadmin", "agent-prod", "prod-web"},
-		{"team", "agent-prod", "prod-api"},
+		{"prodadmin", "agent-prod", ""},
+		{"team", "agent-prod", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.user, func(t *testing.T) {
 			if got := list(tt.user, "/agents", id); got != tt.agents {
 				t.Errorf("agents %s, want %s", got, tt.agents)
 			}
-			if got := list(tt.user, "/audit", target); got != tt.audit {
+			// The audit log is instance-wide: only an assignment on
+			// everything grants it.
+			if tt.audit == "" {
+				if rr := e.do(http.MethodGet, "/audit", e.login(tt.user).AccessToken, nil); rr.Code != http.StatusForbidden {
+					t.Errorf("audit for a scoped caller: %d, want 403", rr.Code)
+				}
+			} else if got := list(tt.user, "/audit", target); got != tt.audit {
 				t.Errorf("audit %s, want %s", got, tt.audit)
 			}
 		})
@@ -101,8 +107,5 @@ func TestAgentsAndAuditFollowScope(t *testing.T) {
 	}
 	if rr := e.do(http.MethodDelete, "/agents/agent-dev", tok, nil); rr.Code != http.StatusForbidden {
 		t.Errorf("revoke out-of-scope agent: %d, want 403", rr.Code)
-	}
-	if rr := e.do(http.MethodGet, "/audit?user_id="+boss.ID, tok, nil); !strings.Contains(rr.Body.String(), "prod-web") || strings.Contains(rr.Body.String(), "someone") {
-		t.Errorf("user_id filter must not widen a scoped caller's audit view: %s", rr.Body)
 	}
 }

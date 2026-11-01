@@ -52,6 +52,9 @@ func TestSensitiveRoutePermissions(t *testing.T) {
 		}
 		tokens[role] = res.AccessToken
 	}
+	if err := roles.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		role, method, path string
@@ -66,7 +69,8 @@ func TestSensitiveRoutePermissions(t *testing.T) {
 		{"viewer", http.MethodGet, "/api/v1/containers/c1/files", true},
 		{"viewer", http.MethodGet, "/api/v1/containers/c1/files/content?path=/etc/passwd", true},
 		{"viewer", http.MethodGet, "/api/v1/containers/c1/files/download?path=/etc/passwd", true},
-		{"operator", http.MethodGet, "/api/v1/containers/c1/files", false},
+		{"operator", http.MethodGet, "/api/v1/containers/c1/files", true},
+		{"host-admin", http.MethodGet, "/api/v1/containers/c1/files", false},
 
 		{"host-admin", http.MethodGet, "/api/v1/settings", true},
 		{"host-admin", http.MethodGet, "/api/v1/global-env", true},
@@ -74,6 +78,7 @@ func TestSensitiveRoutePermissions(t *testing.T) {
 		{"admin", http.MethodGet, "/api/v1/settings", false},
 
 		{"viewer", http.MethodGet, "/api/v1/proxy/version", false},
+		{"operator", http.MethodGet, "/api/v1/proxy/version", true},
 		{"viewer", http.MethodGet, "/api/v1/proxy/settings", false},
 		{"viewer", http.MethodPut, "/api/v1/proxy/version", true},
 		{"viewer", http.MethodPost, "/api/v1/proxy/version/rollback", true},
@@ -97,7 +102,7 @@ func TestSensitiveRoutePermissions(t *testing.T) {
 		})
 	}
 
-	// Past the route gate, the key export itself is admin-only.
+	// The backup key is an extra only the Admin role has.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/backup-key/export", nil)
 	req.Header.Set("Authorization", "Bearer "+tokens["host-admin"])
 	rr := httptest.NewRecorder()

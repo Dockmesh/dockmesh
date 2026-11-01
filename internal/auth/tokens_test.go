@@ -156,19 +156,13 @@ func TestValidateFollowsSessionAndUser(t *testing.T) {
 		name   string
 		mutate func(t *testing.T, sid string)
 		ok     bool
-		role   string
 	}{
-		{"live session", func(*testing.T, string) {}, true, "operator"},
-		{"role changed", func(t *testing.T, _ string) {
-			if _, err := s.UpdateUser(ctx, u.ID, "", "viewer", ""); err != nil {
-				t.Fatal(err)
-			}
-		}, true, "viewer"},
+		{"live session", func(*testing.T, string) {}, true},
 		{"session revoked", func(t *testing.T, sid string) {
 			if _, err := database.Exec(`UPDATE sessions SET revoked_at = CURRENT_TIMESTAMP WHERE family_id = ?`, sid); err != nil {
 				t.Fatal(err)
 			}
-		}, false, ""},
+		}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -182,8 +176,8 @@ func TestValidateFollowsSessionAndUser(t *testing.T) {
 			if (err == nil) != tt.ok {
 				t.Fatalf("err = %v, want ok=%v", err, tt.ok)
 			}
-			if tt.ok && got.Role != tt.role {
-				t.Errorf("role = %q, want %q", got.Role, tt.role)
+			if tt.ok && got.UserID != u.ID {
+				t.Errorf("user = %q, want %q", got.UserID, u.ID)
 			}
 		})
 	}
