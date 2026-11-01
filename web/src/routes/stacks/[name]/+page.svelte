@@ -983,6 +983,7 @@
   }
 
   async function loadReplicaCounts() {
+    if (!allowed('stacks.deploy')) return;
     try {
       const list = await api.stacks.listScale(name, stackHost);
       const m = new Map<string, number>();
@@ -1131,6 +1132,10 @@
   });
 
   async function loadGitSource() {
+    if (!allowed('stacks.update')) {
+      gitSource = null;
+      return;
+    }
     gitLoading = true;
     try {
       gitSource = await api.stacks.getGitSource(name);

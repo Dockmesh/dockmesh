@@ -25,17 +25,11 @@ func (h *Handlers) ListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	visible := make([]agents.Agent, 0, len(list))
 	for _, a := range list {
-		if h.agentInScope(r, a.ID) {
+		if h.hostVisible(r, a.ID) {
 			visible = append(visible, a)
 		}
 	}
 	writeJSON(w, http.StatusOK, visible)
-}
-
-// agentInScope applies both the user's scope tags and the role scope to
-// the host an agent stands for, the same rules /hosts filters by.
-func (h *Handlers) agentInScope(r *http.Request, id string) bool {
-	return h.canAccessHost(r, id) && h.checkRoleScope(r, h.hostScopeReq(r.Context(), id))
 }
 
 func (h *Handlers) GetAgent(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +38,7 @@ func (h *Handlers) GetAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if !h.agentInScope(r, id) {
+	if !h.hostVisible(r, id) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}

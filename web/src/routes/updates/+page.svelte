@@ -94,12 +94,16 @@
     system = out;
   }
 
+  // Image checks cover the server's own containers, which a caller limited
+  // to agent hosts may not read.
+  const seesLocal = () => hosts.available.length === 0 || hosts.available.some((h) => h.id === 'local');
+
   async function load() {
     refreshing = true;
     try {
       const info = await api.system.info().catch(() => null);
       const [list, imgs, ops] = await Promise.all([
-        allowed('containers.view') ? api.containers.list(true, 'local').catch(() => []) : Promise.resolve([]),
+        allowed('containers.view') && seesLocal() ? api.containers.list(true, 'local').catch(() => []) : Promise.resolve([]),
         allowed('images.view') ? api.images.updates().catch(() => ({})) : Promise.resolve({}),
         api.operations.list({ kind: 'image.update', limit: 50 }).catch(() => [] as Operation[]),
         loadSystem(info?.version ?? '')

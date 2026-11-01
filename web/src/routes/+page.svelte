@@ -3,6 +3,7 @@
   import { sevTone } from './alerts/ruleKinds';
   import { fmtAgo, pctTone } from '$lib/format';
   import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { api, isFanOut, type AttentionItem, type SystemMetrics, type ContainerSummary, type HostInfo, type BackupRun } from '$lib/api';
   import { allowed } from '$lib/rbac.svelte';
   import { hosts } from '$lib/stores/host.svelte';
@@ -17,7 +18,7 @@
 
   type PerHostMetrics = SystemMetrics & { host_id: string; host_name: string };
 
-  type StackState = 'running' | 'stopped' | 'unhealthy' | 'partial';
+  type StackState = 'running' | 'stopped' | 'unhealthy' | 'partial' | 'unknown';
   interface StackRow {
     name: string;
     state: StackState;
@@ -50,10 +51,8 @@
     try {
       const [h, sysRaw, sum, stacksList, audit, hostListRaw, att, runList] = await Promise.all([
         api.health(),
-        api.system.metrics(hosts.id).catch(() => null),
-        api.containers
-          .summary(hosts.id)
-          .catch((): ContainerSummary => ({ total: 0, running: 0, stopped: 0, unhealthy: 0, by_stack: {} })),
+        allowed('system.view') ? api.system.metrics(hosts.id).catch(() => null) : Promise.resolve(null),
+        allowed('containers.view') ? api.containers.summary(hosts.id).catch(() => null) : Promise.resolve(null),
         allowed('stacks.view') ? api.stacks.list().catch(() => []) : Promise.resolve([]),
         allowed('audit.view')
           ? api.audit.list(8, '', '', 'changes').catch(() => [])
@@ -73,6 +72,7 @@
       }
       summary = sum;
       stackRows = stacksList.map((s: any): StackRow => {
+        if (!sum) return { name: s.name, state: 'unknown', total: 0, running: 0, unhealthy: 0, hosts: [] };
         const r = sum.by_stack[s.name];
         if (!r) return { name: s.name, state: 'stopped', total: 0, running: 0, unhealthy: 0, hosts: [] };
         let state: StackState;
@@ -103,12 +103,12 @@
   });
   $effect(() => autoRefresh(load, 10_000));
 
-  const ORDER: Record<StackState, number> = { unhealthy: 0, partial: 1, running: 2, stopped: 3 };
+  const ORDER: Record<StackState, number> = { unhealthy: 0, partial: 1, running: 2, stopped: 3, unknown: 4 };
   function stackTone(s: StackState): Tone {
     return s === 'running' ? 'ok' : s === 'unhealthy' ? 'bad' : s === 'partial' ? 'warn' : 'off';
   }
   function stackLabel(s: StackState): string {
-    return s === 'running' ? 'running' : s === 'unhealthy' ? 'unhealthy' : s === 'partial' ? 'degraded' : 'stopped';
+    return s === 'running' ? 'running' : s === 'unhealthy' ? 'unhealthy' : s === 'partial' ? 'degraded' : s === 'unknown' ? 'no status' : 'stopped';
   }
   const hostName = (id: string) => hostList.find((h) => h.id === id)?.name ?? id;
 
@@ -145,6 +145,22 @@
   const issues = $derived(stackRows.filter((s) => s.state === 'unhealthy' || s.state === 'partial'));
   const runs24 = $derived(runs ? runs.filter((r) => Date.now() - Date.parse(r.started_at) < 86_400_000) : null);
   const failed24 = $derived(runs24 ? runs24.filter((r) => r.status === 'failed') : []);
+  const SEV: Record<string, number> = { critical: 0, warning: 1, info: 2 };
+  const ATTN_LIMIT = 5;
+  const attnAll = $derived(page.url.searchParams.get('attention') === 'all');
+  const attnSev = $derived(page.url.searchParams.get('severity') ?? '');
+  const attnSorted = $derived(
+    (attention ?? [])
+      .slice()
+      .sort((a, b) => (SEV[a.severity] ?? 3) - (SEV[b.severity] ?? 3) || Date.parse(b.since ?? '0') - Date.parse(a.since ?? '0'))
+  );
+  const attnShown = $derived(attnAll ? attnSorted.filter((a) => !attnSev || a.severity === attnSev) : attnSorted.slice(0, ATTN_LIMIT));
+  const attnCounts = $derived({
+    '': attnSorted.length,
+    critical: attnSorted.filter((a) => a.severity === 'critical').length,
+    warning: attnSorted.filter((a) => a.severity === 'warning').length,
+    info: attnSorted.filter((a) => a.severity === 'info').length
+  });
   const fleetCpu = $derived.by(() => {
     if (sysMetrics) return Math.round(sysMetrics.cpu_percent);
     if (!perHostMetrics.length) return null;
@@ -274,8 +290,26 @@
     {#if attention}
       <div class="box">
         {#if attention.length}
-          <div class="box-h"><h3>Needs attention <span class="dm-dim">{attention.length}</span></h3></div>
-          {#each attention.slice(0, 8) as a (a.id)}
+          <div class="box-h">
+            <h3>Needs attention <span class="dm-dim">{attention.length}</span></h3>
+            {#if attnAll}
+              <Segmented
+                label="Severity"
+                size="sm"
+                value={attnSev}
+                options={[
+                  { key: '', label: 'All', count: attnCounts[''] },
+                  { key: 'critical', label: 'Critical', count: attnCounts.critical },
+                  { key: 'warning', label: 'Warning', count: attnCounts.warning },
+                  { key: 'info', label: 'Info', count: attnCounts.info }
+                ]}
+                onchange={(v: string) => goto(v ? `/?attention=all&severity=${v}` : '/?attention=all', { replaceState: true })}
+              />
+              <span class="dm-sp"></span>
+              <a class="dm-btn dm-btn-ghost dm-btn-sm" href="/">Show top {ATTN_LIMIT}</a>
+            {/if}
+          </div>
+          {#each attnShown as a (a.id)}
             <div class="attn">
               <StatusChip tone={sevTone(a.severity)} label={a.severity} />
               <div class="t dm-trunc"><b>{a.title}</b>{#if a.detail}<span> — {a.detail}</span>{/if}</div>
@@ -283,8 +317,8 @@
               <a class="dm-btn dm-btn-sm" href={a.link}>Open</a>
             </div>
           {/each}
-          {#if attention.length > 8}
-            <div class="attn more"><span class="dm-dim">{attention.length - 8} more items</span></div>
+          {#if !attnAll && attention.length > ATTN_LIMIT}
+            <div class="attn more"><a class="dm-btn dm-btn-ghost dm-btn-sm" href="/?attention=all">+{attention.length - ATTN_LIMIT} more</a></div>
           {/if}
         {:else}
           <div class="attn">
@@ -332,7 +366,7 @@
                     onkeydown={(e) => { if (e.key === 'Enter') goto(`/stacks/${encodeURIComponent(s.name)}`); }}
                   >
                     <span class="dm-dot {tone === 'off' ? '' : tone}"></span>
-                    <span class="dm-trunc"><b>{s.name}</b> <span class="dm-dim">· {s.hosts.length ? s.hosts.map(hostName).join(', ') : 'not running'}</span></span>
+                    <span class="dm-trunc"><b>{s.name}</b> <span class="dm-dim">· {s.hosts.length ? s.hosts.map(hostName).join(', ') : s.state === 'unknown' ? 'container status not available' : 'not running'}</span></span>
                     <span class="dm-mini" title="{s.running} of {s.total} running{s.unhealthy ? `, ${s.unhealthy} unhealthy` : ''}">
                       {#each Array(Math.min(s.total, 12)) as _, i (i)}<i class={i < s.unhealthy ? 'warn' : i < s.running ? '' : 'off'}></i>{/each}
                     </span>
@@ -412,7 +446,7 @@
   .bar > span:last-child { width: 36px; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
   .box { border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); }
-  .box-h { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .box-h { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
   .box-h h3 { margin: 0; font-size: 13px; font-weight: 600; }
   .attn { display: flex; align-items: center; gap: 12px; padding: 0 14px; min-height: 46px; border-bottom: 1px solid var(--border); }
   .attn:last-child { border-bottom: 0; }
