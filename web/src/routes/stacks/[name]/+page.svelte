@@ -1436,6 +1436,7 @@
   let delNetworks = $state(true);
   let delVolumes = $state(false);
   let delImages = $state(false);
+  let delTyped = $state('');
   let delPlan = $state<StackCleanupPlan | null>(null);
   let delPlanError = $state<string | null>(null);
   let delPlanLoading = $state(false);
@@ -1445,6 +1446,7 @@
     delNetworks = true;
     delVolumes = false;
     delImages = false;
+    delTyped = '';
     delPlan = null;
     delPlanError = null;
     showDelete = true;
@@ -1458,7 +1460,7 @@
     }
   }
   async function confirmDelete() {
-    if (delBusy) return;
+    if (delBusy || delTyped.trim() !== name) return;
     delBusy = true;
     try {
       const res = await stackOps.run(stackHost, name, () =>
@@ -2647,7 +2649,7 @@
      opt-in only because they cause data loss / re-pull cost. -->
 <Modal bind:open={showDelete} title="Delete stack {name}" maxWidth="max-w-lg">
   <div class="space-y-3 text-sm">
-    <p>This removes <span class="font-mono">compose.yaml</span> from disk. Pick what else should be cleaned up:</p>
+    <p>Removes the stack's <span class="dm-mono">compose.yaml</span>. Choose what else goes with it:</p>
 
     {#if delPlanError}
       <div class="p-2.5 rounded-md border border-[color-mix(in_srgb,var(--color-warning-500)_40%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-500)_8%,transparent)] text-xs">
@@ -2664,7 +2666,7 @@
         <span class="font-medium">Stop and remove containers</span>
         <span class="block text-xs text-[var(--fg-muted)] mt-0.5">
           {#if services.length > 0}
-            {services.length} container{services.length === 1 ? '' : 's'} currently running. If unchecked, they keep running after the stack is deleted (and can be re-adopted later).
+            {services.length} container{services.length === 1 ? '' : 's'}; unchecked, they keep running and can be adopted again.
           {:else}
             No containers are currently running for this stack.
           {/if}
@@ -2714,7 +2716,7 @@
       <div class="px-2.5 py-2 rounded-md bg-[color-mix(in_srgb,var(--color-danger-500)_12%,transparent)] border border-[color-mix(in_srgb,var(--color-danger-500)_40%,transparent)] text-xs text-[var(--color-danger-400)] flex items-start gap-2">
         <AlertTriangle class="w-4 h-4 shrink-0 mt-0.5" />
         <span>
-          You are about to <span class="font-medium">permanently delete</span> the data in {delPlan.volumes.length} volume{delPlan.volumes.length === 1 ? '' : 's'}. This cannot be undone — no snapshot, no trash, no recovery. Take a backup first if the data matters.
+          The data in {delPlan.volumes.length} volume{delPlan.volumes.length === 1 ? '' : 's'} is deleted for good. Take a backup first if it matters.
         </span>
       </div>
     {/if}
@@ -2735,14 +2737,17 @@
           {#if delPlan && delPlan.skipped_in_use && delPlan.skipped_in_use.length > 0}
             <span class="block mt-1">Skipped (still used elsewhere): {delPlan.skipped_in_use.length} image{delPlan.skipped_in_use.length === 1 ? '' : 's'}</span>
           {/if}
-          <span class="block mt-1">Next deploy re-pulls them — can be slow on metered connections.</span>
         </span>
       </span>
     </label>
+    <div class="dm-field">
+      <label for="del-typed">Type <b class="dm-mono">{name}</b> to confirm</label>
+      <input id="del-typed" class="dm-input" bind:value={delTyped} autocomplete="off" spellcheck="false" />
+    </div>
   </div>
   {#snippet footer()}
     <Button variant="secondary" onclick={() => (showDelete = false)} disabled={delBusy}>Cancel</Button>
-    <Button variant="danger" onclick={confirmDelete} loading={delBusy} disabled={delBusy}>
+    <Button variant="danger" onclick={confirmDelete} loading={delBusy} disabled={delBusy || delTyped.trim() !== name}>
       <Trash2 class="w-4 h-4" />
       Delete
     </Button>

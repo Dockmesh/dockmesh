@@ -74,7 +74,7 @@
 
       {#if eyebrow || title}
         <div class="ed-modal-header">
-          {#if eyebrow}<Eyebrow>{eyebrow}</Eyebrow>{/if}
+          {#if eyebrow && !title}<Eyebrow>{eyebrow}</Eyebrow>{/if}
           {#if title}
             <h2 class="ed-title ed-modal-title">
               {#if typeof title === 'string'}{title}{:else}{@render title()}{/if}

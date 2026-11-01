@@ -360,7 +360,7 @@ body {
   .ed-title em,
   .ed-accent {
     font-style: normal;
-    color: var(--accent-fg);
+    color: inherit;
     font-weight: inherit;
   }
   em, i { font-style: normal; font-weight: inherit; }

@@ -478,7 +478,7 @@
   width={560}
 >
   {#snippet title()}
-    Mint a new <em>API</em> token
+    New API token
   {/snippet}
 
   <form id="tok-create-form" class="tok-create" onsubmit={createApiToken}>
