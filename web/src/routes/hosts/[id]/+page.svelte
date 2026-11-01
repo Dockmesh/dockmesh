@@ -141,7 +141,8 @@
   // Stacks have no deployed-on field; remote hosts are matched through the
   // compose project label of their containers.
   const stacksOnHost = $derived.by<StackListEntry[]>(() => {
-    if (isLocal) return stacks;
+    // Stacks not deployed anywhere yet live in the server's stack folder.
+    if (isLocal) return stacks.filter((s) => !s.deployment || s.deployment.host_id === 'local' || s.deployment.host_id === '');
     const projects = new Set<string>();
     for (const c of containers) {
       const proj = c?.Labels?.['com.docker.compose.project'];
