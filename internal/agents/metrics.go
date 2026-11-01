@@ -209,9 +209,8 @@ func (a *ConnectedAgent) answerMetrics(ctx context.Context, f Frame, err error) 
 // handleMetrics stores one batch and acknowledges it, so the agent keeps
 // what was not stored. The host id is the agent's own, from its client
 // certificate; nothing in the payload names a host. The caller has
-// called begin on the agent's intake.
-func (s *Service) handleMetrics(ctx context.Context, ag *ConnectedAgent, f Frame) {
-	in := s.intake(ag.ID)
+// called begin on in.
+func (s *Service) handleMetrics(ctx context.Context, ag *ConnectedAgent, in *metricsIntake, f Frame) {
 	defer in.done()
 	ag.answerMetrics(ctx, f, s.storeMetrics(ctx, ag, in, f.Payload))
 }

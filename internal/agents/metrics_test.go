@@ -111,7 +111,9 @@ func TestHandleMetricsUsesAgentID(t *testing.T) {
 		t.Fatal(err)
 	}
 	ag := newConnectedAgent("agent-1", "a1", func() {})
-	s.handleMetrics(context.Background(), ag, Frame{ID: "f1", Payload: payload})
+	in := s.intake(ag.ID)
+	in.begin(time.Now())
+	s.handleMetrics(context.Background(), ag, in, Frame{ID: "f1", Payload: payload})
 	if gotID != "agent-1" || len(got.Host) != 1 || len(got.Containers) != 1 {
 		t.Errorf("sink got id %q with %d/%d samples, want agent-1 with 1/1", gotID, len(got.Host), len(got.Containers))
 	}
