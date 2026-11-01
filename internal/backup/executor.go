@@ -147,7 +147,7 @@ func (e *Executor) complete(ctx context.Context, job *Job, runID int64) (*Run, e
 	defer stop(nil)
 	op.AllowCancel(stop)
 	out, target := e.execute(runCtx, job, runID, stop)
-	op.DisallowCancel()
+	op.DisallowCancel(runCtx)
 	// The outcome is recorded even when the caller went away mid-run.
 	ctx = context.WithoutCancel(ctx)
 	if err := e.store.finishRun(ctx, runID, out.status, out.size, out.path, out.sum, out.err); err != nil {

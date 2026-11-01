@@ -154,7 +154,7 @@ func (s *Service) Restore(ctx context.Context, runID int64, opts RestoreOptions)
 	defer stop(nil)
 	op.AllowCancel(stop)
 	stored, check, err := s.fetchVerified(readCtx, run, job, kind)
-	op.DisallowCancel()
+	op.DisallowCancel(readCtx)
 	if cause := stopCause(readCtx); cause != nil {
 		if stored != nil {
 			_ = stored.Close()

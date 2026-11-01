@@ -312,7 +312,7 @@ func pull(ctx context.Context, cli *client.Client, ref, authBlob string, secrets
 	pctx, stop := context.WithCancelCause(ctx)
 	defer stop(nil)
 	op.AllowCancel(stop)
-	defer op.DisallowCancel()
+	defer op.DisallowCancel(pctx)
 	rc, err := cli.ImagePull(pctx, ref, imagetypes.PullOptions{RegistryAuth: authBlob})
 	if err == nil {
 		// Ends a read of the progress stream that blocks on the registry.

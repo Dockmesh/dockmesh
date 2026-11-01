@@ -230,7 +230,7 @@ func TestVolumeImportIgnoresReservedNames(t *testing.T) {
 
 func TestVolumeExportSkipsReservedNames(t *testing.T) {
 	src := t.TempDir()
-	writeTree(t, src, map[string]string{"keep/a": "1", ".dockmesh-restore-old/x": "2", ".dockmesh-restore-new": "3"})
+	writeTree(t, src, map[string]string{"keep/a": "1", "keep/.dockmesh-restore-notes": "4", ".dockmesh-restore-old/x": "2", ".dockmesh-restore-new": "3"})
 	out := filepath.Join(t.TempDir(), "a.tgz")
 	script := strings.ReplaceAll(VolumeExportScript, "/source", src) + " > " + out
 	if code := runScript(t, src, script, nil); code != 0 {
@@ -244,7 +244,7 @@ func TestVolumeExportSkipsReservedNames(t *testing.T) {
 	if code := runScript(t, dir, "tar xzf - -C "+importDest, data); code != 0 {
 		t.Fatalf("extract exit %d", code)
 	}
-	sameTree(t, "exported", readTree(t, dir), map[string]string{"keep/a": "1"})
+	sameTree(t, "exported", readTree(t, dir), map[string]string{"keep/a": "1", "keep/.dockmesh-restore-notes": "4"})
 }
 
 func TestVolumeImportRecoversBeforeExtracting(t *testing.T) {

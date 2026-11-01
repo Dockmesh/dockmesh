@@ -37,13 +37,17 @@ const (
 	importExitStuck    = 7
 )
 
-// importExclude keeps the restore's own paths out of backups and out of
-// what a restore extracts, so an archive can never collide with them.
+// importExclude keeps the restore's own paths out of what a restore
+// extracts, so an archive can never collide with them. On extract busybox
+// matches these against the top-level name only; both forms cover
+// archives with and without the "./" prefix.
 const importExclude = `--exclude='./.dockmesh-restore-*' --exclude='.dockmesh-restore-*'`
 
 // VolumeExportScript is the helper command that archives the volume
-// mounted read-only at /source to stdout.
-const VolumeExportScript = "tar czf - -C /source " + importExclude + " ."
+// mounted read-only at /source to stdout, without the restore's own
+// paths. On create busybox matches a bare pattern at every depth, so only
+// the "./" form is used: same-named files deeper down stay in the backup.
+const VolumeExportScript = "tar czf - -C /source --exclude='./.dockmesh-restore-*' ."
 
 // importFuncs defines mvall (move every entry of $1 except the restore's
 // own paths into $2; the globs cover dotfiles and skip . and ..) and

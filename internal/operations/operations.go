@@ -540,16 +540,27 @@ func (o *Op) AllowCancel(stop context.CancelCauseFunc) {
 	})
 }
 
-// DisallowCancel closes the window opened by AllowCancel. A cancel that
-// was already requested stays requested.
-func (o *Op) DisallowCancel() {
+// DisallowCancel closes the window opened by AllowCancel; ctx is the
+// window's context. A cancel that was accepted but never reached ctx came
+// too late: it is dropped, so the work is not shown as stopping while it
+// runs to the end.
+func (o *Op) DisallowCancel(ctx context.Context) {
 	if o == nil {
 		return
 	}
+	late := false
 	o.update(func(op *Operation, _ time.Time) {
 		o.runCancel = nil
 		op.Cancellable = false
+		if op.CancelRequested && !errors.Is(context.Cause(ctx), ErrCancelled) {
+			op.CancelRequested = false
+			o.cancelStep = ""
+			late = true
+		}
 	})
+	if late {
+		o.Logf("warn", "the cancel came too late; this step cannot be interrupted")
+	}
 }
 
 // Begin moves a queued operation to running.

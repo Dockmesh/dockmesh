@@ -260,7 +260,7 @@ func TestCancelRunningInsideWindow(t *testing.T) {
 			if err := s.Cancel(o.ID()); !errors.Is(err, ErrNotCancellable) {
 				t.Fatalf("second cancel: %v", err)
 			}
-			o.DisallowCancel()
+			o.DisallowCancel(wctx)
 			if tc.finishErr != nil {
 				o.StepFail("pull", tc.finishErr)
 			}
@@ -284,13 +284,36 @@ func TestCancelRunningInsideWindow(t *testing.T) {
 	}
 }
 
+// A cancel accepted just before the window closed, whose stop never
+// reached the work, is dropped so the work is not shown as stopping.
+func TestLateCancelIsDropped(t *testing.T) {
+	s, _ := newTestService(t)
+	ctx := context.Background()
+	o := s.Start(ctx, Spec{Kind: "backup.restore", Target: "data"})
+	wctx, stop := context.WithCancelCause(ctx)
+	o.AllowCancel(func(error) {})
+	if err := s.Cancel(o.ID()); err != nil {
+		t.Fatal(err)
+	}
+	o.DisallowCancel(wctx)
+	stop(ErrCancelled)
+	got, _ := s.Get(ctx, o.ID())
+	if got.CancelRequested || got.Cancellable {
+		t.Fatalf("late cancel kept: %+v", got)
+	}
+	o.Finish(errors.New("write failed"))
+	if got, _ = s.Get(ctx, o.ID()); got.Status != StatusFailed {
+		t.Fatalf("status %s", got.Status)
+	}
+}
+
 func TestCancelOutsideWindow(t *testing.T) {
 	s, _ := newTestService(t)
 	ctx := context.Background()
 	o := s.Start(ctx, Spec{Kind: "backup.restore", Target: "data"})
-	_, stop := context.WithCancelCause(ctx)
+	wctx, stop := context.WithCancelCause(ctx)
 	o.AllowCancel(stop)
-	o.DisallowCancel()
+	o.DisallowCancel(wctx)
 	if err := s.Cancel(o.ID()); !errors.Is(err, ErrNotCancellable) {
 		t.Fatalf("cancel after the window closed: %v", err)
 	}
