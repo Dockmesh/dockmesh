@@ -36,9 +36,9 @@ import (
 type Manager struct {
 	dir string
 
-	caCert     *x509.Certificate
-	caKey      *ecdsa.PrivateKey
-	caCertPEM  []byte
+	caCert    *x509.Certificate
+	caKey     *ecdsa.PrivateKey
+	caCertPEM []byte
 
 	serverMu   sync.RWMutex
 	serverCert []byte // PEM

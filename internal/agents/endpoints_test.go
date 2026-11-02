@@ -17,15 +17,15 @@ func TestResolveEndpoints(t *testing.T) {
 		base, baseSrc, agent, ag string
 	}{
 		{
-			name:  "derived from the base URL setting",
-			in:    EndpointInputs{SettingBaseURL: "https://dm.lan/", DefaultBaseURL: "http://localhost:8080", AgentListen: ":8443"},
-			base:  "https://dm.lan", baseSrc: SourceSetting,
+			name: "derived from the base URL setting",
+			in:   EndpointInputs{SettingBaseURL: "https://dm.lan/", DefaultBaseURL: "http://localhost:8080", AgentListen: ":8443"},
+			base: "https://dm.lan", baseSrc: SourceSetting,
 			agent: "wss://dm.lan:8443/connect", ag: SourceDerived,
 		},
 		{
-			name:  "agent URL setting is used as is",
-			in:    EndpointInputs{SettingBaseURL: "https://dm.example.com", SettingAgentURL: "wss://agents.example.com:9443/connect", AgentListen: ":8443"},
-			base:  "https://dm.example.com", baseSrc: SourceSetting,
+			name: "agent URL setting is used as is",
+			in:   EndpointInputs{SettingBaseURL: "https://dm.example.com", SettingAgentURL: "wss://agents.example.com:9443/connect", AgentListen: ":8443"},
+			base: "https://dm.example.com", baseSrc: SourceSetting,
 			agent: "wss://agents.example.com:9443/connect", ag: SourceSetting,
 		},
 		{
@@ -34,19 +34,19 @@ func TestResolveEndpoints(t *testing.T) {
 				EnvBaseURL: "http://10.0.0.5:8080", EnvAgentURL: "wss://10.0.0.5:8443/connect",
 				SettingBaseURL: "https://dm.lan", SettingAgentURL: "wss://dm.lan:8443/connect", AgentListen: ":8443",
 			},
-			base:  "http://10.0.0.5:8080", baseSrc: SourceEnv,
+			base: "http://10.0.0.5:8080", baseSrc: SourceEnv,
 			agent: "wss://10.0.0.5:8443/connect", ag: SourceEnv,
 		},
 		{
-			name:  "env base URL, agent URL derived from it",
-			in:    EndpointInputs{EnvBaseURL: "http://192.168.1.4:8080", SettingBaseURL: "https://dm.lan", AgentListen: "0.0.0.0:9443"},
-			base:  "http://192.168.1.4:8080", baseSrc: SourceEnv,
+			name: "env base URL, agent URL derived from it",
+			in:   EndpointInputs{EnvBaseURL: "http://192.168.1.4:8080", SettingBaseURL: "https://dm.lan", AgentListen: "0.0.0.0:9443"},
+			base: "http://192.168.1.4:8080", baseSrc: SourceEnv,
 			agent: "wss://192.168.1.4:9443/connect", ag: SourceDerived,
 		},
 		{
-			name:  "nothing set",
-			in:    EndpointInputs{DefaultBaseURL: "http://localhost:8080", AgentListen: ":8443"},
-			base:  "http://localhost:8080", baseSrc: SourceDefault,
+			name: "nothing set",
+			in:   EndpointInputs{DefaultBaseURL: "http://localhost:8080", AgentListen: ":8443"},
+			base: "http://localhost:8080", baseSrc: SourceDefault,
 			agent: "wss://localhost:8443/connect", ag: SourceDerived,
 		},
 	}
@@ -167,13 +167,9 @@ func TestCheckReachability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	own := httptest.NewUnstartedServer(http.NotFoundHandler())
-	own.TLS = tlsCfg
-	own.StartTLS()
-	t.Cleanup(own.Close)
+	ownAddr := strings.TrimPrefix(serveListenerTLS(t, tlsCfg, http.NotFoundHandler()), "https://")
 	foreign := httptest.NewTLSServer(http.NotFoundHandler())
 	t.Cleanup(foreign.Close)
-	ownAddr := own.Listener.Addr().String()
 	foreignAddr := foreign.Listener.Addr().String()
 
 	type want struct {

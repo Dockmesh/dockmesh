@@ -19,9 +19,9 @@ type checkResult struct {
 	warning bool
 }
 
-func ok(name, detail string) checkResult    { return checkResult{name, true, detail, false} }
-func fail(name, detail string) checkResult  { return checkResult{name, false, detail, false} }
-func warn(name, detail string) checkResult  { return checkResult{name, false, detail, true} }
+func ok(name, detail string) checkResult   { return checkResult{name, true, detail, false} }
+func fail(name, detail string) checkResult { return checkResult{name, false, detail, false} }
+func warn(name, detail string) checkResult { return checkResult{name, false, detail, true} }
 
 // runDoctorCmd handles `dockmesh doctor`.
 func runDoctorCmd(args []string) {

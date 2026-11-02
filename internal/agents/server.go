@@ -227,8 +227,8 @@ func ServerTLSConfig(p *pki.Manager) (*tls.Config, error) {
 		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 			return p.ServerTLSCertificate()
 		},
-		ClientCAs:    p.CACertPool(),
-		ClientAuth:   tls.VerifyClientCertIfGiven,
-		MinVersion:   tls.VersionTLS12,
+		ClientCAs:  p.CACertPool(),
+		ClientAuth: tls.VerifyClientCertIfGiven,
+		MinVersion: tls.VersionTLS12,
 	}, nil
 }

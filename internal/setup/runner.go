@@ -16,9 +16,9 @@ import (
 // operator chose across the seven steps. Validated again on the server
 // before the install runs; the live-validate endpoints are advisory.
 type CommitInput struct {
-	DataDir      string `json:"data_dir"`
-	ServiceUser  struct {
-		Mode      string `json:"mode"`      // "existing" | "create"
+	DataDir     string `json:"data_dir"`
+	ServiceUser struct {
+		Mode      string `json:"mode"` // "existing" | "create"
 		Username  string `json:"username"`
 		AddDocker bool   `json:"add_to_docker_group"`
 	} `json:"service_user"`
