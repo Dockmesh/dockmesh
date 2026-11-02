@@ -197,7 +197,7 @@ export function sevTone(s: string | undefined): Tone {
 
 // CPU rules name their unit; rules stored without one were written
 // against per-core values.
-export function cpuUnitOf(r: Pick<AlertRuleInput, 'metric' | 'cpu_unit'>): 'host' | 'core' | '' {
+function cpuUnitOf(r: Pick<AlertRuleInput, 'metric' | 'cpu_unit'>): 'host' | 'core' | '' {
   if (r.metric !== 'cpu_percent') return '';
   return r.cpu_unit === 'host' ? 'host' : 'core';
 }

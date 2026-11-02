@@ -11,7 +11,7 @@ import (
 // on alert_rules and notification_channels. Only the "weekly" type is
 // honoured by IsMutedNow today; other shapes are reserved.
 type MuteSchedule struct {
-	Type   string             `json:"type"`
+	Type   string              `json:"type"`
 	Ranges []MuteScheduleRange `json:"ranges"`
 }
 

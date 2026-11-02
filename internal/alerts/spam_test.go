@@ -266,7 +266,7 @@ func TestPruneStateDropsQuietCooldowns(t *testing.T) {
 	s, _ := newEvalService(t)
 	s.groupWindow = 0
 	captureSends(s)
-	r := eventRule(t, s, RuleInput{Kind: KindOOM, CooldownSeconds: 300})
+	eventRule(t, s, RuleInput{Kind: KindOOM, CooldownSeconds: 300})
 	s.handleEvent(context.Background(), ev("oom", 0))
 	if s.lastNotified.size() != 1 || s.lastRows.size() != 1 {
 		t.Fatalf("state after fire: notified %d rows %d", s.lastNotified.size(), s.lastRows.size())
@@ -279,7 +279,6 @@ func TestPruneStateDropsQuietCooldowns(t *testing.T) {
 	if s.lastNotified.size() != 0 || s.lastRows.size() != 0 {
 		t.Fatalf("quiet target still tracked: notified %d rows %d", s.lastNotified.size(), s.lastRows.size())
 	}
-	_ = r
 }
 
 func TestHistoryLimitAppliesAfterScopeFilter(t *testing.T) {

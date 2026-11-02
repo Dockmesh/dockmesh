@@ -633,7 +633,7 @@ func (s *Service) evalRule(ctx context.Context, r *Rule, now time.Time) error {
 	}
 	series := map[tkey]*seriesOf{}
 	var order []tkey
-	inScope := map[string]bool{}
+	hostInScope := map[string]bool{}
 	for rows.Next() {
 		var hostID, hostName, name string
 		var smp metricSample
@@ -641,10 +641,10 @@ func (s *Service) evalRule(ctx context.Context, r *Rule, now time.Time) error {
 			rows.Close()
 			return err
 		}
-		ok, seen := inScope[hostID]
+		ok, seen := hostInScope[hostID]
 		if !seen {
 			ok = s.inScope(r, hostID, "")
-			inScope[hostID] = ok
+			hostInScope[hostID] = ok
 		}
 		if !ok {
 			continue
@@ -705,13 +705,13 @@ func (r *Rule) mutedAt(t time.Time) bool {
 	return IsMutedNow(r.MuteSchedule, t)
 }
 
-// cooldown is how long after an announced fire the same target stays
-// quiet. Repeats of one-shot alerts fold into one entry for at least a
-// minute even when the rule has no cooldown.
+// cooldown is how long after an announced fire the same target stays quiet.
 func (r *Rule) cooldown() time.Duration {
 	return time.Duration(r.CooldownSeconds) * time.Second
 }
 
+// repeatWindow is how long repeats of a one-shot alert fold into one
+// entry: the cooldown, at least a minute.
 func (r *Rule) repeatWindow() time.Duration {
 	return max(r.cooldown(), time.Minute)
 }

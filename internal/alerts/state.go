@@ -11,7 +11,7 @@ const maxTargetsPerHost = 500
 // or domain. name is the value stored in alert_history.container_name;
 // hostID is empty for the kinds that belong to no host.
 type target struct {
-	hostID, hostName, name string
+	hostID, name string
 }
 
 type ruleHost struct {

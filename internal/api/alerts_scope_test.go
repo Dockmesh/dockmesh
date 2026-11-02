@@ -81,13 +81,13 @@ func TestAlertEndpointsFollowScope(t *testing.T) {
 	tests := []struct {
 		name       string
 		token      string
-		rules      int // GET /alerts/rules status
+		rules      int
 		stats      int
 		history    string
 		createRule int
 	}{
 		{"global viewer", user("gv", rbac.Assignment{Role: rbac.RoleViewer, Scope: rbac.Global}),
-			http.StatusOK, http.StatusOK, ",edge/db,nightly,web", http.StatusForbidden},
+			http.StatusOK, http.StatusOK, "edge/db,nightly,web", http.StatusForbidden},
 		{"agent viewer", user("av", rbac.Assignment{Role: rbac.RoleViewer, Scope: agent}),
 			http.StatusForbidden, http.StatusForbidden, "edge/db", http.StatusForbidden},
 		{"agent host admin", user("aha", rbac.Assignment{Role: rbac.RoleHostAdmin, Scope: agent}),
@@ -95,7 +95,7 @@ func TestAlertEndpointsFollowScope(t *testing.T) {
 		{"global admin with a scoped grant", user("mix",
 			rbac.Assignment{Role: rbac.RoleAdmin, Scope: rbac.Global},
 			rbac.Assignment{Role: rbac.RoleOperator, Scope: agent}),
-			http.StatusOK, http.StatusOK, ",edge/db,nightly,web", http.StatusCreated},
+			http.StatusOK, http.StatusOK, "edge/db,nightly,web", http.StatusCreated},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -143,12 +143,12 @@ func TestAlertEndpointsFollowScope(t *testing.T) {
 				names = append(names, e.ContainerName)
 			}
 			sort.Strings(names)
-			want := strings.TrimPrefix(tt.history, ",")
+			want := tt.history
 			if got := strings.Join(names, ","); got != want {
 				t.Errorf("history %q, want %q", got, want)
 			}
 
-			rule := `{"name":"cpu-` + strings.ReplaceAll(tt.name, " ", "-") + `","kind":"oom","container_filter":"*"}`
+			rule := `{"name":"oom-` + strings.ReplaceAll(tt.name, " ", "-") + `","kind":"oom","container_filter":"*"}`
 			if code := do(http.MethodPost, "/api/v1/alerts/rules", rule).Code; code != tt.createRule {
 				t.Errorf("create rule: %d, want %d", code, tt.createRule)
 			}

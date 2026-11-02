@@ -338,8 +338,8 @@ func (h *Handlers) SetScalingRules(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// Rules written without a unit are new to units; they get the host
-	// share the charts show.
+	// A rule saved without a unit is new; it gets the host share the charts
+	// show. Stored rules without one stay per core (see Rule.Unit).
 	for i := range cfg.Rules {
 		if cfg.Rules[i].CPUUnit == "" {
 			cfg.Rules[i].CPUUnit = scaling.CPUUnitHost
