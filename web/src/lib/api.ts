@@ -1582,7 +1582,9 @@ async function authFetch(url: string, init: RequestInit = {}): Promise<Response>
   const send = (token: string | null) => {
     const headers = new Headers(init.headers);
     if (token) headers.set('Authorization', `Bearer ${token}`);
-    return fetch(url, { ...init, headers });
+    return fetch(url, { ...init, headers }).catch(() => {
+      throw new ApiError(m.apierr_network(), 0);
+    });
   };
   const used = auth.accessToken;
   const userId = auth.user?.id;

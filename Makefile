@@ -63,11 +63,10 @@ test:
 	go test -race ./...
 	cd web && npm run check && npm test
 
-# Run the v1 regression suite (web/e2e/). Defaults to the dev host at
-# 192.168.10.164:8080 with admin credentials. Override with
-# DOCKMESH_URL / DOCKMESH_USER / DOCKMESH_PASS env vars.
-test-e2e:
-	cd web && npx playwright test --project=v1-regression
+# Playwright flows in English and German against a throwaway instance
+# started from ./dockmesh (see web/tests/run-ephemeral.sh).
+test-e2e: build
+	web/tests/run-ephemeral.sh
 
 lint:
 	golangci-lint run
