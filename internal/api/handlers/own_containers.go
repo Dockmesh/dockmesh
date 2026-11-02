@@ -179,15 +179,24 @@ func (h *Handlers) checkRestoreVolume(ctx context.Context, hostID, name string) 
 	if err != nil {
 		return fmt.Errorf("check volume %s: %w", name, err)
 	}
+	if ownContainerMounts(hostID, cs, name) {
+		return errOwnVolume
+	}
+	return nil
+}
+
+// ownContainerMounts reports whether one of Dockmesh's own containers in
+// cs mounts the volume name.
+func ownContainerMounts(hostID string, cs []container.Summary, name string) bool {
 	for _, c := range cs {
 		if !isOwnSummary(hostID, c) {
 			continue
 		}
 		for _, m := range c.Mounts {
 			if m.Type == mount.TypeVolume && m.Name == name {
-				return errOwnVolume
+				return true
 			}
 		}
 	}
-	return nil
+	return false
 }
