@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -32,7 +33,7 @@ func seedLocalBackupRoots(ctx context.Context, st *settings.Store, db *sql.DB, s
 			return
 		}
 		if lc.Path == "" {
-			lc.Path = targets.DefaultLocalPath
+			lc.Path = targets.LegacyLocalPath
 		}
 		used = append(used, lc.Path)
 	}
@@ -175,4 +176,41 @@ func repairJobSecretsOnce(ctx context.Context, st *settings.Store, svc *backup.S
 		return err
 	}
 	return st.Set(ctx, jobRepairDoneSetting, "done")
+}
+
+// pinEmptyLocalPath decides once which absolute directory a local target
+// without a path writes to. An unset path used to mean ./data/backups
+// below the working directory; when that directory already holds
+// archives it stays the place, so their runs remain restorable, else
+// <dataDir>/backups is used.
+func pinEmptyLocalPath(ctx context.Context, st *settings.Store, dataDir, workDir string) (string, error) {
+	if dir := st.Get(targets.EmptyPathSetting, ""); dir != "" {
+		return dir, nil
+	}
+	dir, err := filepath.Abs(filepath.Join(dataDir, "backups"))
+	if err != nil {
+		return "", err
+	}
+	if legacy := filepath.Join(workDir, targets.LegacyLocalPath); dirHasFiles(filepath.Join(legacy, "jobs")) {
+		dir = filepath.Clean(legacy)
+	}
+	if err := st.Set(ctx, targets.EmptyPathSetting, dir); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func dirHasFiles(dir string) bool {
+	found := false
+	_ = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return fs.SkipAll
+		}
+		if d.Type().IsRegular() {
+			found = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return found
 }

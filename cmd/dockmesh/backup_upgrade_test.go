@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -111,5 +112,58 @@ func TestPrepareJobTargetsRepairsBeforeMigrating(t *testing.T) {
 		if o.Key == "backups.job-secret-missing" {
 			t.Fatalf("migrated job reported as missing its secret: %s", o.Body)
 		}
+	}
+}
+
+func TestPinEmptyLocalPath(t *testing.T) {
+	tests := []struct {
+		name           string
+		legacyArchives bool
+		wantLegacy     bool
+	}{
+		{"fresh install", false, false},
+		{"archives in the old working-directory default", true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { database.Close() })
+			if err := db.Migrate(database); err != nil {
+				t.Fatal(err)
+			}
+			st := settings.NewStore(database)
+			dataDir := filepath.Join(t.TempDir(), "var-data")
+			workDir := t.TempDir()
+			legacy := filepath.Join(workDir, "data", "backups")
+			if tt.legacyArchives {
+				archive := filepath.Join(legacy, "jobs", "web", "20261101-030000-r1.tar.gz")
+				if err := os.MkdirAll(filepath.Dir(archive), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(archive, []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := pinEmptyLocalPath(ctx, st, dataDir, workDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := filepath.Join(dataDir, "backups")
+			if tt.wantLegacy {
+				want = legacy
+			}
+			if got != want {
+				t.Errorf("pinned %q, want %q", got, want)
+			}
+			// Later starts from another working directory keep the choice.
+			again, err := pinEmptyLocalPath(ctx, st, dataDir, t.TempDir())
+			if err != nil || again != got {
+				t.Errorf("second start: %q %v, want %q", again, err, got)
+			}
+		})
 	}
 }

@@ -95,7 +95,7 @@ func (s *Service) MigrateSystemJobPath(ctx context.Context) (from, to string, er
 	}
 	from, _ = cfg["path"].(string)
 	if from == "" {
-		from = targets.DefaultLocalPath
+		from = targets.LegacyLocalPath
 	}
 	if filepath.IsAbs(from) {
 		return "", "", nil

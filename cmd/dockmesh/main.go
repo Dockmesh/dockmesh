@@ -648,6 +648,13 @@ func main() {
 	targets.SetLocalRoots(func() []string {
 		return targets.ParseRoots(settingsStore.Get(targets.LocalRootsSetting, ""))
 	})
+	if wd, err := os.Getwd(); err != nil {
+		slog.Warn("working directory unknown; local backup targets without a path are refused", "err", err)
+	} else if dir, err := pinEmptyLocalPath(ctx, settingsStore, filepath.Dir(cfg.DBPath), wd); err != nil {
+		slog.Warn("pin the directory for local backup targets without a path", "err", err)
+	} else {
+		targets.SetEmptyPathDir(dir)
+	}
 	if tz := settingsStore.Get(backup.TimezoneSetting, ""); tz != "" {
 		if err := backupSvc.SetTimezone(ctx, tz); err != nil {
 			slog.Warn("backup time zone setting ignored, using the server time zone", "err", err)

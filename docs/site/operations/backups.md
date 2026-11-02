@@ -41,7 +41,7 @@ A job stores its own copy of the target configuration, including credentials. Ed
 
 | Type | Config fields | Defaults |
 |---|---|---|
-| Local | `path` | `./data/backups` |
+| Local | `path` | `<data directory>/backups` (see below) |
 | S3 | `endpoint`, `bucket`, `region`, `access_key`, `secret_key`, `prefix`, `use_ssl` | region `us-east-1` |
 | SFTP | `host`, `port`, `username`, `password`, `private_key`, `path` | port 22, path `/backups` |
 | SMB | `host`, `port`, `share`, `username`, `password`, `path` | port 445, path `backups` |
@@ -53,7 +53,7 @@ Archives are written to `jobs/<job-name>/<UTC timestamp>-r<run id>.tar.gz`, with
 <!-- update after: backups: run in the background, set the time zone, use saved targets -->
 Know the limits of each target type before you rely on it:
 
-- **Local**: a relative path is resolved against the server's working directory, which is `/` under the systemd unit that `install.sh` writes. Always enter an absolute path, such as `/var/lib/dockmesh-backups`, and keep it outside the data directory. Otherwise every system backup also contains all earlier backups. A local target on the server's own disk does not protect you against losing that disk.
+- **Local**: a relative path is resolved against the server's working directory, which is `/` under the systemd unit that `install.sh` writes. A local target without a path writes to `<data directory>/backups`, or to `./data/backups` below the working directory if that already held archives when the server first started on this version; the choice is saved in the `backups.empty_path_dir` setting and doesn't change later. Always enter an absolute path, such as `/var/lib/dockmesh-backups`, and keep it outside the data directory. Otherwise every system backup also contains all earlier backups. A local target on the server's own disk does not protect you against losing that disk.
 - **S3**: the target form has no TLS switch and no prefix field, and `use_ssl` defaults to false. A target created in the UI talks plain HTTP to the endpoint. Set `"use_ssl": true` (and `prefix` if you need one) through the API. Each archive is first written to a temporary file on the server and then uploaded in one request, so the server needs free temporary disk space as large as the archive.
 - **SFTP**: the server's host key is not verified, so anyone who can intercept the connection can impersonate the server. Only use SFTP on networks you trust. The form only offers password authentication; `private_key` (PEM) can be set through the API.
 - **SMB**: does not work when the Dockmesh server runs on Linux. The job folder is never created and listing returns wrong paths, so retention deletes nothing. Do not use SMB targets there.
@@ -119,7 +119,7 @@ For MySQL or MariaDB the command would be `["sh", "-c", "mysqldump -u root -p\"$
 
 ## Default system backup
 
-`PUT /api/v1/backups/system/enabled` with `{"enabled": true}` creates a job named `dockmesh-system`: system source, daily at `0 3 * * *`, 14 days retention, local target `./data/backups`, encrypted when secrets encryption is on. If a job with a system source already exists, no new job is created. `{"enabled": false}` disables it. The UI has no switch for this; you can also create the same job in the wizard with **Whole dockmesh**. Change its target to an absolute path, or better an off-host target, for the reasons given under [Targets](#targets).
+`PUT /api/v1/backups/system/enabled` with `{"enabled": true}` creates a job named `dockmesh-system`: system source, daily at `0 3 * * *`, 14 days retention, local target `<data directory>/backups`, encrypted when secrets encryption is on. If a job with a system source already exists, no new job is created. `{"enabled": false}` disables it. The UI has no switch for this; you can also create the same job in the wizard with **Whole dockmesh**. Change its target to an absolute path, or better an off-host target, for the reasons given under [Targets](#targets).
 
 Installs upgraded from older versions may still have an auto-created `dockmesh-system` job. The **Jobs** tab flags it for review with **Keep** and **Disable** buttons.
 

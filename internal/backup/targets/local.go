@@ -23,9 +23,23 @@ type LocalConfig struct {
 const (
 	LocalRootsSetting       = "backups.local_roots"
 	LocalRootsSeededSetting = "backups.local_roots_seeded"
-	// DefaultLocalPath is what an unset path means; new targets get DefaultLocalDir.
-	DefaultLocalPath = "./data/backups"
+	// LegacyLocalPath is what an unset path meant before it was pinned
+	// to an absolute directory (EmptyPathSetting); it resolved against the
+	// server's working directory.
+	LegacyLocalPath = "./data/backups"
+	// EmptyPathSetting records the absolute directory an unset path
+	// means, chosen once so it never depends on the working directory.
+	EmptyPathSetting = "backups.empty_path_dir"
 )
+
+var emptyPathDir string
+
+// SetEmptyPathDir sets the directory an unset local path means.
+func SetEmptyPathDir(dir string) { emptyPathDir = dir }
+
+// ErrLocalPathUnset refuses a local target without a path before the
+// server set what an unset path means.
+var ErrLocalPathUnset = errors.New("local backup target has no path")
 
 // ErrLocalPathNotAllowed is returned for a local target outside every
 // allowed root.
@@ -123,7 +137,10 @@ func NewLocal(raw any) (*Local, error) {
 		return nil, err
 	}
 	if cfg.Path == "" {
-		cfg.Path = DefaultLocalPath
+		if emptyPathDir == "" {
+			return nil, ErrLocalPathUnset
+		}
+		cfg.Path = emptyPathDir
 	}
 	base, rel, err := locate(cfg.Path)
 	if err != nil {
