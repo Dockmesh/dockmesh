@@ -310,3 +310,24 @@ func TestInstallDataDirAllowed(t *testing.T) {
 		}
 	}
 }
+
+// The service user is gone after uninstall.sh, so its kept files belong to
+// a UID without an account; a reinstall must still pick them up.
+func TestInstallEnvFileTrustOrphanedOwner(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	helpers := envHelpers(t)
+	dir := filepath.Join(t.TempDir(), "dm")
+	if err := os.Mkdir(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	f := filepath.Join(dir, "dockmesh.env")
+	mustWrite(t, f, "DOCKMESH_HTTP_ADDR=:8080\n")
+	// id fails for every UID, as it does for a deleted account.
+	h := strings.Replace(helpers, "id -nu", "false", 1)
+	t.Setenv("TEST_TRUSTED_OWNERS", "root dockmesh")
+	if _, stderr, err := runHelper(t, h, nil, "env_file_trusted", f); err != nil {
+		t.Errorf("orphaned owner refused: %v %s", err, stderr)
+	}
+}

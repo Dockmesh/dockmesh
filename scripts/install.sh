@@ -196,15 +196,19 @@ TRUSTED_ENV_OWNERS="root dockmesh"
 
 # env_file_trusted FILE succeeds when FILE may become the config of a
 # service with Docker access: named dockmesh.env, and the file and its
-# directory owned by a trusted owner and not writable by group or others.
+# directory not writable by group or others and owned by a trusted owner
+# or by a UID without an account (uninstall.sh deletes the service user
+# but keeps its data).
 env_file_trusted() {
-  local f="$1" p meta owner mode
+  local f="$1" p meta uid mode owner
   [ "$(basename "$f")" = "dockmesh.env" ] || return 1
   for p in "$f" "$(dirname "$f")"; do
-    meta="$($USE_SUDO stat -c '%U %a' "$p" 2>/dev/null || $USE_SUDO stat -f '%Su %Lp' "$p" 2>/dev/null)" || return 1
-    owner="${meta%% *}"
+    meta="$($USE_SUDO stat -c '%u %a' "$p" 2>/dev/null || $USE_SUDO stat -f '%u %Lp' "$p" 2>/dev/null)" || return 1
+    uid="${meta%% *}"
     mode="${meta##* }"
-    case " $TRUSTED_ENV_OWNERS " in *" $owner "*) ;; *) return 1 ;; esac
+    if owner="$(id -nu "$uid" 2>/dev/null)"; then
+      case " $TRUSTED_ENV_OWNERS " in *" $owner "*) ;; *) return 1 ;; esac
+    fi
     [ $(( 8#$mode & 8#022 )) -eq 0 ] || return 1
   done
 }
