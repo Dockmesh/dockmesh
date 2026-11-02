@@ -173,6 +173,11 @@ paths:
               schema: {$ref: "#/components/schemas/AgentReachability"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+        "429":
+          description: Another connection check is still running.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "503":
           description: Remote agents are not configured on this server.
           content:

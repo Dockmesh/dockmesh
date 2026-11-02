@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -48,6 +49,24 @@ const reachDialTimeout = 5 * time.Second
 // server's point of view cannot prove that remote hosts get the same
 // answer, which the messages say where it matters.
 func (s *Service) CheckReachability(ctx context.Context) Reachability {
+	return s.checkReachability(ctx)
+}
+
+// ErrCheckRunning is returned by TryCheckReachability while another check
+// is still dialing.
+var ErrCheckRunning = errors.New("a connection check is already running")
+
+// TryCheckReachability runs CheckReachability unless one is already in
+// progress, so repeated calls cannot pile up outbound connections.
+func (s *Service) TryCheckReachability(ctx context.Context) (Reachability, error) {
+	if !s.reachMu.TryLock() {
+		return Reachability{}, ErrCheckRunning
+	}
+	defer s.reachMu.Unlock()
+	return s.checkReachability(ctx), nil
+}
+
+func (s *Service) checkReachability(ctx context.Context) Reachability {
 	e := s.Endpoints()
 	s.urlMu.RLock()
 	listenerEnabled := s.listenerOn
@@ -196,8 +215,22 @@ func (s *Service) dialContext(ctx context.Context, network, addr string) (net.Co
 	if s.dial != nil {
 		return s.dial(ctx, network, addr)
 	}
-	var d net.Dialer
+	d := net.Dialer{Control: refuseLinkLocal}
 	return d.DialContext(ctx, network, addr)
+}
+
+// refuseLinkLocal keeps the check away from link-local addresses, where
+// cloud metadata services live; no agent listener is reached that way.
+func refuseLinkLocal(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return fmt.Errorf("refusing to dial %s", host)
+	}
+	return nil
 }
 
 func isLoopbackName(host string) bool {

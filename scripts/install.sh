@@ -191,15 +191,48 @@ get_time() {
 # Env files of an earlier install at the script's default data dirs.
 ENV_FILE_CANDIDATES=(/var/lib/dockmesh/dockmesh.env /data/dockmesh.env /usr/local/var/dockmesh/dockmesh.env)
 
+# Owners an env file of an earlier install may have to be reused.
+TRUSTED_ENV_OWNERS="root dockmesh"
+
+# env_file_trusted FILE succeeds when FILE may become the config of a
+# service with Docker access: named dockmesh.env, and the file and its
+# directory owned by a trusted owner and not writable by group or others.
+env_file_trusted() {
+  local f="$1" p meta owner mode
+  [ "$(basename "$f")" = "dockmesh.env" ] || return 1
+  for p in "$f" "$(dirname "$f")"; do
+    meta="$($USE_SUDO stat -c '%U %a' "$p" 2>/dev/null || $USE_SUDO stat -f '%Su %Lp' "$p" 2>/dev/null)" || return 1
+    owner="${meta%% *}"
+    mode="${meta##* }"
+    case " $TRUSTED_ENV_OWNERS " in *" $owner "*) ;; *) return 1 ;; esac
+    [ $(( 8#$mode & 8#022 )) -eq 0 ] || return 1
+  done
+}
+
+# data_dir_allowed DIR fails for system directories the script must never
+# take over as a data dir.
+data_dir_allowed() {
+  case "${1%/}" in
+    ""|/|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/media|/mnt|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/usr/local|/var|/var/lib) return 1 ;;
+  esac
+}
+
 # find_existing_env_file [PATH...] prints the first regular env file among
 # the given paths and ENV_FILE_CANDIDATES. A reinstall with a different
 # INSTALL_DIR, or over a data dir kept by uninstall.sh, picks up that file
-# instead of writing a new one.
+# instead of writing a new one. One that fails env_file_trusted or sits in
+# a system directory stops the install.
 find_existing_env_file() {
   local p
   for p in "$@" "${ENV_FILE_CANDIDATES[@]}"; do
     [ -n "$p" ] || continue
     if $USE_SUDO test -f "$p" && ! $USE_SUDO test -L "$p"; then
+      if ! env_file_trusted "$p"; then
+        die "refusing to reuse $p: it must be named dockmesh.env and, like its directory, be owned by root or dockmesh and not writable by group or others"
+      fi
+      if ! data_dir_allowed "$(dirname "$p")"; then
+        die "refusing to reuse $p: $(dirname "$p") is a system directory, not a Dockmesh data dir"
+      fi
       printf '%s' "$p"
       return 0
     fi
@@ -1074,7 +1107,14 @@ else
   # service can write everywhere; on macOS root owns it.
   $USE_SUDO mkdir -p "$DATA_DIR/data" "$DATA_DIR/stacks"
   if [ "$OS" = "linux" ]; then
-    $USE_SUDO chown -R dockmesh:docker "$DATA_DIR"
+    if [ -n "$KEPT_ENV_FILE" ]; then
+      # A recreated service user may have a new UID; only the dirs the
+      # service writes are handed back to it.
+      $USE_SUDO chown dockmesh:docker "$DATA_DIR"
+      $USE_SUDO chown -R dockmesh:docker "$DATA_DIR/data" "$DATA_DIR/stacks"
+    else
+      $USE_SUDO chown -R dockmesh:docker "$DATA_DIR"
+    fi
     $USE_SUDO chmod 750 "$DATA_DIR"
   fi
   ok "data layout     $DATA_DIR/{data,stacks}"

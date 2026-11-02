@@ -123,7 +123,8 @@ func runHelper(t *testing.T, helpers string, candidates []string, call string, a
 		quoted = append(quoted, "'"+filepath.ToSlash(c)+"'")
 	}
 	script := "set -euo pipefail\nUSE_SUDO=\nok() { :; }\ninfo() { :; }\nwarn() { echo \"WARN $*\" >&2; }\ndie() { echo \"$*\" >&2; exit 1; }\n" +
-		helpers + "\nENV_FILE_CANDIDATES=(" + strings.Join(quoted, " ") + ")\n" + call + " \"$@\"\n"
+		helpers + "\nENV_FILE_CANDIDATES=(" + strings.Join(quoted, " ") + ")\n" +
+		"TRUSTED_ENV_OWNERS=\"${TEST_TRUSTED_OWNERS:-root dockmesh $(id -un)}\"\n" + call + " \"$@\"\n"
 	for i := range args {
 		args[i] = filepath.ToSlash(args[i])
 	}
@@ -230,5 +231,82 @@ func TestInstallWarnStaleAssetPaths(t *testing.T) {
 				t.Errorf("env file changed: %q", b)
 			}
 		})
+	}
+}
+
+func TestInstallEnvFileTrust(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	helpers := envHelpers(t)
+
+	tests := []struct {
+		name      string
+		file      string
+		owners    string // TRUSTED_ENV_OWNERS override, "" keeps the test user trusted
+		groupMode bool   // make the file group-writable
+		wantOK    bool
+	}{
+		{name: "own dockmesh.env", file: "dockmesh.env", wantOK: true},
+		{name: "other file name", file: "other.env"},
+		{name: "owner not trusted", file: "dockmesh.env", owners: "root dockmesh"},
+		{name: "group writable", file: "dockmesh.env", groupMode: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.groupMode && runtime.GOOS == "windows" {
+				t.Skip("no POSIX modes on Windows")
+			}
+			dir := filepath.Join(t.TempDir(), "dm")
+			if err := os.Mkdir(dir, 0o750); err != nil {
+				t.Fatal(err)
+			}
+			f := filepath.Join(dir, tt.file)
+			mustWrite(t, f, "DOCKMESH_HTTP_ADDR=:8080\n")
+			if tt.groupMode {
+				if err := os.Chmod(f, 0o664); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("TEST_TRUSTED_OWNERS", tt.owners)
+			_, stderr, err := runHelper(t, helpers, nil, "env_file_trusted", f)
+			if (err == nil) != tt.wantOK {
+				t.Errorf("env_file_trusted = %v, want ok=%v (%s)", err, tt.wantOK, stderr)
+			}
+			if tt.wantOK {
+				return
+			}
+			_, _, err = runHelper(t, helpers, []string{f}, "find_existing_env_file")
+			if err == nil {
+				t.Error("find_existing_env_file reused an untrusted env file")
+			}
+		})
+	}
+}
+
+func TestInstallDataDirAllowed(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	helpers := envHelpers(t)
+	tests := []struct {
+		dir string
+		ok  bool
+	}{
+		{"/var/lib/dockmesh", true},
+		{"/data", true},
+		{"/srv/dockmesh", true},
+		{"/etc", false},
+		{"/etc/", false},
+		{"/", false},
+		{"/usr/local", false},
+		{"/var/lib", false},
+		{"/home", false},
+	}
+	for _, tt := range tests {
+		_, _, err := runHelper(t, helpers, nil, "data_dir_allowed", tt.dir)
+		if (err == nil) != tt.ok {
+			t.Errorf("data_dir_allowed(%s) = %v, want ok=%v", tt.dir, err, tt.ok)
+		}
 	}
 }

@@ -45,27 +45,39 @@ type EndpointInputs struct {
 }
 
 // ResolveEndpoints picks each URL from env, then the stored setting, then
-// a default; an unset agent URL is derived from the base URL.
+// a default; an unset agent URL is derived from the base URL. Both URLs end
+// up in a script that agent hosts run as root, so a value that fails
+// validation (one stored before validation existed, or a bad env value) is
+// skipped with a warning and the next source is used.
 func ResolveEndpoints(in EndpointInputs) Endpoints {
 	var e Endpoints
-	switch {
-	case strings.TrimSpace(in.EnvBaseURL) != "":
-		e.BaseURL, e.BaseSource = strings.TrimSpace(in.EnvBaseURL), SourceEnv
-	case strings.TrimSpace(in.SettingBaseURL) != "":
-		e.BaseURL, e.BaseSource = strings.TrimSpace(in.SettingBaseURL), SourceSetting
-	default:
+	e.BaseURL, e.BaseSource = pickURL(ValidateBaseURL, "base URL",
+		[2]string{in.EnvBaseURL, SourceEnv}, [2]string{in.SettingBaseURL, SourceSetting})
+	if e.BaseURL == "" {
 		e.BaseURL, e.BaseSource = in.DefaultBaseURL, SourceDefault
 	}
 	e.BaseURL = strings.TrimRight(e.BaseURL, "/")
-	switch {
-	case strings.TrimSpace(in.EnvAgentURL) != "":
-		e.AgentURL, e.AgentSource = strings.TrimSpace(in.EnvAgentURL), SourceEnv
-	case strings.TrimSpace(in.SettingAgentURL) != "":
-		e.AgentURL, e.AgentSource = strings.TrimSpace(in.SettingAgentURL), SourceSetting
-	default:
+	e.AgentURL, e.AgentSource = pickURL(ValidateAgentURL, "agent URL",
+		[2]string{in.EnvAgentURL, SourceEnv}, [2]string{in.SettingAgentURL, SourceSetting})
+	if e.AgentURL == "" {
 		e.AgentURL, e.AgentSource = DeriveAgentURL(e.BaseURL, in.AgentListen), SourceDerived
 	}
 	return e
+}
+
+func pickURL(validate func(string) error, what string, candidates ...[2]string) (string, string) {
+	for _, c := range candidates {
+		v := strings.TrimSpace(c[0])
+		if v == "" {
+			continue
+		}
+		if err := validate(v); err != nil {
+			slog.Warn("ignoring invalid "+what, "source", c[1], "value", v, "err", err)
+			continue
+		}
+		return v, c[1]
+	}
+	return "", ""
 }
 
 // DeriveAgentURL returns wss://<host of baseURL>:<listener port>/connect.
@@ -84,10 +96,15 @@ func listenPort(listen string) string {
 	return DefaultAgentPort
 }
 
-// ValidateBaseURL accepts an absolute http(s) URL with a host and no
-// query or fragment.
+// ValidateBaseURL accepts an absolute http(s) URL with no query or
+// fragment whose host can go into the listener certificate, since the
+// agent URL is derived from it.
 func ValidateBaseURL(raw string) error {
-	return validateURL(raw, "http", "https")
+	if err := validateURL(raw, "http", "https"); err != nil {
+		return err
+	}
+	u, _ := url.Parse(strings.TrimSpace(raw))
+	return pki.ValidateSAN(u.Hostname())
 }
 
 // ValidateAgentURL accepts an absolute wss:// URL whose host can go into
@@ -110,6 +127,9 @@ func validateURL(raw string, schemes ...string) error {
 	}
 	if u.Hostname() == "" {
 		return errors.New("has no host")
+	}
+	if strings.Contains(u.Hostname(), "*") {
+		return errors.New("must name one host, not a wildcard")
 	}
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("must not contain credentials, a query or a fragment")

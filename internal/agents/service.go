@@ -85,6 +85,7 @@ type Service struct {
 	urlMu      sync.RWMutex
 	endpoints  Endpoints
 	resolve    func() Endpoints
+	reachMu    sync.Mutex
 	listenerOn bool
 	// lookup and dial replace the resolver and dialer of the reachability
 	// check in tests.

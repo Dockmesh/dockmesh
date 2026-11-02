@@ -90,7 +90,12 @@ func (h *Handlers) CheckAgentReachability(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusServiceUnavailable, "agents not configured")
 		return
 	}
-	writeJSON(w, http.StatusOK, h.Agents.CheckReachability(r.Context()))
+	res, err := h.Agents.TryCheckReachability(r.Context())
+	if errors.Is(err, agents.ErrCheckRunning) {
+		writeError(w, http.StatusTooManyRequests, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (h *Handlers) DeleteAgent(w http.ResponseWriter, r *http.Request) {

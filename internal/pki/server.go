@@ -22,6 +22,10 @@ import (
 
 const serverCertValidity = 5 * 365 * 24 * time.Hour
 
+// maxServerSANs bounds the listener cert, which keeps every name and IP it
+// ever had.
+const maxServerSANs = 32
+
 func (m *Manager) ensureServerCert(hosts []string) error {
 	m.serverMu.Lock()
 	defer m.serverMu.Unlock()
@@ -84,6 +88,10 @@ func (m *Manager) ensureServerCertLocked(hosts []string) error {
 		} else {
 			dns = append(dns, h)
 		}
+	}
+	if d, i := mergeSANs(dns, ips); len(d)+len(i) > maxServerSANs {
+		return fmt.Errorf("the agent server certificate would carry %d names and IPs, more than %d; "+
+			"remove old ones with dockmesh ca rotate", len(d)+len(i), maxServerSANs)
 	}
 	cert, newCert, newKey, err := m.issueServerCert(dns, ips)
 	if err != nil {
