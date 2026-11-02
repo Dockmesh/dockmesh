@@ -145,12 +145,17 @@ func (h *Handlers) RollbackToDeployment(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	mergedEnv, err := h.mergeGlobalEnv(r.Context(), current.Env)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+
 	if _, err := h.Stacks.Update(name, entry.ComposeYAML, current.Env); err != nil {
 		writeError(w, http.StatusInternalServerError, "update stack files: "+err.Error())
 		return
 	}
 
-	mergedEnv := h.mergeGlobalEnv(r.Context(), current.Env)
 	deployYAML := entry.ComposeYAML
 	if entry.Environment != "" {
 		_, merged, err := compose.MergeEnvironment(r.Context(), dir, name, mergedEnv, entry.Environment)

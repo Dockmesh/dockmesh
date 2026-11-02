@@ -189,6 +189,9 @@ func (r ColumnRecorder) AcceptPendingHostKey(ctx context.Context) error {
 
 // BuildChecked builds a stored target with the host-key check attached.
 func (s *TargetStore) BuildChecked(ctx context.Context, t *StoredTarget, n *notices.Service) (Target, error) {
+	if t.CredentialsError != "" {
+		return nil, fmt.Errorf("backup target %q: %s", t.Name, t.CredentialsError)
+	}
 	built, err := Build(t.Type, t.Config)
 	if err != nil {
 		return nil, err

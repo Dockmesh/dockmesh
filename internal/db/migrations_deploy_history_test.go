@@ -2,6 +2,7 @@ package db
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -25,6 +26,11 @@ func TestDeployHistoryEnvironmentMigration(t *testing.T) {
 		{"web", merged, "rollback to #2"},
 		{"web", "services: {db: {image: postgres:17}}\n", "rollback to #1"},
 		{"other", merged, ""},
+		{"edited", "services: {db: {image: postgres}}\n", ""},
+		{"edited", "E: merged", "env: prod"},
+		{"edited", "E: merged", "rollback to #2"},
+		{"edited", "E: merged, then edited", ""},
+		{"clean", "services: {a: {image: x}}\n", "env: prod"},
 	}
 	for _, r := range rows {
 		if _, err := database.Exec(`INSERT INTO stack_deploy_history (stack_name, host_id, compose_yaml, note)
@@ -57,12 +63,25 @@ func TestDeployHistoryEnvironmentMigration(t *testing.T) {
 		1: rows[0].compose,
 		2: "",
 		3: "",
-		4: rows[3].compose,
+		4: "",
 		5: merged,
+		6: rows[5].compose,
+		7: "",
+		8: "",
+		9: "",
+		10: "",
 	}
 	for id, w := range want {
 		if got[id] != w {
 			t.Errorf("row %d: compose = %q, want %q", id, got[id], w)
 		}
+	}
+
+	var body string
+	if err := database.QueryRow(`SELECT body FROM notices WHERE key = 'stacks.compose-env-values'`).Scan(&body); err != nil {
+		t.Fatalf("notice: %v", err)
+	}
+	if !strings.Contains(body, "web") || !strings.Contains(body, "edited") || strings.Contains(body, "clean") || strings.Contains(body, "other") {
+		t.Errorf("notice names the wrong stacks: %s", body)
 	}
 }

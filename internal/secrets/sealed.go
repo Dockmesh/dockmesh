@@ -16,14 +16,18 @@ const SealedPrefix = "age:"
 // turned off: the plaintext can't be recovered without the key.
 var ErrSealedButDisabled = errors.New("value is encrypted but secrets encryption is disabled")
 
+// ageHeader starts every age file, so a plaintext value that merely
+// begins with the prefix isn't taken for a sealed one.
+const ageHeader = "age-encryption.org/v1\n"
+
 // IsSealed reports whether stored was written by SealString.
 func IsSealed(stored string) bool {
 	enc, ok := strings.CutPrefix(stored, SealedPrefix)
 	if !ok || enc == "" {
 		return false
 	}
-	_, err := base64.StdEncoding.DecodeString(enc)
-	return err == nil
+	ct, err := base64.StdEncoding.DecodeString(enc)
+	return err == nil && strings.HasPrefix(string(ct), ageHeader)
 }
 
 // SealString encrypts plain for a TEXT column. Empty values and a nil or

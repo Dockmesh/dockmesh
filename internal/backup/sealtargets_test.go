@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -161,5 +162,44 @@ func TestTargetSecretsStoredEncrypted(t *testing.T) {
 	}
 	if s3.Config.(map[string]any)["secret_key"] != "saved-secret" {
 		t.Errorf("s3 config = %v", s3.Config)
+	}
+}
+
+// A target whose credentials can't be decrypted still lists, can't run,
+// and can't be saved without entering the credentials again.
+func TestUnreadableTargetCredentials(t *testing.T) {
+	svc, _ := newTestService(t, true)
+	ctx := context.Background()
+	tgt, err := svc.Targets().Create(ctx, targets.TargetInput{Name: "s3", Type: "s3",
+		Config: map[string]any{"endpoint": "e", "bucket": "b", "access_key": "a", "secret_key": "saved-secret"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Targets().Create(ctx, targets.TargetInput{Name: "local", Type: "local", Config: map[string]any{"path": "/srv/backups"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	keyless := targets.NewTargetStore(svc.store.db, nil)
+	list, err := keyless.List(ctx)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("list = %d targets, %v", len(list), err)
+	}
+	got, err := keyless.Get(ctx, tgt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CredentialsError == "" || got.Config.(map[string]any)["secret_key"] != nil {
+		t.Fatalf("unreadable target = %+v", got)
+	}
+	if _, err := keyless.BuildChecked(ctx, got, nil); err == nil {
+		t.Error("target with unreadable credentials was built")
+	}
+	cfg := map[string]any{"endpoint": "e", "bucket": "b", "access_key": "a"}
+	if _, err := keyless.Update(ctx, tgt.ID, targets.TargetInput{Name: "s3", Type: "s3", Config: cfg}); !errors.Is(err, targets.ErrCredentialsUnreadable) {
+		t.Errorf("update without the secret: err = %v", err)
+	}
+	cfg["secret_key"] = "new-secret"
+	if _, err := keyless.Update(ctx, tgt.ID, targets.TargetInput{Name: "s3", Type: "s3", Config: cfg}); err != nil {
+		t.Errorf("update with a new secret: %v", err)
 	}
 }

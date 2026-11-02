@@ -19,6 +19,7 @@
     value: string;
     group_name: string;
     encrypted: boolean;
+    unreadable?: boolean;
     created_at: string;
     updated_at: string;
   }
@@ -496,7 +497,11 @@
                       {#if v.encrypted}
                         <span class="env-value-secret">
                           <span class="env-value-mask">•••••••••••••••</span>
-                          <span class="env-value-encrypted-pill">Hidden</span>
+                          {#if v.unreadable}
+                            <span class="env-value-encrypted-pill env-value-unreadable" title="The stored value can't be decrypted with this server's secrets key. Deploys fail until you set it again.">Can't decrypt</span>
+                          {:else}
+                            <span class="env-value-encrypted-pill">Hidden</span>
+                          {/if}
                         </span>
                       {:else}
                         <code class="env-value-text" title={v.value}>{v.value || ' '}</code>
@@ -588,7 +593,9 @@
 
     <Field
       label="Value"
-      hint={editing?.encrypted
+      hint={editing?.unreadable
+        ? "The stored value can't be decrypted. Enter it again."
+        : editing?.encrypted
         ? 'Secret value is never shown. Leave empty to keep the stored value.'
         : 'Plain string. Multi-line is fine.'}
     >
@@ -607,8 +614,8 @@
         Secret
         <span class="env-secret-check-hint">
           {editing?.encrypted
-            ? 'Stored encrypted and never shown. To make it plain, delete and re-create the variable.'
-            : 'Stored encrypted and never shown again after saving.'}
+            ? 'Never shown. To make it plain, delete and re-create the variable.'
+            : 'Never shown again after saving; stored encrypted unless secrets encryption is turned off on the server.'}
         </span>
       </span>
     </label>
@@ -1024,6 +1031,9 @@
     color: var(--fg-subtle);
     letter-spacing: 0.05em;
     user-select: none;
+  }
+  .env-value-encrypted-pill.env-value-unreadable {
+    color: var(--color-danger-400);
   }
   .env-value-encrypted-pill {
     font-size: 11.5px;

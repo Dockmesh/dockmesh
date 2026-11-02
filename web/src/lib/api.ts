@@ -986,6 +986,8 @@ export interface BackupTarget {
   free_bytes: number;
   last_checked_at?: string;
   job_count?: number;
+  /** Set when stored credentials can't be decrypted; enter them again. */
+  credentials_error?: string;
   created_at: string;
   updated_at: string;
 }

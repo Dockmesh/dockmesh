@@ -152,9 +152,7 @@ const jobRepairDoneSetting = "backups.job_repair_done"
 // plaintext. The order matters: the migration copies whatever secret the
 // job holds, so it must see the repaired one.
 func prepareJobTargets(ctx context.Context, st *settings.Store, svc *backup.Service, ts *targets.TargetStore, n *notices.Service, onRepair func(backup.Job, string)) error {
-	if err := repairJobSecretsOnce(ctx, st, svc, ts, n, onRepair); err != nil {
-		return err
-	}
+	repairErr := repairJobSecretsOnce(ctx, st, svc, ts, n, onRepair)
 	moved, err := svc.MigrateInlineTargets(ctx)
 	if moved > 0 {
 		slog.Info("backup: job targets moved to saved targets", "jobs", moved)
@@ -163,7 +161,7 @@ func prepareJobTargets(ctx context.Context, st *settings.Store, svc *backup.Serv
 	if sealed > 0 {
 		slog.Info("backup: encrypted stored target credentials", "rows", sealed)
 	}
-	return errors.Join(err, sealErr)
+	return errors.Join(repairErr, err, sealErr)
 }
 
 // repairJobSecretsOnce runs the job secret repair for the first start

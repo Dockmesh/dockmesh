@@ -2213,6 +2213,11 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "422":
+          description: The stored credentials can't be decrypted and the update doesn't enter them again.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
     delete:
       operationId: backups.delete_target
       tags: [backups]
@@ -3274,6 +3279,12 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422":
+          description: The secret's stored value can't be decrypted and the update leaves the value empty.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
     delete:
       operationId: global_env.delete
       tags: [global-env]
@@ -3928,7 +3939,8 @@ paths:
               schema:
                 type: object
                 properties:
-                  reencrypted: {type: integer}
+                  reencrypted: {type: integer, description: Stack .env files re-encrypted.}
+                  reencrypted_secrets: {type: integer, description: Stored backup target credentials and secret global variables re-encrypted.}
                   old_recipient: {type: string}
                   new_recipient: {type: string}
         "400":
@@ -8428,6 +8440,7 @@ components:
           type: object
           description: >-
             Empty for jobs that reference a saved target; the configuration lives on the target. For a job not yet moved to a saved target, secret fields (`password`, `secret_key`, `private_key`) are returned as `""` with a sibling `<field>_set: true` when a value is stored.
+        credentials_error: {type: string, description: "Set when the inline target's stored credentials can't be decrypted; the job can't run."}
         sources:
           type: array
           items: {$ref: "#/components/schemas/BackupSource"}
@@ -8584,6 +8597,7 @@ components:
         used_bytes: {type: integer, format: int64}
         last_checked_at: {type: string, format: date-time}
         job_count: {type: integer, description: "Backup jobs (not deleted ones) that write to this target. Only for callers whose access is all on everything."}
+        credentials_error: {type: string, description: "Set when stored credentials can't be decrypted (wrong secrets key, encryption turned off). The target can't run, and an update must enter them again (422 otherwise)."}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     BackupTargetInput:
@@ -8894,6 +8908,9 @@ components:
         encrypted:
           type: boolean
           description: True when the variable is marked secret; its value is write-only and stored encrypted.
+        unreadable:
+          type: boolean
+          description: The secret's stored value can't be decrypted (wrong secrets key, encryption turned off). Deploys using global variables fail until it is set again.
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     GlobalEnvInput:

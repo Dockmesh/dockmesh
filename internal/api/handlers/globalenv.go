@@ -177,6 +177,10 @@ func (h *Handlers) UpdateGlobalEnv(w http.ResponseWriter, r *http.Request) {
 	if prev.Encrypted {
 		in.Encrypted = true
 		if in.Value == "" {
+			if prev.Unreadable {
+				writeError(w, http.StatusUnprocessableEntity, "the stored value can't be decrypted; enter the value again")
+				return
+			}
 			in.Value = prev.Value
 		}
 	}

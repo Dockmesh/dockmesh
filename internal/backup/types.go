@@ -10,20 +10,23 @@ import (
 
 // Job is one row of backup_jobs.
 type Job struct {
-	ID             int64    `json:"id"`
-	Name           string   `json:"name"`
-	HostID         string   `json:"host_id,omitempty"`
-	TargetID       int64    `json:"target_id,omitempty"`
-	TargetType     string   `json:"target_type"`
-	TargetConfig   any      `json:"target_config"`
-	Sources        []Source `json:"sources"`
-	Schedule       string   `json:"schedule"`
-	RetentionCount int      `json:"retention_count"`
-	RetentionDays  int      `json:"retention_days"`
-	Encrypt        bool     `json:"encrypt"`
-	PreHooks       []Hook   `json:"pre_hooks"`
-	PostHooks      []Hook   `json:"post_hooks"`
-	Enabled        bool     `json:"enabled"`
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	HostID       string `json:"host_id,omitempty"`
+	TargetID     int64  `json:"target_id,omitempty"`
+	TargetType   string `json:"target_type"`
+	TargetConfig any    `json:"target_config"`
+	// CredentialsError is set when the inline target's stored credentials
+	// can't be decrypted.
+	CredentialsError string   `json:"credentials_error,omitempty"`
+	Sources          []Source `json:"sources"`
+	Schedule         string   `json:"schedule"`
+	RetentionCount   int      `json:"retention_count"`
+	RetentionDays    int      `json:"retention_days"`
+	Encrypt          bool     `json:"encrypt"`
+	PreHooks         []Hook   `json:"pre_hooks"`
+	PostHooks        []Hook   `json:"post_hooks"`
+	Enabled          bool     `json:"enabled"`
 	// NeedsReview is true when the job was auto-created by an older
 	// version of dockmesh and the operator has not yet confirmed they
 	// want to keep it. New installs never set this.

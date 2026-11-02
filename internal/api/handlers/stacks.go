@@ -33,16 +33,25 @@ import (
 // .env line with the same KEY still wins (the stack's KEY= lines come
 // after globals in the resulting string and later definitions
 // override earlier ones in .env resolution).
-func (h *Handlers) mergeGlobalEnv(ctx context.Context, stackEnv string) string {
+//
+// A variable that can't be read fails the deploy: deploying without it
+// would silently fall back to compose defaults.
+func (h *Handlers) mergeGlobalEnv(ctx context.Context, stackEnv string) (string, error) {
 	if h.GlobalEnv == nil {
-		return stackEnv
+		return stackEnv, nil
 	}
 	vars, err := h.GlobalEnv.List(ctx)
-	if err != nil || len(vars) == 0 {
-		return stackEnv
+	if err != nil {
+		return "", fmt.Errorf("read global environment: %w", err)
+	}
+	if len(vars) == 0 {
+		return stackEnv, nil
 	}
 	var b strings.Builder
 	for _, v := range vars {
+		if v.Unreadable {
+			return "", fmt.Errorf("global variable %s can't be decrypted; check the secrets key or set the value again", v.Key)
+		}
 		fmt.Fprintf(&b, "%s=%s\n", v.Key, v.Value)
 	}
 	if stackEnv != "" {
@@ -51,7 +60,7 @@ func (h *Handlers) mergeGlobalEnv(ctx context.Context, stackEnv string) string {
 		}
 		b.WriteString(stackEnv)
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 type stackRequest struct {
@@ -1041,7 +1050,11 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 	// no override. The empty-string fallback makes this a no-op for
 	// stacks that don't use the overlay pattern at all.
 	composeYAML := detail.Compose
-	mergedEnv := h.mergeGlobalEnv(r.Context(), detail.Env)
+	mergedEnv, err := h.mergeGlobalEnv(r.Context(), detail.Env)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
 	envOverride, mergedYAML, envErr := h.resolveEnvOverride(r, name, detail.Compose, mergedEnv)
 	if envErr != nil {
 		writeError(w, http.StatusUnprocessableEntity, envErr.Error())
@@ -1205,7 +1218,10 @@ func (h *Handlers) stackRunning(ctx context.Context, target interface {
 // deploys the dep explicitly). Dependency-driven deploys get one
 // audit entry at the end under the main stack, not one per dep. P.12.7.
 func (h *Handlers) deployStackOnce(r *http.Request, target host.Host, name string, detail *stacks.Detail) error {
-	mergedEnv := h.mergeGlobalEnv(r.Context(), detail.Env)
+	mergedEnv, err := h.mergeGlobalEnv(r.Context(), detail.Env)
+	if err != nil {
+		return err
+	}
 	res, err := target.DeployStack(r.Context(), name, detail.Compose, mergedEnv)
 	if err != nil {
 		return err

@@ -504,14 +504,14 @@
           <span></span><span>Target</span><span>Type</span><span>Location</span><span>Jobs</span><span>Last test</span><span></span>
         </div>
         {#each sortedTargets as t (t.id)}
-          {@const tone = targetPendingHostKey(t) || t.status === 'error' ? 'bad' : t.status === 'connected' ? 'ok' : ''}
+          {@const tone = targetPendingHostKey(t) || t.credentials_error || t.status === 'error' ? 'bad' : t.status === 'connected' ? 'ok' : ''}
           {@const href = `/backups/targets/${t.id}`}
           {@const usedPct = t.total_bytes > 0 ? Math.round((t.used_bytes / t.total_bytes) * 100) : null}
           <div class="dm-tr dm-click" role="row" tabindex="0" style="grid-template-columns: {TGT_COLS}" onclick={() => goto(href)} onkeydown={(e) => rowKey(e, href)}>
             <span><span class="dm-dot {tone}"></span></span>
             <span class="dm-nm">
               <a {href} onclick={(e) => e.stopPropagation()}>{t.name}</a>
-              {#if targetPendingHostKey(t)}<small class="bad">SFTP host key changed</small>{:else if usedPct != null}<small class:warn={usedPct > 80}>{fmtBytes(t.free_bytes)} free · {usedPct} % used</small>{/if}
+              {#if t.credentials_error}<small class="bad" title={t.credentials_error}>Credentials can't be decrypted, enter them again</small>{:else if targetPendingHostKey(t)}<small class="bad">SFTP host key changed</small>{:else if usedPct != null}<small class:warn={usedPct > 80}>{fmtBytes(t.free_bytes)} free · {usedPct} % used</small>{/if}
             </span>
             <span class="muted">{targetTypeLabel(t.type)}</span>
             <span class="dm-mono dm-trunc muted small" title={targetLocation(t)}>{targetLocation(t)}</span>

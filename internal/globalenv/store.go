@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -17,13 +18,16 @@ import (
 
 // Var is one row in the global_env table.
 type Var struct {
-	ID        int64     `json:"id"`
-	Key       string    `json:"key"`
-	Value     string    `json:"value"`
-	Group     string    `json:"group_name"`
-	Encrypted bool      `json:"encrypted"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        int64  `json:"id"`
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	Group     string `json:"group_name"`
+	Encrypted bool   `json:"encrypted"`
+	// Unreadable marks a secret whose stored value can't be decrypted
+	// (wrong key, encryption turned off); Value is empty then.
+	Unreadable bool      `json:"unreadable,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // VarInput is the create/update payload.
@@ -66,9 +70,7 @@ func (s *Store) List(ctx context.Context) ([]Var, error) {
 		if err := rows.Scan(&v.ID, &v.Key, &v.Value, &v.Group, &enc, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
-		if err := s.open(&v, enc); err != nil {
-			return nil, err
-		}
+		s.open(&v, enc)
 		out = append(out, v)
 	}
 	return out, rows.Err()
@@ -113,18 +115,21 @@ func (s *Store) Update(ctx context.Context, id int64, in VarInput) (*Var, error)
 }
 
 // open decrypts the value of a variable marked encrypted. Plain variables
-// are taken as stored, even if they happen to look sealed.
-func (s *Store) open(v *Var, enc int) error {
+// are taken as stored, even if they happen to look sealed. A value that
+// can't be decrypted marks the variable unreadable instead of failing, so
+// the list still loads and the value can be set again.
+func (s *Store) open(v *Var, enc int) {
 	v.Encrypted = enc == 1
 	if !v.Encrypted {
-		return nil
+		return
 	}
 	plain, err := s.sec.OpenString(v.Value)
 	if err != nil {
-		return fmt.Errorf("global variable %s: %w", v.Key, err)
+		slog.Warn("global env: can't decrypt value", "key", v.Key, "err", err)
+		v.Value, v.Unreadable = "", true
+		return
 	}
 	v.Value = plain
-	return nil
 }
 
 // storedValue returns the value as it goes into the database, sealed for
@@ -211,9 +216,7 @@ func (s *Store) Get(ctx context.Context, id int64) (*Var, error) {
 		}
 		return nil, err
 	}
-	if err := s.open(&v, enc); err != nil {
-		return nil, err
-	}
+	s.open(&v, enc)
 	return &v, nil
 }
 
@@ -231,6 +234,9 @@ func (s *Store) Merged(ctx context.Context, stackEnv string) (string, error) {
 	// Build global lines, then append stack lines (stack overrides global).
 	var lines []string
 	for _, v := range vars {
+		if v.Unreadable {
+			return stackEnv, fmt.Errorf("global variable %s can't be decrypted", v.Key)
+		}
 		lines = append(lines, v.Key+"="+v.Value)
 	}
 	if stackEnv != "" {

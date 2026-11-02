@@ -72,6 +72,12 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422":
+          description: The secret's stored value can't be decrypted and the update leaves the value empty.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
     delete:
       operationId: global_env.delete
       tags: [global-env]
@@ -114,6 +120,9 @@ components:
         encrypted:
           type: boolean
           description: True when the variable is marked secret; its value is write-only and stored encrypted.
+        unreadable:
+          type: boolean
+          description: The secret's stored value can't be decrypted (wrong secrets key, encryption turned off). Deploys using global variables fail until it is set again.
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     GlobalEnvInput:

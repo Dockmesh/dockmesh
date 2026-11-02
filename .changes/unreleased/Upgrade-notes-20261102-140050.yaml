@@ -1,3 +1,3 @@
 kind: Upgrade notes
-body: "[secrets-at-rest, admins] On the first start, stored backup target credentials and secret global variables are encrypted automatically. Deploy history entries of environment-override deploys made before this version lose their compose snapshot, because it held .env values; they can no longer be rolled back to."
+body: "[secrets-at-rest, admins] On the first start, stored backup target credentials and secret global variables are encrypted automatically. Deploy history entries of environment-override deploys made before this version lose their compose snapshot, because it held .env values; they can no longer be rolled back to. Stacks whose compose.yaml an earlier rollback filled with .env values get a notice. The database snapshot taken before the upgrade (*.pre-migrate-*.bak next to the database) still holds the old plaintext values; delete it once the upgrade works."
 time: 2026-11-02T14:00:50.9015536+01:00

@@ -2,7 +2,7 @@ package backup
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
 )
@@ -51,7 +51,8 @@ func (s *Service) EncryptStoredTargetSecrets(ctx context.Context) (int, error) {
 		for _, r := range all {
 			sealed, changed, err := targets.ResealIfPlain(s.secrets, r.raw)
 			if err != nil {
-				return 0, fmt.Errorf("%s %d: %w", t.table, r.id, err)
+				slog.Warn("backup: can't encrypt stored credentials", "table", t.table, "id", r.id, "err", err)
+				continue
 			}
 			if !changed {
 				continue

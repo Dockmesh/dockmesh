@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/secrets"
@@ -22,9 +22,13 @@ type StoredTarget struct {
 	FreeBytes     int64      `json:"free_bytes"`
 	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
 	// JobCount is the number of backup jobs that write to this target.
-	JobCount  *int      `json:"job_count,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	JobCount *int `json:"job_count,omitempty"`
+	// CredentialsError is set when stored credentials can't be decrypted;
+	// the target can't be used until they are entered again.
+	CredentialsError string `json:"credentials_error,omitempty"`
+	unreadable       []string
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type TargetInput struct {
@@ -93,6 +97,14 @@ func (s *TargetStore) Update(ctx context.Context, id int64, in TargetInput) (*St
 	if err != nil {
 		return nil, err
 	}
+	if len(prev.unreadable) > 0 {
+		m, _ := in.Config.(map[string]any)
+		for _, k := range prev.unreadable {
+			if v, _ := m[k].(string); v == "" {
+				return nil, ErrCredentialsUnreadable
+			}
+		}
+	}
 	cfg, err := SealConfig(s.sec, KeepHostKey(prev.Type, prev.Config, in.Type, in.Config))
 	if err != nil {
 		return nil, err
@@ -150,11 +162,10 @@ func (s *TargetStore) scanTarget(r scanner) (*StoredTarget, error) {
 		return nil, err
 	}
 	t.JobCount = &jobs
-	cfg, err := OpenConfig(s.sec, cfgJSON)
-	if err != nil {
-		return nil, fmt.Errorf("backup target %q: %w", t.Name, err)
+	t.Config, t.unreadable = OpenConfigLenient(s.sec, cfgJSON)
+	if t.CredentialsError = credentialsError(t.unreadable); t.CredentialsError != "" {
+		slog.Warn("backup target credentials can't be decrypted", "target", t.Name, "fields", t.unreadable)
 	}
-	t.Config = cfg
 	if checked.Valid {
 		t.LastCheckedAt = &checked.Time
 	}

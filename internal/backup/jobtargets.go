@@ -281,6 +281,9 @@ func jobTarget(ctx context.Context, st *store, n *notices.Service, job *Job) (ta
 		}
 		return wrapRunTarget(built), nil
 	}
+	if job.CredentialsError != "" {
+		return nil, fmt.Errorf("backup job %q: %s", job.Name, job.CredentialsError)
+	}
 	operations.FromContext(ctx).AddSecrets(targetSecretValues(job.TargetType, job.TargetConfig)...)
 	t, err := buildTarget(job.TargetType, job.TargetConfig)
 	if err != nil {

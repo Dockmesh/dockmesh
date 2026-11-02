@@ -36,6 +36,8 @@ func TestSealString(t *testing.T) {
 		{"sealed value opens", on, sealed, "hunter2", nil},
 		{"legacy plaintext passes", on, "plain", "plain", nil},
 		{"plaintext with prefix but not base64", on, "age:not base64!", "age:not base64!", nil},
+		{"plaintext with prefix and base64", on, "age:Passw0rd", "age:Passw0rd", nil},
+		{"plaintext with prefix and short base64", on, "age:test", "age:test", nil},
 		{"empty", on, "", "", nil},
 		{"disabled service refuses sealed value", off, sealed, "", ErrSealedButDisabled},
 		{"nil service refuses sealed value", none, sealed, "", ErrSealedButDisabled},

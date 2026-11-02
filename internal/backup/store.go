@@ -5,7 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/dockmesh/dockmesh/internal/backup/targets"
@@ -447,11 +448,12 @@ func (s *store) scanJob(r rowScanner) (*Job, error) {
 	j.Encrypt = encrypt == 1
 	j.NeedsReview = needsReview == 1
 	j.ReviewAcked = reviewAcked == 1
-	cfg, err := targets.OpenConfig(s.sec, tcfg)
-	if err != nil {
-		return nil, fmt.Errorf("backup job %q target: %w", j.Name, err)
+	var unreadable []string
+	j.TargetConfig, unreadable = targets.OpenConfigLenient(s.sec, tcfg)
+	if len(unreadable) > 0 {
+		j.CredentialsError = "stored target " + strings.Join(unreadable, ", ") + " can't be decrypted (check the secrets key)"
+		slog.Warn("backup job target credentials can't be decrypted", "job", j.Name, "fields", unreadable)
 	}
-	j.TargetConfig = cfg
 	_ = json.Unmarshal([]byte(srcs), &j.Sources)
 	_ = json.Unmarshal([]byte(pre), &j.PreHooks)
 	_ = json.Unmarshal([]byte(post), &j.PostHooks)

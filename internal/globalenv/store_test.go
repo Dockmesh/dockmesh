@@ -10,7 +10,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/secrets"
 )
 
-func newTestStore(t *testing.T) (*Store, *secrets.Service) {
+func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -24,7 +24,7 @@ func newTestStore(t *testing.T) (*Store, *secrets.Service) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewStore(database, sec), sec
+	return NewStore(database, sec)
 }
 
 func storedValue(t *testing.T, s *Store, key string) string {
@@ -37,7 +37,7 @@ func storedValue(t *testing.T, s *Store, key string) string {
 }
 
 func TestSecretValuesStoredEncrypted(t *testing.T) {
-	s, _ := newTestStore(t)
+	s := newTestStore(t)
 	ctx := context.Background()
 	secret, err := s.Create(ctx, VarInput{Key: "DB_PASSWORD", Value: "pw-1", Encrypted: true})
 	if err != nil {
@@ -71,7 +71,7 @@ func TestSecretValuesStoredEncrypted(t *testing.T) {
 }
 
 func TestEncryptFlagged(t *testing.T) {
-	s, _ := newTestStore(t)
+	s := newTestStore(t)
 	ctx := context.Background()
 	for _, row := range []struct {
 		key, value string
@@ -105,5 +105,36 @@ func TestEncryptFlagged(t *testing.T) {
 	}
 	if got["API_TOKEN"] != "tok-legacy" || got["PLAIN"] != "age:QUJD" || got["EMPTY_SECRET"] != "" {
 		t.Errorf("values after migration = %v", got)
+	}
+}
+
+// A secret that can't be decrypted shows as unreadable instead of
+// breaking the list, and the merge for a deploy refuses it.
+func TestUnreadableSecret(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if _, err := s.Create(ctx, VarInput{Key: "DB_PASSWORD", Value: "pw", Encrypted: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Create(ctx, VarInput{Key: "BASE_DOMAIN", Value: "haus.lan"}); err != nil {
+		t.Fatal(err)
+	}
+	off, err := secrets.New("", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.sec = off
+	vars, err := s.List(ctx)
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	for _, v := range vars {
+		want := v.Key == "DB_PASSWORD"
+		if v.Unreadable != want || (want && v.Value != "") {
+			t.Errorf("%s: unreadable=%v value=%q", v.Key, v.Unreadable, v.Value)
+		}
+	}
+	if _, err := s.Merged(ctx, ""); err == nil {
+		t.Error("merge with an unreadable secret succeeded")
 	}
 }
