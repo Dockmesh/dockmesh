@@ -26,6 +26,7 @@ require (
 	github.com/mattn/go-shellwords v1.0.16
 	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/minio/minio-go/v7 v7.4.1
+	github.com/moby/docker-image-spec v1.3.1
 	github.com/pkg/sftp v1.13.12
 	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_golang v1.25.0
@@ -93,7 +94,6 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/minio/crc64nvme v1.1.1 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
-	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/sys/atomicwriter v0.1.0 // indirect
 	github.com/moby/term v0.5.2 // indirect
 	github.com/morikuni/aec v1.1.0 // indirect

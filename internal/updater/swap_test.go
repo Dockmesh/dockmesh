@@ -104,7 +104,7 @@ func TestSwapContainerRestoresOldOnFailure(t *testing.T) {
 		f := &fakeDocker{failOn: tt.failOn}
 		cli := f.client(t)
 		old := oldContainer()
-		_, err := swapContainer(context.Background(), cli, old, standaloneSpec(old, "nginx:1.28", nil))
+		_, err := swapContainer(context.Background(), cli, old, standaloneSpec(old, "nginx:1.28", nil, nil))
 		if err == nil {
 			t.Fatalf("%s: swap succeeded", tt.failOn)
 		}
@@ -116,7 +116,7 @@ func TestSwapContainerRemovesOldAfterSuccess(t *testing.T) {
 	f := &fakeDocker{}
 	cli := f.client(t)
 	old := oldContainer()
-	id, err := swapContainer(context.Background(), cli, old, standaloneSpec(old, "nginx:1.28", nil))
+	id, err := swapContainer(context.Background(), cli, old, standaloneSpec(old, "nginx:1.28", nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestSwapContainerRefusesAutoRemove(t *testing.T) {
 	cli := f.client(t)
 	old := oldContainer()
 	old.HostConfig.AutoRemove = true
-	if _, err := swapContainer(context.Background(), cli, old, standaloneSpec(old, "nginx:1.28", nil)); err == nil {
+	if _, err := swapContainer(context.Background(), cli, old, standaloneSpec(old, "nginx:1.28", nil, nil)); err == nil {
 		t.Fatal("swap of an auto-remove container succeeded")
 	}
 	if len(f.calls) != 0 {

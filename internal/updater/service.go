@@ -21,6 +21,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +39,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/docker"
 	"github.com/dockmesh/dockmesh/internal/operations"
 	"github.com/dockmesh/dockmesh/internal/stacks"
+	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 )
 
 var (
@@ -268,11 +272,9 @@ func (s *Service) Update(ctx context.Context, containerID, userID string) (*Resu
 	if st != nil {
 		newContainerID, err = s.swapService(ctx, cli, st, containerName, image, rollbackTag)
 	} else {
-		health := info.Config.Healthcheck
-		if health == nil && newInfo.Config != nil {
-			health = newInfo.Config.Healthcheck
-		}
-		newContainerID, err = swapContainer(ctx, cli, &info, standaloneSpec(&info, ref, health))
+		oldCfg := imageConfig(ctx, cli, oldImageID)
+		spec := standaloneSpec(&info, ref, oldCfg, newInfo.Config)
+		newContainerID, err = swapContainer(ctx, cli, &info, spec)
 	}
 	if err != nil {
 		err = fmt.Errorf("update %s: %w (previous image kept as %s)", containerName, err, rollbackTag)
@@ -379,7 +381,12 @@ func (s *Service) Rollback(ctx context.Context, containerID string, historyID in
 	if st != nil {
 		newID, err = s.swapService(ctx, cli, st, e.ContainerName, e.RollbackTag, info.Image)
 	} else {
-		newID, err = swapContainer(ctx, cli, &info, standaloneSpec(&info, e.RollbackTag, info.Config.Healthcheck))
+		rbInfo, ierr := cli.ImageInspect(ctx, e.RollbackTag)
+		if ierr != nil {
+			return nil, fmt.Errorf("inspect rollback image: %w", ierr)
+		}
+		spec := standaloneSpec(&info, e.RollbackTag, imageConfig(ctx, cli, info.Image), rbInfo.Config)
+		newID, err = swapContainer(ctx, cli, &info, spec)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("rollback %s: %w", e.ContainerName, err)
@@ -543,11 +550,29 @@ func (s *Service) recordStack(ctx context.Context, st *stackTarget, userID, note
 	}
 }
 
+// imageConfig is the config of an image, nil when it can't be read.
+func imageConfig(ctx context.Context, cli *client.Client, ref string) *dockerspec.DockerOCIImageConfig {
+	info, err := cli.ImageInspect(ctx, ref)
+	if err != nil {
+		slog.Warn("updater: inspect current image", "image", ref, "err", err)
+		return nil
+	}
+	return info.Config
+}
+
 // standaloneSpec rebuilds a non-stack container from its own inspected
-// config with a new image.
-func standaloneSpec(info *container.InspectResponse, image string, health *container.HealthConfig) newSpec {
+// config with a new image. The inspected config already holds the old
+// image's defaults; those are dropped so the new image's apply, and only
+// what the container set itself is carried over. Without the old image's
+// config everything is kept.
+func standaloneSpec(info *container.InspectResponse, image string, oldImg, newImg *dockerspec.DockerOCIImageConfig) newSpec {
 	cfg := *info.Config
 	cfg.Image = image
+	dropImageDefaults(&cfg, oldImg)
+	health := cfg.Healthcheck
+	if health == nil && newImg != nil {
+		health = newImg.Healthcheck
+	}
 	if info.Config.Volumes != nil {
 		cfg.Volumes = make(map[string]struct{}, len(info.Config.Volumes))
 		for k, v := range info.Config.Volumes {
@@ -582,6 +607,49 @@ func standaloneSpec(info *container.InspectResponse, image string, health *conta
 		}
 	}
 	return newSpec{cfg: &cfg, hostCfg: &hostCfg, netCfg: netCfg, health: healthFromConfig(health)}
+}
+
+// dropImageDefaults removes from cfg what it inherited from img, so the
+// container create applies the defaults of the image it runs now. An
+// entrypoint set on the container keeps its command, as docker resets
+// the image command when the entrypoint is overridden.
+func dropImageDefaults(cfg *container.Config, img *dockerspec.DockerOCIImageConfig) {
+	if img == nil {
+		return
+	}
+	inherited := make(map[string]bool, len(img.Env))
+	for _, e := range img.Env {
+		inherited[e] = true
+	}
+	cfg.Env = slices.DeleteFunc(slices.Clone(cfg.Env), func(e string) bool { return inherited[e] })
+	entrypointInherited := slices.Equal(cfg.Entrypoint, img.Entrypoint)
+	if entrypointInherited {
+		cfg.Entrypoint = nil
+		if slices.Equal(cfg.Cmd, img.Cmd) {
+			cfg.Cmd = nil
+		}
+	}
+	if cfg.WorkingDir == img.WorkingDir {
+		cfg.WorkingDir = ""
+	}
+	if cfg.User == img.User {
+		cfg.User = ""
+	}
+	if cfg.StopSignal == img.StopSignal {
+		cfg.StopSignal = ""
+	}
+	if img.Healthcheck != nil && reflect.DeepEqual(cfg.Healthcheck, img.Healthcheck) {
+		cfg.Healthcheck = nil
+	}
+	if len(img.Labels) > 0 && cfg.Labels != nil {
+		labels := maps.Clone(cfg.Labels)
+		for k, v := range img.Labels {
+			if labels[k] == v {
+				delete(labels, k)
+			}
+		}
+		cfg.Labels = labels
+	}
 }
 
 func containerNameOf(c container.Summary) string {
