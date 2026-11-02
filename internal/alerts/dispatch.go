@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notifications"
 	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/rbac"
@@ -32,6 +32,7 @@ type groupKey struct {
 type announcement struct {
 	target target
 	msg    string
+	text   i18n.Text
 	value  float64
 	ts     time.Time
 }
@@ -132,12 +133,15 @@ func (s *Service) sendCtx() context.Context {
 
 // sendGroup pings the rule's channels and, for fires, the bell.
 func (s *Service) sendGroup(ctx context.Context, g *outGroup) {
-	title, body := s.groupText(ctx, g)
+	title, body := s.groupText(ctx, g, i18n.Default)
 	r := &g.rule
 	if s.notify != nil && len(r.ChannelIDs) > 0 {
 		n := notify.Notification{
-			Title:     title,
-			Body:      body,
+			Title: title,
+			Body:  body,
+			Localize: func(lang string) (string, string) {
+				return s.groupText(ctx, g, lang)
+			},
 			Level:     g.level,
 			Metric:    r.Metric,
 			Threshold: r.Threshold,
@@ -153,7 +157,7 @@ func (s *Service) sendGroup(ctx context.Context, g *outGroup) {
 	if !g.resolved && s.notifs != nil {
 		bellTitle := "Alert firing: " + r.Name
 		if g.n > 1 {
-			bellTitle += " (" + s.groupSummary(ctx, g) + ")"
+			bellTitle += " (" + s.groupSummary(ctx, g, i18n.Default) + ")"
 		}
 		_, _ = s.notifs.Emit(ctx, alertNotification(r, g.items[0].target.hostID, bellTitle, body))
 	}
@@ -161,35 +165,44 @@ func (s *Service) sendGroup(ctx context.Context, g *outGroup) {
 
 // groupText renders the channel title and body; a group of one reads
 // exactly like a single alert.
-func (s *Service) groupText(ctx context.Context, g *outGroup) (string, string) {
+func (s *Service) groupText(ctx context.Context, g *outGroup, lang string) (string, string) {
 	name := g.rule.Name
 	if g.n == 1 {
 		if g.resolved {
-			return "✅ " + name + " resolved", g.items[0].msg
+			return i18n.T(lang, "alert.resolved", name), g.items[0].textIn(lang)
 		}
-		return "🔥 " + name, g.items[0].msg
+		return i18n.T(lang, "alert.fired", name), g.items[0].textIn(lang)
 	}
 	lines := make([]string, 0, len(g.items)+1)
 	for _, a := range g.items {
-		lines = append(lines, a.msg)
+		lines = append(lines, a.textIn(lang))
 	}
 	if more := g.n - len(g.items); more > 0 {
-		lines = append(lines, fmt.Sprintf("… and %d more", more))
+		lines = append(lines, i18n.T(lang, "alert.and_more", more))
 	}
-	summary := s.groupSummary(ctx, g)
+	summary := s.groupSummary(ctx, g, lang)
 	if g.resolved {
-		return "✅ " + name + " resolved: " + summary, strings.Join(lines, "\n")
+		return i18n.T(lang, "alert.resolved_group", name, summary), strings.Join(lines, "\n")
 	}
-	return "🔥 " + name + ": " + summary, strings.Join(lines, "\n")
+	return i18n.T(lang, "alert.fired_group", name, summary), strings.Join(lines, "\n")
+}
+
+// textIn renders the announcement; announcements queued without a text
+// keep their English message.
+func (a announcement) textIn(lang string) string {
+	if a.text.Key == "" {
+		return a.msg
+	}
+	return a.text.In(lang)
 }
 
 // groupSummary is "12 containers on dm-agent1".
-func (s *Service) groupSummary(ctx context.Context, g *outGroup) string {
-	out := fmt.Sprintf("%d %s", g.n, targetNoun(g.rule.Kind))
-	if host := s.hostLabel(ctx, g.items[0].target.hostID); host != "" {
-		out += " on " + host
+func (s *Service) groupSummary(ctx context.Context, g *outGroup, lang string) string {
+	noun := i18n.T(lang, "alert.noun."+targetNoun(g.rule.Kind))
+	if host := s.hostLabel(ctx, g.items[0].target.hostID, lang); host != "" {
+		return i18n.T(lang, "alert.group_summary_on", g.n, noun, host)
 	}
-	return out
+	return i18n.T(lang, "alert.group_summary", g.n, noun)
 }
 
 func targetNoun(kind string) string {
@@ -199,7 +212,7 @@ func targetNoun(kind string) string {
 	case KindDiskUsage:
 		return "mounts"
 	case KindBackupFailed, KindBackupMissed:
-		return "backup jobs"
+		return "backup_jobs"
 	case KindCertExpiry:
 		return "certificates"
 	}
@@ -208,12 +221,12 @@ func targetNoun(kind string) string {
 
 // hostLabel names a host for messages: the agent's name, "Local" for the
 // server itself, empty for the kinds without a host.
-func (s *Service) hostLabel(ctx context.Context, hostID string) string {
+func (s *Service) hostLabel(ctx context.Context, hostID, lang string) string {
 	switch hostID {
 	case "":
 		return ""
 	case "local":
-		return "Local"
+		return i18n.T(lang, "alert.host_local")
 	}
 	var name string
 	err := s.db.QueryRowContext(ctx, `SELECT name FROM agents WHERE id = ?`, hostID).Scan(&name)

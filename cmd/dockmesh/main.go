@@ -538,6 +538,7 @@ func main() {
 	auditSvc.SetProm(promMetrics)
 
 	notifySvc := notify.NewService(database)
+	notifySvc.SetEmailLanguages(userprefs.New(database).LanguageForEmail)
 	if err := notifySvc.Reload(ctx); err != nil {
 		slog.Warn("notify reload", "err", err)
 	}

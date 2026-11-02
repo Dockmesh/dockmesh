@@ -11,8 +11,8 @@ import (
 )
 
 type ntfyCfg struct {
-	URL      string `json:"url"`            // e.g. https://ntfy.sh/dockmesh-alerts
-	Token    string `json:"token,omitempty"` // optional auth for self-hosted ntfy
+	URL      string `json:"url"`                // e.g. https://ntfy.sh/dockmesh-alerts
+	Token    string `json:"token,omitempty"`    // optional auth for self-hosted ntfy
 	Priority int    `json:"priority,omitempty"` // 1-5, defaults to 3 (default)
 }
 

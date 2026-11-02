@@ -9,6 +9,7 @@ import (
 
 	"github.com/dockmesh/dockmesh/internal/alerts"
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notify"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/go-chi/chi/v5"
@@ -123,8 +124,11 @@ func (h *Handlers) TestNotificationChannel(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	test := notify.Notification{
-		Title:     "Dockmesh test notification",
-		Body:      "If you see this, the channel is wired up correctly.",
+		Title: i18n.T(i18n.Default, "notify.test_title"),
+		Body:  i18n.T(i18n.Default, "notify.test_body"),
+		Localize: func(lang string) (string, string) {
+			return i18n.T(lang, "notify.test_title"), i18n.T(lang, "notify.test_body")
+		},
 		Level:     notify.LevelInfo,
 		Container: "test",
 		Metric:    "cpu_percent",

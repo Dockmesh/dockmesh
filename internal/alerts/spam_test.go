@@ -192,14 +192,14 @@ func TestBurstOnOneHostIsOneNotification(t *testing.T) {
 	if burst == nil || burst.n != 12 || len(burst.items) != groupListMax {
 		t.Fatalf("agent group = %+v", burst)
 	}
-	title, body := s.groupText(ctx, burst)
+	title, body := s.groupText(ctx, burst, "en")
 	if want := "🔥 " + r.Name + ": 12 containers on dm-agent1"; title != want {
 		t.Errorf("title = %q, want %q", title, want)
 	}
 	if !strings.HasSuffix(body, "… and 2 more") {
 		t.Errorf("body does not end with the remainder: %q", body)
 	}
-	single, _ := s.groupText(ctx, byHost["local"])
+	single, _ := s.groupText(ctx, byHost["local"], "en")
 	if single != "🔥 "+r.Name {
 		t.Errorf("single alert title = %q", single)
 	}

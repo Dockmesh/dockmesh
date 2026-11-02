@@ -67,6 +67,9 @@ func TestErrorCodesAreUniqueIdentifiers(t *testing.T) {
 		if !valid.MatchString(code) {
 			t.Errorf("code %q for %q is not a lower-case identifier", code, msg)
 		}
+		if strings.HasPrefix(code, "http_") {
+			t.Errorf("code %q for %q uses the prefix of the generic codes", code, msg)
+		}
 		if other, dup := seen[code]; dup {
 			t.Errorf("code %q used for %q and %q", code, msg, other)
 		}
@@ -81,10 +84,10 @@ func TestWriteErrorCode(t *testing.T) {
 		want   string
 	}{
 		{http.StatusBadRequest, "invalid body", "invalid_body"},
-		{http.StatusBadRequest, "port 99999: out of range", "bad_request"},
-		{http.StatusNotFound, "stack foo: no such file", "not_found"},
-		{http.StatusInternalServerError, "disk full", "internal"},
-		{http.StatusTeapot, "odd", "error"},
+		{http.StatusBadRequest, "port 99999: out of range", "http_bad_request"},
+		{http.StatusNotFound, "stack foo: no such file", "http_not_found"},
+		{http.StatusInternalServerError, "disk full", "http_internal"},
+		{http.StatusTeapot, "odd", "http_error"},
 	}
 	for _, c := range cases {
 		rec := httptest.NewRecorder()

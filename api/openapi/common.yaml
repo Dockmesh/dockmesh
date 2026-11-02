@@ -17,8 +17,8 @@ components:
           description: |
             Stable identifier of the message, for clients that show errors in
             another language. Fixed messages have their own code; messages with
-            runtime detail carry a generic one per status (`bad_request`,
-            `not_found`, `conflict`, `unavailable`, `internal`, …).
+            runtime detail carry a generic `http_*` one per status (`http_bad_request`,
+            `http_not_found`, `http_unavailable`, `http_internal`, …).
     Operation:
       type: object
       required: [id, kind, target, status, steps, created_at]

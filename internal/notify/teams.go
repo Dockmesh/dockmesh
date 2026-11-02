@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	"github.com/dockmesh/dockmesh/internal/i18n"
 )
 
 type teamsCfg struct {
@@ -34,12 +36,12 @@ func parseTeams(raw json.RawMessage, hc *http.Client) (*teamsChannel, error) {
 func (c *teamsChannel) Send(ctx context.Context, n Notification) error {
 	facts := []map[string]string{}
 	if n.Container != "" {
-		facts = append(facts, map[string]string{"name": "Container", "value": n.Container})
+		facts = append(facts, map[string]string{"name": i18n.T(n.Lang, "notify.container"), "value": n.Container})
 	}
 	if n.Metric != "" {
 		facts = append(facts, map[string]string{
 			"name":  n.Metric,
-			"value": fmt.Sprintf("%s (threshold %s)", formatValue(n.Value), formatValue(n.Threshold)),
+			"value": fmt.Sprintf("%s (%s %s)", formatValue(n.Value), i18n.T(n.Lang, "notify.threshold"), formatValue(n.Threshold)),
 		})
 	}
 	body, err := json.Marshal(map[string]any{
@@ -49,10 +51,10 @@ func (c *teamsChannel) Send(ctx context.Context, n Notification) error {
 		"summary":    n.Title,
 		"sections": []any{
 			map[string]any{
-				"activityTitle": n.Title,
+				"activityTitle":    n.Title,
 				"activitySubtitle": n.Time.UTC().Format("2006-01-02 15:04:05 UTC"),
-				"text":          n.Body,
-				"facts":         facts,
+				"text":             n.Body,
+				"facts":            facts,
 			},
 		},
 	})

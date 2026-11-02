@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/dockmesh/dockmesh/internal/i18n"
 )
 
 // Pushover — https://pushover.net/api
@@ -46,10 +48,10 @@ func parsePushover(raw json.RawMessage, hc *http.Client) (*pushoverChannel, erro
 func (c *pushoverChannel) Send(ctx context.Context, n Notification) error {
 	body := n.Body
 	if n.Container != "" {
-		body += fmt.Sprintf("\nContainer: %s", n.Container)
+		body += fmt.Sprintf("\n%s: %s", i18n.T(n.Lang, "notify.container"), n.Container)
 	}
 	if n.Metric != "" {
-		body += fmt.Sprintf("\n%s: %s (threshold %s)", n.Metric, formatValue(n.Value), formatValue(n.Threshold))
+		body += fmt.Sprintf("\n%s: %s (%s %s)", n.Metric, formatValue(n.Value), i18n.T(n.Lang, "notify.threshold"), formatValue(n.Threshold))
 	}
 
 	form := url.Values{}

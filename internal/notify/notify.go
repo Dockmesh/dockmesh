@@ -17,6 +17,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/dockmesh/dockmesh/internal/i18n"
 )
 
 // Level controls the visual severity of the notification (icon/color).
@@ -39,6 +41,43 @@ type Notification struct {
 	Value     float64
 	Threshold float64
 	Time      time.Time
+	// Localize renders title and body in a language; nil keeps Title and
+	// Body for every channel.
+	Localize func(lang string) (title, body string)
+	// Lang is the language the channel renders labels in, set per send.
+	Lang string
+}
+
+// in returns n rendered for one language.
+func (n Notification) in(lang string) Notification {
+	lang = i18n.Normalize(lang)
+	if n.Localize != nil {
+		n.Title, n.Body = n.Localize(lang)
+	}
+	n.Lang = lang
+	return n
+}
+
+// channelLanguage reads the optional "language" key every channel config
+// may carry; channels without one get English.
+func channelLanguage(cfg json.RawMessage) string {
+	var c struct {
+		Language string `json:"language"`
+	}
+	if len(cfg) > 0 {
+		_ = json.Unmarshal(cfg, &c)
+	}
+	return i18n.Normalize(c.Language)
+}
+
+// localized sends n in the channel's language.
+type localized struct {
+	impl channelImpl
+	lang string
+}
+
+func (l localized) Send(ctx context.Context, n Notification) error {
+	return l.impl.Send(ctx, n.in(l.lang))
 }
 
 // Channel is a configured notification destination (one row in
@@ -78,6 +117,15 @@ type Service struct {
 
 	mu    sync.RWMutex
 	cache map[int64]*Channel // id → row, kept in sync with DB on writes
+
+	// emailLanguage resolves a recipient address to its user's language
+	// ("" when unknown), so mail reaches each user in their language.
+	emailLanguage func(ctx context.Context, addr string) (string, error)
+}
+
+// SetEmailLanguages installs the recipient language lookup for mail.
+func (s *Service) SetEmailLanguages(fn func(ctx context.Context, addr string) (string, error)) {
+	s.emailLanguage = fn
 }
 
 func NewService(db *sql.DB) *Service {
@@ -168,7 +216,17 @@ func (s *Service) prepare(id int64) (channelImpl, error) {
 	if isMutedNow(c.MuteSchedule, time.Now()) {
 		return nil, nil
 	}
-	return buildChannel(c, s.http)
+	impl, err := buildChannel(c, s.http)
+	if err != nil {
+		return nil, err
+	}
+	lang := channelLanguage(c.Config)
+	if e, ok := impl.(*emailChannel); ok {
+		e.lang = lang
+		e.langOf = s.emailLanguage
+		return e, nil
+	}
+	return localized{impl: impl, lang: lang}, nil
 }
 
 // SendToAll fans n out to multiple channels in parallel. Each channel
