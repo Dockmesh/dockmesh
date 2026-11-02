@@ -76,6 +76,9 @@ func (h *Handlers) CreateBackupJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !h.requireNotAuditTarget(w, r, in.TargetID) {
+		return
+	}
 	if err := resolveJobTargetSecrets(&in, nil); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -126,6 +129,9 @@ func (h *Handlers) UpdateBackupJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.requireJobAccess(w, r, prev, &in) || !h.checkBackupJobScope(w, r, in) || !h.checkBackupJobPlacement(w, r, prev, in) {
+		return
+	}
+	if in.TargetID != prev.TargetID && !h.requireNotAuditTarget(w, r, in.TargetID) {
 		return
 	}
 	if err := resolveJobTargetSecrets(&in, prev); err != nil {

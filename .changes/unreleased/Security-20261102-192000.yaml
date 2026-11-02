@@ -1,3 +1,3 @@
 kind: Security
-body: "A non-admin can no longer change or delete the backup target the audit log is archived to."
+body: "The backup target the audit log is archived to is hidden from non-admins, and only admins can change, delete or pick it for a job."
 time: 2026-11-02T19:20:00Z

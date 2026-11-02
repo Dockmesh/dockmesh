@@ -52,8 +52,10 @@ func leftoverDirs(cfg *config.Config) ([]leftoverDir, error) {
 	stacks := filepath.Clean(cfg.StacksRoot)
 	parent := filepath.Dir(stacks)
 	prefix := filepath.Base(stacks) + PreRestoreDir + "-"
+	// The stacks root's parent may be traversable but not listable for
+	// the service user; the data copies are still found then.
 	entries, err = os.ReadDir(parent)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fs.ErrPermission) {
 		return nil, err
 	}
 	for _, e := range entries {

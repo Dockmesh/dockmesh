@@ -49,6 +49,8 @@ func newBackupRunHostEnv(t *testing.T) *authzEnv {
 		r.Use(e.h.StackScope)
 		r.With(middleware.RequirePerm(rbac.PermBackupsView)).Get("/backups/runs/{id}", e.h.GetBackupRun)
 		r.With(middleware.RequirePerm(rbac.PermBackupsDelete)).Delete("/backups/targets/{id}", e.h.DeleteBackupTarget)
+		r.With(middleware.RequirePerm(rbac.PermBackupsView)).Get("/backups/targets", e.h.ListBackupTargets)
+		r.With(middleware.RequirePerm(rbac.PermBackupsCreate)).Post("/backups/jobs", e.h.CreateBackupJob)
 	})
 	e.user("boss", "admin")
 	tagged := e.user("thadmin", "host-admin")
@@ -101,6 +103,14 @@ func TestAuditArchiveTargetNeedsAdmin(t *testing.T) {
 		audit.RetentionTargetKey: "1",
 	}, nil)
 	tok := e.login("thadmin").AccessToken
+	if rr := e.do(http.MethodGet, "/backups/targets", tok, nil); rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), "audit-share") {
+		t.Errorf("host admin lists the audit target: %d %s", rr.Code, rr.Body)
+	}
+	job := map[string]any{"name": "onto-audit", "host_id": "agent-1", "target_id": 1, "target_type": "local",
+		"sources": []map[string]string{{"type": "volume", "name": "data"}}}
+	if rr := e.do(http.MethodPost, "/backups/jobs", tok, job); rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), "audit") {
+		t.Errorf("host admin creates a job on the audit target: %d %s, want 403", rr.Code, rr.Body)
+	}
 	rr := e.do(http.MethodDelete, "/backups/targets/1", tok, nil)
 	if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), "audit") {
 		t.Errorf("delete audit target as host admin: %d %s, want 403", rr.Code, rr.Body)

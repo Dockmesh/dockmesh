@@ -105,7 +105,7 @@ func (h *Handlers) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		// Where local backups may be written is as powerful as replacing the
 		// server binary, so it needs that permission rather than settings
 		// access.
-		if (e.Key == targets.LocalRootsSetting || e.Key == targets.LocalRootsSeededSetting) && !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermSystemUpgrade) {
+		if (e.Key == targets.LocalRootsSetting || e.Key == targets.LocalRootsSeededSetting || e.Key == targets.EmptyPathSetting) && !middleware.AccessOf(r.Context()).AllowsGlobally(rbac.PermSystemUpgrade) {
 			writeError(w, http.StatusForbidden, "changing "+e.Key+" needs the system.upgrade permission")
 			return
 		}

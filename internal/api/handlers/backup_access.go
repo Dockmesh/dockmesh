@@ -62,8 +62,7 @@ func (h *Handlers) requireJobAccess(w http.ResponseWriter, r *http.Request, prev
 // caller needs requireJobAccess for each of those jobs, deleted ones
 // included. A target with a system job or the audit archive is admin-only.
 func (h *Handlers) requireTargetAccess(w http.ResponseWriter, r *http.Request, targetID int64) bool {
-	if h.AuditRetention != nil && h.AuditRetention.Config().TargetID == targetID && !h.callerIsAdmin(r) {
-		writeError(w, http.StatusForbidden, "only an admin can change the target the audit log is archived to")
+	if !h.requireNotAuditTarget(w, r, targetID) {
 		return false
 	}
 	if h.Backups == nil {
@@ -80,6 +79,21 @@ func (h *Handlers) requireTargetAccess(w http.ResponseWriter, r *http.Request, t
 		}
 	}
 	return true
+}
+
+// isAuditTarget reports whether the audit log is archived to targetID.
+func (h *Handlers) isAuditTarget(targetID int64) bool {
+	return targetID > 0 && h.AuditRetention != nil && h.AuditRetention.Config().TargetID == targetID
+}
+
+// requireNotAuditTarget keeps the audit archive target to admins: its
+// settings say where the tamper-evidence log goes.
+func (h *Handlers) requireNotAuditTarget(w http.ResponseWriter, r *http.Request, targetID int64) bool {
+	if !h.isAuditTarget(targetID) || h.callerIsAdmin(r) {
+		return true
+	}
+	writeError(w, http.StatusForbidden, "only an admin can use or change the target the audit log is archived to")
+	return false
 }
 
 // requireRunAccess guards everything that reads or restores a run's
@@ -148,9 +162,16 @@ func (h *Handlers) backupJobsByID(r *http.Request) (map[int64]backup.Job, error)
 
 // backupTargetVisible hides a saved target whose jobs the caller cannot
 // all see: its settings name the share, bucket or server those jobs write
-// to. A target no job uses stays visible so it can be picked for a new job.
+// to. A target no job uses stays visible so it can be picked for a new job,
+// unless the audit log is archived to it.
 func (h *Handlers) backupTargetVisible(r *http.Request, targetID int64) (bool, error) {
-	if h.Backups == nil || h.callerIsAdmin(r) {
+	if h.callerIsAdmin(r) {
+		return true, nil
+	}
+	if h.isAuditTarget(targetID) {
+		return false, nil
+	}
+	if h.Backups == nil {
 		return true, nil
 	}
 	jobs, err := h.Backups.JobsUsingTarget(r.Context(), targetID)

@@ -622,7 +622,7 @@ paths:
       tags: [backups]
       summary: Update a backup target
       description: >-
-        Secrets sent empty keep the stored value; changing the server, URL or user while keeping a stored secret returns 400 (re-enter it). Needs access to every job that uses or used the target; admin only if a system job uses it or the audit log is archived to it (403).
+        Secrets sent empty keep the stored value; changing the server, URL or user while keeping a stored secret returns 400 (re-enter it). Needs access to every job that uses or used the target; admin only if a system job uses it or the audit log is archived to it (403); non-admins neither see the audit archive target in the list nor can pick it for a job.
       requestBody:
         required: true
         content:
