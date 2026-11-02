@@ -35,3 +35,20 @@ func TestResolveImageAuthPrefersRequestAuth(t *testing.T) {
 		})
 	}
 }
+
+func TestImagesOf(t *testing.T) {
+	yaml := "include:\n  - /etc/passwd\nservices:\n  app:\n    image: registry.example.com/app:${TAG}\n  db:\n    image: postgres:${PG:-16}\n  built:\n    build: .\n"
+	got := ImagesOf(yaml, "# c\nTAG=2\n")
+	want := map[string]bool{"registry.example.com/app:2": true, "postgres:16": true}
+	if len(got) != len(want) {
+		t.Fatalf("images = %v", got)
+	}
+	for _, g := range got {
+		if !want[g] {
+			t.Errorf("unexpected image %q", g)
+		}
+	}
+	if got := ImagesOf("not: [yaml", ""); got != nil {
+		t.Errorf("invalid yaml: %v", got)
+	}
+}

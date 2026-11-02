@@ -797,7 +797,8 @@ paths:
         for rollback until `/migrate/{id}/source` is called.
 
         The target gets the same files as a manual deploy: global
-        variables and the stack's default environment override. Stack
+        variables and the stack's default environment override (only one
+        the last manual deploy used with the same file). Stack
         files changed outside Dockmesh are refused (409
         `modified_outside`) until the request confirms them. A change
         after the start fails the migration, and a stopped source is not

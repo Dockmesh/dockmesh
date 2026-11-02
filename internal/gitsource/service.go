@@ -671,6 +671,8 @@ func readCompose(repo *os.Root, pathInRepo string) (repoCompose, error) {
 // sh -c and the default override; override files change what a deploy
 // runs. A repo push must not be able to replace either.
 func skipSibling(rel string) bool {
+	// Lower-cased: the stack dir may be on a case-insensitive filesystem.
+	rel = strings.ToLower(rel)
 	if strings.HasPrefix(rel, ".git") {
 		return true
 	}

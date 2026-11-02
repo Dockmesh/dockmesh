@@ -267,12 +267,22 @@ func (s *Service) spec(ctx context.Context, name string) (deploy.Spec, error) {
 	if err != nil {
 		return deploy.Spec{}, err
 	}
-	return deploy.Resolve(ctx, s.globals, dir, name, detail.Compose, detail.Env)
+	spec, err := deploy.Resolve(ctx, s.globals, dir, name, detail.Compose, detail.Env)
+	if err != nil {
+		return deploy.Spec{}, err
+	}
+	if err := s.stacks.CheckOverride(name, spec.Override); err != nil {
+		return deploy.Spec{}, err
+	}
+	return spec, nil
 }
 
 func (s *Service) phasePrepare(ctx context.Context, m *Migration) error {
 	slog.Info("migration prepare", "id", m.ID)
 	if err := s.checkFiles(m.StackName); err != nil {
+		return err
+	}
+	if _, err := s.spec(ctx, m.StackName); err != nil {
 		return err
 	}
 	detail, err := s.stacks.Get(m.StackName)

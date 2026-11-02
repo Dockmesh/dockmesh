@@ -162,6 +162,9 @@ func TestSkipSibling(t *testing.T) {
 		{"conf/.dockmesh.meta.json", false},
 		{"compose.prod.yml", false},
 		{"nginx.conf", false},
+		{".DOCKMESH.meta.json", true},
+		{"COMPOSE.prod.yaml", true},
+		{".ENV", true},
 	}
 	for _, tt := range tests {
 		if got := skipSibling(tt.rel); got != tt.skip {

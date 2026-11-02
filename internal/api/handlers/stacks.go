@@ -1053,6 +1053,9 @@ func (h *Handlers) DeployStack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, deployErrorStatus(err), friendlyDeployError(err))
 		return
 	}
+	if err := h.Stacks.RecordOverride(name, envOverride); err != nil {
+		slog.Warn("record deployed environment override", "stack", name, "err", err)
+	}
 	// Record the deployment association (P.7).
 	if h.Deployments != nil {
 		if err := h.Deployments.Set(r.Context(), name, target.ID(), "deployed"); err != nil {

@@ -612,7 +612,9 @@ func standaloneSpec(info *container.InspectResponse, image string, oldImg, newIm
 // dropImageDefaults removes from cfg what it inherited from img, so the
 // container create applies the defaults of the image it runs now. An
 // entrypoint set on the container keeps its command, as docker resets
-// the image command when the entrypoint is overridden.
+// the image command when the entrypoint is overridden. The user is kept:
+// one set on the container can't be told apart from the image's, and
+// dropping it could run the new container as root.
 func dropImageDefaults(cfg *container.Config, img *dockerspec.DockerOCIImageConfig) {
 	if img == nil {
 		return
@@ -631,9 +633,6 @@ func dropImageDefaults(cfg *container.Config, img *dockerspec.DockerOCIImageConf
 	}
 	if cfg.WorkingDir == img.WorkingDir {
 		cfg.WorkingDir = ""
-	}
-	if cfg.User == img.User {
-		cfg.User = ""
 	}
 	if cfg.StopSignal == img.StopSignal {
 		cfg.StopSignal = ""

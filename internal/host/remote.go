@@ -40,25 +40,14 @@ type RemoteHost struct {
 }
 
 // registryAuth is the credentials for the images of a compose payload,
-// nil when there are none or the project can't be read (the agent then
-// reports the parse error itself).
+// nil when there are none.
 func (h *RemoteHost) registryAuth(ctx context.Context, name, composeYAML, envContent string) map[string]string {
 	if h.auth == nil {
 		return nil
 	}
-	dir, cleanup, err := writeStagingDir(name, composeYAML, envContent)
-	if err != nil {
-		slog.Warn("registry auth for agent: stage compose", "stack", name, "err", err)
+	images := compose.ImagesOf(composeYAML, envContent)
+	if len(images) == 0 {
 		return nil
-	}
-	defer cleanup()
-	proj, err := compose.LoadProject(ctx, dir, name, envContent)
-	if err != nil {
-		return nil
-	}
-	images := make([]string, 0, len(proj.Services))
-	for _, svc := range proj.Services {
-		images = append(images, svc.Image)
 	}
 	auth, err := h.auth.AuthForImages(ctx, h.id, images)
 	if err != nil {

@@ -112,6 +112,9 @@ func newMigrationEnv(t *testing.T) *migrationEnv {
 	if err := scaling.SaveMeta(dir, &scaling.MetaFile{ActiveEnvironment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := mgr.RecordOverride("web", "prod"); err != nil {
+		t.Fatal(err)
+	}
 	deps := stacks.NewDeploymentStore(database)
 	if err := deps.Set(context.Background(), "web", "local", "deployed"); err != nil {
 		t.Fatal(err)
@@ -234,5 +237,25 @@ func TestMigrationRefusesFilesChangedOutside(t *testing.T) {
 	if e.source.stops != 0 || len(e.target.deploys) != 0 || len(e.source.deploys) != 0 {
 		t.Errorf("stack touched: source stops %d, target deploys %d, source deploys %d",
 			e.source.stops, len(e.target.deploys), len(e.source.deploys))
+	}
+}
+
+// Override files are not written by Dockmesh, so a migration only uses the
+// override a manual deploy confirmed.
+func TestMigrationRefusesUnconfirmedOverride(t *testing.T) {
+	e := newMigrationEnv(t)
+	dir, err := e.mgr.Dir("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "compose.prod.yaml"), []byte("services:\n  web:\n    image: evil\n    privileged: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := e.migrate(t)
+	if m.Status != StatusFailed || !strings.Contains(m.ErrorMessage, "override") {
+		t.Fatalf("status = %s (%s), want failed for the override", m.Status, m.ErrorMessage)
+	}
+	if e.source.stops != 0 || len(e.target.deploys) != 0 {
+		t.Errorf("stack touched: source stops %d, target deploys %d", e.source.stops, len(e.target.deploys))
 	}
 }

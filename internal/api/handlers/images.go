@@ -118,12 +118,8 @@ func (h *Handlers) PullImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "image required")
 		return
 	}
-	// Registry credentials lookup (P.11.7). Local-pull only — the host
-	// picker is not consulted because the PullImage endpoint itself runs
-	// against h.Docker, not a fanout. The scope check is still there:
-	// we pass empty hostTags so only "all hosts" registry entries match,
-	// which is the correct behaviour for pulls on the central server's
-	// own docker daemon.
+	// The pull runs on the server's own daemon, so the registries
+	// matching the local host's tags apply.
 	var registryAuth string
 	var usedRegistryName string
 	if h.Registries != nil {

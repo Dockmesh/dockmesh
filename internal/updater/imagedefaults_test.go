@@ -61,6 +61,7 @@ func TestStandaloneSpecUsesNewImageDefaults(t *testing.T) {
 		{
 			name: "inherited values dropped", cfg: inherited, oldImg: oldImg,
 			wantEnv:    []string{"DB_HOST=db"},
+			wantUser:   "app",
 			wantLabels: map[string]string{"team": "web"},
 			wantHealth: []string{"CMD", "/v2-health"},
 		},
@@ -70,6 +71,7 @@ func TestStandaloneSpecUsesNewImageDefaults(t *testing.T) {
 			wantEntry:  []string{"/custom.sh"},
 			wantCmd:    []string{"serve", "--v1"},
 			wantDir:    "/srv",
+			wantUser:   "app",
 			wantLabels: map[string]string{"team": "web"},
 			wantHealth: []string{"CMD", "/mine"},
 		},

@@ -63,6 +63,9 @@ func (g *gitDeployer) deploy(ctx context.Context, stackName string) (any, error)
 		if spec, err = deploy.Resolve(ctx, g.globals, dir, stackName, detail.Compose, detail.Env); err != nil {
 			return err
 		}
+		if err := g.stacks.CheckOverride(stackName, spec.Override); err != nil {
+			return err
+		}
 		// Force-pull so a new push under the same tag is picked up even
 		// when compose.yaml did not change.
 		res, err = target.DeployStack(compose.WithForcePull(ctx), stackName, spec.Compose, spec.Env)
