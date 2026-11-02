@@ -16,6 +16,7 @@ import (
 	"github.com/dockmesh/dockmesh/internal/api/middleware"
 	"github.com/dockmesh/dockmesh/internal/backup"
 	"github.com/dockmesh/dockmesh/internal/host"
+	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/proxy"
 	"github.com/dockmesh/dockmesh/internal/rbac"
 	"github.com/dockmesh/dockmesh/pkg/version"
@@ -151,7 +152,7 @@ func (h *Handlers) attentionHosts(r *http.Request) []AttentionItem {
 		return nil
 	}
 	outdated := h.Agents.Outdated()
-	var out []AttentionItem
+	var out, builds []AttentionItem
 	for _, a := range list {
 		if !h.inReadScope(r, a.ID, "") {
 			continue
@@ -175,7 +176,7 @@ func (h *Handlers) attentionHosts(r *http.Request) []AttentionItem {
 			if !ok {
 				continue
 			}
-			out = append(out, AttentionItem{
+			builds = append(builds, AttentionItem{
 				ID:       "agent_outdated:" + a.ID,
 				Kind:     "agent_outdated",
 				Severity: attentionInfo,
@@ -186,7 +187,29 @@ func (h *Handlers) attentionHosts(r *http.Request) []AttentionItem {
 			})
 		}
 	}
-	return out
+	return append(out, groupAgentBuilds(builds)...)
+}
+
+// groupAgentBuilds folds agents on a different build into one item: an
+// upgrade usually leaves every agent behind at once, and one line per host
+// would bury the items that need a decision.
+func groupAgentBuilds(items []AttentionItem) []AttentionItem {
+	if len(items) < 2 {
+		return items
+	}
+	names := make([]string, 0, len(items))
+	for _, it := range items {
+		names = append(names, it.Object.Name)
+	}
+	return []AttentionItem{{
+		ID:       "agent_outdated:*",
+		Kind:     "agent_outdated",
+		Severity: attentionInfo,
+		Title:    fmt.Sprintf("%d agents run a different build", len(items)),
+		Detail:   fmt.Sprintf("%s. Server %s.", strings.Join(names, ", "), version.Version),
+		Link:     "/hosts",
+		Object:   AttentionObject{Type: "hosts", ID: "*"},
+	}}
 }
 
 func attentionContainerItems(rows []containerRow) []AttentionItem {
@@ -535,6 +558,11 @@ func (h *Handlers) attentionNotices(r *http.Request) []AttentionItem {
 	}
 	out := make([]AttentionItem, 0, len(list))
 	for _, n := range list {
+		// Info notices announce a change and need no action; they are
+		// listed under Activity instead.
+		if n.Severity == notices.SevInfo {
+			continue
+		}
 		id := strconv.FormatInt(n.ID, 10)
 		since := n.CreatedAt
 		out = append(out, AttentionItem{

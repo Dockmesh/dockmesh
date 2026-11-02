@@ -370,3 +370,53 @@ func TestRefreshRunsOnlyWhileOpen(t *testing.T) {
 		t.Fatalf("calls = %d, listed = %v; want the refresh to resolve the notice before listing", calls, keys(got))
 	}
 }
+
+func TestBlockingHidesForADay(t *testing.T) {
+	s, _ := newTestService(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	if err := s.Raise(ctx, RaiseInput{Key: "block", Audience: All(), Severity: SevCritical, Title: "b", Blocking: true}); err != nil {
+		t.Fatal(err)
+	}
+	n := mustOpen(t, s)[0]
+	if !n.Blocking || !n.Dismissible {
+		t.Fatalf("blocking=%v dismissible=%v, want both", n.Blocking, n.Dismissible)
+	}
+	if err := s.Dismiss(ctx, viewer, n.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name  string
+		after time.Duration
+		want  bool
+	}{
+		{"right after", time.Minute, true},
+		{"one hour before the end", HideFor - time.Hour, true},
+		{"after a day", HideFor + time.Minute, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s.now = func() time.Time { return now.Add(tt.after) }
+			got, err := s.ForViewer(ctx, viewer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].Dismissed != tt.want {
+				t.Fatalf("got %+v, want dismissed=%v", got, tt.want)
+			}
+			if tt.want && got[0].HiddenUntil == nil {
+				t.Error("hidden_until missing while hidden")
+			}
+		})
+	}
+}
+
+func TestBlockingNeedsCritical(t *testing.T) {
+	s, _ := newTestService(t)
+	err := s.Raise(context.Background(), RaiseInput{Key: "w", Audience: All(), Severity: SevWarning, Title: "w", Blocking: true})
+	if err == nil {
+		t.Fatal("warning notice accepted as blocking")
+	}
+}

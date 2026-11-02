@@ -362,16 +362,15 @@ func (e *Executor) removePartial(ctx context.Context, runID int64, target target
 	return relPath
 }
 
+// notifyRun tells the job's audience about runs that need a look. A clean
+// run sends nothing: scheduled jobs would fill the bell, and the run is
+// listed under Activity as a finished operation.
 func (e *Executor) notifyRun(ctx context.Context, job *Job, runID int64, out runOutcome) {
-	if e.notifs == nil {
+	if e.notifs == nil || out.status == StatusSuccess {
 		return
 	}
 	in := runNotification(job, runID)
 	switch out.status {
-	case StatusSuccess:
-		in.Kind, in.Severity = notifications.KindBackupOK, notifications.SevSuccess
-		in.Title = "Backup completed: " + job.Name
-		in.Body = fmt.Sprintf("Wrote %d bytes", out.size)
 	case StatusSuccessWithWarnings:
 		in.Kind, in.Severity = notifications.KindBackupOK, notifications.SevWarning
 		in.Title = "Backup completed with warnings: " + job.Name

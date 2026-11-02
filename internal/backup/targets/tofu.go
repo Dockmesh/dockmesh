@@ -88,6 +88,7 @@ func (tf TOFU) Handle(ctx context.Context, ev HostKeyEvent) error {
 			Key:      ChangedNoticeKey(tf.ID),
 			Audience: notices.Admins(),
 			Severity: notices.SevCritical,
+			Blocking: true,
 			Title:    "SFTP host key changed for " + tf.Label,
 			Body: fmt.Sprintf("The server used to present %s and now presents %s, so connections are "+
 				"refused. If the server was reinstalled or its key rotated on purpose, accept the new "+

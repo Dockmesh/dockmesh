@@ -66,8 +66,10 @@ type Notice struct {
 	Link        string     `json:"link,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
+	Blocking    bool       `json:"blocking"`
 	Dismissible bool       `json:"dismissible"`
 	Dismissed   bool       `json:"dismissed"`
+	HiddenUntil *time.Time `json:"hidden_until,omitempty"`
 
 	audience Audience
 }
@@ -75,6 +77,9 @@ type Notice struct {
 // RaiseInput describes a notice. Body is plain text: the UI keeps its line
 // breaks and shows lines starting with "- " as a list (see Bullets). Link
 // is an in-app path ("/stacks/foo") the UI turns into a button.
+//
+// Blocking marks a critical notice about something that no longer works
+// until someone acts; only blocking notices are shown as a banner.
 type RaiseInput struct {
 	Key      string
 	Audience Audience
@@ -82,6 +87,7 @@ type RaiseInput struct {
 	Title    string
 	Body     string
 	Link     string
+	Blocking bool
 }
 
 // Bullets formats items as list lines for a notice body, each on its own
@@ -108,12 +114,17 @@ var (
 	ErrNotDismissible = errors.New("critical notices cannot be dismissed")
 )
 
+// HideFor is how long a dismissed blocking notice stays out of the banner
+// before it comes back.
+const HideFor = 24 * time.Hour
+
 // Check is a condition evaluated at startup, after migrations and service
 // wiring. It raises or resolves its notices through the service.
 type Check func(ctx context.Context, s *Service) error
 
 type Service struct {
-	db *sql.DB
+	db  *sql.DB
+	now func() time.Time
 
 	mu     sync.Mutex
 	checks []namedCheck
@@ -126,7 +137,7 @@ type namedCheck struct {
 	fn   Check
 }
 
-func NewService(db *sql.DB) *Service { return &Service{db: db} }
+func NewService(db *sql.DB) *Service { return &Service{db: db, now: time.Now} }
 
 func (in RaiseInput) validate() error {
 	if strings.TrimSpace(in.Key) == "" {
@@ -139,6 +150,9 @@ func (in RaiseInput) validate() error {
 	case SevInfo, SevWarning, SevCritical:
 	default:
 		return fmt.Errorf("invalid notice severity %q", in.Severity)
+	}
+	if in.Blocking && in.Severity != SevCritical {
+		return errors.New("only critical notices can be blocking")
 	}
 	switch in.Audience.Kind {
 	case AudienceAll, AudienceAdmins:
@@ -205,9 +219,9 @@ func (s *Service) Raise(ctx context.Context, in RaiseInput) error {
 	// committed in between, without waiting for busy_timeout.
 	res, err := tx.ExecContext(ctx, `
 		UPDATE notices SET audience = ?, audience_value = ?, severity = ?, title = ?, body = ?, link = ?,
-		       created_at = CURRENT_TIMESTAMP, resolved_at = NULL
+		       blocking = ?, created_at = CURRENT_TIMESTAMP, resolved_at = NULL
 		 WHERE key = ? AND resolved_at IS NOT NULL`,
-		string(in.Audience.Kind), value, string(in.Severity), in.Title, in.Body, in.Link, in.Key)
+		string(in.Audience.Kind), value, string(in.Severity), in.Title, in.Body, in.Link, in.Blocking, in.Key)
 	if err != nil {
 		return err
 	}
@@ -222,10 +236,10 @@ func (s *Service) Raise(ctx context.Context, in RaiseInput) error {
 		}
 	} else {
 		res, err = tx.ExecContext(ctx, `
-			INSERT INTO notices (key, audience, audience_value, severity, title, body, link)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
+			INSERT INTO notices (key, audience, audience_value, severity, title, body, link, blocking)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(key) DO NOTHING`,
-			in.Key, string(in.Audience.Kind), value, string(in.Severity), in.Title, in.Body, in.Link)
+			in.Key, string(in.Audience.Kind), value, string(in.Severity), in.Title, in.Body, in.Link, in.Blocking)
 		if err != nil {
 			return err
 		}
@@ -269,7 +283,7 @@ func (s *Service) Set(ctx context.Context, active bool, in RaiseInput) error {
 // Open returns every unresolved notice, without audience filtering.
 func (s *Service) Open(ctx context.Context) ([]Notice, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, key, audience, audience_value, severity, title, body, link, created_at
+		SELECT id, key, audience, audience_value, severity, title, body, link, blocking, created_at
 		  FROM notices WHERE resolved_at IS NULL
 		 ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC, id DESC`)
 	if err != nil {
@@ -280,11 +294,11 @@ func (s *Service) Open(ctx context.Context) ([]Notice, error) {
 	for rows.Next() {
 		var n Notice
 		var kind, value, sev string
-		if err := rows.Scan(&n.ID, &n.Key, &kind, &value, &sev, &n.Title, &n.Body, &n.Link, &n.CreatedAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.Key, &kind, &value, &sev, &n.Title, &n.Body, &n.Link, &n.Blocking, &n.CreatedAt); err != nil {
 			return nil, err
 		}
 		n.Severity = Severity(sev)
-		n.Dismissible = n.Severity != SevCritical
+		n.Dismissible = n.Blocking || n.Severity != SevCritical
 		n.audience = decodeAudience(kind, value)
 		out = append(out, n)
 	}
@@ -310,26 +324,28 @@ func (a Audience) includes(v Viewer) bool {
 }
 
 // ForViewer returns the open notices v is in the audience of, with
-// Dismissed set from v's dismissals.
+// Dismissed set from v's dismissals. A blocking notice counts as dismissed
+// only until its HiddenUntil has passed.
 func (s *Service) ForViewer(ctx context.Context, v Viewer) ([]Notice, error) {
 	s.refreshOpen(ctx)
 	open, err := s.Open(ctx)
 	if err != nil {
 		return nil, err
 	}
-	dismissed := map[int64]bool{}
+	dismissed := map[int64]sql.NullTime{}
 	if v.UserID != "" {
-		rows, err := s.db.QueryContext(ctx, `SELECT notice_id FROM notice_dismissals WHERE user_id = ?`, v.UserID)
+		rows, err := s.db.QueryContext(ctx, `SELECT notice_id, hidden_until FROM notice_dismissals WHERE user_id = ?`, v.UserID)
 		if err != nil {
 			return nil, err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var id int64
-			if err := rows.Scan(&id); err != nil {
+			var until sql.NullTime
+			if err := rows.Scan(&id, &until); err != nil {
 				return nil, err
 			}
-			dismissed[id] = true
+			dismissed[id] = until
 		}
 		if err := rows.Err(); err != nil {
 			return nil, err
@@ -340,14 +356,24 @@ func (s *Service) ForViewer(ctx context.Context, v Viewer) ([]Notice, error) {
 		if !n.audience.includes(v) {
 			continue
 		}
-		n.Dismissed = dismissed[n.ID]
+		if until, ok := dismissed[n.ID]; ok {
+			switch {
+			case !n.Blocking:
+				n.Dismissed = true
+			case until.Valid && until.Time.After(s.now()):
+				n.Dismissed = true
+				t := until.Time
+				n.HiddenUntil = &t
+			}
+		}
 		out = append(out, n)
 	}
 	return out, nil
 }
 
-// Dismiss hides an open, non-critical notice from v's banner. It stays in
-// the bell drawer until resolved.
+// Dismiss hides an open notice for v. A blocking notice is hidden from the
+// banner for HideFor and then comes back while it is open; other notices
+// stay dismissed until resolved.
 func (s *Service) Dismiss(ctx context.Context, v Viewer, id int64) error {
 	if v.UserID == "" {
 		return ErrNotFound
@@ -363,8 +389,14 @@ func (s *Service) Dismiss(ctx context.Context, v Viewer, id int64) error {
 		if !n.Dismissible {
 			return ErrNotDismissible
 		}
-		_, err := s.db.ExecContext(ctx,
-			`INSERT OR IGNORE INTO notice_dismissals (notice_id, user_id) VALUES (?, ?)`, id, v.UserID)
+		var until any
+		if n.Blocking {
+			until = s.now().Add(HideFor).UTC()
+		}
+		_, err := s.db.ExecContext(ctx, `
+			INSERT INTO notice_dismissals (notice_id, user_id, hidden_until) VALUES (?, ?, ?)
+			ON CONFLICT(notice_id, user_id) DO UPDATE SET dismissed_at = CURRENT_TIMESTAMP, hidden_until = excluded.hidden_until`,
+			id, v.UserID, until)
 		return err
 	}
 	return ErrNotFound
