@@ -299,6 +299,7 @@ export interface ScalingRule {
   scale_up: ThresholdConfig;
   scale_down: ThresholdConfig;
   cooldown_seconds: number;
+  cpu_unit?: 'host' | 'core';
 }
 
 export interface ThresholdConfig {
@@ -1158,6 +1159,8 @@ export interface AlertRule {
   scope_stack?: string;
   mute_schedule?: string;
   metric: string;
+  /** CPU rules only: "host" = share of the whole host, "core" = 100 per busy core. */
+  cpu_unit?: 'host' | 'core' | '';
   operator: string;
   threshold: number;
   duration_seconds: number;
@@ -1186,6 +1189,8 @@ export interface AlertRuleInput {
   scope_stack?: string;
   mute_schedule?: string;
   metric: string;
+  /** CPU rules only: "host" = share of the whole host, "core" = 100 per busy core. */
+  cpu_unit?: 'host' | 'core' | '';
   operator: string;
   threshold: number;
   duration_seconds: number;
@@ -1208,6 +1213,8 @@ export interface AlertHistoryEntry {
   kind?: string;
   host_id?: string;
   notified: boolean;
+  /** Repeats of a one-shot alert inside the cooldown counted on this entry. */
+  repeats?: number;
   occurred_at: string;
 }
 

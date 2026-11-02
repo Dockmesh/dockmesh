@@ -27,6 +27,7 @@
     scope_tag: '',
     scope_stack: '',
     metric: 'cpu_percent',
+    cpu_unit: 'host',
     operator: 'gt',
     threshold: 80,
     duration_seconds: 60,
@@ -40,7 +41,7 @@
 
   // Defaults applied when the kind of a new rule changes.
   const KIND_DEFAULTS: Partial<Record<RuleKind, Partial<AlertRuleInput>>> = {
-    metric: { metric: 'cpu_percent', operator: 'gt', threshold: 80, duration_seconds: 60 },
+    metric: { metric: 'cpu_percent', cpu_unit: 'host', operator: 'gt', threshold: 80, duration_seconds: 60 },
     restart_loop: { threshold: 3, duration_seconds: 600 },
     host_offline: { duration_seconds: 300, severity: 'critical' },
     disk_usage: { threshold: 90 },
@@ -58,6 +59,9 @@
   const kind = $derived((form.kind || 'metric') as RuleKind);
   const kindMeta = $derived(KINDS.find((k) => k.id === kind) ?? KINDS[0]);
   const tags = $derived([...new Set(hosts.flatMap((h) => h.tags ?? []))].sort());
+  const watchesContainers = $derived(isContainerKind(kind) || kind === 'metric');
+  // Per core, a busy multi-core container goes past 100.
+  const perCore = $derived(form.metric === 'cpu_percent' && form.cpu_unit === 'core');
 
   let lastOpen = false;
   let lastEditingId: number | null = null;
@@ -85,6 +89,7 @@
       ...form,
       kind: k,
       metric: '',
+      cpu_unit: '',
       operator: '',
       threshold: 0,
       duration_seconds: 0,
@@ -122,9 +127,9 @@
     else if (kind === 'cert_expiry') filterList('All proxy sites', sites, 'Site');
     else {
       if (scopeValue === 'current') out.push({ value: 'current', label: `Current: ${appliesTo(form, hostName)}` });
-      out.push({ value: 'all', label: isContainerKind(kind) ? 'All containers' : kind === 'host_offline' ? 'All agents' : 'All hosts' });
+      out.push({ value: 'all', label: watchesContainers ? 'All containers' : kind === 'host_offline' ? 'All agents' : 'All hosts' });
       if (isContainerKind(kind)) for (const s of stacks) out.push({ value: 's:' + s, label: `Stack ${s}` });
-      for (const h of hosts.filter((h) => h.kind !== 'all')) out.push({ value: 'h:' + h.id, label: isContainerKind(kind) ? `Containers on ${h.name}` : h.name });
+      for (const h of hosts.filter((h) => h.kind !== 'all')) out.push({ value: 'h:' + h.id, label: watchesContainers ? `Containers on ${h.name}` : h.name });
       for (const t of tags) out.push({ value: 't:' + t, label: `Hosts with tag ${t}` });
       if (isContainerKind(kind) && form.scope_stack && !stacks.includes(form.scope_stack) && scopeValue !== 'current')
         out.push({ value: 's:' + form.scope_stack, label: `Stack ${form.scope_stack}` });
@@ -217,14 +222,9 @@
       </div>
       <div class="dm-field">
         <label for="rm-scope">Applies to</label>
-        {#if kind === 'metric'}
-          <input id="rm-scope" class="dm-input" bind:value={form.container_filter} placeholder="*" />
-          <span class="rm-hint">Containers on this server. {kindMeta.targetHint}</span>
-        {:else}
-          <select id="rm-scope" class="dm-input" value={scopeValue} onchange={(e) => setScope((e.target as HTMLSelectElement).value)}>
-            {#each scopeOpts as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
-          </select>
-        {/if}
+        <select id="rm-scope" class="dm-input" value={scopeValue} onchange={(e) => setScope((e.target as HTMLSelectElement).value)}>
+          {#each scopeOpts as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
+        </select>
       </div>
     </div>
 
@@ -240,8 +240,16 @@
             <option value="gt">above</option>
             <option value="lt">below</option>
           </select>
-          <input type="number" class="dm-input rm-n" aria-label="Threshold in percent" min="1" max="100" bind:value={form.threshold} />
-          <span>% for at least</span>
+          <input type="number" class="dm-input rm-n" aria-label="Threshold in percent" min="1" max={perCore ? undefined : 100} bind:value={form.threshold} />
+          {#if form.metric === 'cpu_percent'}
+            <select class="dm-input rm-w" aria-label="CPU unit" value={form.cpu_unit || 'host'} onchange={(e) => (form.cpu_unit = (e.target as HTMLSelectElement).value as 'host' | 'core')}>
+              <option value="host">% of host</option>
+              <option value="core">% of one core</option>
+            </select>
+            <span>for at least</span>
+          {:else}
+            <span>% for at least</span>
+          {/if}
           <select class="dm-input rm-w" aria-label="Duration" value={form.duration_seconds} onchange={(e) => (form.duration_seconds = num(e))}>
             {#each withCurrent(durations, form.duration_seconds) as d (d.value)}<option value={d.value}>{d.label}</option>{/each}
           </select>
@@ -276,7 +284,7 @@
       </div>
     </div>
 
-    {#if hasNameFilter && kind !== 'metric'}
+    {#if hasNameFilter}
       <div class="dm-field">
         <label for="rm-filter">{kindMeta.target}</label>
         <input id="rm-filter" class="dm-input dm-mono" bind:value={form.container_filter} placeholder="*" />

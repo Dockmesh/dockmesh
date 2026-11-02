@@ -1,0 +1,3 @@
+kind: Added
+body: Container CPU and memory alert rules cover every host, agents included, and can be limited to a host or a host tag like the event rules.
+time: 2026-11-02T11:12:09.3803869+01:00

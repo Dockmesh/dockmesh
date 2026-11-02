@@ -199,6 +199,7 @@
             <span role="cell" class="dm-nm">
               <span class="dm-t" title={e.rule_name}>{e.rule_name}</span>
               {#if e.notified === false}<small title="Recorded without notifying channels (muted or in cooldown)">silenced</small>{/if}
+              {#if e.repeats}<small title="Repeated {e.repeats}× inside the cooldown, counted here instead of as new entries">×{e.repeats + 1}</small>{/if}
             </span>
             <span role="cell" class="dm-mono al-obj" title={e.host_id ? `${e.container_name} on ${hostName(e.host_id)}` : e.container_name}>
               {e.container_name}{#if e.host_id}<span class="dm-dim"> · {hostName(e.host_id)}</span>{/if}

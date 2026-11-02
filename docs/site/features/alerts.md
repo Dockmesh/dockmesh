@@ -3,6 +3,7 @@ title: Alerts
 description: Threshold alert rules on container CPU and memory, and their current limitations.
 ---
 
+<!-- update after: alerts: one message per burst, bounded history, every host, CPU unit -->
 Alert rules watch container CPU and memory on the local host and notify [channels](./notifications.md) when a threshold is crossed. They're configured on the **Alerts** page, which has **Rules**, **Channels** and **History** tabs.
 
 <!-- update after: alerts: add event rules for containers, hosts, disks, backups, certs -->

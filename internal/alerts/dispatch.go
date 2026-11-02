@@ -238,7 +238,7 @@ func alertNotification(r *Rule, hostID, title, body string) notifications.EmitIn
 		Severity: sev,
 		Title:    title,
 		Body:     body,
-		Link:     "/alerts",
+		Link:     "/alerts?tab=history",
 		Perm:     rbac.PermAlertsHistory,
 		HostID:   hostID,
 		Unscoped: hostID == "",

@@ -40,7 +40,7 @@ export function isContainerKind(k: RuleKind): boolean {
 
 // Mirrors alerts.HostBound: backup and certificate rules are global.
 export function isHostBoundKind(k: RuleKind): boolean {
-  return k !== 'metric' && k !== 'backup_failed' && k !== 'backup_missed' && k !== 'cert_expiry';
+  return k !== 'backup_failed' && k !== 'backup_missed' && k !== 'cert_expiry';
 }
 
 export function fmtDuration(secs: number): string {
@@ -84,6 +84,7 @@ export function ruleToInput(r: AlertRule): AlertRuleInput {
     scope_tag: r.scope_tag ?? '',
     scope_stack: r.scope_stack ?? '',
     metric: r.metric,
+    cpu_unit: r.cpu_unit ?? '',
     operator: r.operator,
     threshold: r.threshold,
     duration_seconds: r.duration_seconds,
@@ -96,7 +97,7 @@ export function ruleToInput(r: AlertRule): AlertRuleInput {
   };
 }
 
-type RuleShape = Pick<AlertRuleInput, 'kind' | 'container_filter' | 'scope_host' | 'scope_tag' | 'scope_stack' | 'metric' | 'operator' | 'threshold' | 'duration_seconds'>;
+type RuleShape = Pick<AlertRuleInput, 'kind' | 'container_filter' | 'scope_host' | 'scope_tag' | 'scope_stack' | 'metric' | 'cpu_unit' | 'operator' | 'threshold' | 'duration_seconds'>;
 
 // Groups for the "Watch" picker, in the order the dialog lists them.
 export const KIND_GROUPS: { group: string; kinds: RuleKind[] }[] = [
@@ -145,7 +146,7 @@ export function ruleSentence(r: RuleShape, hostName?: (id: string) => string): s
     case 'metric': {
       const m = r.metric === 'mem_percent' ? 'memory' : 'CPU';
       const op = r.operator === 'lt' ? 'below' : 'above';
-      return `${m} of ${s} is ${op} ${r.threshold} %${r.duration_seconds > 0 ? ` for ${d}` : ''}`;
+      return `${m} of ${s} is ${op} ${r.threshold} %${cpuUnitSuffix(r)}${r.duration_seconds > 0 ? ` for ${d}` : ''}`;
     }
     case 'restart_loop':
       return `${s} restarts ${r.threshold} times within ${d}`;
@@ -192,4 +193,16 @@ export function kindLabel(k: RuleKind): string {
 
 export function sevTone(s: string | undefined): Tone {
   return s === 'critical' ? 'bad' : s === 'warning' ? 'warn' : 'off';
+}
+
+// CPU rules name their unit; rules stored without one were written
+// against per-core values.
+export function cpuUnitOf(r: Pick<AlertRuleInput, 'metric' | 'cpu_unit'>): 'host' | 'core' | '' {
+  if (r.metric !== 'cpu_percent') return '';
+  return r.cpu_unit === 'host' ? 'host' : 'core';
+}
+
+export function cpuUnitSuffix(r: Pick<AlertRuleInput, 'metric' | 'cpu_unit'>): string {
+  const u = cpuUnitOf(r);
+  return u === 'host' ? ' of the host' : u === 'core' ? ' of one core' : '';
 }
