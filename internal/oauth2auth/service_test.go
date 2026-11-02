@@ -168,3 +168,20 @@ func TestProviderChangeUnlinksAccounts(t *testing.T) {
 		}
 	})
 }
+
+func TestExactLegacy(t *testing.T) {
+	tests := []struct {
+		v    any
+		want bool
+	}{
+		{json.Number("12345678"), true},
+		{json.Number("9007199254740993"), false},
+		{json.Number("1.5"), false},
+		{"alice", true},
+	}
+	for _, tt := range tests {
+		if got := exactLegacy(tt.v); got != tt.want {
+			t.Errorf("exactLegacy(%v) = %v, want %v", tt.v, got, tt.want)
+		}
+	}
+}

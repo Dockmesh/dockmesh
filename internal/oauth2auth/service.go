@@ -554,7 +554,7 @@ func (s *Service) HandleCallback(ctx context.Context, pending *Pending, code, st
 	legacy, legacyField := LegacySubject(p.UsernameField, claims)
 	rekeyed, err := s.auth.RekeyLegacy(ctx, auth.LegacyLogin{
 		Kind: "oauth2", Provider: p.Slug, Subject: subject,
-		Legacy: legacy, SameSource: legacyField == subjectField, Email: email,
+		Legacy: legacy, SameSource: legacyField == subjectField && exactLegacy(claims[legacyField]), Email: email,
 		EmailUnverified: claimFalse(claims, "email_verified"),
 	})
 	if err != nil {
@@ -603,8 +603,8 @@ func LegacySubject(usernameField string, claims map[string]any) (string, string)
 	return stringClaim(claims, "sub"), "sub"
 }
 
-// idClaim formats a string or numeric id; JSON numbers arrive as float64
-// and are written without an exponent.
+// idClaim formats a string or numeric id; JSON numbers keep their literal
+// digits.
 func idClaim(m map[string]any, key string) string {
 	switch x := m[key].(type) {
 	case string:
@@ -851,4 +851,16 @@ func claimFalse(claims map[string]any, key string) bool {
 		return v == "false"
 	}
 	return false
+}
+
+// exactLegacy reports whether the legacy key of this claim named exactly
+// one id. Numbers beyond 2^53 were stored rounded, so several ids share
+// one legacy key.
+func exactLegacy(v any) bool {
+	n, ok := v.(json.Number)
+	if !ok {
+		return true
+	}
+	i, err := n.Int64()
+	return err == nil && i < 1<<53 && i > -(1<<53)
 }
