@@ -21,7 +21,7 @@ Click **New stack** (needs `stacks.create`). The **Create stack** dialog asks fo
 - **Compose editor**: paste a `compose.yaml` and, optionally, the contents of a `.env` file.
 - **From git repository**: clone the compose file from a repository. The fields are described in [Git sources](./git-sources.md).
 
-On a server with more than one host, **Deploy on host** picks where **Create & deploy** runs the stack. The files themselves are host-neutral.
+On a server with more than one host, **Host** picks the host the stack is for, and **Create & deploy** runs it there. Until the stack is deployed it belongs to that host: users whose access is limited to that host (or one of its tags) can read, edit and deploy it. A user limited to some hosts has to pick one of them. A stack name that someone's stack assignment names is reserved; only an admin, or a user whose own assignment names it, can create a stack with it.
 
 | Button | What it does |
 |---|---|
