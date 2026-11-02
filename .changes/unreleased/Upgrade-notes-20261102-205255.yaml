@@ -1,3 +1,3 @@
 kind: Upgrade notes
-body: Backup job changes, adding or removing hosts, agent upgrades and host drains are now audited as backup.job_create/update/delete, agent.create/delete/upgrade and host.drain/drain_abort instead of stack actions. Audit webhook filters that relied on stack.* for these need backup.*, agent.* or host.* added.
+body: "[audit-job-host-actions, admins] Backup job changes, adding or removing hosts, agent upgrades and host drains are now audited as backup.job_create/update/delete, agent.create/delete/upgrade and host.drain/drain_abort instead of stack actions. Audit webhook filters that relied on stack.* for these need backup.*, agent.* or host.* added."
 time: 2026-11-02T20:52:55.6845657+01:00
