@@ -242,6 +242,7 @@ func (s *Service) SyncSSORekeyNotice(ctx context.Context, n *notices.Service) er
 		"A sign-in whose login name or directory entry changed since needs the same email as the account. " +
 		"After that date, or when you end re-keying, these accounts can no longer sign in through their provider; " +
 		"an admin then has to remove and recreate them."
+	// An open notice keeps its text on Raise, so reopen it when the list changed.
 	open, err := n.Open(ctx)
 	if err != nil {
 		return err

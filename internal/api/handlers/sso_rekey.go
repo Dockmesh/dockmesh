@@ -37,7 +37,7 @@ func (h *Handlers) EndSSORekey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, audit.ActionSSORekeyEnd, "", map[string]string{"accounts": strconv.FormatInt(n, 10)})
-	h.syncSSORekeyNotices(r.Context())
+	h.syncSSORekeyNotice(r.Context())
 	writeJSON(w, http.StatusOK, map[string]int64{"ended": n})
 }
 
@@ -48,20 +48,23 @@ func (h *Handlers) auditSSORekey(r *http.Request, userID, kind, slug string) {
 		return
 	}
 	h.audit(r, audit.ActionSSORekey, userID, map[string]string{"provider": slug, "kind": kind})
-	h.syncSSORekeyNotices(r.Context())
+	h.syncSSORekeyNotice(r.Context())
 }
 
-// syncSSORekeyNotices updates both pending re-key notices after accounts
-// were re-keyed or unlinked. A failure only delays them until the next
-// change or restart.
-func (h *Handlers) syncSSORekeyNotices(ctx context.Context) {
-	if h.Notices == nil {
+// syncSSORekeyNotice updates the OAuth2/LDAP re-key notice. A failure only
+// delays it until the next change or restart.
+func (h *Handlers) syncSSORekeyNotice(ctx context.Context) {
+	if h.Notices == nil || h.Auth == nil {
 		return
 	}
-	if h.Auth != nil {
-		if err := h.Auth.SyncSSORekeyNotice(ctx, h.Notices); err != nil {
-			slog.Warn("sso re-key notice update failed", "err", err)
-		}
+	if err := h.Auth.SyncSSORekeyNotice(ctx, h.Notices); err != nil {
+		slog.Warn("sso re-key notice update failed", "err", err)
 	}
+}
+
+// syncSSORekeyNotices updates both re-key notices after a provider change
+// unlinked accounts.
+func (h *Handlers) syncSSORekeyNotices(ctx context.Context) {
+	h.syncSSORekeyNotice(ctx)
 	h.syncSAMLRekeyNotice(ctx)
 }
