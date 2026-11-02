@@ -1,4 +1,6 @@
 // Shared text formats for lists and detail pages.
+import { m } from '$lib/paraglide/messages.js';
+import { fmtDate } from '$lib/i18n';
 
 // "just now", "3 min ago", "2 h ago", "5 d ago", then the date.
 export function fmtAgo(ts?: string | number | null, empty = '—'): string {
@@ -6,11 +8,11 @@ export function fmtAgo(ts?: string | number | null, empty = '—'): string {
   const t = typeof ts === 'number' ? ts : Date.parse(ts);
   if (!t || isNaN(t)) return empty;
   const s = Math.max(0, (Date.now() - t) / 1000);
-  if (s < 60) return 'just now';
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
-  if (s < 30 * 86400) return `${Math.floor(s / 86400)} d ago`;
-  return new Date(t).toLocaleDateString();
+  if (s < 60) return m.time_just_now();
+  if (s < 3600) return m.time_min_ago({ n: Math.floor(s / 60) });
+  if (s < 86400) return m.time_h_ago({ n: Math.floor(s / 3600) });
+  if (s < 30 * 86400) return m.time_d_ago({ n: Math.floor(s / 86400) });
+  return fmtDate(t);
 }
 
 // SI units for image, file, disk, transfer and backup sizes, like Docker.
