@@ -41,7 +41,7 @@ import (
 var (
 	ErrNotFound         = errors.New("git source not found")
 	ErrInvalidAuthKind  = errors.New("auth_kind must be one of: none, http, ssh")
-	ErrPollTooShort     = errors.New("poll_interval_sec must be >= 60")
+	ErrPollTooShort     = errors.New("poll_interval_sec must be 0 (no polling) or >= 60")
 	ErrComposeMissing   = errors.New("repo did not contain compose.yaml at path_in_repo")
 	ErrStackNameInvalid = errors.New("stack name contains characters that cannot be used on disk")
 	ErrPathOutsideRepo  = errors.New("path_in_repo must be a relative path inside the repository")
@@ -84,7 +84,7 @@ type Input struct {
 	SSHKey          string `json:"ssh_key,omitempty"`
 	ClearSSHKey     bool   `json:"clear_ssh_key,omitempty"`
 	AutoDeploy      bool   `json:"auto_deploy,omitempty"`
-	PollIntervalSec int    `json:"poll_interval_sec,omitempty"`
+	PollIntervalSec *int   `json:"poll_interval_sec,omitempty"`
 	WebhookSecret   string `json:"webhook_secret,omitempty"`
 	ClearWebhook    bool   `json:"clear_webhook_secret,omitempty"`
 }
@@ -207,9 +207,14 @@ func (s *Service) Configure(ctx context.Context, stackName string, in Input) (*S
 	if authKind == "" {
 		authKind = "none"
 	}
-	poll := in.PollIntervalSec
-	if poll == 0 {
-		poll = 300
+	// Absent keeps the stored interval (300 s for a new source); 0 means
+	// webhook or manual sync only.
+	poll := defaultPollSec
+	switch {
+	case in.PollIntervalSec != nil:
+		poll = *in.PollIntervalSec
+	case existing != nil:
+		poll = existing.PollIntervalSec
 	}
 
 	// Encrypt-on-update helpers: pick the incoming value, the cleared
@@ -916,7 +921,7 @@ func validateInput(in Input) error {
 	default:
 		return ErrInvalidAuthKind
 	}
-	if in.PollIntervalSec != 0 && in.PollIntervalSec < 60 {
+	if p := in.PollIntervalSec; p != nil && *p != 0 && *p < 60 {
 		return ErrPollTooShort
 	}
 	// Only new secrets are checked; shorter ones stored earlier keep working.
@@ -932,6 +937,8 @@ func validateInput(in Input) error {
 
 // minWebhookSecretLen keeps webhook secrets out of guessing range.
 const minWebhookSecretLen = 16
+
+const defaultPollSec = 300
 
 func safeStackName(s string) bool {
 	if s == "" || strings.ContainsAny(s, `/\:*?"<>|`) {

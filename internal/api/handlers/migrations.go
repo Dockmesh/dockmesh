@@ -41,6 +41,9 @@ func (h *Handlers) InitiateMigration(w http.ResponseWriter, r *http.Request) {
 		h.writeScopeDenied(w, r, rbac.PermStacksDeploy, target, "stack "+name+" on the target host")
 		return
 	}
+	if !h.checkStackFiles(w, r, name) {
+		return
+	}
 	userID := middleware.UserID(r.Context())
 	m, err := h.Migrations.Initiate(r.Context(), name, req.TargetHostID, userID)
 	if errors.Is(err, migration.ErrNamedVolumes) {

@@ -7032,8 +7032,16 @@ paths:
         mTLS tunnel to the target host, deploys the stack there, and
         finally stops the source containers. The source files are kept
         for rollback until `/migrate/{id}/source` is called.
+
+        The target gets the same files as a manual deploy: global
+        variables and the stack's default environment override. Stack
+        files changed outside Dockmesh are refused (409
+        `modified_outside`) until the request confirms them. A change
+        after the start fails the migration, and a stopped source is not
+        redeployed with the changed files.
       parameters:
         - $ref: "#/components/parameters/StackNamePath"
+        - $ref: "#/components/parameters/ConfirmExternalQuery"
       requestBody:
         required: true
         content:
@@ -7060,13 +7068,25 @@ paths:
         "404": {$ref: "#/components/responses/NotFound"}
         "409":
           description: |
-            The stack uses named volumes. Volume data can't be transferred
-            yet, so the migration is refused instead of starting the stack
-            with empty volumes on the target. Preflight reports the same
-            as the failing `named_volumes` check.
+            The stack uses named volumes (volume data can't be transferred
+            yet, the same as the failing `named_volumes` preflight check),
+            or its compose.yaml or .env changed outside Dockmesh
+            (`code: modified_outside`; repeat with `confirm_external=1`
+            after reviewing them).
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/Error"}
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/Error"
+                  - type: object
+                    required: [error, code, files]
+                    properties:
+                      error: {type: string}
+                      code: {type: string, enum: [modified_outside]}
+                      stack: {type: string}
+                      files:
+                        type: array
+                        items: {type: string}
   /stacks/{name}/migrate/preflight:
     post:
       operationId: stacks.migrate_preflight
@@ -9971,8 +9991,8 @@ components:
           description: When true, a successful sync with a new SHA triggers a deploy.
         poll_interval_sec:
           type: integer
-          minimum: 60
-          description: 0 = do not poll (webhook / manual sync only).
+          minimum: 0
+          description: 0 = do not poll (webhook / manual sync only); otherwise at least 60.
         has_webhook_secret:
           type: boolean
           description: Whether a webhook secret is set. Without one, `POST /stacks/{name}/git/webhook` is rejected.
@@ -10009,7 +10029,8 @@ components:
         auto_deploy: {type: boolean}
         poll_interval_sec:
           type: integer
-          minimum: 60
+          minimum: 0
+          description: 0 = do not poll (webhook / manual sync only); otherwise at least 60. Omitted = 300 on create, unchanged on update.
         webhook_secret:
           type: string
           description: Shared secret for HMAC verification of incoming webhook pushes. At least 16 characters when set or changed (shorter secrets stored earlier keep working). Empty keeps the stored secret. Webhooks are rejected while no secret is set.

@@ -941,6 +941,7 @@ func main() {
 	deployStore := stacks.NewDeploymentStore(database)
 	depStore := stacks.NewDependencyStore(database)
 	migrationSvc := migration.NewService(database, hostRegistry, stacksMgr, deployStore)
+	migrationSvc.SetGlobalEnv(globalEnvStore.List)
 	if err := migrationSvc.Start(ctx); err != nil {
 		slog.Warn("migration service start", "err", err)
 	}
