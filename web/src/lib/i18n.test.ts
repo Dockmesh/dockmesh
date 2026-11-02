@@ -75,7 +75,7 @@ describe('messages', () => {
   });
 
   it('translates every fixed server error code', () => {
-    const codes = [...errcodesGo.matchAll(/^\t".*":\s+"([a-z0-9_]+)",\r?$/gm)].map((m) => m[1]);
+    const codes = [...errcodesGo.matchAll(/^\t\{".*", "([a-z0-9_]+)"\},\r?$/gm)].map((m) => m[1]);
     expect(codes.length).toBeGreaterThan(100);
     const missing = codes.filter((c) => !(`apierr_${c}` in en));
     expect(missing).toEqual([]);

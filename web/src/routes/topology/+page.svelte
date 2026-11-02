@@ -9,6 +9,7 @@
   import { EventStream, type ConnStatus } from '$lib/events';
   import { Waypoints, Minus, Plus } from 'lucide-svelte';
   import { m } from '$lib/paraglide/messages.js';
+  import { containerStateLabel } from '$lib/labels';
 
   type Route = { id: number; host: string; upstream: string; enabled: boolean };
 
@@ -40,8 +41,8 @@
   // A container is "behind the proxy" when an enabled route points at one
   // of its published host ports (Caddy runs with host networking).
   function upstreamPort(u: string): number | null {
-    const m = u.match(/:(\d+)(?:\/.*)?$/);
-    return m ? Number(m[1]) : null;
+    const mt = u.match(/:(\d+)(?:\/.*)?$/);
+    return mt ? Number(mt[1]) : null;
   }
   const proxiedPorts = $derived(
     new Map(routes.filter((r) => r.enabled).map((r) => [upstreamPort(r.upstream), r.host] as const).filter(([p]) => p != null))
@@ -139,18 +140,6 @@
     if (c.state === 'restarting' || c.state === 'paused') return 'warn';
     if (c.state === 'dead') return 'bad';
     return 'off';
-  }
-  const STATE_LABEL: Record<string, () => string> = {
-    created: m.topology_state_created,
-    running: m.topology_state_running,
-    paused: m.topology_state_paused,
-    restarting: m.topology_state_restarting,
-    removing: m.topology_state_removing,
-    exited: m.topology_state_exited,
-    dead: m.topology_state_dead
-  };
-  function stateLabel(state: string): string {
-    return STATE_LABEL[state]?.() ?? state;
   }
   const RING: Record<string, string> = { ok: 'var(--ok)', warn: 'var(--warn)', bad: 'var(--bad)', off: 'var(--off)' };
   function short(s: string, n: number): string {
@@ -296,7 +285,7 @@
                   class:sel={selected === c.id}
                   role="button"
                   tabindex="0"
-                  aria-label={m.topology_container_aria({ name: c.ct.name, state: stateLabel(c.ct.state) })}
+                  aria-label={m.topology_container_aria({ name: c.ct.name, state: containerStateLabel(c.ct.state) })}
                   aria-pressed={selected === c.id}
                   opacity={ctMatches(c.ct) ? 1 : 0.3}
                   onclick={() => (selected = selected === c.id ? null : c.id)}
@@ -348,7 +337,7 @@
           {@const domains = routesFor(sel.ct)}
           <h2 class="dm-h2 dm-mono">{sel.ct.name}</h2>
           <dl class="dm-kv">
-            <dt>{m.common_status()}</dt><dd><StatusChip tone={ctTone(sel.ct)} label={stateLabel(sel.ct.state)} /></dd>
+            <dt>{m.common_status()}</dt><dd><StatusChip tone={ctTone(sel.ct)} label={containerStateLabel(sel.ct.state)} /></dd>
             <dt>{m.common_image()}</dt><dd class="dm-mono">{sel.ct.image}</dd>
             <dt>{m.common_ports()}</dt>
             <dd class="dm-mono">{(sel.ct.ports ?? []).map((p) => (p.host_port ? `${p.host_port}:${p.container_port}` : `${p.container_port}`) + `/${p.protocol}`).join(', ') || '—'}</dd>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { m } from '$lib/paraglide/messages.js';
+  import { vulnSeverityLabel } from '$lib/labels';
   // Images, volumes and networks of the hosts in the lens, one tab each.
   import { fmtBytes } from '$lib/format';
   import { fmtDate as fmtLocaleDate } from '$lib/i18n';
@@ -748,17 +749,6 @@
     if (isNaN(d.getTime())) return s;
     return fmtLocaleDate(d);
   }
-  function sevLabel(s: string): string {
-    switch (s) {
-      case 'critical': return m.resources_sev_critical();
-      case 'high': return m.resources_sev_high();
-      case 'medium': return m.resources_sev_medium();
-      case 'low': return m.resources_sev_low();
-      case 'negligible': return m.resources_sev_negligible();
-      case 'unknown': return m.resources_sev_unknown();
-      default: return s;
-    }
-  }
   function sevColor(s: Severity): 'danger' | 'warning' | 'info' | 'default' {
     if (s === 'critical' || s === 'high') return 'danger';
     if (s === 'medium') return 'warning';
@@ -1289,7 +1279,7 @@
         {#each [['critical', scanReport.summary.critical], ['high', scanReport.summary.high], ['medium', scanReport.summary.medium], ['low', scanReport.summary.low], ['negligible', scanReport.summary.negligible], ['unknown', scanReport.summary.unknown]] as [sev, count] (sev)}
           <button type="button" class="dm-card p-2 text-center cursor-pointer hover:border-[var(--color-brand-500)]" class:scan-tile-active={scanFilter === sev} onclick={() => (scanFilter = scanFilter === sev ? 'all' : sev as Severity)}>
             <div class="text-lg font-bold tabular-nums">{count}</div>
-            <div class="text-[10px] uppercase text-[var(--fg-muted)]">{sevLabel(String(sev))}</div>
+            <div class="text-[10px] uppercase text-[var(--fg-muted)]">{vulnSeverityLabel(String(sev))}</div>
           </button>
         {/each}
       </div>
@@ -1308,7 +1298,7 @@
             <tbody class="divide-y divide-[var(--border)]">
               {#each scanFiltered as v (v.id)}
                 <tr class="hover:bg-[var(--surface-hover)]">
-                  <td class="px-3 py-1.5"><Badge variant={sevColor(v.severity)}>{sevLabel(v.severity)}</Badge></td>
+                  <td class="px-3 py-1.5"><Badge variant={sevColor(v.severity)}>{vulnSeverityLabel(v.severity)}</Badge></td>
                   <td class="px-3 py-1.5 font-mono">{v.package}</td>
                   <td class="px-3 py-1.5 font-mono">{v.version}</td>
                   <td class="px-3 py-1.5 font-mono">{v.fixed_in || '—'}</td>

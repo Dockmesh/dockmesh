@@ -302,12 +302,12 @@ func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"language": lang,
-		"id":       u.ID, "username": u.Username, "display_name": u.DisplayName, "email": u.Email,
+		"id": u.ID, "username": u.Username, "display_name": u.DisplayName, "email": u.Email,
 		"source": u.Source, "mfa_enabled": u.MFAEnabled, "last_login_at": u.LastLoginAt,
 		"password_changed_at": u.PasswordChangedAt, "has_avatar": u.HasAvatar,
 		"permissions": u.Permissions, "unscoped": access.Unscoped(),
 		"assignments": h.viewUser(*u).Assignments,
+		"language":    lang,
 	})
 }
 
@@ -332,7 +332,8 @@ func (h *Handlers) SetMyLanguage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.UserPrefs.Set(r.Context(), uid, userprefs.KeyLanguage, req.Language); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		slog.Warn("save language preference", "user", uid, "err", err)
+		writeError(w, http.StatusInternalServerError, "could not save the language")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

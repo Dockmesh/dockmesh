@@ -7,6 +7,7 @@
   import { Modal } from '$lib/components/ui';
   import { Rocket, AlertCircle, ChevronRight } from 'lucide-svelte';
   import { m } from '$lib/paraglide/messages.js';
+  import { hostStatusLabel } from '$lib/labels';
 
   interface Props {
     open: boolean;
@@ -119,12 +120,6 @@
   const preview = $derived(template ? previewCompose(template, values) : '');
 
   const hostOptions = $derived(hosts.available.filter((h) => h.kind !== 'all'));
-
-  function hostStatusLabel(status: string): string {
-    if (status === 'online') return m.common_online();
-    if (status === 'offline') return m.common_offline();
-    return status;
-  }
 </script>
 
 <Modal bind:open title={template ? m.templates_dd_title({ name: template.name }) : m.templates_dd_title_generic()} maxWidth="max-w-2xl" onclose={close}>

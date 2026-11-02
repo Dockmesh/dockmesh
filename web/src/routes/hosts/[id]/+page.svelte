@@ -1,5 +1,6 @@
 <script lang="ts">
   import { m } from '$lib/paraglide/messages.js';
+  import { containerStateLabel, hostStatusLabel } from '$lib/labels';
   import { untrack } from 'svelte';
   import { tagProblem } from '../_host';
   import { urlTab } from '$lib/urlTab.svelte';
@@ -164,29 +165,12 @@
   function fmtDate(iso?: string): string {
     return iso ? fmtLocaleDate(iso) : '—';
   }
-  function statusLabel(s: string): string {
-    if (s === 'online') return m.hosts_st_online();
-    if (s === 'offline') return m.hosts_st_offline();
-    if (s === 'pending') return m.hosts_pending();
-    return s;
-  }
   function migStatusLabel(s: string): string {
     if (s === 'completed') return m.hosts_mig_completed();
     if (s === 'failed') return m.hosts_mig_failed();
     if (s === 'rolled_back') return m.hosts_mig_rolled_back();
     if (s === 'pending') return m.hosts_pending();
     return s;
-  }
-  function ctStateLabel(s: string): string {
-    switch (s) {
-      case 'running': return m.hosts_ct_running();
-      case 'exited': return m.hosts_ct_exited();
-      case 'paused': return m.hosts_ct_paused();
-      case 'created': return m.hosts_ct_created();
-      case 'restarting': return m.hosts_ct_restarting();
-      case 'dead': return m.hosts_ct_dead();
-      default: return s;
-    }
   }
   function selectTab(t: string) {
     openTab.set(t);
@@ -234,7 +218,7 @@
       note: metrics && metrics.disk_total > 0 ? m.hosts_mem_of({ used: fmtBytes(metrics.disk_used), total: fmtBytes(metrics.disk_total) }) : m.hosts_unavailable_here(),
       tone: tone(diskPct, 80)
     },
-    { label: m.common_containers(), value: `${running} / ${containers.length}`, note: m.hosts_ct_running() },
+    { label: m.common_containers(), value: `${running} / ${containers.length}`, note: m.containers_status_running() },
     { label: m.common_stacks(), value: stacksOnHost.length }
   ]);
 
@@ -349,7 +333,7 @@
   {:else}
     <div class="dm-ph">
       <h1>{hostName}</h1>
-      <StatusChip tone={statusTone} label={statusLabel(status)} />
+      <StatusChip tone={statusTone} label={hostStatusLabel(status)} />
       <span class="dm-sub dm-trunc">
         {hostKind}{hostname ? ` · ${hostname}` : ''}{!isLocal && agent?.os ? ` · ${agent.os}/${agent.arch}` : ''}{!isLocal && agent?.docker_version ? ` · Docker ${agent.docker_version}` : ''}{agent?.online_since ? ` · ${m.hosts_up({ dur: fmtUptime(agent.online_since) })}` : ''}
       </span>
@@ -475,7 +459,7 @@
             <a class="dm-tr dm-click lnk" role="row" style="grid-template-columns: {CT_COLS}" {href}>
               <span role="cell" class="dm-nm"><span class="dm-t">{name}</span><small>{c.Labels?.['com.docker.compose.project'] ?? m.hosts_standalone()}</small></span>
               <span role="cell" class="dm-mono dm-dim" title={c.Image}>{c.Image}</span>
-              <span role="cell"><StatusChip tone={st as Tone} label={st === 'warn' ? m.hosts_ct_unhealthy() : ctStateLabel(c.State)} /></span>
+              <span role="cell"><StatusChip tone={st as Tone} label={st === 'warn' ? m.containers_status_unhealthy() : containerStateLabel(c.State)} /></span>
               <span role="cell" class="dm-dim" title={c.Status}>{c.Status ?? '—'}</span>
             </a>
           {/each}

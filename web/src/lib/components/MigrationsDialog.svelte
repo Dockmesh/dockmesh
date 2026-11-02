@@ -66,13 +66,13 @@
     return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
   }
 
-  function progressPercent(m: Migration): number {
-    if (!m.progress) return 0;
-    if (m.progress.bytes_total > 0) {
-      return Math.min(100, Math.round((m.progress.bytes_done / m.progress.bytes_total) * 100));
+  function progressPercent(mg: Migration): number {
+    if (!mg.progress) return 0;
+    if (mg.progress.bytes_total > 0) {
+      return Math.min(100, Math.round((mg.progress.bytes_done / mg.progress.bytes_total) * 100));
     }
-    if (m.progress.volumes_total > 0) {
-      return Math.min(100, Math.round((m.progress.volume_index / m.progress.volumes_total) * 100));
+    if (mg.progress.volumes_total > 0) {
+      return Math.min(100, Math.round((mg.progress.volume_index / mg.progress.volumes_total) * 100));
     }
     return 0;
   }

@@ -67,10 +67,10 @@
     const h = host;
     api.system
       .metrics(h)
-      .then((m) => {
-        if ('cpu_cores' in m) {
-          cores = m.cpu_cores;
-          memTotal = m.mem_total;
+      .then((mt) => {
+        if ('cpu_cores' in mt) {
+          cores = mt.cpu_cores;
+          memTotal = mt.mem_total;
         }
       })
       .catch(() => {});

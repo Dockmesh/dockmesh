@@ -17,6 +17,7 @@
   import { stackInLens } from '$lib/lens';
   import { auditSentence, hostNames as hostNameMap, loadUserNames, targetLabel } from '$lib/auditText';
   import { m } from '$lib/paraglide/messages.js';
+  import { alertSeverityLabel } from '$lib/labels';
   import { fmtDateTime, fmtNumber } from '$lib/i18n';
   import type { Stat } from '$lib/components/ui/StatBar.svelte';
   import StackHealth from '$lib/components/ui/StackHealth.svelte';
@@ -121,8 +122,6 @@
 
   const KIND_LABEL: Record<string, () => string> = { local: m.overview_kind_local, agent: m.overview_kind_agent };
   const kindLabel = (kind: string) => KIND_LABEL[kind]?.() ?? kind;
-  const SEV_LABEL: Record<string, () => string> = { critical: m.activity_sev_critical, warning: m.activity_sev_warning, info: m.activity_sev_info };
-  const sevLabel = (sev: string) => SEV_LABEL[sev]?.() ?? sev;
 
   const ORDER: Record<StackState, number> = { unhealthy: 0, partial: 1, running: 2, stopped: 3, unknown: 4 };
   const hostName = (id: string) => hostList.find((h) => h.id === id)?.name ?? id;
@@ -303,7 +302,7 @@
           </div>
           {#each attnSorted.slice(0, ATTN_LIMIT) as a (a.id)}
             <div class="attn">
-              <StatusChip tone={sevTone(a.severity)} label={sevLabel(a.severity)} />
+              <StatusChip tone={sevTone(a.severity)} label={alertSeverityLabel(a.severity)} />
               <div class="t dm-trunc" title={a.detail ? `${a.title} — ${a.detail}` : a.title}><b>{a.title}</b>{#if a.detail}<span> — {a.detail}</span>{/if}</div>
               {#if a.since}<span class="dm-num dm-dim" title={fmtDateTime(a.since)}>{fmtAgo(a.since)}</span>{/if}
               {#if inAppLink(a.link)}<a class="dm-btn dm-btn-sm" href={inAppLink(a.link)}>{m.common_open()}</a>{/if}

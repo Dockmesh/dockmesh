@@ -33,9 +33,10 @@
   import { copyWithToast } from '$lib/clipboard';
   import { confirm } from '$lib/stores/confirm.svelte';
   import { allowed } from '$lib/rbac.svelte';
-  import { fmtBytes } from '$lib/format';
-  import { fmtDate, fmtDateTime } from '$lib/i18n';
+  import { fmtAgo, fmtBytes } from '$lib/format';
+  import { fmtDate } from '$lib/i18n';
   import { m } from '$lib/paraglide/messages.js';
+  import { containerStateLabel } from '$lib/labels';
   import { hosts, isAllHosts } from '$lib/stores/host.svelte';
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import type { UpdatePreview, UpdateHistoryEntry } from '$lib/api';
@@ -381,23 +382,6 @@
     inp.click();
   }
 
-  function formatRelativeTime(iso: string): string {
-    if (!iso) return '';
-    const t = new Date(iso).getTime();
-    if (!t) return '';
-    const diff = Date.now() - t;
-    if (diff < 0) return fmtDateTime(iso);
-    const sec = Math.floor(diff / 1000);
-    if (sec < 60) return m.containers_rel_s_ago({ n: sec });
-    const min = Math.floor(sec / 60);
-    if (min < 60) return m.containers_rel_m_ago({ n: min });
-    const hr = Math.floor(min / 60);
-    if (hr < 24) return m.containers_rel_h_ago({ n: hr });
-    const days = Math.floor(hr / 24);
-    if (days < 30) return m.containers_rel_d_ago({ n: days });
-    return fmtDate(iso);
-  }
-
   // Auto-load the root listing when the Files tab is opened for the
   // first time. Re-load when the targetHost changes — switching hosts
   // would otherwise show stale data. Depends only on `filesLoaded` so
@@ -596,16 +580,7 @@
     }
   }
 
-  function fmtRelTime(ts?: string | null): string {
-    if (!ts) return '—';
-    const d = (Date.now() - new Date(ts).getTime()) / 1000;
-    if (d < 60) return m.time_just_now();
-    if (d < 3600) return m.containers_rel_m_ago({ n: Math.floor(d / 60) });
-    if (d < 86400) return m.containers_rel_h_ago({ n: Math.floor(d / 3600) });
-    if (d < 2592000) return m.containers_rel_d_ago({ n: Math.floor(d / 86400) });
-    return fmtDate(ts);
-  }
-  // Same buckets as fmtRelTime without the "ago", for "up 3h".
+  // Same buckets as fmtAgo without the "ago", for "up 3h".
   function fmtRelBare(ts?: string | null): string {
     if (!ts) return '—';
     const d = (Date.now() - new Date(ts).getTime()) / 1000;
@@ -1005,21 +980,8 @@
       return { tone: 'ok', label: m.containers_status_running() };
     }
     if (st.Status === 'dead' || (st.ExitCode ?? 0) !== 0) return { tone: 'bad', label: st.Status === 'dead' ? m.containers_status_dead() : m.containers_status_exited_code({ code: st.ExitCode }) };
-    return { tone: 'off', label: st.Status ? stateLabel(st.Status) : m.containers_status_stopped() };
+    return { tone: 'off', label: st.Status ? containerStateLabel(st.Status) : m.containers_status_stopped() };
   });
-
-  function stateLabel(s: string): string {
-    switch (s) {
-      case 'running': return m.containers_status_running();
-      case 'restarting': return m.containers_status_restarting();
-      case 'paused': return m.containers_status_paused();
-      case 'dead': return m.containers_status_dead();
-      case 'exited': return m.containers_status_exited();
-      case 'created': return m.containers_status_created();
-      case 'removing': return m.containers_status_removing();
-      default: return s;
-    }
-  }
 
   const hostName = $derived(
     hosts.available.find((h) => h.id === targetHost)?.name ?? (targetHost === 'local' ? m.containers_detail_the_server() : targetHost)
@@ -1208,7 +1170,7 @@
             {/if}
 
             <dt>{m.common_created()}</dt>
-            <dd>{info.Created?.slice(0, 19).replace('T', ' ')} · {fmtRelTime(info.Created)}</dd>
+            <dd>{info.Created?.slice(0, 19).replace('T', ' ')} · {fmtAgo(info.Created)}</dd>
 
             {#if info.HostConfig?.RestartPolicy?.Name}
               <dt>{m.containers_detail_restart_policy()}</dt>
@@ -1253,7 +1215,7 @@
                       <span class="ctn-health-streak">{m.containers_detail_failing_streak({ count: health.FailingStreak })}</span>
                     {/if}
                   </div>
-                  <span class="ctn-health-when">{m.containers_detail_failing_since({ time: fmtRelTime(health.Log?.[0]?.Start) })}</span>
+                  <span class="ctn-health-when">{m.containers_detail_failing_since({ time: fmtAgo(health.Log?.[0]?.Start) })}</span>
                 </div>
                 {#if health.Log?.[0]?.Output}
                   <pre class="ctn-health-output">{health.Log[0].Output.slice(0, 400)}</pre>
@@ -1268,7 +1230,7 @@
                   <div class="ctn-health-status">
                     <span class="dm-pill dm-pill-warning ctn-health-pill"><span class="dm-pill-dot"></span>{m.containers_status_starting()}</span>
                   </div>
-                  <span class="ctn-health-when">{fmtRelTime(info.State?.StartedAt)}</span>
+                  <span class="ctn-health-when">{fmtAgo(info.State?.StartedAt)}</span>
                 </div>
               {:else}
                 <div class="ed-row" data-status="running" style="grid-template-columns: 6px 1fr auto auto">
@@ -1280,7 +1242,7 @@
                   <div class="ctn-health-status">
                     <span class="dm-pill dm-pill-success ctn-health-pill"><span class="dm-pill-dot"></span>{m.containers_status_healthy()}</span>
                   </div>
-                  <span class="ctn-health-when">{m.containers_detail_last_ok({ time: fmtRelTime(health.Log?.[0]?.End) })}</span>
+                  <span class="ctn-health-when">{m.containers_detail_last_ok({ time: fmtAgo(health.Log?.[0]?.End) })}</span>
                 </div>
               {/if}
             </div>
@@ -1292,12 +1254,12 @@
         <section class="ctn-block">
           <h3 class="ctn-h3">{m.containers_detail_restart_history()} · {m.containers_detail_restarts({ count: restartCount })}</h3>
           {#if restartCount === 0 && info.State?.Running}
-            <p class="ctn-empty-line">{m.containers_detail_no_restarts_before()} <strong>{fmtRelTime(info.State?.StartedAt)}</strong>.</p>
+            <p class="ctn-empty-line">{m.containers_detail_no_restarts_before()} <strong>{fmtAgo(info.State?.StartedAt)}</strong>.</p>
           {:else}
             <ol class="ctn-restart-list">
               {#if info.State?.StartedAt}
                 <li class="ed-feed-item">
-                  <span class="ed-feed-time">{fmtRelTime(info.State.StartedAt)}</span>
+                  <span class="ed-feed-time">{fmtAgo(info.State.StartedAt)}</span>
                   <span class="ed-feed-text">
                     <strong>{m.containers_detail_last_start()}</strong> · {info.State?.Running ? m.containers_detail_currently_running() : m.containers_detail_not_running()}
                   </span>
@@ -1314,7 +1276,7 @@
               {/if}
               {#if info.State?.FinishedAt && info.State.FinishedAt !== '0001-01-01T00:00:00Z'}
                 <li class="ed-feed-item">
-                  <span class="ed-feed-time">{fmtRelTime(info.State.FinishedAt)}</span>
+                  <span class="ed-feed-time">{fmtAgo(info.State.FinishedAt)}</span>
                   <span class="ed-feed-text">
                     <strong>{m.containers_detail_last_finish()}</strong> · {info.State?.Error || m.containers_detail_clean_exit()}
                   </span>
@@ -1569,7 +1531,7 @@
                   </div>
                   <p class="ctn-updates-banner-meta">
                     {#if updatePreview.remote_last_updated}
-                      {m.containers_upd_released()} <span class="ctn-updates-rel">{fmtRelTime(updatePreview.remote_last_updated)}</span>{#if updatePreview.remote_size} · <span class="ctn-updates-rel">{fmtBytes(updatePreview.remote_size, '—')}</span>{/if}.
+                      {m.containers_upd_released()} <span class="ctn-updates-rel">{fmtAgo(updatePreview.remote_last_updated)}</span>{#if updatePreview.remote_size} · <span class="ctn-updates-rel">{fmtBytes(updatePreview.remote_size, '—')}</span>{/if}.
                     {/if}
                     {#if updatePreview.latest_release?.name && updatePreview.latest_release.name !== updatePreview.latest_release.tag}
                       {updatePreview.latest_release.name}.
@@ -1616,9 +1578,9 @@
                     <h3 class="ctn-h3">{m.containers_upd_up_to_date()}</h3>
                     <div class="ctn-updates-image-ref">{updatePreview.image}</div>
                     <div class="ctn-updates-image-meta">
-                      <div>{m.containers_upd_local_meta({ digest: shortDigest(updatePreview.current_digest), time: fmtRelTime(updatePreview.current_created) })}</div>
+                      <div>{m.containers_upd_local_meta({ digest: shortDigest(updatePreview.current_digest), time: fmtAgo(updatePreview.current_created) })}</div>
                       {#if updatePreview.remote_last_updated}
-                        <div>{m.containers_upd_remote_meta({ time: fmtRelTime(updatePreview.remote_last_updated), size: fmtBytes(updatePreview.remote_size, '—') })}</div>
+                        <div>{m.containers_upd_remote_meta({ time: fmtAgo(updatePreview.remote_last_updated), size: fmtBytes(updatePreview.remote_size, '—') })}</div>
                       {/if}
                     </div>
                   </div>
@@ -1693,7 +1655,7 @@
                 {#if updatePreview.remote_last_updated}
                   <div class="ed-metric ctn-updates-metric">
                     <span class="ed-metric-label">{m.containers_upd_pushed()}</span>
-                    <div class="ed-metric-value">{fmtRelTime(updatePreview.remote_last_updated)}</div>
+                    <div class="ed-metric-value">{fmtAgo(updatePreview.remote_last_updated)}</div>
                     <span class="ed-metric-meta">{newTag || updatePreview.latest_release?.tag || m.containers_upd_latest_tag()}</span>
                   </div>
                 {/if}
@@ -1701,7 +1663,7 @@
                   <div class="ed-metric ctn-updates-metric">
                     <span class="ed-metric-label">{m.containers_upd_local_digest()}</span>
                     <div class="ed-metric-value mono">{shortDigest(updatePreview.current_digest)}</div>
-                    <span class="ed-metric-meta">{m.containers_upd_built({ time: fmtRelTime(updatePreview.current_created) })}</span>
+                    <span class="ed-metric-meta">{m.containers_upd_built({ time: fmtAgo(updatePreview.current_created) })}</span>
                   </div>
                 {/if}
               </div>
@@ -1731,7 +1693,7 @@
             <li>
               <span class="ctn-updates-version-tag current">{currentTagShort || imageTag || '—'}</span>
               <span class="ctn-updates-version-meta">
-                {m.containers_upd_current()}{#if info?.State?.StartedAt} · {fmtRelTime(info.State.StartedAt)}{/if}
+                {m.containers_upd_current()}{#if info?.State?.StartedAt} · {fmtAgo(info.State.StartedAt)}{/if}
               </span>
             </li>
             {#each updateHistory.slice(0, 6) as e (e.id)}
@@ -1739,7 +1701,7 @@
               <li>
                 <span class="ctn-updates-version-tag">{trimV(tag) || shortDigest(e.old_digest)}</span>
                 <span class="ctn-updates-version-meta">
-                  {fmtRelTime(e.applied_at)}{#if e.rolled_back_at} · {m.containers_upd_rolled_back()}{/if}
+                  {fmtAgo(e.applied_at)}{#if e.rolled_back_at} · {m.containers_upd_rolled_back()}{/if}
                 </span>
               </li>
             {/each}
@@ -1775,7 +1737,7 @@
                       {/if}
                     </div>
                     <span class="ctn-updates-history-meta">
-                      {shortDigest(e.old_digest)} → {shortDigest(e.new_digest)} · {fmtRelTime(e.applied_at)}
+                      {shortDigest(e.old_digest)} → {shortDigest(e.new_digest)} · {fmtAgo(e.applied_at)}
                     </span>
                   </div>
                 </li>
@@ -2017,7 +1979,7 @@
               </span>
               <span class="ctn-files-cell-right">{entry.type === 'dir' ? '—' : fmtBytes(entry.size)}</span>
               <span class="ctn-files-mode">{entry.mode}</span>
-              <span class="ctn-files-modified">{formatRelativeTime(entry.mod_time)}</span>
+              <span class="ctn-files-modified">{fmtAgo(entry.mod_time, '')}</span>
               <span class="ctn-files-row-actions">
                 {#if entry.type === 'file'}
                   <button

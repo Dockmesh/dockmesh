@@ -17,6 +17,7 @@
   import { sevTone } from '../alerts/ruleKinds';
   import { CheckCheck } from 'lucide-svelte';
   import { m } from '$lib/paraglide/messages.js';
+  import { alertSeverityLabel } from '$lib/labels';
   import { fmtDateTime } from '$lib/i18n';
 
   const TABS = ['attention', 'notifications'] as const;
@@ -104,8 +105,6 @@
     else if (e.link) goto(e.link);
   }
 
-  const SEV_LABEL: Record<string, () => string> = { critical: m.activity_sev_critical, warning: m.activity_sev_warning, info: m.activity_sev_info };
-  const sevLabel = (s: string) => SEV_LABEL[s]?.() ?? s;
 
   const ATT_COLS = '110px minmax(0, 1fr) 160px 90px 72px';
   const FEED_COLS = '150px minmax(0, 1fr) 110px 90px 36px';
@@ -165,7 +164,7 @@
         </div>
         {#each attShown as a (a.id)}
           <div class="dm-tr" role="row" style="grid-template-columns: {ATT_COLS}">
-            <span role="cell"><StatusChip tone={sevTone(a.severity)} label={sevLabel(a.severity)} /></span>
+            <span role="cell"><StatusChip tone={sevTone(a.severity)} label={alertSeverityLabel(a.severity)} /></span>
             <span role="cell" class="dm-trunc" title={a.detail ? `${a.title} — ${a.detail}` : a.title}><b>{a.title}</b>{#if a.detail}<span class="dm-dim"> — {a.detail}</span>{/if}</span>
             <span role="cell" class="dm-dim dm-trunc">{a.object.host_id ? hostName(a.object.host_id) : '—'}</span>
             <span role="cell" class="dm-num dm-dim" title={a.since ? fmtDateTime(a.since) : ''}>{a.since ? fmtAgo(a.since) : '—'}</span>

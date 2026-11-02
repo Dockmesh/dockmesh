@@ -27,6 +27,9 @@ type emailChannel struct {
 	cfg    emailCfg
 	lang   string
 	langOf func(ctx context.Context, addr string) (string, error)
+	// sent remembers the language groups already delivered, so a retry
+	// after one group failed doesn't mail the others again.
+	sent map[string]bool
 }
 
 func parseEmail(raw json.RawMessage) (*emailChannel, error) {
@@ -44,7 +47,8 @@ func parseEmail(raw json.RawMessage) (*emailChannel, error) {
 }
 
 // Send mails each recipient in their own language: the language of the
-// Dockmesh user with that address, else the channel's.
+// Dockmesh user with that address, else the channel's. Each language group
+// gets its own mail, so its To header lists only that group.
 func (c *emailChannel) Send(ctx context.Context, n Notification) error {
 	addr := c.cfg.Host + ":" + strconv.Itoa(c.cfg.Port)
 	var auth smtp.Auth
@@ -57,11 +61,18 @@ func (c *emailChannel) Send(ctx context.Context, n Notification) error {
 		langs = append(langs, l)
 	}
 	sort.Strings(langs)
+	if c.sent == nil {
+		c.sent = map[string]bool{}
+	}
 	for _, l := range langs {
+		if c.sent[l] {
+			continue
+		}
 		to := groups[l]
 		if err := smtp.SendMail(addr, auth, c.cfg.From, to, c.message(n.in(l), to)); err != nil {
 			return err
 		}
+		c.sent[l] = true
 	}
 	return nil
 }

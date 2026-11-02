@@ -87,9 +87,9 @@
     if (!compose) return [];
     const out = new Set<string>();
     const re = /^\s*image:\s*([^\s#].*)$/gim;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(compose)) !== null) {
-      let img = m[1].trim();
+    let mt: RegExpExecArray | null;
+    while ((mt = re.exec(compose)) !== null) {
+      let img = mt[1].trim();
       const hashIdx = img.indexOf('#');
       if (hashIdx > 0) img = img.slice(0, hashIdx).trim();
       if ((img.startsWith('"') && img.endsWith('"')) || (img.startsWith("'") && img.endsWith("'"))) {
@@ -144,8 +144,8 @@
   }
   function parsePlaceholders(compose: string): Placeholder[] {
     const byName = new Map<string, Placeholder>();
-    for (const m of compose.matchAll(/\{\{\s*(.+?)\s*\}\}/g)) {
-      const parts = m[1].split('|');
+    for (const mt of compose.matchAll(/\{\{\s*(.+?)\s*\}\}/g)) {
+      const parts = mt[1].split('|');
       const name = parts[0].trim();
       if (!name) continue;
       const ph = byName.get(name) ?? { name, def: '', secret: false };

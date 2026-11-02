@@ -173,8 +173,8 @@ export interface FieldError { field: string; message: string }
 // parseFieldError reads the field out of a server validation message
 // ("options.performance.read_timeout: must be …").
 export function parseFieldError(msg: string): FieldError | null {
-  const m = /options\.([a-z_]+(?:\.[a-z_]+)*): (.+)$/s.exec(msg);
-  if (m) return { field: m[1], message: m[2] };
+  const mt = /options\.([a-z_]+(?:\.[a-z_]+)*): (.+)$/s.exec(msg);
+  if (mt) return { field: mt[1], message: mt[2] };
   if (/www\. name/.test(msg)) return { field: 'routing.www_redirect', message: msg };
   return null;
 }

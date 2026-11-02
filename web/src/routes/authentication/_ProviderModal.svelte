@@ -145,7 +145,7 @@
   });
 
   function oidcConfigFromProvider(p: OIDCProvider): OIDCConfig {
-    const mappings = (p.group_mappings ?? []).map((m) => ({ group: m.group_value, role: m.role_name, scope: m.scope }));
+    const mappings = (p.group_mappings ?? []).map((gm) => ({ group: gm.group_value, role: gm.role_name, scope: gm.scope }));
     return {
       kind: 'oidc',
       slug: p.slug,
@@ -373,8 +373,8 @@
       scopes: oidc.scopes.trim() || 'openid profile email',
       group_claim: oidc.group_claim.trim() || undefined,
       group_mappings: oidc.group_mappings
-        .filter((m) => m.group && m.role)
-        .map((m) => ({ group_value: m.group, role_name: m.role, scope: m.scope ?? { type: 'global' } })),
+        .filter((gm) => gm.group && gm.role)
+        .map((gm) => ({ group_value: gm.group, role_name: gm.role, scope: gm.scope ?? { type: 'global' } })),
       default_role: oidc.default_role,
       allow_email_link: oidc.allow_email_link,
       enabled: oidc.enabled,
@@ -404,7 +404,7 @@
       groups_field: oauth2.groups_field.trim(),
       default_role: oauth2.default_role,
       allow_email_link: oauth2.allow_email_link,
-      group_mappings: oauth2.group_mappings.filter((m) => m.group && m.role),
+      group_mappings: oauth2.group_mappings.filter((gm) => gm.group && gm.role),
       enabled: oauth2.enabled,
     };
     if (editing && editing.kind === 'oauth2') {
@@ -428,7 +428,7 @@
       groups_attribute: saml.groups_attribute.trim() || 'groups',
       default_role: saml.default_role,
       allow_email_link: saml.allow_email_link,
-      group_mappings: saml.group_mappings.filter((m) => m.group && m.role),
+      group_mappings: saml.group_mappings.filter((gm) => gm.group && gm.role),
       enabled: saml.enabled,
     };
     if (editing && editing.kind === 'saml') {
@@ -459,7 +459,7 @@
       group_membership_attribute: ldap.group_membership_attribute.trim() || 'memberOf',
       default_role: ldap.default_role,
       allow_email_link: ldap.allow_email_link,
-      group_mappings: ldap.group_mappings.filter((m) => m.group && m.role),
+      group_mappings: ldap.group_mappings.filter((gm) => gm.group && gm.role),
       enabled: ldap.enabled,
     };
     if (editing && editing.kind === 'ldap') {

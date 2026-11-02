@@ -814,7 +814,7 @@ func (s *Service) fireRule(ctx context.Context, r *Rule, t target, text i18n.Tex
 	slog.Info("alert fired", "rule", r.Name, "host", t.hostID, "target", t.name, "value", value,
 		"muted", muted, "cooldown", cooling)
 	if notified {
-		s.announce(ctx, r, announcement{target: t, msg: msg, text: text, value: value, ts: ts}, false)
+		s.announce(ctx, r, announcement{target: t, text: text, value: value, ts: ts}, false)
 	}
 }
 
@@ -914,7 +914,7 @@ func (s *Service) resolveRule(ctx context.Context, r *Rule, t target, text i18n.
 	}
 	slog.Info("alert resolved", "rule", r.Name, "host", t.hostID, "target", t.name, "value", value, "notified", notified)
 	if notified {
-		s.announce(ctx, r, announcement{target: t, msg: msg, text: text, value: value, ts: ts}, true)
+		s.announce(ctx, r, announcement{target: t, text: text, value: value, ts: ts}, true)
 	}
 }
 

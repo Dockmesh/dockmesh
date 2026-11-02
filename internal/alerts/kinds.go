@@ -4,18 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"log/slog"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/dockmesh/dockmesh/internal/i18n"
 	"github.com/dockmesh/dockmesh/internal/notices"
 	"github.com/dockmesh/dockmesh/internal/system"
 	"github.com/robfig/cron/v3"
-
-	"github.com/dockmesh/dockmesh/internal/i18n"
 )
 
 // Rule kinds. For the event kinds, container_filter is the target filter
@@ -798,7 +796,7 @@ func (s *Service) evalBackupMissed(ctx context.Context, r *Rule, now time.Time) 
 		switch {
 		case overdue && !firing:
 			s.fireRule(ctx, r, target{name: j.name}, i18n.Msg("alert.backup_missed",
-				j.name, since.Local().Format("2006-01-02 15:04"), fmt.Sprint(interval)), 0, now)
+				j.name, since.Local().Format("2006-01-02 15:04"), interval.String()), 0, now)
 		case !overdue && firing:
 			s.resolveRule(ctx, r, target{name: j.name}, i18n.Msg("alert.backup_on_schedule", j.name), 0, now)
 		}

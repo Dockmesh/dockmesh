@@ -15,6 +15,7 @@
   import type { Tone } from '$lib/components/ui/StatusChip.svelte';
   import { Box, AlertTriangle } from 'lucide-svelte';
   import { m } from '$lib/paraglide/messages.js';
+  import { containerStateLabel } from '$lib/labels';
 
   const canControlAll = $derived(allowed('containers.update'));
   const canExecAll = $derived(allowed('containers.exec'));
@@ -105,19 +106,6 @@
     if (idx < 0 || idx < image.lastIndexOf('/')) return { name: image, tag: null };
     return { name: image.slice(0, idx), tag: image.slice(idx + 1) };
   }
-  function stateLabel(s: string): string {
-    switch (s) {
-      case 'running': return m.containers_status_running();
-      case 'restarting': return m.containers_status_restarting();
-      case 'paused': return m.containers_status_paused();
-      case 'dead': return m.containers_status_dead();
-      case 'exited': return m.containers_status_exited();
-      case 'created': return m.containers_status_created();
-      case 'removing': return m.containers_status_removing();
-      case '': return m.containers_status_unknown();
-      default: return s;
-    }
-  }
   function statusOf(c: Container): { tone: Tone; label: string } {
     const health = parseHealth(c.Status);
     if (c.State === 'running') {
@@ -125,11 +113,11 @@
       if (health === 'starting') return { tone: 'warn', label: m.containers_status_starting() };
       return { tone: 'ok', label: m.containers_status_running() };
     }
-    if (c.State === 'restarting' || c.State === 'paused') return { tone: 'warn', label: stateLabel(c.State) };
+    if (c.State === 'restarting' || c.State === 'paused') return { tone: 'warn', label: containerStateLabel(c.State) };
     if (c.State === 'dead') return { tone: 'bad', label: m.containers_status_dead() };
     const exit = exitCodeFromStatus(c.Status);
     if (c.State === 'exited' && exit !== null && exit !== 0) return { tone: 'bad', label: m.containers_status_exited_code({ code: exit }) };
-    return { tone: 'off', label: stateLabel(c.State || '') };
+    return { tone: 'off', label: c.State ? containerStateLabel(c.State) : m.containers_status_unknown() };
   }
   function needsAttention(c: Container): boolean {
     const t = statusOf(c).tone;

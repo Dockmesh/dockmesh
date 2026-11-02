@@ -54,7 +54,7 @@
   function niceMax(v: number): number {
     if (!isFinite(v) || v <= 0) return 1;
     const p = Math.pow(10, Math.floor(Math.log10(v)));
-    for (const m of [1, 2, 2.5, 5, 10]) if (v <= m * p) return m * p;
+    for (const f of [1, 2, 2.5, 5, 10]) if (v <= f * p) return f * p;
     return 10 * p;
   }
 

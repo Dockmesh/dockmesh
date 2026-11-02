@@ -1,5 +1,6 @@
 <script lang="ts">
   import { m } from '$lib/paraglide/messages.js';
+  import { hostStatusLabel } from '$lib/labels';
   import { onMount, onDestroy } from 'svelte';
   import { tagProblem } from './_host';
   import { fmtAgo, fmtMem, pctTone } from '$lib/format';
@@ -100,10 +101,10 @@
     const offline = rows.filter((r) => r.status === 'offline');
     let cores = 0;
     let mem = 0;
-    for (const m of Object.values(metricsByHost)) {
-      if (!m) continue;
-      cores += m.cores;
-      mem += m.memTotal;
+    for (const mt of Object.values(metricsByHost)) {
+      if (!mt) continue;
+      cores += mt.cores;
+      mem += mt.memTotal;
     }
     const containers = Object.values(containerCounts).reduce((a, n) => a + n, 0);
     return [
@@ -136,9 +137,9 @@
           api.hosts.listTags(id).then((t) => (hostTags[id] = t)).catch(() => (hostTags[id] = [])),
           api.system
             .metrics(id)
-            .then((m) => {
-              if (!isFanOut(m)) {
-                metricsByHost[id] = { cpu: m.cpu_percent, cores: m.cpu_cores, memUsed: m.mem_used, memTotal: m.mem_total, disk: m.disk_percent ?? 0 };
+            .then((mt) => {
+              if (!isFanOut(mt)) {
+                metricsByHost[id] = { cpu: mt.cpu_percent, cores: mt.cpu_cores, memUsed: mt.mem_used, memTotal: mt.mem_total, disk: mt.disk_percent ?? 0 };
               }
             })
             .catch(() => (metricsByHost[id] = null)),
@@ -291,12 +292,6 @@
     if (s === 'pending') return 'warn';
     return '';
   }
-  function statusLabel(s: string): string {
-    if (s === 'online') return m.hosts_st_online();
-    if (s === 'offline') return m.hosts_st_offline();
-    if (s === 'pending') return m.hosts_pending();
-    return s;
-  }
 
   function rowMenu(r: Row): MenuItem[] {
     const items: MenuItem[] = [
@@ -430,7 +425,7 @@
               <input type="checkbox" aria-label={m.hosts_select_one({ name: r.name })} disabled={r.kind === 'local'} checked={selected.has(r.id)}
                 onclick={(e) => e.stopPropagation()} onchange={() => toggleSelect(r.id)} />
             </span>
-            <span role="cell"><span class="dm-dot {dotTone(r.status)}" title={statusLabel(r.status)}></span></span>
+            <span role="cell"><span class="dm-dot {dotTone(r.status)}" title={hostStatusLabel(r.status)}></span></span>
             <span role="cell" class="dm-nm">
               <a href="/hosts/{r.id}" onclick={(e) => e.stopPropagation()}>{r.name}</a>
               <small>

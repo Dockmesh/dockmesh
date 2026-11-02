@@ -2,7 +2,8 @@
   import { fmtAgo } from '$lib/format';
   import { untrack } from 'svelte';
   import { goto } from '$app/navigation';
-  import { sevTone, sevLabel } from './ruleKinds';
+  import { sevTone } from './ruleKinds';
+  import { alertSeverityLabel } from '$lib/labels';
   import { m } from '$lib/paraglide/messages.js';
   import { fmtDateTime, fmtNumber } from '$lib/i18n';
   import { urlTab } from '$lib/urlTab.svelte';
@@ -196,7 +197,7 @@
           {@const fired = e.status === 'fired'}
           <div class="dm-tr" role="row" style="grid-template-columns: {HCOLS}">
             <span role="cell">
-              {#if fired}<StatusChip tone={sev ? sevTone(sev) : 'bad'} label={sev ? sevLabel(sev) : m.alerts_fired_lc()} title={m.alerts_fired()} />{:else}<StatusChip tone="ok" label={m.alerts_resolved()} />{/if}
+              {#if fired}<StatusChip tone={sev ? sevTone(sev) : 'bad'} label={sev ? alertSeverityLabel(sev) : m.alerts_fired_lc()} title={m.alerts_fired()} />{:else}<StatusChip tone="ok" label={m.alerts_resolved()} />{/if}
             </span>
             <span role="cell" class="dm-nm">
               <span class="dm-t" title={e.rule_name}>{e.rule_name}</span>

@@ -22,6 +22,7 @@
   import { pageContext } from '$lib/stores/pageContext.svelte';
   import { fmtDateTime } from '$lib/i18n';
   import { m } from '$lib/paraglide/messages.js';
+  import { containerStateLabel } from '$lib/labels';
   import {
     ChevronLeft, Folder, File as FileIcon, FileText, Link2, Download,
     RefreshCw, HardDrive, AlertTriangle, Trash2, Copy, Box
@@ -173,18 +174,6 @@
     const d = new Date(iso);
     if (isNaN(d.getTime())) return iso;
     return fmtDateTime(d, { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' });
-  }
-  function stateLabel(s: string): string {
-    switch (s) {
-      case 'running': return m.containers_status_running();
-      case 'restarting': return m.containers_status_restarting();
-      case 'paused': return m.containers_status_paused();
-      case 'dead': return m.containers_status_dead();
-      case 'exited': return m.containers_status_exited();
-      case 'created': return m.containers_status_created();
-      case 'removing': return m.containers_status_removing();
-      default: return s;
-    }
   }
   function entryIcon(e: VolumeEntry) {
     if (e.type === 'dir') return Folder;
@@ -401,7 +390,7 @@
               {#if c.state === 'running'}
                 <span class="dm-pill dm-pill-success vol-detail-pill"><span class="dm-pill-dot"></span> {m.containers_status_running()}</span>
               {:else}
-                <span class="dm-pill dm-pill-neutral vol-detail-pill">{stateLabel(c.state)}</span>
+                <span class="dm-pill dm-pill-neutral vol-detail-pill">{containerStateLabel(c.state)}</span>
               {/if}
             </span>
             <span class="font-mono vol-detail-container-image">{c.image}</span>

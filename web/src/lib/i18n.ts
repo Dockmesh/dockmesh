@@ -1,6 +1,11 @@
-import { getLocale, setLocale, locales, cookieName, type Locale } from '$lib/paraglide/runtime.js';
-
-export type LanguagePref = '' | Locale;
+import {
+  baseLocale,
+  extractLocaleFromNavigator,
+  getLocale,
+  locales,
+  setLocale,
+  type Locale
+} from '$lib/paraglide/runtime.js';
 
 export const LANGUAGES: { id: Locale; label: string }[] = [
   { id: 'en', label: 'English' },
@@ -11,25 +16,13 @@ export function isLocale(v: unknown): v is Locale {
   return typeof v === 'string' && (locales as readonly string[]).includes(v);
 }
 
-export function locale(): Locale {
-  return getLocale();
-}
-
-function hasLocaleCookie(): boolean {
-  return document.cookie.split(';').some((c) => c.trim().startsWith(`${cookieName}=`));
-}
-
-// The browser language only decides while the user has no saved choice, so an
-// empty preference drops the cookie that would otherwise pin the last one.
+// A saved choice wins; without one the browser language decides. Paraglide
+// keeps the resolved locale in a cookie, so a choice cleared on the account
+// is undone by switching to the browser's language, which reloads once.
 export function applyLanguagePref(pref: string | undefined | null): void {
   if (typeof document === 'undefined') return;
-  if (isLocale(pref)) {
-    if (pref !== getLocale() || !hasLocaleCookie()) setLocale(pref);
-    return;
-  }
-  if (!hasLocaleCookie()) return;
-  document.cookie = `${cookieName}=; path=/; max-age=0`;
-  window.location.reload();
+  const want = isLocale(pref) ? pref : (extractLocaleFromNavigator() ?? baseLocale);
+  if (want !== getLocale()) setLocale(want);
 }
 
 export function fmtDate(t: number | string | Date): string {

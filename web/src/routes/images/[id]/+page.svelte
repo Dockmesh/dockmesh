@@ -7,6 +7,7 @@
   import { fmtBytes } from '$lib/format';
   import { fmtDate } from '$lib/i18n';
   import { m } from '$lib/paraglide/messages.js';
+  import { containerStateLabel, vulnSeverityLabel } from '$lib/labels';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api, ApiError, isFanOut, type ScanReport, type Severity } from '$lib/api';
@@ -142,29 +143,6 @@
     const d = typeof iso === 'number' ? new Date(iso * 1000) : new Date(iso);
     if (isNaN(d.getTime())) return String(iso);
     return fmtDate(d);
-  }
-  function sevLabel(s: string): string {
-    switch (s) {
-      case 'critical': return m.images_sev_critical();
-      case 'high': return m.images_sev_high();
-      case 'medium': return m.images_sev_medium();
-      case 'low': return m.images_sev_low();
-      case 'negligible': return m.images_sev_negligible();
-      case 'unknown': return m.images_sev_unknown();
-      default: return s;
-    }
-  }
-  function stateLabel(s: string): string {
-    switch (s) {
-      case 'running': return m.containers_status_running();
-      case 'restarting': return m.containers_status_restarting();
-      case 'paused': return m.containers_status_paused();
-      case 'dead': return m.containers_status_dead();
-      case 'exited': return m.containers_status_exited();
-      case 'created': return m.containers_status_created();
-      case 'removing': return m.containers_status_removing();
-      default: return s;
-    }
   }
   function shortSha(s: string): string {
     return s.replace(/^sha256:/, '').slice(0, 12);
@@ -482,7 +460,7 @@
               onclick={() => (scanFilter = scanFilter === sev ? 'all' : sev as Severity)}
             >
               <div class="img-detail-cve-tile-num">{count}</div>
-              <div class="img-detail-cve-tile-label">{sevLabel(String(sev))}</div>
+              <div class="img-detail-cve-tile-label">{vulnSeverityLabel(String(sev))}</div>
             </button>
           {/each}
         </div>
@@ -504,7 +482,7 @@
             </div>
             {#each scanFiltered as v (v.id + v.package)}
               <div class="img-detail-cve-row">
-                <span><Badge variant={sevColor(v.severity)}>{sevLabel(v.severity)}</Badge></span>
+                <span><Badge variant={sevColor(v.severity)}>{vulnSeverityLabel(v.severity)}</Badge></span>
                 <span class="font-mono">{v.package}</span>
                 <span class="font-mono">{v.version}</span>
                 <span class="font-mono">{v.fixed_in || '—'}</span>
@@ -603,7 +581,7 @@
               {#if c.state === 'running'}
                 <span class="dm-pill dm-pill-success img-detail-pill"><span class="dm-pill-dot"></span> {m.containers_status_running()}</span>
               {:else}
-                <span class="dm-pill dm-pill-neutral img-detail-pill">{stateLabel(c.state)}</span>
+                <span class="dm-pill dm-pill-neutral img-detail-pill">{containerStateLabel(c.state)}</span>
               {/if}
             </span>
             <span class="font-mono">{fmtDay(c.started)}</span>

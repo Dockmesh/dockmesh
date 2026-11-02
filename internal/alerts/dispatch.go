@@ -31,7 +31,6 @@ type groupKey struct {
 
 type announcement struct {
 	target target
-	msg    string
 	text   i18n.Text
 	value  float64
 	ts     time.Time
@@ -169,13 +168,13 @@ func (s *Service) groupText(ctx context.Context, g *outGroup, lang string) (stri
 	name := g.rule.Name
 	if g.n == 1 {
 		if g.resolved {
-			return i18n.T(lang, "alert.resolved", name), g.items[0].textIn(lang)
+			return i18n.T(lang, "alert.resolved", name), g.items[0].text.In(lang)
 		}
-		return i18n.T(lang, "alert.fired", name), g.items[0].textIn(lang)
+		return i18n.T(lang, "alert.fired", name), g.items[0].text.In(lang)
 	}
 	lines := make([]string, 0, len(g.items)+1)
 	for _, a := range g.items {
-		lines = append(lines, a.textIn(lang))
+		lines = append(lines, a.text.In(lang))
 	}
 	if more := g.n - len(g.items); more > 0 {
 		lines = append(lines, i18n.T(lang, "alert.and_more", more))
@@ -185,15 +184,6 @@ func (s *Service) groupText(ctx context.Context, g *outGroup, lang string) (stri
 		return i18n.T(lang, "alert.resolved_group", name, summary), strings.Join(lines, "\n")
 	}
 	return i18n.T(lang, "alert.fired_group", name, summary), strings.Join(lines, "\n")
-}
-
-// textIn renders the announcement; announcements queued without a text
-// keep their English message.
-func (a announcement) textIn(lang string) string {
-	if a.text.Key == "" {
-		return a.msg
-	}
-	return a.text.In(lang)
 }
 
 // groupSummary is "12 containers on dm-agent1".

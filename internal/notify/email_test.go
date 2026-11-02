@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -42,7 +43,12 @@ func TestEmailMessageHeaderInjection(t *testing.T) {
 
 func TestEmailRecipientLanguages(t *testing.T) {
 	users := map[string]string{"anna@example.com": "de", "carl@example.com": "fr"}
-	lookup := func(_ context.Context, addr string) (string, error) { return users[addr], nil }
+	lookup := func(_ context.Context, addr string) (string, error) {
+		if addr == "dora@example.com" {
+			return "de", errors.New("db closed")
+		}
+		return users[addr], nil
+	}
 	cases := []struct {
 		name    string
 		channel string
@@ -50,17 +56,17 @@ func TestEmailRecipientLanguages(t *testing.T) {
 	}{
 		{"channel english", "", map[string][]string{
 			"de": {"anna@example.com"},
-			"en": {"ben@example.com", "carl@example.com"},
+			"en": {"ben@example.com", "carl@example.com", "dora@example.com"},
 		}},
 		{"channel german", "de", map[string][]string{
-			"de": {"anna@example.com", "ben@example.com"},
+			"de": {"anna@example.com", "ben@example.com", "dora@example.com"},
 			"en": {"carl@example.com"},
 		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := &emailChannel{
-				cfg:    emailCfg{To: []string{"anna@example.com", "ben@example.com", "carl@example.com"}},
+				cfg:    emailCfg{To: []string{"anna@example.com", "ben@example.com", "carl@example.com", "dora@example.com"}},
 				lang:   tc.channel,
 				langOf: lookup,
 			}

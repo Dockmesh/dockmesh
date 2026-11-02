@@ -202,13 +202,6 @@ export function sevTone(s: string | undefined): Tone {
   return s === 'critical' ? 'bad' : s === 'warning' ? 'warn' : 'off';
 }
 
-export function sevLabel(s: string): string {
-  if (s === 'critical') return m.alerts_sev_critical();
-  if (s === 'warning') return m.alerts_sev_warning();
-  if (s === 'info') return m.alerts_sev_info();
-  return s;
-}
-
 // CPU rules name their unit; rules stored without one were written
 // against per-core values.
 function cpuUnitOf(r: Pick<AlertRuleInput, 'metric' | 'cpu_unit'>): 'host' | 'core' | '' {

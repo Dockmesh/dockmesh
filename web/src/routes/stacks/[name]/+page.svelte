@@ -22,6 +22,7 @@
   import type { StackGitSource, StackGitSourceInput } from '$lib/api';
   import DeleteStackDialog from '../_DeleteStackDialog.svelte';
   import { m } from '$lib/paraglide/messages.js';
+  import { containerStateLabel } from '$lib/labels';
   import { fmtDateTime, fmtTime } from '$lib/i18n';
 
   import { isAllHosts } from '$lib/stores/host.svelte';
@@ -339,10 +340,10 @@
   function parsePortSpec(service: string, spec: string): { service: string; port: string; mode: 'host' | 'internal' } {
     // Forms we accept (best-effort):
     //   "8080:80" / "127.0.0.1:8080:80" / "8080:80/tcp" / "80" (internal-only)
-    const m = spec.match(/^(?:[\d.]+:)?(\d+):(\d+)(?:\/(\w+))?$/);
-    if (m) {
-      const proto = m[3] ? `/${m[3]}` : '';
-      return { service, port: `:${m[1]} → ${m[2]}${proto}`, mode: 'host' };
+    const mt = spec.match(/^(?:[\d.]+:)?(\d+):(\d+)(?:\/(\w+))?$/);
+    if (mt) {
+      const proto = mt[3] ? `/${mt[3]}` : '';
+      return { service, port: `:${mt[1]} → ${mt[2]}${proto}`, mode: 'host' };
     }
     return { service, port: spec, mode: 'internal' };
   }
@@ -359,8 +360,8 @@
         continue;
       }
       if (!inBlock) continue;
-      const m = line.match(/^ {2}([\w.-]+)\s*:\s*(.*)$/);
-      if (m) out.push(m[1]);
+      const mt = line.match(/^ {2}([\w.-]+)\s*:\s*(.*)$/);
+      if (mt) out.push(mt[1]);
     }
     return out;
   }
@@ -791,9 +792,9 @@
     if (ms < 1000) return `${ms}ms`;
     if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
     if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-    const m = Math.floor(ms / 60_000);
+    const min = Math.floor(ms / 60_000);
     const s = Math.round((ms % 60_000) / 1000);
-    return s === 0 ? `${m}m` : `${m}m${s}s`;
+    return s === 0 ? `${min}m` : `${min}m${s}s`;
   }
 
   // buildGitCommitURL turns the stored repo_url + a commit SHA into a
@@ -828,7 +829,7 @@
     if (n === '') return { label: m.stacks_d_trigger_manual(), raw: '', variant: 'neutral' };
     if (n.startsWith('rollback')) return { label: n, raw: n, variant: 'warn' };
     if (n === 'git auto-deploy') return { label: m.stacks_d_trigger_git(), raw: n, variant: 'info' };
-    if (n.startsWith('env:')) return { label: m.stacks_d_trigger_env(), raw: 'env override', variant: 'neutral' };
+    if (n.startsWith('env:')) return { label: m.stacks_d_trigger_env(), raw: '', variant: 'neutral' };
     // Custom note — show truncated, full text in tooltip.
     const label = n.length > 24 ? n.slice(0, 24) + '…' : n;
     return { label, raw: label, variant: 'neutral' };
@@ -1469,18 +1470,6 @@
   });
   const lastDeploy = $derived(historyEntries[0]);
 
-  const STATE_LABEL: Record<string, () => string> = {
-    created: m.topology_state_created,
-    running: m.topology_state_running,
-    paused: m.topology_state_paused,
-    restarting: m.topology_state_restarting,
-    removing: m.topology_state_removing,
-    exited: m.topology_state_exited,
-    dead: m.topology_state_dead
-  };
-  function stateLabel(state: string): string {
-    return STATE_LABEL[state]?.() ?? state;
-  }
 
   const tabItems = $derived<TabItem[]>([
     { key: 'overview', label: m.common_overview(), count: services.length || null },
@@ -1771,7 +1760,7 @@
                     {#if op && (isActive(op) || Date.now() - Date.parse(op.finished_at ?? op.created_at) < 60_000)}
                       <OpProgress {op} compact />
                     {:else}
-                      <StatusChip tone={s.state !== 'running' ? 'off' : unhealthy ? 'warn' : 'ok'} label={unhealthy ? m.stacks_d_unhealthy() : stateLabel(s.state)} />
+                      <StatusChip tone={s.state !== 'running' ? 'off' : unhealthy ? 'warn' : 'ok'} label={unhealthy ? m.stacks_d_unhealthy() : containerStateLabel(s.state)} />
                     {/if}
                   </span>
                   <span class="dm-num r" class:warn={(st?.cpu_percent ?? 0) >= 80}>{st ? `${st.cpu_percent.toFixed(1)}%` : '—'}</span>

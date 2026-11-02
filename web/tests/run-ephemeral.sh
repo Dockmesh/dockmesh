@@ -8,7 +8,7 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 bin="${DOCKMESH_BIN:-$root/dockmesh}"
 port="${DOCKMESH_E2E_PORT:-18080}"
 work="$(mktemp -d)"
-trap 'kill "${pid:-0}" 2>/dev/null || true; rm -rf "$work"' EXIT
+trap 'kill "${pid:-0}" 2>/dev/null && wait "$pid" 2>/dev/null; rm -rf "$work"' EXIT
 
 export DOCKMESH_DB_PATH="$work/data/dockmesh.db"
 export DOCKMESH_STACKS_ROOT="$work/stacks"
