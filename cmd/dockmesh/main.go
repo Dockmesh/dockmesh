@@ -393,7 +393,7 @@ func main() {
 			"err", dockerCli.LastError())
 	}
 	// The server's own container is protected like the proxy: non-admins
-	// can't stop it, exec into it or read its files.
+	// can't stop it or exec into it, and nobody reads its files.
 	go func() {
 		for !dockerCli.Connected() {
 			select {

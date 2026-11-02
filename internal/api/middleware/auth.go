@@ -130,16 +130,12 @@ func TokenIdentity(ctx context.Context, svc *auth.Service, tok *apitokens.Token)
 	if RBACStore == nil {
 		return id, false
 	}
-	scope := tok.Scope
-	if scope.Type == "" {
-		scope = rbac.Global
-	}
 	if tok.Legacy {
 		perms, ok := RBACStore.RolePerms(tok.Role)
 		if !ok {
 			return id, false
 		}
-		id.Access = RBACStore.RoleAccess(tok.Role).Restrict(perms, scope)
+		id.Access = RBACStore.RoleAccess(tok.Role).Restrict(perms, tokenScope(tok))
 		return id, true
 	}
 	if tok.CreatedBy == nil {
@@ -185,11 +181,15 @@ func restrictToToken(access *rbac.Access, tok *apitokens.Token) *rbac.Access {
 	if !ok {
 		perms = map[rbac.Perm]bool{}
 	}
-	scope := tok.Scope
-	if scope.Type == "" {
-		scope = rbac.Global
+	return access.Restrict(perms, tokenScope(tok))
+}
+
+// tokenScope is the scope of tok's restriction; none means everything.
+func tokenScope(tok *apitokens.Token) rbac.Scope {
+	if tok.Scope.Type == "" {
+		return rbac.Global
 	}
-	return access.Restrict(perms, scope)
+	return tok.Scope
 }
 
 // NewAuth returns middleware that validates Bearer tokens and injects

@@ -87,12 +87,12 @@ func (h *Handlers) requireNotOwnContainer(w http.ResponseWriter, r *http.Request
 	return false
 }
 
-// requireVolumeNotOwn refuses browsing Dockmesh's own volumes to everyone
-// but admins.
+// requireVolumeNotOwn keeps Dockmesh's own volumes (browse, backup
+// source) to admins.
 func (h *Handlers) requireVolumeNotOwn(w http.ResponseWriter, r *http.Request, name string) bool {
 	if !ownVolumes[name] || h.callerIsAdmin(r) {
 		return true
 	}
-	writeError(w, http.StatusForbidden, "only an admin can browse Dockmesh's own volumes")
+	writeError(w, http.StatusForbidden, "only an admin can access Dockmesh's own volumes")
 	return false
 }
